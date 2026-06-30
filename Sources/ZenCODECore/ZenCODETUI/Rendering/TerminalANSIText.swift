@@ -30,7 +30,7 @@ enum TerminalANSIText {
     
     
     private static func visibleWidth(of character: Character) -> Int {
-        let scalars = Array(character.unicodeScalars)
+        let scalars = character.unicodeScalars
         guard let first = scalars.first else {
             return 0
         }
@@ -92,8 +92,7 @@ enum TerminalANSIText {
         guard width > ellipsisWidth else {
             return ellipsis
         }
-        let stripped = stripANSI(text)
-        guard stripped.count > width else {
+        guard visibleWidth(stripANSI(text)) > width else {
             return text
         }
 

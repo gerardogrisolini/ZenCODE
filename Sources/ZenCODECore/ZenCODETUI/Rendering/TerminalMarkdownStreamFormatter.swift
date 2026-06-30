@@ -12,6 +12,9 @@ import Glibc
 #endif
 import Foundation
 import Markdown
+#if canImport(os)
+import os
+#endif
 
 public struct TerminalMarkdownStreamFormatter {
     private static let reset = "\u{1B}[0m"
@@ -295,11 +298,25 @@ public struct TerminalMarkdownStreamFormatter {
             return true
         }
         
-        return trimmed.contains("`")
-        || trimmed.contains("**")
-        || trimmed.contains("__")
-        || trimmed.contains("~~")
-        || trimmed.contains("](")
+        // Single pass over the line looking for inline markers (`, **, __, ~~,
+        // ](), exiting at the first match instead of scanning the string once
+        // per marker.
+        var previous: Character?
+        for character in trimmed {
+            switch character {
+            case "`":
+                return true
+            case "*" where previous == "*",
+                 "_" where previous == "_",
+                 "~" where previous == "~",
+                 "(" where previous == "]":
+                return true
+            default:
+                break
+            }
+            previous = character
+        }
+        return false
     }
     
     private func isOrderedListMarker(in line: String) -> Bool {
@@ -434,7 +451,39 @@ public struct TerminalMarkdownStreamFormatter {
     
     // MARK: - Terminal capabilities
     
+    private struct CachedTerminalWidth {
+        var value: Int
+        var timestamp: Date
+    }
+
+    /// Short-lived cache so streaming a long response does not issue one `ioctl`
+    /// per rendered line. The TTL keeps width adaptive to live terminal resizes.
+    private static let terminalWidthCacheTTL: TimeInterval = 0.25
+    private static let terminalWidthCache = OSAllocatedUnfairLock<CachedTerminalWidth?>(
+        initialState: nil
+    )
+
     private static func detectTerminalWidth() -> Int {
+        let now = Date()
+        let cached = terminalWidthCache.withLock { cache -> Int? in
+            guard let cache,
+                  now.timeIntervalSince(cache.timestamp) < terminalWidthCacheTTL else {
+                return nil
+            }
+            return cache.value
+        }
+        if let cached {
+            return cached
+        }
+
+        let measured = measureTerminalWidth()
+        terminalWidthCache.withLock { cache in
+            cache = CachedTerminalWidth(value: measured, timestamp: now)
+        }
+        return measured
+    }
+
+    private static func measureTerminalWidth() -> Int {
         var size = winsize()
         let descriptors: [Int32] = [1, 2, 0]
         for descriptor in descriptors {

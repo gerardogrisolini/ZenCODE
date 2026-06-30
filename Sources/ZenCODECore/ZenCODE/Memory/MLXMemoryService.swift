@@ -61,6 +61,10 @@ public final class MLXMemoryService {
 
     let fileManager: FileManager
     let globalMemoryDirectoryURL: URL?
+    /// Serializes read-modify-write operations on MEMORY.md files so concurrent
+    /// writes cannot clobber each other (lost update). Recursive so root methods
+    /// can call one another without deadlocking.
+    private let writeLock = NSRecursiveLock()
 
     public init(
         fileManager: FileManager = .default,
@@ -244,6 +248,9 @@ public final class MLXMemoryService {
             throw MLXMemoryServiceError.missingField("content")
         }
 
+        writeLock.lock()
+        defer { writeLock.unlock() }
+
         let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
         var entries = readEntries(from: document)
         if let existingEntry = entries.first(where: {
@@ -273,6 +280,9 @@ public final class MLXMemoryService {
         guard !normalizedContent.isEmpty else {
             throw MLXMemoryServiceError.missingField("content")
         }
+
+        writeLock.lock()
+        defer { writeLock.unlock() }
 
         let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
         var entries = readEntries(from: document)
@@ -322,6 +332,9 @@ public final class MLXMemoryService {
             throw MLXMemoryServiceError.invalidIdentifier(rawIdentifier)
         }
 
+        writeLock.lock()
+        defer { writeLock.unlock() }
+
         let documents = memoryDocuments(workspaceRootURL: workspaceRootURL)
             .filter { scope == nil || $0.scope == scope }
         for document in documents {
@@ -346,6 +359,9 @@ public final class MLXMemoryService {
         scope: MLXMemoryScope,
         workspaceRootURL: URL?
     ) throws -> MLXMemoryEntry {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+
         let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
         var entries = readEntries(from: document)
         guard let index = entries.firstIndex(where: { $0.id == id }) else {
@@ -362,6 +378,9 @@ public final class MLXMemoryService {
         scope: MLXMemoryScope,
         workspaceRootURL: URL?
     ) throws {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+
         let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
         var entries = readEntries(from: document)
         guard let index = entries.firstIndex(where: { $0.id == id }) else {

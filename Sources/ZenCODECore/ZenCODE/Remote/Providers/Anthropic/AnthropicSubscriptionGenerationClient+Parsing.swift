@@ -78,9 +78,10 @@ extension AnthropicSubscriptionGenerationClient {
     ) async throws -> String {
         var data = Data()
         for try await byte in bytes {
-            if data.count < limit {
-                data.append(byte)
+            if data.count >= limit {
+                break
             }
+            data.append(byte)
         }
         return String(decoding: data, as: UTF8.self)
     }
@@ -203,7 +204,7 @@ extension AnthropicSubscriptionGenerationClient {
                    now: now
                ) {
                 resetDates.append(date)
-            } else if let date = ISO8601DateFormatter().date(from: raw) {
+            } else if let date = sharedISO8601Formatter.date(from: raw) {
                 resetDates.append(date)
             }
         }
@@ -235,13 +236,17 @@ extension AnthropicSubscriptionGenerationClient {
                 }
                 return Int(max(absolute, 0))
             }
-            if let date = ISO8601DateFormatter().date(from: raw) {
+            if let date = sharedISO8601Formatter.date(from: raw) {
                 let delta = date.timeIntervalSinceNow
                 return delta > 0 ? Int(delta) : 0
             }
         }
         return nil
     }
+
+    /// `ISO8601DateFormatter` is expensive to initialize and its `date(from:)`
+    /// parsing is thread-safe for read-only use, so reuse a single instance.
+    private nonisolated(unsafe) static let sharedISO8601Formatter = ISO8601DateFormatter()
 
     static func stringValue(_ value: Any?) -> String? {
         RemoteGenerationClient.stringValue(value)

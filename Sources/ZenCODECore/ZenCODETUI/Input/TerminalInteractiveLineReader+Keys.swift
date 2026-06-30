@@ -181,7 +181,7 @@ extension TerminalInteractiveLineReader {
         var bytes: [UInt8] = []
 
         while true {
-            guard let byte = readByte() else {
+            guard let byte = readByte(timeoutMilliseconds: Self.bracketedPasteByteTimeout) else {
                 return Self.normalizedPastedText(bytes: bytes)
             }
             bytes.append(byte)

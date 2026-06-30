@@ -143,19 +143,17 @@ func isContextLengthMetadataKey(
     preferredContextLengthMetadataKeys.contains(normalizedMetadataKey(key))
 }
 
+private let contextLengthRegexes: [NSRegularExpression] = [
+    #"(?i)context\s+(?:length|window)[^\n\n\d]{0,40}(\d+(?:\.\d+)?)\s*([km])?\b"#,
+    #"(?i)(\d+(?:\.\d+)?)\s*([km])?\s*(?:-|\s)?token\s+context\b"#,
+    #"(?i)context\s+(?:length|window)[^\n\n\d]{0,40}(\d+)\b"#
+].compactMap { try? NSRegularExpression(pattern: $0) }
+
 func contextLength(
     fromText text: String
 ) -> Int? {
     let normalizedText = text.replacingOccurrences(of: ",", with: "")
-    let patterns = [
-        #"(?i)context\s+(?:length|window)[^\n\n\d]{0,40}(\d+(?:\.\d+)?)\s*([km])?\b"#,
-        #"(?i)(\d+(?:\.\d+)?)\s*([km])?\s*(?:-|\s)?token\s+context\b"#,
-        #"(?i)context\s+(?:length|window)[^\n\n\d]{0,40}(\d+)\b"#
-    ]
-    for pattern in patterns {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
-            continue
-        }
+    for regex in contextLengthRegexes {
         let range = NSRange(normalizedText.startIndex..<normalizedText.endIndex, in: normalizedText)
         let matches = regex.matches(in: normalizedText, range: range)
         for match in matches {

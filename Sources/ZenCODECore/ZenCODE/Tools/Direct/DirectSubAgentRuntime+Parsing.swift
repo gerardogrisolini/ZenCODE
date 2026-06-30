@@ -143,6 +143,11 @@ extension DirectSubAgentRuntime {
                 case let .string(string):
                     return string
                 case let .number(number):
+                    // Render whole numbers without a trailing ".0" so an id like
+                    // 3 becomes "3" instead of "3.0".
+                    if number == number.rounded(), abs(number) < 9_007_199_254_740_992 {
+                        return String(Int64(number))
+                    }
                     return String(number)
                 case let .bool(bool):
                     return bool ? "true" : "false"

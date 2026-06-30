@@ -267,22 +267,6 @@ public final class TerminalRawInput: @unchecked Sendable {
         originalAttributes = nil
     }
 
-    private func closeInputFileDescriptorLocked() {
-        if shouldCloseFileDescriptor, fileDescriptor >= 0 {
-            close(fileDescriptor)
-        }
-        shouldCloseFileDescriptor = false
-    }
-
-    private func closeControlFileDescriptorLocked() {
-        if shouldCloseControlFileDescriptor,
-           controlFileDescriptor >= 0,
-           controlFileDescriptor != fileDescriptor {
-            close(controlFileDescriptor)
-        }
-        shouldCloseControlFileDescriptor = false
-    }
-
     private func requestEnhancedKeyboardProtocolLocked() {
         guard !didRequestEnhancedKeyboardProtocol else {
             return

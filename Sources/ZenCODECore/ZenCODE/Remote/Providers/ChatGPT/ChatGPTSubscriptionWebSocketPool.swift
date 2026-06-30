@@ -43,12 +43,33 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         }
     }
 
+    /// Closes idle entries whose `idleTTL` has elapsed. Without this sweep,
+    /// web sockets for short-lived sessions that are never re-acquired would
+    /// stay open indefinitely, leaking `URLSessionWebSocketTask` instances.
+    private func reapExpiredIdleEntries(now: Date = Date()) {
+        let expiredTasks = state.withLock { state -> [URLSessionWebSocketTask] in
+            var expired: [URLSessionWebSocketTask] = []
+            for (sessionID, entry) in state.entries
+            where !entry.isBusy
+                && (now.timeIntervalSince(entry.lastUsedAt) >= idleTTL
+                    || !Self.isReusable(entry.task)) {
+                expired.append(entry.task)
+                state.entries.removeValue(forKey: sessionID)
+            }
+            return expired
+        }
+        for task in expiredTasks {
+            Self.close(task)
+        }
+    }
+
     func acquire(
         sessionID: String,
         request: URLRequest,
         urlSession: URLSession
     ) -> ChatGPTSubscriptionResponsesClient.WebSocketLease {
         let now = Date()
+        reapExpiredIdleEntries(now: now)
         let result = state.withLock { state -> (
             lease: ChatGPTSubscriptionResponsesClient.WebSocketLease,
             taskToClose: URLSessionWebSocketTask?
@@ -124,6 +145,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         if shouldClose {
             Self.close(lease.task)
         }
+        reapExpiredIdleEntries()
     }
 
     public func closeSession(sessionID: String) {

@@ -171,7 +171,7 @@ public enum AsyncProcessRunner {
         exitObserver: AsyncProcessExitObserver,
         timeout: TimeInterval?
     ) async -> Bool {
-        guard let timeout else {
+        guard let timeout, timeout > 0 else {
             await exitObserver.wait()
             return false
         }

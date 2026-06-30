@@ -90,7 +90,7 @@ public nonisolated enum MCPToolResultRenderer {
             return result.prettyPrinted()
         }
 
-        if rootObject["isError"]?.boolValue == true || rootObject["success"]?.boolValue == false {
+        if isErrorResult(rootObject) {
             return "Tool error:\n\(renderedText)"
         }
 

@@ -291,7 +291,7 @@ extension TerminalChat {
 
         var output = ""
         for character in text {
-            if character == "\n" || character == "\n" {
+            if character == "\n" || character == "\r" {
                 output.append(character)
                 isAtLineStart = true
                 continue

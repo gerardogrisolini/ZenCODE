@@ -39,7 +39,6 @@ extension ChatGPTSubscriptionGenerationClient {
         /// is disabled (matching the Codex CLI behavior).
         private var reasoningItems: [[String: Any]] = []
         private var reasoningItemIndexByID: [String: Int] = [:]
-        private var anonymousReasoningItemCount = 0
 
         func ingest(_ object: [String: Any]) throws -> [DirectAgentEvent] {
             lock.lock()
@@ -212,7 +211,6 @@ extension ChatGPTSubscriptionGenerationClient {
                     reasoningItems.append(sanitizedItem)
                 }
             } else {
-                anonymousReasoningItemCount += 1
                 reasoningItems.append(sanitizedItem)
             }
         }

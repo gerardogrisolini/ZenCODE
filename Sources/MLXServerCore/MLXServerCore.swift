@@ -5,12 +5,12 @@
 //  Created by Gerardo Grisolini on 25/05/26.
 //
 import Foundation
-import MLXPackageMetadata
+import ZenPackageMetadata
 
 public enum MLXServerCore {
     public static let serviceName = "MLX"
-    public static let version = MLXPackageMetadata.version
-    public static let versionDescription = MLXPackageMetadata.versionDescription(
+    public static let version = ZenPackageMetadata.version
+    public static let versionDescription = ZenPackageMetadata.versionDescription(
         for: serviceName
     )
 }

@@ -98,7 +98,7 @@ public struct RemoteToolCallAccumulator {
         if let name = stringValue(event["name"]), !name.isEmpty {
             partial.name = name
         }
-        if let arguments = stringValue(event["arguments"]) {
+        if let arguments = stringValue(event["arguments"]), !arguments.isEmpty {
             partial.arguments = arguments
         }
         if let item = event["item"] as? [String: Any] {
@@ -172,7 +172,12 @@ public struct RemoteToolCallAccumulator {
             return index
         }
 
-        let index = partialsByIndex.count
+        let highestKnownIndex = max(
+            partialsByIndex.keys.max() ?? -1,
+            indexesByResponseItemID.values.max() ?? -1,
+            indexesByCallID.values.max() ?? -1
+        )
+        let index = highestKnownIndex + 1
         if let itemID = stringValue(object["item_id"] ?? object["id"]), !itemID.isEmpty {
             indexesByResponseItemID[itemID] = index
         }

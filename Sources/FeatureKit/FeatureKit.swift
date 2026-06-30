@@ -132,13 +132,6 @@ public enum FeatureProcessRunner {
             throw error
         }
 
-        if let stdinData,
-           let stdinPipe {
-            let writer = stdinPipe.fileHandleForWriting
-            try? writer.write(contentsOf: stdinData)
-            try? writer.close()
-        }
-
         let stdoutReader = Task.detached { () -> (Data, Bool) in
             readStdout(
                 from: stdoutPipe,
@@ -148,6 +141,18 @@ public enum FeatureProcessRunner {
         }
         let stderrReader = Task.detached {
             stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        }
+
+        // Write stdin concurrently with the readers: writing synchronously before
+        // draining stdout/stderr can deadlock when the payload exceeds the OS pipe
+        // buffer and the child blocks writing output that nobody is reading yet.
+        if let stdinData,
+           let stdinPipe {
+            let writer = stdinPipe.fileHandleForWriting
+            Task.detached {
+                try? writer.write(contentsOf: stdinData)
+                try? writer.close()
+            }
         }
 
         let timedOut = await withTaskCancellationHandler {

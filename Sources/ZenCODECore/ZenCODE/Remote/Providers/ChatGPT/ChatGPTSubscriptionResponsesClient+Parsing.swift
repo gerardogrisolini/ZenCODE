@@ -16,9 +16,10 @@ extension ChatGPTSubscriptionResponsesClient {
     ) async throws -> String {
         var data = Data()
         for try await byte in bytes {
-            if data.count < limit {
-                data.append(byte)
+            if data.count >= limit {
+                break
             }
+            data.append(byte)
         }
         return String(decoding: data, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)

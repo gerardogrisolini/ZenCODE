@@ -144,9 +144,15 @@ enum LocalToolsSupport {
             return "<empty>"
         }
         var matches: [String] = []
+        let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
         for case let url as URL in enumerator {
-            let relative = String(url.path.dropFirst(root.path.count))
-                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let relative: String
+            if url.path.hasPrefix(rootPrefix) {
+                relative = String(url.path.dropFirst(rootPrefix.count))
+            } else {
+                relative = String(url.path.dropFirst(root.path.count))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            }
             guard !relative.isEmpty else {
                 continue
             }

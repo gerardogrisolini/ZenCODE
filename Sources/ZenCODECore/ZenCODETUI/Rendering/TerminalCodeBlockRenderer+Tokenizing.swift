@@ -13,12 +13,15 @@ extension TerminalCodeBlockRenderer {
         at index: String.Index,
         prefixes: [String]
     ) -> String? {
-        for prefix in prefixes.sorted(by: { $0.count > $1.count }) {
-            if hasPrefix(prefix, in: line, at: index) {
-                return prefix
+        // Track the longest matching prefix directly instead of sorting the
+        // prefix list on every call (this runs for each character of each line).
+        var longestMatch: String?
+        for prefix in prefixes where hasPrefix(prefix, in: line, at: index) {
+            if longestMatch == nil || prefix.count > longestMatch!.count {
+                longestMatch = prefix
             }
         }
-        return nil
+        return longestMatch
     }
     
     static func hasPrefix(

@@ -23,7 +23,7 @@ extension ZenCODECore.JSONValue {
         case let .bool(value):
             return value
         case .null:
-            return self
+            return NSNull()
         }
     }
 }

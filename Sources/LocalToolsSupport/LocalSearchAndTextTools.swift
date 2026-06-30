@@ -62,7 +62,7 @@ struct SearchGrepTool: FeatureTool {
         if maxResults < 10000 {
             processArguments.append(contentsOf: ["-m", "\(maxResults)"])
         }
-        processArguments.append(pattern)
+        processArguments.append(contentsOf: ["-e", pattern, "--"])
         processArguments.append(path.path)
         let result = try await FeatureProcessRunner.run(
             executableURL: URL(fileURLWithPath: "/usr/bin/grep"),
@@ -152,9 +152,18 @@ struct TextSortTool: FeatureTool {
         let lines = try String(contentsOf: path, encoding: .utf8)
             .components(separatedBy: .newlines)
         let sortedLines = lines.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-        let outputLines = input.unique == true
-            ? Array(Set(sortedLines)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-            : sortedLines
+        let outputLines: [String]
+        if input.unique == true {
+            // Already sorted: drop consecutive duplicates instead of building a
+            // Set and re-sorting.
+            var deduplicated: [String] = []
+            for line in sortedLines where deduplicated.last != line {
+                deduplicated.append(line)
+            }
+            outputLines = deduplicated
+        } else {
+            outputLines = sortedLines
+        }
         guard !outputLines.isEmpty else {
             return "File: \(path.path)\n<empty>"
         }

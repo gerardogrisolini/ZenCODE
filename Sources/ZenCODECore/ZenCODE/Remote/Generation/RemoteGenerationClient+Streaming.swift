@@ -335,11 +335,19 @@ extension RemoteGenerationClient {
     }
 
     public func endpointURL(path: String) throws -> URL {
-        guard var url = URL(string: provider.baseURL) else {
+        guard var components = URLComponents(string: provider.baseURL) else {
             throw RemoteGenerationClientError.invalidBaseURL(provider.baseURL)
         }
-        for component in path.split(separator: "/") {
-            url.appendPathComponent(String(component))
+        // Build the joined path explicitly so an existing query on the base URL
+        // is preserved and duplicate slashes are collapsed.
+        let basePathComponents = components.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+        let extraPathComponents = path
+            .split(separator: "/", omittingEmptySubsequences: true)
+        let joined = (basePathComponents + extraPathComponents).joined(separator: "/")
+        components.path = joined.isEmpty ? "" : "/" + joined
+        guard let url = components.url else {
+            throw RemoteGenerationClientError.invalidBaseURL(provider.baseURL)
         }
         return url
     }
@@ -379,9 +387,10 @@ extension RemoteGenerationClient {
     ) async throws -> String {
         var data = Data()
         for try await byte in bytes {
-            if data.count < limit {
-                data.append(byte)
+            if data.count >= limit {
+                break
             }
+            data.append(byte)
         }
         return String(decoding: data, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -569,7 +578,7 @@ extension RemoteGenerationClient {
         }
     }
 
-            static func streamContentDelta(
+    static func streamContentDelta(
         fromSnapshot snapshot: String,
         accumulatedText: String
     ) -> String {
@@ -591,18 +600,21 @@ extension RemoteGenerationClient {
             return snapshot
         }
 
+        // Materialize the character arrays once, then compare slices directly
+        // with `elementsEqual` so the overlap search no longer allocates a fresh
+        // array on every iteration.
         let snapshotCharacters = Array(snapshot)
         let accumulatedCharacters = Array(accumulatedText)
         for overlapLength in stride(from: maximumOverlap, through: 1, by: -1) {
             let accumulatedSuffixStart = accumulatedCharacters.count - overlapLength
             let accumulatedSuffix = accumulatedCharacters[accumulatedSuffixStart...]
             let snapshotPrefix = snapshotCharacters[..<overlapLength]
-            if Array(accumulatedSuffix) == Array(snapshotPrefix) {
+            if accumulatedSuffix.elementsEqual(snapshotPrefix) {
                 return String(snapshotCharacters.dropFirst(overlapLength))
             }
         }
         return snapshot
-        }
+    }
 
     private static func responseContentPartDelta(from object: [String: Any]) -> String? {
         if let delta = responseContentPartText(from: object["delta"]) {

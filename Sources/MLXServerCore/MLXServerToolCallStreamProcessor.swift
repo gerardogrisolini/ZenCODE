@@ -167,16 +167,16 @@ struct MLXServerToolCallStreamProcessor {
     }
 
     private func potentialStartIndex(in text: String) -> String.Index? {
-        var indexes: [String.Index] = []
-        if let startChar = parser.startTag?.first,
-           let index = text.firstIndex(of: startChar) {
-            indexes.append(index)
+        let tagStartCharacter = parser.startTag?.first
+        let jsonStartCharacter = supportsBareJSONFallback ? jsonObjectScanner.startCharacter : nil
+        guard tagStartCharacter != nil || jsonStartCharacter != nil else {
+            return nil
         }
-        if supportsBareJSONFallback,
-           let index = text.firstIndex(of: jsonObjectScanner.startCharacter) {
-            indexes.append(index)
+        // Single pass that stops at the first character matching either marker,
+        // instead of scanning the buffer once per marker.
+        return text.firstIndex { character in
+            character == tagStartCharacter || character == jsonStartCharacter
         }
-        return indexes.min()
     }
 }
 

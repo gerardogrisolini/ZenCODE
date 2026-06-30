@@ -113,9 +113,7 @@ public nonisolated enum MCPTransportCodec {
 
     private static func headerTerminatorRange(in buffer: Data) -> Range<Data.Index>? {
         let patterns = [
-            Data("\n\n".utf8),
-            Data("\n\n".utf8),
-            Data("\n\n".utf8),
+            Data("\r\n\r\n".utf8),
             Data("\n\n".utf8)
         ]
 

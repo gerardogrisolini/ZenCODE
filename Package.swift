@@ -117,7 +117,7 @@ products += [
 var zenCODEDependencies: [Target.Dependency] = [
     "ZenCODECore",
     "ZenCODESetup",
-    "MLXPackageMetadata",
+    "ZenPackageMetadata",
     "search-tools-feature",
     "web-tools-feature",
     "git-tools-feature",
@@ -180,7 +180,7 @@ if localDS4Enabled {
 
 targets += [
     .target(
-        name: "MLXPackageMetadata",
+        name: "ZenPackageMetadata",
         dependencies: []
     ),
     .target(
@@ -190,7 +190,7 @@ targets += [
             .product(name: "Markdown", package: "swift-markdown"),
             "FeatureKit",
             "LocalToolsSupport",
-            "MLXPackageMetadata"
+            "ZenPackageMetadata"
         ],
         swiftSettings: [
             .define("SWIFTPM_NON_SANDBOX_TUI")
@@ -282,7 +282,7 @@ if localMLXEnabled {
         .target(
             name: "MLXServerCore",
             dependencies: [
-                "MLXPackageMetadata",
+                "ZenPackageMetadata",
                 .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),

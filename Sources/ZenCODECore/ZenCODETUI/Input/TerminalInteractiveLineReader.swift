@@ -39,6 +39,7 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
 
     static let escapeSequenceInitialTimeout: Int32 = 120
     static let escapeSequenceContinuationTimeout: Int32 = 60
+    static let bracketedPasteByteTimeout: Int32 = 2000
     static let escapeSequenceMaximumLength = 24
     static let maximumPanelCommandSuggestionLines = 6
 

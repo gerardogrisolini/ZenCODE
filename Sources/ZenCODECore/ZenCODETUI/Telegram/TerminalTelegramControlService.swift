@@ -169,10 +169,20 @@ public actor TerminalTelegramControlService {
         let token = try telegramToken(from: settings)
         let client = TerminalTelegramAPIClient(token: token)
 
-        _ = try? await client.deleteWebhook(dropPendingUpdates: false)
-        let bot = try await client.getMe()
-
+        // Stop any previous polling before starting a new session so a failure
+        // below cannot leave a stale poller running.
         stopPolling()
+
+        let bot: TerminalTelegramUser
+        do {
+            _ = try? await client.deleteWebhook(dropPendingUpdates: false)
+            bot = try await client.getMe()
+        } catch {
+            state.isActive = false
+            state.lastError = error.localizedDescription
+            throw error
+        }
+
         state = TerminalTelegramControlState(
             isConfigured: true,
             isActive: true,

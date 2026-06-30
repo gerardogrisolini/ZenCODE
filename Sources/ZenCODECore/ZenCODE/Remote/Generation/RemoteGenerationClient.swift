@@ -253,10 +253,19 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                 attachments: attachments
             )
         )
+        // Persist immediately so concurrent actor operations (compaction,
+        // option updates) observe and build on the latest messages instead of
+        // being silently overwritten by the local copy at the end of the loop.
+        sessions[sessionID] = session
 
         var accumulatedText = ""
         var generationStats: [RemoteGenerationStats] = []
         for round in 0..<configuration.maxToolRounds {
+            // Re-read shared state at the start of each round so changes applied
+            // by concurrent operations between rounds are not lost.
+            if let latestSession = sessions[sessionID] {
+                session = latestSession
+            }
             let expectsPromptCache = Self.messagesExpectPromptCache(session.messages)
             let streamResult: RemoteStreamResult
             switch provider.chatEndpoint {
@@ -293,6 +302,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                 streamResult: streamResult,
                 to: &session.messages
             )
+            sessions[sessionID] = session
             if let metrics = Self.generationMetrics(
                 generationStats,
                 estimateMissingRates: Self.shouldEstimateStreamingRates(
@@ -340,6 +350,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                     "name": toolCall.name,
                     "content": result.output
                 ])
+                sessions[sessionID] = session
             }
 
             if round == configuration.maxToolRounds - 1 {

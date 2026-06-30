@@ -368,9 +368,20 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
             let available = max(renderWidth - overhead, columnCount)
             let total = widths.reduce(0, +)
             if total > available {
-                // Proportionally shrink each column, ensuring a minimum of 3.
+                let minColumnWidth = 3
+                // Proportionally shrink each column, ensuring a minimum width.
                 let scale = Double(available) / Double(total)
-                widths = widths.map { max(3, Int(Double($0) * scale)) }
+                widths = widths.map { max(minColumnWidth, Int(Double($0) * scale)) }
+                // Flooring at `minColumnWidth` can push the sum back above
+                // `available`, making the row exceed `renderWidth`. Trim the
+                // widest columns until it fits (or all are at the minimum).
+                var currentTotal = widths.reduce(0, +)
+                while currentTotal > available,
+                      let widest = widths.indices.max(by: { widths[$0] < widths[$1] }),
+                      widths[widest] > minColumnWidth {
+                    widths[widest] -= 1
+                    currentTotal -= 1
+                }
                 // Truncate cell content to the new widths.
                 headerCells = headerCells.enumerated().map { index, cell in
                     TerminalANSIText.truncate(cell, to: widths[index])

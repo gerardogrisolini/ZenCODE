@@ -145,7 +145,8 @@ struct LocalReplaceTool: FeatureTool {
         let oldString = try LocalToolsSupport.requiredRawString(input.oldString, input.old_string, name: "oldString")
         let newString = input.newString ?? input.new_string ?? ""
         let original = try String(contentsOf: path, encoding: .utf8)
-        let occurrences = original.components(separatedBy: oldString).count - 1
+        // Count without materializing the full split array.
+        let occurrences = original.ranges(of: oldString).count
         guard occurrences > 0 else {
             throw LocalToolsFeatureError.permissionDenied("oldString was not found in \(path.path).")
         }
@@ -177,7 +178,7 @@ struct LocalEditFileTool: FeatureTool {
         let newString = input.newString ?? input.new_string ?? ""
         let replaceAll = input.replaceAll ?? input.replace_all ?? false
         let original = try String(contentsOf: path, encoding: .utf8)
-        let occurrences = original.components(separatedBy: oldString).count - 1
+        let occurrences = original.ranges(of: oldString).count
         guard occurrences > 0 else {
             throw LocalToolsFeatureError.permissionDenied("oldString was not found in \(path.path).")
         }

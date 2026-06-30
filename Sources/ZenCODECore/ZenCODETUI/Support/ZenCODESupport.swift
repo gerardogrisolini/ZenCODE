@@ -11,9 +11,9 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
-import MLXPackageMetadata
+import ZenPackageMetadata
 
-let agentVersion = MLXPackageMetadata.version
+let agentVersion = ZenPackageMetadata.version
 
 public enum SwiftPMResourceBundleDirectory {
     private static let environmentKey = "PACKAGE_RESOURCE_BUNDLE_PATH"

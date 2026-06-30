@@ -220,8 +220,13 @@ final class MLXServerDiskKVCacheStore: Sendable {
         target: MLXServerDiskKVCachePersistenceTarget
     ) throws {
         try withStoreLock {
-            try? fileManager.removeItem(at: target.cacheURL)
-            try fileManager.moveItem(at: target.temporaryURL, to: target.cacheURL)
+            // Atomic replace eliminates the window where the destination cache
+            // file is missing (old remove + move could crash in between).
+            if fileManager.fileExists(atPath: target.cacheURL.path) {
+                _ = try fileManager.replaceItemAt(target.cacheURL, withItemAt: target.temporaryURL)
+            } else {
+                try fileManager.moveItem(at: target.temporaryURL, to: target.cacheURL)
+            }
 
             let now = Date()
             let existingMetadata = loadMetadata(from: target.metadataURL)
@@ -241,7 +246,15 @@ final class MLXServerDiskKVCacheStore: Sendable {
                 updatedAt: now,
                 lastAccessedAt: now
             )
-            saveMetadata(metadata, to: target.metadataURL)
+            do {
+                try saveMetadata(metadata, to: target.metadataURL)
+            } catch {
+                // Avoid leaving a new cache file paired with stale/missing
+                // metadata (which would corrupt KV continuation). Roll back.
+                try? fileManager.removeItem(at: target.cacheURL)
+                try? fileManager.removeItem(at: target.metadataURL)
+                throw error
+            }
             enforceDiskLimit(preserving: target.cacheURL)
         }
     }
@@ -284,7 +297,7 @@ final class MLXServerDiskKVCacheStore: Sendable {
     private func modelDirectoryName(_ modelID: String) -> String {
         var hasher = SHA256()
         hasher.update(data: Data(modelID.utf8))
-        return SHA256.hexString(from: hasher.finalize()).prefix(16).description
+        return String(SHA256.hexString(from: hasher.finalize()).prefix(32))
     }
 
     private func loadMetadata(
@@ -302,14 +315,11 @@ final class MLXServerDiskKVCacheStore: Sendable {
     private func saveMetadata(
         _ metadata: MLXServerPersistedChatSessionMetadata,
         to url: URL
-    ) {
-        do {
-            try ensureDirectoryExists(url.deletingLastPathComponent())
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-            try encoder.encode(metadata).write(to: url, options: .atomic)
-        } catch {
-        }
+    ) throws {
+        try ensureDirectoryExists(url.deletingLastPathComponent())
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        try encoder.encode(metadata).write(to: url, options: .atomic)
     }
 
     private func ensureDirectoryExists(_ url: URL) throws {
@@ -394,7 +404,7 @@ final class MLXServerDiskKVCacheStore: Sendable {
             let currentByteCount = byteCount(of: cacheURL)
             if metadata.byteCount != currentByteCount {
                 metadata.byteCount = currentByteCount
-                saveMetadata(metadata, to: url)
+                try? saveMetadata(metadata, to: url)
             }
             entries.append(
                 PersistedEntry(

@@ -18,10 +18,10 @@ extension TerminalInteractiveLineReader {
     func recordHistory(_ line: String) {
         let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedLine.isEmpty,
-              history.last != line else {
+              history.last != trimmedLine else {
             return
         }
-        history.append(line)
+        history.append(trimmedLine)
     }
 
     func previousHistory(currentBuffer: [Character]) -> [Character]? {
