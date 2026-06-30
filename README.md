@@ -53,7 +53,7 @@ swift --version
 ```
 
 > Note: `zen --mlx` is unavailable on Linux/WSL because local MLX inference
-> requires Apple Silicon and Metal. Use a configured remote provider instead.
+> requires Apple Silicon and Metal.
 
 ## Quick Start
 
