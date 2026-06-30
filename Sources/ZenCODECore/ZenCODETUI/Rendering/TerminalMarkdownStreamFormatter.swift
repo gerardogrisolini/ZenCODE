@@ -1,0 +1,473 @@
+//
+//  TerminalMarkdownStreamFormatter.swift
+//  ZenCODE
+//
+//  Created by Gerardo Grisolini on 28/05/26.
+//
+
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+import Foundation
+import Markdown
+
+public struct TerminalMarkdownStreamFormatter {
+    private static let reset = "\u{1B}[0m"
+    private static let dim = "\u{1B}[90m"
+    private static let code = "\u{1B}[38;5;180m"
+    private static let maxBufferedLineLength = 240
+    private static let maxMarkdownBufferedLineLength = 2_000
+    
+    /// Multi-line markdown constructs that must be parsed as a whole block
+    /// rather than one isolated line at a time. Buffering these lets the
+    /// renderer handle nested lists, multi-line blockquotes, and GFM tables.
+    private enum BlockKind {
+        case list
+        case blockQuote
+        case table
+    }
+    
+    private let isEnabled: Bool
+    private let fixedRenderWidth: Int?
+    private let supportsHyperlinks: Bool
+    private let removesUnbalancedStrongMarkers: Bool
+    
+    /// Visible terminal width used for reflow. When no fixed width was injected
+    /// (production), this is re-read on each access so output adapts to live
+    /// terminal resizes instead of being frozen at startup.
+    private var renderWidth: Int {
+        fixedRenderWidth ?? Self.detectTerminalWidth()
+    }
+    private var pendingLine = ""
+    private var isInCodeFence = false
+    private var codeFenceLanguage: String?
+    private var blockLines: [String] = []
+    private var blockKind: BlockKind?
+    
+    public init(
+        isEnabled: Bool,
+        removesUnbalancedStrongMarkers: Bool = false
+    ) {
+        self.isEnabled = isEnabled
+        self.fixedRenderWidth = nil
+        self.supportsHyperlinks = Self.detectHyperlinkSupport()
+        self.removesUnbalancedStrongMarkers = removesUnbalancedStrongMarkers
+    }
+    
+    init(
+        isEnabled: Bool,
+        renderWidth: Int,
+        supportsHyperlinks: Bool,
+        removesUnbalancedStrongMarkers: Bool = false
+    ) {
+        self.isEnabled = isEnabled
+        self.fixedRenderWidth = renderWidth
+        self.supportsHyperlinks = supportsHyperlinks
+        self.removesUnbalancedStrongMarkers = removesUnbalancedStrongMarkers
+    }
+    
+    public mutating func consume(_ text: String) -> String {
+        guard isEnabled else {
+            return text
+        }
+        
+        pendingLine += text
+        var rendered = ""
+        
+        while let newlineIndex = pendingLine.firstIndex(of: "\n") {
+            let line = String(pendingLine[..<newlineIndex])
+            rendered += handleCompleteLine(line)
+            pendingLine.removeSubrange(pendingLine.startIndex...newlineIndex)
+        }
+        
+        if pendingLine.count > Self.maxBufferedLineLength {
+            if shouldFlushPendingLineForStreaming(pendingLine) {
+                rendered += flushBlock()
+                rendered += pendingLine
+                pendingLine = ""
+            } else if pendingLine.count > Self.maxMarkdownBufferedLineLength {
+                rendered += flushBlock()
+                rendered += renderCompleteLine(pendingLine, appendsNewline: false)
+                pendingLine = ""
+            }
+        }
+        
+        return rendered
+    }
+    
+    public mutating func finish() -> String {
+        guard isEnabled else {
+            return ""
+        }
+        defer {
+            isInCodeFence = false
+            codeFenceLanguage = nil
+        }
+        var rendered = ""
+        if !pendingLine.isEmpty {
+            rendered += handleCompleteLine(pendingLine, appendsNewline: false)
+            pendingLine = ""
+        }
+        rendered += flushBlock()
+        return rendered
+    }
+    
+    /// Routes a complete line either into the pending multi-line block buffer
+    /// or to immediate rendering, flushing the block when the line no longer
+    /// belongs to it.
+    private mutating func handleCompleteLine(
+        _ line: String,
+        appendsNewline: Bool = true
+    ) -> String {
+        let newline = appendsNewline ? "\n" : ""
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        
+        // Code fences take precedence and are handled line by line.
+        if trimmed.hasPrefix("```") {
+            let flushed = flushBlock()
+            if isInCodeFence {
+                isInCodeFence = false
+                codeFenceLanguage = nil
+            } else {
+                isInCodeFence = true
+                codeFenceLanguage = codeFenceLanguage(from: trimmed)
+            }
+            return flushed + "\(Self.dim)\(line)\(Self.reset)\(newline)"
+        }
+        
+        if isInCodeFence {
+            return "\(TerminalCodeBlockRenderer.renderLine(line, language: codeFenceLanguage))\(newline)"
+        }
+        
+        // Continue or start a multi-line block.
+        if blockKind != nil {
+            if lineContinuesBlock(line, trimmed: trimmed) {
+                blockLines.append(line)
+                return ""
+            }
+            let flushed = flushBlock()
+            return flushed + handleCompleteLine(line, appendsNewline: appendsNewline)
+        }
+        
+        if let kind = blockKind(forStartLine: trimmed) {
+            blockKind = kind
+            blockLines = [line]
+            return ""
+        }
+        
+        return renderCompleteLine(line, appendsNewline: appendsNewline)
+    }
+    
+    private func lineContinuesBlock(_ line: String, trimmed: String) -> Bool {
+        guard let kind = blockKind else {
+            return false
+        }
+        // A blank line ends the current block.
+        if trimmed.isEmpty {
+            return false
+        }
+        switch kind {
+        case .list:
+            // List markers, indented continuation lines, or nested content.
+            if isListMarker(trimmed) {
+                return true
+            }
+            return line.first == " " || line.first == "\t"
+        case .blockQuote:
+            return trimmed.hasPrefix(">")
+        case .table:
+            return trimmed.contains("|")
+        }
+    }
+    
+    private func blockKind(forStartLine trimmed: String) -> BlockKind? {
+        if trimmed.hasPrefix(">") {
+            return .blockQuote
+        }
+        if isListMarker(trimmed) {
+            return .list
+        }
+        if isTableRow(trimmed) {
+            return .table
+        }
+        return nil
+    }
+    
+    private func isListMarker(_ trimmed: String) -> Bool {
+        if trimmed.hasPrefix("- ")
+            || trimmed.hasPrefix("* ")
+            || trimmed.hasPrefix("+ ")
+            || trimmed == "-"
+            || trimmed == "*"
+            || trimmed == "+" {
+            return true
+        }
+        return isOrderedListMarker(in: trimmed)
+    }
+    
+    private func isTableRow(_ trimmed: String) -> Bool {
+        // A pipe-delimited row that is not just inline text containing a pipe.
+        guard trimmed.contains("|") else {
+            return false
+        }
+        return trimmed.hasPrefix("|") || trimmed.filter { $0 == "|" }.count >= 2
+    }
+    
+    /// Renders and clears the buffered multi-line block, parsing it as a single
+    /// markdown document so nested structure is preserved.
+    private mutating func flushBlock() -> String {
+        guard blockKind != nil, !blockLines.isEmpty else {
+            blockKind = nil
+            blockLines = []
+            return ""
+        }
+        let source = sanitizedMarkdownSource(blockLines.joined(separator: "\n"))
+        blockKind = nil
+        blockLines = []
+        
+        var renderer = makeRenderer()
+        let document = Document(parsing: source)
+        let rendered = renderer.visit(document)
+        return wrapIfNeeded(rendered) + "\n"
+    }
+    
+    private mutating func renderCompleteLine(
+        _ line: String,
+        appendsNewline: Bool
+    ) -> String {
+        let newline = appendsNewline ? "\n" : ""
+        
+        guard mayContainMarkdown(in: line) else {
+            return "\(wrapIfNeeded(line))\(newline)"
+        }
+        
+        let parsed = leadingIndent(in: sanitizedMarkdownSource(line))
+        var renderer = makeRenderer()
+        let document = Document(parsing: parsed.body)
+        let rendered = "\(parsed.indent)\(renderer.visit(document))"
+        return "\(wrapIfNeeded(rendered))\(newline)"
+    }
+    
+    private func makeRenderer() -> TerminalSwiftMarkdownRenderer {
+        TerminalSwiftMarkdownRenderer(
+            supportsHyperlinks: supportsHyperlinks,
+            renderWidth: renderWidth
+        )
+    }
+    
+    /// Reflows rendered output to the terminal width, but never tables or other
+    /// box-drawing content where wrapping would corrupt the layout.
+    private func wrapIfNeeded(_ text: String) -> String {
+        guard renderWidth > 0,
+              !text.contains("│"),
+              !text.contains("─") else {
+            return text
+        }
+        // Leave one column for the chat inset prefix.
+        return TerminalANSIText.wrap(text, width: max(8, renderWidth - 1))
+    }
+    
+    private func shouldFlushPendingLineForStreaming(_ line: String) -> Bool {
+        !isInCodeFence && blockKind == nil && !mayContainMarkdown(in: line)
+    }
+    
+    private func mayContainMarkdown(in line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else {
+            return false
+        }
+        
+        if trimmed.hasPrefix("#")
+            || trimmed.hasPrefix(">")
+            || trimmed.hasPrefix("```")
+            || trimmed.hasPrefix("---")
+            || trimmed.hasPrefix("***")
+            || trimmed.hasPrefix("___")
+            || trimmed.hasPrefix("- ")
+            || trimmed.hasPrefix("* ")
+            || trimmed.hasPrefix("+ ") {
+            return true
+        }
+        
+        if isOrderedListMarker(in: trimmed) {
+            return true
+        }
+        
+        return trimmed.contains("`")
+        || trimmed.contains("**")
+        || trimmed.contains("__")
+        || trimmed.contains("~~")
+        || trimmed.contains("](")
+    }
+    
+    private func isOrderedListMarker(in line: String) -> Bool {
+        var index = line.startIndex
+        var sawDigit = false
+        while index < line.endIndex, line[index].isNumber {
+            sawDigit = true
+            index = line.index(after: index)
+        }
+        guard sawDigit,
+              index < line.endIndex,
+              line[index] == "." else {
+            return false
+        }
+        let afterDot = line.index(after: index)
+        return afterDot < line.endIndex && line[afterDot].isWhitespace
+    }
+    
+    private func leadingIndent(in line: String) -> (indent: String, body: String) {
+        let bodyStart = line.firstIndex { !$0.isWhitespace } ?? line.endIndex
+        return (
+            String(line[..<bodyStart]),
+            String(line[bodyStart...])
+        )
+    }
+    
+    
+    private struct StrongMarker {
+        let range: Range<String.Index>
+        let canOpen: Bool
+        let canClose: Bool
+    }
+    
+    private func sanitizedMarkdownSource(_ source: String) -> String {
+        guard removesUnbalancedStrongMarkers,
+              source.contains("**") else {
+            return source
+        }
+        
+        let markers = strongMarkersOutsideInlineCode(in: source)
+        guard !markers.isEmpty else {
+            return source
+        }
+        
+        var openStack: [Int] = []
+        var keptMarkerIndexes = Set<Int>()
+        for (markerIndex, marker) in markers.enumerated() {
+            if marker.canClose, let openerIndex = openStack.popLast() {
+                keptMarkerIndexes.insert(openerIndex)
+                keptMarkerIndexes.insert(markerIndex)
+            } else if marker.canOpen {
+                openStack.append(markerIndex)
+            }
+        }
+        
+        guard keptMarkerIndexes.count != markers.count else {
+            return source
+        }
+        
+        var sanitized = ""
+        var markerIndex = 0
+        var index = source.startIndex
+        while index < source.endIndex {
+            if markerIndex < markers.count,
+               index == markers[markerIndex].range.lowerBound {
+                if keptMarkerIndexes.contains(markerIndex) {
+                    sanitized += "**"
+                }
+                index = markers[markerIndex].range.upperBound
+                markerIndex += 1
+                continue
+            }
+            sanitized.append(source[index])
+            index = source.index(after: index)
+        }
+        return sanitized
+    }
+    
+    private func strongMarkersOutsideInlineCode(in source: String) -> [StrongMarker] {
+        var markers: [StrongMarker] = []
+        var index = source.startIndex
+        var isInInlineCode = false
+        while index < source.endIndex {
+            let character = source[index]
+            if character == "`" {
+                isInInlineCode.toggle()
+                index = source.index(after: index)
+                continue
+            }
+            if !isInInlineCode,
+               source[index...].hasPrefix("**") {
+                let upperBound = source.index(index, offsetBy: 2)
+                markers.append(
+                    StrongMarker(
+                        range: index..<upperBound,
+                        canOpen: strongMarkerCanOpen(in: source, at: index),
+                        canClose: strongMarkerCanClose(in: source, at: index)
+                    )
+                )
+                index = upperBound
+                continue
+            }
+            index = source.index(after: index)
+        }
+        return markers
+    }
+    
+    private func strongMarkerCanOpen(in source: String, at index: String.Index) -> Bool {
+        let afterMarker = source.index(index, offsetBy: 2)
+        guard afterMarker < source.endIndex else {
+            return false
+        }
+        return !source[afterMarker].isWhitespace
+    }
+    
+    private func strongMarkerCanClose(in source: String, at index: String.Index) -> Bool {
+        guard index > source.startIndex else {
+            return false
+        }
+        let beforeMarker = source.index(before: index)
+        return !source[beforeMarker].isWhitespace
+    }
+    
+    private func codeFenceLanguage(from line: String) -> String? {
+        let info = String(line.dropFirst(3))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let language = info.split(whereSeparator: { $0.isWhitespace }).first else {
+            return nil
+        }
+        return String(language).lowercased()
+    }
+    
+    // MARK: - Terminal capabilities
+    
+    private static func detectTerminalWidth() -> Int {
+        var size = winsize()
+        let descriptors: [Int32] = [1, 2, 0]
+        for descriptor in descriptors {
+            if ioctl(descriptor, TIOCGWINSZ, &size) == 0, size.ws_col > 0 {
+                return Int(size.ws_col)
+            }
+        }
+        return 0
+    }
+    
+    private static func detectHyperlinkSupport() -> Bool {
+        let environment = ProcessInfo.processInfo.environment
+        if let term = environment["TERM"], term == "dumb" {
+            return false
+        }
+        // Terminals with well-known OSC 8 hyperlink support.
+        if let program = environment["TERM_PROGRAM"]?.lowercased() {
+            if program.contains("iterm")
+                || program.contains("wezterm")
+                || program.contains("vscode")
+                || program.contains("ghostty")
+                || program.contains("hyper") {
+                return true
+            }
+            if program.contains("apple_terminal") {
+                return false
+            }
+        }
+        if environment["WT_SESSION"] != nil
+            || environment["KITTY_WINDOW_ID"] != nil
+            || environment["VTE_VERSION"] != nil {
+            return true
+        }
+        return false
+    }
+}

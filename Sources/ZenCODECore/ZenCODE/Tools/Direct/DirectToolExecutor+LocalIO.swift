@@ -1,0 +1,138 @@
+//
+//  DirectToolExecutor+LocalIO.swift
+//  ZenCODE
+//
+//  Created by Gerardo Grisolini on 26/05/26.
+//
+import Foundation
+
+extension DirectToolExecutor {
+    public func deniedLocalExecOutputIfNeeded(
+        sessionID: String?,
+        toolCall: DirectAgentToolCall,
+        command: String,
+        cwd: URL
+    ) async -> String? {
+        guard let authorizationHandler else {
+            return nil
+        }
+
+        let approved = await authorizationHandler(
+            AgentToolAuthorizationRequest(
+                sessionID: sessionID,
+                toolCallID: toolCall.id,
+                toolName: "local.exec",
+                title: "Run \(command)",
+                kind: "execute",
+                command: command,
+                workingDirectory: cwd.path
+            )
+        )
+        guard !approved else {
+            return nil
+        }
+
+        return """
+        Command execution cancelled.
+        The user did not approve this `local.exec` request, so no shell command was run.
+
+        Working directory:
+        \(cwd.path)
+
+        Command:
+        \(command)
+        """
+    }
+
+    public func resolvePath(_ path: String, cwd: URL) -> URL {
+        let expanded = NSString(string: path).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return URL(fileURLWithPath: expanded).standardizedFileURL
+        }
+        return cwd.appendingPathComponent(expanded).standardizedFileURL
+    }
+
+#if canImport(Darwin) || canImport(Glibc)
+    public func runProcess(
+        executable: String,
+        arguments: [String],
+        cwd: URL,
+        environment: [String: String]? = nil,
+        timeout: TimeInterval
+    ) async -> ProcessResult {
+        do {
+            let result = try await AsyncProcessRunner.run(
+                executableURL: URL(fileURLWithPath: executable),
+                arguments: arguments,
+                workingDirectory: cwd,
+                environment: environment,
+                timeout: timeout
+            )
+            return ProcessResult(
+                status: result.exitCode,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                timedOut: result.timedOut
+            )
+        } catch {
+            return ProcessResult(
+                status: -1,
+                stdout: "",
+                stderr: error.localizedDescription,
+                timedOut: false
+            )
+        }
+    }
+#endif
+
+    public func renderProcessResult(_ result: ProcessResult) -> String {
+        var sections = ["exit_code: \(result.status)"]
+        if result.timedOut {
+            sections.append("timed_out: true")
+        }
+        if !result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sections.append("stdout:\n\(result.stdout)")
+        }
+        if !result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sections.append("stderr:\n\(result.stderr)")
+        }
+        if sections.count == 1 {
+            sections.append("<no output>")
+        }
+        return sections.joined(separator: "\n")
+    }
+
+    public static func toolArguments(from argumentsJSON: String) -> [String: JSONValue] {
+        let trimmedJSON = argumentsJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedJSON.isEmpty,
+              let data = trimmedJSON.data(using: .utf8),
+              let arguments = try? JSONDecoder().decode([String: JSONValue].self, from: data) else {
+            return [:]
+        }
+        return arguments
+    }
+
+    public func truncated(_ text: String) -> String {
+        guard text.count > outputLimit else {
+            return text
+        }
+        return String(text.prefix(outputLimit)) + "\n... truncated to \(outputLimit) characters ..."
+    }
+
+    public func summary(from output: String) -> String {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return "<no output>"
+        }
+        return String(trimmed.components(separatedBy: .newlines).first?.prefix(160) ?? "")
+    }
+
+    public static func canonicalized(
+        _ descriptors: [DirectToolDescriptor]
+    ) -> [DirectToolDescriptor] {
+        var seen = Set<String>()
+        return descriptors.filter { descriptor in
+            seen.insert(descriptor.name).inserted
+        }
+    }
+}

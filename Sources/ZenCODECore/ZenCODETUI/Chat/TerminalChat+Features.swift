@@ -1,0 +1,241 @@
+//
+//  TerminalChat+Features.swift
+//  ZenCODE
+//
+//  Created by Gerardo Grisolini on 30/05/26.
+//
+import Foundation
+
+enum TerminalFeatureCommandResult: Sendable {
+    case none
+    case runPrompt(String)
+    case prefillPrompt(String)
+}
+
+extension TerminalChat {
+    func handleFeaturesCommand(_ command: String) async {
+        let rawArguments = String(command.dropFirst("/features".count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard rawArguments.isEmpty else {
+            writeFailureMessage("ZenCODE: /features does not accept arguments.\n")
+            writeSystemMessage(Self.renderFeaturesCommandUsage())
+            return
+        }
+
+        guard stdinIsTerminal else {
+            writeFailureMessage("ZenCODE: /features requires an interactive terminal.\n")
+            return
+        }
+
+        let statuses = await SwiftFeatureRuntime().featureStatuses(
+            includeTools: true,
+            includeDisabled: true
+        )
+        let sortedStatuses = statuses.sorted(by: Self.featureStatusSortOrder)
+        let selectedIDs = Set(sortedStatuses.filter(\.enabled).map(\.id))
+        let requestedIDs = TerminalCheckboxMenu.select(
+            title: "Features",
+            items: sortedStatuses.map(Self.featureCheckboxItem),
+            selected: selectedIDs,
+            reservedBottomRows: statusBar.reservedRowsForOverlay()
+        )
+        if let requestedIDs {
+            await applyFeatureSelection(
+                requestedIDs: requestedIDs,
+                statuses: sortedStatuses
+            )
+        }
+    }
+
+    func handleFeatureCommand(_ command: String) async -> TerminalFeatureCommandResult {
+        let rawArguments = String(command.dropFirst("/feature".count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if Self.featureCommandRequiresActiveBuilder(rawArguments: rawArguments),
+           !(await featureBuilderIsActive()) {
+            writeFailureMessage(Self.renderFeatureBuilderInactiveWarning())
+            return .none
+        }
+
+        if rawArguments.isEmpty {
+            guard stdinIsTerminal else {
+                await runFeatureManagementTool(
+                    name: "feature.list",
+                    arguments: ["includeTools": true]
+                )
+                writeSystemMessage(Self.renderFeatureCommandUsage())
+                return .none
+            }
+            return await runFeatureWizard()
+        }
+
+        var tokens = rawArguments.split(separator: " ").map(String.init)
+        let action = tokens.removeFirst().lowercased()
+        switch action {
+        case "list", "ls", "status":
+            await printFeatureList()
+            return .none
+        case "reload":
+            await runFeatureManagementTool(
+                name: "feature.reload",
+                arguments: ["includeTools": true]
+            )
+            await updateCurrentSessionToolOptions(discoverExternalTools: false)
+            await printFeatureList()
+            return .none
+        case "enable", "disable", "delete", "build", "validate":
+            guard let rawID = tokens.first?.nilIfBlank else {
+                writeFailureMessage("ZenCODE: /feature \(action) requires a feature id, name, or list number.\n")
+                writeSystemMessage(Self.renderFeatureCommandUsage())
+                return .none
+            }
+            let id: String
+            do {
+                id = try await resolvedFeatureID(rawID)
+            } catch {
+                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+                return .none
+            }
+            if action == "enable",
+               id == Self.jiraFeatureID,
+               !(await runJiraFeatureSetupBeforeEnable()) {
+                return .none
+            }
+            let toolName = "feature.\(action)"
+            let didSucceed = await runFeatureManagementTool(
+                name: toolName,
+                arguments: ["id": id]
+            )
+            if didSucceed, action == "delete" {
+                selectedToolKeys.remove(TerminalToolSelectionCatalog.featurePackageKey(id: id))
+            }
+            if didSucceed,
+               action == "enable" || action == "disable" || action == "delete" || action == "build" {
+                await updateCurrentSessionToolOptions(discoverExternalTools: false)
+                await printFeatureList()
+            }
+            return .none
+        default:
+            writeFailureMessage("ZenCODE: unknown /feature command '\(action)'.\n")
+            writeSystemMessage(Self.renderFeatureCommandUsage())
+            return .none
+        }
+    }
+
+    private func featureBuilderIsActive() async -> Bool {
+        AgentProfileStore.isBuilderAgent(selectedAgent)
+    }
+
+    private func printFeatureList() async {
+        let statuses = await SwiftFeatureRuntime().featureStatuses(
+            includeTools: true,
+            includeDisabled: true
+        )
+        writeSystemMessage(Self.renderFeatureStatusList(statuses))
+    }
+
+    private func applyFeatureSelection(
+        requestedIDs: Set<String>,
+        statuses: [SwiftFeatureStatus]
+    ) async {
+        let enabledIDs = Set(statuses.filter(\.enabled).map(\.id))
+        let idsToEnable = requestedIDs.subtracting(enabledIDs)
+        let idsToDisable = enabledIDs.subtracting(requestedIDs)
+
+        var changed = false
+        for status in statuses where idsToEnable.contains(status.id) {
+            changed = await setFeatureEnabled(
+                id: status.id,
+                enabled: true
+            ) || changed
+        }
+        for status in statuses where idsToDisable.contains(status.id) {
+            changed = await setFeatureEnabled(id: status.id, enabled: false) || changed
+        }
+
+        if changed {
+            await updateCurrentSessionToolOptions(discoverExternalTools: false)
+        }
+    }
+
+    @discardableResult
+    private func setFeatureEnabled(
+        id: String,
+        enabled: Bool
+    ) async -> Bool {
+        let didSucceed = await runFeatureManagementTool(
+            name: enabled ? "feature.enable" : "feature.disable",
+            arguments: ["id": id]
+        )
+        guard didSucceed else {
+            return false
+        }
+
+        if !enabled {
+            selectedToolKeys.remove(TerminalToolSelectionCatalog.featurePackageKey(id: id))
+        }
+        return true
+    }
+
+    private func runJiraFeatureSetupBeforeEnable() async -> Bool {
+        guard stdinIsTerminal else {
+            writeFailureMessage("ZenCODE: Jira setup requires an interactive terminal.\n")
+            return false
+        }
+
+        let statuses = await SwiftFeatureRuntime().featureStatuses(
+            includeTools: false,
+            includeDisabled: true
+        )
+        guard let status = statuses.first(where: { $0.id == Self.jiraFeatureID }) else {
+            writeFailureMessage("ZenCODE: Jira feature is not available in this build.\n")
+            return false
+        }
+        guard status.available else {
+            writeFailureMessage("ZenCODE: Jira feature executable was not found at \(status.executablePath).\n")
+            return false
+        }
+
+        do {
+            let exitCode = try runInteractiveFeatureSetupProcess(
+                executablePath: status.executablePath,
+                arguments: ["--setup"]
+            )
+            guard exitCode == 0 else {
+                writeFailureMessage("ZenCODE: Jira setup did not complete.\n")
+                return false
+            }
+            return true
+        } catch {
+            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            return false
+        }
+    }
+
+    private func runInteractiveFeatureSetupProcess(
+        executablePath: String,
+        arguments: [String]
+    ) throws -> Int32 {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = arguments
+        process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        process.environment = ProcessInfo.processInfo.environment
+        process.standardInput = FileHandle.standardInput
+        process.standardOutput = FileHandle.standardOutput
+        process.standardError = FileHandle.standardError
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus
+    }
+
+    private func resolvedFeatureID(_ rawValue: String) async throws -> String {
+        let statuses = await SwiftFeatureRuntime().featureStatuses(
+            includeTools: false,
+            includeDisabled: true
+        )
+        return try Self.resolvedFeatureID(rawValue, statuses: statuses)
+    }
+
+}

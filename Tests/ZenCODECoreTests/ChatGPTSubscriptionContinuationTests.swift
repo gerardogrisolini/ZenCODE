@@ -1,0 +1,476 @@
+//
+//  RemoteSessionSnapshotTests.swift
+//  ZenCODE
+//
+//  Created by Gerardo Grisolini on 30/05/26.
+//
+import Foundation
+import os
+@testable import ZenCODECore
+import Testing
+
+#if os(macOS)
+extension RemoteSessionSnapshotTests {
+    @Test
+    func chatGPTSubscriptionContinuationKeepsFullInputForBaseRequest() throws {
+        let messages = chatGPTContinuationMessages()
+        let fullPayload = RemoteGenerationClient.responsesInputPayload(from: messages)
+        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: messages,
+            continuation: ChatGPTSubscriptionContinuationState(
+                responseID: "resp_previous",
+                messageCount: 3,
+                instructions: "System prompt"
+            )
+        )
+        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
+            input: JSONValue.acpValue(from: payload.input),
+            model: "gpt-5.5",
+            instructions: payload.instructions ?? "",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "session-chatgpt"
+        )
+
+        #expect(payload.input.count == fullPayload.input.count)
+        #expect(payload.cachedWebSocketInput?.count == 1)
+        #expect(payload.previousResponseID == "resp_previous")
+        #expect(body["previous_response_id"] == nil)
+        #expect((body["input"] as? [Any])?.count == fullPayload.input.count)
+    }
+
+    @Test
+    func chatGPTSubscriptionWebSocketUsesContinuationOnlyWhenCached() throws {
+        let messages = chatGPTContinuationMessages()
+        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: messages,
+            continuation: ChatGPTSubscriptionContinuationState(
+                responseID: "resp_previous",
+                messageCount: 3,
+                instructions: "System prompt"
+            )
+        )
+        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
+            input: JSONValue.acpValue(from: payload.input),
+            model: "gpt-5.5",
+            instructions: payload.instructions ?? "",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "session-chatgpt"
+        )
+        let freshPayload = ChatGPTSubscriptionResponsesClient.webSocketRequestPayload(
+            body: body,
+            cachedInput: payload.cachedWebSocketInput.map { JSONValue.acpValue(from: $0) },
+            previousResponseID: payload.previousResponseID,
+            useCachedContinuation: false
+        )
+        let cachedPayload = ChatGPTSubscriptionResponsesClient.webSocketRequestPayload(
+            body: body,
+            cachedInput: payload.cachedWebSocketInput.map { JSONValue.acpValue(from: $0) },
+            previousResponseID: payload.previousResponseID,
+            useCachedContinuation: true
+        )
+
+        #expect(freshPayload["previous_response_id"] == nil)
+        #expect((freshPayload["input"] as? [Any])?.count == payload.input.count)
+        #expect(cachedPayload["previous_response_id"] as? String == "resp_previous")
+        #expect((cachedPayload["input"] as? [Any])?.count == payload.cachedWebSocketInput?.count)
+        #expect(cachedPayload["type"] as? String == "response.create")
+    }
+
+    @Test
+    func chatGPTSubscriptionFullReplayIncludesReasoningTextFallback() throws {
+        let messages: [[String: Any]] = [
+            ["role": "system", "content": "System prompt"],
+            ["role": "user", "content": "First prompt"],
+            [
+                "role": "assistant",
+                "content": "Visible answer",
+                "reasoning_content": "hidden thought"
+            ],
+            ["role": "user", "content": "Second prompt"]
+        ]
+        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: messages,
+            continuation: nil
+        )
+        let reasoningItem = try #require(
+            payload.input.compactMap { $0 as? [String: Any] }
+                .first { $0["type"] as? String == "reasoning" }
+        )
+        let content = try #require(reasoningItem["content"] as? [[String: Any]])
+
+        #expect(content.first?["type"] as? String == "reasoning_text")
+        #expect(content.first?["text"] as? String == "hidden thought")
+    }
+
+    @Test
+    func chatGPTSubscriptionAccumulatorKeepsPlainReasoningItemsForReplay() throws {
+        let accumulator = ChatGPTSubscriptionGenerationClient.StreamAccumulator()
+        _ = try accumulator.ingest([
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": [
+                "type": "reasoning",
+                "id": "rs_plain",
+                "summary": [],
+                "content": [
+                    [
+                        "type": "reasoning_text",
+                        "text": "plain thought"
+                    ]
+                ]
+            ]
+        ])
+        let result = try accumulator.result(
+            toolCatalog: RemoteToolWireCatalog(descriptors: [])
+        )
+        let storedItems = RemoteGenerationClient.responsesReasoningItems(
+            from: result.reasoningItemsJSON
+        )
+        let storedItem = try #require(storedItems.first)
+        let content = try #require(storedItem["content"] as? [[String: Any]])
+
+        #expect(storedItems.count == 1)
+        #expect(storedItem["id"] as? String == "rs_plain")
+        #expect(content.first?["text"] as? String == "plain thought")
+    }
+
+    @Test
+    func chatGPTSubscriptionWebSocketHasNoDefaultResponseIdleTimeout() {
+        #expect(ChatGPTSubscriptionResponsesClient.webSocketIdleTimeoutNanoseconds == nil)
+    }
+
+    @Test
+    func chatGPTSubscriptionTreatsDisconnectedSocketAsRetryableTransportError() {
+        let posixError = POSIXError(.ENOTCONN)
+        let nsPosixError = NSError(
+            domain: NSPOSIXErrorDomain,
+            code: Int(POSIXErrorCode.ENOTCONN.rawValue)
+        )
+        let localizedSocketError = NSError(
+            domain: "UnitTest",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "The operation couldn’t be completed. Socket is not connected"
+            ]
+        )
+
+        #expect(ChatGPTSubscriptionResponsesClient.isRetryableTransportError(posixError))
+        #expect(ChatGPTSubscriptionResponsesClient.isRetryableTransportError(nsPosixError))
+        #expect(ChatGPTSubscriptionResponsesClient.isRetryableTransportError(localizedSocketError))
+        #expect(!ChatGPTSubscriptionResponsesClient.isRetryableTransportError(URLError(.badServerResponse)))
+    }
+
+    @Test
+    func chatGPTSubscriptionTextDeltasAreBufferedUntilFinalSnapshot() throws {
+        let result = try ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+            [
+                "type": "response.output_text.delta",
+                "delta": "Confermi che proceda?"
+            ],
+            [
+                "type": "response.output_text.delta",
+                "delta": "Confermi che proceda?\n\nFile modificati: nessuno."
+            ],
+            [
+                "type": "response.completed",
+                "response": [
+                    "output_text": "Confermi che proceda?\n\nFile modificati: nessuno."
+                ]
+            ]
+        ])
+
+        #expect(result.text == "Confermi che proceda?\n\nFile modificati: nessuno.")
+        #expect(result.contentText == result.text)
+    }
+
+    @Test
+    func chatGPTSubscriptionUnderscoreTextDeltasAreBufferedUntilFinalSnapshot() throws {
+        let result = try ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+            [
+                "type": "response_output_text_delta",
+                "delta": "Prima parte. "
+            ],
+            [
+                "type": "response_output_text_delta",
+                "delta": "Seconda parte."
+            ],
+            [
+                "type": "response_completed",
+                "response": [
+                    "output_text": "Prima parte. Seconda parte."
+                ]
+            ]
+        ])
+
+        #expect(result.text == "Prima parte. Seconda parte.")
+        #expect(result.contentText == result.text)
+    }
+
+            @Test
+    func chatGPTSubscriptionCorrectedDeltaSnapshotReplacesBufferedDraft() throws {
+        let result = try ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+            [
+                "type": "response_output_text_delta",
+                "delta": "Corego le ultime indentazioni accidentali evidenziate dal diff, poi rilancio swift build."
+            ],
+            [
+                "type": "response_output_text_delta",
+                "delta": "Correggo le ultime indentazioni accidentali evidenziate dal diff, poi rilancio swift build."
+            ],
+            [
+                "type": "response_completed"
+            ]
+        ])
+
+        #expect(result.text == "Correggo le ultime indentazioni accidentali evidenziate dal diff, poi rilancio swift build.")
+        #expect(result.contentText.isEmpty)
+    }
+
+    @Test
+    func chatGPTSubscriptionCorrectedFinalSnapshotReplacesBufferedDraft() throws {
+        let result = try ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+            [
+                "type": "response_output_text_delta",
+                "delta": "Corego le ultime indentazioni accidentali evidenziate dal diff."
+            ],
+            [
+                "type": "response_completed",
+                "response": [
+                    "output_text": "Correggo le ultime indentazioni accidentali evidenziate dal diff."
+                ]
+            ]
+        ])
+
+        #expect(result.text == "Correggo le ultime indentazioni accidentali evidenziate dal diff.")
+        #expect(result.contentText == result.text)
+        #expect(!result.contentText.contains("Corego"))
+    }
+
+    @Test
+    func chatGPTSubscriptionCompletedSnapshotExtendsExistingContent() throws {
+        let result = try ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+            [
+                "type": "response.output_text.delta",
+                "delta": "Confermi che proceda?"
+            ],
+            [
+                "type": "response.completed",
+                "response": [
+                    "output_text": "Confermi che proceda?\n\nFile modificati: nessuno."
+                ]
+            ]
+        ])
+
+        #expect(result.text == "Confermi che proceda?\n\nFile modificati: nessuno.")
+        #expect(result.contentText == result.text)
+    }
+
+    @Test
+    func chatCompletionDeltaContentPartsAreParsedAsContent() {
+        let events = RemoteGenerationClient.parseChatCompletionStreamEvent([
+            "choices": [
+                [
+                    "delta": [
+                        "content": [
+                            ["type": "text", "text": "Hello "],
+                            ["type": "text", "text": "world"]
+                        ],
+                        "reasoning_content": "thinking..."
+                    ]
+                ]
+            ]
+        ])
+        var contentText = ""
+        var reasoningText = ""
+        for event in events {
+            switch event {
+            case let .content(delta):
+                contentText += delta
+            case let .reasoning(delta):
+                reasoningText += delta
+            default:
+                continue
+            }
+        }
+        #expect(contentText == "Hello world")
+        #expect(reasoningText == "thinking...")
+    }
+
+    @Test
+    func responsesContentPartDeltaIsParsedAsContent() {
+        let events = RemoteGenerationClient.parseResponsesStreamEvent([
+            "type": "response.content_part.delta",
+            "delta": [
+                "type": "output_text_delta",
+                "content": "Visible answer"
+            ]
+        ])
+        var contentText = ""
+        for event in events {
+            if case let .content(delta) = event {
+                contentText += delta
+            }
+        }
+
+        #expect(contentText == "Visible answer")
+    }
+
+    @Test
+    func streamResponsesDoesNotDuplicateOutputItemSnapshotAfterDelta() async throws {
+        let response = """
+        data: {"type":"response.output_text.delta","delta":"Visible answer"}
+
+        data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"Visible answer"}]}}
+
+        data: {"type":"response.completed","response":{"output":[]}}
+
+        """
+        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+            responseBody: Data(response.utf8)
+        )
+        let client = RemoteGenerationClient(
+            configuration: remoteStreamingConfiguration(),
+            provider: AgentRemoteProvider(
+                name: "Unit Test",
+                baseURL: "https://unit.test/v1",
+                modelID: "unit-model",
+                chatEndpoint: .responses
+            ),
+            apiKey: nil,
+            urlSession: urlSession
+        )
+        let capturedEvents = CapturedDirectAgentEvents()
+
+        let result = try await client.streamResponses(
+            messages: [["role": "user", "content": "hi"]],
+            sessionID: "session-output-item-message-dedup",
+            allowedToolNames: [],
+            thinkingSelection: nil,
+            onEvent: { event in
+                capturedEvents.append(event)
+            }
+        )
+
+        #expect(result.text == "Visible answer")
+        #expect(capturedEvents.contentText() == "Visible answer")
+    }
+
+    @Test
+    func streamResponsesDoesNotDuplicateMultipartOutputItemSnapshotAfterDeltas() async throws {
+        let response = """
+        data: {"type":"response.output_text.delta","delta":"Visible "}
+
+        data: {"type":"response.output_text.delta","delta":"answer"}
+
+        data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"Visible "},{"type":"output_text","text":"answer"}]}}
+
+        data: {"type":"response.completed","response":{"output":[]}}
+
+        """
+        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+            responseBody: Data(response.utf8)
+        )
+        let client = RemoteGenerationClient(
+            configuration: remoteStreamingConfiguration(),
+            provider: AgentRemoteProvider(
+                name: "Unit Test",
+                baseURL: "https://unit.test/v1",
+                modelID: "unit-model",
+                chatEndpoint: .responses
+            ),
+            apiKey: nil,
+            urlSession: urlSession
+        )
+        let capturedEvents = CapturedDirectAgentEvents()
+
+        let result = try await client.streamResponses(
+            messages: [["role": "user", "content": "hi"]],
+            sessionID: "session-output-item-multipart-message-dedup",
+            allowedToolNames: [],
+            thinkingSelection: nil,
+            onEvent: { event in
+                capturedEvents.append(event)
+            }
+        )
+
+        #expect(result.text == "Visible answer")
+        #expect(capturedEvents.contentText() == "Visible answer")
+    }
+
+    @Test
+    func chatGPTSubscriptionContinuationUsesToolOutputDelta() throws {
+        let messages = chatGPTContinuationMessagesWithToolOutput()
+        let fullPayload = RemoteGenerationClient.responsesInputPayload(from: messages)
+        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: messages,
+            continuation: ChatGPTSubscriptionContinuationState(
+                responseID: "resp_tool_call",
+                messageCount: 3,
+                instructions: "System prompt"
+            )
+        )
+        let cachedInput = try #require(payload.cachedWebSocketInput)
+        let cachedObject = try #require(cachedInput.first as? [String: Any])
+
+        #expect(payload.input.count == fullPayload.input.count)
+        #expect(cachedInput.count == 1)
+        #expect(cachedObject["type"] as? String == "function_call_output")
+        #expect(cachedObject["call_id"] as? String == "call_memory")
+        #expect(payload.previousResponseID == "resp_tool_call")
+    }
+
+    @Test
+    func chatGPTSubscriptionRequestBodySendsWireSafeXcodeToolNames() throws {
+        let catalog = remoteXcodeToolCatalog()
+        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: catalog.wireMessages(from: remoteXcodeHistoryMessages()),
+            continuation: nil
+        )
+        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
+            input: JSONValue.acpValue(from: payload.input),
+            model: "gpt-5.5",
+            instructions: payload.instructions ?? "",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "session-chatgpt-xcode",
+            toolPayloads: JSONValue.acpValue(from: catalog.responsesToolPayloads)
+        )
+        let toolNames = Set(
+            ((body["tools"] as? [[String: Any]]) ?? []).compactMap {
+                $0["name"] as? String
+            }
+        )
+        let input = try #require(body["input"] as? [[String: Any]])
+        let historyFunctionCall = try #require(input.first {
+            $0["type"] as? String == "function_call"
+                && $0["call_id"] as? String == "call_previous_xcode"
+        })
+
+        #expect(toolNames == ["tool_local_exec", "tool_xcode_BuildProject"])
+        #expect(!toolNames.contains("local.exec"))
+        #expect(!toolNames.contains("xcode.BuildProject"))
+        #expect(historyFunctionCall["name"] as? String == "tool_xcode_BuildProject")
+        #expect(JSONValue(jsonObject: body).prettyPrinted().contains("xcode.BuildProject") == false)
+    }
+
+    @Test
+    func chatGPTSubscriptionClientUsesInjectedMCPRuntimeForActiveTools() async throws {
+        let client = ChatGPTSubscriptionGenerationClient(
+            configuration: remoteStreamingConfiguration(),
+            mcpRuntime: await borrowedXcodeMCPRuntime()
+        )
+
+        await client.createSession(
+            id: "session-chatgpt-xcode-tools",
+            cwd: "/tmp/project",
+            allowedToolNames: ["xcode."]
+        )
+        let descriptors = await client.activeToolDescriptors()
+
+        #expect(descriptors.map(\.name) == ["xcode.BuildProject"])
+    }
+}
+#endif
