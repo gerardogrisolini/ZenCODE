@@ -27,18 +27,6 @@ temporary build directory.
 Requires macOS 26 (Tahoe), Apple Silicon, Git, and the Swift toolchain from
 Xcode or the Apple command line tools.
 
-Useful options:
-
-```bash
-# Install into a custom prefix
-curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh | bash -s -- --prefix "$HOME/.local/bin"
-
-# Include DS4 support when a local DS4 checkout is available
-DS4_ROOT=/path/to/ds4 curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh | bash -s -- --with-ds4
-```
-
-Make sure the install directory is on your `PATH`.
-
 ### Linux and Windows via WSL
 
 ```bash
@@ -63,18 +51,6 @@ with:
 ```bash
 swift --version
 ```
-
-Useful options:
-
-```bash
-# Install into a custom prefix
-curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh | bash -s -- --prefix "$HOME/.local/bin"
-
-# Include DS4 support when a local DS4 checkout is available
-DS4_ROOT=/path/to/ds4 curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh | bash -s -- --with-ds4
-```
-
-Make sure the install directory is on your `PATH`.
 
 > Note: `zen --mlx` is unavailable on Linux/WSL because local MLX inference
 > requires Apple Silicon and Metal. Use a configured remote provider instead.
