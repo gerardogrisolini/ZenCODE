@@ -1,4 +1,4 @@
-# ZenCODE
+![ZenCODE](Docs/Images/logo.png)
 
 **ZenCODE** is a local-first AI coding agent for Apple Silicon, powered by Apple MLX. It runs as a standalone terminal agent or as an ACP agent for editor integrations.
 
