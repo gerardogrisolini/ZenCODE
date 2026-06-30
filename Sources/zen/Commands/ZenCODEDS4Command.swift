@@ -5,7 +5,7 @@
 
 import Foundation
 import ZenCODECore
-import MLXPackageMetadata
+import ZenPackageMetadata
 
 enum ZenCODEDS4Command {
     static let option = "--ds4"
@@ -25,7 +25,7 @@ enum ZenCODEDS4Command {
         }
 
         if arguments.contains("--version") {
-            AgentOutput.standardOutput.writeString("ZenCODE \(MLXPackageMetadata.version)\n")
+            AgentOutput.standardOutput.writeString("ZenCODE \(ZenPackageMetadata.version)\n")
             return
         }
 
