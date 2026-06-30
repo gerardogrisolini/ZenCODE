@@ -18,6 +18,9 @@ set -euo pipefail
 #                  ZENCODE_DS4_ROOT is also accepted.
 #   ZENCODE_INSTALLER_REF
 #                  Git ref used by the URL installer (default: main)
+#   ZENCODE_INSTALLER_SCRATCH
+#                  Persistent SwiftPM scratch/build cache.
+#                  (default: ~/.zencode/installer/swiftpm-build)
 #
 # Flags:
 #   --debug          Build with the debug configuration
@@ -38,6 +41,7 @@ ASSUME_YES=0
 REPO_URL="${ZENCODE_INSTALLER_REPO:-https://github.com/gerardogrisolini/ZenCODE.git}"
 REPO_REF="${ZENCODE_INSTALLER_REF:-main}"
 INSTALLER_TMPDIR="${ZENCODE_INSTALLER_TMPDIR:-${TMPDIR:-/tmp}}"
+SWIFTPM_SCRATCH_PATH="${ZENCODE_INSTALLER_SCRATCH:-${HOME}/.zencode/installer/swiftpm-build}"
 BOOTSTRAP_TMP_ROOT=""
 ORIGINAL_ARGS=("$@")
 
@@ -60,6 +64,9 @@ Environment overrides:
                  ZENCODE_DS4_ROOT is also accepted.
   ZENCODE_INSTALLER_REF
                  Git ref used by the URL installer (default: main)
+  ZENCODE_INSTALLER_SCRATCH
+                 Persistent SwiftPM scratch/build cache.
+                 (default: ~/.zencode/installer/swiftpm-build)
 
 Flags:
   --debug          Build with the debug configuration
@@ -394,6 +401,7 @@ echo "Build configuration:"
 echo "  config: ${BUILD_CONFIG}"
 echo "  MLX:    $([ "$WITH_MLX" = "1" ] && echo enabled || echo disabled)"
 echo "  DS4:    $([ "$WITH_DS4" = "1" ] && echo enabled || echo disabled)"
+echo "  cache:  ${SWIFTPM_SCRATCH_PATH}"
 if [ "$WITH_DS4" = "1" ]; then
     echo "  DS4 root: ${DS4_ROOT}"
 fi
@@ -418,14 +426,14 @@ if [ "$WITH_DS4" = "1" ]; then
 fi
 
 echo "Building ZenCODE (${BUILD_CONFIG})..."
-env "${build_env[@]}" swift build -c "$BUILD_CONFIG" --product zen
+env "${build_env[@]}" swift build --scratch-path "$SWIFTPM_SCRATCH_PATH" -c "$BUILD_CONFIG" --product zen
 
 for product in "${FEATURE_PRODUCTS[@]}"; do
     echo "Building ${product} (${BUILD_CONFIG})..."
-    env "${build_env[@]}" swift build -c "$BUILD_CONFIG" --product "$product"
+    env "${build_env[@]}" swift build --scratch-path "$SWIFTPM_SCRATCH_PATH" -c "$BUILD_CONFIG" --product "$product"
 done
 
-BIN_PATH="$(env "${build_env[@]}" swift build -c "$BUILD_CONFIG" --show-bin-path)"
+BIN_PATH="$(env "${build_env[@]}" swift build --scratch-path "$SWIFTPM_SCRATCH_PATH" -c "$BUILD_CONFIG" --show-bin-path)"
 if [ ! -x "${BIN_PATH}/zen" ]; then
     echo "Error: build did not produce ${BIN_PATH}/zen." >&2
     exit 1

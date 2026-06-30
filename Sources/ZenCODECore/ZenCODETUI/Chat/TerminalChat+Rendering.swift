@@ -148,16 +148,13 @@ extension TerminalChat {
 
     public static func renderStartupBox(lines: [String]) -> String {
         let columns = terminalColumnCount()
-        let bannerLines = zenCODEHeaderLines
         let horizontalInset = terminalBoxHorizontalInset(columns: columns)
         let contentWidth = max(20, columns - horizontalInset * 2)
                 let linePrefix = String(repeating: " ", count: horizontalInset)
         let orange = "\u{1B}[38;5;208m"
-        let reset = "\u{1B}[0m"
+        let reset  = "\u{001B}[0m"
 
-        var output = bannerLines.map { line in
-            "\(linePrefix)\(orange)\(fitBannerLine(line, width: contentWidth))\(reset)"
-        }
+        var output: [String] = ["\(orange)\(TerminalChat.zenCODEHeader)\(reset)"]
         for line in lines {
             let splitLines = line.components(separatedBy: .newlines)
             for splitLine in splitLines {
@@ -182,7 +179,7 @@ extension TerminalChat {
         isContinuation: Bool
     ) -> String {
         let orange = "\u{1B}[38;5;208m"
-                let gray = "\u{1B}[38;5;253m"
+        let gray = "\u{1B}[38;5;253m"
 
         guard !isContinuation,
               let colonIndex = line.firstIndex(of: ":") else {
@@ -194,13 +191,16 @@ extension TerminalChat {
         return "\(orange)\(label)\(gray)\(value)"
     }
 
-    public static var zenCODEHeaderLines: [String] {
-        [
-            "█ █  █   █ █    ██   ██   ██   ██  ███",
-            "███  █    █    █    █  █  █ █  █   ██ ",
-            "█ █  ██  █ █    ██   ██   ██   ██  █ █",
-            "                                      "
-        ]
+    public static var zenCODEHeader: String {
+        """
+        ███████╗                 ██████╗ ██████╗ ██████╗ ███████╗
+        ╚══███╔╝ █████╗ ██████╗ ██╔════╝██╔═══██╗██╔══██╗██╔════╝
+          ███╔╝ ██╔══██╗██╔══██╗██║     ██║   ██║██║  ██║█████╗  
+         ███╔╝  █████╔═╝██║  ██║██║     ██║   ██║██║  ██║██╔══╝  
+        ███████╗██╔═══╝ ██║  ██║╚██████╗╚██████╔╝██████╔╝███████╗
+        ╚══════╝╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+        
+        """
     }
 
     public static var appVersionDescription: String {
@@ -267,14 +267,6 @@ extension TerminalChat {
             lines.append(finalLine)
         }
         return lines
-    }
-
-    public static func fitBannerLine(_ text: String, width: Int) -> String {
-        let singleLine = text.replacingOccurrences(of: "\n", with: " ")
-        guard width > 3, singleLine.count > width else {
-            return singleLine
-        }
-        return String(singleLine.prefix(width - 3)) + "..."
     }
 
     public static func padded(_ text: String, width: Int) -> String {

@@ -20,9 +20,10 @@ The default macOS path can run fully on-device: no cloud, no API keys, and no da
 curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh | bash
 ```
 
-Re-run the same command to update. The installer downloads a temporary checkout,
-builds `zen`, installs the binary and feature executables, then removes the
-temporary build directory.
+Re-run the same command to update. The installer downloads a temporary source
+checkout, builds `zen`, installs the binary and feature executables, then
+removes the checkout. SwiftPM build artifacts are cached under
+`~/.zencode/installer/swiftpm-build`.
 
 Requires macOS 26 (Tahoe), Apple Silicon, Git, and the Swift toolchain from
 Xcode or the Apple command line tools.
