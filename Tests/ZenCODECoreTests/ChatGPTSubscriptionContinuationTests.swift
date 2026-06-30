@@ -79,7 +79,7 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionFullReplayIncludesReasoningTextFallback() throws {
+    func chatGPTSubscriptionFullReplayDropsPlainReasoningTextFallback() throws {
         let messages: [[String: Any]] = [
             ["role": "system", "content": "System prompt"],
             ["role": "user", "content": "First prompt"],
@@ -94,14 +94,65 @@ extension RemoteSessionSnapshotTests {
             from: messages,
             continuation: nil
         )
+        let genericPayload = RemoteGenerationClient.responsesInputPayload(from: messages)
+        let genericReasoningItem = try #require(
+            genericPayload.input.compactMap { $0 as? [String: Any] }
+                .first { $0["type"] as? String == "reasoning" }
+        )
+        let genericContent = try #require(
+            genericReasoningItem["content"] as? [[String: Any]]
+        )
+
+        #expect(genericContent.first?["type"] as? String == "reasoning_text")
+        #expect(genericContent.first?["text"] as? String == "hidden thought")
+        #expect(
+            payload.input.compactMap { $0 as? [String: Any] }
+                .contains { $0["type"] as? String == "reasoning" } == false
+        )
+    }
+
+    @Test
+    func chatGPTSubscriptionReplayStripsReasoningContentWhenEncrypted() throws {
+        let reasoningItems: [[String: Any]] = [
+            [
+                "type": "reasoning",
+                "id": "rs_1",
+                "summary": [],
+                "encrypted_content": "encrypted-state",
+                "content": [
+                    [
+                        "type": "reasoning_text",
+                        "text": "hidden thought"
+                    ]
+                ]
+            ]
+        ]
+        let reasoningData = try JSONValue(jsonObject: reasoningItems).jsonData(
+            outputFormatting: [.withoutEscapingSlashes]
+        )
+        let messages: [[String: Any]] = [
+            ["role": "system", "content": "System prompt"],
+            ["role": "user", "content": "First prompt"],
+            [
+                "role": "assistant",
+                "content": "Visible answer",
+                "reasoning_items": String(decoding: reasoningData, as: UTF8.self)
+            ],
+            ["role": "user", "content": "Second prompt"]
+        ]
+        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: messages,
+            continuation: nil
+        )
         let reasoningItem = try #require(
             payload.input.compactMap { $0 as? [String: Any] }
                 .first { $0["type"] as? String == "reasoning" }
         )
-        let content = try #require(reasoningItem["content"] as? [[String: Any]])
 
-        #expect(content.first?["type"] as? String == "reasoning_text")
-        #expect(content.first?["text"] as? String == "hidden thought")
+        #expect(reasoningItem["id"] as? String == "rs_1")
+        #expect(reasoningItem["encrypted_content"] as? String == "encrypted-state")
+        #expect(reasoningItem["summary"] != nil)
+        #expect(reasoningItem["content"] == nil)
     }
 
     @Test

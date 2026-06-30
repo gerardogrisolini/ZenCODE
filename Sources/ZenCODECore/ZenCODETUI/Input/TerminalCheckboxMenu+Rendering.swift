@@ -251,9 +251,30 @@ extension TerminalCheckboxMenu {
         guard let frame else {
             return
         }
-        AgentOutput.standardError.writeString("\u{1B}[\(frame.row);1H\u{1B}[J")
-        let nextRow = min(terminalGeometry().rows, frame.row + frame.height)
-        AgentOutput.standardError.writeString("\u{1B}[\(nextRow);1H")
+        AgentOutput.standardError.writeString(
+            clearFrameSequence(
+                frame: frame,
+                terminalRows: terminalGeometry().rows
+            )
+        )
+    }
+
+    static func clearFrameSequence(frame: RenderedFrame, terminalRows: Int) -> String {
+        guard frame.height > 0, terminalRows > 0 else {
+            return ""
+        }
+
+        let firstRow = min(max(1, frame.row), terminalRows)
+        let lastRow = min(
+            terminalRows,
+            max(firstRow, frame.row + frame.height - 1)
+        )
+        var sequence = ""
+        for row in firstRow...lastRow {
+            sequence += "\u{1B}[\(row);1H\u{1B}[2K"
+        }
+        sequence += "\u{1B}[\(lastRow);1H"
+        return sequence
     }
 
     static func writeLine(row: Int, text: String) {

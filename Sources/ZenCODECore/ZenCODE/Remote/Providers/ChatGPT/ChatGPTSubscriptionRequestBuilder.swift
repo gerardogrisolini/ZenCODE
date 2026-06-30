@@ -24,7 +24,7 @@ public enum ChatGPTSubscriptionRequestBuilder {
         from messages: [[String: Any]],
         continuation: ChatGPTSubscriptionContinuationState?
     ) -> (instructions: String?, input: [Any], cachedWebSocketInput: [Any]?, previousResponseID: String?) {
-        let fullPayload = RemoteGenerationClient.responsesInputPayload(from: messages)
+        let fullPayload = chatGPTResponsesInputPayload(from: messages)
         let normalizedInstructions = fullPayload.instructions?.nilIfBlank
 
         guard let continuation,
@@ -41,7 +41,7 @@ public enum ChatGPTSubscriptionRequestBuilder {
         }
 
         let deltaMessages = Array(messages[continuation.messageCount...])
-        let deltaPayload = RemoteGenerationClient.responsesInputPayload(from: deltaMessages)
+        let deltaPayload = chatGPTResponsesInputPayload(from: deltaMessages)
         guard deltaPayload.instructions?.nilIfBlank == nil,
               !deltaPayload.input.isEmpty else {
             return (
@@ -58,6 +58,64 @@ public enum ChatGPTSubscriptionRequestBuilder {
             deltaPayload.input,
             continuation.responseID
         )
+    }
+
+    static func chatGPTResponsesInputPayload(
+        from messages: [[String: Any]]
+    ) -> (instructions: String?, input: [Any]) {
+        let payload = RemoteGenerationClient.responsesInputPayload(from: messages)
+        return (
+            payload.instructions,
+            chatGPTInputPayload(from: payload.input)
+        )
+    }
+
+    static func chatGPTInputPayload(from input: [Any]) -> [Any] {
+        input.compactMap(chatGPTInputItem)
+    }
+
+    private static func chatGPTInputItem(_ item: Any) -> Any? {
+        guard let object = item as? [String: Any] else {
+            return item
+        }
+        let type = (object["type"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard type == "reasoning" else {
+            return item
+        }
+        return chatGPTReasoningInputItem(from: object)
+    }
+
+    private static func chatGPTReasoningInputItem(from item: [String: Any]) -> [String: Any]? {
+        var sanitized: [String: Any] = ["type": "reasoning"]
+        if let id = RemoteGenerationClient.stringValue(item["id"])?.nilIfBlank {
+            sanitized["id"] = id
+        }
+        if let encrypted = RemoteGenerationClient.stringValue(item["encrypted_content"])?.nilIfBlank
+            ?? RemoteGenerationClient.stringValue(item["encryptedContent"])?.nilIfBlank {
+            sanitized["encrypted_content"] = encrypted
+            sanitized["summary"] = item["summary"] ?? []
+            return sanitized
+        }
+        guard let summary = item["summary"], !chatGPTReasoningSummaryIsEmpty(summary) else {
+            return nil
+        }
+        sanitized["summary"] = summary
+        return sanitized
+    }
+
+    private static func chatGPTReasoningSummaryIsEmpty(_ value: Any) -> Bool {
+        if let text = value as? String {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if let items = value as? [Any] {
+            return items.isEmpty
+        }
+        if let items = value as? [[String: Any]] {
+            return items.isEmpty
+        }
+        return false
     }
 
     public static func requestBody(
