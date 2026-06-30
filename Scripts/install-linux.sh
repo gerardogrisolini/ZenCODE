@@ -4,7 +4,9 @@ set -euo pipefail
 # ZenCODE Linux installer
 #
 # Builds ZenCODE and its bundled feature executables from source and installs
-# them. Intended for native Linux and for Windows via WSL (Ubuntu).
+# them. Intended for native Linux and for Windows via WSL (Ubuntu). When
+# launched outside a repository checkout, for example with curl | bash, the
+# installer uses a temporary source checkout and removes it before exiting.
 #
 # Local MLX inference is Apple-only, so this installer never pulls in MLX/Metal
 # dependencies. DS4 support is available on Linux and can be included or
@@ -18,6 +20,8 @@ set -euo pipefail
 #   WITH_DS4       yes/no, true/false, 1/0. Prompted when unset.
 #   DS4_ROOT       DS4 source/build directory used when DS4 is enabled.
 #                  ZENCODE_DS4_ROOT is also accepted.
+#   ZENCODE_INSTALLER_REF
+#                  Git ref used by the URL installer (default: main)
 #
 # Flags:
 #   --debug          Build with the debug configuration
@@ -32,9 +36,44 @@ BUILD_CONFIG="${BUILD_CONFIG:-release}"
 WITH_DS4="${WITH_DS4:-}"
 DS4_ROOT="${ZENCODE_DS4_ROOT:-${DS4_ROOT:-}}"
 ASSUME_YES=0
+REPO_URL="${ZENCODE_INSTALLER_REPO:-https://github.com/gerardogrisolini/ZenCODE.git}"
+REPO_REF="${ZENCODE_INSTALLER_REF:-main}"
+INSTALLER_TMPDIR="${ZENCODE_INSTALLER_TMPDIR:-${TMPDIR:-/tmp}}"
+BOOTSTRAP_TMP_ROOT=""
+ORIGINAL_ARGS=("$@")
 
 usage() {
-    sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//'
+    cat <<'EOF'
+ZenCODE Linux installer
+
+Builds ZenCODE and its bundled feature executables from source and installs
+them. Intended for native Linux and for Windows via WSL (Ubuntu). When
+launched outside a repository checkout, for example with curl | bash, the
+installer uses a temporary source checkout and removes it before exiting.
+
+Local MLX inference is Apple-only, so this installer never pulls in MLX/Metal
+dependencies. DS4 support is available on Linux and can be included or
+omitted at build time.
+
+Environment overrides:
+  INSTALL_DIR    Directory for the ZenCODE binary (default: /usr/local/bin)
+  FEATURES_DIR   Directory for feature executables
+                 (default: $INSTALL_DIR/zen-features)
+  BUILD_CONFIG   SwiftPM configuration: release or debug (default: release)
+  WITH_DS4       yes/no, true/false, 1/0. Prompted when unset.
+  DS4_ROOT       DS4 source/build directory used when DS4 is enabled.
+                 ZENCODE_DS4_ROOT is also accepted.
+  ZENCODE_INSTALLER_REF
+                 Git ref used by the URL installer (default: main)
+
+Flags:
+  --debug          Build with the debug configuration
+  --prefix DIR     Install the binary into DIR (sets INSTALL_DIR)
+  --with-ds4       Compile DS4 support
+  --without-ds4    Do not compile DS4 support
+  --yes            Use defaults for unanswered prompts
+  -h, --help       Show this help and exit
+EOF
 }
 
 parse_bool() {
@@ -217,6 +256,49 @@ validate_ds4_root() {
     done
 }
 
+resolve_package_dir() {
+    local script_source="${BASH_SOURCE[0]:-$0}"
+    local script_dir=""
+    local package_dir=""
+
+    if [ -z "$script_source" ] || [ ! -f "$script_source" ]; then
+        return 1
+    fi
+
+    script_dir="$(cd "$(dirname "$script_source")" && pwd -P)"
+    package_dir="$(cd "${script_dir}/.." && pwd -P)"
+
+    if [ ! -f "${package_dir}/Package.swift" ]; then
+        return 1
+    fi
+
+    printf '%s\n' "$package_dir"
+}
+
+bootstrap_checkout() {
+    local checkout=""
+    local status=0
+
+    if ! command -v git &>/dev/null; then
+        echo "Error: Git is required to install ZenCODE from the URL installer." >&2
+        exit 1
+    fi
+
+    BOOTSTRAP_TMP_ROOT="$(mktemp -d "${INSTALLER_TMPDIR%/}/zencode-installer.XXXXXX")"
+    checkout="${BOOTSTRAP_TMP_ROOT}/ZenCODE"
+    trap 'rm -rf "$BOOTSTRAP_TMP_ROOT"' EXIT
+
+    echo "Downloading ZenCODE installer checkout..."
+    git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$checkout"
+    echo ""
+
+    set +e
+    "${checkout}/Scripts/install-linux.sh" "${ORIGINAL_ARGS[@]}"
+    status=$?
+    set -e
+    exit "$status"
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --debug)
@@ -280,18 +362,19 @@ echo ""
 
 # Resolve the package root (the directory that contains Package.swift) -------
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PACKAGE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
-if [ ! -f "${PACKAGE_DIR}/Package.swift" ]; then
-    echo "Error: could not locate Package.swift at ${PACKAGE_DIR}." >&2
-    echo "Run this script from a checkout of the ZenCODE repository." >&2
-    exit 1
+PACKAGE_DIR="$(resolve_package_dir || true)"
+if [ -z "$PACKAGE_DIR" ]; then
+    bootstrap_checkout
 fi
+SCRIPT_DIR="${PACKAGE_DIR}/Scripts"
 
 cd "$PACKAGE_DIR"
 
-WITH_DS4="$(prompt_bool "Compile DS4 support?" 1 "$WITH_DS4")"
+DS4_DEFAULT=0
+if [ -n "$DS4_ROOT" ] || preferred_ds4_root >/dev/null 2>&1; then
+    DS4_DEFAULT=1
+fi
+WITH_DS4="$(prompt_bool "Compile DS4 support?" "$DS4_DEFAULT" "$WITH_DS4")"
 if [ "$WITH_DS4" = "1" ]; then
     DS4_ROOT="$(prompt_directory "DS4 source/build directory" "$(preferred_ds4_root || true)")"
     validate_ds4_root "$DS4_ROOT"
@@ -345,9 +428,20 @@ echo ""
 
 # Use sudo only when the target directories are not writable by this user.
 SUDO=""
-if [ ! -w "$(dirname "$INSTALL_DIR")" ] || { [ -d "$INSTALL_DIR" ] && [ ! -w "$INSTALL_DIR" ]; }; then
+if ! mkdir -p "$INSTALL_DIR" "$FEATURES_DIR" 2>/dev/null; then
     if command -v sudo &>/dev/null; then
         SUDO="sudo"
+    else
+        echo "Error: cannot create ${INSTALL_DIR} or ${FEATURES_DIR}, and sudo was not found." >&2
+        exit 1
+    fi
+fi
+if [ -z "$SUDO" ] && { [ ! -w "$INSTALL_DIR" ] || [ ! -w "$FEATURES_DIR" ]; }; then
+    if command -v sudo &>/dev/null; then
+        SUDO="sudo"
+    else
+        echo "Error: ${INSTALL_DIR} or ${FEATURES_DIR} is not writable, and sudo was not found." >&2
+        exit 1
     fi
 fi
 

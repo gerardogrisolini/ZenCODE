@@ -1,116 +1,83 @@
 # ZenCODE
 
-**ZenCODE** is a local-first AI coding agent for Apple Silicon, powered by Apple MLX. It runs a standalone terminal and ACP coding agent on your Mac — no cloud, no API keys, and no data leaving your machine when you use the local MLX runtime.
+**ZenCODE** is a local-first AI coding agent for Apple Silicon, powered by Apple MLX. It runs as a standalone terminal agent or as an ACP agent for editor integrations.
 
 Keywords: ZenCODE, MLX coding agent, local LLM coding assistant, Apple Silicon AI agent, Apple MLX, ACP agent, on-device LLM, terminal coding agent for macOS.
 
-`ZenCODE` is a Swift Package centered on a local-first coding agent for Apple Silicon.
+The default macOS path can run fully on-device: no cloud, no API keys, and no data leaving your machine when you use the local MLX runtime. Remote providers are also available through setup when you want them.
 
-- **`zen`** runs the standalone terminal and ACP coding agent with configured providers.
-- **`zen --mlx`** runs the same agent on the local MLX runtime directly, with no HTTP server and no remote provider required.
-- **`zen --ds4`** runs the same agent on a local DS4 runtime loaded in-process, with native DSML tool calls and no DS4 webserver.
+## Runtimes
 
-Local MLX model setup, model catalog management, reset, and runtime launch now live under `zen --mlx`.
+- `zen` runs the standalone terminal and ACP coding agent with configured providers.
+- `zen --mlx` runs the same agent on the local MLX runtime directly, with no HTTP server and no remote provider required.
+- `zen --ds4` runs the same agent on a local DS4 runtime loaded in-process, with native DSML tool calls and no DS4 webserver.
 
 ## Install
 
-### Installer Script
-
-Use the installer script to build ZenCODE and install the selected local runtime
-modules. Re-run the same script to update an existing script installation.
+### macOS
 
 ```bash
-git clone https://github.com/gerardogrisolini/ZenCODE.git
-cd ZenCODE
-./Scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh | bash
 ```
 
-Update an existing script installation from the checkout with:
+Re-run the same command to update. The installer downloads a temporary checkout,
+builds `zen`, installs the binary and feature executables, then removes the
+temporary build directory.
+
+Requires macOS 26 (Tahoe), Apple Silicon, Git, and the Swift toolchain from
+Xcode or the Apple command line tools.
+
+Useful options:
 
 ```bash
-git pull
-./Scripts/install.sh
+# Install into a custom prefix
+curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh | bash -s -- --prefix "$HOME/.local/bin"
+
+# Include DS4 support when a local DS4 checkout is available
+DS4_ROOT=/path/to/ds4 curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh | bash -s -- --with-ds4
 ```
 
-Requires macOS 26 (Tahoe) on Apple Silicon.
+Make sure the install directory is on your `PATH`.
 
-### Build From Source
+### Linux and Windows via WSL
 
 ```bash
-swift build -c release --product zen
+curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh | bash
 ```
 
-To compile DS4 support from source, point the build at a local DS4 checkout:
+On Linux, `zen` runs in remote-only mode: the local MLX runtime is Apple-only,
+so the build does not pull in MLX/Metal and you drive the agent through
+configured remote providers (`zen --setup`). The standalone agent, TUI, ACP
+bridge, and bundled feature executables work normally.
 
-```bash
-ZENCODE_BUILD_DS4=1 ZENCODE_DS4_ROOT=/path/to/ds4 swift build -c release --product zen
+Windows is supported through WSL. Install Ubuntu first, then run the Linux
+installer inside the Ubuntu shell:
+
+```powershell
+wsl --install -d Ubuntu
 ```
 
-### Linux (and Windows via WSL)
-
-On Linux, `zen` runs in remote-only mode: the local MLX runtime is
-Apple-only, so the build never pulls in MLX/Metal and you drive the agent
-through configured remote providers (`zen --setup`). The standalone
-agent, TUI, ACP bridge, and bundled feature executables all work normally.
-
-Windows is supported through **WSL (Windows Subsystem for Linux)**. Inside a
-WSL Ubuntu shell you run a real Linux toolchain, so the steps below apply
-unchanged — no native Windows build is required.
-
-#### 1. Install a Swift toolchain
-
-- **Native Linux:** install Swift for Linux following
-  <https://www.swift.org/install/linux/> (a distribution package or `swiftly`).
-- **Windows:** install WSL first, then a Linux distribution:
-
-  ```powershell
-  wsl --install -d Ubuntu
-  ```
-
-  Open the **Ubuntu** shell and install Swift inside it exactly as on native
-  Linux. Everything from here on runs in that Ubuntu shell.
-
-Verify the toolchain:
+Install Swift for Linux first: <https://www.swift.org/install/linux/>. Verify it
+with:
 
 ```bash
 swift --version
 ```
 
-#### 2. Build and install from source
+Useful options:
 
 ```bash
-git clone https://github.com/gerardogrisolini/ZenCODE.git
-cd ZenCODE
-./Scripts/install-linux.sh
+# Install into a custom prefix
+curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh | bash -s -- --prefix "$HOME/.local/bin"
+
+# Include DS4 support when a local DS4 checkout is available
+DS4_ROOT=/path/to/ds4 curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh | bash -s -- --with-ds4
 ```
 
-The script compiles `ZenCODE` plus the bundled feature executables and
-installs them to `/usr/local/bin` (with feature binaries under
-`/usr/local/bin/zen-features/`). Useful options:
+Make sure the install directory is on your `PATH`.
 
-```bash
-# Install into a custom prefix (no sudo needed if it is user-writable)
-INSTALL_DIR="$HOME/.local/bin" ./Scripts/install-linux.sh
-
-# or
-./Scripts/install-linux.sh --prefix "$HOME/.local/bin"
-
-# Build the debug configuration instead of release
-./Scripts/install-linux.sh --debug
-```
-
-Make sure the chosen install directory is on your `PATH`.
-
-#### 3. Configure and run
-
-```bash
-zen --setup
-zen --cwd /path/to/project
-```
-
-> Note: `zen --mlx` (local MLX inference) is unavailable on Linux/WSL
-> because it requires Apple Silicon and Metal. Use a configured remote provider
-> instead.
+> Note: `zen --mlx` is unavailable on Linux/WSL because local MLX inference
+> requires Apple Silicon and Metal. Use a configured remote provider instead.
 
 ## Quick Start
 
@@ -118,40 +85,36 @@ Set up the standalone agent:
 
 ```bash
 zen --setup
-zen --cwd /path/to/project
+zen
 ```
 
-Set up and run the local MLX runtime:
+Run the local MLX runtime:
 
 ```bash
-zen --setup
-zen --mlx --cwd /path/to/project
+zen --mlx
 ```
 
-Run ACP over stdio with the local MLX runtime:
+Run the local DS4 runtime:
 
 ```bash
-zen --mlx --acp --cwd /path/to/project
+zen --ds4
 ```
 
-## Local MLX Mode
 
-`zen --mlx` starts the `ZenCODE` agent with `MLXServerRuntime` embedded in the same process. It does not start a webserver and does not serialize model calls over HTTP.
+## Build From Source
 
-Useful commands:
+Use a source checkout when developing ZenCODE itself:
 
 ```bash
-zen --mlx --help
-zen --mlx --agent Feature --model qwen3-mlx --cwd /path/to/project
-zen --setup
+git clone https://github.com/gerardogrisolini/ZenCODE.git
+cd ZenCODE
+swift build -c release --product zen
 ```
 
-Local MLX configuration lives in:
+To compile DS4 support from source, point the build at a local DS4 checkout:
 
-```text
-~/.zencode/mlx/settings.json
-~/.zencode/mlx/models.json
-~/.zencode/mlx/KVCaches/
+```bash
+ZENCODE_BUILD_DS4=1 ZENCODE_DS4_ROOT=/path/to/ds4 swift build -c release --product zen
 ```
 
 ## TUI Commands
@@ -186,7 +149,7 @@ Local MLX configuration lives in:
 - `Tests`: SwiftPM test targets.
 - `Docs`: detailed guides and feature documentation.
 
-## Common Commands
+## Development Commands
 
 ```bash
 swift test
