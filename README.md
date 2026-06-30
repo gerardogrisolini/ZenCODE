@@ -22,8 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scrip
 
 Re-run the same command to update. The installer downloads a temporary source
 checkout, builds `zen`, installs the binary and feature executables, then
-removes the checkout. SwiftPM build artifacts are cached under
-`~/.zencode/installer/swiftpm-build`.
+removes the checkout.
 
 Requires macOS 26 (Tahoe), Apple Silicon, Git, and the Swift toolchain from
 Xcode or the Apple command line tools.
