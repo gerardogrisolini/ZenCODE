@@ -1,6 +1,6 @@
 ![ZenCODE](Docs/Images/logo.png)
 
-**ZenCODE** is a local-first AI coding agent for Apple Silicon, powered by Apple MLX. It runs as a standalone terminal agent or as an ACP agent for editor integrations.
+**ZenCODE** is a local-first coding agent powered by Apple MLX and DS4. Standalone terminal + ACP, no cloud required.
 
 Keywords: ZenCODE, MLX coding agent, local LLM coding assistant, Apple Silicon AI agent, Apple MLX, ACP agent, on-device LLM, terminal coding agent for macOS.
 
