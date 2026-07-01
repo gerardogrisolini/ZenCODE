@@ -124,6 +124,74 @@ json_escape() {
   printf '%s' "$value"
 }
 
+write_minimal_settings() {
+  {
+    printf '{\n'
+    printf '  "ds4Root" : "%s",\n' "$(json_escape "$ds4_root")"
+    printf '  "libraryPath" : "%s",\n' "$(json_escape "$library_path")"
+    printf '  "version" : 1\n'
+    printf '}\n'
+  } > "$tmp_file"
+}
+
+write_merged_settings_with_python() {
+  command -v python3 &>/dev/null || return 1
+  python3 - "$settings_file" "$tmp_file" "$ds4_root" "$library_path" <<'PY'
+import json
+import sys
+
+settings_file, tmp_file, ds4_root, library_path = sys.argv[1:5]
+settings = {}
+
+try:
+    with open(settings_file, encoding="utf-8") as handle:
+        loaded = json.load(handle)
+    if isinstance(loaded, dict):
+        settings = loaded
+except FileNotFoundError:
+    pass
+except Exception:
+    settings = {}
+
+settings["ds4Root"] = ds4_root
+settings["libraryPath"] = library_path
+settings["version"] = 1
+
+with open(tmp_file, "w", encoding="utf-8") as handle:
+    json.dump(settings, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+}
+
+write_merged_settings_with_plutil() {
+  [[ -f "$settings_file" ]] || return 1
+  command -v plutil &>/dev/null || return 1
+
+  cp "$settings_file" "$tmp_file"
+  plutil -lint "$tmp_file" >/dev/null || return 1
+
+  if ! plutil -replace ds4Root -string "$ds4_root" "$tmp_file"; then
+    plutil -insert ds4Root -string "$ds4_root" "$tmp_file"
+  fi
+  if ! plutil -replace libraryPath -string "$library_path" "$tmp_file"; then
+    plutil -insert libraryPath -string "$library_path" "$tmp_file"
+  fi
+  if ! plutil -replace version -integer 1 "$tmp_file"; then
+    plutil -insert version -integer 1 "$tmp_file"
+  fi
+  plutil -convert json -r -o "$tmp_file" "$tmp_file"
+}
+
+write_settings() {
+  if write_merged_settings_with_python; then
+    return 0
+  fi
+  if write_merged_settings_with_plutil; then
+    return 0
+  fi
+  write_minimal_settings
+}
+
 ds4_root="$(absolute_dir "$ds4_root")"
 library_path="$(absolute_file_path "${library_path:-${ds4_root}/${default_library_name}}")"
 support_dir="$(absolute_output_dir "$support_dir")"
@@ -140,13 +208,7 @@ settings_file="${settings_dir}/settings.json"
 tmp_file="${settings_file}.tmp.$$"
 
 mkdir -p "$settings_dir"
-{
-  printf '{\n'
-  printf '  "ds4Root" : "%s",\n' "$(json_escape "$ds4_root")"
-  printf '  "libraryPath" : "%s",\n' "$(json_escape "$library_path")"
-  printf '  "version" : 1\n'
-  printf '}\n'
-} > "$tmp_file"
+write_settings
 mv "$tmp_file" "$settings_file"
 
 echo "DS4 configured for ZenCODE."
