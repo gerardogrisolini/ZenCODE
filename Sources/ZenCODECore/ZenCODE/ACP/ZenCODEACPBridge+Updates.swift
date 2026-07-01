@@ -157,22 +157,22 @@ extension ZenCODEACPBridge {
     }
 
     public static func toolTitle(for toolCall: DirectAgentToolCall) -> String {
-        switch toolKind(for: toolCall.name) {
-        case "read":
-            return "Read \(displayToolTarget(for: toolCall) ?? toolCall.name)"
-        case "edit":
-            return "Edit \(displayToolTarget(for: toolCall) ?? toolCall.name)"
-        case "delete":
-            return "Delete \(displayToolTarget(for: toolCall) ?? toolCall.name)"
-        case "move":
-            return "Move \(displayToolTarget(for: toolCall) ?? toolCall.name)"
-        case "search":
-            return "Search \(displayToolTarget(for: toolCall) ?? toolCall.name)"
-        case "execute":
-            return "Run \(displayToolTarget(for: toolCall) ?? toolCall.name)"
-        default:
+//        switch toolKind(for: toolCall.name) {
+//        case "read":
+//            return "Read \(displayToolTarget(for: toolCall) ?? toolCall.name)"
+//        case "edit":
+//            return "Edit \(displayToolTarget(for: toolCall) ?? toolCall.name)"
+//        case "delete":
+//            return "Delete \(displayToolTarget(for: toolCall) ?? toolCall.name)"
+//        case "move":
+//            return "Move \(displayToolTarget(for: toolCall) ?? toolCall.name)"
+//        case "search":
+//            return "Search \(displayToolTarget(for: toolCall) ?? toolCall.name)"
+//        case "execute":
+//            return "Run \(displayToolTarget(for: toolCall) ?? toolCall.name)"
+//        default:
             return displayToolTarget(for: toolCall).map { "\(toolCall.name) \($0)" } ?? toolCall.name
-        }
+//        }
     }
 
     public static func toolKind(for toolName: String) -> String {
