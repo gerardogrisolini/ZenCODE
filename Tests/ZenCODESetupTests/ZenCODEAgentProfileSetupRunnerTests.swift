@@ -30,10 +30,12 @@ struct ZenCODEAgentProfileSetupRunnerTests {
         let names = Set(prepared.map(\.name))
         let minimal = try #require(prepared.first { $0.name == "Minimal" })
         let xcode = try #require(prepared.first { $0.name == AgentProfileStore.xcodeAgentName })
+        let planner = try #require(prepared.first { $0.name == AgentProfileStore.plannerAgentName })
 
-        #expect(names == ["Default", "Custom", "Minimal", "Builder", "Xcode", "Reviewer"])
+        #expect(names == ["Default", "Custom", "Minimal", "Builder", "Xcode", "Reviewer", "Planner"])
         #expect(minimal.tools == AgentProfileStore.minimalToolNames)
         #expect(xcode.tools == AgentProfileStore.xcodeToolNames)
+        #expect(planner.tools == AgentProfileStore.plannerToolNames)
     }
 
     @Test

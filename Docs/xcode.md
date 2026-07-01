@@ -10,7 +10,7 @@ Xcode 27 can run `zen` as an ACP stdio coding agent. Use the dedicated `Xcode` a
    zen --setup
    ```
 
-2. Make sure the recommended agents exist. The setup can create `Default`, `Builder`, `Minimal`, `Xcode`, and `Reviewer`.
+2. Make sure the recommended agents exist. The setup can create `Default`, `Builder`, `Minimal`, `Xcode`, `Planner`, and `Reviewer`.
 3. Verify the executable path:
 
    ```bash

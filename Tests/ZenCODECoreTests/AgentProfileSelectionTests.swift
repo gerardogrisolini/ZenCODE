@@ -16,19 +16,37 @@ extension AgentConfigurationTests {
         )
         let xcodeKey = TerminalToolSelectionCatalog.featurePackageKey(id: "xcode-tools")
         let figmaKey = TerminalToolSelectionCatalog.featurePackageKey(id: "figma-tools")
+        let searchKey = TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools")
+        let gitKey = TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools")
         let webKey = TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools")
         let featureBuilderKey = TerminalToolSelectionCatalog.featureBuilderKey
+        let toolSelectionItems = TerminalChat.toolSelectionItems(
+            featureStatuses: SwiftFeatureRuntime.defaultFeatureStatuses()
+        )
         let defaultProfile = try #require(profiles["Default"])
         let minimalProfile = try #require(profiles["Minimal"])
         let builderProfile = try #require(profiles["Builder"])
                 let xcodeProfile = try #require(profiles["Xcode"])
         let reviewerProfile = try #require(profiles["Reviewer"])
-        #expect(profiles.count == 5)
+        let plannerProfile = try #require(profiles["Planner"])
+        #expect(profiles.count == 6)
         #expect(reviewerProfile.tools == AgentProfileStore.reviewerToolNames)
         #expect(reviewerProfile.instructions?.contains("Reviewer agent") == true)
                 #expect(!reviewerProfile.tools.contains("orchestration"))
+        #expect(!reviewerProfile.tools.contains("shell"))
+        #expect(plannerProfile.tools == AgentProfileStore.plannerToolNames)
+        #expect(plannerProfile.tools == ["files", searchKey, "text", gitKey, "memory", webKey])
+        #expect(plannerProfile.instructions?.contains("Planner agent") == true)
+        #expect(!plannerProfile.tools.contains("orchestration"))
+        #expect(!plannerProfile.tools.contains("shell"))
+        #expect(!plannerProfile.tools.contains("local.exec"))
+        #expect(!plannerProfile.tools.contains("local.readFile"))
+        #expect(!plannerProfile.tools.contains("local.writeFile"))
+        #expect(plannerProfile.tools.allSatisfy {
+            !TerminalToolSelectionCatalog.selectionKeys(for: $0, items: toolSelectionItems).isEmpty
+        })
 
-        for profile in profiles.values where profile.name != "Xcode" {
+        for profile in profiles.values where profile.name != "Xcode" && profile.name != "Planner" {
             #expect(!profile.tools.contains(xcodeKey))
             #expect(!profile.tools.contains(figmaKey))
             #expect(profile.tools.contains("files"))
@@ -66,7 +84,8 @@ extension AgentConfigurationTests {
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Builder"])).contains("Create, build"))
                 #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Xcode"])).contains("ACP agent for Xcode"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reviewer"])).contains("Read-only reviewer"))
-                #expect(profiles.count == 5)
+        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Planner"])).contains("Read-only planner"))
+                #expect(profiles.count == 6)
 
         let customAgent = AgentProfile(
             id: "custom",

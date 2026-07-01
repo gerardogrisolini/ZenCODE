@@ -146,6 +146,8 @@ extension TerminalChat {
         case "/undo":
             await handleUndoFileChangesCommand()
             return .continueChat
+        case let command where command == "/plan" || command.hasPrefix("/plan "):
+            return handlePlanCommand(command)
         case let command where command == "/review" || command.hasPrefix("/review "):
             return handleReviewCommand(command)
         case let command where command == "/subagents" || command.hasPrefix("/subagents "):

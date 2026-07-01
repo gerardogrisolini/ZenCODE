@@ -387,7 +387,8 @@ struct MLXMemoryServiceTests {
             "Builder",
             "Minimal",
             "Xcode",
-            "Reviewer"
+            "Reviewer",
+            "Planner"
         ]))
         #expect(Set(profiles.map(\.id)).count == profiles.count)
         #expect(try AgentProfileStore.defaultProfile(in: profiles).name == "Default")

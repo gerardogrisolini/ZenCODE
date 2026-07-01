@@ -55,7 +55,8 @@ extension ZenCODEAgentProfileSetupRunner {
             AgentProfileStore.builderAgentName,
             "Minimal",
             AgentProfileStore.xcodeAgentName,
-            AgentProfileStore.reviewerAgentName
+            AgentProfileStore.reviewerAgentName,
+            AgentProfileStore.plannerAgentName
         ].map(agentSetupNameKey))
     }
 

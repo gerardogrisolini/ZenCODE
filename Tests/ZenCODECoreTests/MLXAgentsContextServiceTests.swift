@@ -19,13 +19,13 @@ struct MLXAgentsContextServiceTests {
         #expect(!content.contains("on the user's Mac"))
         #expect(content.contains("do not invent extra requirements"))
         #expect(content.contains("Briefly explain the intent behind non-obvious or risky actions"))
-        #expect(content.contains("prepare a concise implementation plan"))
-        #expect(content.contains("files or areas expected to change"))
-        #expect(content.contains("validation you expect to run"))
-        #expect(content.contains("Do not modify files until the user approves the plan"))
-        #expect(content.contains("verify the plan point by point"))
-        #expect(content.contains("report validation results"))
         #expect(content.contains("Ask focused questions when they help"))
+        #expect(!content.contains("response-language"))
+        #expect(!content.contains("operating system language"))
+        #expect(!content.contains("user's active language"))
+        #expect(!content.contains("prepare a concise implementation plan"))
+        #expect(!content.contains("verify the plan point by point"))
+        #expect(!content.contains("approves the plan"))
     }
 
     @Test

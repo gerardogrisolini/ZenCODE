@@ -279,6 +279,11 @@ extension TerminalChat {
             summary: "revert last file changes",
             help: "/undo reverts the most recent tracked file changes."
         ),
+        TerminalChatCommandDescriptor(
+            command: "/plan",
+            summary: "plan work via sub-agents",
+            help: "/plan [goal] spawns Planner sub-agents (read-only) to produce an actionable implementation plan before work starts."
+        ),
                 TerminalChatCommandDescriptor(
             command: "/review",
             summary: "review changes via sub-agents",

@@ -97,6 +97,7 @@ The setup can create the recommended profiles:
 - `Builder`: creates, builds, validates, enables, disables, and deletes reusable Swift feature tools.
 - `Minimal`: concise assistant with only essential shell/file/text tools.
 - `Xcode`: ACP profile for Xcode with Xcode-native tools enabled.
+- `Planner`: read-only planner used by `/plan` and sub-agent delegation.
 - `Reviewer`: read-only reviewer used by `/review` and sub-agent delegation.
 
 Profiles can define enabled tools, skills, model overrides, symbols, and extra instructions. In the TUI you can switch profiles without restarting:
@@ -132,6 +133,8 @@ Inside chat mode, type a prompt and press return. Commands start with `/`:
 - `/changes`: show the latest tracked file change summary.
 - `/changes diff`: include patches in the change summary.
 - `/undo`: revert the most recent tracked file changes created by the agent.
+- `/plan [goal]`: delegate planning to one or more read-only `Planner` sub-agents. With no goal, the command infers the activity to plan from the current conversation and visible project context.
+  This command requires the `orchestration` tool group; enable it with `/tools` or switch to a profile that includes it.
 - `/review [focus]`: delegate code review to one or more read-only `Reviewer` sub-agents. The command reviews only the tracked file changes made during the current session; an optional focus is applied within those session changes.
   This command requires the `orchestration` tool group; enable it with `/tools` or switch to a profile that includes it.
 - `/subagents`: show delegated sub-agent status.
@@ -167,6 +170,22 @@ Tools are not just shell access. Depending on profile, mode, and environment, to
 - bundled feature tools such as search, web, git, Xcode, Figma, or Jira integrations.
 
 Use `/tools` to inspect and select the tool groups for the current session. ACP clients can pass the enabled tools to the runtime directly.
+
+## Planner Agent And Planning
+
+The `Planner` profile is a built-in read-only planning profile. It is intended for delegated planning before implementation: planners inspect only the context needed to make a plan concrete, then report likely files or areas to change, implementation phases, risks, open questions, and validation steps.
+
+Use `/plan` from a normal implementation session when you want a planning pass before editing:
+
+```text
+/plan
+/plan add archived-memory filtering to the memory search UI
+/plan update docs and tests for the new Planner agent
+```
+
+`/plan` keeps the current agent profile as the planning director and creates `Planner` sub-agents through the orchestration tools. The delegated planners run with `isolationMode "report"` and a read-only planning tool allowlist, so they can inspect but must not modify the workspace. After the planners finish, the director consolidates their output into one actionable plan for the loop `/plan -> implementation work -> /review`.
+
+See the [Planner agent guide](planner.md) for details.
 
 ## Reviewer Agent And Reviews
 
@@ -390,11 +409,12 @@ zen --mlx \
    /skills
    ```
 
-4. Ask the agent to inspect before editing.
-5. Review changes with `/changes diff` and Git.
-6. Run `/review` for a read-only Reviewer pass when the change is broad, risky, or ready for a pre-commit check.
-7. Save meaningful checkpoints with `/sessions name`, then refresh the active checkpoint with `/sessions save`.
-8. Keep durable project status in project `MEMORY.md` when a session reaches a useful handoff point.
+4. Run `/plan <goal>` when the work benefits from a delegated planning pass before editing.
+5. Implement the plan with the active implementation profile.
+6. Review changes with `/changes diff` and Git.
+7. Run `/review` for a read-only Reviewer pass when the change is broad, risky, or ready for a pre-commit check.
+8. Save meaningful checkpoints with `/sessions name`, then refresh the active checkpoint with `/sessions save`.
+9. Keep durable project status in project `MEMORY.md` when a session reaches a useful handoff point.
 
 ## Troubleshooting
 
@@ -402,6 +422,7 @@ zen --mlx \
 - Model not found: run `/models` or check `~/.zencode/settings.json`; in `zen --mlx` mode check `~/.zencode/mlx/models.json`.
 - No tools available: use `/tools`, switch to a profile that permits tools, or check ACP client tool exposure.
 - `/feature` unavailable: switch to the Builder agent with `/agents Builder`.
+- `/plan` says orchestration is required: enable the `orchestration` tool group with `/tools`, or switch to an agent profile that includes it.
 - `/review` says orchestration is required: enable the `orchestration` tool group with `/tools`, or switch to an agent profile that includes it.
 - Xcode tools missing: make sure Xcode is running and MCP bridge tooling can expose tools. For Xcode 27 ACP setup, see [Xcode 27 ACP setup](xcode.md).
 - Figma tools missing: make sure the Figma desktop MCP server is enabled.

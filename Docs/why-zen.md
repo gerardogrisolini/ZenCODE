@@ -46,11 +46,12 @@ This document summarizes the strengths of `ZenCODE`, my motivations for writing 
   filesystem, shell, text, search, Git, and memory.
 
 ### Agentic workflow
-- **Agent profiles** (`Default`, `Builder`, `Minimal`, `Xcode`, `Reviewer`) with
+- **Agent profiles** (`Default`, `Builder`, `Minimal`, `Xcode`, `Planner`, `Reviewer`) with
   dedicated tools, skills, model, and instructions, switchable within a session.
-- **Sub-agents and `/review`**: read-only review delegated to `Reviewer`
-  sub-agents in `isolationMode report`, runnable in parallel, with a read-only
-  allowlist restricted to the session's tracked changes.
+- **Sub-agents, `/plan`, and `/review`**: read-only planning delegated to
+  `Planner` sub-agents before implementation, then read-only review delegated to
+  `Reviewer` sub-agents in `isolationMode report`, runnable in parallel with
+  scoped read-only allowlists.
 - **Dynamic Swift Features**: the Builder generates reusable Swift packages as
   durable tools, run out-of-process over a JSON stdin/stdout protocol.
 - **Change tracking and `/undo`**: `/changes`, `/changes diff`, and restoring the
@@ -75,6 +76,6 @@ This document summarizes the strengths of `ZenCODE`, my motivations for writing 
 5. **Efficient session continuity**: the persistent KV cache with a content-derived key drastically reduces re-prefill, even for statelessients.
 6. **Native Xcode integration via ACP**: it fits directly into the Apple workflow as an Xcode 27 coding agent.
 7. **Durable extensibility**: the agent not only uses tools but **creates new ones** as reusable Swift packages shared across sessions.
-8. **Review and orchestration safe by design**: review sub-agents are read-only and limited to the current session's changes, reducing the risk of unwantedits.
+8. **Planning, review, and orchestration safe by design**: planning and review sub-agents are read-only and scoped to the requested work or current session changes, reducing the risk of unwanted edits.
 9. **Change safety**: change tracking and a dedicated `/undo` for the agent'sits.
 10. **Memory with separated responsibilities**: project journal, global index, and operating rules kept distinct, for cleaner context resumption.

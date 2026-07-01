@@ -105,6 +105,7 @@ ZENCODE_BUILD_DS4=1 ZENCODE_DS4_ROOT=/path/to/ds4 swift build -c release --produ
 /open        Open a referenced file, URL, or attachment
 /changes     Review the latest tracked file changes
 /undo        Revert the latest tracked agent changes
+/plan        Delegate read-only planning to Planner sub-agents
 /review      Delegate a read-only review to Reviewer sub-agents
 /features    Enable or disable feature packages with the Builder agent
 /feature     Create and manage Swift features with the Builder agent
@@ -148,6 +149,7 @@ zen --mlx --acp --cwd /path/to/project
 - [Local MLX runtime guide](Docs/mlx-runtime.md)
 - [DS4 direct runtime guide](Docs/ds4.md)
 - [Builder agent guide](Docs/builder.md)
+- [Planner agent guide](Docs/planner.md)
 - [Reviewer agent guide](Docs/reviewer.md)
 - [Aion UI manual setup](Docs/aion-ui.md)
 - [Xcode 27 ACP setup](Docs/xcode.md)

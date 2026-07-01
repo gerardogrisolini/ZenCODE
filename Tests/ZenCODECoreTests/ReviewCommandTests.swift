@@ -11,6 +11,16 @@ import Testing
 @Suite
 struct ReviewCommandTests {
     @Test
+    func defaultReviewerProfileDoesNotEnableShell() throws {
+        let reviewer = try #require(
+            AgentProfileStore.defaultProfiles().first(where: TerminalChat.isReviewerProfile)
+        )
+
+        #expect(!reviewer.tools.contains("shell"))
+        #expect(reviewer.tools == AgentProfileStore.reviewerToolNames)
+    }
+
+    @Test
     func reviewerToolAllowlistExcludesGitAndMemory() {
         let reviewer = AgentProfile(
             id: AgentProfileStore.reviewerAgentID.uuidString,

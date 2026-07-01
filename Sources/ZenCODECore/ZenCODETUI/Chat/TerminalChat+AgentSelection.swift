@@ -179,6 +179,8 @@ extension TerminalChat {
             return "ACP agent for Xcode with Xcode-native tools"
         case AgentProfileStore.reviewerAgentID.uuidString.lowercased():
             return "Read-only reviewer for delegated code review"
+        case AgentProfileStore.plannerAgentID.uuidString.lowercased():
+            return "Read-only planner for implementation workflows"
         default:
             return customAgentToolSummary(agent.tools)
         }

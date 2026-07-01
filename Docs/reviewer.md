@@ -67,19 +67,20 @@ Setup can create a built-in `Reviewer` profile in `~/.zencode/agents.json`. The 
 
 ## Recommended Workflow
 
-1. Implement or update files with the normal `Default`, `Xcode`, or other implementation profile.
-2. Inspect the local change summary:
+1. If the work is non-trivial, start with `/plan <goal>` to get a delegated Planner pass.
+2. Implement or update files with the normal `Default`, `Xcode`, or other implementation profile.
+3. Inspect the local change summary:
 
    ```text
    /changes diff
    ```
 
-3. Run a review of the tracked session changes:
+4. Run a review of the tracked session changes:
 
    ```text
    /review
    ```
 
-4. Read the consolidated findings and correction plan.
-5. Decide whether to apply the proposed fixes in a separate implementation turn.
-6. Validate with the relevant build, test, or lint command before committing.
+5. Read the consolidated findings and correction plan.
+6. Decide whether to apply the proposed fixes in a separate implementation turn.
+7. Validate with the relevant build, test, or lint command before committing.

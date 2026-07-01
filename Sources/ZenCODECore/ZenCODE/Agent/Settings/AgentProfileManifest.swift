@@ -239,9 +239,11 @@ public enum AgentProfileStore {
     public static let minimalAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000008")!
     public static let xcodeAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000009")!
     public static let reviewerAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!
+    public static let plannerAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000011")!
     public static let builderAgentName = "Builder"
     public static let xcodeAgentName = "Xcode"
     public static let reviewerAgentName = "Reviewer"
+    public static let plannerAgentName = "Planner"
     public static let manifestFilename = "agents.json"
     public static let minimalToolNames: [String] = [
         "shell",
@@ -265,7 +267,15 @@ public enum AgentProfileStore {
     public static let builderToolNames: [String] = codingToolNames + [
         TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools")
     ]
-            public static let reviewerToolNames: [String] = codingToolNames
+            public static let reviewerToolNames: [String] = codingToolNames.filter { $0 != "shell" }
+    public static let plannerToolNames: [String] = [
+        "files",
+        TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools"),
+        "text",
+        TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools"),
+        "memory",
+        TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools")
+    ]
     public static let xcodeToolNames: [String] = [
         "shell",
         "memory",
@@ -392,6 +402,17 @@ public enum AgentProfileStore {
                 """,
                 symbolName: "magnifyingglass.circle",
                 tools: reviewerToolNames
+            ),
+            AgentProfile(
+                id: plannerAgentID.uuidString,
+                name: plannerAgentName,
+                instructions: """
+                Planner agent. Perform read-only planning before implementation. Inspect the project only as needed to make the plan concrete, then produce an actionable implementation plan. Do not edit files.
+
+                Report likely files or areas to change, implementation phases, dependencies, risks, edge cases, validation steps, and where to run /review after the work is implemented.
+                """,
+                symbolName: "list.bullet.clipboard",
+                tools: plannerToolNames
             )
         ]
     }
