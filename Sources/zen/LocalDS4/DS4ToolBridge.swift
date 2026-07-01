@@ -43,6 +43,17 @@ enum DS4ToolBridge {
         let parameterEnd: String
     }
 
+    private struct ParsedInvokeStart {
+        let name: String
+        let syntax: Syntax
+        let bodyStart: String.Index
+    }
+
+    private struct ParsedInvokeArguments {
+        let json: String
+        let object: [String: AnyHashable]
+    }
+
     private static let syntaxes = [
         Syntax(
             toolCallsStart: "<｜DSML｜tool_calls>",
@@ -239,74 +250,128 @@ enum DS4ToolBridge {
         guard text.hasPrefix(syntax.toolCallsStart, at: start) else {
             throw DS4ToolBridgeError.invalidDSML("missing tool_calls start")
         }
+
         var index = text.index(start, offsetBy: syntax.toolCallsStart.count)
         var calls: [DS4ParsedToolCall] = []
-
         while true {
             index = text.skippingASCIIWhitespace(from: index)
-            if text.hasPrefix(syntax.toolCallsEnd, at: index) {
-                let end = text.index(index, offsetBy: syntax.toolCallsEnd.count)
+            if let end = toolCallsEndIndex(in: text, at: index, syntax: syntax) {
                 return (calls, String(text[start..<end]))
             }
 
-            let invokeSyntax = syntaxForInvokeTag(at: index, in: text)
-            guard let invokeSyntax else {
-                throw DS4ToolBridgeError.invalidDSML("expected invoke tag")
-            }
-            let tagEnd = try text.tagEnd(from: index)
-            let tag = String(text[index...tagEnd])
-            guard let name = attribute("name", in: tag)?.nilIfBlank else {
-                throw DS4ToolBridgeError.invalidDSML("tool invoke without name")
-            }
-            index = text.index(after: tagEnd)
-
-            var argumentPairs: [String] = []
-            var argumentObject: [String: AnyHashable] = [:]
-            while true {
-                index = text.skippingASCIIWhitespace(from: index)
-                if text.hasPrefix(invokeSyntax.invokeEnd, at: index) {
-                    index = text.index(index, offsetBy: invokeSyntax.invokeEnd.count)
-                    break
-                }
-                guard text.hasPrefix(invokeSyntax.parameterStart, at: index) else {
-                    throw DS4ToolBridgeError.invalidDSML("expected parameter tag")
-                }
-                let parameterTagEnd = try text.tagEnd(from: index)
-                let parameterTag = String(text[index...parameterTagEnd])
-                guard let parameterName = attribute("name", in: parameterTag)?.nilIfBlank else {
-                    throw DS4ToolBridgeError.invalidDSML("tool parameter without name")
-                }
-                let isString = (attribute("string", in: parameterTag) ?? "true") == "true"
-                let valueStart = text.index(after: parameterTagEnd)
-                guard let valueEnd = text.range(
-                    of: invokeSyntax.parameterEnd,
-                    range: valueStart..<text.endIndex
-                )?.lowerBound else {
-                    throw DS4ToolBridgeError.invalidDSML("parameter without closing tag")
-                }
-                let rawValue = String(text[valueStart..<valueEnd])
-                let valueJSON: String
-                if isString {
-                    let value = dsmlUnescaped(rawValue)
-                    valueJSON = jsonString(value)
-                    argumentObject[parameterName] = AnyHashable(value)
-                } else {
-                    let minified = minifiedJSONFragment(rawValue) ?? "null"
-                    valueJSON = minified
-                    argumentObject[parameterName] = anyHashableJSONValue(from: minified)
-                }
-                argumentPairs.append("\(jsonString(parameterName)):\(valueJSON)")
-                index = text.index(valueEnd, offsetBy: invokeSyntax.parameterEnd.count)
-            }
-            let argumentsJSON = "{\(argumentPairs.joined(separator: ","))}"
+            let invoke = try parseInvokeStart(in: text, at: index)
+            index = invoke.bodyStart
+            let arguments = try parseInvokeArguments(
+                in: text,
+                index: &index,
+                syntax: invoke.syntax
+            )
             calls.append(
                 DS4ParsedToolCall(
-                    name: name,
-                    argumentsJSON: argumentsJSON,
-                    argumentsObject: argumentObject
+                    name: invoke.name,
+                    argumentsJSON: arguments.json,
+                    argumentsObject: arguments.object
                 )
             )
         }
+    }
+
+    private static func toolCallsEndIndex(
+        in text: String,
+        at index: String.Index,
+        syntax: Syntax
+    ) -> String.Index? {
+        guard text.hasPrefix(syntax.toolCallsEnd, at: index) else {
+            return nil
+        }
+        return text.index(index, offsetBy: syntax.toolCallsEnd.count)
+    }
+
+    private static func parseInvokeStart(
+        in text: String,
+        at index: String.Index
+    ) throws -> ParsedInvokeStart {
+        guard let syntax = syntaxForInvokeTag(at: index, in: text) else {
+            throw DS4ToolBridgeError.invalidDSML("expected invoke tag")
+        }
+        let tagEnd = try text.tagEnd(from: index)
+        let tag = String(text[index...tagEnd])
+        guard let name = attribute("name", in: tag)?.nilIfBlank else {
+            throw DS4ToolBridgeError.invalidDSML("tool invoke without name")
+        }
+        return ParsedInvokeStart(
+            name: name,
+            syntax: syntax,
+            bodyStart: text.index(after: tagEnd)
+        )
+    }
+
+    private static func parseInvokeArguments(
+        in text: String,
+        index: inout String.Index,
+        syntax: Syntax
+    ) throws -> ParsedInvokeArguments {
+        var argumentPairs: [String] = []
+        var argumentObject: [String: AnyHashable] = [:]
+        while true {
+            index = text.skippingASCIIWhitespace(from: index)
+            if text.hasPrefix(syntax.invokeEnd, at: index) {
+                index = text.index(index, offsetBy: syntax.invokeEnd.count)
+                return ParsedInvokeArguments(
+                    json: "{\(argumentPairs.joined(separator: ","))}",
+                    object: argumentObject
+                )
+            }
+            let parameter = try parseParameter(in: text, at: index, syntax: syntax)
+            argumentPairs.append("\(jsonString(parameter.name)):\(parameter.valueJSON)")
+            argumentObject[parameter.name] = parameter.value
+            index = parameter.nextIndex
+        }
+    }
+
+    private static func parseParameter(
+        in text: String,
+        at index: String.Index,
+        syntax: Syntax
+    ) throws -> (name: String, valueJSON: String, value: AnyHashable, nextIndex: String.Index) {
+        guard text.hasPrefix(syntax.parameterStart, at: index) else {
+            throw DS4ToolBridgeError.invalidDSML("expected parameter tag")
+        }
+        let parameterTagEnd = try text.tagEnd(from: index)
+        let parameterTag = String(text[index...parameterTagEnd])
+        guard let parameterName = attribute("name", in: parameterTag)?.nilIfBlank else {
+            throw DS4ToolBridgeError.invalidDSML("tool parameter without name")
+        }
+        let valueStart = text.index(after: parameterTagEnd)
+        guard let valueEnd = text.range(
+            of: syntax.parameterEnd,
+            range: valueStart..<text.endIndex
+        )?.lowerBound else {
+            throw DS4ToolBridgeError.invalidDSML("parameter without closing tag")
+        }
+        let rawValue = String(text[valueStart..<valueEnd])
+        let parsedValue = parseParameterValue(
+            rawValue,
+            isString: (attribute("string", in: parameterTag) ?? "true") == "true"
+        )
+        return (
+            name: parameterName,
+            valueJSON: parsedValue.json,
+            value: parsedValue.value,
+            nextIndex: text.index(valueEnd, offsetBy: syntax.parameterEnd.count)
+        )
+    }
+
+    private static func parseParameterValue(
+        _ rawValue: String,
+        isString: Bool
+    ) -> (json: String, value: AnyHashable) {
+        if isString {
+            let value = dsmlUnescaped(rawValue)
+            return (jsonString(value), AnyHashable(value))
+        }
+        let minified = minifiedJSONFragment(rawValue) ?? "null"
+        return (minified, anyHashableJSONValue(from: minified))
     }
 
     private static func syntaxForInvokeTag(

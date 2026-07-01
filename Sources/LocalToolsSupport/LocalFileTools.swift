@@ -355,72 +355,86 @@ struct LocalApplyPatchTool: FeatureTool {
     static let description = "Applies a unified diff that may span multiple files. All hunks are validated in memory first and written atomically: if any hunk fails to match, no file is changed."
     static let inputSchema = #"{"type":"object","properties":{"patch":{"type":"string"},"diff":{"type":"string"}},"required":["patch"]}"#
 
+    private struct PlannedPatchChange {
+        let url: URL
+        let newContent: String?
+        let isDelete: Bool
+    }
+
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let rawPatch = try LocalToolsSupport.requiredRawString(input.patch, input.diff, name: "patch")
+        let plannedChanges = try plannedPatchChanges(for: rawPatch, context: context)
+        let changedPaths = try commit(plannedChanges)
+        return "Applied patch to \(changedPaths.count) file(s):\n" + changedPaths.joined(separator: "\n")
+    }
+
+    private func plannedPatchChanges(
+        for rawPatch: String,
+        context: FeatureContext
+    ) throws -> [PlannedPatchChange] {
         if LocalToolsSupport.isBeginPatchFormat(rawPatch) {
-            let filePatches = try LocalToolsSupport.parseBeginPatch(rawPatch)
-            guard !filePatches.isEmpty else {
-                throw LocalToolsFeatureError.permissionDenied("No file sections were found in the patch.")
-            }
-
-            // Phase 1: validate and compute all new contents without writing.
-            var planned: [(url: URL, newContent: String?, isDelete: Bool)] = []
-            for filePatch in filePatches {
-                let url = context.resolvePath(filePatch.path)
-                let result = try LocalToolsSupport.applyBeginPatch(filePatch, at: url)
-                planned.append((url, result.newContent, result.isDelete))
-            }
-
-            // Phase 2: commit.
-            var changed: [String] = []
-            for entry in planned {
-                if entry.isDelete {
-                    if FileManager.default.fileExists(atPath: entry.url.path) {
-                        try FileManager.default.removeItem(at: entry.url)
-                    }
-                    changed.append("deleted \(entry.url.path)")
-                } else if let content = entry.newContent {
-                    try FileManager.default.createDirectory(
-                        at: entry.url.deletingLastPathComponent(),
-                        withIntermediateDirectories: true
-                    )
-                    try content.write(to: entry.url, atomically: true, encoding: .utf8)
-                    changed.append("patched \(entry.url.path)")
-                }
-            }
-            return "Applied patch to \(changed.count) file(s):\n" + changed.joined(separator: "\n")
+            return try plannedBeginPatchChanges(for: rawPatch, context: context)
         }
+        return try plannedUnifiedDiffChanges(for: rawPatch, context: context)
+    }
 
+    private func plannedBeginPatchChanges(
+        for rawPatch: String,
+        context: FeatureContext
+    ) throws -> [PlannedPatchChange] {
+        let filePatches = try LocalToolsSupport.parseBeginPatch(rawPatch)
+        try requireNonEmptyFilePatches(filePatches)
+        return try filePatches.map { filePatch in
+            let url = context.resolvePath(filePatch.path)
+            let result = try LocalToolsSupport.applyBeginPatch(filePatch, at: url)
+            return PlannedPatchChange(url: url, newContent: result.newContent, isDelete: result.isDelete)
+        }
+    }
+
+    private func plannedUnifiedDiffChanges(
+        for rawPatch: String,
+        context: FeatureContext
+    ) throws -> [PlannedPatchChange] {
         let filePatches = try LocalToolsSupport.parseUnifiedDiff(rawPatch)
+        try requireNonEmptyFilePatches(filePatches)
+        return try filePatches.map { filePatch in
+            let url = context.resolvePath(filePatch.path)
+            let result = try LocalToolsSupport.applyFilePatch(filePatch, at: url)
+            return PlannedPatchChange(url: url, newContent: result.newContent, isDelete: result.isDelete)
+        }
+    }
+
+    private func requireNonEmptyFilePatches(_ filePatches: some Collection) throws {
         guard !filePatches.isEmpty else {
             throw LocalToolsFeatureError.permissionDenied("No file sections were found in the patch.")
         }
+    }
 
-        // Phase 1: validate and compute all new contents without writing.
-        var planned: [(url: URL, newContent: String?, isDelete: Bool)] = []
-        for filePatch in filePatches {
-            let url = context.resolvePath(filePatch.path)
-            let result = try LocalToolsSupport.applyFilePatch(filePatch, at: url)
-            planned.append((url, result.newContent, result.isDelete))
-        }
-
-        // Phase 2: commit.
-        var changed: [String] = []
-        for entry in planned {
-            if entry.isDelete {
-                if FileManager.default.fileExists(atPath: entry.url.path) {
-                    try FileManager.default.removeItem(at: entry.url)
-                }
-                changed.append("deleted \(entry.url.path)")
-            } else if let content = entry.newContent {
-                try FileManager.default.createDirectory(
-                    at: entry.url.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                try content.write(to: entry.url, atomically: true, encoding: .utf8)
-                changed.append("patched \(entry.url.path)")
+    private func commit(_ changes: [PlannedPatchChange]) throws -> [String] {
+        var changedPaths: [String] = []
+        for change in changes {
+            if change.isDelete {
+                try deleteIfPresent(change.url)
+                changedPaths.append("deleted \(change.url.path)")
+            } else if let content = change.newContent {
+                try write(content, to: change.url)
+                changedPaths.append("patched \(change.url.path)")
             }
         }
-        return "Applied patch to \(changed.count) file(s):\n" + changed.joined(separator: "\n")
+        return changedPaths
+    }
+
+    private func deleteIfPresent(_ url: URL) throws {
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private func write(_ content: String, to url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try content.write(to: url, atomically: true, encoding: .utf8)
     }
 }

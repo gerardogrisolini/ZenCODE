@@ -188,22 +188,7 @@ extension RemoteGenerationClient {
         let (bytes, response) = try await urlSession.bytes(for: request)
         try await validateHTTPResponse(response, bytes: bytes)
 
-        var accumulatedText = ""
-        var accumulatedReasoningText = ""
-        var stopReason = "end_turn"
-        var toolCallAccumulator = RemoteToolCallAccumulator()
-        var firstDeltaAt: Date?
-        var usage: RemoteGenerationUsage?
-        var contentNormalizer = ThinkingBoundarySpacingNormalizer()
-        var reasoningItems: [[String: Any]] = []
-        var reasoningItemIndexByID: [String: Int] = [:]
-
-        func markFirstDelta() {
-            if firstDeltaAt == nil {
-                firstDeltaAt = Date()
-            }
-        }
-
+        var accumulator = RemoteStreamAccumulator()
         for try await line in bytes.lines {
             try Task.checkCancellation()
             guard let payload = Self.ssePayload(from: line) else {
@@ -215,116 +200,156 @@ extension RemoteGenerationClient {
             guard let object = Self.jsonObject(from: payload) else {
                 continue
             }
-
             for event in eventParser(object) {
-                switch event {
-                case let .content(delta):
-                    guard !delta.isEmpty else {
-                        continue
-                    }
-                    markFirstDelta()
-                    let normalizedDelta = contentNormalizer.append(delta)
-                    guard !normalizedDelta.isEmpty else {
-                        continue
-                    }
-                    accumulatedText.append(normalizedDelta)
-                    await onEvent(.content(normalizedDelta))
-                case let .contentSnapshot(snapshot):
-                    let delta = Self.streamContentDelta(
-                        fromSnapshot: snapshot,
-                        accumulatedText: accumulatedText
-                    )
-                    guard !delta.isEmpty else {
-                        continue
-                    }
-                    markFirstDelta()
-                    let normalizedDelta = contentNormalizer.append(delta)
-                    guard !normalizedDelta.isEmpty else {
-                        continue
-                    }
-                    accumulatedText.append(normalizedDelta)
-                    await onEvent(.content(normalizedDelta))
-                case let .reasoning(delta):
-                    guard !delta.isEmpty else {
-                        continue
-                    }
-                    markFirstDelta()
-                    accumulatedReasoningText.append(delta)
-                    await onEvent(.thought(delta))
-                case let .toolCallDelta(rawToolCalls):
-                    markFirstDelta()
-                    toolCallAccumulator.ingestChatCompletionToolCalls(rawToolCalls)
-                case let .responseToolCallItem(item, outputIndex):
-                    markFirstDelta()
-                    toolCallAccumulator.ingestResponseToolCallItem(
-                        item,
-                        outputIndex: outputIndex
-                    )
-                case let .responseReasoningItem(item):
-                    markFirstDelta()
-                    guard Self.responseReasoningItemHasReplayableContent(item) else {
-                        continue
-                    }
-                    let sanitizedItem = Self.sanitizedResponseReasoningItem(item)
-                    if let id = Self.stringValue(item["id"])?.nilIfBlank {
-                        if let existingIndex = reasoningItemIndexByID[id] {
-                            reasoningItems[existingIndex] = sanitizedItem
-                        } else {
-                            reasoningItemIndexByID[id] = reasoningItems.count
-                            reasoningItems.append(sanitizedItem)
-                        }
-                    } else {
-                        reasoningItems.append(sanitizedItem)
-                    }
-                case let .responseToolCallArgumentsDelta(event):
-                    markFirstDelta()
-                    toolCallAccumulator.ingestResponseToolCallArgumentsDelta(event)
-                case let .responseToolCallArgumentsDone(event):
-                    markFirstDelta()
-                    toolCallAccumulator.ingestResponseToolCallArgumentsDone(event)
-                case let .stop(reason):
-                    stopReason = reason
-                case let .failure(message):
-                    throw RemoteGenerationClientError.remoteFailure(message)
-                case let .usage(remoteUsage):
-                    usage = remoteUsage
-                case .ignored:
-                    continue
-                }
+                try await accumulator.ingest(event, onEvent: onEvent)
             }
         }
-        let normalizedRemainder = contentNormalizer.finish()
-        if !normalizedRemainder.isEmpty {
+        await accumulator.finish(onEvent: onEvent)
+        return try accumulator.result(requestStartedAt: requestStartedAt)
+    }
+
+    private struct RemoteStreamAccumulator {
+        private var accumulatedText = ""
+        private var accumulatedReasoningText = ""
+        private var stopReason = "end_turn"
+        private var toolCallAccumulator = RemoteToolCallAccumulator()
+        private var firstDeltaAt: Date?
+        private var usage: RemoteGenerationUsage?
+        private var contentNormalizer = ThinkingBoundarySpacingNormalizer()
+        private var reasoningItems: [[String: Any]] = []
+        private var reasoningItemIndexByID: [String: Int] = [:]
+
+        mutating func ingest(
+            _ event: ParsedRemoteStreamEvent,
+            onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+        ) async throws {
+            switch event {
+            case let .content(delta):
+                await appendContent(delta, onEvent: onEvent)
+            case let .contentSnapshot(snapshot):
+                let delta = RemoteGenerationClient.streamContentDelta(
+                    fromSnapshot: snapshot,
+                    accumulatedText: accumulatedText
+                )
+                await appendContent(delta, onEvent: onEvent)
+            case let .reasoning(delta):
+                await appendReasoning(delta, onEvent: onEvent)
+            case let .toolCallDelta(rawToolCalls):
+                markFirstDelta()
+                toolCallAccumulator.ingestChatCompletionToolCalls(rawToolCalls)
+            case let .responseToolCallItem(item, outputIndex):
+                markFirstDelta()
+                toolCallAccumulator.ingestResponseToolCallItem(item, outputIndex: outputIndex)
+            case let .responseReasoningItem(item):
+                markFirstDelta()
+                appendReasoningItemIfReplayable(item)
+            case let .responseToolCallArgumentsDelta(event):
+                markFirstDelta()
+                toolCallAccumulator.ingestResponseToolCallArgumentsDelta(event)
+            case let .responseToolCallArgumentsDone(event):
+                markFirstDelta()
+                toolCallAccumulator.ingestResponseToolCallArgumentsDone(event)
+            case let .stop(reason):
+                stopReason = reason
+            case let .failure(message):
+                throw RemoteGenerationClientError.remoteFailure(message)
+            case let .usage(remoteUsage):
+                usage = remoteUsage
+            case .ignored:
+                break
+            }
+        }
+
+        mutating func finish(
+            onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+        ) async {
+            let normalizedRemainder = contentNormalizer.finish()
+            guard !normalizedRemainder.isEmpty else {
+                return
+            }
             markFirstDelta()
             accumulatedText.append(normalizedRemainder)
             await onEvent(.content(normalizedRemainder))
         }
 
-        let toolCalls = try toolCallAccumulator.finalize()
-        let reasoningItemsJSON: String?
-        if reasoningItems.isEmpty {
-            reasoningItemsJSON = nil
-        } else if let data = try? JSONValue(jsonObject: reasoningItems).jsonData(
-            outputFormatting: [.withoutEscapingSlashes]
-        ) {
-            reasoningItemsJSON = String(decoding: data, as: UTF8.self)
-        } else {
-            reasoningItemsJSON = nil
+        func result(requestStartedAt: Date) throws -> RemoteStreamResult {
+            let toolCalls = try toolCallAccumulator.finalize()
+            return RemoteStreamResult(
+                text: accumulatedText,
+                reasoningText: accumulatedReasoningText,
+                stopReason: toolCalls.isEmpty ? stopReason : "tool_calls",
+                toolCalls: toolCalls,
+                stats: RemoteGenerationStats(
+                    usage: usage,
+                    requestStartedAt: requestStartedAt,
+                    firstDeltaAt: firstDeltaAt,
+                    finishedAt: Date(),
+                    generatedCharacterCount: accumulatedText.count
+                ),
+                reasoningItemsJSON: reasoningItemsJSON()
+            )
         }
-        return RemoteStreamResult(
-            text: accumulatedText,
-            reasoningText: accumulatedReasoningText,
-            stopReason: toolCalls.isEmpty ? stopReason : "tool_calls",
-            toolCalls: toolCalls,
-            stats: RemoteGenerationStats(
-                usage: usage,
-                requestStartedAt: requestStartedAt,
-                firstDeltaAt: firstDeltaAt,
-                finishedAt: Date(),
-                generatedCharacterCount: accumulatedText.count
-            ),
-            reasoningItemsJSON: reasoningItemsJSON
-        )
+
+        private mutating func appendContent(
+            _ delta: String,
+            onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+        ) async {
+            guard !delta.isEmpty else {
+                return
+            }
+            markFirstDelta()
+            let normalizedDelta = contentNormalizer.append(delta)
+            guard !normalizedDelta.isEmpty else {
+                return
+            }
+            accumulatedText.append(normalizedDelta)
+            await onEvent(.content(normalizedDelta))
+        }
+
+        private mutating func appendReasoning(
+            _ delta: String,
+            onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+        ) async {
+            guard !delta.isEmpty else {
+                return
+            }
+            markFirstDelta()
+            accumulatedReasoningText.append(delta)
+            await onEvent(.thought(delta))
+        }
+
+        private mutating func appendReasoningItemIfReplayable(_ item: [String: Any]) {
+            guard RemoteGenerationClient.responseReasoningItemHasReplayableContent(item) else {
+                return
+            }
+            let sanitizedItem = RemoteGenerationClient.sanitizedResponseReasoningItem(item)
+            guard let id = RemoteGenerationClient.stringValue(item["id"])?.nilIfBlank else {
+                reasoningItems.append(sanitizedItem)
+                return
+            }
+            if let existingIndex = reasoningItemIndexByID[id] {
+                reasoningItems[existingIndex] = sanitizedItem
+            } else {
+                reasoningItemIndexByID[id] = reasoningItems.count
+                reasoningItems.append(sanitizedItem)
+            }
+        }
+
+        private mutating func markFirstDelta() {
+            if firstDeltaAt == nil {
+                firstDeltaAt = Date()
+            }
+        }
+
+        private func reasoningItemsJSON() -> String? {
+            guard !reasoningItems.isEmpty,
+                  let data = try? JSONValue(jsonObject: reasoningItems).jsonData(
+                    outputFormatting: [.withoutEscapingSlashes]
+                  ) else {
+                return nil
+            }
+            return String(decoding: data, as: UTF8.self)
+        }
     }
 
     public static func toolExposureDiagnostic(from descriptors: [DirectToolDescriptor]) -> String {

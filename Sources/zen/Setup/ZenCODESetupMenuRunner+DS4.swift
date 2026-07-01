@@ -57,17 +57,36 @@ extension ZenCODESetupMenuRunner {
         return URL(fileURLWithPath: modelPath).lastPathComponent
     }
 
+    private struct DS4RuntimePaths {
+        let root: URL
+        let library: URL
+    }
+
     private static func configureDS4RuntimeSettings() throws {
         guard var settings = try DS4SettingsStore.load() ?? configureInitialDS4RuntimeInstall() else {
             return
         }
+        guard let runtimePaths = validatedDS4RuntimePaths(from: settings) else {
+            return
+        }
 
+        printDS4Runtime(runtimePaths)
+        settings.libraryPath = runtimePaths.library.path
+        try promptDS4BaseRuntimeSettings(&settings)
+        try promptDS4StreamingSettings(&settings)
+        try promptDS4GenerationSettings(&settings)
+
+        try DS4SettingsStore.save(settings)
+        printDS4RuntimeSettingsSaved()
+    }
+
+    private static func validatedDS4RuntimePaths(
+        from settings: DS4SettingsManifest
+    ) -> DS4RuntimePaths? {
         let ds4Root = URL(fileURLWithPath: settings.ds4Root).standardizedFileURL
         guard directoryExists(ds4Root) else {
-            AgentOutput.standardError.writeString(
-                "DS4 root not found: \(ds4Root.path)\nRun Scripts/setup-ds4.sh /path/to/ds4 again.\n\n"
-            )
-            return
+            printMissingDS4Root(ds4Root)
+            return nil
         }
 
         let libraryURL = URL(
@@ -75,22 +94,24 @@ extension ZenCODESetupMenuRunner {
                 ?? ds4Root.appendingPathComponent(defaultDS4LibraryName()).path
         ).standardizedFileURL
         guard DS4ModelDiscovery.isFile(libraryURL) else {
-            AgentOutput.standardError.writeString(
-                "DS4 runtime library not found: \(libraryURL.path)\nRun Scripts/setup-ds4.sh \(ds4Root.path) again.\n\n"
-            )
-            return
+            printMissingDS4Library(libraryURL, ds4Root: ds4Root)
+            return nil
         }
+        return DS4RuntimePaths(root: ds4Root, library: libraryURL)
+    }
 
+    private static func printDS4Runtime(_ paths: DS4RuntimePaths) {
         AgentOutput.standardError.writeString(
             """
             DS4 runtime:
-              root:    \(ds4Root.path)
-              library: \(libraryURL.path)
+              root:    \(paths.root.path)
+              library: \(paths.library.path)
 
             """
         )
+    }
 
-        settings.libraryPath = libraryURL.path
+    private static func promptDS4BaseRuntimeSettings(_ settings: inout DS4SettingsManifest) throws {
         settings.backend = try promptBackend(defaultValue: settings.backend?.nilIfBlank ?? defaultDS4Backend())
         settings.contextWindow = try promptInt(
             "Context window tokens",
@@ -128,32 +149,38 @@ extension ZenCODESetupMenuRunner {
             "Quality mode",
             defaultValue: settings.quality ?? false
         )
+    }
 
+    private static func promptDS4StreamingSettings(_ settings: inout DS4SettingsManifest) throws {
         let ssdStreaming = promptBool(
             "SSD streaming",
             defaultValue: settings.ssdStreaming ?? false
         )
         settings.ssdStreaming = ssdStreaming
-        if ssdStreaming {
-            let cache = try promptStreamingCache(
-                defaultExperts: settings.ssdStreamingCacheExperts ?? 0,
-                defaultBytes: settings.ssdStreamingCacheBytes ?? 0
-            )
-            settings.ssdStreamingCacheExperts = cache.experts
-            settings.ssdStreamingCacheBytes = cache.bytes
-            settings.ssdStreamingPreloadExperts = UInt32(
-                try promptInt(
-                    "SSD streaming preload experts (0 for none)",
-                    defaultValue: Int(settings.ssdStreamingPreloadExperts ?? 0),
-                    allowedRange: 0...Int(UInt32.max)
-                )
-            )
-            settings.ssdStreamingCold = promptBool(
-                "SSD streaming cold start",
-                defaultValue: settings.ssdStreamingCold ?? false
-            )
+        guard ssdStreaming else {
+            return
         }
 
+        let cache = try promptStreamingCache(
+            defaultExperts: settings.ssdStreamingCacheExperts ?? 0,
+            defaultBytes: settings.ssdStreamingCacheBytes ?? 0
+        )
+        settings.ssdStreamingCacheExperts = cache.experts
+        settings.ssdStreamingCacheBytes = cache.bytes
+        settings.ssdStreamingPreloadExperts = UInt32(
+            try promptInt(
+                "SSD streaming preload experts (0 for none)",
+                defaultValue: Int(settings.ssdStreamingPreloadExperts ?? 0),
+                allowedRange: 0...Int(UInt32.max)
+            )
+        )
+        settings.ssdStreamingCold = promptBool(
+            "SSD streaming cold start",
+            defaultValue: settings.ssdStreamingCold ?? false
+        )
+    }
+
+    private static func promptDS4GenerationSettings(_ settings: inout DS4SettingsManifest) throws {
         settings.mtpPath = try promptOptionalPath(
             "MTP model path (none for disabled)",
             defaultValue: settings.mtpPath?.nilIfBlank
@@ -195,8 +222,9 @@ extension ZenCODESetupMenuRunner {
                 allowedRange: 0...Int(Int32.max)
             )
         )
+    }
 
-        try DS4SettingsStore.save(settings)
+    private static func printDS4RuntimeSettingsSaved() {
         AgentOutput.standardError.writeString(
             """
             DS4 runtime settings saved.
@@ -205,6 +233,18 @@ extension ZenCODESetupMenuRunner {
               zen --ds4 --doctor
 
             """
+        )
+    }
+
+    private static func printMissingDS4Root(_ ds4Root: URL) {
+        AgentOutput.standardError.writeString(
+            "DS4 root not found: \(ds4Root.path)\nRun Scripts/setup-ds4.sh /path/to/ds4 again.\n\n"
+        )
+    }
+
+    private static func printMissingDS4Library(_ libraryURL: URL, ds4Root: URL) {
+        AgentOutput.standardError.writeString(
+            "DS4 runtime library not found: \(libraryURL.path)\nRun Scripts/setup-ds4.sh \(ds4Root.path) again.\n\n"
         )
     }
 
@@ -282,18 +322,14 @@ extension ZenCODESetupMenuRunner {
 
         let ds4Root = URL(fileURLWithPath: settings.ds4Root).standardizedFileURL
         guard directoryExists(ds4Root) else {
-            AgentOutput.standardError.writeString(
-                "DS4 root not found: \(ds4Root.path)\nRun Scripts/setup-ds4.sh /path/to/ds4 again.\n\n"
-            )
+            printMissingDS4Root(ds4Root)
             return
         }
 
         if let libraryPath = settings.libraryPath?.nilIfBlank {
             let libraryURL = URL(fileURLWithPath: libraryPath).standardizedFileURL
             guard DS4ModelDiscovery.isFile(libraryURL) else {
-                AgentOutput.standardError.writeString(
-                    "DS4 runtime library not found: \(libraryURL.path)\nRun Scripts/setup-ds4.sh \(ds4Root.path) again.\n\n"
-                )
+                printMissingDS4Library(libraryURL, ds4Root: ds4Root)
                 return
             }
         }

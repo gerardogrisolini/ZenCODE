@@ -290,74 +290,78 @@ extension ZenCODEACPBridge {
         "🛠️"
     }
 
+    private static let locationStringArgumentKeys = [
+        "path",
+        "file_path",
+        "sourcePath",
+        "destinationPath",
+        "workingDirectory",
+        "cwd",
+        "filePath",
+        "sourceFilePath",
+        "directoryPath"
+    ]
+
+    private static let readFilesPathArrayArgumentKeys = ["paths", "file_paths"]
+
+    private static let displayTargetStringArgumentKeys = [
+        "file_path",
+        "filePath",
+        "sourceFilePath",
+        "sourcePath",
+        "destinationPath",
+        "directoryPath",
+        "path",
+        "command",
+        "pattern"
+    ]
+
     public static func toolLocations(for toolCall: DirectAgentToolCall) -> [[String: Any]] {
-        let candidateKeys = [
-            "path",
-            "file_path",
-            "sourcePath",
-            "destinationPath",
-            "workingDirectory",
-            "cwd",
-            "filePath",
-            "sourceFilePath",
-            "directoryPath"
-        ]
         var seen = Set<String>()
-        var locations = candidateKeys.compactMap { key -> [String: Any]? in
-            guard let rawPath = toolCall.argumentsObject[key] as? String,
-                  let path = rawPath.nilIfBlank else {
-                return nil
-            }
+        var locations: [[String: Any]] = []
+
+        appendLocations(
+            stringArguments(from: toolCall.argumentsObject, keys: locationStringArgumentKeys),
+            seen: &seen,
+            locations: &locations
+        )
+        if toolCall.name == "local.readFiles" {
+            appendLocations(
+                pathArrayArguments(from: toolCall.argumentsObject, keys: readFilesPathArrayArgumentKeys),
+                seen: &seen,
+                locations: &locations
+            )
+        }
+        if toolCall.name == "local.applyPatch" {
+            appendLocations(
+                patchPathTargets(from: toolCall.argumentsObject),
+                seen: &seen,
+                locations: &locations
+            )
+        }
+        return locationsWithoutAncestorDuplicates(locations)
+    }
+
+    private static func appendLocations(
+        _ paths: [String],
+        seen: inout Set<String>,
+        locations: inout [[String: Any]]
+    ) {
+        for path in paths {
             let normalizedPath = URL(fileURLWithPath: path)
                 .standardizedFileURL
                 .path
             guard seen.insert(normalizedPath).inserted else {
-                return nil
+                continue
             }
-            return ["path": normalizedPath]
+            locations.append(["path": normalizedPath])
         }
-        if toolCall.name == "local.readFiles" {
-            let arrayKeys = ["paths", "file_paths"]
-            for key in arrayKeys {
-                if let rawPaths = toolCall.argumentsObject[key] as? [String] {
-                    for rawPath in rawPaths {
-                        guard let path = rawPath.nilIfBlank else { continue }
-                        let normalizedPath = URL(fileURLWithPath: path)
-                            .standardizedFileURL
-                            .path
-                        guard seen.insert(normalizedPath).inserted else {
-                            continue
-                        }
-                        locations.append(["path": normalizedPath])
-                    }
-                }
-                if let rawValues = toolCall.argumentsObject[key] as? [Any] {
-                    for rawValue in rawValues {
-                        guard let rawPath = rawValue as? String,
-                              let path = rawPath.nilIfBlank else { continue }
-                        let normalizedPath = URL(fileURLWithPath: path)
-                            .standardizedFileURL
-                            .path
-                        guard seen.insert(normalizedPath).inserted else {
-                            continue
-                        }
-                        locations.append(["path": normalizedPath])
-                    }
-                }
-            }
-        }
-        if toolCall.name == "local.applyPatch" {
-            for path in patchPathTargets(from: toolCall.argumentsObject) {
-                let normalizedPath = URL(fileURLWithPath: path)
-                    .standardizedFileURL
-                    .path
-                guard seen.insert(normalizedPath).inserted else {
-                    continue
-                }
-                locations.append(["path": normalizedPath])
-            }
-        }
-        return locations.filter { location in
+    }
+
+    private static func locationsWithoutAncestorDuplicates(
+        _ locations: [[String: Any]]
+    ) -> [[String: Any]] {
+        locations.filter { location in
             guard let path = location["path"] as? String else {
                 return true
             }
@@ -396,39 +400,49 @@ extension ZenCODEACPBridge {
         }
 
         if toolCall.name == "local.readFiles" {
-            let arrayKeys = ["paths", "file_paths"]
-            var collectedPaths: [String] = []
-            for key in arrayKeys {
-                if let rawPaths = toolCall.argumentsObject[key] as? [String] {
-                    collectedPaths.append(contentsOf: rawPaths.compactMap { $0.nilIfBlank })
-                }
-                if let rawValues = toolCall.argumentsObject[key] as? [Any] {
-                    collectedPaths.append(contentsOf: rawValues.compactMap { ($0 as? String)?.nilIfBlank })
-                }
-            }
-            guard !collectedPaths.isEmpty else {
-                return nil
-            }
-            if collectedPaths.count == 1, let first = collectedPaths.first {
-                return URL(fileURLWithPath: first).lastPathComponent
-            }
-            return "\(collectedPaths.count) files"
+            return readFilesDisplayTarget(from: toolCall.argumentsObject)
         }
 
-        let candidateKeys = [
-            "file_path",
-            "filePath",
-            "sourceFilePath",
-            "sourcePath",
-            "destinationPath",
-            "directoryPath",
-            "path",
-            "command",
-            "pattern"
-        ]
-        return candidateKeys.lazy.compactMap { key in
-            (toolCall.argumentsObject[key] as? String)?.nilIfBlank
-        }.first
+        return stringArguments(
+            from: toolCall.argumentsObject,
+            keys: displayTargetStringArgumentKeys
+        ).first
+    }
+
+    private static func readFilesDisplayTarget(from arguments: [String: Any]) -> String? {
+        let paths = pathArrayArguments(from: arguments, keys: readFilesPathArrayArgumentKeys)
+        guard !paths.isEmpty else {
+            return nil
+        }
+        guard paths.count > 1 else {
+            return paths.first.map { URL(fileURLWithPath: $0).lastPathComponent }
+        }
+        return "\(paths.count) files"
+    }
+
+    private static func stringArguments(
+        from arguments: [String: Any],
+        keys: [String]
+    ) -> [String] {
+        keys.compactMap { key in
+            (arguments[key] as? String)?.nilIfBlank
+        }
+    }
+
+    private static func pathArrayArguments(
+        from arguments: [String: Any],
+        keys: [String]
+    ) -> [String] {
+        keys.flatMap { key in
+            var paths: [String] = []
+            if let rawPaths = arguments[key] as? [String] {
+                paths.append(contentsOf: rawPaths.compactMap { $0.nilIfBlank })
+            }
+            if let rawValues = arguments[key] as? [Any] {
+                paths.append(contentsOf: rawValues.compactMap { ($0 as? String)?.nilIfBlank })
+            }
+            return paths
+        }
     }
 
     public static func patchDisplayTarget(from arguments: [String: Any]) -> String? {

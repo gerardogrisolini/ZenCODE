@@ -31,6 +31,31 @@ extension LocalToolsSupport {
         let isDelete: Bool
     }
 
+    private struct PatchTextLines {
+        let lines: [String]
+        let hadTrailingNewline: Bool
+
+        init(_ text: String, isNewFile: Bool = false) {
+            var lines = text.isEmpty && isNewFile
+                ? []
+                : text.components(separatedBy: "\n")
+            let trailingNewline = text.hasSuffix("\n")
+            if trailingNewline, lines.last == "" {
+                lines.removeLast()
+            }
+            self.lines = lines
+            self.hadTrailingNewline = trailingNewline
+        }
+
+        func content(from resultLines: [String], forceTrailingNewline: Bool = false) -> String {
+            var content = resultLines.joined(separator: "\n")
+            if hadTrailingNewline || forceTrailingNewline {
+                content += "\n"
+            }
+            return content
+        }
+    }
+
     enum BeginPatchAction {
         case add
         case update
@@ -149,62 +174,76 @@ extension LocalToolsSupport {
             guard !FileManager.default.fileExists(atPath: url.path) else {
                 throw LocalToolsFeatureError.permissionDenied("Patch add target already exists: \(filePatch.path).")
             }
-            let lines = filePatch.hunks.flatMap { hunk in
-                hunk.compactMap { line -> String? in
-                    if case let .added(text) = line {
-                        return text
-                    }
-                    return nil
-                }
-            }
+            let lines = addedLines(from: filePatch.hunks)
             return FilePatchResult(newContent: lines.joined(separator: "\n") + "\n", isDelete: false)
         case .update:
-            let originalText = try String(contentsOf: url, encoding: .utf8)
-            var originalLines = originalText.components(separatedBy: "\n")
-            let hadTrailingNewline = originalText.hasSuffix("\n")
-            if hadTrailingNewline, originalLines.last == "" {
-                originalLines.removeLast()
-            }
+            let source = PatchTextLines(try String(contentsOf: url, encoding: .utf8))
+            let result = try applyBeginPatchHunks(
+                filePatch.hunks,
+                path: filePatch.path,
+                to: source.lines
+            )
+            return FilePatchResult(newContent: source.content(from: result), isDelete: false)
+        }
+    }
 
-            var result: [String] = []
-            var cursor = 0
-            for hunk in filePatch.hunks {
-                let pattern = hunk.compactMap { line -> String? in
-                    switch line {
-                    case let .context(text), let .removed(text):
-                        return text
-                    case .added:
-                        return nil
-                    }
+    private static func addedLines(from hunks: [[DiffLine]]) -> [String] {
+        hunks.flatMap { hunk in
+            hunk.compactMap { line -> String? in
+                if case let .added(text) = line {
+                    return text
                 }
-                guard !pattern.isEmpty else {
-                    throw LocalToolsFeatureError.permissionDenied("Patch update hunk for \(filePatch.path) has no context or removals.")
-                }
-                guard let matchIndex = firstMatch(of: pattern, in: originalLines, startingAt: cursor) else {
-                    throw LocalToolsFeatureError.permissionDenied("Patch hunk did not match \(filePatch.path).")
-                }
-                if matchIndex > cursor {
-                    result.append(contentsOf: originalLines[cursor..<matchIndex])
-                }
-                for line in hunk {
-                    switch line {
-                    case let .context(text), let .added(text):
-                        result.append(text)
-                    case .removed:
-                        break
-                    }
-                }
-                cursor = matchIndex + pattern.count
+                return nil
             }
-            if cursor < originalLines.count {
-                result.append(contentsOf: originalLines[cursor...])
-            }
+        }
+    }
 
-            var newContent = result.joined(separator: "\n")
-            if hadTrailingNewline {
-                newContent += "\n"
+    private static func applyBeginPatchHunks(
+        _ hunks: [[DiffLine]],
+        path: String,
+        to originalLines: [String]
+    ) throws -> [String] {
+        var result: [String] = []
+        var cursor = 0
+        for hunk in hunks {
+            let pattern = beginPatchPattern(from: hunk)
+            guard !pattern.isEmpty else {
+                throw LocalToolsFeatureError.permissionDenied("Patch update hunk for \(path) has no context or removals.")
             }
-            return FilePatchResult(newContent: newContent, isDelete: false)
+            guard let matchIndex = firstMatch(of: pattern, in: originalLines, startingAt: cursor) else {
+                throw LocalToolsFeatureError.permissionDenied("Patch hunk did not match \(path).")
+            }
+            if matchIndex > cursor {
+                result.append(contentsOf: originalLines[cursor..<matchIndex])
+            }
+            appendBeginPatchHunk(hunk, to: &result)
+            cursor = matchIndex + pattern.count
+        }
+        if cursor < originalLines.count {
+            result.append(contentsOf: originalLines[cursor...])
+        }
+        return result
+    }
+
+    private static func beginPatchPattern(from hunk: [DiffLine]) -> [String] {
+        hunk.compactMap { line -> String? in
+            switch line {
+            case let .context(text), let .removed(text):
+                return text
+            case .added:
+                return nil
+            }
+        }
+    }
+
+    private static func appendBeginPatchHunk(_ hunk: [DiffLine], to result: inout [String]) {
+        for line in hunk {
+            switch line {
+            case let .context(text), let .added(text):
+                result.append(text)
+            case .removed:
+                break
+            }
         }
     }
 
@@ -218,7 +257,7 @@ extension LocalToolsSupport {
         }
         var index = max(startIndex, 0)
         while index + pattern.count <= lines.count {
-            if Array(lines[index..<(index + pattern.count)]) == pattern {
+            if lines[index..<(index + pattern.count)].elementsEqual(pattern) {
                 return index
             }
             index += 1
@@ -345,66 +384,106 @@ extension LocalToolsSupport {
             return FilePatchResult(newContent: nil, isDelete: true)
         }
 
-        let originalText: String
+        let source = PatchTextLines(
+            try originalText(for: filePatch, at: url),
+            isNewFile: filePatch.isNewFile
+        )
+        let result = try applyUnifiedDiffHunks(
+            filePatch.hunks,
+            path: filePatch.path,
+            to: source.lines
+        )
+        return FilePatchResult(
+            newContent: source.content(from: result, forceTrailingNewline: filePatch.isNewFile),
+            isDelete: false
+        )
+    }
+
+    private static func originalText(for filePatch: FilePatch, at url: URL) throws -> String {
         if filePatch.isNewFile || !FileManager.default.fileExists(atPath: url.path) {
-            originalText = ""
-        } else {
-            originalText = try String(contentsOf: url, encoding: .utf8)
+            return ""
         }
-        var originalLines = originalText.isEmpty && filePatch.isNewFile
-            ? []
-            : originalText.components(separatedBy: "\n")
-        let hadTrailingNewline = originalText.hasSuffix("\n")
-        if hadTrailingNewline, originalLines.last == "" {
-            originalLines.removeLast()
-        }
+        return try String(contentsOf: url, encoding: .utf8)
+    }
 
+    private static func applyUnifiedDiffHunks(
+        _ hunks: [DiffHunk],
+        path: String,
+        to originalLines: [String]
+    ) throws -> [String] {
         var result: [String] = []
-        var cursor = 0 // index into originalLines
+        var cursor = 0
 
-        for hunk in filePatch.hunks {
+        for hunk in hunks {
             let targetIndex = max(hunk.oldStart - 1, 0)
-            // Copy untouched lines up to the hunk start.
             if targetIndex > cursor {
                 guard targetIndex <= originalLines.count else {
-                    throw LocalToolsFeatureError.permissionDenied("Patch hunk for \(filePatch.path) starts beyond end of file.")
+                    throw LocalToolsFeatureError.permissionDenied("Patch hunk for \(path) starts beyond end of file.")
                 }
                 result.append(contentsOf: originalLines[cursor..<targetIndex])
                 cursor = targetIndex
             }
-            for diffLine in hunk.lines {
-                switch diffLine {
-                case let .context(text):
-                    guard cursor < originalLines.count else {
-                        throw LocalToolsFeatureError.permissionDenied("Patch context ran past end of \(filePatch.path).")
-                    }
-                    guard originalLines[cursor] == text else {
-                        throw LocalToolsFeatureError.permissionDenied("Patch context mismatch in \(filePatch.path) at line \(cursor + 1): expected \"\(text)\", found \"\(originalLines[cursor])\".")
-                    }
-                    result.append(text)
-                    cursor += 1
-                case let .removed(text):
-                    guard cursor < originalLines.count else {
-                        throw LocalToolsFeatureError.permissionDenied("Patch removal ran past end of \(filePatch.path).")
-                    }
-                    guard originalLines[cursor] == text else {
-                        throw LocalToolsFeatureError.permissionDenied("Patch removal mismatch in \(filePatch.path) at line \(cursor + 1): expected \"\(text)\", found \"\(originalLines[cursor])\".")
-                    }
-                    cursor += 1
-                case let .added(text):
-                    result.append(text)
-                }
-            }
+            try appendUnifiedDiffHunk(
+                hunk,
+                path: path,
+                originalLines: originalLines,
+                cursor: &cursor,
+                result: &result
+            )
         }
-        // Append any remaining lines after the last hunk.
+
         if cursor < originalLines.count {
             result.append(contentsOf: originalLines[cursor...])
         }
+        return result
+    }
 
-        var newContent = result.joined(separator: "\n")
-        if hadTrailingNewline || filePatch.isNewFile {
-            newContent += "\n"
+    private static func appendUnifiedDiffHunk(
+        _ hunk: DiffHunk,
+        path: String,
+        originalLines: [String],
+        cursor: inout Int,
+        result: inout [String]
+    ) throws {
+        for diffLine in hunk.lines {
+            switch diffLine {
+            case let .context(text):
+                try validateOriginalLine(
+                    text,
+                    path: path,
+                    originalLines: originalLines,
+                    cursor: cursor,
+                    kind: "context"
+                )
+                result.append(text)
+                cursor += 1
+            case let .removed(text):
+                try validateOriginalLine(
+                    text,
+                    path: path,
+                    originalLines: originalLines,
+                    cursor: cursor,
+                    kind: "removal"
+                )
+                cursor += 1
+            case let .added(text):
+                result.append(text)
+            }
         }
-        return FilePatchResult(newContent: newContent, isDelete: false)
+    }
+
+    private static func validateOriginalLine(
+        _ expectedText: String,
+        path: String,
+        originalLines: [String],
+        cursor: Int,
+        kind: String
+    ) throws {
+        guard cursor < originalLines.count else {
+            throw LocalToolsFeatureError.permissionDenied("Patch \(kind) ran past end of \(path).")
+        }
+        guard originalLines[cursor] == expectedText else {
+            throw LocalToolsFeatureError.permissionDenied("Patch \(kind) mismatch in \(path) at line \(cursor + 1): expected \"\(expectedText)\", found \"\(originalLines[cursor])\".")
+        }
     }
 }
