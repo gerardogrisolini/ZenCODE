@@ -50,6 +50,26 @@ struct TerminalSwiftMarkdownRendererTests {
     }
 
     @Test
+    func headingStyleIsRestoredAfterInlineCodeReset() {
+        var renderer = TerminalSwiftMarkdownRenderer()
+        let document = Document(parsing: "## Title with `code` after")
+
+        let rendered = renderer.visit(document)
+
+        #expect(rendered.contains("\u{1B}[38;5;180mcode\u{1B}[0m\u{1B}[1;38;5;75m after"))
+    }
+
+    @Test
+    func strongStyleIsRestoredAfterInlineCodeReset() {
+        var renderer = TerminalSwiftMarkdownRenderer()
+        let document = Document(parsing: "This is **bold `code` after** text")
+
+        let rendered = renderer.visit(document)
+
+        #expect(rendered.contains("\u{1B}[38;5;180mcode\u{1B}[0m\u{1B}[1m after"))
+    }
+
+    @Test
     func inlineHTMLIsRenderedInsteadOfDropped() {
         var renderer = TerminalSwiftMarkdownRenderer()
         let document = Document(parsing: "Hello <span>raw</span>")

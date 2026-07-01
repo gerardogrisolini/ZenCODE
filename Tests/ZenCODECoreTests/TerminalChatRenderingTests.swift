@@ -359,7 +359,91 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-        func subAgentOverviewRendersPlainWrappedStatusWithoutBoxDrawing() {
+    func markdownFormatterEmitsStreamingBlankLineChunks() {
+        var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
+
+        let first = formatter.consume("First paragraph.\n")
+        let blank = formatter.consume("\n")
+        let second = formatter.consume("Second paragraph.\n")
+
+        #expect(first == "First paragraph.\n")
+        #expect(blank == "\n")
+        #expect(second == "Second paragraph.\n")
+    }
+
+    @Test
+    func preservedSpacingTracksTrailingNewlinesThroughANSI() {
+        var trailingNewlineCount = 0
+
+        TerminalChat.updateTrailingNewlineCount(
+            afterPreserving: "\u{1B}[90mthinking\n\u{1B}[0m",
+            trailingNewlineCount: &trailingNewlineCount
+        )
+
+        #expect(trailingNewlineCount == 1)
+    }
+
+    @Test
+    func markdownFormatterDoesNotBufferInlinePipelineAsTableCandidate() {
+        var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
+
+        let rendered = formatter.consume("Use `cat file | grep foo | sort` now.\n")
+
+        #expect(!rendered.isEmpty)
+        #expect(rendered.contains("cat file"))
+        #expect(formatter.finish() == "")
+    }
+
+    @Test
+    func markdownFormatterRendersPipeTableAfterDelimiter() {
+        var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
+
+        let header = formatter.consume("| A | B |\n")
+        let rendered = formatter.consume("| --- | --- |\n| 1 | 2 |\n") + formatter.finish()
+
+        #expect(header == "")
+        #expect(rendered.contains("┌"))
+        #expect(rendered.contains("A"))
+        #expect(rendered.contains("1"))
+    }
+
+    @Test
+    func markdownFormatterFlushesLongListsDuringStreaming() {
+        var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
+        let list = (1...81)
+            .map { "- item \($0)" }
+            .joined(separator: "\n") + "\n"
+
+        let rendered = formatter.consume(list)
+
+        #expect(!rendered.isEmpty)
+        #expect(rendered.contains("item 1"))
+        #expect(rendered.contains("item 80"))
+    }
+
+    @Test
+    func toolAndStatusWidthsUseTerminalCellWidth() {
+        #expect(TerminalChat.displayWidth("🛠️ Tool") == TerminalANSIText.visibleWidth("🛠️ Tool"))
+        #expect(TerminalChat.displayWidth("e\u{301}") == 1)
+        #expect(TerminalStatusBar.visibleCharacterCount("🛠️ Tool") == 7)
+        #expect(TerminalStatusBar.visibleCharacterCount("你好") == 4)
+    }
+
+    @Test
+    func inputPanelRowsRespectWideCharacters() {
+        let rows = TerminalStatusBar.inputPanelDisplayRows(
+            text: "你好世界",
+            cursorIndex: 4,
+            contentWidth: 6,
+            maxRows: 10
+        )
+
+        #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) <= 6 })
+        #expect(rows.count == 3)
+    }
+
+    @Test
+    func subAgentOverviewRendersPlainWrappedStatusWithoutBoxDrawing() {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_1",
             name: "swift-scan",

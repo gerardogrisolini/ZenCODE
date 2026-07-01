@@ -174,18 +174,7 @@ extension TerminalStatusBar {
     }
     
     static func visibleCharacterCount(_ text: String) -> Int {
-        var count = 0
-        var index = text.startIndex
-        while index < text.endIndex {
-            if text[index] == "\u{1B}",
-               let end = ansiEscapeSequenceEnd(in: text, from: index) {
-                index = text.index(after: end)
-                continue
-            }
-            count += 1
-            index = text.index(after: index)
-        }
-        return count
+        TerminalANSIText.visibleWidth(text)
     }
     
     static func ansiEscapeSequenceEnd(in text: String, from start: String.Index) -> String.Index? {
@@ -211,26 +200,8 @@ extension TerminalStatusBar {
         guard width > 3, visibleCharacterCount(text) > width else {
             return text
         }
-        
-        var result = ""
-        var visibleCount = 0
-        var index = text.startIndex
-        let visibleLimit = width - 3
-        while index < text.endIndex, visibleCount < visibleLimit {
-            if text[index] == "\u{1B}",
-               let end = ansiEscapeSequenceEnd(in: text, from: index) {
-                result += text[index...end]
-                index = text.index(after: end)
-                continue
-            }
-            result.append(text[index])
-            visibleCount += 1
-            index = text.index(after: index)
-        }
-        if result.contains("\u{1B}[") {
-            result += "\u{1B}[0m"
-        }
-        return result + "..."
+
+        return TerminalANSIText.truncate(text, to: width)
     }
     
     static func padded(_ text: String, width: Int) -> String {
@@ -327,11 +298,9 @@ extension TerminalStatusBar {
             var remaining = logicalLine
             var isFirstVisualRow = true
             repeat {
-                let chunkLength = min(inputWidth, remaining.count)
-                let chunk = remaining.prefix(chunkLength)
-                if chunkLength > 0 {
-                    remaining.removeFirst(chunkLength)
-                }
+                let split = inputPanelChunk(remaining, maxWidth: inputWidth)
+                let chunk = split.chunk
+                remaining = split.remaining
                 let prefix: String
                 if rows.isEmpty && logicalLineIndex == 0 && isFirstVisualRow {
                     prefix = promptPrefix
@@ -354,6 +323,37 @@ extension TerminalStatusBar {
         )
     }
     
+    static func inputPanelChunk(
+        _ characters: [Character],
+        maxWidth: Int
+    ) -> (chunk: [Character], remaining: [Character]) {
+        guard !characters.isEmpty else {
+            return ([], [])
+        }
+
+        let widthLimit = max(1, maxWidth)
+        var width = 0
+        var endIndex = 0
+
+        for character in characters {
+            let characterWidth = TerminalANSIText.visibleWidth(String(character))
+            if endIndex > 0, width + characterWidth > widthLimit {
+                break
+            }
+            endIndex += 1
+            width += characterWidth
+            if width >= widthLimit {
+                break
+            }
+        }
+
+        let splitIndex = max(1, endIndex)
+        return (
+            Array(characters.prefix(splitIndex)),
+            Array(characters.dropFirst(splitIndex))
+        )
+    }
+
     static func visibleInputRows(
         _ rows: [String],
         maxRows: Int,

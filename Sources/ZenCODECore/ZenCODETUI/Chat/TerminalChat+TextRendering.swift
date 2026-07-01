@@ -22,7 +22,13 @@ extension TerminalChat {
     }
 
     public func writeThought(_ delta: String) {
-        guard !delta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let normalizedDelta = normalizedThoughtDelta(delta)
+        guard !normalizedDelta.isEmpty else {
+            return
+        }
+
+        guard isStreamingThoughtOutput
+                || !normalizedDelta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
 
@@ -34,14 +40,11 @@ extension TerminalChat {
                 : "🤔 Thinking:"
             writeChatError("\(title)\n")
         }
-        let normalizedDelta = normalizedThoughtDelta(delta)
-        guard !normalizedDelta.isEmpty else {
-            return
-        }
         let renderedThought = thoughtMarkdownFormatter.consume(normalizedDelta)
-        writeChatError(
-            Self.renderThoughtMarkdown(renderedThought)
-        )
+        let markdown = Self.renderThoughtMarkdown(renderedThought)
+        if !markdown.isEmpty {
+            writeChatError(markdown, preservesSpacing: true)
+        }
     }
 
     public func writeAssistantContent(_ delta: String) {
@@ -53,24 +56,27 @@ extension TerminalChat {
             return
         }
         let renderedContent = assistantMarkdownFormatter.consume(normalizedDelta)
-        if !renderedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            writeChatOutput(renderedContent)
+        if !renderedContent.isEmpty {
+            writeChatOutput(renderedContent, preservesSpacing: true)
         }
     }
 
-        public func finishAssistantContentFormatting() {
+    public func finishAssistantContentFormatting() {
         let flushed = Self.flushBoldSectionBreak(state: &assistantBoldBreakState)
         if !flushed.isEmpty {
             _ = assistantMarkdownFormatter.consume(flushed)
         }
         let renderedContent = assistantMarkdownFormatter.finish()
-        if !renderedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            writeChatOutput("\(renderedContent)\n")
+        if !renderedContent.isEmpty {
+            writeChatOutput(renderedContent, preservesSpacing: true)
+            if trailingChatNewlineCount == 0 {
+                writeChatOutput("\n")
+            }
             flushChatOutput()
         }
     }
 
-        public func writeSubmittedPrompt(_ prompt: String) {
+    public func writeSubmittedPrompt(_ prompt: String) {
         let background = "\u{1B}[48;5;236m"
         let clearToEnd = "\u{1B}[K"
         let reset = "\u{1B}[0m"
@@ -93,11 +99,10 @@ extension TerminalChat {
         if !flushed.isEmpty {
             _ = thoughtMarkdownFormatter.consume(flushed)
         }
-
-                let renderedThought = thoughtMarkdownFormatter.finish()
+        let renderedThought = thoughtMarkdownFormatter.finish()
         let markdown = Self.renderThoughtMarkdown(renderedThought)
-        if !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            writeChatError(markdown)
+        if !markdown.isEmpty {
+            writeChatError(markdown, preservesSpacing: true)
         }
         // Always emit a blank separator after the thinking block so the answer
         // never starts glued to the reasoning. chatSpacingNormalized collapses
@@ -178,8 +183,10 @@ extension TerminalChat {
         return String(text[firstContentIndex...])
     }
 
-    func writeChatOutput(_ text: String) {
-        let normalizedText = chatSpacingNormalized(text)
+    func writeChatOutput(_ text: String, preservesSpacing: Bool = false) {
+        let normalizedText = preservesSpacing
+            ? chatSpacingPreserved(text)
+            : chatSpacingNormalized(text)
         AgentOutput.standardOutput.writeString(chatLineInsetApplied(to: normalizedText))
     }
 
@@ -190,8 +197,10 @@ extension TerminalChat {
         AgentOutput.standardOutput.synchronizeFile()
     }
 
-    func writeChatError(_ text: String) {
-        let normalizedText = chatSpacingNormalized(text)
+    func writeChatError(_ text: String, preservesSpacing: Bool = false) {
+        let normalizedText = preservesSpacing
+            ? chatSpacingPreserved(text)
+            : chatSpacingNormalized(text)
         AgentOutput.standardError.writeString(chatLineInsetApplied(to: normalizedText))
     }
 
@@ -205,6 +214,14 @@ extension TerminalChat {
             text,
             trailingNewlineCount: &trailingChatNewlineCount
         )
+    }
+
+    func chatSpacingPreserved(_ text: String) -> String {
+        Self.updateTrailingNewlineCount(
+            afterPreserving: text,
+            trailingNewlineCount: &trailingChatNewlineCount
+        )
+        return text
     }
 
     static func chatSpacingNormalized(
@@ -230,6 +247,30 @@ extension TerminalChat {
             trailingNewlineCount = 0
         }
         return output
+    }
+
+    static func updateTrailingNewlineCount(
+        afterPreserving text: String,
+        trailingNewlineCount: inout Int
+    ) {
+        guard !text.isEmpty else {
+            return
+        }
+
+        let visibleText = TerminalANSIText.stripANSI(text)
+        guard !visibleText.isEmpty else {
+            return
+        }
+
+        var count = 0
+        for character in visibleText.reversed() {
+            if character == "\n" {
+                count += 1
+            } else {
+                break
+            }
+        }
+        trailingNewlineCount = count
     }
 
     func writeFailureMessage(_ text: String) {
@@ -324,7 +365,7 @@ extension TerminalChat {
             .joined(separator: "\n")
     }
 
-        static let systemMessageANSIColor = "\u{1B}[38;5;110m"
+    static let systemMessageANSIColor = "\u{1B}[38;5;110m"
 
     static func fileChangeSummaryColorApplied(to text: String, isEnabled: Bool) -> String {
         guard isEnabled, !text.isEmpty else {
@@ -354,7 +395,7 @@ extension TerminalChat {
     }
 
     static func colorFileChangeSummaryHeader(_ line: String) -> String {
-                let reset = "\u{1B}[0m"
+        let reset = "\u{1B}[0m"
         let color = fileChangeSummaryHeaderANSIColor
         let count = "\u{1B}[38;5;81m"
         let white = "\u{1B}[97m"
@@ -518,7 +559,7 @@ extension TerminalChat {
             return reset + gray
         }
 
-                var preservedCodes: [Int] = []
+        var preservedCodes: [Int] = []
         var mutedAccent: Int?
         var index = 0
         while index < rawCodes.count {

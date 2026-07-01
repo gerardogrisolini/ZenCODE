@@ -22,6 +22,8 @@ public struct TerminalMarkdownStreamFormatter {
     private static let code = "\u{1B}[38;5;180m"
     private static let maxBufferedLineLength = 240
     private static let maxMarkdownBufferedLineLength = 2_000
+    private static let maxBufferedBlockLineCount = 80
+    private static let maxBufferedBlockCharacterCount = 12_000
     
     /// Multi-line markdown constructs that must be parsed as a whole block
     /// rather than one isolated line at a time. Buffering these lets the
@@ -29,6 +31,7 @@ public struct TerminalMarkdownStreamFormatter {
     private enum BlockKind {
         case list
         case blockQuote
+        case tableCandidate
         case table
     }
     
@@ -145,9 +148,23 @@ public struct TerminalMarkdownStreamFormatter {
         }
         
         // Continue or start a multi-line block.
+        if blockKind == .tableCandidate {
+            if isTableDelimiterRow(trimmed) {
+                blockKind = .table
+                blockLines.append(line)
+                return ""
+            }
+
+            let flushed = flushBlock()
+            return flushed + handleCompleteLine(line, appendsNewline: appendsNewline)
+        }
+
         if blockKind != nil {
             if lineContinuesBlock(line, trimmed: trimmed) {
                 blockLines.append(line)
+                if shouldFlushBufferedBlock() {
+                    return flushBlock()
+                }
                 return ""
             }
             let flushed = flushBlock()
@@ -157,6 +174,9 @@ public struct TerminalMarkdownStreamFormatter {
         if let kind = blockKind(forStartLine: trimmed) {
             blockKind = kind
             blockLines = [line]
+            if shouldFlushBufferedBlock() {
+                return flushBlock()
+            }
             return ""
         }
         
@@ -171,6 +191,8 @@ public struct TerminalMarkdownStreamFormatter {
             return kind == .list
         }
         switch kind {
+        case .tableCandidate:
+            return false
         case .list:
             // List markers, indented continuation lines, or nested content.
             if isListMarker(trimmed) {
@@ -180,7 +202,7 @@ public struct TerminalMarkdownStreamFormatter {
         case .blockQuote:
             return trimmed.hasPrefix(">")
         case .table:
-            return trimmed.contains("|")
+            return isPotentialTableRow(trimmed)
         }
     }
     
@@ -191,8 +213,8 @@ public struct TerminalMarkdownStreamFormatter {
         if isListMarker(trimmed) {
             return .list
         }
-        if isTableRow(trimmed) {
-            return .table
+        if isPotentialTableHeader(trimmed) {
+            return .tableCandidate
         }
         return nil
     }
@@ -209,12 +231,89 @@ public struct TerminalMarkdownStreamFormatter {
         return isOrderedListMarker(in: trimmed)
     }
     
-    private func isTableRow(_ trimmed: String) -> Bool {
-        // A pipe-delimited row that is not just inline text containing a pipe.
-        guard trimmed.contains("|") else {
+    private func isPotentialTableHeader(_ trimmed: String) -> Bool {
+        guard !isTableDelimiterRow(trimmed) else {
             return false
         }
-        return trimmed.hasPrefix("|") || trimmed.filter { $0 == "|" }.count >= 2
+        return isPotentialTableRow(trimmed)
+    }
+
+    private func isPotentialTableRow(_ trimmed: String) -> Bool {
+        // A table candidate is confirmed only if the following line is a markdown
+        // delimiter row. This one-line candidate state avoids buffering ordinary
+        // prose or shell pipelines that happen to contain pipe characters.
+        pipeCountOutsideInlineCode(in: trimmed) > 0
+    }
+
+    private func isTableDelimiterRow(_ trimmed: String) -> Bool {
+        let cells = tableCells(in: trimmed)
+        guard cells.count >= 2 else {
+            return false
+        }
+        return cells.allSatisfy(isTableDelimiterCell)
+    }
+
+    private func tableCells(in row: String) -> [String] {
+        var body = row.trimmingCharacters(in: .whitespaces)
+        if body.first == "|" {
+            body.removeFirst()
+        }
+        if body.last == "|" {
+            body.removeLast()
+        }
+        return body
+            .split(separator: "|", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    private func isTableDelimiterCell(_ cell: String) -> Bool {
+        var body = cell.trimmingCharacters(in: .whitespaces)
+        guard !body.isEmpty else {
+            return false
+        }
+        if body.first == ":" {
+            body.removeFirst()
+        }
+        if body.last == ":" {
+            body.removeLast()
+        }
+        return body.count >= 3 && body.allSatisfy { $0 == "-" }
+    }
+
+    private func pipeCountOutsideInlineCode(in line: String) -> Int {
+        var count = 0
+        var activeBacktickRunLength: Int?
+        var index = line.startIndex
+
+        while index < line.endIndex {
+            if line[index] == "`" {
+                let runLength = backtickRunLength(in: line, from: index)
+                if activeBacktickRunLength == runLength {
+                    activeBacktickRunLength = nil
+                } else if activeBacktickRunLength == nil {
+                    activeBacktickRunLength = runLength
+                }
+                index = line.index(index, offsetBy: runLength)
+                continue
+            }
+
+            if line[index] == "|", activeBacktickRunLength == nil {
+                count += 1
+            }
+            index = line.index(after: index)
+        }
+
+        return count
+    }
+
+    private func backtickRunLength(in line: String, from start: String.Index) -> Int {
+        var length = 0
+        var index = start
+        while index < line.endIndex, line[index] == "`" {
+            length += 1
+            index = line.index(after: index)
+        }
+        return length
     }
     
     /// Renders and clears the buffered multi-line block, parsing it as a single
@@ -236,6 +335,16 @@ public struct TerminalMarkdownStreamFormatter {
         let document = Document(parsing: source)
         let rendered = renderer.visit(document)
         return wrapIfNeeded(rendered) + "\n"
+    }
+
+    private func shouldFlushBufferedBlock() -> Bool {
+        guard blockKind != .tableCandidate else {
+            return false
+        }
+        if blockLines.count >= Self.maxBufferedBlockLineCount {
+            return true
+        }
+        return blockLines.reduce(0) { $0 + $1.count } >= Self.maxBufferedBlockCharacterCount
     }
 
     private func compactListBlockLines(_ lines: [String]) -> [String] {

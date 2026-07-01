@@ -97,7 +97,7 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
         let style = Self.headingStyles[level - 1]
         let prefix = String(repeating: "#", count: level)
         let body = renderChildren(of: heading)
-        return "\(style)\(prefix) \(body)\(Self.reset)"
+        return applyStyle(style, to: "\(prefix) \(body)")
     }
 
     mutating func visitBlockQuote(_ blockQuote: BlockQuote) -> String {
@@ -116,9 +116,9 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
                 // Lines already indented from nested content get aligned
                 // under the quote text column.
                 if line.first == " " || line.first == "\t" {
-                    return "\(prefix)\(Self.dim)\(indent)\(line)\(Self.reset)"
+                    return "\(prefix)\(applyStyle(Self.dim, to: "\(indent)\(line)"))"
                 }
-                return "\(prefix)\(Self.dim)\(line)\(Self.reset)"
+                return "\(prefix)\(applyStyle(Self.dim, to: String(line)))"
             }
             .joined(separator: "\n")
         return quoted
@@ -178,15 +178,15 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     }
 
     mutating func visitStrong(_ strong: Strong) -> String {
-        "\(Self.bold)\(renderChildren(of: strong))\(Self.reset)"
+        applyStyle(Self.bold, to: renderChildren(of: strong))
     }
 
     mutating func visitEmphasis(_ emphasis: Emphasis) -> String {
-        "\(Self.italic)\(renderChildren(of: emphasis))\(Self.reset)"
+        applyStyle(Self.italic, to: renderChildren(of: emphasis))
     }
 
     mutating func visitStrikethrough(_ strikethrough: Strikethrough) -> String {
-        "\(Self.strikethrough)\(renderChildren(of: strikethrough))\(Self.reset)"
+        applyStyle(Self.strikethrough, to: renderChildren(of: strikethrough))
     }
 
     mutating func visitLink(_ link: Link) -> String {
@@ -199,7 +199,7 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
         if supportsHyperlinks {
             let open = "\u{1B}]8;;\(destination)\u{1B}\u{5C}"
             let close = "\u{1B}]8;;\u{1B}\u{5C}"
-            return "\(open)\(Self.link)\(label)\(Self.reset)\(close)"
+            return "\(open)\(applyStyle(Self.link, to: label))\(close)"
         }
         let displayURL: String
         if destination.count > Self.maxFallbackURLWidth {
@@ -207,7 +207,7 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
         } else {
             displayURL = destination
         }
-        return "\(Self.link)\(label)\(Self.reset) \(Self.dim)<\(displayURL)>\(Self.reset)"
+        return "\(applyStyle(Self.link, to: label)) \(Self.dim)<\(displayURL)>\(Self.reset)"
     }
 
     mutating func visitImage(_ image: Image) -> String {
@@ -257,6 +257,14 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
             rendered.append(visit(child))
         }
         return rendered.joined(separator: separator)
+    }
+
+    private func applyStyle(_ style: String, to content: String) -> String {
+        let restyled = content.replacingOccurrences(
+            of: Self.reset,
+            with: "\(Self.reset)\(style)"
+        )
+        return "\(style)\(restyled)\(Self.reset)"
     }
 
     /// Indents the rendered content of a nested list one level deeper than its
@@ -464,11 +472,7 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     }
 
     private func styleTableHeaderCell(_ cell: String) -> String {
-        let restyled = cell.replacingOccurrences(
-            of: Self.reset,
-            with: "\(Self.reset)\(Self.tableHeader)"
-        )
-        return "\(Self.tableHeader)\(restyled)\(Self.reset)"
+        applyStyle(Self.tableHeader, to: cell)
     }
 
     private func padCell(

@@ -265,12 +265,7 @@ extension TerminalChat {
     }
 
     static func displayWidth(_ text: String) -> Int {
-        text.unicodeScalars.reduce(0) { result, scalar in
-            guard scalar.value >= 0x20 else {
-                return result
-            }
-            return result + (scalar.value >= 0x1100 ? 2 : 1)
-        }
+        TerminalANSIText.visibleWidth(text)
     }
 
     func writeToolBlock(_ lines: [String]) {
