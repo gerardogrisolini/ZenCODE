@@ -343,4 +343,35 @@ extension TerminalChatRenderingTests {
         #expect(detailLines.contains { $0.contains("\"path\"") })
         #expect(detailLines.contains { $0.contains("/tmp/project/Sources/App.swift") })
     }
+
+    @Test
+    func applyPatchParametersRenderPatchAsMultilineBlock() {
+        let patch = """
+        *** Begin Patch
+        *** Update File: Sources/App.swift
+        @@
+        -old
+        +new
+        *** End Patch
+        """
+        let toolCall = DirectAgentToolCall(
+            id: "call_1",
+            name: "local.applyPatch",
+            argumentsObject: [
+                "patch": patch
+            ],
+            argumentsJSON: "{}"
+        )
+
+        let lines = TerminalChat.detailedToolCallStartedLines(
+            for: toolCall,
+            level: .detail
+        )
+
+        #expect(lines.contains("parameters:"))
+        #expect(lines.contains { $0.contains("\"patch\": \"\"\"") })
+        #expect(lines.contains { $0.contains("*** Begin Patch") })
+        #expect(lines.contains { $0.contains("*** End Patch") })
+        #expect(!lines.contains { $0.contains(#"\n"#) })
+    }
 }

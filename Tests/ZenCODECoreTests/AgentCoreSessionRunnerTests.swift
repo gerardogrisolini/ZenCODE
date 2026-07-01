@@ -192,6 +192,56 @@ struct AgentCoreSessionRunnerTests {
         #expect(await runner.snapshotSession(id: sessionID)?.history == compaction.snapshot.history)
         #expect(await backend.lastCreatedHistory() == compaction.snapshot.history)
     }
+
+    @Test
+    func compactSessionUsesRuntimeContextWindowOverrideWhenConfigurationHasNoLimit() async throws {
+        let backend = CapturingAgentRuntimeBackend()
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in backend }
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        var history: [AgentRuntimeMessage] = []
+        for index in 0..<8 {
+            history.append(
+                AgentRuntimeMessage(
+                    role: .user,
+                    content: "Older request \(index) " + String(repeating: "details ", count: 80)
+                )
+            )
+            history.append(
+                AgentRuntimeMessage(
+                    role: .assistant,
+                    content: "Older response \(index) " + String(repeating: "answer ", count: 80)
+                )
+            )
+        }
+        history.append(AgentRuntimeMessage(role: .user, content: "Newest request"))
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: "System instructions.",
+            cacheKey: "cache-key",
+            history: history,
+            allowedToolNames: []
+        )
+
+        try await runner.createSession(configuration: configuration)
+        _ = try await runner.preloadModel(configuration: configuration, onEvent: { _ in })
+        let result = try await runner.compactSession(
+            id: sessionID,
+            force: true,
+            maxTokensOverride: 1_000
+        )
+
+        let compaction = try #require(result)
+        #expect(compaction.wasCompacted)
+        #expect(compaction.maxTokens == 1_000)
+        #expect(compaction.snapshot.systemPrompt?.contains(AgentConversationCompactionSupport.memorySummaryHeader) == true)
+        #expect(compaction.snapshot.history.count < history.count)
+        #expect(await runner.snapshotSession(id: sessionID)?.history == compaction.snapshot.history)
+        #expect(await backend.lastCreatedHistory() == compaction.snapshot.history)
+    }
 }
 
 private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {

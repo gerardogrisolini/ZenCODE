@@ -136,6 +136,20 @@ struct TerminalChatRenderingTests {
         #expect(rendered.contains("Secondo"))
     }
 
+    @Test
+    func markdownFormatterCompactsLooseListBlankLines() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+        let rendered = formatter.consume("1. Primo\n\n2. Secondo\n") + formatter.finish()
+
+        #expect(rendered.contains("Primo"))
+        #expect(rendered.contains("Secondo"))
+        #expect(!rendered.contains("\n\n"))
+    }
+
 
 
     @Test

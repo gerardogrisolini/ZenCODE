@@ -167,9 +167,8 @@ public struct TerminalMarkdownStreamFormatter {
         guard let kind = blockKind else {
             return false
         }
-        // A blank line ends the current block.
         if trimmed.isEmpty {
-            return false
+            return kind == .list
         }
         switch kind {
         case .list:
@@ -226,7 +225,10 @@ public struct TerminalMarkdownStreamFormatter {
             blockLines = []
             return ""
         }
-        let source = sanitizedMarkdownSource(blockLines.joined(separator: "\n"))
+        let sourceLines = blockKind == .list
+            ? compactListBlockLines(blockLines)
+            : blockLines
+        let source = sanitizedMarkdownSource(sourceLines.joined(separator: "\n"))
         blockKind = nil
         blockLines = []
         
@@ -234,6 +236,12 @@ public struct TerminalMarkdownStreamFormatter {
         let document = Document(parsing: source)
         let rendered = renderer.visit(document)
         return wrapIfNeeded(rendered) + "\n"
+    }
+
+    private func compactListBlockLines(_ lines: [String]) -> [String] {
+        lines.filter { line in
+            !line.trimmingCharacters(in: .whitespaces).isEmpty
+        }
     }
     
     private mutating func renderCompleteLine(

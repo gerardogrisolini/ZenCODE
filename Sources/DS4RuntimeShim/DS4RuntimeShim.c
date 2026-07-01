@@ -286,6 +286,21 @@ const char *zencode_ds4_engine_model_name(zencode_ds4_engine *engine) {
     return engine->sym.engine_model_name(engine->engine);
 }
 
+zencode_ds4_think_mode zencode_ds4_engine_effective_think_mode(
+    zencode_ds4_engine *engine,
+    zencode_ds4_think_mode think_mode,
+    int ctx_size
+) {
+    if (!engine || !engine->engine || !engine->sym.think_mode_for_context) {
+        return think_mode;
+    }
+    int resolved_ctx = ctx_size > 0 ? ctx_size : 65536;
+    return (zencode_ds4_think_mode)engine->sym.think_mode_for_context(
+        (ds4_think_mode)think_mode,
+        resolved_ctx
+    );
+}
+
 const char *zencode_ds4_backend_name(zencode_ds4_backend backend) {
     switch (backend) {
     case ZENCODE_DS4_BACKEND_METAL:

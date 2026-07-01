@@ -71,6 +71,11 @@ int zencode_ds4_engine_open(
 
 void zencode_ds4_engine_close(zencode_ds4_engine *engine);
 const char *zencode_ds4_engine_model_name(zencode_ds4_engine *engine);
+zencode_ds4_think_mode zencode_ds4_engine_effective_think_mode(
+    zencode_ds4_engine *engine,
+    zencode_ds4_think_mode think_mode,
+    int ctx_size
+);
 const char *zencode_ds4_backend_name(zencode_ds4_backend backend);
 
 int zencode_ds4_session_create(

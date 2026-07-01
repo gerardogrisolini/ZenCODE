@@ -22,6 +22,9 @@ struct DS4ParsedGeneratedMessage {
 enum DS4ToolBridge {
     static let toolCallsStart = "<｜DSML｜tool_calls>"
     static let toolCallsEnd = "</｜DSML｜tool_calls>"
+    static var toolCallStartMarkers: [String] {
+        syntaxes.map(\.toolCallsStart)
+    }
     static let syntaxReminder = """
     DSML syntax reminder:
     <｜DSML｜tool_calls>
@@ -245,7 +248,9 @@ enum DS4ToolBridge {
                 let end = text.index(index, offsetBy: syntax.toolCallsEnd.count)
                 return (calls, String(text[start..<end]))
             }
-            guard text.hasPrefix(syntax.invokeStart, at: index) else {
+
+            let invokeSyntax = syntaxForInvokeTag(at: index, in: text)
+            guard let invokeSyntax else {
                 throw DS4ToolBridgeError.invalidDSML("expected invoke tag")
             }
             let tagEnd = try text.tagEnd(from: index)
@@ -259,11 +264,11 @@ enum DS4ToolBridge {
             var argumentObject: [String: AnyHashable] = [:]
             while true {
                 index = text.skippingASCIIWhitespace(from: index)
-                if text.hasPrefix(syntax.invokeEnd, at: index) {
-                    index = text.index(index, offsetBy: syntax.invokeEnd.count)
+                if text.hasPrefix(invokeSyntax.invokeEnd, at: index) {
+                    index = text.index(index, offsetBy: invokeSyntax.invokeEnd.count)
                     break
                 }
-                guard text.hasPrefix(syntax.parameterStart, at: index) else {
+                guard text.hasPrefix(invokeSyntax.parameterStart, at: index) else {
                     throw DS4ToolBridgeError.invalidDSML("expected parameter tag")
                 }
                 let parameterTagEnd = try text.tagEnd(from: index)
@@ -274,7 +279,7 @@ enum DS4ToolBridge {
                 let isString = (attribute("string", in: parameterTag) ?? "true") == "true"
                 let valueStart = text.index(after: parameterTagEnd)
                 guard let valueEnd = text.range(
-                    of: syntax.parameterEnd,
+                    of: invokeSyntax.parameterEnd,
                     range: valueStart..<text.endIndex
                 )?.lowerBound else {
                     throw DS4ToolBridgeError.invalidDSML("parameter without closing tag")
@@ -291,7 +296,7 @@ enum DS4ToolBridge {
                     argumentObject[parameterName] = anyHashableJSONValue(from: minified)
                 }
                 argumentPairs.append("\(jsonString(parameterName)):\(valueJSON)")
-                index = text.index(valueEnd, offsetBy: syntax.parameterEnd.count)
+                index = text.index(valueEnd, offsetBy: invokeSyntax.parameterEnd.count)
             }
             let argumentsJSON = "{\(argumentPairs.joined(separator: ","))}"
             calls.append(
@@ -302,6 +307,18 @@ enum DS4ToolBridge {
                 )
             )
         }
+    }
+
+    private static func syntaxForInvokeTag(
+        at index: String.Index,
+        in text: String
+    ) -> Syntax? {
+        for syntax in syntaxes {
+            if text.hasPrefix(syntax.invokeStart, at: index) {
+                return syntax
+            }
+        }
+        return nil
     }
 
     private static func attribute(_ name: String, in tag: String) -> String? {

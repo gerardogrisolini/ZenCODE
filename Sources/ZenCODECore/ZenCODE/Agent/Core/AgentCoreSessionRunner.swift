@@ -240,17 +240,26 @@ public actor AgentCoreSessionRunner {
 
     public func compactSession(
         id sessionID: String,
-        force: Bool = true
+        force: Bool = true,
+        maxTokensOverride: Int? = nil
     ) async throws -> AgentRuntimeSessionCompactionResult? {
         if activePromptTaskIDsBySessionID[sessionID]?.isEmpty == false {
             throw AgentCoreSessionRunnerError.cannotCompactDuringActivePrompt(sessionID)
         }
 
         let result: AgentRuntimeSessionCompactionResult?
-        if let backendResult = await backend?.compactSession(id: sessionID, force: force) {
+        if let backendResult = await backend?.compactSession(
+            id: sessionID,
+            force: force,
+            maxTokensOverride: maxTokensOverride
+        ) {
             result = backendResult
         } else {
-            result = compactStoredSession(id: sessionID, force: force)
+            result = compactStoredSession(
+                id: sessionID,
+                force: force,
+                maxTokensOverride: maxTokensOverride
+            )
         }
         guard let result else {
             return nil
@@ -572,7 +581,8 @@ public actor AgentCoreSessionRunner {
 
     private func compactStoredSession(
         id sessionID: String,
-        force: Bool
+        force: Bool,
+        maxTokensOverride: Int?
     ) -> AgentRuntimeSessionCompactionResult? {
         let baseConfiguration: AgentCoreSessionConfiguration
         let currentSnapshot: AgentRuntimeSessionSnapshot
@@ -589,7 +599,7 @@ public actor AgentCoreSessionRunner {
 
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             currentSnapshot.compactionInputMessages,
-            maxTokens: baseConfiguration.configuredContextWindowLimit,
+            maxTokens: maxTokensOverride ?? baseConfiguration.configuredContextWindowLimit,
             force: force
         )
         guard result.wasCompacted else {
@@ -621,4 +631,3 @@ public actor AgentCoreSessionRunner {
         return await defaultToolAuthorizationHandler(request)
     }
 }
-

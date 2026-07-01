@@ -155,6 +155,20 @@ final class DS4Engine {
         return String(cString: cString)
     }
 
+    func effectiveThinkMode(
+        _ thinkMode: zencode_ds4_think_mode,
+        contextWindow: Int
+    ) -> zencode_ds4_think_mode {
+        guard let pointer else {
+            return thinkMode
+        }
+        return zencode_ds4_engine_effective_think_mode(
+            pointer,
+            thinkMode,
+            Int32(contextWindow)
+        )
+    }
+
     fileprivate static func withErrorBuffer(
         _ body: (UnsafeMutablePointer<CChar>, Int) throws -> Int32
     ) rethrows -> (returnCode: Int32, error: String) {
@@ -213,13 +227,14 @@ final class DS4Session: @unchecked Sendable {
         topP: Float,
         minP: Float,
         seed: UInt64,
-        thinkMode: zencode_ds4_think_mode
+        thinkMode: zencode_ds4_think_mode,
+        onChunk: (@Sendable (String) -> Void)? = nil
     ) throws -> DS4GenerationResult {
         guard let pointer else {
             throw DS4RuntimeError.generationFailed("session already closed")
         }
 
-        let collector = DS4ChunkCollector()
+        let collector = DS4ChunkCollector(onChunk: onChunk)
         var stats = zencode_ds4_generation_stats()
         let userData = Unmanaged.passUnretained(collector).toOpaque()
         let message = DS4Engine.withErrorBuffer { errorBuffer, errorLength in
@@ -246,6 +261,7 @@ final class DS4Session: @unchecked Sendable {
             }
             return prompt.withCString { generate($0) }
         }
+        collector.finish()
         guard message.returnCode == 0 else {
             throw DS4RuntimeError.generationFailed(message.error)
         }
@@ -273,6 +289,85 @@ final class DS4Session: @unchecked Sendable {
 
 private final class DS4ChunkCollector {
     var data = Data()
+
+    private let onChunk: (@Sendable (String) -> Void)?
+    private var streamDecoder = DS4UTF8StreamDecoder()
+
+    init(onChunk: (@Sendable (String) -> Void)?) {
+        self.onChunk = onChunk
+    }
+
+    func append(_ buffer: UnsafeBufferPointer<UInt8>) {
+        data.append(buffer)
+        guard let onChunk else {
+            return
+        }
+        let text = streamDecoder.consume(buffer)
+        if !text.isEmpty {
+            onChunk(text)
+        }
+    }
+
+    func finish() {
+        guard let onChunk else {
+            return
+        }
+        let text = streamDecoder.finish()
+        if !text.isEmpty {
+            onChunk(text)
+        }
+    }
+}
+
+struct DS4UTF8StreamDecoder {
+    private var pendingBytes: [UInt8] = []
+
+    mutating func consume(_ bytes: [UInt8]) -> String {
+        bytes.withUnsafeBufferPointer { buffer in
+            consume(buffer)
+        }
+    }
+
+    mutating func consume(_ buffer: UnsafeBufferPointer<UInt8>) -> String {
+        guard !buffer.isEmpty else {
+            return ""
+        }
+        pendingBytes.append(contentsOf: buffer)
+        return emitCompletePrefix()
+    }
+
+    mutating func finish() -> String {
+        guard !pendingBytes.isEmpty else {
+            return ""
+        }
+        defer {
+            pendingBytes.removeAll(keepingCapacity: true)
+        }
+        return String(decoding: pendingBytes, as: UTF8.self)
+    }
+
+    private mutating func emitCompletePrefix() -> String {
+        let maxSuffixLength = min(3, pendingBytes.count)
+        for suffixLength in 0...maxSuffixLength {
+            let prefixLength = pendingBytes.count - suffixLength
+            guard prefixLength > 0 else {
+                continue
+            }
+            let prefix = pendingBytes.prefix(prefixLength)
+            if let text = String(bytes: prefix, encoding: .utf8) {
+                pendingBytes.removeFirst(prefixLength)
+                return text
+            }
+        }
+
+        guard pendingBytes.count > 3 else {
+            return ""
+        }
+        defer {
+            pendingBytes.removeAll(keepingCapacity: true)
+        }
+        return String(decoding: pendingBytes, as: UTF8.self)
+    }
 }
 
 private let ds4ChunkCollectorCallback: zencode_ds4_emit_fn = { userData, bytes, length in
@@ -286,7 +381,7 @@ private let ds4ChunkCollectorCallback: zencode_ds4_emit_fn = { userData, bytes, 
         start: UnsafeRawPointer(bytes).assumingMemoryBound(to: UInt8.self),
         count: length
     )
-    collector.data.append(buffer)
+    collector.append(buffer)
 }
 
 private func withOptionalCString<Result>(

@@ -222,9 +222,12 @@ extension TerminalChat {
 
     public func compactCurrentSession() async {
         do {
+            let runtimeMaxTokens = statusBar.currentContextWindowStatus()?.maxTokens
+                .flatMap { $0 > 0 ? $0 : nil }
             guard let result = try await sessionRunner.compactSession(
                 id: sessionID,
-                force: true
+                force: true,
+                maxTokensOverride: runtimeMaxTokens
             ) else {
                 writeSystemMessage(
                     "Nothing to compact yet. The session may be too short or the current model has no context-window limit.\n"

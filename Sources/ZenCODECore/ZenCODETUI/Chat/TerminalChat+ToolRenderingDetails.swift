@@ -77,8 +77,63 @@ extension TerminalChat {
             return []
         }
         var lines = ["parameters:"]
-        lines.append(contentsOf: indentedSnippet(pretty, level: level))
+        let formatted = formattedParameterSnippet(for: toolCall.argumentsObject)
+        if formatted.preservesIndentation {
+            lines.append(contentsOf: indentedSnippetPreservingIndentation(formatted.text, level: level))
+        } else {
+            lines.append(contentsOf: indentedSnippet(formatted.text, level: level))
+        }
         return lines
+    }
+
+    static func formattedParameterSnippet(
+        for arguments: [String: Any]
+    ) -> (text: String, preservesIndentation: Bool) {
+        let entries = arguments
+            .map { (key: $0.key, value: JSONValue(jsonObject: $0.value)) }
+            .sorted { $0.key < $1.key }
+        guard entries.contains(where: { shouldRenderParameterAsMultilineString($0.value) }) else {
+            return (JSONValue(jsonObject: arguments).prettyPrinted(), false)
+        }
+
+        var lines = ["{"]
+        for (index, entry) in entries.enumerated() {
+            let suffix = index == entries.count - 1 ? "" : ","
+            let key = JSONValue.string(entry.key).compactString(sortedKeys: true)
+            let valueLines = formattedParameterValueLines(entry.value)
+            for (lineIndex, valueLine) in valueLines.enumerated() {
+                let lineSuffix = lineIndex == valueLines.count - 1 ? suffix : ""
+                if lineIndex == 0 {
+                    lines.append("  \(key): \(valueLine)\(lineSuffix)")
+                } else {
+                    lines.append("  \(valueLine)\(lineSuffix)")
+                }
+            }
+        }
+        lines.append("}")
+        return (lines.joined(separator: "\n"), true)
+    }
+
+    static func shouldRenderParameterAsMultilineString(_ value: JSONValue) -> Bool {
+        guard case let .string(text) = value else {
+            return false
+        }
+        return text.contains("\n") && !text.contains("\"\"\"")
+    }
+
+    static func formattedParameterValueLines(_ value: JSONValue) -> [String] {
+        if case let .string(text) = value,
+           shouldRenderParameterAsMultilineString(value) {
+            let contentLines = text
+                .trimmingCharacters(in: .newlines)
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init)
+            return ["\"\"\""] + contentLines + ["\"\"\""]
+        }
+        return value
+            .prettyPrinted()
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
     }
 
     static func appliedChangeDetailLines(
@@ -311,6 +366,30 @@ extension TerminalChat {
             }
         }
 
+        let visibleLines = Array(lines.prefix(lineLimit))
+        var output = visibleLines.isEmpty
+            ? ["\(indentation)<empty>"]
+            : visibleLines.map { "\(indentation)\($0)" }
+        if lines.count > visibleLines.count || text.count > snippet.count {
+            output.append("\(indentation)... truncated")
+        }
+        return output
+    }
+
+    static func indentedSnippetPreservingIndentation(
+        _ text: String,
+        indentation: String = "  ",
+        level: ToolOutputDetailLevel = .medium
+    ) -> [String] {
+        let characterLimit = snippetCharacterLimit(for: level)
+        let lineLimit = snippetLineLimit(for: level)
+        var snippet = text.trimmingCharacters(in: .newlines)
+        if snippet.count > characterLimit {
+            snippet = String(snippet.prefix(characterLimit))
+        }
+        let lines = snippet
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
         let visibleLines = Array(lines.prefix(lineLimit))
         var output = visibleLines.isEmpty
             ? ["\(indentation)<empty>"]

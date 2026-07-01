@@ -91,5 +91,95 @@ struct DS4TranscriptSplitterTests {
         #expect(result.content == "ab")
         #expect(result.thought == "reasoning")
     }
+
+    @Test
+    func streamingFilterSplitsThoughtAndContent() {
+        var filter = DS4StreamingOutputFilter(startsInThinking: true)
+        var parts = filter.consume("reasoning</th")
+        parts += filter.consume("ink>visible")
+        parts += filter.finish()
+
+        let result = render(parts)
+        #expect(result.thought == "reasoning")
+        #expect(result.content == "visible")
+    }
+
+    @Test
+    func streamingFilterSuppressesToolCallsAcrossChunks() {
+        let marker = DS4ToolBridge.toolCallsStart
+        let splitIndex = marker.index(marker.startIndex, offsetBy: 5)
+        var filter = DS4StreamingOutputFilter(startsInThinking: false)
+        var parts = filter.consume("visible " + String(marker[..<splitIndex]))
+        parts += filter.consume(String(marker[splitIndex...]) + "\n<｜DSML｜invoke name=\"noop\">")
+        parts += filter.finish()
+
+        let result = render(parts)
+        #expect(result.content == "visible ")
+        #expect(result.thought.isEmpty)
+    }
+
+    @Test
+    func streamingFilterDoesNotLeakPartialToolMarker() {
+        let marker = DS4ToolBridge.toolCallsStart
+        let splitIndex = marker.index(marker.startIndex, offsetBy: 3)
+        var filter = DS4StreamingOutputFilter(startsInThinking: false)
+
+        let firstParts = render(filter.consume("prefix " + String(marker[..<splitIndex])))
+        #expect(firstParts.content == "prefix ")
+
+        let result = render(
+            filter.consume(String(marker[splitIndex...]) + " hidden") + filter.finish()
+        )
+        #expect(result.content.isEmpty)
+        #expect(result.thought.isEmpty)
+    }
+
+    @Test
+    func streamingFilterSuppressesToolCallsInsideThinking() {
+        let marker = DS4ToolBridge.toolCallsStart
+        let splitIndex = marker.index(marker.startIndex, offsetBy: 5)
+        var filter = DS4StreamingOutputFilter(startsInThinking: true)
+
+        var parts = filter.consume("reasoning " + String(marker[..<splitIndex]))
+        parts += filter.consume(String(marker[splitIndex...]) + "\n<｜DSML｜invoke name=\"noop\">")
+        parts += filter.finish()
+
+        let result = render(parts)
+        #expect(result.thought == "reasoning ")
+        #expect(result.content.isEmpty)
+    }
+
+    @Test
+    func utf8StreamDecoderBuffersSplitScalars() {
+        var decoder = DS4UTF8StreamDecoder()
+        let bytes = Array("ciao 🙂".utf8)
+        let splitIndex = bytes.count - 2
+
+        let first = decoder.consume(Array(bytes[..<splitIndex]))
+        let second = decoder.consume(Array(bytes[splitIndex...]))
+
+        #expect(first + second + decoder.finish() == "ciao 🙂")
+        #expect(!first.contains("\u{FFFD}"))
+        #expect(!second.contains("\u{FFFD}"))
+    }
+
+    @Test
+    func streamingFilterSuppressesToolMarkerSplitInsideUTF8Scalar() {
+        let marker = DS4ToolBridge.toolCallsStart
+        let markerBytes = Array(marker.utf8)
+        var decoder = DS4UTF8StreamDecoder()
+        var filter = DS4StreamingOutputFilter(startsInThinking: false)
+
+        let firstText = decoder.consume(Array(markerBytes.prefix(2)))
+        let firstParts = render(filter.consume("prefix " + firstText))
+        #expect(firstParts.content == "prefix ")
+
+        let secondBytes = Array(markerBytes.dropFirst(2)) + Array(" hidden".utf8)
+        let secondText = decoder.consume(secondBytes) + decoder.finish()
+        let result = render(filter.consume(secondText) + filter.finish())
+
+        #expect(result.content.isEmpty)
+        #expect(result.thought.isEmpty)
+    }
 }
 #endif

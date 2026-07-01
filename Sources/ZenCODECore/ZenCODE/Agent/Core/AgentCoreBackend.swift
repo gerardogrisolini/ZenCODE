@@ -72,8 +72,10 @@ public actor AgentCoreBackend {
 
     public func compactSession(
         id sessionID: String,
-        force: Bool = true
+        force: Bool = true,
+        maxTokensOverride: Int? = nil
     ) async -> AgentRuntimeSessionCompactionResult? {
+        let maxTokens = maxTokensOverride ?? configuration.configuredContextWindowLimit
         if let activeBackend {
             if let result = await activeBackend.compactSession(id: sessionID, force: force) {
                 updateSessionSeed(from: result.snapshot)
@@ -82,7 +84,7 @@ public actor AgentCoreBackend {
             guard let snapshot = await activeBackend.snapshotSession(id: sessionID),
                   let result = compactSnapshot(
                     snapshot,
-                    maxTokens: configuration.configuredContextWindowLimit,
+                    maxTokens: maxTokens,
                     force: force
                   ) else {
                 return nil
@@ -104,7 +106,7 @@ public actor AgentCoreBackend {
         guard let seed = sessions[sessionID],
               let result = compactSnapshot(
                 seedSnapshot(id: sessionID, seed: seed),
-                maxTokens: configuration.configuredContextWindowLimit,
+                maxTokens: maxTokens,
                 force: force
               ) else {
             return nil

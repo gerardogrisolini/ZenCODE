@@ -219,7 +219,11 @@ actor DS4CoderBackend: AgentRuntimeBackend {
         )
 
         for round in 0..<maxToolRounds {
-            let result = try await sharedEngine.generate(
+            let generationStartsInThinking = try await sharedEngine.effectiveThinkMode(
+                thinkMode,
+                contextWindow: options.contextWindow
+            ).rawValue != ZENCODE_DS4_THINK_NONE.rawValue
+            let result = try await streamGeneration(
                 ds4Session,
                 prompt: nextPrompt,
                 maxTokens: maxTokens,
@@ -228,7 +232,9 @@ actor DS4CoderBackend: AgentRuntimeBackend {
                 topP: options.topP,
                 minP: options.minP,
                 seed: options.seed,
-                thinkMode: thinkMode
+                thinkMode: thinkMode,
+                startsInThinking: generationStartsInThinking,
+                onEvent: onEvent
             )
             nextPrompt = nil
             lastStopReason = Self.finishReason(from: result.stats.finish_reason)
@@ -246,10 +252,8 @@ actor DS4CoderBackend: AgentRuntimeBackend {
                 case .content(let text):
                     visibleText += text
                     accumulatedVisibleText += text
-                    await onEvent(.content(text))
                 case .thought(let text):
                     reasoningText += text
-                    await onEvent(.thought(text))
                 }
             }
 
@@ -330,6 +334,70 @@ actor DS4CoderBackend: AgentRuntimeBackend {
             stopReason: lastStopReason,
             modelID: options.modelID
         )
+    }
+
+    private func streamGeneration(
+        _ ds4Session: DS4Session,
+        prompt: String?,
+        maxTokens: Int,
+        temperature: Float,
+        topK: Int,
+        topP: Float,
+        minP: Float,
+        seed: UInt64,
+        thinkMode: zencode_ds4_think_mode,
+        startsInThinking: Bool,
+        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> DS4GenerationResult {
+        let (chunks, continuation) = AsyncStream<String>.makeStream()
+        let streamingTask = Task {
+            var filter = DS4StreamingOutputFilter(startsInThinking: startsInThinking)
+            for await chunk in chunks {
+                for part in filter.consume(chunk) {
+                    await Self.emitStreamingPart(part, onEvent: onEvent)
+                }
+            }
+            for part in filter.finish() {
+                await Self.emitStreamingPart(part, onEvent: onEvent)
+            }
+        }
+
+        do {
+            let result = try await sharedEngine.generate(
+                ds4Session,
+                prompt: prompt,
+                maxTokens: maxTokens,
+                temperature: temperature,
+                topK: topK,
+                topP: topP,
+                minP: minP,
+                seed: seed,
+                thinkMode: thinkMode,
+                onChunk: { chunk in
+                    continuation.yield(chunk)
+                }
+            )
+            continuation.finish()
+            await streamingTask.value
+            return result
+        } catch {
+            continuation.finish()
+            streamingTask.cancel()
+            await streamingTask.value
+            throw error
+        }
+    }
+
+    private static func emitStreamingPart(
+        _ part: DS4TranscriptSplitter.Part,
+        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async {
+        switch part {
+        case .content(let text):
+            await onEvent(.content(text))
+        case .thought(let text):
+            await onEvent(.thought(text))
+        }
     }
 
     func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? {
@@ -503,7 +571,8 @@ actor DS4SharedEngine {
         topP: Float,
         minP: Float,
         seed: UInt64,
-        thinkMode: zencode_ds4_think_mode
+        thinkMode: zencode_ds4_think_mode,
+        onChunk: (@Sendable (String) -> Void)? = nil
     ) throws -> DS4GenerationResult {
         try session.generate(
             prompt: prompt,
@@ -513,8 +582,16 @@ actor DS4SharedEngine {
             topP: topP,
             minP: minP,
             seed: seed,
-            thinkMode: thinkMode
+            thinkMode: thinkMode,
+            onChunk: onChunk
         )
+    }
+
+    func effectiveThinkMode(
+        _ thinkMode: zencode_ds4_think_mode,
+        contextWindow: Int
+    ) throws -> zencode_ds4_think_mode {
+        try ensureEngine().effectiveThinkMode(thinkMode, contextWindow: contextWindow)
     }
 
     private func ensureEngine() throws -> DS4Engine {
