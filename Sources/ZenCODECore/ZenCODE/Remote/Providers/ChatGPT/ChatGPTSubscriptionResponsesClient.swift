@@ -68,6 +68,7 @@ public struct ChatGPTSubscriptionResponsesClient {
         sessionID: String,
         cachedWebSocketInput: JSONValue? = nil,
         previousResponseID: String? = nil,
+        allowsFreshWebSocketContinuation: Bool = false,
         toolPayloads: JSONValue = .array([]),
         maxOutputTokens: Int? = nil,
         onEvent: ([String: Any]) async throws -> Void
@@ -90,6 +91,7 @@ public struct ChatGPTSubscriptionResponsesClient {
                     body: body,
                     cachedInput: cachedWebSocketInput,
                     previousResponseID: previousResponseID,
+                    allowsFreshContinuation: allowsFreshWebSocketContinuation,
                     sessionID: sessionID,
                     onEvent: onEvent
                 )
@@ -219,6 +221,7 @@ public struct ChatGPTSubscriptionResponsesClient {
         body: [String: Any],
         cachedInput: JSONValue?,
         previousResponseID: String?,
+        allowsFreshContinuation: Bool,
         sessionID: String,
         onEvent: ([String: Any]) async throws -> Void
     ) async throws -> StreamCompletion {
@@ -246,7 +249,7 @@ public struct ChatGPTSubscriptionResponsesClient {
                     body: body,
                     cachedInput: cachedInput,
                     previousResponseID: previousResponseID,
-                    useCachedContinuation: lease.isReused
+                    useCachedContinuation: lease.isReused || allowsFreshContinuation
                 )
             ).jsonData(
                 outputFormatting: [.withoutEscapingSlashes]

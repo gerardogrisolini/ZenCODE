@@ -133,7 +133,7 @@ Inside chat mode, type a prompt and press return. Commands start with `/`:
 - `/changes`: show the latest tracked file change summary.
 - `/changes diff`: include patches in the change summary.
 - `/undo`: revert the most recent tracked file changes created by the agent.
-- `/plan [goal]`: delegate planning to one or more read-only `Planner` sub-agents. With no goal, the command infers the activity to plan from the current conversation and visible project context.
+- `/plan <goal>`: delegate planning for an explicit goal to one or more read-only `Planner` sub-agents. With no goal, the command reports the missing goal and does not create sub-agents.
   This command requires the `orchestration` tool group; enable it with `/tools` or switch to a profile that includes it.
 - `/review [focus]`: delegate code review to one or more read-only `Reviewer` sub-agents. The command reviews only the tracked file changes made during the current session; an optional focus is applied within those session changes.
   This command requires the `orchestration` tool group; enable it with `/tools` or switch to a profile that includes it.
@@ -178,10 +178,11 @@ The `Planner` profile is a built-in read-only planning profile. It is intended f
 Use `/plan` from a normal implementation session when you want a planning pass before editing:
 
 ```text
-/plan
 /plan add archived-memory filtering to the memory search UI
 /plan update docs and tests for the new Planner agent
 ```
+
+`/plan` requires the goal as an argument; run `/plan <goal>` rather than a bare `/plan`.
 
 `/plan` keeps the current agent profile as the planning director and creates `Planner` sub-agents through the orchestration tools. The delegated planners run with `isolationMode "report"` and a read-only planning tool allowlist, so they can inspect but must not modify the workspace. After the planners finish, the director consolidates their output into one actionable plan for the loop `/plan -> implementation work -> /review`.
 
@@ -297,7 +298,7 @@ Start a fresh, unsaved session:
 /sessions new
 ```
 
-Local MLX sessions save the runtime snapshot. Remote sessions save the local transcript, including tool calls and outputs, so compatible providers can reuse context when the restored prompt prefix matches. `/sessions compact` rewrites the active runtime context by summarizing older turns into the system prompt and keeping recent messages; provider continuations and runtime caches are regenerated as needed on later prompts.
+Local MLX sessions save the runtime snapshot. Remote sessions save the local transcript, including tool calls, outputs, and provider replay metadata. ChatGPT subscription sessions persist response continuation metadata so a restored session can resume with a small delta request when the provider still accepts the previous response id. Anthropic subscription sessions replay signed thinking blocks and use one-hour prompt-cache breakpoints so compatible restored prefixes can be read from cache instead of being fully reprocessed. `/sessions compact` rewrites the active runtime context by summarizing older turns into the system prompt and keeping recent messages; provider continuations and runtime caches are regenerated as needed on later prompts.
 
 When `/sessions <name>` saves a session, `ZenCODE` updates one active global resume pointer for that project while leaving pointers for other projects intact. `/sessions save` rewrites that active saved session; if no saved session is active yet, it saves a new session named after your first prompt. `/sessions compact` only updates the active conversation; run `/sessions save` afterwards if you want the compacted state persisted. `/sessions new` resets the conversation and starts a fresh, unsaved session.
 
@@ -422,6 +423,7 @@ zen --mlx \
 - Model not found: run `/models` or check `~/.zencode/settings.json`; in `zen --mlx` mode check `~/.zencode/mlx/models.json`.
 - No tools available: use `/tools`, switch to a profile that permits tools, or check ACP client tool exposure.
 - `/feature` unavailable: switch to the Builder agent with `/agents Builder`.
+- `/plan` says a goal is required: rerun it as `/plan <goal>` with the activity you want planned.
 - `/plan` says orchestration is required: enable the `orchestration` tool group with `/tools`, or switch to an agent profile that includes it.
 - `/review` says orchestration is required: enable the `orchestration` tool group with `/tools`, or switch to an agent profile that includes it.
 - Xcode tools missing: make sure Xcode is running and MCP bridge tooling can expose tools. For Xcode 27 ACP setup, see [Xcode 27 ACP setup](xcode.md).

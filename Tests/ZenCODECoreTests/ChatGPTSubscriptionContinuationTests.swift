@@ -79,6 +79,61 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionRestoresContinuationFromSavedResponseID() throws {
+        let history = [
+            AgentRuntimeMessage(role: .user, content: "First prompt"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "First answer",
+                providerResponseID: "resp_saved"
+            )
+        ]
+        var messages = RemoteGenerationClient.initialMessages(
+            cwd: "/tmp/project",
+            systemPrompt: "System prompt",
+            history: history,
+            allowedToolNames: []
+        )
+        let continuation = try #require(
+            ChatGPTSubscriptionGenerationClient.restoredContinuation(from: messages)
+        )
+        messages.append(
+            RemoteGenerationClient.remoteMessage(
+                role: "user",
+                content: "Next prompt",
+                attachments: []
+            )
+        )
+        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: messages,
+            continuation: continuation
+        )
+        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
+            input: JSONValue.acpValue(from: payload.input),
+            model: "gpt-5.5",
+            instructions: payload.instructions ?? "",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "session-chatgpt"
+        )
+        let resumedPayload = ChatGPTSubscriptionResponsesClient.webSocketRequestPayload(
+            body: body,
+            cachedInput: payload.cachedWebSocketInput.map { JSONValue.acpValue(from: $0) },
+            previousResponseID: payload.previousResponseID,
+            useCachedContinuation: continuation.allowsFreshTransport
+        )
+
+        #expect(continuation.responseID == "resp_saved")
+        #expect(continuation.messageCount == 3)
+        #expect(continuation.instructions == "System prompt")
+        #expect(continuation.allowsFreshTransport)
+        #expect(payload.previousResponseID == "resp_saved")
+        #expect(payload.cachedWebSocketInput?.count == 1)
+        #expect(resumedPayload["previous_response_id"] as? String == "resp_saved")
+        #expect((resumedPayload["input"] as? [Any])?.count == 1)
+    }
+
+    @Test
     func chatGPTSubscriptionFullReplayDropsPlainReasoningTextFallback() throws {
         let messages: [[String: Any]] = [
             ["role": "system", "content": "System prompt"],

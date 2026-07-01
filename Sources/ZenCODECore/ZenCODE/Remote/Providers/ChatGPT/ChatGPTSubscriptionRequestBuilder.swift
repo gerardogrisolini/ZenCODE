@@ -11,11 +11,18 @@ public struct ChatGPTSubscriptionContinuationState: Equatable, Sendable {
     public let responseID: String
     public let messageCount: Int
     public let instructions: String
+    public let allowsFreshTransport: Bool
 
-    public init(responseID: String, messageCount: Int, instructions: String) {
+    public init(
+        responseID: String,
+        messageCount: Int,
+        instructions: String,
+        allowsFreshTransport: Bool = false
+    ) {
         self.responseID = responseID
         self.messageCount = messageCount
         self.instructions = instructions
+        self.allowsFreshTransport = allowsFreshTransport
     }
 }
 

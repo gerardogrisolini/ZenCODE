@@ -16,6 +16,7 @@ extension ChatGPTSubscriptionGenerationClient {
         reasoningText: String,
         toolCalls: [DirectAgentToolCall],
         reasoningItemsJSON: String? = nil,
+        responseID: String? = nil,
         to messages: inout [[String: Any]]
     ) {
         var message: [String: Any] = [
@@ -27,6 +28,9 @@ extension ChatGPTSubscriptionGenerationClient {
         }
         if let reasoningItemsJSON = reasoningItemsJSON?.nilIfBlank {
             message["reasoning_items"] = reasoningItemsJSON
+        }
+        if let responseID = responseID?.nilIfBlank {
+            message["response_id"] = responseID
         }
         if !toolCalls.isEmpty {
             message["tool_calls"] = toolCalls.map { toolCall in

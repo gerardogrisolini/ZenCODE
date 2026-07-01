@@ -211,11 +211,15 @@ extension AnthropicSubscriptionGenerationClient {
 
 
     static func cacheControl() -> [String: Any] {
-        ["type": "ephemeral"]
+        ["type": "ephemeral", "ttl": "1h"]
     }
 
     static func oauthBetaHeader(forModelID modelID: String) -> String {
-        var headers = [claudeCodeBetaHeader, oauthBetaHeader]
+        var headers = [
+            claudeCodeBetaHeader,
+            oauthBetaHeader,
+            extendedCacheTTLHeader
+        ]
         if !usesAdaptiveThinking(modelID: modelID) {
             headers.append(interleavedThinkingBetaHeader)
         }

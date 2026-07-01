@@ -21,21 +21,22 @@ extension ChatGPTSubscriptionGenerationClient {
         thinkingSelection: AgentThinkingSelection? = nil,
         preserveThinking: Bool = false
     ) {
+        let messages = RemoteGenerationClient.initialMessages(
+            cwd: cwd,
+            systemPrompt: systemPrompt,
+            history: history,
+            allowedToolNames: allowedToolNames
+        )
         sessions[id] = AgentSession(
             id: id,
             cwd: cwd,
             systemPrompt: systemPrompt,
             cacheKey: cacheKey,
-            messages: RemoteGenerationClient.initialMessages(
-                cwd: cwd,
-                systemPrompt: systemPrompt,
-                history: history,
-                allowedToolNames: allowedToolNames
-            ),
+            messages: messages,
             allowedToolNames: allowedToolNames,
             thinkingSelection: thinkingSelection,
             preserveThinking: preserveThinking,
-            continuation: nil,
+            continuation: Self.restoredContinuation(from: messages),
             chatGPTSessionID: nil
         )
     }
@@ -163,6 +164,36 @@ extension ChatGPTSubscriptionGenerationClient {
             thinkingSelection: session.thinkingSelection,
             preserveThinking: session.preserveThinking
         )
+    }
+
+    static func restoredContinuation(
+        from messages: [[String: Any]]
+    ) -> ChatGPTSubscriptionContinuationState? {
+        let payload = ChatGPTSubscriptionRequestBuilder.chatGPTResponsesInputPayload(
+            from: messages
+        )
+        let instructions = payload.instructions?.nilIfBlank ?? ""
+
+        for index in messages.indices.reversed() {
+            let message = messages[index]
+            let role = (message["role"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard role == "assistant",
+                  let responseID = RemoteGenerationClient.stringValue(message["response_id"])?.nilIfBlank
+                    ?? RemoteGenerationClient.stringValue(message["provider_response_id"])?.nilIfBlank else {
+                continue
+            }
+
+            return ChatGPTSubscriptionContinuationState(
+                responseID: responseID,
+                messageCount: index + 1,
+                instructions: instructions,
+                allowsFreshTransport: true
+            )
+        }
+
+        return nil
     }
 }
 

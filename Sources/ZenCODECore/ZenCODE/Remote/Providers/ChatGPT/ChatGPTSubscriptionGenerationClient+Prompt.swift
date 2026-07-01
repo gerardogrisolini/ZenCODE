@@ -104,6 +104,9 @@ extension ChatGPTSubscriptionGenerationClient {
                     from: toolCatalog.wireMessages(from: session.messages),
                     continuation: session.continuation
                 )
+                let usesRestoredContinuation = session.continuation?.allowsFreshTransport == true
+                    && requestPayload.previousResponseID?.nilIfBlank != nil
+                    && requestPayload.cachedWebSocketInput != nil
                 let expectsPromptCache = RemoteGenerationClient.messagesExpectPromptCache(
                     session.messages
                 )
@@ -126,6 +129,7 @@ extension ChatGPTSubscriptionGenerationClient {
                             JSONValue.acpValue(from: $0)
                         },
                         previousResponseID: requestPayload.previousResponseID,
+                        allowsFreshWebSocketContinuation: usesRestoredContinuation,
                         toolPayloads: JSONValue.acpValue(from: toolPayloads),
                         maxOutputTokens: configuration.maxOutputTokens
                     ) { object in
@@ -136,6 +140,17 @@ extension ChatGPTSubscriptionGenerationClient {
                         }
                     }
                 } catch {
+                    if usesRestoredContinuation,
+                       Self.isContinuationReplayRejected(error) {
+                        session.continuation = nil
+                        sessions[sessionID] = session
+                        await onEvent(
+                            .diagnostic(
+                                "ChatGPT restored continuation was rejected; retrying with full conversation replay."
+                            )
+                        )
+                        continue
+                    }
                     guard Self.isContextLimitError(error), !didRetryAfterContextLimit else {
                         throw error
                     }
@@ -192,6 +207,7 @@ extension ChatGPTSubscriptionGenerationClient {
                     reasoningText: streamResult.reasoningText,
                     toolCalls: streamResult.toolCalls,
                     reasoningItemsJSON: streamResult.reasoningItemsJSON,
+                    responseID: streamResult.latestResponseID,
                     to: &session.messages
                 )
                 if let responseID = streamResult.latestResponseID?.nilIfBlank {

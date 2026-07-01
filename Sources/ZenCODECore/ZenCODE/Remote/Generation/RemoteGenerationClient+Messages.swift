@@ -103,6 +103,18 @@ extension RemoteGenerationClient {
            let reasoningContent = message.reasoningContent?.nilIfBlank {
             payload["reasoning_content"] = reasoningContent
         }
+        if message.role == .assistant,
+           let reasoningItemsJSON = message.reasoningItemsJSON?.nilIfBlank {
+            payload["reasoning_items"] = reasoningItemsJSON
+        }
+        if message.role == .assistant,
+           let thinkingBlocksJSON = message.thinkingBlocksJSON?.nilIfBlank {
+            payload["thinking_blocks"] = thinkingBlocksJSON
+        }
+        if message.role == .assistant,
+           let providerResponseID = message.providerResponseID?.nilIfBlank {
+            payload["response_id"] = providerResponseID
+        }
         if message.role == .tool {
             if let toolCallID = message.toolCallID {
                 payload["tool_call_id"] = toolCallID

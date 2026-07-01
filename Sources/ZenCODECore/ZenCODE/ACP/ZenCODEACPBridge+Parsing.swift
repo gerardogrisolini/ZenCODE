@@ -42,13 +42,35 @@ extension ZenCODEACPBridge {
             let rawRole = (object["role"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()
-            let content = (object["content"] as? String ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !content.isEmpty,
-                  let role = AgentRuntimeMessage.Role(rawValue: rawRole) else {
+            let content = RemoteGenerationClient.contentString(from: object["content"])?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let toolCalls = RemoteGenerationClient.runtimeToolCalls(from: object)
+            let reasoningContent = RemoteGenerationClient.stringValue(object["reasoning_content"])?
+                .nilIfBlank
+            let reasoningItemsJSON = RemoteGenerationClient.stringValue(object["reasoning_items"])?
+                .nilIfBlank
+            let thinkingBlocksJSON = RemoteGenerationClient.stringValue(object["thinking_blocks"])?
+                .nilIfBlank
+            guard let role = AgentRuntimeMessage.Role(rawValue: rawRole),
+                  !content.isEmpty
+                    || reasoningContent != nil
+                    || reasoningItemsJSON != nil
+                    || thinkingBlocksJSON != nil
+                    || !toolCalls.isEmpty else {
                 return nil
             }
-            return AgentRuntimeMessage(role: role, content: content)
+            return AgentRuntimeMessage(
+                role: role,
+                content: content,
+                reasoningContent: reasoningContent,
+                reasoningItemsJSON: reasoningItemsJSON,
+                thinkingBlocksJSON: thinkingBlocksJSON,
+                providerResponseID: RemoteGenerationClient.stringValue(object["response_id"])?.nilIfBlank
+                    ?? RemoteGenerationClient.stringValue(object["provider_response_id"])?.nilIfBlank,
+                toolCalls: toolCalls,
+                toolCallID: RemoteGenerationClient.stringValue(object["tool_call_id"])?.nilIfBlank,
+                toolName: RemoteGenerationClient.stringValue(object["name"])?.nilIfBlank
+            )
         }
     }
 

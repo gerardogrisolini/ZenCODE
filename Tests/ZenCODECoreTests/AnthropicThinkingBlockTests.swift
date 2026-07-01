@@ -136,6 +136,55 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
+    func savedSessionRoundTripPreservesThinkingBlocksForResumeReplay() {
+        let thinkingBlocksJSON = #"[{"type":"thinking","thinking":"step","signature":"sig"}]"#
+        let history = [
+            AgentRuntimeMessage(role: .user, content: "Hello"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "Working on it.",
+                thinkingBlocksJSON: thinkingBlocksJSON
+            )
+        ]
+        let messages = RemoteGenerationClient.initialMessages(
+            cwd: "/tmp/project",
+            systemPrompt: "System.",
+            history: history,
+            allowedToolNames: []
+        )
+        let snapshot = RemoteGenerationClient.snapshotMessages(from: messages)
+        let restoredMessages = RemoteGenerationClient.initialMessages(
+            cwd: "/tmp/project",
+            systemPrompt: snapshot.systemPrompt,
+            history: snapshot.history,
+            allowedToolNames: []
+        )
+        let payload = AnthropicSubscriptionGenerationClient.anthropicMessagesPayload(
+            from: restoredMessages,
+            includeThinkingBlocks: true
+        )
+        let assistant = payload.messages.first { ($0["role"] as? String) == "assistant" }
+        let assistantBlocks = assistant?["content"] as? [[String: Any]]
+
+        #expect(snapshot.history.last?.thinkingBlocksJSON == thinkingBlocksJSON)
+        #expect(assistantBlocks?.first?["type"] as? String == "thinking")
+        #expect(assistantBlocks?.first?["signature"] as? String == "sig")
+    }
+
+    @Test
+    func anthropicCacheControlUsesOneHourTTLForSavedSessionResume() {
+        let cacheControl = AnthropicSubscriptionGenerationClient.cacheControl()
+
+        #expect(cacheControl["type"] as? String == "ephemeral")
+        #expect(cacheControl["ttl"] as? String == "1h")
+        #expect(
+            AnthropicSubscriptionGenerationClient.oauthBetaHeader(
+                forModelID: "claude-sonnet-4-20250514"
+            ).contains("extended-cache-ttl")
+        )
+    }
+
+    @Test
     func cacheUsageDiagnosticReportsHitRate() {
         let usage = RemoteGenerationUsage(
             promptTokens: 1_000,

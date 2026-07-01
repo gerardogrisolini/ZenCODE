@@ -26,6 +26,43 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func remoteInitialMessagesRoundTripProviderReplayMetadata() {
+        let reasoningItemsJSON = #"[{"type":"reasoning","id":"rs_1","encrypted_content":"state","summary":[]}]"#
+        let thinkingBlocksJSON = #"[{"type":"thinking","thinking":"step","signature":"sig"}]"#
+        let history = [
+            AgentRuntimeMessage(role: .user, content: "First prompt"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "First answer",
+                reasoningItemsJSON: reasoningItemsJSON,
+                thinkingBlocksJSON: thinkingBlocksJSON,
+                providerResponseID: "resp_first"
+            )
+        ]
+        let messages = RemoteGenerationClient.initialMessages(
+            cwd: "/tmp/project",
+            systemPrompt: "System prompt",
+            history: history,
+            allowedToolNames: []
+        )
+        let snapshot = RemoteGenerationClient.snapshotMessages(from: messages)
+        let restoredMessages = RemoteGenerationClient.initialMessages(
+            cwd: "/tmp/project",
+            systemPrompt: snapshot.systemPrompt,
+            history: snapshot.history,
+            allowedToolNames: []
+        )
+        let assistant = restoredMessages.first {
+            ($0["role"] as? String) == "assistant"
+        }
+
+        #expect(snapshot.history == history)
+        #expect(assistant?["reasoning_items"] as? String == reasoningItemsJSON)
+        #expect(assistant?["thinking_blocks"] as? String == thinkingBlocksJSON)
+        #expect(assistant?["response_id"] as? String == "resp_first")
+    }
+
+    @Test
     func remoteClientSnapshotUsesLocalTranscript() async {
         let history = remoteHistory()
         let configuration = AgentRuntimeConfiguration(

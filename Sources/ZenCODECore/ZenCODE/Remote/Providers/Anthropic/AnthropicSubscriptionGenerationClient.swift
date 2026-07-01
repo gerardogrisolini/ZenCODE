@@ -31,6 +31,7 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
     static let claudeCodeBetaHeader = "claude-code-20250219"
     static let oauthBetaHeader = "oauth-2025-04-20"
     static let interleavedThinkingBetaHeader = "interleaved-thinking-2025-05-14"
+    static let extendedCacheTTLHeader = "extended-cache-ttl-2025-04-11"
     static let minimumOutputTokensForThinking = 1_024
 
     public let configuration: AgentRuntimeConfiguration

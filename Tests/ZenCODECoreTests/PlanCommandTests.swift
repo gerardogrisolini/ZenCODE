@@ -22,6 +22,49 @@ struct PlanCommandTests {
     }
 
     @Test
+    func planCommandRequiresExplicitGoalArgument() throws {
+        let descriptor = try #require(
+            TerminalChat.visibleCommandDescriptors(
+                builderAgentEnabled: false,
+                telegramEnabled: false,
+                voiceEnabled: false
+            ).first(where: { $0.command == "/plan" })
+        )
+
+        #expect(descriptor.requiresArgument)
+        #expect(descriptor.help.contains("/plan <goal>"))
+        #expect(!descriptor.help.contains("/plan [goal]"))
+    }
+
+    @Test
+    func barePlanCommandStopsBeforeDelegatingToPlanner() throws {
+        let configuration = try AgentConfiguration(
+            hostedModelID: "mlx-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: URL(
+                fileURLWithPath: "/tmp/ZenCODE-plan-command",
+                isDirectory: true
+            )
+        )
+        let terminal = TerminalChat(
+            configuration: configuration,
+            stdinIsTerminal: false
+        )
+        terminal.selectedToolKeys.insert("orchestration")
+
+        let action = terminal.handlePlanCommand("/plan")
+
+        switch action {
+        case .continueChat:
+            break
+        case .runHiddenPrompt(_):
+            Issue.record("Bare /plan should not create a hidden delegation prompt")
+        default:
+            Issue.record("Bare /plan should only continue the chat after reporting the missing goal")
+        }
+    }
+
+    @Test
     func plannerToolAllowlistExcludesMutatingTools() {
         let planner = AgentProfile(
             id: AgentProfileStore.plannerAgentID.uuidString,
@@ -96,6 +139,7 @@ struct PlanCommandTests {
         #expect(prompt.contains("agent.wait"))
         #expect(prompt.contains("/plan -> implementation work -> /review"))
         #expect(prompt.contains("Do not edit any files yourself in this planning turn"))
+        #expect(!prompt.contains("infer the activity to plan"))
         #expect(!prompt.contains("local.writeFile"))
         #expect(!prompt.contains("local.exec"))
         #expect(!prompt.contains("git.add"))

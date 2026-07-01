@@ -44,6 +44,11 @@ extension TerminalChat {
         let argument = String(command.dropFirst("/plan".count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
+        guard !argument.isEmpty else {
+            writeFailureMessage(Self.planMissingGoalMessage)
+            return .continueChat
+        }
+
         if !isOrchestrationToolEnabled {
             writeFailureMessage(
                 """
@@ -58,9 +63,7 @@ extension TerminalChat {
         let plannerProfile = plannerProfileForDelegation()
 
         writeSystemMessage(
-            argument.isEmpty
-                ? "Starting planning pass via Planner sub-agents...\n"
-                : "Starting planning pass for requested goal via Planner sub-agents...\n"
+            "Starting planning pass for requested goal via Planner sub-agents...\n"
         )
 
         return .runHiddenPrompt(
@@ -70,6 +73,10 @@ extension TerminalChat {
             )
         )
     }
+
+    static let planMissingGoalMessage =
+        "ZenCODE: /plan requires a goal. "
+        + "Use /plan <goal> to describe what should be planned.\n"
 
     /// Resolves the Planner profile used to configure delegated sub-agents.
     /// Prefers a user-configured "Planner" profile from agents.json and falls
@@ -110,21 +117,11 @@ extension TerminalChat {
             .map { "\"\($0)\"" }
             .joined(separator: ", ")
 
-        let goalSection: String
-        if goal.isEmpty {
-            goalSection = """
-                Planning goal: infer the activity to plan from the current conversation, \
-                the latest user request, and the visible project context. If the goal is \
-                genuinely ambiguous, have the Planner identify the ambiguity and propose \
-                the minimum clarifying question before implementation starts.
-                """
-        } else {
-            goalSection = """
-                Planning goal requested by the user: \(goal)
-                Plan only this requested activity unless the conversation clearly provides \
-                required constraints.
-                """
-        }
+        let goalSection = """
+            Planning goal requested by the user: \(goal)
+            Plan only this requested activity unless the conversation clearly provides \
+            required constraints.
+            """
 
         return """
             You are the director of this planning pass. Stay on your current agent profile: \

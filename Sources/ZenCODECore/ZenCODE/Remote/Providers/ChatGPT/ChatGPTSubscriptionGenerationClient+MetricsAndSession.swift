@@ -143,6 +143,22 @@ extension ChatGPTSubscriptionGenerationClient {
             return selection.rawValue
         }
     }
+
+    static func isContinuationReplayRejected(_ error: Error) -> Bool {
+        let message = (error as? LocalizedError)?.errorDescription
+            ?? error.localizedDescription
+        let normalizedMessage = message.lowercased()
+        let mentionsContinuation = normalizedMessage.contains("previous_response")
+            || normalizedMessage.contains("previous response")
+            || normalizedMessage.contains("response id")
+            || normalizedMessage.contains("response_id")
+        let rejectsContinuation = normalizedMessage.contains("not found")
+            || normalizedMessage.contains("invalid")
+            || normalizedMessage.contains("expired")
+            || normalizedMessage.contains("unknown")
+
+        return mentionsContinuation && rejectsContinuation
+    }
 }
 
 #endif

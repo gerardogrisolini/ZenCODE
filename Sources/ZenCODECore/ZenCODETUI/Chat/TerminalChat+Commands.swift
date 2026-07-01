@@ -282,7 +282,8 @@ extension TerminalChat {
         TerminalChatCommandDescriptor(
             command: "/plan",
             summary: "plan work via sub-agents",
-            help: "/plan [goal] spawns Planner sub-agents (read-only) to produce an actionable implementation plan before work starts."
+            help: "/plan <goal> spawns Planner sub-agents (read-only) to produce an actionable implementation plan before work starts.",
+            requiresArgument: true
         ),
                 TerminalChatCommandDescriptor(
             command: "/review",

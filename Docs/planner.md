@@ -24,12 +24,12 @@ The built-in `/plan` read-only tool set includes local read/list tools, text uti
 ## Running A Plan
 
 ```text
-/plan
+/plan <goal>
 ```
 
-With no argument, `ZenCODE` asks the Planner to infer the activity to plan from the current conversation and visible project context.
+`ZenCODE` requires an explicit planning goal. If you run `/plan` without an argument, it reports the missing goal and does not create Planner sub-agents.
 
-To plan a specific activity, pass a goal:
+Pass the activity to plan as the command argument:
 
 ```text
 /plan add support for archived memories in the memory search UI

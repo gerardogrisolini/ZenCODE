@@ -384,6 +384,10 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                 role: role,
                 content: content,
                 reasoningContent: reasoningContent(from: message),
+                reasoningItemsJSON: stringValue(message["reasoning_items"])?.nilIfBlank,
+                thinkingBlocksJSON: stringValue(message["thinking_blocks"])?.nilIfBlank,
+                providerResponseID: stringValue(message["response_id"])?.nilIfBlank
+                    ?? stringValue(message["provider_response_id"])?.nilIfBlank,
                 attachments: imageAttachments,
                 toolCalls: runtimeToolCalls(from: message),
                 toolCallID: stringValue(message["tool_call_id"])?.nilIfBlank,
