@@ -4,6 +4,7 @@
 //
 //  Created by Gerardo Grisolini on 21/06/26.
 //
+
 import Foundation
 
 extension TerminalChat {

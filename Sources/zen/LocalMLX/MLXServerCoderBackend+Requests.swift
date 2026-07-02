@@ -111,5 +111,4 @@ extension MLXServerCoderBackend {
         }
     }
 }
-
 #endif

@@ -230,5 +230,4 @@ extension MLXServerCoderBackend {
         }
     }
 }
-
 #endif

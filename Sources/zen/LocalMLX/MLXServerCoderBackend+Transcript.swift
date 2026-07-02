@@ -226,5 +226,4 @@ extension MLXServerCoderBackend {
         JSONValue(jsonObject: object).compactString(sortedKeys: true)
     }
 }
-
 #endif

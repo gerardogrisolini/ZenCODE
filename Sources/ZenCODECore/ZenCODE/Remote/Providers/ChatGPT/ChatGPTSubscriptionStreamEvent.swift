@@ -4,6 +4,7 @@
 //
 //  Created by Gerardo Grisolini on 15/06/26.
 //
+
 #if os(macOS)
 import Foundation
 
@@ -23,5 +24,4 @@ enum ChatGPTSubscriptionStreamEvent: Sendable {
     case contextWindow(DirectAgentContextWindowStatus)
     case completed(stopReason: String?)
 }
-
 #endif

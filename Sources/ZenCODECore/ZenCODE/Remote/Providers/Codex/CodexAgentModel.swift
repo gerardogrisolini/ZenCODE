@@ -4,6 +4,7 @@
 //
 //  Created by Gerardo Grisolini on 26/05/26.
 //
+
 import Foundation
 
 public struct CodexAgentCredentials: Codable, Equatable, Sendable {
@@ -286,7 +287,6 @@ public nonisolated enum CodexAgentModel {
         }
         return Data(base64Encoded: base64)
     }
-
 #endif
 }
 

@@ -2,8 +2,9 @@
 //  SubscriptionPromptCacheIntegrationTests.swift
 //  ZenCODE
 //
-//  Created by OpenAI Codex on 28/06/26.
+//  Created by Gerardo Grisolini on 28/06/26.
 //
+
 #if os(macOS)
 import Foundation
 @testable import ZenCODECore

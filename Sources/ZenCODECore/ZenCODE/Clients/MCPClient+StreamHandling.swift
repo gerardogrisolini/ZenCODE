@@ -4,13 +4,14 @@
 //
 //  Created by Gerardo Grisolini on 26/05/26.
 //
+
 #if canImport(Darwin)
+
 import Darwin
 #endif
 import Foundation
 
 #if os(macOS)
-
 extension MCPClient {
     public nonisolated static func readLoop(from handle: FileHandle, client: MCPClient) async {
         let fileDescriptor = handle.fileDescriptor

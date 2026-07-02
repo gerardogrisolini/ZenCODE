@@ -4,6 +4,7 @@
 //
 //  Created by Gerardo Grisolini on 09/06/26.
 //
+
 import Foundation
 
 public enum ExternalToolAvailability {

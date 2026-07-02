@@ -4,7 +4,9 @@
 //
 //  Created for Linux compatibility.
 //
+
 #if os(Linux)
+
 import Synchronization
 
 /// Linux compatibility shim for the subset of `OSAllocatedUnfairLock` used by ZenCODE.

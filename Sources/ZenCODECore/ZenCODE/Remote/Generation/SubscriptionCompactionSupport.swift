@@ -8,6 +8,7 @@
 //  the per-provider clients only differ where their behaviour genuinely
 //  diverges.
 //
+
 #if os(macOS)
 import Foundation
 
@@ -110,5 +111,4 @@ enum SubscriptionCompactionSupport {
             || normalizedMessage.contains("exceeded maximum")
     }
 }
-
 #endif

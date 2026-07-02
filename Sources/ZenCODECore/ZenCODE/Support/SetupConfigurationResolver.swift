@@ -7,6 +7,7 @@
 //  configuration value and, when loading fails, asks the operator whether the
 //  file should be overwritten with defaults.
 //
+
 import Foundation
 
 public enum SetupConfigurationResolution<Value> {

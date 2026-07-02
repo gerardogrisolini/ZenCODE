@@ -4,6 +4,7 @@
 //
 //  Created by Gerardo Grisolini on 15/06/26.
 //
+
 #if os(macOS)
 import Foundation
 
@@ -200,5 +201,4 @@ public enum ChatGPTSubscriptionRequestBuilder {
         return max(Int((Double(data.count) / 4.0).rounded(.up)), 1)
     }
 }
-
 #endif

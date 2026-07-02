@@ -119,5 +119,4 @@ int zencode_ds4_session_ctx(zencode_ds4_session *session);
 #ifdef __cplusplus
 }
 #endif
-
 #endif

@@ -4,6 +4,7 @@
 //
 //  Created by Gerardo Grisolini on 13/06/26.
 //
+
 import Foundation
 import ZenCODECore
 import ZenPackageMetadata
@@ -441,5 +442,4 @@ private enum ZenCODEMLXUnavailableError: LocalizedError {
         }
     }
 }
-
 #endif

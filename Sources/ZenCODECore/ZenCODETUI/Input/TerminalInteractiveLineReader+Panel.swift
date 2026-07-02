@@ -379,9 +379,7 @@ extension TerminalInteractiveLineReader {
         if hasActiveCommandSuggestionsLocked() {
             return "↑/↓ select · Tab complete · Enter choose"
         }
-        return panelIsProcessing
-            ? "Enter queue · Option+Enter newline · Ctrl+T tools · Esc stop"
-            : "Enter send · Option+Enter newline · Ctrl+T tools · Esc clear"
+        return "Enter queue · Option+Enter newline · Ctrl+T tools · Esc stop"
     }
 
     struct CommandSuggestionSelection {

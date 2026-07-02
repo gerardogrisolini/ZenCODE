@@ -62,5 +62,4 @@ extension MLXServerCoderBackend {
         return "KV cache: status=\(event.status.rawValue) cachedPromptTokens=\(cachedPromptTokens) restoredPromptTokens=\(restoredPromptTokens) requestMessages=\(event.priorTranscriptCount) bestCommonPrefixMessages=\(event.bestCommonPrefixCount) cachedTranscriptMessages=\(event.bestCachedTranscriptCount)"
     }
 }
-
 #endif

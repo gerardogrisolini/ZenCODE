@@ -4,6 +4,7 @@
 //
 //  Created by Gerardo Grisolini on 15/06/26.
 //
+
 #if os(macOS)
 import Foundation
 

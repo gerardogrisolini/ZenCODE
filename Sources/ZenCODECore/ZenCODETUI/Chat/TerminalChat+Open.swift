@@ -4,6 +4,7 @@
 //
 //  Created by Gerardo Grisolini.
 //
+
 import Foundation
 
 /// A file path or URL referenced somewhere in the conversation that the

@@ -330,5 +330,4 @@ final class CallbackStartState: Sendable {
         continuation?.resume(with: result)
     }
 }
-
 #endif

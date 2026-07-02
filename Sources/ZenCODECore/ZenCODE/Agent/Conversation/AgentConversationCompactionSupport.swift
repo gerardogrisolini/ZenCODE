@@ -4,6 +4,7 @@
 //
 //  Created by Gerardo Grisolini on 27/05/26.
 //
+
 import Foundation
 
 public enum AgentConversationCompactionPolicy {

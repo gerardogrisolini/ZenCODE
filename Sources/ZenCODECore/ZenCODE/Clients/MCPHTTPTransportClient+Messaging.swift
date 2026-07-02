@@ -4,10 +4,10 @@
 //
 //  Created by Gerardo Grisolini on 26/05/26.
 //
+
 import Foundation
 
 #if os(macOS)
-
 extension MCPHTTPTransportClient {
     public func connect() async throws {
         guard !isInitialized else {

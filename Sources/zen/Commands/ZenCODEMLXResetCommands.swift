@@ -89,5 +89,4 @@ private extension FileHandle {
         try? write(contentsOf: Data(string.utf8))
     }
 }
-
 #endif

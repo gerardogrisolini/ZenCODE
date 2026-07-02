@@ -4,7 +4,9 @@
 //
 //  Keeps macOS from entering idle system sleep while an ZenCODE session is active.
 //
+
 import Foundation
+
 public final class ZenCODESleepAssertion {
     #if os(macOS)
     private let lock = NSLock()

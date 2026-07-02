@@ -4,6 +4,7 @@
 //
 //  Created by Gerardo Grisolini on 10/06/26.
 //
+
 #if os(macOS)
 import Foundation
 #if canImport(FoundationNetworking)
@@ -72,5 +73,4 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
         )
     }
 }
-
 #endif

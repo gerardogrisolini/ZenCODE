@@ -4,6 +4,7 @@
 //
 //  Created by Gerardo Grisolini on 11/06/26.
 //
+
 import Foundation
 
 enum TerminalTelegramPermissionDecision: Sendable, Equatable {

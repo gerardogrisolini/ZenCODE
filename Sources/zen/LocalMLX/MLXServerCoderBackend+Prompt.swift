@@ -105,5 +105,4 @@ extension MLXServerCoderBackend {
         throw MLXServerCoderBackendError.tooManyToolRounds(configuration.maxToolRounds)
     }
 }
-
 #endif

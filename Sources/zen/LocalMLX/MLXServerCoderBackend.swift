@@ -65,5 +65,4 @@ actor MLXServerCoderBackend: AgentRuntimeBackend {
         )
     }
 }
-
 #endif

@@ -4,6 +4,7 @@
 //
 //  Created by Gerardo Grisolini on 15/06/26.
 //
+
 #if os(macOS)
 import Foundation
 #if canImport(os)
@@ -183,5 +184,4 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         task.cancel(with: .normalClosure, reason: nil)
     }
 }
-
 #endif
