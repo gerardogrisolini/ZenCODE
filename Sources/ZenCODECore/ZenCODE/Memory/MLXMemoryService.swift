@@ -249,25 +249,24 @@ public final class MLXMemoryService {
             throw MLXMemoryServiceError.missingField("content")
         }
 
-        writeLock.lock()
-        defer { writeLock.unlock() }
+        return try writeLock.withLock {
+            let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
+            var entries = readEntries(from: document)
+            if let existingEntry = entries.first(where: {
+                !$0.isArchived && $0.content.localizedCaseInsensitiveCompare(normalizedContent) == .orderedSame
+            }) {
+                return existingEntry
+            }
 
-        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-        var entries = readEntries(from: document)
-        if let existingEntry = entries.first(where: {
-            !$0.isArchived && $0.content.localizedCaseInsensitiveCompare(normalizedContent) == .orderedSame
-        }) {
-            return existingEntry
+            let entry = MLXMemoryEntry(
+                content: normalizedContent,
+                scope: scope
+            )
+            entries.insert(entry, at: 0)
+            try writeEntries(entries, to: document)
+            Self.notifyMemoryEntriesChanged()
+            return entry
         }
-
-        let entry = MLXMemoryEntry(
-            content: normalizedContent,
-            scope: scope
-        )
-        entries.insert(entry, at: 0)
-        try writeEntries(entries, to: document)
-        Self.notifyMemoryEntriesChanged()
-        return entry
     }
 
     @discardableResult
@@ -282,19 +281,18 @@ public final class MLXMemoryService {
             throw MLXMemoryServiceError.missingField("content")
         }
 
-        writeLock.lock()
-        defer { writeLock.unlock() }
+        return try writeLock.withLock {
+            let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
+            var entries = readEntries(from: document)
+            guard let index = entries.firstIndex(where: { $0.id == id }) else {
+                throw MLXMemoryServiceError.entryNotFound(id.uuidString)
+            }
 
-        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-        var entries = readEntries(from: document)
-        guard let index = entries.firstIndex(where: { $0.id == id }) else {
-            throw MLXMemoryServiceError.entryNotFound(id.uuidString)
+            entries[index].content = normalizedContent
+            try writeEntries(entries, to: document)
+            Self.notifyMemoryEntriesChanged()
+            return entries[index]
         }
-
-        entries[index].content = normalizedContent
-        try writeEntries(entries, to: document)
-        Self.notifyMemoryEntriesChanged()
-        return entries[index]
     }
 
     @discardableResult
@@ -333,24 +331,23 @@ public final class MLXMemoryService {
             throw MLXMemoryServiceError.invalidIdentifier(rawIdentifier)
         }
 
-        writeLock.lock()
-        defer { writeLock.unlock() }
+        return try writeLock.withLock {
+            let documents = memoryDocuments(workspaceRootURL: workspaceRootURL)
+                .filter { scope == nil || $0.scope == scope }
+            for document in documents {
+                var entries = readEntries(from: document)
+                guard let index = entries.firstIndex(where: { $0.id == id }) else {
+                    continue
+                }
 
-        let documents = memoryDocuments(workspaceRootURL: workspaceRootURL)
-            .filter { scope == nil || $0.scope == scope }
-        for document in documents {
-            var entries = readEntries(from: document)
-            guard let index = entries.firstIndex(where: { $0.id == id }) else {
-                continue
+                entries[index].isArchived = true
+                try writeEntries(entries, to: document)
+                Self.notifyMemoryEntriesChanged()
+                return entries[index]
             }
 
-            entries[index].isArchived = true
-            try writeEntries(entries, to: document)
-            Self.notifyMemoryEntriesChanged()
-            return entries[index]
+            throw MLXMemoryServiceError.entryNotFound(rawIdentifier)
         }
-
-        throw MLXMemoryServiceError.entryNotFound(rawIdentifier)
     }
 
     @discardableResult
@@ -360,18 +357,17 @@ public final class MLXMemoryService {
         scope: MLXMemoryScope,
         workspaceRootURL: URL?
     ) throws -> MLXMemoryEntry {
-        writeLock.lock()
-        defer { writeLock.unlock() }
-
-        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-        var entries = readEntries(from: document)
-        guard let index = entries.firstIndex(where: { $0.id == id }) else {
-            throw MLXMemoryServiceError.entryNotFound(id.uuidString)
+        return try writeLock.withLock {
+            let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
+            var entries = readEntries(from: document)
+            guard let index = entries.firstIndex(where: { $0.id == id }) else {
+                throw MLXMemoryServiceError.entryNotFound(id.uuidString)
+            }
+            entries[index].isArchived = isArchived
+            try writeEntries(entries, to: document)
+            Self.notifyMemoryEntriesChanged()
+            return entries[index]
         }
-        entries[index].isArchived = isArchived
-        try writeEntries(entries, to: document)
-        Self.notifyMemoryEntriesChanged()
-        return entries[index]
     }
 
     public func deleteEntry(
@@ -379,17 +375,16 @@ public final class MLXMemoryService {
         scope: MLXMemoryScope,
         workspaceRootURL: URL?
     ) throws {
-        writeLock.lock()
-        defer { writeLock.unlock() }
-
-        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-        var entries = readEntries(from: document)
-        guard let index = entries.firstIndex(where: { $0.id == id }) else {
-            throw MLXMemoryServiceError.entryNotFound(id.uuidString)
+        try writeLock.withLock {
+            let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
+            var entries = readEntries(from: document)
+            guard let index = entries.firstIndex(where: { $0.id == id }) else {
+                throw MLXMemoryServiceError.entryNotFound(id.uuidString)
+            }
+            entries.remove(at: index)
+            try writeEntries(entries, to: document)
+            Self.notifyMemoryEntriesChanged()
         }
-        entries.remove(at: index)
-        try writeEntries(entries, to: document)
-        Self.notifyMemoryEntriesChanged()
     }
 
     public func globalMemoryFileURL() -> URL {

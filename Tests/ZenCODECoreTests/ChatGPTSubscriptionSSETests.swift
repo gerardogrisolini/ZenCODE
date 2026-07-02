@@ -162,8 +162,8 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionBuffersRepeatedOutputTextDeltasWithoutDroppingThem() throws {
-        let result = try ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+    func chatGPTSubscriptionBuffersRepeatedOutputTextDeltasWithoutDroppingThem() async throws {
+        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
             [
                 "type": "response.output_text.delta",
                 "delta": "ha"

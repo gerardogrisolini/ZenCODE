@@ -100,15 +100,12 @@ public enum AnthropicSubscriptionAuthError: LocalizedError {
     }
 }
 
-public final class AnthropicSubscriptionSignInSession {
+public final class AnthropicSubscriptionSignInSession: @unchecked Sendable {
     public let authorizationURL: URL
 
     private let verifier: String
     private let state: String
-    private let lock = OSAllocatedUnfairLock()
-    private var waitContinuation: CheckedContinuation<AnthropicSubscriptionAuthorizationResult, Error>?
-    private var pendingResult: Result<AnthropicSubscriptionAuthorizationResult, Error>?
-    private var isCancelled = false
+    private let authorizationState = AnthropicSubscriptionSignInAuthorizationState()
 
     fileprivate init(
         authorizationURL: URL,
@@ -137,35 +134,14 @@ public final class AnthropicSubscriptionSignInSession {
     }
 
     public func cancel() {
-        lock.lock()
-        guard !isCancelled else {
-            lock.unlock()
-            return
+        Task {
+            let continuation = await authorizationState.cancel()
+            continuation?.resume(throwing: AnthropicSubscriptionAuthError.callbackCancelled)
         }
-        isCancelled = true
-        let continuation = waitContinuation
-        waitContinuation = nil
-        lock.unlock()
-        continuation?.resume(throwing: AnthropicSubscriptionAuthError.callbackCancelled)
     }
 
     private func waitForAuthorizationResult() async throws -> AnthropicSubscriptionAuthorizationResult {
-        try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            if let pendingResult {
-                self.pendingResult = nil
-                lock.unlock()
-                continuation.resume(with: pendingResult)
-                return
-            }
-            if isCancelled {
-                lock.unlock()
-                continuation.resume(throwing: AnthropicSubscriptionAuthError.callbackCancelled)
-                return
-            }
-            waitContinuation = continuation
-            lock.unlock()
-        }
+        try await authorizationState.waitForAuthorizationResult()
     }
 
     private func authorizationResult(
@@ -237,10 +213,48 @@ public final class AnthropicSubscriptionSignInSession {
     }
 
     private func complete(_ result: Result<AnthropicSubscriptionAuthorizationResult, Error>) {
-        lock.lock()
+        Task {
+            let continuation = await authorizationState.complete(result)
+            continuation?.resume(with: result)
+        }
+    }
+}
+
+private actor AnthropicSubscriptionSignInAuthorizationState {
+    private var waitContinuation: CheckedContinuation<AnthropicSubscriptionAuthorizationResult, Error>?
+    private var pendingResult: Result<AnthropicSubscriptionAuthorizationResult, Error>?
+    private var isCancelled = false
+
+    func waitForAuthorizationResult() async throws -> AnthropicSubscriptionAuthorizationResult {
+        try await withCheckedThrowingContinuation { continuation in
+            if let pendingResult {
+                self.pendingResult = nil
+                continuation.resume(with: pendingResult)
+                return
+            }
+            if isCancelled {
+                continuation.resume(throwing: AnthropicSubscriptionAuthError.callbackCancelled)
+                return
+            }
+            waitContinuation = continuation
+        }
+    }
+
+    func cancel() -> CheckedContinuation<AnthropicSubscriptionAuthorizationResult, Error>? {
         guard !isCancelled else {
-            lock.unlock()
-            return
+            return nil
+        }
+        isCancelled = true
+        let continuation = waitContinuation
+        waitContinuation = nil
+        return continuation
+    }
+
+    func complete(
+        _ result: Result<AnthropicSubscriptionAuthorizationResult, Error>
+    ) -> CheckedContinuation<AnthropicSubscriptionAuthorizationResult, Error>? {
+        guard !isCancelled else {
+            return nil
         }
         isCancelled = true
         let continuation = waitContinuation
@@ -248,8 +262,7 @@ public final class AnthropicSubscriptionSignInSession {
         if continuation == nil {
             pendingResult = result
         }
-        lock.unlock()
-        continuation?.resume(with: result)
+        return continuation
     }
 }
 

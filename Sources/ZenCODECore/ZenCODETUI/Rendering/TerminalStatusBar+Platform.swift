@@ -37,14 +37,13 @@ extension TerminalStatusBar {
     }
     
     func advanceSpinner() {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        guard isStarted, isProcessing else {
-            return
+        lock.withLock {
+            guard isStarted, isProcessing else {
+                return
+            }
+            spinnerIndex = (spinnerIndex + 1) % Self.spinnerFrames.count
+            renderLocked()
         }
-        spinnerIndex = (spinnerIndex + 1) % Self.spinnerFrames.count
-        renderLocked()
     }
     
     func startResizeSignalSourceLocked() {
@@ -70,15 +69,17 @@ extension TerminalStatusBar {
     }
     
     func scheduleTerminalResize() {
-        lock.lock()
-        guard isStarted else {
-            lock.unlock()
+        let generation = lock.withLock { () -> Int? in
+            guard isStarted else {
+                return nil
+            }
+            resizeGeneration += 1
+            isResizePending = true
+            return resizeGeneration
+        }
+        guard let generation else {
             return
         }
-        resizeGeneration += 1
-        isResizePending = true
-        let generation = resizeGeneration
-        lock.unlock()
         
         DispatchQueue.global(qos: .userInteractive).asyncAfter(
             deadline: .now() + .milliseconds(80)
@@ -88,20 +89,19 @@ extension TerminalStatusBar {
     }
     
     func handleTerminalResize(generation: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        guard isStarted, generation == resizeGeneration else {
-            return
-        }
-        defer {
+        lock.withLock {
+            guard isStarted, generation == resizeGeneration else {
+                return
+            }
+            defer {
+                isResizePending = false
+            }
+            guard refreshTerminalGeometryLocked() else {
+                return
+            }
             isResizePending = false
+            renderLocked()
         }
-        guard refreshTerminalGeometryLocked() else {
-            return
-        }
-        isResizePending = false
-        renderLocked()
     }
     
     static func currentTerminalGeometry(

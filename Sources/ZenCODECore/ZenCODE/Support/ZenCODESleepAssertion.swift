@@ -32,11 +32,11 @@ public final class ZenCODESleepAssertion {
 
     public func invalidate() {
         #if os(macOS)
-        let activityToEnd: NSObjectProtocol?
-        lock.lock()
-        activityToEnd = activity
-        activity = nil
-        lock.unlock()
+        let activityToEnd = lock.withLock {
+            let activityToEnd = activity
+            activity = nil
+            return activityToEnd
+        }
 
         if let activityToEnd {
             ProcessInfo.processInfo.endActivity(activityToEnd)

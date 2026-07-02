@@ -104,7 +104,12 @@ actor MLXServerPerModelGenerationGate {
         var leases: [MLXServerGenerationLease] = []
         do {
             for modelID in snapshotIDs {
-                let lease = try await gates[modelID]!.acquire()
+                // Re-read the gate after each suspension: actor state may have
+                // changed while awaiting, so never force unwrap here.
+                guard let gate = gates[modelID] else {
+                    continue
+                }
+                let lease = try await gate.acquire()
                 leases.append(lease)
             }
             return MLXServerGenerationLeaseSet(leases: leases)

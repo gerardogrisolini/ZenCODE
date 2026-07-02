@@ -18,7 +18,7 @@ public struct TerminalVoiceRecordingSession: Equatable, Sendable {
     public let startedAt: Date
 }
 
-public final class TerminalVoiceRecordingService {
+public final class TerminalVoiceRecordingService: @unchecked Sendable {
     private let lock = OSAllocatedUnfairLock()
     #if canImport(AVFoundation)
     private var recorder: AVAudioRecorder?
@@ -58,12 +58,12 @@ public final class TerminalVoiceRecordingService {
 
     public func stopRecording() throws -> AgentVoiceAudioInput {
         #if canImport(AVFoundation)
-        lock.lock()
-        let recorder = self.recorder
-        let session = activeSession
-        self.recorder = nil
-        activeSession = nil
-        lock.unlock()
+        let (recorder, session) = lock.withLock {
+            let state = (recorder: self.recorder, session: activeSession)
+            self.recorder = nil
+            activeSession = nil
+            return state
+        }
 
         guard let recorder, let session else {
             throw TerminalVoiceRecordingError.noActiveRecording
@@ -91,12 +91,12 @@ public final class TerminalVoiceRecordingService {
 
     public func cancelRecording() {
         #if canImport(AVFoundation)
-        lock.lock()
-        let recorder = self.recorder
-        let fileURL = activeSession?.fileURL
-        self.recorder = nil
-        activeSession = nil
-        lock.unlock()
+        let (recorder, fileURL) = lock.withLock {
+            let state = (recorder: self.recorder, fileURL: activeSession?.fileURL)
+            self.recorder = nil
+            activeSession = nil
+            return state
+        }
 
         recorder?.stop()
         if let fileURL {
@@ -110,10 +110,10 @@ public final class TerminalVoiceRecordingService {
         _ recorder: AVAudioRecorder,
         session: TerminalVoiceRecordingSession
     ) {
-        lock.lock()
-        self.recorder = recorder
-        activeSession = session
-        lock.unlock()
+        lock.withLock {
+            self.recorder = recorder
+            activeSession = session
+        }
     }
 
     private func ensureMicrophoneAccess() async throws {

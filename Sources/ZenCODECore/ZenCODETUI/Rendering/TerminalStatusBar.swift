@@ -85,37 +85,35 @@ public final class TerminalStatusBar: @unchecked Sendable {
     
     @discardableResult
     public func start() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        guard isEnabled, !isStarted, output != nil else {
-            return isStarted
+        lock.withLock {
+            guard isEnabled, !isStarted, output != nil else {
+                return isStarted
+            }
+            guard configureTerminalLocked() else {
+                return false
+            }
+            isStarted = true
+            writeLocked("\u{1B}[?25l")
+            startResizeSignalSourceLocked()
+            if isProcessing {
+                startSpinnerTimerLocked()
+            }
+            renderLocked()
+            return true
         }
-        guard configureTerminalLocked() else {
-            return false
-        }
-        isStarted = true
-        writeLocked("\u{1B}[?25l")
-        startResizeSignalSourceLocked()
-        if isProcessing {
-            startSpinnerTimerLocked()
-        }
-        renderLocked()
-        return true
     }
     
     public func stop() {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        guard isStarted else {
-            return
+        lock.withLock {
+            guard isStarted else {
+                return
+            }
+            stopSpinnerTimerLocked()
+            stopResizeSignalSourceLocked()
+            clearLocked()
+            writeLocked("\u{1B}[r\u{1B}[?25h")
+            isStarted = false
         }
-        stopSpinnerTimerLocked()
-        stopResizeSignalSourceLocked()
-        clearLocked()
-        writeLocked("\u{1B}[r\u{1B}[?25h")
-        isStarted = false
     }
     
     public func updateInputPanel(
@@ -125,217 +123,204 @@ public final class TerminalStatusBar: @unchecked Sendable {
         helpText: String,
         suggestionLines: [String] = []
     ) {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        let boundedCursorIndex = min(max(0, cursorIndex), text.count)
-        let hadInputPanel = inputPanelState != nil
-        let oldReservedRows = isStarted ? reservedBottomRowsLocked() : 0
-        inputPanelState = InputPanelState(
-            text: text,
-            cursorIndex: boundedCursorIndex,
-            modeText: modeText,
-            helpText: helpText,
-            suggestionLines: Array(suggestionLines.prefix(6))
-        )
-        guard isStarted else {
-            return
-        }
-        let newReservedRows = reservedBottomRowsLocked()
-        if !hadInputPanel || oldReservedRows != newReservedRows {
-            if hadInputPanel, newReservedRows > oldReservedRows {
-                scrollOutputRegionUpLocked(
-                    by: newReservedRows - oldReservedRows,
-                    reservedRows: oldReservedRows
-                )
+        lock.withLock {
+            let boundedCursorIndex = min(max(0, cursorIndex), text.count)
+            let hadInputPanel = inputPanelState != nil
+            let oldReservedRows = isStarted ? reservedBottomRowsLocked() : 0
+            inputPanelState = InputPanelState(
+                text: text,
+                cursorIndex: boundedCursorIndex,
+                modeText: modeText,
+                helpText: helpText,
+                suggestionLines: Array(suggestionLines.prefix(6))
+            )
+            guard isStarted else {
+                return
             }
-            clearReservedRowsLocked(count: max(oldReservedRows, newReservedRows))
-            writeScrollRegionLocked(moveCursorToPrompt: true)
+            let newReservedRows = reservedBottomRowsLocked()
+            if !hadInputPanel || oldReservedRows != newReservedRows {
+                if hadInputPanel, newReservedRows > oldReservedRows {
+                    scrollOutputRegionUpLocked(
+                        by: newReservedRows - oldReservedRows,
+                        reservedRows: oldReservedRows
+                    )
+                }
+                clearReservedRowsLocked(count: max(oldReservedRows, newReservedRows))
+                writeScrollRegionLocked(moveCursorToPrompt: true)
+            }
+            renderLocked()
         }
-        renderLocked()
     }
     
     public func clearInputPanel() {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        guard inputPanelState != nil else {
-            return
+        lock.withLock {
+            guard inputPanelState != nil else {
+                return
+            }
+            let oldReservedRows = reservedBottomRowsLocked()
+            inputPanelState = nil
+            guard isStarted else {
+                return
+            }
+            clearReservedRowsLocked(count: oldReservedRows)
+            writeScrollRegionLocked(moveCursorToPrompt: true)
+            renderLocked()
         }
-        let oldReservedRows = reservedBottomRowsLocked()
-        inputPanelState = nil
-        guard isStarted else {
-            return
-        }
-        clearReservedRowsLocked(count: oldReservedRows)
-        writeScrollRegionLocked(moveCursorToPrompt: true)
-        renderLocked()
     }
     
     public func reset() {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        latestMetrics = nil
-        latestContextWindow = nil
-        latestModelID = nil
-        latestThinkingSelection = nil
-        latestModelRuntime = nil
-        isProcessing = false
-        spinnerIndex = 0
-        stopSpinnerTimerLocked()
-        guard isStarted else {
-            return
+        lock.withLock {
+            latestMetrics = nil
+            latestContextWindow = nil
+            latestModelID = nil
+            latestThinkingSelection = nil
+            latestModelRuntime = nil
+            isProcessing = false
+            spinnerIndex = 0
+            stopSpinnerTimerLocked()
+            guard isStarted else {
+                return
+            }
+            renderLocked()
         }
-        renderLocked()
     }
     
     public func setProcessing(_ isProcessing: Bool) {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        guard self.isProcessing != isProcessing else {
-            return
+        lock.withLock {
+            guard self.isProcessing != isProcessing else {
+                return
+            }
+            self.isProcessing = isProcessing
+            spinnerIndex = 0
+            if isProcessing {
+                startSpinnerTimerLocked()
+            } else {
+                stopSpinnerTimerLocked()
+            }
+            guard isStarted else {
+                return
+            }
+            renderLocked()
         }
-        self.isProcessing = isProcessing
-        spinnerIndex = 0
-        if isProcessing {
-            startSpinnerTimerLocked()
-        } else {
-            stopSpinnerTimerLocked()
-        }
-        guard isStarted else {
-            return
-        }
-        renderLocked()
     }
     
     @discardableResult
     public func update(modelID: String) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        if latestModelID != modelID {
-            latestModelRuntime = nil
+        lock.withLock {
+            if latestModelID != modelID {
+                latestModelRuntime = nil
+            }
+            latestModelID = modelID
+            guard isStarted else {
+                return false
+            }
+            renderLocked()
+            return true
         }
-        latestModelID = modelID
-        guard isStarted else {
-            return false
-        }
-        renderLocked()
-        return true
     }
     
     @discardableResult
     public func update(thinkingSelection: AgentThinkingSelection?) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        latestThinkingSelection = thinkingSelection
-        guard isStarted else {
-            return false
+        lock.withLock {
+            latestThinkingSelection = thinkingSelection
+            guard isStarted else {
+                return false
+            }
+            renderLocked()
+            return true
         }
-        renderLocked()
-        return true
     }
     
     @discardableResult
     public func update(modelRuntime: String?) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        latestModelRuntime = Self.runtimeDisplayName(modelRuntime)
-        guard isStarted else {
-            return false
+        lock.withLock {
+            latestModelRuntime = Self.runtimeDisplayName(modelRuntime)
+            guard isStarted else {
+                return false
+            }
+            renderLocked()
+            return true
         }
-        renderLocked()
-        return true
     }
     
     @discardableResult
     public func update(metrics: DirectAgentGenerationMetrics) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        latestMetrics = mergedMetrics(
-            current: latestMetrics,
-            update: metrics
-        )
-        guard isStarted else {
-            return false
+        lock.withLock {
+            latestMetrics = mergedMetrics(
+                current: latestMetrics,
+                update: metrics
+            )
+            guard isStarted else {
+                return false
+            }
+            renderLocked()
+            return true
         }
-        renderLocked()
-        return true
     }
     
     @discardableResult
     public func update(contextWindow: DirectAgentContextWindowStatus) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        latestContextWindow = contextWindow
-        guard isStarted else {
-            return false
+        lock.withLock {
+            latestContextWindow = contextWindow
+            guard isStarted else {
+                return false
+            }
+            renderLocked()
+            return true
         }
-        renderLocked()
-        return true
     }
     
     @discardableResult
     public func update(subscriptionUsage: DirectAgentSubscriptionUsageStatus) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        guard subscriptionUsage.hasValues else {
-            return false
+        lock.withLock {
+            guard subscriptionUsage.hasValues else {
+                return false
+            }
+            latestSubscriptionUsage = subscriptionUsage
+            guard isStarted else {
+                return false
+            }
+            renderLocked()
+            return true
         }
-        latestSubscriptionUsage = subscriptionUsage
-        guard isStarted else {
-            return false
-        }
-        renderLocked()
-        return true
     }
     
     @discardableResult
     public func update(gitStatusSummary: TerminalGitStatusSummary?) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        latestGitStatusSummary = gitStatusSummary
-        guard isStarted else {
-            return false
+        lock.withLock {
+            latestGitStatusSummary = gitStatusSummary
+            guard isStarted else {
+                return false
+            }
+            renderLocked()
+            return true
         }
-        renderLocked()
-        return true
     }
     
     public func currentContextWindowStatus() -> DirectAgentContextWindowStatus? {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        if let latestContextWindow {
-            return latestContextWindow
+        lock.withLock {
+            if let latestContextWindow {
+                return latestContextWindow
+            }
+            guard let latestModelID else {
+                return nil
+            }
+            return DirectAgentContextWindowStatus(
+                usedTokens: latestMetrics?.totalTokenCount,
+                maxTokens: nil,
+                modelID: latestModelID,
+                isApproximate: true
+            )
         }
-        guard let latestModelID else {
-            return nil
-        }
-        return DirectAgentContextWindowStatus(
-            usedTokens: latestMetrics?.totalTokenCount,
-            maxTokens: nil,
-            modelID: latestModelID,
-            isApproximate: true
-        )
     }
     
     public func reservedRowsForOverlay() -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        guard isStarted else {
-            return 0
+        lock.withLock {
+            guard isStarted else {
+                return 0
+            }
+            return reservedBottomRowsLocked()
         }
-        return reservedBottomRowsLocked()
     }
     
 }

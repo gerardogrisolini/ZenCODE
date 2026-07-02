@@ -86,7 +86,7 @@ public enum ChatGPTSubscriptionAuthError: LocalizedError {
     }
 }
 
-public final class ChatGPTSubscriptionSignInSession {
+public final class ChatGPTSubscriptionSignInSession: @unchecked Sendable {
     public let authorizationURL: URL
 
     private let verifier: String
@@ -104,7 +104,9 @@ public final class ChatGPTSubscriptionSignInSession {
 
     public func waitForCredentials() async throws -> CodexAgentCredentials {
         defer {
-            callbackServer.stop()
+            Task {
+                await callbackServer.stop()
+            }
         }
 
         let code = try await callbackServer.waitForCode()
@@ -121,7 +123,9 @@ public final class ChatGPTSubscriptionSignInSession {
     }
 
     public func cancel() {
-        callbackServer.stop()
+        Task {
+            await callbackServer.stop()
+        }
     }
 }
 

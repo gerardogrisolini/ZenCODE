@@ -197,7 +197,9 @@ extension TerminalChat {
                 continue
             }
 
-            let event = await eventQueue.next()
+            guard let event = await eventQueue.next() else {
+                break eventLoop
+            }
             switch event {
             case let .input(inputEvent):
                 switch inputEvent {

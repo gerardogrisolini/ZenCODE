@@ -290,14 +290,14 @@ extension MLXServerRuntime {
         ) else {
             return true
         }
-        guard let target = try? diskKVCacheStore.preparePersistenceTarget(for: cacheKey) else {
+        guard let target = try? await diskKVCacheStore.preparePersistenceTarget(for: cacheKey) else {
             return false
         }
 
         return await Task.detached(priority: .utility) {
             do {
                 try await sessionTransfer.session.saveCache(to: target.temporaryURL)
-                try diskKVCacheStore.commitPersistedSession(
+                try await diskKVCacheStore.commitPersistedSession(
                     key: cacheKey,
                     toolsSignature: toolsSignature,
                     contextSignature: contextSignature,
@@ -307,7 +307,7 @@ extension MLXServerRuntime {
                 )
                 return true
             } catch {
-                diskKVCacheStore.discardPersistenceTarget(target)
+                await diskKVCacheStore.discardPersistenceTarget(target)
                 return false
             }
         }.value

@@ -212,25 +212,29 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionAccumulatorKeepsPlainReasoningItemsForReplay() throws {
+    func chatGPTSubscriptionAccumulatorKeepsPlainReasoningItemsForReplay() async throws {
         let accumulator = ChatGPTSubscriptionGenerationClient.StreamAccumulator()
-        _ = try accumulator.ingest([
-            "type": "response.output_item.done",
-            "output_index": 0,
-            "item": [
-                "type": "reasoning",
-                "id": "rs_plain",
-                "summary": [],
-                "content": [
-                    [
-                        "type": "reasoning_text",
-                        "text": "plain thought"
+        _ = try await accumulator.ingest(
+            ChatGPTSubscriptionGenerationClient.StreamAccumulatorObject([
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": [
+                    "type": "reasoning",
+                    "id": "rs_plain",
+                    "summary": [],
+                    "content": [
+                        [
+                            "type": "reasoning_text",
+                            "text": "plain thought"
+                        ]
                     ]
                 ]
-            ]
-        ])
-        let result = try accumulator.result(
-            toolCatalog: RemoteToolWireCatalog(descriptors: [])
+            ])
+        )
+        let result = try await accumulator.result(
+            toolCatalog: ChatGPTSubscriptionGenerationClient.StreamAccumulatorToolCatalog(
+                RemoteToolWireCatalog(descriptors: [])
+            )
         )
         let storedItems = RemoteGenerationClient.responsesReasoningItems(
             from: result.reasoningItemsJSON
@@ -271,8 +275,8 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionTextDeltasAreBufferedUntilFinalSnapshot() throws {
-        let result = try ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+    func chatGPTSubscriptionTextDeltasAreBufferedUntilFinalSnapshot() async throws {
+        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
             [
                 "type": "response.output_text.delta",
                 "delta": "Confermi che proceda?"
@@ -294,8 +298,8 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionUnderscoreTextDeltasAreBufferedUntilFinalSnapshot() throws {
-        let result = try ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+    func chatGPTSubscriptionUnderscoreTextDeltasAreBufferedUntilFinalSnapshot() async throws {
+        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
             [
                 "type": "response_output_text_delta",
                 "delta": "Prima parte. "
@@ -317,8 +321,8 @@ extension RemoteSessionSnapshotTests {
     }
 
             @Test
-    func chatGPTSubscriptionCorrectedDeltaSnapshotReplacesBufferedDraft() throws {
-        let result = try ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+    func chatGPTSubscriptionCorrectedDeltaSnapshotReplacesBufferedDraft() async throws {
+        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
             [
                 "type": "response_output_text_delta",
                 "delta": "Corego le ultime indentazioni accidentali evidenziate dal diff, poi rilancio swift build."
@@ -337,8 +341,8 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionCorrectedFinalSnapshotReplacesBufferedDraft() throws {
-        let result = try ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+    func chatGPTSubscriptionCorrectedFinalSnapshotReplacesBufferedDraft() async throws {
+        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
             [
                 "type": "response_output_text_delta",
                 "delta": "Corego le ultime indentazioni accidentali evidenziate dal diff."
@@ -357,8 +361,8 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionCompletedSnapshotExtendsExistingContent() throws {
-        let result = try ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+    func chatGPTSubscriptionCompletedSnapshotExtendsExistingContent() async throws {
+        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
             [
                 "type": "response.output_text.delta",
                 "delta": "Confermi che proceda?"

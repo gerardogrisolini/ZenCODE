@@ -10,6 +10,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import Synchronization
 #if canImport(os)
 import os
 #endif
@@ -47,7 +48,7 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
     var historyIndex: Int?
     var draftBeforeHistory: [Character] = []
     let rawInput = TerminalRawInput()
-    let panelLock = OSAllocatedUnfairLock()
+    let panelLock = Mutex(())
     var panelTask: Task<Void, Never>?
     var panelStatusBar: TerminalStatusBar?
     var panelBuffer: [Character] = []
@@ -59,6 +60,14 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
     var panelCommandSuggestionIndex = 0
 
     public init() {}
+
+    func withPanelLock<T: Sendable>(
+        _ body: @Sendable () throws -> T
+    ) rethrows -> T {
+        try panelLock.withLock { _ in
+            try body()
+        }
+    }
 
     public func readSingleKey(prompt: String) -> String? {
         AgentOutput.standardError.writeString(prompt)

@@ -21,6 +21,9 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
     private struct State {
         var readinessContinuation: CheckedContinuation<Void, Error>?
         var callbackContinuation: CheckedContinuation<MCPOAuthCallback, Error>?
+        /// Buffers a callback result that arrives before `waitForCallback`
+        /// registers its continuation, so early browser callbacks are not lost.
+        var pendingCallbackResult: Result<MCPOAuthCallback, Error>?
         var didResumeReadiness = false
         var didResumeCallback = false
     }
@@ -76,12 +79,29 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
     public func waitForCallback(timeout: TimeInterval) async throws -> MCPOAuthCallback {
         try await withThrowingTaskGroup(of: MCPOAuthCallback.self) { group in
             group.addTask {
-                try await withCheckedThrowingContinuation { continuation in
-                    self.queue.async {
-                        self.state.withLock { state in
+                try await withTaskCancellationHandler {
+                    try await withCheckedThrowingContinuation { continuation in
+                        let bufferedResult = self.state.withLock { state -> Result<MCPOAuthCallback, Error>? in
+                            if let pending = state.pendingCallbackResult {
+                                state.pendingCallbackResult = nil
+                                state.didResumeCallback = true
+                                return pending
+                            }
                             state.callbackContinuation = continuation
+                            return nil
+                        }
+                        if let bufferedResult {
+                            continuation.resume(with: bufferedResult)
                         }
                     }
+                } onCancel: {
+                    self.resumeCallbackIfNeeded(
+                        with: .failure(
+                            MCPClientError.browserAuthenticationFailed(
+                                "The \(self.serviceName) browser sign-in was interrupted."
+                            )
+                        )
+                    )
                 }
             }
 
@@ -294,9 +314,17 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
     }
 
     public func resumeCallbackIfNeeded(with result: Result<MCPOAuthCallback, Error>) {
-        let continuation = state.withLock { state in
-            guard !state.didResumeCallback, let continuation = state.callbackContinuation else {
-                return nil as CheckedContinuation<MCPOAuthCallback, Error>?
+        let continuation = state.withLock { state -> CheckedContinuation<MCPOAuthCallback, Error>? in
+            guard !state.didResumeCallback else {
+                return nil
+            }
+            guard let continuation = state.callbackContinuation else {
+                // No waiter yet: buffer the first result so it is delivered
+                // as soon as `waitForCallback` registers its continuation.
+                if state.pendingCallbackResult == nil {
+                    state.pendingCallbackResult = result
+                }
+                return nil
             }
 
             state.didResumeCallback = true

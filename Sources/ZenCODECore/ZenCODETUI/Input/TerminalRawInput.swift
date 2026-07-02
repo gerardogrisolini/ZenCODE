@@ -196,28 +196,27 @@ public final class TerminalRawInput: @unchecked Sendable {
 
     @discardableResult
     public func beginRawMode() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.withLock {
+            if originalAttributes != nil {
+                return true
+            }
 
-        if originalAttributes != nil {
-            return true
-        }
+            rawModeFailureDescription = nil
 
-        rawModeFailureDescription = nil
+            guard fileDescriptor >= 0 else {
+                rawModeFailureDescription = Self.noForegroundTerminalDescription
+                return false
+            }
 
-        guard fileDescriptor >= 0 else {
-            rawModeFailureDescription = Self.noForegroundTerminalDescription
+            _ = Self.ensureForegroundTerminal(fileDescriptor: fileDescriptor)
+
+            if activateRawModeLocked(fileDescriptor: fileDescriptor) {
+                rawModeFailureDescription = nil
+                return true
+            }
+
             return false
         }
-
-        _ = Self.ensureForegroundTerminal(fileDescriptor: fileDescriptor)
-
-        if activateRawModeLocked(fileDescriptor: fileDescriptor) {
-            rawModeFailureDescription = nil
-            return true
-        }
-
-        return false
     }
 
     private func activateRawModeLocked(fileDescriptor: Int32) -> Bool {
@@ -253,18 +252,17 @@ public final class TerminalRawInput: @unchecked Sendable {
     }
 
     public func restoreRawMode() {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard var attributes = originalAttributes else {
-            return
+        lock.withLock {
+            guard var attributes = originalAttributes else {
+                return
+            }
+            disableBracketedPasteLocked()
+            restoreEnhancedKeyboardProtocolLocked()
+            _ = Self.withSIGTTOUIgnored {
+                tcsetattr(fileDescriptor, TCSANOW, &attributes)
+            }
+            originalAttributes = nil
         }
-        disableBracketedPasteLocked()
-        restoreEnhancedKeyboardProtocolLocked()
-        _ = Self.withSIGTTOUIgnored {
-            tcsetattr(fileDescriptor, TCSANOW, &attributes)
-        }
-        originalAttributes = nil
     }
 
     private func requestEnhancedKeyboardProtocolLocked() {
@@ -335,10 +333,9 @@ public final class TerminalRawInput: @unchecked Sendable {
     }
 
     public func lastRawModeFailureDescription() -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-
-        return rawModeFailureDescription
+        lock.withLock {
+            rawModeFailureDescription
+        }
     }
 
     private func writeToTerminal(_ text: String) {

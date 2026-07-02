@@ -24,9 +24,8 @@ extension ChatGPTSubscriptionGenerationClient {
         let reasoningItemsJSON: String?
     }
 
-    /// Streaming callbacks may cross concurrency domains; all accumulator mutations are serialized by `lock`.
-    final class StreamAccumulator: @unchecked Sendable {
-        private let lock = OSAllocatedUnfairLock()
+    /// Streaming callbacks may cross concurrency domains; all accumulator mutations are serialized by actor isolation.
+    actor StreamAccumulator {
         private var responseText = ""
         private var responseReasoningText = ""
         private var stopReason = "end_turn"
@@ -41,11 +40,8 @@ extension ChatGPTSubscriptionGenerationClient {
         private var reasoningItems: [[String: Any]] = []
         private var reasoningItemIndexByID: [String: Int] = [:]
 
-        func ingest(_ object: [String: Any]) throws -> [DirectAgentEvent] {
-            lock.lock()
-            defer {
-                lock.unlock()
-            }
+        func ingest(_ streamObject: StreamAccumulatorObject) throws -> [DirectAgentEvent] {
+            let object = streamObject.value
 
             if let errorMessage = ChatGPTSubscriptionGenerationClient.responseErrorMessage(from: object) {
                 throw ChatGPTSubscriptionGenerationError.responseFailed(errorMessage)
@@ -161,17 +157,10 @@ extension ChatGPTSubscriptionGenerationClient {
             guard let responseID = responseID?.nilIfBlank else {
                 return
             }
-            lock.lock()
             latestResponseID = responseID
-            lock.unlock()
         }
 
-        func result(toolCatalog: RemoteToolWireCatalog) throws -> StreamAccumulatorResult {
-            lock.lock()
-            defer {
-                lock.unlock()
-            }
-
+        func result(toolCatalog: StreamAccumulatorToolCatalog) throws -> StreamAccumulatorResult {
             let remoteToolCalls = try toolCallAccumulator.finalize()
             let reasoningItemsJSON: String?
             if reasoningItems.isEmpty {
@@ -187,7 +176,7 @@ extension ChatGPTSubscriptionGenerationClient {
                 text: responseText,
                 reasoningText: responseReasoningText,
                 stopReason: stopReason,
-                toolCalls: remoteToolCalls.map(toolCatalog.localToolCall),
+                toolCalls: remoteToolCalls.map(toolCatalog.value.localToolCall),
                 usage: requestUsage,
                 firstDeltaAt: firstDeltaAt,
                 latestResponseID: latestResponseID,
@@ -268,6 +257,22 @@ extension ChatGPTSubscriptionGenerationClient {
             if firstDeltaAt == nil {
                 firstDeltaAt = Date()
             }
+        }
+    }
+
+    struct StreamAccumulatorObject: @unchecked Sendable {
+        let value: [String: Any]
+
+        init(_ value: [String: Any]) {
+            self.value = value
+        }
+    }
+
+    struct StreamAccumulatorToolCatalog: @unchecked Sendable {
+        let value: RemoteToolWireCatalog
+
+        init(_ value: RemoteToolWireCatalog) {
+            self.value = value
         }
     }
 }

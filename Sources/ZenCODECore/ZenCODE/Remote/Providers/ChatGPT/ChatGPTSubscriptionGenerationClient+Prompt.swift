@@ -135,7 +135,7 @@ extension ChatGPTSubscriptionGenerationClient {
                         maxOutputTokens: configuration.maxOutputTokens
                     ) { object in
                         try Task.checkCancellation()
-                        let events = try streamAccumulator.ingest(object)
+                        let events = try await streamAccumulator.ingest(StreamAccumulatorObject(object))
                         for event in events {
                             await onEvent(event)
                         }
@@ -170,8 +170,10 @@ extension ChatGPTSubscriptionGenerationClient {
                     continue
                 }
 
-                streamAccumulator.recordCompletionResponseID(completion.responseID)
-                let streamResult = try streamAccumulator.result(toolCatalog: toolCatalog)
+                await streamAccumulator.recordCompletionResponseID(completion.responseID)
+                let streamResult = try await streamAccumulator.result(
+                    toolCatalog: StreamAccumulatorToolCatalog(toolCatalog)
+                )
                 if !streamResult.didEmitContent,
                    !streamResult.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     await onEvent(.content(streamResult.text))

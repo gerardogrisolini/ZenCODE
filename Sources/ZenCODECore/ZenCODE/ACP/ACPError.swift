@@ -48,22 +48,16 @@ extension FileHandle {
         guard let data = string.data(using: .utf8) else {
             return
         }
-        TerminalOutputSynchronization.lock()
-        defer {
-            TerminalOutputSynchronization.unlock()
+        TerminalOutputSynchronization.withLock {
+            write(data)
         }
-        write(data)
     }
 }
 
 private enum TerminalOutputSynchronization {
     private static let outputLock = OSAllocatedUnfairLock()
 
-    static func lock() {
-        outputLock.lock()
-    }
-
-    static func unlock() {
-        outputLock.unlock()
+    static func withLock(_ body: @Sendable () -> Void) {
+        outputLock.withLock(body)
     }
 }

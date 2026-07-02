@@ -244,7 +244,7 @@ func chatSessionTranscriptRejectsDivergedUserPrefix() {
 }
 
 @Test
-func diskKVCacheEvictsLeastRecentlyUsedSessionEntries() throws {
+func diskKVCacheEvictsLeastRecentlyUsedSessionEntries() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("mlx-server-tests-\(UUID().uuidString)", isDirectory: true)
     defer {
@@ -260,9 +260,9 @@ func diskKVCacheEvictsLeastRecentlyUsedSessionEntries() throws {
     let firstKey = testChatSessionCacheKey(sessionKey: "session-a")
     let secondKey = testChatSessionCacheKey(sessionKey: "session-b")
 
-    let firstTarget = try #require(try store.preparePersistenceTarget(for: firstKey))
+    let firstTarget = try #require(try await store.preparePersistenceTarget(for: firstKey))
     try Data(repeating: 1, count: 32).write(to: firstTarget.temporaryURL)
-    try store.commitPersistedSession(
+    try await store.commitPersistedSession(
         key: firstKey,
         toolsSignature: "none",
         contextSignature: "none",
@@ -270,9 +270,9 @@ func diskKVCacheEvictsLeastRecentlyUsedSessionEntries() throws {
         target: firstTarget
     )
 
-    let secondTarget = try #require(try store.preparePersistenceTarget(for: secondKey))
+    let secondTarget = try #require(try await store.preparePersistenceTarget(for: secondKey))
     try Data(repeating: 2, count: 32).write(to: secondTarget.temporaryURL)
-    try store.commitPersistedSession(
+    try await store.commitPersistedSession(
         key: secondKey,
         toolsSignature: "none",
         contextSignature: "none",
@@ -287,7 +287,7 @@ func diskKVCacheEvictsLeastRecentlyUsedSessionEntries() throws {
 }
 
 @Test
-func diskKVCacheSkipsPersistenceForUnchangedSessionTranscript() throws {
+func diskKVCacheSkipsPersistenceForUnchangedSessionTranscript() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("mlx-server-dedup-\(UUID().uuidString)", isDirectory: true)
     defer {
@@ -303,9 +303,9 @@ func diskKVCacheSkipsPersistenceForUnchangedSessionTranscript() throws {
     let key = testChatSessionCacheKey(sessionKey: "session-a")
     let fingerprints = [testFingerprint("first")]
 
-    let target = try #require(try store.preparePersistenceTarget(for: key))
+    let target = try #require(try await store.preparePersistenceTarget(for: key))
     try Data(repeating: 1, count: 16).write(to: target.temporaryURL)
-    try store.commitPersistedSession(
+    try await store.commitPersistedSession(
         key: key,
         toolsSignature: "none",
         contextSignature: "none",
@@ -319,7 +319,7 @@ func diskKVCacheSkipsPersistenceForUnchangedSessionTranscript() throws {
 }
 
 @Test
-func diskKVCacheCommitPersistsContextTokenCount() throws {
+func diskKVCacheCommitPersistsContextTokenCount() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("mlx-server-context-tokens-\(UUID().uuidString)", isDirectory: true)
     defer {
@@ -333,10 +333,10 @@ func diskKVCacheCommitPersistsContextTokenCount() throws {
         )
     )
     let key = testChatSessionCacheKey(sessionKey: "session-a")
-    let target = try #require(try store.preparePersistenceTarget(for: key))
+    let target = try #require(try await store.preparePersistenceTarget(for: key))
     try Data(repeating: 1, count: 16).write(to: target.temporaryURL)
 
-    try store.commitPersistedSession(
+    try await store.commitPersistedSession(
         key: key,
         toolsSignature: "none",
         contextSignature: "none",
@@ -353,7 +353,7 @@ func diskKVCacheCommitPersistsContextTokenCount() throws {
 }
 
 @Test
-func diskKVCacheCommitOverwritesSameSessionEntry() throws {
+func diskKVCacheCommitOverwritesSameSessionEntry() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("mlx-server-overwrite-\(UUID().uuidString)", isDirectory: true)
     defer {
@@ -368,9 +368,9 @@ func diskKVCacheCommitOverwritesSameSessionEntry() throws {
     )
     let key = testChatSessionCacheKey(sessionKey: "session-a")
 
-    let firstTarget = try #require(try store.preparePersistenceTarget(for: key))
+    let firstTarget = try #require(try await store.preparePersistenceTarget(for: key))
     try Data(repeating: 1, count: 16).write(to: firstTarget.temporaryURL)
-    try store.commitPersistedSession(
+    try await store.commitPersistedSession(
         key: key,
         toolsSignature: "none",
         contextSignature: "none",
@@ -378,9 +378,9 @@ func diskKVCacheCommitOverwritesSameSessionEntry() throws {
         target: firstTarget
     )
 
-    let secondTarget = try #require(try store.preparePersistenceTarget(for: key))
+    let secondTarget = try #require(try await store.preparePersistenceTarget(for: key))
     try Data(repeating: 2, count: 32).write(to: secondTarget.temporaryURL)
-    try store.commitPersistedSession(
+    try await store.commitPersistedSession(
         key: key,
         toolsSignature: "none",
         contextSignature: "none",
@@ -394,7 +394,7 @@ func diskKVCacheCommitOverwritesSameSessionEntry() throws {
 }
 
 @Test
-func diskKVCacheIndexRebuildRemovesOrphanedCacheFiles() throws {
+func diskKVCacheIndexRebuildRemovesOrphanedCacheFiles() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("mlx-server-orphans-\(UUID().uuidString)", isDirectory: true)
     defer {
@@ -409,9 +409,9 @@ func diskKVCacheIndexRebuildRemovesOrphanedCacheFiles() throws {
     )
     let key = testChatSessionCacheKey(sessionKey: "session-a")
 
-    let target = try #require(try store.preparePersistenceTarget(for: key))
+    let target = try #require(try await store.preparePersistenceTarget(for: key))
     try Data(repeating: 1, count: 16).write(to: target.temporaryURL)
-    try store.commitPersistedSession(
+    try await store.commitPersistedSession(
         key: key,
         toolsSignature: "none",
         contextSignature: "none",
@@ -438,7 +438,7 @@ func diskKVCacheIndexRebuildRemovesOrphanedCacheFiles() throws {
             limitBytes: 1_000_000
         )
     )
-    freshStore.enforceDiskLimit()
+    await freshStore.enforceDiskLimit()
 
     #expect(FileManager.default.fileExists(atPath: target.cacheURL.path))
     #expect(FileManager.default.fileExists(atPath: target.metadataURL.path))

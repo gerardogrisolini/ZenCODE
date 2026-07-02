@@ -13,11 +13,7 @@ import os
 final class ChatGPTSubscriptionCallbackServer: @unchecked Sendable {
     let state: String
     let queue = DispatchQueue(label: "ZenCODE.ChatGPTSubscriptionCallback")
-    let lock = OSAllocatedUnfairLock()
-    var listener: NWListener?
-    var waitContinuation: CheckedContinuation<String, Error>?
-    var pendingResult: Result<String, Error>?
-    var isStopped = false
+    private let callbackState = ChatGPTSubscriptionCallbackServerState()
 
     init(state: String) {
         self.state = state
@@ -28,7 +24,7 @@ final class ChatGPTSubscriptionCallbackServer: @unchecked Sendable {
             return self
         }
 
-        self.listener = listener
+        await callbackState.setListener(listener)
         listener.newConnectionHandler = { [weak self] connection in
             self?.handle(connection)
         }
@@ -37,7 +33,7 @@ final class ChatGPTSubscriptionCallbackServer: @unchecked Sendable {
             try await startListening(listener)
         } catch {
             listener.cancel()
-            self.listener = nil
+            await callbackState.clearListener(listener)
         }
 
         return self
@@ -112,11 +108,17 @@ final class ChatGPTSubscriptionCallbackServer: @unchecked Sendable {
             listener.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    startState.resume(with: .success(()))
+                    Task {
+                        await startState.resume(with: .success(()))
+                    }
                 case let .failed(error):
-                    startState.resume(with: .failure(error))
+                    Task {
+                        await startState.resume(with: .failure(error))
+                    }
                 case .cancelled:
-                    startState.resume(with: .failure(ChatGPTSubscriptionAuthError.callbackCancelled))
+                    Task {
+                        await startState.resume(with: .failure(ChatGPTSubscriptionAuthError.callbackCancelled))
+                    }
                 default:
                     break
                 }
@@ -126,38 +128,19 @@ final class ChatGPTSubscriptionCallbackServer: @unchecked Sendable {
     }
 
     func waitForCode() async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            if let pendingResult {
-                self.pendingResult = nil
-                lock.unlock()
-                continuation.resume(with: pendingResult)
-                return
+        try await withTaskCancellationHandler {
+            try await callbackState.waitForCode()
+        } onCancel: {
+            Task {
+                await self.stop()
             }
-            if isStopped {
-                lock.unlock()
-                continuation.resume(throwing: ChatGPTSubscriptionAuthError.callbackCancelled)
-                return
-            }
-            waitContinuation = continuation
-            lock.unlock()
         }
     }
 
-    func stop() {
-        lock.lock()
-        guard !isStopped else {
-            lock.unlock()
-            return
-        }
-        isStopped = true
-        let continuation = waitContinuation
-        waitContinuation = nil
-        lock.unlock()
-
-        listener?.cancel()
-        listener = nil
-        continuation?.resume(throwing: ChatGPTSubscriptionAuthError.callbackCancelled)
+    func stop() async {
+        let state = await callbackState.stop()
+        state.listener?.listener.cancel()
+        state.continuation?.resume(throwing: ChatGPTSubscriptionAuthError.callbackCancelled)
     }
 
     func handle(_ connection: NWConnection) {
@@ -247,22 +230,11 @@ final class ChatGPTSubscriptionCallbackServer: @unchecked Sendable {
     }
 
     func complete(_ result: Result<String, Error>) {
-        lock.lock()
-        guard !isStopped else {
-            lock.unlock()
-            return
+        Task {
+            let state = await callbackState.complete(result)
+            state.listener?.listener.cancel()
+            state.continuation?.resume(with: result)
         }
-        isStopped = true
-        let continuation = waitContinuation
-        waitContinuation = nil
-        if continuation == nil {
-            pendingResult = result
-        }
-        lock.unlock()
-
-        listener?.cancel()
-        listener = nil
-        continuation?.resume(with: result)
     }
 
     func sendResponse(
@@ -314,19 +286,83 @@ final class ChatGPTSubscriptionCallbackServer: @unchecked Sendable {
     }
 }
 
-final class CallbackStartState: Sendable {
-    let continuation: OSAllocatedUnfairLock<CheckedContinuation<Void, Error>?>
+private struct ChatGPTSubscriptionCallbackListener: @unchecked Sendable {
+    let listener: NWListener
+}
+
+private actor ChatGPTSubscriptionCallbackServerState {
+    typealias CompletionState = (
+        listener: ChatGPTSubscriptionCallbackListener?,
+        continuation: CheckedContinuation<String, Error>?
+    )
+
+    private var listener: ChatGPTSubscriptionCallbackListener?
+    private var waitContinuation: CheckedContinuation<String, Error>?
+    private var pendingResult: Result<String, Error>?
+    private var isStopped = false
+
+    func setListener(_ listener: NWListener) {
+        self.listener = ChatGPTSubscriptionCallbackListener(listener: listener)
+    }
+
+    func clearListener(_ listener: NWListener) {
+        guard self.listener?.listener === listener else {
+            return
+        }
+        self.listener = nil
+    }
+
+    func waitForCode() async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            if let pendingResult {
+                self.pendingResult = nil
+                continuation.resume(with: pendingResult)
+                return
+            }
+            if isStopped {
+                continuation.resume(throwing: ChatGPTSubscriptionAuthError.callbackCancelled)
+                return
+            }
+            waitContinuation = continuation
+        }
+    }
+
+    func stop() -> CompletionState {
+        guard !isStopped else {
+            return (nil, nil)
+        }
+        isStopped = true
+        let state = (listener: listener, continuation: waitContinuation)
+        listener = nil
+        waitContinuation = nil
+        return state
+    }
+
+    func complete(_ result: Result<String, Error>) -> CompletionState {
+        guard !isStopped else {
+            return (nil, nil)
+        }
+        isStopped = true
+        let state = (listener: listener, continuation: waitContinuation)
+        listener = nil
+        waitContinuation = nil
+        if state.continuation == nil {
+            pendingResult = result
+        }
+        return state
+    }
+}
+
+private actor CallbackStartState {
+    private var continuation: CheckedContinuation<Void, Error>?
 
     init(continuation: CheckedContinuation<Void, Error>) {
-        self.continuation = OSAllocatedUnfairLock(initialState: continuation)
+        self.continuation = continuation
     }
 
     func resume(with result: Result<Void, Error>) {
-        let continuation = continuation.withLock { continuation in
-            let current = continuation
-            continuation = nil
-            return current
-        }
+        let continuation = continuation
+        self.continuation = nil
         continuation?.resume(with: result)
     }
 }
