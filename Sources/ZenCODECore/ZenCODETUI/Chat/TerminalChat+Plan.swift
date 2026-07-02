@@ -66,7 +66,7 @@ extension TerminalChat {
             "Starting planning pass for requested goal via Planner sub-agents...\n"
         )
 
-        return .runHiddenPrompt(
+        return .runPrompt(
             Self.planDelegationPrompt(
                 goal: argument,
                 planner: plannerProfile

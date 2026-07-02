@@ -65,6 +65,35 @@ struct PlanCommandTests {
     }
 
     @Test
+    func planCommandWithGoalRunsVisibleDelegationPrompt() throws {
+        let configuration = try AgentConfiguration(
+            hostedModelID: "mlx-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: URL(
+                fileURLWithPath: "/tmp/ZenCODE-plan-command",
+                isDirectory: true
+            )
+        )
+        let terminal = TerminalChat(
+            configuration: configuration,
+            stdinIsTerminal: false
+        )
+        terminal.selectedToolKeys.insert("orchestration")
+
+        let action = terminal.handlePlanCommand("/plan fix the planner command")
+
+        switch action {
+        case let .runPrompt(prompt):
+            #expect(prompt.contains("Planning goal requested by the user: fix the planner command"))
+            #expect(prompt.contains("agent.create"))
+        case .runHiddenPrompt(_):
+            Issue.record("/plan <goal> should run a visible prompt so it is shown in chat")
+        default:
+            Issue.record("/plan <goal> should start the planning delegation prompt")
+        }
+    }
+
+    @Test
     func plannerToolAllowlistExcludesMutatingTools() {
         let planner = AgentProfile(
             id: AgentProfileStore.plannerAgentID.uuidString,
