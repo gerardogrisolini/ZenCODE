@@ -38,7 +38,7 @@ extension TerminalChat {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
         writeChatError(
-            "\n" + Self.renderSubAgentOverview(snapshots) + "\n"
+            Self.renderSubAgentOverview(snapshots) + "\n\n"
         )
     }
 
@@ -86,7 +86,7 @@ extension TerminalChat {
             }
             lines.append(renderSubAgentHeader(snapshot))
             if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                lines.append("    \(dimText("role:")) \(snapshot.role)")
+                lines.append("  \(dimText("role:")) \(snapshot.role)")
             }
             if let model = renderSubAgentModel(snapshot) {
                 lines.append(model)
@@ -97,7 +97,7 @@ extension TerminalChat {
             if let detail = renderSubAgentDetail(snapshot) {
                 lines.append(detail)
             }
-            lines.append("    \(dimText("id: \(snapshot.id)"))")
+            lines.append("  \(dimText("id: \(snapshot.id)"))")
         }
 
         return renderSubAgentOverviewLines(lines)
@@ -150,7 +150,7 @@ extension TerminalChat {
         if let runtime = snapshot.modelRuntime?.nilIfBlank {
             text += " · \(runtime)"
         }
-        return "    \(dimText("model:")) \(truncatedInline(text, limit: 120))"
+        return "  \(dimText("model:")) \(truncatedInline(text, limit: 180))"
     }
 
     private static func renderSubAgentActivity(
@@ -158,13 +158,13 @@ extension TerminalChat {
     ) -> String? {
         if let currentToolName = snapshot.currentToolName?.nilIfBlank {
             let label = colorText("▸ tool:", code: "\u{1B}[38;5;208m")
-            return "    \(label) \(truncatedInline(currentToolName, limit: 120))"
+            return "  \(label) \(truncatedInline(currentToolName, limit: 180))"
         }
         guard let activity = snapshot.currentActivity?.nilIfBlank else {
             return nil
         }
         let label = colorText("▸ activity:", code: "\u{1B}[38;5;208m")
-        return "    \(label) \(truncatedInline(activity, limit: 180))"
+        return "  \(label) \(truncatedInline(activity, limit: 180))"
     }
 
     private static func renderSubAgentDetail(
@@ -172,23 +172,23 @@ extension TerminalChat {
     ) -> String? {
         if let latestError = snapshot.latestError?.nilIfBlank {
             let label = colorText("✗ error:", code: "\u{1B}[31m")
-            return "    \(label) \(truncatedInline(latestError, limit: 180))"
+            return "  \(label) \(truncatedInline(latestError, limit: 180))"
         }
 
         guard let latestOutput = snapshot.latestOutput?.nilIfBlank else {
             if snapshot.pending {
                 let label = colorText("▸ working:", code: "\u{1B}[38;5;208m")
-                return "    \(label) \(dimText("pending response"))"
+                return "  \(label) \(dimText("pending response"))"
             }
             return nil
         }
 
         if snapshot.pending {
             let label = colorText("▸ working:", code: "\u{1B}[38;5;208m")
-            return "    \(label) \(truncatedInline(latestOutput, limit: 180))"
+            return "  \(label) \(truncatedInline(latestOutput, limit: 180))"
         }
         let label = colorText("✓ result:", code: "\u{1B}[32m")
-        return "    \(label) \(truncatedInline(latestOutput, limit: 180))"
+        return "  \(label) \(truncatedInline(latestOutput, limit: 180))"
     }
 
     private static func statusBadge(
@@ -268,7 +268,7 @@ extension TerminalChat {
     private static func renderSubAgentOverviewLines(_ lines: [String]) -> String {
         let columns = terminalColumnCount()
         let horizontalInset = terminalBoxHorizontalInset(columns: columns)
-        let contentWidth = max(40, min(columns - horizontalInset, 120))
+        let contentWidth = max(40, min(columns - horizontalInset, 180))
         let linePrefix = String(repeating: " ", count: horizontalInset)
         let orange = "\u{1B}[38;5;208m"
         let dim = "\u{1B}[90m"
