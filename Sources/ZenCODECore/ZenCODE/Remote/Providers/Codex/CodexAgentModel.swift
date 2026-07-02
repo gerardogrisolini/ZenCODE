@@ -102,18 +102,6 @@ public nonisolated enum CodexAgentModel {
             title: "GPT-5.3 Codex",
             subtitle: "Coding-optimized",
             contextWindowTokenLimit: contextWindowTokenLimit
-        ),
-        ModelOption(
-            modelID: "gpt-5.3-codex-spark",
-            title: "GPT-5.3 Codex Spark",
-            subtitle: "Ultra-fast coding",
-            contextWindowTokenLimit: 128_000
-        ),
-        ModelOption(
-            modelID: "gpt-5.2",
-            title: "GPT-5.2",
-            subtitle: "Long-running work",
-            contextWindowTokenLimit: contextWindowTokenLimit
         )
     ]
     public static let thinkingSupport = MLXModelThinkingSupport.effort(

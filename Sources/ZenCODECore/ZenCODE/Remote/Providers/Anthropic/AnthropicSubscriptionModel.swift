@@ -22,7 +22,7 @@ public nonisolated enum AnthropicSubscriptionModel {
     }
 
     public static let llmID = "claude"
-    public static let defaultModelID = "claude-sonnet-4-6"
+    public static let defaultModelID = "claude-opus-4-8"
     public static var defaultLLMID: String {
         selectionID(forModelID: defaultModelID)
     }
@@ -38,6 +38,13 @@ public nonisolated enum AnthropicSubscriptionModel {
     )
 
     public static let availableModels: [ModelOption] = [
+        modelOption(
+            modelID: "claude-fable-5",
+            title: "Claude Fable 5",
+            subtitle: "Adaptive reasoning",
+            contextWindowTokenLimit: largeContextWindowTokenLimit,
+            maxOutputTokens: largeMaxOutputTokens
+        ),
         modelOption(
             modelID: "claude-opus-4-8",
             title: "Claude Opus 4.8",
@@ -60,31 +67,17 @@ public nonisolated enum AnthropicSubscriptionModel {
             maxOutputTokens: largeMaxOutputTokens
         ),
         modelOption(
-            modelID: "claude-fable-5",
-            title: "Claude Fable 5",
-            subtitle: "Adaptive reasoning",
+            modelID: "claude-sonnet-5-0",
+            title: "Claude Sonnet 5.0",
+            subtitle: "Latest everyday coding",
             contextWindowTokenLimit: largeContextWindowTokenLimit,
             maxOutputTokens: largeMaxOutputTokens
         ),
         modelOption(
             modelID: "claude-sonnet-4-6",
             title: "Claude Sonnet 4.6",
-            subtitle: "Latest everyday coding",
-            contextWindowTokenLimit: largeContextWindowTokenLimit,
-            maxOutputTokens: defaultMaxOutputTokens
-        ),
-        modelOption(
-            modelID: "claude-sonnet-4-5",
-            title: "Claude Sonnet 4.5 (latest)",
             subtitle: "Everyday coding",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: defaultMaxOutputTokens
-        ),
-        modelOption(
-            modelID: "claude-sonnet-4-5-20250929",
-            title: "Claude Sonnet 4.5",
-            subtitle: "Versioned everyday coding",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
+            contextWindowTokenLimit: largeContextWindowTokenLimit,
             maxOutputTokens: defaultMaxOutputTokens
         ),
         modelOption(
@@ -93,132 +86,6 @@ public nonisolated enum AnthropicSubscriptionModel {
             subtitle: "Fast small model",
             contextWindowTokenLimit: defaultContextWindowTokenLimit,
             maxOutputTokens: defaultMaxOutputTokens
-        ),
-        modelOption(
-            modelID: "claude-haiku-4-5-20251001",
-            title: "Claude Haiku 4.5",
-            subtitle: "Versioned fast model",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: defaultMaxOutputTokens
-        ),
-        modelOption(
-            modelID: "claude-opus-4-5",
-            title: "Claude Opus 4.5 (latest)",
-            subtitle: "Frontier model",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: defaultMaxOutputTokens
-        ),
-        modelOption(
-            modelID: "claude-opus-4-5-20251101",
-            title: "Claude Opus 4.5",
-            subtitle: "Versioned frontier model",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: defaultMaxOutputTokens
-        ),
-        modelOption(
-            modelID: "claude-opus-4-1",
-            title: "Claude Opus 4.1 (latest)",
-            subtitle: "Frontier model",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: 32_000
-        ),
-        modelOption(
-            modelID: "claude-opus-4-1-20250805",
-            title: "Claude Opus 4.1",
-            subtitle: "Versioned frontier model",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: 32_000
-        ),
-        modelOption(
-            modelID: "claude-opus-4-0",
-            title: "Claude Opus 4 (latest)",
-            subtitle: "Frontier model",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: 32_000
-        ),
-        modelOption(
-            modelID: "claude-opus-4-20250514",
-            title: "Claude Opus 4",
-            subtitle: "Versioned frontier model",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: 32_000
-        ),
-        modelOption(
-            modelID: "claude-sonnet-4-0",
-            title: "Claude Sonnet 4 (latest)",
-            subtitle: "Everyday coding",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: defaultMaxOutputTokens
-        ),
-        modelOption(
-            modelID: "claude-sonnet-4-20250514",
-            title: "Claude Sonnet 4",
-            subtitle: "Versioned everyday coding",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: defaultMaxOutputTokens
-        ),
-        modelOption(
-            modelID: "claude-3-7-sonnet-20250219",
-            title: "Claude Sonnet 3.7",
-            subtitle: "Long-running work",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: defaultMaxOutputTokens
-        ),
-        modelOption(
-            modelID: "claude-3-5-sonnet-20241022",
-            title: "Claude Sonnet 3.5 v2",
-            subtitle: "Previous generation",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: 8_192,
-            supportsThinking: false
-        ),
-        modelOption(
-            modelID: "claude-3-5-sonnet-20240620",
-            title: "Claude Sonnet 3.5",
-            subtitle: "Previous generation",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: 8_192,
-            supportsThinking: false
-        ),
-        modelOption(
-            modelID: "claude-3-5-haiku-latest",
-            title: "Claude Haiku 3.5 (latest)",
-            subtitle: "Previous fast model",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: 8_192,
-            supportsThinking: false
-        ),
-        modelOption(
-            modelID: "claude-3-5-haiku-20241022",
-            title: "Claude Haiku 3.5",
-            subtitle: "Previous fast model",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: 8_192,
-            supportsThinking: false
-        ),
-        modelOption(
-            modelID: "claude-3-opus-20240229",
-            title: "Claude Opus 3",
-            subtitle: "Legacy frontier model",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: 4_096,
-            supportsThinking: false
-        ),
-        modelOption(
-            modelID: "claude-3-sonnet-20240229",
-            title: "Claude Sonnet 3",
-            subtitle: "Legacy model",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: 4_096,
-            supportsThinking: false
-        ),
-        modelOption(
-            modelID: "claude-3-haiku-20240307",
-            title: "Claude Haiku 3",
-            subtitle: "Legacy fast model",
-            contextWindowTokenLimit: defaultContextWindowTokenLimit,
-            maxOutputTokens: 4_096,
-            supportsThinking: false
         )
     ]
 
