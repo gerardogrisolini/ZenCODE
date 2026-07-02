@@ -75,8 +75,9 @@ Open `Local inference`. The DS4 entries are:
 
 - `DS4 runtime`: backend, context window, output/tool limits, SSD streaming,
   MTP, sampling, and other runtime flags.
-- `DS4 models`: scans the DS4 root for `.gguf` files and also lets you enter a
-  model path manually.
+- `DS4 local GGUF model`: selects an existing local/downloaded `.gguf` file. It
+  scans the DS4 root for local GGUF files and also lets you enter an existing
+  model path manually. Downloadable remote models are not mixed into this list.
 
 After configuring the runtime and selecting the model, validate the
 configuration:
@@ -164,7 +165,8 @@ zen --ds4 \
 
 These options can be saved from `zen --setup` under `Local inference`,
 then `DS4 runtime`. The install script only records the DS4 root and runtime
-library. The model path is recorded by `DS4 models`.
+library. The model path is recorded by `DS4 local GGUF model` and must point to
+an existing local `.gguf` file.
 
 When setup asks for `SSD streaming cache`, enter `32GB` to match the old
 `--ssd-streaming-cache-experts 32GB` command. Entering only `32` means cache 32
@@ -203,7 +205,8 @@ Common fixes:
 
 - missing DS4 root: run `Scripts/setup-ds4.sh /path/to/ds4`
 - missing `libds4.dylib`: run `Scripts/build-ds4-runtime.sh /path/to/ds4`
-- missing model: run `zen --setup`, open `Local inference`, then `DS4 models`
+- missing model: run `zen --setup`, open `Local inference`, then
+  `DS4 local GGUF model`
 - wrong DS4 flags: run `zen --setup`, open `Local inference`, then `DS4 runtime`
 
 `zen --ds4` uses native DSML tool calls in-process, so tool execution does

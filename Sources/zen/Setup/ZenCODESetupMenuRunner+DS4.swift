@@ -21,7 +21,7 @@ extension ZenCODESetupMenuRunner {
 
     static func ds4ModelsSetupSection() -> ZenCODESetupAdditionalSection {
         ZenCODESetupAdditionalSection(
-            title: "DS4 models",
+            title: "DS4 local GGUF model",
             detail: ds4ModelSetupDetail(),
             aliases: ["ds4", "ds4 setup", "ds4 runtime", "ds4 model", "ds4 models"]
         ) {
@@ -52,9 +52,13 @@ extension ZenCODESetupMenuRunner {
             return "install runtime first"
         }
         guard let modelPath = settings.modelPath?.nilIfBlank else {
-            return "runtime ready, model not selected"
+            return "select local GGUF model"
         }
-        return URL(fileURLWithPath: modelPath).lastPathComponent
+        let modelURL = URL(fileURLWithPath: modelPath).standardizedFileURL
+        guard DS4ModelDiscovery.isGGUFModelFile(modelURL) else {
+            return "model path missing"
+        }
+        return modelURL.lastPathComponent
     }
 
     private struct DS4RuntimePaths {
@@ -748,26 +752,42 @@ extension ZenCODESetupMenuRunner {
         ds4Root: URL,
         currentModelPath: String?
     ) throws -> URL {
-        let candidates = DS4ModelDiscovery.ggufModelCandidates(in: ds4Root)
+        let candidates = localDS4ModelCandidates(
+            ds4Root: ds4Root,
+            currentModelPath: currentModelPath
+        )
         var items = candidates.map { candidate in
             TerminalCheckboxMenuItem(
                 value: DS4ModelChoice.candidate(candidate.path),
                 title: modelDisplayName(candidate, ds4Root: ds4Root),
-                detail: candidate.path
+                detail: modelDetail(candidate, ds4Root: ds4Root)
             )
         }
         items.append(
             TerminalCheckboxMenuItem(
                 value: .manual,
-                title: "Enter model path",
-                detail: "choose a GGUF file outside the detected list"
+                title: "Enter local GGUF path",
+                detail: "choose an existing local .gguf file outside the detected list"
             )
         )
 
+        if candidates.isEmpty {
+            AgentOutput.standardError.writeString(
+                "No local GGUF models found under DS4 root. Enter an existing .gguf path or download one separately.\n"
+            )
+        } else {
+            AgentOutput.standardError.writeString(
+                "Select an existing local DS4 GGUF model. Downloadable models are not mixed into this list.\n"
+            )
+        }
+
+        let currentSelectedPath = currentModelPath.map {
+            URL(fileURLWithPath: $0).standardizedFileURL.path
+        }
         let selectedChoice: DS4ModelChoice
-        if let currentModelPath,
-           candidates.contains(where: { $0.path == currentModelPath }) {
-            selectedChoice = .candidate(currentModelPath)
+        if let currentSelectedPath,
+           candidates.contains(where: { $0.path == currentSelectedPath }) {
+            selectedChoice = .candidate(currentSelectedPath)
         } else if let first = candidates.first {
             selectedChoice = .candidate(first.path)
         } else {
@@ -775,7 +795,7 @@ extension ZenCODESetupMenuRunner {
         }
 
         guard let choice = TerminalCheckboxMenu.selectOne(
-            title: "DS4 model",
+            title: "DS4 local GGUF model",
             items: items,
             selected: selectedChoice
         ) else {
@@ -793,8 +813,8 @@ extension ZenCODESetupMenuRunner {
     private static func promptManualDS4ModelURL(defaultValue: String?) throws -> URL {
         while true {
             guard let rawValue = TerminalCheckboxMenu.promptLine(
-                title: "DS4 model",
-                prompt: "GGUF model path",
+                title: "DS4 local GGUF model",
+                prompt: "Local GGUF model path",
                 defaultValue: defaultValue,
                 allowEmpty: false,
                 help: "Enter the absolute path to a local DS4 GGUF model file."
@@ -803,12 +823,33 @@ extension ZenCODESetupMenuRunner {
             }
 
             let url = URL(fileURLWithPath: rawValue).standardizedFileURL
-            guard url.pathExtension.lowercased() == "gguf",
-                  DS4ModelDiscovery.isFile(url) else {
+            guard DS4ModelDiscovery.isGGUFModelFile(url) else {
                 AgentOutput.standardError.writeString("Enter an existing .gguf file path.\n")
                 continue
             }
             return url
+        }
+    }
+
+    private static func localDS4ModelCandidates(
+        ds4Root: URL,
+        currentModelPath: String?
+    ) -> [URL] {
+        var candidatesByPath = Dictionary(
+            uniqueKeysWithValues: DS4ModelDiscovery.ggufModelCandidates(in: ds4Root).map {
+                ($0.standardizedFileURL.path, $0.standardizedFileURL)
+            }
+        )
+
+        if let currentModelPath {
+            let currentModelURL = URL(fileURLWithPath: currentModelPath).standardizedFileURL
+            if DS4ModelDiscovery.isGGUFModelFile(currentModelURL) {
+                candidatesByPath[currentModelURL.path] = currentModelURL
+            }
+        }
+
+        return candidatesByPath.values.sorted {
+            $0.path.localizedStandardCompare($1.path) == .orderedAscending
         }
     }
 
@@ -819,6 +860,15 @@ extension ZenCODESetupMenuRunner {
             return String(path.dropFirst(rootPath.count + 1))
         }
         return url.lastPathComponent
+    }
+
+    private static func modelDetail(_ url: URL, ds4Root: URL) -> String {
+        let rootPath = ds4Root.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        if path.hasPrefix(rootPath + "/") {
+            return path
+        }
+        return "currently configured outside DS4 root: \(path)"
     }
 
     private static func directoryExists(_ url: URL) -> Bool {

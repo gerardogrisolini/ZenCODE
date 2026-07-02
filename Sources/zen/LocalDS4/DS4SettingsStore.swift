@@ -184,17 +184,22 @@ enum DS4ModelDiscovery {
             return []
         }
 
-        var candidates: [URL] = []
+        var candidatesByPath: [String: URL] = [:]
         for case let url as URL in enumerator {
-            guard url.pathExtension.lowercased() == "gguf", isFile(url) else {
+            guard isGGUFModelFile(url) else {
                 continue
             }
-            candidates.append(url.standardizedFileURL)
+            let standardizedURL = url.standardizedFileURL
+            candidatesByPath[standardizedURL.path] = standardizedURL
         }
 
-        return candidates.sorted {
+        return candidatesByPath.values.sorted {
             $0.path.localizedStandardCompare($1.path) == .orderedAscending
         }
+    }
+
+    static func isGGUFModelFile(_ url: URL) -> Bool {
+        url.pathExtension.lowercased() == "gguf" && isFile(url)
     }
 
     static func isFile(_ url: URL) -> Bool {
