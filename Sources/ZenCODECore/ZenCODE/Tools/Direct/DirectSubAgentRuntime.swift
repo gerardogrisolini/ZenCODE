@@ -48,6 +48,12 @@ public actor DirectSubAgentRuntime {
         public var pendingPrompts: [String]
         public var latestOutput: String?
         public var latestError: String?
+        public var modelID: String? = nil
+        public var modelRuntime: String? = nil
+        public var currentActivity: String? = nil
+        public var currentToolName: String? = nil
+        public var latestContentPreview: String? = nil
+        public var latestEventAt: Date? = nil
         public var runTask: Task<Void, Never>?
     }
 
@@ -64,10 +70,52 @@ public actor DirectSubAgentRuntime {
         public let isolationMode: IsolationMode
         public let status: Status
         public let pending: Bool
+        public let modelID: String?
+        public let modelRuntime: String?
+        public let currentActivity: String?
+        public let currentToolName: String?
+        public let latestContentPreview: String?
+        public let latestEventAt: Date?
         public let latestOutput: String?
         public let latestError: String?
         public let createdAt: Date
         public let updatedAt: Date
+
+        public init(
+            id: String,
+            name: String,
+            role: String,
+            isolationMode: IsolationMode,
+            status: Status,
+            pending: Bool,
+            modelID: String? = nil,
+            modelRuntime: String? = nil,
+            currentActivity: String? = nil,
+            currentToolName: String? = nil,
+            latestContentPreview: String? = nil,
+            latestEventAt: Date? = nil,
+            latestOutput: String?,
+            latestError: String?,
+            createdAt: Date,
+            updatedAt: Date
+        ) {
+            self.id = id
+            self.name = name
+            self.role = role
+            self.isolationMode = isolationMode
+            self.status = status
+            self.pending = pending
+            self.modelID = modelID
+            self.modelRuntime = modelRuntime
+            self.currentActivity = currentActivity
+            self.currentToolName = currentToolName
+            self.latestContentPreview = latestContentPreview
+            self.latestEventAt = latestEventAt
+            self.latestOutput = latestOutput
+            self.latestError = latestError
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+        }
     }
 
     public struct RequestedAgentPayload {

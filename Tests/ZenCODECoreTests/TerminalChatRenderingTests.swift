@@ -462,11 +462,58 @@ struct TerminalChatRenderingTests {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { ansiStripped(String($0)) }
 
-        #expect(visibleLines.first == "Sub-Agents")
+        #expect(visibleLines.first == "🤖 Sub-Agents")
         #expect(!rendered.contains("┌"))
         #expect(!rendered.contains("│"))
         #expect(!rendered.contains("└"))
         #expect(visibleLines.allSatisfy { $0.count <= 122 })
+    }
+
+    @Test
+    func subAgentOverviewRendersModelAndCurrentActivity() {
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_2",
+            name: "planner",
+            role: "Planner",
+            isolationMode: .report,
+            status: .running,
+            pending: true,
+            modelID: "gpt-5",
+            modelRuntime: "remote",
+            currentActivity: "reading project files",
+            currentToolName: "search.grep",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+
+        #expect(rendered.contains("model: gpt-5 · remote"))
+        #expect(rendered.contains("tool: search.grep"))
+    }
+
+    @Test
+    func subAgentOverviewRendersActivityWithoutCurrentTool() {
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_3",
+            name: "planner",
+            role: "Planner",
+            isolationMode: .report,
+            status: .running,
+            pending: true,
+            currentActivity: "reading project files",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+
+        #expect(rendered.contains("activity: reading project files"))
+        #expect(!rendered.contains("tool:"))
     }
 
     @Test

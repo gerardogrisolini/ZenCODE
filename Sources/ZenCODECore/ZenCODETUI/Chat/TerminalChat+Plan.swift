@@ -62,9 +62,9 @@ extension TerminalChat {
 
         let plannerProfile = plannerProfileForDelegation()
 
-        writeSystemMessage(
-            "Starting planning pass for requested goal via Planner sub-agents...\n"
-        )
+//        writeSystemMessage(
+//            "Starting planning pass for requested goal via Planner sub-agents...\n"
+//        )
 
         return .runPrompt(
             Self.planDelegationPrompt(

@@ -214,8 +214,6 @@ extension TerminalChat {
                         case .empty, .prompt:
                             queuedPrompts.append(TerminalQueuedPrompt(text: line, origin: .local))
                             interactiveReader.setQueuedPromptCount(queuedPrompts.count)
-                        case .slashCommand where Self.isSubAgentsCommand(line):
-                            _ = await handleSubmittedPanelLine(line)
                         case .slashCommand:
                             writeFailureMessage(generatingSlashCommandMessage(for: line))
                         }

@@ -22,6 +22,18 @@ struct PlanCommandTests {
     }
 
     @Test
+    func subAgentsCommandIsRemovedFromVisibleCommands() {
+        let commands = TerminalChat.visibleCommandDescriptors(
+            builderAgentEnabled: false,
+            telegramEnabled: false,
+            voiceEnabled: false
+        ).map(\.command)
+
+        #expect(!commands.contains("/subagents"))
+        #expect(!TerminalChat.isKnownSlashCommand("/subagents"))
+    }
+
+    @Test
     func planCommandRequiresExplicitGoalArgument() throws {
         let descriptor = try #require(
             TerminalChat.visibleCommandDescriptors(

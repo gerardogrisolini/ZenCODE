@@ -52,7 +52,7 @@ public struct AgentConfiguration: Sendable {
       In chat mode, use /skills to select prompt skills installed by the app or install a skill from GitHub or a local folder.
       In chat mode, use /attach to add image or video files to the next prompt.
       In chat mode, use /changes to review tracked file changes and /undo to revert the latest tracked changes.
-      In chat mode, use /subagents to show delegated sub-agent status.
+      In chat mode, delegated sub-agent status is shown automatically in the chat flow.
       In ACP mode, clients pass the enabled tools to the agent runtime.
       Xcode MCP tools are added when Xcode is running and mcpbridge can expose tools.
       Figma MCP tools are added when the local Figma desktop MCP server exposes tools.

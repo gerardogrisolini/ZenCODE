@@ -44,11 +44,12 @@ extension TerminalChat {
 
     let reviewerProfile = reviewerProfileForDelegation()
 
-    writeSystemMessage(
-      argument.isEmpty
-        ? "Starting review of session changes...\n"
-        : "Starting review of session changes with requested focus...\n"
-    )
+//    writeSystemMessage(
+//      argument.isEmpty
+//        ? "Starting review of session changes...\n"
+//        : "Starting review of session changes with requested focus...\n"
+//    )
+      writeSubmittedPrompt("/review")
 
     return .runHiddenPrompt(
       Self.reviewDelegationPrompt(

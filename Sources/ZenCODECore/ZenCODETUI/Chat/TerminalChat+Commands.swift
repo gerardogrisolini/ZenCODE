@@ -78,10 +78,6 @@ extension TerminalChat {
         }
     }
 
-    static func isSubAgentsCommand(_ line: String) -> Bool {
-        commandToken(from: line) == "/subagents"
-    }
-
     static func isVoiceCommand(_ line: String) -> Bool {
         commandToken(from: line) == "/voice"
     }
@@ -289,11 +285,6 @@ extension TerminalChat {
             command: "/review",
             summary: "review changes via sub-agents",
             help: "/review [focus] spawns Reviewer sub-agents (read-only) to review only the tracked file changes made during the current session."
-        ),
-        TerminalChatCommandDescriptor(
-            command: "/subagents",
-            summary: "show sub-agent status",
-            help: "/subagents shows delegated sub-agent status. Use /subagents off to hide automatic updates."
         ),
         TerminalChatCommandDescriptor(
             command: "/telegram",

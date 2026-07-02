@@ -150,9 +150,6 @@ extension TerminalChat {
             return handlePlanCommand(command)
         case let command where command == "/review" || command.hasPrefix("/review "):
             return handleReviewCommand(command)
-        case let command where command == "/subagents" || command.hasPrefix("/subagents "):
-            await handleSubAgentsCommand(command)
-            return .continueChat
         case let command where command == "/telegram" || command.hasPrefix("/telegram "):
             await handleTelegramCommand(command)
             return .continueChat

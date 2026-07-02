@@ -137,8 +137,7 @@ Inside chat mode, type a prompt and press return. Commands start with `/`:
   This command requires the `orchestration` tool group; enable it with `/tools` or switch to a profile that includes it.
 - `/review [focus]`: delegate code review to one or more read-only `Reviewer` sub-agents. The command reviews only the tracked file changes made during the current session; an optional focus is applied within those session changes.
   This command requires the `orchestration` tool group; enable it with `/tools` or switch to a profile that includes it.
-- `/subagents`: show delegated sub-agent status.
-- `/subagents off`: hide automatic sub-agent status updates.
+- Delegated sub-agent status is shown automatically in the chat flow while `/plan`, `/review`, or `agent.*` tool calls create and update sub-agents.
 - `/telegram`: show Telegram status for the current TUI session.
 - `/telegram on`: turn Telegram on for the current TUI session. This also sends a confirmation message to the linked Telegram chat, so the iOS client is woken up and you do not need to message the bot first to start receiving notifications.
 - `/telegram off`: turn Telegram off for the current TUI session.

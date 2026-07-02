@@ -84,7 +84,7 @@ extension TerminalChat {
                                 self.telegramToolStartedMessage(toolCall)
                             )
                         }
-                        await self.publishSubAgentOverviewIfVisible(
+                        await self.publishSubAgentOverviewIfChanged(
                             relatedToolName: toolCall.name
                         )
                     case let .toolCallCompleted(toolCall, result):
@@ -95,7 +95,7 @@ extension TerminalChat {
                         if Self.isFileMutationTool(toolCall.name) {
                             self.refreshStatusBarGitStatusSummaryForFileMutation()
                         }
-                        await self.publishSubAgentOverviewIfVisible(
+                        await self.publishSubAgentOverviewIfChanged(
                             relatedToolName: toolCall.name
                         )
                     case let .sessionSnapshot(snapshot):
@@ -116,7 +116,7 @@ extension TerminalChat {
                     telegramFileChangeSummaryMessage(summary)
                 )
             }
-            await publishSubAgentOverviewIfVisible()
+            await publishSubAgentOverviewIfChanged()
             await telegramProgressReporter?.flush()
             return TerminalChatGenerationSuccess(
                 response: response,
@@ -132,7 +132,7 @@ extension TerminalChat {
                     telegramFileChangeSummaryMessage(summary)
                 )
             }
-            await publishSubAgentOverviewIfVisible()
+            await publishSubAgentOverviewIfChanged()
             await telegramProgressReporter?.flush()
             throw TerminalChatGenerationRunError(
                 underlying: error,

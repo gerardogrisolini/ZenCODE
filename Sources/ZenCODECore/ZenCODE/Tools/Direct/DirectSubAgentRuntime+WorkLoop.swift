@@ -48,7 +48,9 @@ extension DirectSubAgentRuntime {
                     sessionID: work.sessionID,
                     prompt: work.prompt,
                     attachments: [],
-                    onEvent: { _ in }
+                    onEvent: { event in
+                        await self.recordEvent(event, agentID: agentID)
+                    }
                 )
                 recordCompletion(response, agentID: agentID)
             } catch is CancellationError {
@@ -92,15 +94,103 @@ extension DirectSubAgentRuntime {
         )
     }
 
+    public func recordEvent(
+        _ event: DirectAgentEvent,
+        agentID: String
+    ) {
+        guard var agent = agents[agentID],
+              agent.status != .closed else {
+            return
+        }
+
+        switch event {
+        case let .status(message):
+            agent.currentActivity = message.nilIfBlank.map { Self.truncatedActivity($0) }
+        case let .diagnostic(message):
+            if let message = message.nilIfBlank {
+                agent.currentActivity = Self.truncatedActivity(message)
+            }
+        case let .thought(delta):
+            if let thought = delta.nilIfBlank {
+                agent.currentActivity = "thinking: \(Self.truncatedActivity(thought))"
+            }
+        case let .modelLoaded(modelID):
+            agent.modelID = modelID.nilIfBlank ?? agent.modelID
+            if let modelID = modelID.nilIfBlank {
+                agent.currentActivity = "loaded model \(modelID)"
+            }
+        case let .modelLoadedDetails(details):
+            agent.modelID = details.modelID.nilIfBlank ?? agent.modelID
+            agent.modelRuntime = details.runtime ?? agent.modelRuntime
+            agent.currentActivity = "loaded model \(details.modelID)"
+        case let .modelRuntime(runtime):
+            agent.modelRuntime = runtime.nilIfBlank ?? agent.modelRuntime
+        case let .content(delta):
+            if let preview = Self.updatedPreview(agent.latestContentPreview, appending: delta) {
+                agent.latestContentPreview = preview
+                agent.currentActivity = preview
+            }
+        case let .toolCallStarted(toolCall):
+            agent.currentToolName = toolCall.name
+            agent.currentActivity = "running \(toolCall.name)"
+        case let .toolCallCompleted(toolCall, result):
+            agent.currentToolName = nil
+            let summary = result.summary.nilIfBlank ?? result.output.nilIfBlank
+            agent.currentActivity = summary.map { "completed \(toolCall.name): \(Self.truncatedActivity($0))" }
+                ?? "completed \(toolCall.name)"
+        case let .sessionSnapshot(snapshot):
+            agent.modelID = snapshot.modelID?.nilIfBlank ?? agent.modelID
+        case .metrics,
+             .contextWindow,
+             .subscriptionUsage,
+             .turnEnded:
+            break
+        }
+
+        agent.latestEventAt = .now
+        agent.updatedAt = .now
+        agents[agentID] = agent
+    }
+
+    private static func updatedPreview(
+        _ current: String?,
+        appending delta: String
+    ) -> String? {
+        let combined = ((current ?? "") + delta)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !combined.isEmpty else {
+            return current
+        }
+        return truncatedActivity(combined)
+    }
+
+    private static func truncatedActivity(_ text: String) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        let limit = 180
+        guard normalized.count > limit else {
+            return normalized
+        }
+        return String(normalized.prefix(limit - 1)) + "…"
+    }
+
     public func recordCompletion(
         _ response: DirectAgentResponse,
         agentID: String
     ) {
-        guard var agent = agents[agentID] else {
+        guard var agent = agents[agentID],
+              agent.status != .closed else {
             return
         }
         agent.latestOutput = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
         agent.latestError = nil
+        agent.modelID = response.modelID.nilIfBlank ?? agent.modelID
+        agent.currentActivity = nil
+        agent.currentToolName = nil
+        agent.latestContentPreview = nil
         agent.status = agent.pendingPrompts.isEmpty ? .idle : .queued
         agent.updatedAt = .now
         agents[agentID] = agent
@@ -118,6 +208,8 @@ extension DirectSubAgentRuntime {
         if agent.status != .closed {
             agent.status = .failed
             agent.latestError = error.localizedDescription
+            agent.currentActivity = nil
+            agent.currentToolName = nil
         }
         agent.updatedAt = .now
         agents[agentID] = agent
@@ -132,6 +224,8 @@ extension DirectSubAgentRuntime {
         if agent.status != .closed {
             agent.status = .closed
             agent.latestError = "Cancelled."
+            agent.currentActivity = nil
+            agent.currentToolName = nil
         }
         agent.updatedAt = .now
         agents[agentID] = agent

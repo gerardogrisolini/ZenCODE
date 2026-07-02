@@ -137,6 +137,13 @@ public enum MLXSystemPromptBuilder {
     }
 
     private static func standaloneBaseSection(memoryToolEnabled: Bool) -> String {
+        let confirmationFiles = ""
+//        """
+//        5. Before starting file modifications, briefly explain the intended changes, including a concise list of the files or areas you expect to edit and what you expect to change in each one, then ask the user to confirm. Do not modify files until the user confirms.
+//        6. When pausing for this confirmation, do not rely on the turn-closing modified-files report as the only file list; the intended edits must be visible before the confirmation question.
+//        7. Ask for confirmation when the next step starts file modifications, is destructive, irreversible, or genuinely ambiguous.
+//        """
+
         let toolFamilyText = memoryToolEnabled
             ? "Git, Xcode, shell, web, Figma, memory, and delegated sub-agent tools"
             : "Git, Xcode, shell, web, Figma, and delegated sub-agent tools"
@@ -148,9 +155,7 @@ public enum MLXSystemPromptBuilder {
         2. Use the model's native tool-call interface when calling tools; do not print JSON tool-call objects, markdown fences, XML-style tags, or explanations around tool calls.
         3. Use only exact tool names exposed in this session. Never invent tool names, and do not claim a tool is missing if it is exposed.
         4. Do not ask for routine confirmation to inspect, search, read, or run non-mutating diagnostics when those steps are already implied by the user's request.
-        5. Before starting file modifications, briefly explain the intended changes, including a concise list of the files or areas you expect to edit and what you expect to change in each one, then ask the user to confirm. Do not modify files until the user confirms.
-        6. When pausing for this confirmation, do not rely on the turn-closing modified-files report as the only file list; the intended edits must be visible before the confirmation question.
-        7. Ask for confirmation when the next step starts file modifications, is destructive, irreversible, or genuinely ambiguous.
+        \(confirmationFiles)
 
         Coding workflow:
         Prefer concrete tool evidence over assumptions. Search before broad reads, read before edits, and keep edits narrowly scoped to the user's request. Preserve unrelated user changes and do not revert work you did not make. Use \(toolFamilyText) when they are available and relevant. Prefer dedicated non-shell tools for file, text, search, Git, web, Xcode, Figma, memory, and sub-agent operations when those tools are exposed; use shell execution only for work not covered by a dedicated tool. Prefer Xcode-native tools for Apple-project build, test, preview, and diagnostics work when those tools are exposed. Validate important changes with the available build, test, lint, or diagnostic tools when the risk justifies it.

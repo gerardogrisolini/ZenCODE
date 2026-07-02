@@ -7,37 +7,9 @@
 import Foundation
 
 extension TerminalChat {
-    public func handleSubAgentsCommand(_ command: String) async {
-        let argument = String(command.dropFirst("/subagents".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-
-        switch argument {
-        case "", "on", "show":
-            isSubAgentOverviewVisible = true
-            lastRenderedSubAgentOverviewSignature = nil
-            startSubAgentOverviewRefreshLoop()
-            await renderSubAgentOverview(force: true)
-        case "once", "now", "status":
-            await renderSubAgentOverview(force: true, rememberSignature: false)
-        case "off", "hide":
-            isSubAgentOverviewVisible = false
-            lastRenderedSubAgentOverviewSignature = nil
-            stopSubAgentOverviewRefreshLoop()
-            writeSystemMessage("Sub-agent overview hidden.\n")
-        default:
-            writeSystemMessage(
-                "Usage: /subagents [on|off|once]\n"
-            )
-        }
-    }
-
-    public func publishSubAgentOverviewIfVisible(
+    public func publishSubAgentOverviewIfChanged(
         relatedToolName: String? = nil
     ) async {
-        guard isSubAgentOverviewVisible else {
-            return
-        }
         if let relatedToolName,
            !DirectSubAgentRuntime.isSubAgentToolName(relatedToolName) {
             return
@@ -51,6 +23,9 @@ extension TerminalChat {
         rememberSignature: Bool = true
     ) async {
         let snapshots = await sessionRunner.subAgentSnapshots()
+        guard force || !snapshots.isEmpty else {
+            return
+        }
         let signature = Self.subAgentOverviewSignature(snapshots)
         guard force || signature != lastRenderedSubAgentOverviewSignature else {
             return
@@ -74,10 +49,16 @@ extension TerminalChat {
 
         subAgentOverviewRefreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                guard let self,
-                      self.isSubAgentOverviewVisible else {
-                    continue
+                do {
+                    try await Task.sleep(nanoseconds: 1_500_000_000)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else {
+                    return
+                }
+                guard let self else {
+                    return
                 }
                 await self.renderSubAgentOverview(force: false)
             }
@@ -94,7 +75,7 @@ extension TerminalChat {
     ) -> String {
         var lines = [renderSubAgentSummary(snapshots)]
 
-                if snapshots.isEmpty {
+        if snapshots.isEmpty {
             lines.append("No delegated sub-agents.")
             return renderSubAgentOverviewLines(lines)
         }
@@ -106,6 +87,12 @@ extension TerminalChat {
             lines.append(renderSubAgentHeader(snapshot))
             if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 lines.append("    \(dimText("role:")) \(snapshot.role)")
+            }
+            if let model = renderSubAgentModel(snapshot) {
+                lines.append(model)
+            }
+            if let activity = renderSubAgentActivity(snapshot) {
+                lines.append(activity)
             }
             if let detail = renderSubAgentDetail(snapshot) {
                 lines.append(detail)
@@ -151,6 +138,33 @@ extension TerminalChat {
         let badge = statusBadge(for: snapshot)
         let meta = dimText("\(snapshot.isolationMode.rawValue) · updated \(age)")
         return "\(marker) \(boldText(name))  \(badge)  \(meta)"
+    }
+
+    private static func renderSubAgentModel(
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
+    ) -> String? {
+        guard let modelID = snapshot.modelID?.nilIfBlank else {
+            return nil
+        }
+        var text = modelID
+        if let runtime = snapshot.modelRuntime?.nilIfBlank {
+            text += " · \(runtime)"
+        }
+        return "    \(dimText("model:")) \(truncatedInline(text, limit: 120))"
+    }
+
+    private static func renderSubAgentActivity(
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
+    ) -> String? {
+        if let currentToolName = snapshot.currentToolName?.nilIfBlank {
+            let label = colorText("▸ tool:", code: "\u{1B}[38;5;208m")
+            return "    \(label) \(truncatedInline(currentToolName, limit: 120))"
+        }
+        guard let activity = snapshot.currentActivity?.nilIfBlank else {
+            return nil
+        }
+        let label = colorText("▸ activity:", code: "\u{1B}[38;5;208m")
+        return "    \(label) \(truncatedInline(activity, limit: 180))"
     }
 
     private static func renderSubAgentDetail(
@@ -251,7 +265,7 @@ extension TerminalChat {
         return "\(color)\(marker)\u{1B}[0m"
     }
 
-        private static func renderSubAgentOverviewLines(_ lines: [String]) -> String {
+    private static func renderSubAgentOverviewLines(_ lines: [String]) -> String {
         let columns = terminalColumnCount()
         let horizontalInset = terminalBoxHorizontalInset(columns: columns)
         let contentWidth = max(40, min(columns - horizontalInset, 120))
@@ -260,8 +274,8 @@ extension TerminalChat {
         let dim = "\u{1B}[90m"
         let reset = "\u{1B}[0m"
         let title = AgentOutput.standardErrorIsTerminal
-            ? "\(orange)Sub-Agents\(reset)"
-            : "Sub-Agents"
+            ? "👥 \(orange)Sub-Agents\(reset)"
+            : "👥 Sub-Agents"
 
         var output = ["\(linePrefix)\(title)"]
         for (index, line) in lines.enumerated() {
@@ -291,6 +305,11 @@ extension TerminalChat {
                 snapshot.status.rawValue,
                 snapshot.pending ? "pending" : "idle",
                 "\(snapshot.updatedAt.timeIntervalSince1970)",
+                snapshot.modelID?.nilIfBlank ?? "",
+                snapshot.modelRuntime?.nilIfBlank ?? "",
+                snapshot.currentActivity?.nilIfBlank ?? "",
+                snapshot.currentToolName?.nilIfBlank ?? "",
+                snapshot.latestContentPreview?.nilIfBlank ?? "",
                 snapshot.latestOutput?.nilIfBlank ?? "",
                 snapshot.latestError?.nilIfBlank ?? ""
             ].joined(separator: "\u{1F}")

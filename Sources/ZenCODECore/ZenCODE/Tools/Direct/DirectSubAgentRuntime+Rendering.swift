@@ -38,9 +38,17 @@ extension DirectSubAgentRuntime {
 
         var lines = ["Sub-agents:"]
         for snapshot in snapshots {
-            lines.append(
-                "- \(snapshot.id) name=\(snapshot.name) role=\(snapshot.role) status=\(snapshot.status.rawValue) pending=\(snapshot.pending) isolation=\(snapshot.isolationMode.rawValue)"
-            )
+            var summary = "- \(snapshot.id) name=\(snapshot.name) role=\(snapshot.role) status=\(snapshot.status.rawValue) pending=\(snapshot.pending) isolation=\(snapshot.isolationMode.rawValue)"
+            if let modelID = snapshot.modelID?.nilIfBlank {
+                summary += " model=\(modelID)"
+            }
+            if let currentToolName = snapshot.currentToolName?.nilIfBlank {
+                summary += " tool=\(currentToolName)"
+            }
+            lines.append(summary)
+            if let activity = snapshot.currentActivity?.nilIfBlank {
+                lines.append("  activity: \(activity)")
+            }
             if includeLatestOutput,
                let latestError = snapshot.latestError?.nilIfBlank {
                 lines.append("  latest_error: \(latestError)")

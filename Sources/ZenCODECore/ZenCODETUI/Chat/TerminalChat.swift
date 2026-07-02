@@ -67,7 +67,6 @@ public final class TerminalChat: @unchecked Sendable {
     public var selectedSkillIDs = Set<String>()
     public var pendingAttachments: [AgentRuntimeAttachment] = []
     public var lastFileChangeSummary: TurnFileChangeSummary?
-    public var isSubAgentOverviewVisible = false
     public var lastRenderedSubAgentOverviewSignature: String?
     public var subAgentOverviewRefreshTask: Task<Void, Never>?
     public var availableSkillsCache: [MLXPromptSkill]?
@@ -202,6 +201,7 @@ public final class TerminalChat: @unchecked Sendable {
 
         let statusBarStarted = statusBar.start()
         refreshStatusBarGitStatusSummary()
+        startSubAgentOverviewRefreshLoop()
         defer {
             stopSubAgentOverviewRefreshLoop()
             Task {
