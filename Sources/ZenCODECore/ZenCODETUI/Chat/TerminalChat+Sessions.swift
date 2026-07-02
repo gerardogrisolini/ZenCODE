@@ -54,7 +54,6 @@ extension TerminalChat {
             pendingAttachments.removeAll()
             lastAssistantResponseText = nil
             lastRenderedSubAgentOverviewSignature = nil
-            startSubAgentOverviewRefreshLoop()
             writeSystemMessage("Started a new session.\n")
         } catch {
             writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
@@ -301,7 +300,7 @@ extension TerminalChat {
         pendingAttachments.removeAll()
         lastFileChangeSummary = nil
         lastRenderedSubAgentOverviewSignature = nil
-        startSubAgentOverviewRefreshLoop()
+        await renderSubAgentOverview(force: false)
         didPrintActiveTools = false
         printedModelID = nil
         statusBar.reset()

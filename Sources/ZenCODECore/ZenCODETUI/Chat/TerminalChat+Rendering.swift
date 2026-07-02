@@ -281,12 +281,18 @@ extension TerminalChat {
     }
 
     public static func truncatedInline(_ text: String, limit: Int) -> String {
-        let singleLine = text
-            .replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let singleLine = inlineText(text)
         guard singleLine.count > limit else {
             return singleLine
         }
         return String(singleLine.prefix(limit - 3)) + "..."
+    }
+
+    public static func inlineText(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

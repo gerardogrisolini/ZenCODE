@@ -42,34 +42,6 @@ extension TerminalChat {
         )
     }
 
-    public func startSubAgentOverviewRefreshLoop() {
-        guard subAgentOverviewRefreshTask == nil else {
-            return
-        }
-
-        subAgentOverviewRefreshTask = Task { [weak self] in
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(nanoseconds: 1_500_000_000)
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled else {
-                    return
-                }
-                guard let self else {
-                    return
-                }
-                await self.renderSubAgentOverview(force: false)
-            }
-        }
-    }
-
-    public func stopSubAgentOverviewRefreshLoop() {
-        subAgentOverviewRefreshTask?.cancel()
-        subAgentOverviewRefreshTask = nil
-    }
-
     public static func renderSubAgentOverview(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
     ) -> String {
@@ -150,7 +122,7 @@ extension TerminalChat {
         if let runtime = snapshot.modelRuntime?.nilIfBlank {
             text += " · \(runtime)"
         }
-        return "\(dimText("model:")) \(truncatedInline(text, limit: 180))"
+        return "\(dimText("model:")) \(inlineText(text))"
     }
 
     private static func renderSubAgentActivity(
@@ -158,13 +130,13 @@ extension TerminalChat {
     ) -> String? {
         if let currentToolName = snapshot.currentToolName?.nilIfBlank {
             let label = colorText("▸ tool:", code: "\u{1B}[38;5;208m")
-            return "\(label) \(truncatedInline(currentToolName, limit: 180))"
+            return "\(label) \(inlineText(currentToolName))"
         }
         guard let activity = snapshot.currentActivity?.nilIfBlank else {
             return nil
         }
         let label = colorText("▸ activity:", code: "\u{1B}[38;5;208m")
-        return "\(label) \(truncatedInline(activity, limit: 180))"
+        return "\(label) \(inlineText(activity))"
     }
 
     private static func renderSubAgentDetail(
@@ -172,7 +144,7 @@ extension TerminalChat {
     ) -> String? {
         if let latestError = snapshot.latestError?.nilIfBlank {
             let label = colorText("✗ error:", code: "\u{1B}[31m")
-            return "\(label) \(truncatedInline(latestError, limit: 180))"
+            return "\(label) \(inlineText(latestError))"
         }
 
         guard let latestOutput = snapshot.latestOutput?.nilIfBlank else {
@@ -185,10 +157,10 @@ extension TerminalChat {
 
         if snapshot.pending {
             let label = colorText("▸ working:", code: "\u{1B}[38;5;208m")
-            return "\(label) \(truncatedInline(latestOutput, limit: 180))"
+            return "\(label) \(inlineText(latestOutput))"
         }
         let label = colorText("✓ result:", code: "\u{1B}[32m")
-        return "\(label) \(truncatedInline(latestOutput, limit: 180))"
+        return "\(label) \(inlineText(latestOutput))"
     }
 
     private static func statusBadge(
@@ -268,7 +240,7 @@ extension TerminalChat {
     private static func renderSubAgentOverviewLines(_ lines: [String]) -> String {
         let columns = terminalColumnCount()
         let horizontalInset = terminalBoxHorizontalInset(columns: columns)
-        let contentWidth = max(40, min(columns - horizontalInset, 180))
+        let contentWidth = max(40, columns - horizontalInset)
         let linePrefix = String(repeating: " ", count: horizontalInset)
         let orange = "\u{1B}[38;5;208m"
         let dim = "\u{1B}[90m"
@@ -277,6 +249,7 @@ extension TerminalChat {
             ? "👥 \(orange)Sub-Agents\(reset)"
             : "👥 Sub-Agents"
 
+        let maxWrappedLinesPerEntry = 3
         var output = ["\(linePrefix)\(title)"]
         for (index, line) in lines.enumerated() {
             let prefix: String
@@ -285,8 +258,15 @@ extension TerminalChat {
             } else {
                 prefix = "  "
             }
-            for wrappedLine in fitInline(line, width: contentWidth - 2)
-                .components(separatedBy: "\n") {
+            var wrapped = fitInline(line, width: contentWidth - 2)
+                .components(separatedBy: "\n")
+            if wrapped.count > maxWrappedLinesPerEntry {
+                wrapped = Array(wrapped.prefix(maxWrappedLinesPerEntry))
+                let lastIndex = maxWrappedLinesPerEntry - 1
+                let ellipsis = AgentOutput.standardErrorIsTerminal ? "\(reset)…" : "…"
+                wrapped[lastIndex] += ellipsis
+            }
+            for wrappedLine in wrapped {
                 output.append("\(linePrefix)\(prefix)\(wrappedLine)")
             }
         }
@@ -304,7 +284,6 @@ extension TerminalChat {
                 snapshot.isolationMode.rawValue,
                 snapshot.status.rawValue,
                 snapshot.pending ? "pending" : "idle",
-                "\(snapshot.updatedAt.timeIntervalSince1970)",
                 snapshot.modelID?.nilIfBlank ?? "",
                 snapshot.modelRuntime?.nilIfBlank ?? "",
                 snapshot.currentActivity?.nilIfBlank ?? "",

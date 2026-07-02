@@ -68,7 +68,6 @@ public final class TerminalChat: @unchecked Sendable {
     public var pendingAttachments: [AgentRuntimeAttachment] = []
     public var lastFileChangeSummary: TurnFileChangeSummary?
     public var lastRenderedSubAgentOverviewSignature: String?
-    public var subAgentOverviewRefreshTask: Task<Void, Never>?
     public var availableSkillsCache: [MLXPromptSkill]?
     public var toolOutputDetailLevel: ToolOutputDetailLevel = .compact
     public var activeCompactToolCallID: String?
@@ -201,9 +200,7 @@ public final class TerminalChat: @unchecked Sendable {
 
         let statusBarStarted = statusBar.start()
         refreshStatusBarGitStatusSummary()
-        startSubAgentOverviewRefreshLoop()
         defer {
-            stopSubAgentOverviewRefreshLoop()
             Task {
                 _ = await telegramControlService.stop()
             }

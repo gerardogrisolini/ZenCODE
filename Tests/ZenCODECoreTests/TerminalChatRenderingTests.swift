@@ -462,7 +462,7 @@ struct TerminalChatRenderingTests {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { ansiStripped(String($0)) }
 
-        #expect(visibleLines.first == "🤖 Sub-Agents")
+        #expect(visibleLines.first == "👥 Sub-Agents")
         #expect(!rendered.contains("┌"))
         #expect(!rendered.contains("│"))
         #expect(!rendered.contains("└"))
@@ -514,6 +514,60 @@ struct TerminalChatRenderingTests {
 
         #expect(rendered.contains("activity: reading project files"))
         #expect(!rendered.contains("tool:"))
+    }
+
+    @Test
+    func inlineTextCollapsesNewlinesAndCarriageReturns() {
+        #expect(TerminalChat.inlineText("a\nb\r\nc\rd  ") == "a b c d")
+        #expect(TerminalChat.inlineText("  hello world  ") == "hello world")
+        #expect(TerminalChat.inlineText("line1\r\nline2") == "line1 line2")
+    }
+
+    @Test
+    func subAgentOverviewDoesNotTruncateLongOutputWithEllipsisDots() {
+        let longOutput = String(repeating: "word ", count: 40) + "ENDMARKER"
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_long",
+            name: "worker",
+            role: "worker",
+            isolationMode: .report,
+            status: .idle,
+            pending: false,
+            latestOutput: longOutput,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+
+        #expect(rendered.contains("ENDMARKER"))
+        #expect(!rendered.contains("..."))
+    }
+
+    @Test
+    func subAgentOverviewCapsWrappedDetailToThreeLines() {
+        let hugeOutput = String(repeating: "alpha bravo charlie delta ", count: 60)
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_flood",
+            name: "worker",
+            role: "worker",
+            isolationMode: .report,
+            status: .idle,
+            pending: false,
+            latestOutput: hugeOutput,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+        let visibleLines = rendered
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { String($0) }
+
+        #expect(rendered.contains("…"))
+        #expect(visibleLines.count <= 12)
     }
 
     @Test
