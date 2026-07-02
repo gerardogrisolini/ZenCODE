@@ -17,9 +17,21 @@ extension TerminalChat {
         }
 
         let paths = try Self.splitAttachmentCommandArguments(rawArguments)
-        guard !paths.isEmpty else {
+        guard let first = paths.first else {
             writeSystemMessage(Self.renderAttachmentUsage())
             return
+        }
+
+        switch first.lowercased() {
+        case "list":
+            writePendingAttachments()
+            return
+        case "delete":
+            let deleteArgument = paths.dropFirst().joined(separator: " ")
+            try deletePendingAttachments(argument: deleteArgument)
+            return
+        default:
+            break
         }
 
         let urls = paths.map { resolvedAttachmentURL(from: $0) }
@@ -33,9 +45,8 @@ extension TerminalChat {
         writePendingAttachments()
     }
 
-    public func handleDetachCommand(_ command: String) throws {
-        let rawArgument = String(command.dropFirst("/detach".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    public func deletePendingAttachments(argument: String) throws {
+        let rawArgument = argument.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !pendingAttachments.isEmpty else {
             writeSystemMessage("No pending attachments.\n")
@@ -43,7 +54,7 @@ extension TerminalChat {
         }
 
         guard !rawArgument.isEmpty else {
-            writeSystemMessage(Self.renderDetachUsage())
+            writeSystemMessage(Self.renderAttachmentDeleteUsage())
             return
         }
 
@@ -90,11 +101,16 @@ extension TerminalChat {
     }
 
     public static func renderAttachmentUsage() -> String {
-        "Usage: /attach <image-or-video-file> [file ...]\n"
+        """
+        Usage: /attach <image-or-video-file> [file ...]
+               /attach list
+               /attach delete [all|attachment-number]
+
+        """
     }
 
-    public static func renderDetachUsage() -> String {
-        "Usage: /detach [all|attachment-number]\n"
+    public static func renderAttachmentDeleteUsage() -> String {
+        "Usage: /attach delete [all|attachment-number]\n"
     }
 
     public static func renderAttachmentLine(

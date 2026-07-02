@@ -68,8 +68,8 @@ public nonisolated enum AnthropicSubscriptionModel {
             maxOutputTokens: largeMaxOutputTokens
         ),
         modelOption(
-            modelID: "claude-sonnet-5-0",
-            title: "Claude Sonnet 5.0",
+            modelID: "claude-sonnet-5",
+            title: "Claude Sonnet 5",
             subtitle: "Latest everyday coding",
             contextWindowTokenLimit: largeContextWindowTokenLimit,
             maxOutputTokens: largeMaxOutputTokens

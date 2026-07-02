@@ -126,8 +126,8 @@ Inside chat mode, type a prompt and press return. Commands start with `/`:
 - `/sessions new`: reset the conversation and start a fresh, unsaved session.
 - `/sessions delete`: delete a saved session snapshot.
 - `/attach <file> [file ...]`: attach image/video files to the next prompt.
-- `/attachments`: list pending attachments.
-- `/detach [all|number]`: remove pending attachments.
+- `/attach list`: list pending attachments.
+- `/attach delete [all|number]`: remove pending attachments.
 - `/open`: list files, URLs, and file-backed attachments referenced in the conversation, newest first, then open the selected item with the system `open` utility. In non-interactive terminals it prints the candidate list instead of opening a menu.
 - `/open <file-or-url>`: open a specific file path or URL directly. Relative file paths are resolved from the current working directory.
 - `/changes`: show the latest tracked file change summary.
@@ -225,9 +225,9 @@ Use attachments for image or video context in models/providers that support it:
 
 ```text
 /attach screenshot.png demo.mov
-/attachments
-/detach 1
-/detach all
+/attach list
+/attach delete 1
+/attach delete all
 ```
 
 Attachments are applied to the next prompt, then the session continues with the normal conversation history.

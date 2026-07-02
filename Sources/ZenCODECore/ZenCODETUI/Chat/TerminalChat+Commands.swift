@@ -246,19 +246,8 @@ extension TerminalChat {
         ),
         TerminalChatCommandDescriptor(
             command: "/attach",
-            summary: "attach files",
-            help: "/attach <file> [file ...] attaches image or video files to the next prompt.",
-            requiresArgument: true
-        ),
-        TerminalChatCommandDescriptor(
-            command: "/attachments",
-            summary: "show pending attachments",
-            help: "/attachments shows pending attachments."
-        ),
-        TerminalChatCommandDescriptor(
-            command: "/detach",
-            summary: "remove attachments",
-            help: "/detach [all|number] removes pending attachments.",
+            summary: "attach/list/delete files",
+            help: "/attach <file> [file ...] attaches image or video files to the next prompt. /attach list shows pending attachments. /attach delete [all|number] removes pending attachments.",
             requiresArgument: true
         ),
                 TerminalChatCommandDescriptor(

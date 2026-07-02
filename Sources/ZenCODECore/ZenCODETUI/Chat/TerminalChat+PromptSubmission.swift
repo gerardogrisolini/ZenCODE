@@ -127,16 +127,6 @@ extension TerminalChat {
                 writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
             }
             return .continueChat
-        case "/attachments":
-            writePendingAttachments()
-            return .continueChat
-        case let command where command == "/detach" || command.hasPrefix("/detach "):
-            do {
-                try handleDetachCommand(command)
-            } catch {
-                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            }
-            return .continueChat
                 case let command where command == "/open" || command.hasPrefix("/open "):
             await handleOpenCommand(command)
             return .continueChat
