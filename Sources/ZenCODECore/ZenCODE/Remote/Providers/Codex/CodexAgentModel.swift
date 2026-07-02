@@ -74,7 +74,7 @@ public nonisolated enum CodexAgentModel {
         selectionID(forModelID: defaultModelID)
     }
     public static let modelID = defaultModelID
-                public static let legacyContextWindowTokenLimit = 272_000
+    public static let legacyContextWindowTokenLimit = 272_000
     public static let contextWindowTokenLimit = 1_000_000
     public static let displayTitle = "ChatGPT Subscription"
     public static let displaySubtitle = "ChatGPT Plus/Pro"
@@ -89,19 +89,25 @@ public nonisolated enum CodexAgentModel {
             modelID: "gpt-5.4",
             title: "GPT-5.4",
             subtitle: "Everyday coding",
-            contextWindowTokenLimit: contextWindowTokenLimit
+            contextWindowTokenLimit: legacyContextWindowTokenLimit
         ),
         ModelOption(
             modelID: "gpt-5.4-mini",
             title: "GPT-5.4 Mini",
             subtitle: "Fast small model",
-            contextWindowTokenLimit: contextWindowTokenLimit
+            contextWindowTokenLimit: legacyContextWindowTokenLimit
         ),
         ModelOption(
             modelID: "gpt-5.3-codex",
             title: "GPT-5.3 Codex",
             subtitle: "Coding-optimized",
-            contextWindowTokenLimit: contextWindowTokenLimit
+            contextWindowTokenLimit: legacyContextWindowTokenLimit
+        ),
+        ModelOption(
+            modelID: "gpt-5.3-codex-spark",
+            title: "GPT-5.3 Codex Spark",
+            subtitle: "Ultra-fast coding",
+            contextWindowTokenLimit: 128_000
         )
     ]
     public static let thinkingSupport = MLXModelThinkingSupport.effort(
