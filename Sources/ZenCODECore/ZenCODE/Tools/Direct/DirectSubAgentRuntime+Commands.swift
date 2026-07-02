@@ -18,7 +18,12 @@ extension DirectSubAgentRuntime {
         for (offset, payload) in payloads.enumerated() {
             let id = "agent_\(UUID().uuidString.lowercased())"
             let sessionID = "\(id)_session"
-            let backend = backendFactory()
+            let profile = profileResolver(payload)
+            let backendContext = Self.backendContext(
+                for: payload,
+                profile: profile
+            )
+            let backend = try backendFactory(backendContext)
             let now = Date()
             await backend.createSession(
                 id: sessionID,
@@ -34,7 +39,7 @@ extension DirectSubAgentRuntime {
                     requestedToolNames: payload.allowedToolNames,
                     parentAllowedToolNames: parentAllowedToolNames
                 ),
-                thinkingSelection: nil,
+                thinkingSelection: backendContext.thinkingSelection,
                 preserveThinking: false
             )
 
@@ -51,6 +56,7 @@ extension DirectSubAgentRuntime {
                 pendingPrompts: [],
                 latestOutput: nil,
                 latestError: nil,
+                modelID: backendContext.modelID,
                 runTask: nil
             )
             createdIDs.append(id)

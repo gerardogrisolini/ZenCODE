@@ -373,8 +373,8 @@ public enum DirectToolCatalog {
     public static let subAgentDescriptors: [DirectToolDescriptor] = [
         DirectToolDescriptor(
             name: "agent.create",
-            description: "Creates one or more delegated sub-agents. Each sub-agent inherits the parent session's enabled tools by default. Use isolationMode=report for read-only investigation and isolationMode=implementation for scoped code changes.",
-            inputSchema: #"{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"isolationMode":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}},"agents":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"isolationMode":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}}}}},"items":{"type":"array","items":{"type":"object"}}}}"#
+            description: "Creates one or more delegated sub-agents. Each sub-agent inherits the parent session's enabled tools by default. If name, role, or profile matches an agent profile in agents.json, that profile's model is used. Use isolationMode=report for read-only investigation and isolationMode=implementation for scoped code changes.",
+            inputSchema: #"{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"isolationMode":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}},"agents":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"isolationMode":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}}}}},"items":{"type":"array","items":{"type":"object"}}}}"#
         ),
         DirectToolDescriptor(
             name: "agent.list",

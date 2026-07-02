@@ -7,6 +7,35 @@ import Foundation
 import ZenCODECore
 import ZenPackageMetadata
 
+private struct DS4AgentRuntimeBackendFactory: @unchecked Sendable {
+    let runtimeOptions: DS4RuntimeOptions
+
+    func makeBackend(
+        configuration: AgentRuntimeConfiguration,
+        mcpRuntime: DirectMCPToolRuntime
+    ) throws -> any AgentRuntimeBackend {
+        if let modelID = configuration.modelID?.nilIfBlank,
+           modelID.caseInsensitiveCompare(runtimeOptions.modelID) != .orderedSame {
+            return try AgentCoreBackend.makeRemoteBackend(
+                configuration: configuration,
+                mcpRuntime: mcpRuntime
+            )
+        }
+
+        return DS4CoderBackend(
+            configuration: configuration,
+            options: runtimeOptions,
+            mcpRuntime: mcpRuntime,
+            subAgentContextualBackendFactory: { context in
+                try makeBackend(
+                    configuration: configuration.applyingSubAgentBackendContext(context),
+                    mcpRuntime: mcpRuntime
+                )
+            }
+        )
+    }
+}
+
 enum ZenCODEDS4Command {
     static let option = "--ds4"
 
@@ -109,10 +138,12 @@ enum ZenCODEDS4Command {
         let availableAgents = (try? AgentProfileStore.loadRequired())
             ?? AgentProfileStore.defaultProfiles()
         let runtimeOptions = options.runtimeOptions
+        let backendBuilder = DS4AgentRuntimeBackendFactory(
+            runtimeOptions: runtimeOptions
+        )
         let backendFactory: AgentRuntimeBackendFactory = { configuration, mcpRuntime in
-            DS4CoderBackend(
+            try backendBuilder.makeBackend(
                 configuration: configuration,
-                options: runtimeOptions,
                 mcpRuntime: mcpRuntime
             )
         }

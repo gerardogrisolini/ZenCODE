@@ -7,6 +7,12 @@
 import Foundation
 
 public typealias DirectSubAgentBackendFactory = @Sendable () -> any AgentRuntimeBackend
+public typealias DirectSubAgentContextualBackendFactory = @Sendable (
+    DirectSubAgentRuntime.BackendContext
+) throws -> any AgentRuntimeBackend
+public typealias DirectSubAgentProfileResolver = @Sendable (
+    DirectSubAgentRuntime.RequestedAgentPayload
+) -> AgentProfile?
 
 public actor DirectSubAgentRuntime {
     public enum Status: String, Sendable {
@@ -118,19 +124,60 @@ public actor DirectSubAgentRuntime {
         }
     }
 
-    public struct RequestedAgentPayload {
+    public struct RequestedAgentPayload: Sendable {
         public let name: String
         public let role: String
+        public let profileReference: String?
         public let prompt: String?
         public let isolationMode: IsolationMode
         public let allowedToolNames: Set<String>?
     }
 
-    public let backendFactory: DirectSubAgentBackendFactory
+    public struct BackendContext: Sendable {
+        public let requestedName: String
+        public let requestedRole: String
+        public let isolationMode: IsolationMode
+        public let profile: AgentProfile?
+
+        public init(
+            requestedName: String,
+            requestedRole: String,
+            isolationMode: IsolationMode,
+            profile: AgentProfile?
+        ) {
+            self.requestedName = requestedName
+            self.requestedRole = requestedRole
+            self.isolationMode = isolationMode
+            self.profile = profile
+        }
+
+        public var modelID: String? {
+            profile?.modelID?.nilIfBlank
+        }
+
+        public var thinkingSelection: AgentThinkingSelection? {
+            profile?.thinkingSelection
+        }
+    }
+
+    public let backendFactory: DirectSubAgentContextualBackendFactory
+    public let profileResolver: DirectSubAgentProfileResolver
     public var agents: [String: AgentRecord] = [:]
 
-    public init(backendFactory: @escaping DirectSubAgentBackendFactory) {
-        self.backendFactory = backendFactory
+    public init(
+        backendFactory: @escaping DirectSubAgentBackendFactory,
+        profileResolver: @escaping DirectSubAgentProfileResolver = DirectSubAgentRuntime.defaultProfileResolver
+    ) {
+        self.backendFactory = { _ in backendFactory() }
+        self.profileResolver = profileResolver
+    }
+
+    public init(
+        contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
+        profileResolver: @escaping DirectSubAgentProfileResolver = DirectSubAgentRuntime.defaultProfileResolver
+    ) {
+        self.backendFactory = contextualBackendFactory
+        self.profileResolver = profileResolver
     }
 
     public func shutdown() async {
@@ -187,5 +234,27 @@ public actor DirectSubAgentRuntime {
         default:
             throw DirectSubAgentRuntimeError.unknownTool(toolCall.name)
         }
+    }
+}
+
+extension AgentRuntimeConfiguration {
+    public func applyingSubAgentBackendContext(
+        _ context: DirectSubAgentRuntime.BackendContext
+    ) -> AgentRuntimeConfiguration {
+        guard let requestedModelID = context.modelID else {
+            return self
+        }
+
+        guard let selection = AgentSettingsStore.defaultSelection(
+            explicitModelID: requestedModelID
+        ) else {
+            return withModelID(requestedModelID)
+        }
+
+        return withModelID(selection.modelID)
+            .withModelSettings(
+                configuredContextWindowLimit: selection.configuredContextWindowLimit,
+                generationParameterOverrides: selection.generationParameterOverrides
+            )
     }
 }

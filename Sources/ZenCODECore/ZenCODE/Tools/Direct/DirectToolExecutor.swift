@@ -44,6 +44,27 @@ public actor DirectToolExecutor {
         borrowedOrchestrationToolExecutor: AgentBorrowedToolExecutor? = nil,
         subAgentBackendFactory: @escaping DirectSubAgentBackendFactory
     ) {
+        self.init(
+            outputLimit: outputLimit,
+            authorizationHandler: authorizationHandler,
+            mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime,
+            preferredWorkspaceRootURL: preferredWorkspaceRootURL,
+            borrowedOrchestrationToolExecutor: borrowedOrchestrationToolExecutor,
+            subAgentContextualBackendFactory: { _ in subAgentBackendFactory() }
+        )
+    }
+
+    public init(
+        outputLimit: Int,
+        authorizationHandler: AgentToolAuthorizationHandler? = nil,
+        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
+        swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
+        preferredWorkspaceRootURL: URL? = nil,
+        borrowedOrchestrationToolExecutor: AgentBorrowedToolExecutor? = nil,
+        subAgentContextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
+        subAgentProfileResolver: @escaping DirectSubAgentProfileResolver = DirectSubAgentRuntime.defaultProfileResolver
+    ) {
         self.outputLimit = outputLimit
         self.authorizationHandler = authorizationHandler
         self.mcpRuntime = mcpRuntime
@@ -51,7 +72,8 @@ public actor DirectToolExecutor {
         self.preferredWorkspaceRootURL = preferredWorkspaceRootURL?.standardizedFileURL
         self.borrowedOrchestrationToolExecutor = borrowedOrchestrationToolExecutor
         self.subAgentRuntime = DirectSubAgentRuntime(
-            backendFactory: subAgentBackendFactory
+            contextualBackendFactory: subAgentContextualBackendFactory,
+            profileResolver: subAgentProfileResolver
         )
     }
 

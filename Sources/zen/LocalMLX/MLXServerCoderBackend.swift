@@ -41,7 +41,8 @@ actor MLXServerCoderBackend: AgentRuntimeBackend {
         runtime: MLXServerRuntime,
         model: MLXServerModelDescriptor,
         kvCacheSettings: MLXServerKVCacheSettings,
-        mcpRuntime: DirectMCPToolRuntime
+        mcpRuntime: DirectMCPToolRuntime,
+        subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
     ) {
         self.configuration = configuration
         self.runtime = runtime
@@ -52,7 +53,7 @@ actor MLXServerCoderBackend: AgentRuntimeBackend {
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
             preferredWorkspaceRootURL: configuration.workingDirectory,
-            subAgentBackendFactory: {
+            subAgentContextualBackendFactory: subAgentContextualBackendFactory ?? { _ in
                 MLXServerCoderBackend(
                     configuration: configuration,
                     runtime: runtime,

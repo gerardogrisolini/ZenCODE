@@ -11,6 +11,40 @@ import ZenPackageMetadata
 #if ZENCODE_LOCAL_MLX
 import MLXServerCore
 
+private struct MLXAgentRuntimeBackendFactory: @unchecked Sendable {
+    let modelCatalog: MLXServerModelCatalog
+    let initialModelID: String
+    let runtime: MLXServerRuntime
+    let kvCacheSettings: MLXServerKVCacheSettings
+
+    func makeBackend(
+        configuration: AgentRuntimeConfiguration,
+        mcpRuntime: DirectMCPToolRuntime
+    ) throws -> any AgentRuntimeBackend {
+        guard let model = try? modelCatalog.resolve(
+            id: configuration.modelID ?? initialModelID
+        ) else {
+            return try AgentCoreBackend.makeRemoteBackend(
+                configuration: configuration,
+                mcpRuntime: mcpRuntime
+            )
+        }
+
+        return MLXServerCoderBackend(
+            configuration: configuration,
+            runtime: runtime,
+            model: model,
+            kvCacheSettings: kvCacheSettings,
+            mcpRuntime: mcpRuntime,
+            subAgentContextualBackendFactory: { context in
+                try makeBackend(
+                    configuration: configuration.applyingSubAgentBackendContext(context),
+                    mcpRuntime: mcpRuntime
+                )
+            }
+        )
+    }
+}
 
 enum ZenCODEMLXCommand {
     static let option = "--mlx"
@@ -65,15 +99,15 @@ enum ZenCODEMLXCommand {
             modelLoadLogger: nil,
             modelUnloadLogger: nil
         )
+        let backendBuilder = MLXAgentRuntimeBackendFactory(
+            modelCatalog: modelCatalog,
+            initialModelID: initialModel.id,
+            runtime: runtime,
+            kvCacheSettings: settings.kvCache
+        )
         let backendFactory: AgentRuntimeBackendFactory = { configuration, mcpRuntime in
-            let model = try modelCatalog.resolve(
-                id: configuration.modelID ?? initialModel.id
-            )
-            return MLXServerCoderBackend(
+            try backendBuilder.makeBackend(
                 configuration: configuration,
-                runtime: runtime,
-                model: model,
-                kvCacheSettings: settings.kvCache,
                 mcpRuntime: mcpRuntime
             )
         }

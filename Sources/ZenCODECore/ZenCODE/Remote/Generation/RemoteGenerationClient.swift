@@ -52,13 +52,13 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
             preferredWorkspaceRootURL: configuration.workingDirectory,
-            subAgentBackendFactory: {
-                RemoteGenerationClient(
-                    configuration: configuration,
-                    provider: provider,
-                    apiKey: apiKey,
-                    urlSession: urlSession,
-                    mcpRuntime: mcpRuntime
+            subAgentContextualBackendFactory: { context in
+                try AgentCoreBackend.makeRemoteBackend(
+                    configuration: configuration.applyingSubAgentBackendContext(context),
+                    mcpRuntime: mcpRuntime,
+                    fallbackProvider: provider,
+                    fallbackAPIKey: apiKey,
+                    urlSession: urlSession
                 )
             }
         )

@@ -7,6 +7,49 @@
 import Foundation
 
 extension DirectSubAgentRuntime {
+    public static func defaultProfileResolver(
+        for payload: RequestedAgentPayload
+    ) -> AgentProfile? {
+        let agents = (try? AgentProfileStore.loadRequired())
+            ?? AgentProfileStore.defaultProfiles()
+        return agentProfile(matching: payload, in: agents)
+    }
+
+    public static func agentProfile(
+        matching payload: RequestedAgentPayload,
+        in agents: [AgentProfile]
+    ) -> AgentProfile? {
+        let rawCandidates: [String?] = [payload.profileReference, payload.name, payload.role]
+        let candidates = rawCandidates.compactMap { $0?.nilIfBlank }
+
+        for candidate in candidates {
+            let lookupValue = normalizedAgentLookupValue(candidate)
+            guard !lookupValue.isEmpty else {
+                continue
+            }
+            if let agent = agents.first(where: { agent in
+                normalizedAgentLookupValue(agent.id) == lookupValue
+                    || normalizedAgentLookupValue(agent.name) == lookupValue
+            }) {
+                return agent
+            }
+        }
+
+        return nil
+    }
+
+    public static func backendContext(
+        for payload: RequestedAgentPayload,
+        profile: AgentProfile?
+    ) -> BackendContext {
+        BackendContext(
+            requestedName: payload.name,
+            requestedRole: payload.role,
+            isolationMode: payload.isolationMode,
+            profile: profile
+        )
+    }
+
     public static func requestedAgentPayloads(
         from arguments: [String: JSONValue]
     ) throws -> [RequestedAgentPayload] {
@@ -42,6 +85,10 @@ extension DirectSubAgentRuntime {
         return RequestedAgentPayload(
             name: firstString(["name", "title"], in: object) ?? "sub-agent-\(fallbackIndex + 1)",
             role: firstString(["role"], in: object) ?? "worker",
+            profileReference: firstString(
+                ["agent", "agentName", "agent_name", "agentID", "agent_id", "profile", "profileName", "profile_name"],
+                in: object
+            )?.nilIfBlank,
             prompt: firstString(["prompt", "message", "initialPrompt", "initial_prompt"], in: object)?.nilIfBlank,
             isolationMode: IsolationMode(
                 rawValue: firstString(["isolationMode", "isolation_mode", "mode"], in: object)
@@ -111,6 +158,13 @@ extension DirectSubAgentRuntime {
 
     public static func jsonValue(from value: Any) -> JSONValue {
         JSONValue(jsonObject: value)
+    }
+
+    private static func normalizedAgentLookupValue(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
     }
 
     public static func requestedAgentIdentifiers(

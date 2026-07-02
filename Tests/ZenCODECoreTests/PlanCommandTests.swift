@@ -77,7 +77,7 @@ struct PlanCommandTests {
     }
 
     @Test
-    func planCommandWithGoalRunsVisibleDelegationPrompt() throws {
+    func planCommandWithGoalRunsHiddenDelegationPrompt() throws {
         let configuration = try AgentConfiguration(
             hostedModelID: "mlx-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
@@ -95,11 +95,11 @@ struct PlanCommandTests {
         let action = terminal.handlePlanCommand("/plan fix the planner command")
 
         switch action {
-        case let .runPrompt(prompt):
+        case let .runHiddenPrompt(prompt):
             #expect(prompt.contains("Planning goal requested by the user: fix the planner command"))
             #expect(prompt.contains("agent.create"))
-        case .runHiddenPrompt(_):
-            Issue.record("/plan <goal> should run a visible prompt so it is shown in chat")
+        case .runPrompt(_):
+            Issue.record("/plan <goal> should keep the generated delegation prompt hidden")
         default:
             Issue.record("/plan <goal> should start the planning delegation prompt")
         }

@@ -5,6 +5,9 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public actor AgentCoreBackend {
     private struct SessionSeed {
@@ -33,6 +36,92 @@ public actor AgentCoreBackend {
         self.configuration = configuration
         self.mcpRuntime = mcpRuntime
         self.backendFactory = backendFactory
+    }
+
+    public static func makeRemoteBackend(
+        configuration: AgentRuntimeConfiguration,
+        mcpRuntime: DirectMCPToolRuntime,
+        fallbackProvider: AgentRemoteProvider? = nil,
+        fallbackAPIKey: String? = nil,
+        urlSession: URLSession? = nil,
+        chatGPTUsesWebSocketTransport: Bool = true
+    ) throws -> any AgentRuntimeBackend {
+        let selection = AgentSettingsStore.defaultSelection(
+            explicitModelID: configuration.modelID
+        )
+        if let modelID = configuration.modelID,
+           AgentSettingsStore.isRemoteLLMIDSyntax(modelID),
+           selection == nil {
+            throw AgentCoreBackendError.missingRemoteProvider
+        }
+
+        let provider: AgentRemoteProvider
+        let apiKey: String?
+        let resolvedConfiguration: AgentRuntimeConfiguration
+        if let selection {
+            guard let selectedProvider = selection.remoteProvider else {
+                throw AgentCoreBackendError.missingRemoteProvider
+            }
+            provider = selectedProvider
+            apiKey = selection.apiKey ?? configuration.bearerToken
+            resolvedConfiguration = configuration
+                .withModelID(selection.modelID)
+                .withModelSettings(
+                    configuredContextWindowLimit: selection.configuredContextWindowLimit,
+                    generationParameterOverrides: selection.generationParameterOverrides
+                )
+        } else if let fallbackProvider {
+            let modelID = configuration.modelID?.nilIfBlank ?? fallbackProvider.modelID
+            provider = AgentRemoteProvider(
+                id: fallbackProvider.id,
+                name: fallbackProvider.name,
+                baseURL: fallbackProvider.baseURL,
+                modelID: modelID,
+                chatEndpoint: fallbackProvider.chatEndpoint
+            )
+            apiKey = fallbackAPIKey ?? configuration.bearerToken
+            resolvedConfiguration = configuration.withModelID(modelID)
+        } else {
+            throw AgentCoreBackendError.missingRemoteProvider
+        }
+
+        if provider.requiresAPIKey, apiKey?.nilIfBlank == nil {
+            throw AgentCoreBackendError.missingRemoteAPIKey(provider.displayTitle)
+        }
+
+        if provider.isChatGPTSubscriptionProvider {
+#if os(macOS)
+            return ChatGPTSubscriptionGenerationClient(
+                configuration: resolvedConfiguration,
+                urlSession: urlSession,
+                mcpRuntime: mcpRuntime,
+                usesWebSocketTransport: chatGPTUsesWebSocketTransport
+            )
+#else
+            throw AgentCoreBackendError.missingRemoteProvider
+#endif
+        }
+
+        if provider.isAnthropicSubscriptionProvider {
+#if os(macOS)
+            return AnthropicSubscriptionGenerationClient(
+                configuration: resolvedConfiguration,
+                provider: provider,
+                urlSession: urlSession,
+                mcpRuntime: mcpRuntime
+            )
+#else
+            throw AgentCoreBackendError.missingRemoteProvider
+#endif
+        }
+
+        return RemoteGenerationClient(
+            configuration: resolvedConfiguration,
+            provider: provider,
+            apiKey: apiKey,
+            urlSession: urlSession,
+            mcpRuntime: mcpRuntime
+        )
     }
 
     public func createSession(

@@ -39,6 +39,19 @@ REPO_URL="${ZENCODE_INSTALLER_REPO:-https://github.com/gerardogrisolini/ZenCODE.
 REPO_REF="${ZENCODE_INSTALLER_REF:-main}"
 INSTALLER_TMPDIR="${ZENCODE_INSTALLER_TMPDIR:-${TMPDIR:-/tmp}}"
 BOOTSTRAP_TMP_ROOT=""
+CONFIG_BACKUP_DIR=""
+CONFIG_SUPPORT_DIR=""
+CONFIG_RELATIVE_PATHS=(
+    "agents.json"
+    "settings.json"
+    "permissions.json"
+    "AGENTS.md"
+    "MEMORY.md"
+    "features/state.json"
+    "ds4/settings.json"
+    "mlx-server/settings.json"
+    "mlx-server/models.json"
+)
 ORIGINAL_ARGS=("$@")
 
 usage() {
@@ -90,6 +103,50 @@ restore_prompt_terminal() {
     if [ -t 0 ]; then
         stty sane < /dev/tty 2>/dev/null || stty sane 2>/dev/null || true
     fi
+}
+
+backup_existing_config_files() {
+    CONFIG_SUPPORT_DIR="${ZENCODE_SUPPORT_DIRECTORY:-${HOME}/.zencode}"
+    CONFIG_BACKUP_DIR="$(mktemp -d "${INSTALLER_TMPDIR%/}/zencode-config-backup.XXXXXX")"
+
+    local relative_path
+    local source_path
+    local backup_path
+    for relative_path in "${CONFIG_RELATIVE_PATHS[@]}"; do
+        source_path="${CONFIG_SUPPORT_DIR}/${relative_path}"
+        backup_path="${CONFIG_BACKUP_DIR}/${relative_path}"
+        if [ -e "$source_path" ]; then
+            mkdir -p "$(dirname "$backup_path")"
+            cp -p "$source_path" "$backup_path"
+        fi
+    done
+}
+
+restore_config_files() {
+    if [ -z "$CONFIG_BACKUP_DIR" ] || [ -z "$CONFIG_SUPPORT_DIR" ]; then
+        return 0
+    fi
+
+    local relative_path
+    local target_path
+    local backup_path
+    for relative_path in "${CONFIG_RELATIVE_PATHS[@]}"; do
+        target_path="${CONFIG_SUPPORT_DIR}/${relative_path}"
+        backup_path="${CONFIG_BACKUP_DIR}/${relative_path}"
+        if [ -e "$backup_path" ]; then
+            if [ ! -e "$target_path" ] || ! cmp -s "$backup_path" "$target_path"; then
+                mkdir -p "$(dirname "$target_path")"
+                cp -p "$backup_path" "$target_path"
+                echo "Preserved existing configuration: ${target_path}"
+            fi
+        elif [ -e "$target_path" ]; then
+            rm -f "$target_path"
+            echo "Removed installer-created configuration: ${target_path}"
+        fi
+    done
+
+    rm -rf "$CONFIG_BACKUP_DIR"
+    CONFIG_BACKUP_DIR=""
 }
 
 prompt_bool() {
@@ -364,6 +421,9 @@ if [ -z "$PACKAGE_DIR" ]; then
 fi
 SCRIPT_DIR="${PACKAGE_DIR}/Scripts"
 
+backup_existing_config_files
+trap restore_config_files EXIT
+
 cd "$PACKAGE_DIR"
 
 WITH_MLX="$(prompt_bool "Compile local MLX support?" 1 "$WITH_MLX")"
@@ -412,7 +472,8 @@ echo ""
 
 if [ "$WITH_DS4" = "1" ]; then
     echo "Preparing DS4 runtime..."
-    "${SCRIPT_DIR}/setup-ds4.sh" "$DS4_ROOT"
+    "${SCRIPT_DIR}/build-ds4-runtime.sh" "$DS4_ROOT"
+    echo "ZenCODE configuration files were left unchanged. Run zen --setup if you want to update DS4 settings."
     echo ""
 fi
 

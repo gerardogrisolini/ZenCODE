@@ -9,6 +9,28 @@ import Testing
 @Suite
 struct DS4SetupScriptTests {
     @Test
+    func installerBuildsDS4RuntimeWithoutWritingConfiguration() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .standardizedFileURL
+        let installScript = try String(
+            contentsOf: packageRoot.appendingPathComponent("Scripts/install.sh"),
+            encoding: .utf8
+        )
+
+        #expect(installScript.contains("CONFIG_RELATIVE_PATHS=("))
+        #expect(installScript.contains("\"agents.json\""))
+        #expect(installScript.contains("backup_existing_config_files"))
+        #expect(installScript.contains("trap restore_config_files EXIT"))
+        #expect(installScript.contains("Preserved existing configuration"))
+        #expect(!installScript.contains("${SCRIPT_DIR}/setup-ds4.sh"))
+        #expect(installScript.contains("${SCRIPT_DIR}/build-ds4-runtime.sh"))
+        #expect(installScript.contains("configuration files were left unchanged"))
+    }
+
+    @Test
     func setupScriptPreservesExistingRuntimeAndModelSettings() throws {
         let fileManager = FileManager.default
         let packageRoot = URL(fileURLWithPath: #filePath)

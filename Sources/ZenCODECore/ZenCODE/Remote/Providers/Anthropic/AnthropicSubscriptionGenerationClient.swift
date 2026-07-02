@@ -61,12 +61,12 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
             preferredWorkspaceRootURL: configuration.workingDirectory,
-            subAgentBackendFactory: {
-                AnthropicSubscriptionGenerationClient(
-                    configuration: configuration,
-                    provider: provider,
-                    urlSession: urlSession,
-                    mcpRuntime: mcpRuntime
+            subAgentContextualBackendFactory: { context in
+                try AgentCoreBackend.makeRemoteBackend(
+                    configuration: configuration.applyingSubAgentBackendContext(context),
+                    mcpRuntime: mcpRuntime,
+                    fallbackProvider: provider,
+                    urlSession: urlSession
                 )
             }
         )

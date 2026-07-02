@@ -31,7 +31,8 @@ actor DS4CoderBackend: AgentRuntimeBackend {
         configuration: AgentRuntimeConfiguration,
         options: DS4RuntimeOptions,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
-        sharedEngine: DS4SharedEngine? = nil
+        sharedEngine: DS4SharedEngine? = nil,
+        subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
     ) {
         let resolvedSharedEngine = sharedEngine ?? DS4SharedEngine(options: options)
         self.configuration = configuration
@@ -42,7 +43,7 @@ actor DS4CoderBackend: AgentRuntimeBackend {
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
             preferredWorkspaceRootURL: configuration.workingDirectory,
-            subAgentBackendFactory: {
+            subAgentContextualBackendFactory: subAgentContextualBackendFactory ?? { _ in
                 DS4CoderBackend(
                     configuration: configuration,
                     options: options,

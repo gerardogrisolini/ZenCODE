@@ -138,13 +138,19 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
             preferredWorkspaceRootURL: configuration.workingDirectory,
-            subAgentBackendFactory: {
-                ChatGPTSubscriptionGenerationClient(
-                    configuration: configuration,
-                    urlSession: urlSession,
+            subAgentContextualBackendFactory: { context in
+                let fallbackProvider = AgentRemoteProvider(
+                    id: AgentRemoteProvider.chatGPTSubscriptionProviderID,
+                    name: CodexAgentModel.displayTitle,
+                    baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
+                    modelID: configuration.modelID ?? CodexAgentModel.defaultLLMID
+                )
+                return try AgentCoreBackend.makeRemoteBackend(
+                    configuration: configuration.applyingSubAgentBackendContext(context),
                     mcpRuntime: mcpRuntime,
-                    webSocketPool: ChatGPTSubscriptionWebSocketPool(),
-                    usesWebSocketTransport: usesWebSocketTransport
+                    fallbackProvider: fallbackProvider,
+                    urlSession: urlSession,
+                    chatGPTUsesWebSocketTransport: usesWebSocketTransport
                 )
             }
         )
