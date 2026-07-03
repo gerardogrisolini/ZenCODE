@@ -12,7 +12,7 @@ import Testing
 extension AgentConfigurationTests {
     @Test
     func defaultAgentInstructionsArePlatformNeutralAndOmitDynamicFeatureWorkflow() {
-        let instructions = MLXSystemPromptBuilder.defaultAgentInstructions()
+        let instructions = SystemPromptBuilder.defaultAgentInstructions()
 
         #expect(instructions.contains("on the user's machine"))
         #expect(!instructions.contains("on the user's Mac"))
@@ -30,7 +30,7 @@ extension AgentConfigurationTests {
 
     @Test
     func defaultAgentInstructionsDoNotRequireQuestionSentinel() {
-        let instructions = MLXSystemPromptBuilder.defaultAgentInstructions()
+        let instructions = SystemPromptBuilder.defaultAgentInstructions()
 
         #expect(!instructions.contains("follow-up question"))
         #expect(!instructions.contains("final character"))
@@ -46,7 +46,7 @@ extension AgentConfigurationTests {
 
     @Test
     func standalonePromptKeepsResponseLanguageInstructionAfterContextSections() throws {
-        let prompt = MLXSystemPromptBuilder.standalonePrompt(
+        let prompt = SystemPromptBuilder.standalonePrompt(
             cwd: "/tmp/project",
             agentsSection: "Agent instructions:\nAnswer briefly.",
             memorySection: "Memory tools:\nUse memory.read when relevant.",

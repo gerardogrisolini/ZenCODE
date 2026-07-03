@@ -1,5 +1,5 @@
 //
-//  MLXThinkingConfiguration+MetadataDetection.swift
+//  ThinkingConfiguration+MetadataDetection.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -7,18 +7,18 @@
 
 import Foundation
 
-extension MLXModelThinkingSupport {
+extension ModelThinkingSupport {
     public static func fromSparseRemoteModelIdentifier(
         _ modelID: String
-    ) -> MLXModelThinkingSupport? {
+    ) -> ModelThinkingSupport? {
         var detector = MetadataDetector()
         detector.scan(["id": modelID])
         return detector.support
     }
 
     public static func effortLevels(
-        from selections: [MLXThinkingSelection]
-    ) -> [MLXThinkingSelection] {
+        from selections: [ThinkingSelection]
+    ) -> [ThinkingSelection] {
         let requestedLevels = Set(selections)
         return [.minimal, .low, .medium, .high, .xhigh].filter {
             requestedLevels.contains($0)
@@ -29,16 +29,16 @@ extension MLXModelThinkingSupport {
         public var supportsThinking = false
         public var supportsEffort = false
         public var supportsPreserveThinking = false
-        public var effortLevels: [MLXThinkingSelection] = []
-        public var defaultSelection: MLXThinkingSelection?
+        public var effortLevels: [ThinkingSelection] = []
+        public var defaultSelection: ThinkingSelection?
 
-        public var support: MLXModelThinkingSupport? {
+        public var support: ModelThinkingSupport? {
             guard supportsThinking else {
                 return nil
             }
 
             if supportsEffort {
-                let normalizedLevels = MLXModelThinkingSupport.effortLevels(from: effortLevels)
+                let normalizedLevels = ModelThinkingSupport.effortLevels(from: effortLevels)
                 let resolvedLevels = normalizedLevels.isEmpty
                     ? [.minimal, .low, .medium, .high, .xhigh]
                     : normalizedLevels
@@ -47,7 +47,7 @@ extension MLXModelThinkingSupport {
                     availableSelections.contains($0) ? $0 : nil
                 } ?? (resolvedLevels.contains(.medium) ? .medium : resolvedLevels[0])
 
-                return MLXModelThinkingSupport(
+                return ModelThinkingSupport(
                     supportsThinking: true,
                     supportsReasoningEffort: true,
                     supportsPreserveThinking: supportsPreserveThinking,
@@ -56,12 +56,12 @@ extension MLXModelThinkingSupport {
                 )
             }
 
-            let availableSelections: [MLXThinkingSelection] = [.enabled, .off]
+            let availableSelections: [ThinkingSelection] = [.enabled, .off]
             let resolvedDefaultSelection = defaultSelection.flatMap {
                 availableSelections.contains($0) ? $0 : nil
             } ?? .enabled
 
-            return MLXModelThinkingSupport(
+            return ModelThinkingSupport(
                 supportsThinking: true,
                 supportsReasoningEffort: false,
                 supportsPreserveThinking: supportsPreserveThinking,
@@ -368,7 +368,7 @@ extension MLXModelThinkingSupport {
         }
 
         private mutating func appendEffortSelection(
-            _ selection: MLXThinkingSelection
+            _ selection: ThinkingSelection
         ) {
             guard !effortLevels.contains(selection) else {
                 return
@@ -380,7 +380,7 @@ extension MLXModelThinkingSupport {
 
         private func thinkingSelections(
             from value: Any
-        ) -> [MLXThinkingSelection] {
+        ) -> [ThinkingSelection] {
             if let string = value as? String {
                 return thinkingSelection(from: string).map { [$0] } ?? []
             }
@@ -398,13 +398,13 @@ extension MLXModelThinkingSupport {
 
         private func firstThinkingSelection(
             from value: Any
-        ) -> MLXThinkingSelection? {
+        ) -> ThinkingSelection? {
             thinkingSelections(from: value).first
         }
 
         private func thinkingSelection(
             from value: String
-        ) -> MLXThinkingSelection? {
+        ) -> ThinkingSelection? {
             let normalizedValue = normalizedToken(value)
             switch normalizedValue {
             case "on", "enabled", "enable", "true", "auto":
@@ -414,12 +414,12 @@ extension MLXModelThinkingSupport {
             case "max":
                 return .xhigh
             default:
-                return MLXThinkingSelection(rawValue: normalizedValue)
+                return ThinkingSelection(rawValue: normalizedValue)
             }
         }
 
         private func isEffortSelection(
-            _ selection: MLXThinkingSelection
+            _ selection: ThinkingSelection
         ) -> Bool {
             switch selection {
             case .minimal, .low, .medium, .high, .xhigh:

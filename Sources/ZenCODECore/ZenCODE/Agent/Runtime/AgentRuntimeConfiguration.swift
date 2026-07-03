@@ -378,7 +378,7 @@ public enum AgentStandaloneSystemPrompt {
             .compactMap { $0?.nilIfBlank }
             .joined(separator: "\n\n")
             .nilIfBlank
-        return MLXSystemPromptBuilder.standalonePrompt(
+        return SystemPromptBuilder.standalonePrompt(
             cwd: cwd,
             agentsSection: agentsSection,
             memorySection: memoryToolEnabled ? MemoryService.toolUsagePromptSection() : nil,

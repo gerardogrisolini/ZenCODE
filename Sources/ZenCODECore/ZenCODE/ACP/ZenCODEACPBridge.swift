@@ -34,7 +34,7 @@ public actor ZenCODEACPBridge {
     public let xcodeIsRunning: @Sendable () -> Bool
     public let verboseLogFile: ACPVerboseLogFile?
     public var sessions: [String: SessionState] = [:]
-    private var sessionSleepAssertion: ZenCODESleepAssertion?
+    private var sessionSleepAssertion: ZenSleepAssertion?
 
     public init(
         configuration: AgentConfiguration,
@@ -78,7 +78,7 @@ public actor ZenCODEACPBridge {
         guard sessionSleepAssertion == nil else {
             return
         }
-        sessionSleepAssertion = ZenCODESleepAssertion(
+        sessionSleepAssertion = ZenSleepAssertion(
             reason: "ZenCODE ACP session active"
         )
     }

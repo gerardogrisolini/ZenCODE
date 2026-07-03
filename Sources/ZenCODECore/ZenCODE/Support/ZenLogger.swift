@@ -1,5 +1,5 @@
 //
-//  SwiftMLXLogger.swift
+//  ZenLogger.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -7,13 +7,13 @@
 
 import Foundation
 
-public enum SwiftMLXLogLevel: Int, Comparable, Sendable {
+public enum ZenLogLevel: Int, Comparable, Sendable {
     case debug = 0
     case info = 1
     case warning = 2
     case error = 3
 
-    public static func < (lhs: SwiftMLXLogLevel, rhs: SwiftMLXLogLevel) -> Bool {
+    public static func < (lhs: ZenLogLevel, rhs: ZenLogLevel) -> Bool {
         lhs.rawValue < rhs.rawValue
     }
 
@@ -31,7 +31,7 @@ public enum SwiftMLXLogLevel: Int, Comparable, Sendable {
     }
 }
 
-public enum SwiftMLXLogCategory: String, Sendable {
+public enum ZenLogCategory: String, Sendable {
     case assistantBackend = "MLXAssistantBackendService"
     case applicationDelegate = "ZenCODEApplicationDelegate"
     case cloudChatWorker = "MLXCloudChatWorker"
@@ -61,38 +61,38 @@ public enum SwiftMLXLogCategory: String, Sendable {
     case conversationHistory = "MLXConversationHistorySupport"
 }
 
-public enum SwiftMLXLogger {
+public enum ZenLogger {
     public static func debug(
-        _ category: SwiftMLXLogCategory,
+        _ category: ZenLogCategory,
         _ message: @autoclosure () -> String
     ) {
         log(.debug, category, message)
     }
 
     public static func info(
-        _ category: SwiftMLXLogCategory,
+        _ category: ZenLogCategory,
         _ message: @autoclosure () -> String
     ) {
         log(.info, category, message)
     }
 
     public static func warning(
-        _ category: SwiftMLXLogCategory,
+        _ category: ZenLogCategory,
         _ message: @autoclosure () -> String
     ) {
         log(.warning, category, message)
     }
 
     public static func error(
-        _ category: SwiftMLXLogCategory,
+        _ category: ZenLogCategory,
         _ message: @autoclosure () -> String
     ) {
         log(.error, category, message)
     }
 
     public static func log(
-        _ level: SwiftMLXLogLevel,
-        _ category: SwiftMLXLogCategory,
+        _ level: ZenLogLevel,
+        _ category: ZenLogCategory,
         _ message: () -> String
     ) {
         _ = level
@@ -101,15 +101,15 @@ public enum SwiftMLXLogger {
     }
 
     public static func formattedMessage(
-        level: SwiftMLXLogLevel,
-        category: SwiftMLXLogCategory,
+        level: ZenLogLevel,
+        category: ZenLogCategory,
         message: String
     ) -> String {
         "[\(category.rawValue)][\(level.label)] \(messageBody(category: category, message: message))"
     }
 
     private static func messageBody(
-        category: SwiftMLXLogCategory,
+        category: ZenLogCategory,
         message: String
     ) -> String {
         let normalizedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)

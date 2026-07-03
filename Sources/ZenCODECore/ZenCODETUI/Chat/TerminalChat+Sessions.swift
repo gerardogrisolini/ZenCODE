@@ -264,7 +264,7 @@ extension TerminalChat {
                 savedAt: savedSession.savedAt
             )
         } catch {
-            SwiftMLXLogger.warning(
+            ZenLogger.warning(
                 .memory,
                 "failed to update global saved-session memory index for \(savedSession.name): \(error.localizedDescription)"
             )

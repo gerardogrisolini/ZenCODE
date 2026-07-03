@@ -31,7 +31,7 @@ public actor XcodeToolExecutor {
     }
 
     public func execute(_ request: ToolRequest) async throws -> ToolExecutionOutput {
-        SwiftMLXLogger.debug(
+        ZenLogger.debug(
             .xcodeToolExecutor,
             "\(request.name) request arguments:\n\(JSONValue.object(request.arguments).prettyPrinted())"
         )
@@ -40,16 +40,16 @@ public actor XcodeToolExecutor {
 
         if request.name == "XcodeUpdate" || request.name == "XcodeWrite" {
             if let summary = summarizedMutationResult(from: result) {
-                SwiftMLXLogger.info(
+                ZenLogger.info(
                     .xcodeToolExecutor,
                     "\(request.name) outcome: \(summary)"
                 )
             }
-            SwiftMLXLogger.debug(
+            ZenLogger.debug(
                 .xcodeToolExecutor,
                 "\(request.name) rendered result:\n\(renderedResult)"
             )
-            SwiftMLXLogger.debug(
+            ZenLogger.debug(
                 .xcodeToolExecutor,
                 "\(request.name) raw result:\n\(result.prettyPrinted())"
             )
@@ -78,12 +78,12 @@ public actor XcodeToolExecutor {
         }
 
         if let summary = summarizedMutationResult(from: initialResult) {
-            SwiftMLXLogger.info(
+            ZenLogger.info(
                 .xcodeToolExecutor,
                 "XcodeUpdate initial outcome before indentation retry: \(summary)"
             )
         }
-        SwiftMLXLogger.debug(
+        ZenLogger.debug(
             .xcodeToolExecutor,
             "XcodeUpdate retrying with indentation fallback arguments:\n\(JSONValue.object(retryRequest.arguments).prettyPrinted())"
         )

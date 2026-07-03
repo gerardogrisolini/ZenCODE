@@ -106,7 +106,7 @@ public enum ZenCODESetupRunner {
             """
             ZenCODE setup
             Configuring support files at:
-            \(ZenCODESupportFileService.supportDirectoryURL().path)
+            \(ZenFileService.supportDirectoryURL().path)
 
             """
         )
@@ -199,7 +199,7 @@ public enum ZenCODESetupRunner {
             manifest: finalManifest,
             settingsWillBeWritten: shouldWriteSettings
         )
-        let result = try ZenCODESupportFileService.ensureRequiredFiles(
+        let result = try ZenFileService.ensureRequiredFiles(
             settingsManifest: finalManifest,
             overwriteSettings: shouldWriteSettings
         )

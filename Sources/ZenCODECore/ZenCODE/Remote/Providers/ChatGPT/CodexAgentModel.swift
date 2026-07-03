@@ -111,7 +111,7 @@ public nonisolated enum CodexAgentModel {
             contextWindowTokenLimit: 128_000
         )
     ]
-    public static let thinkingSupport = MLXModelThinkingSupport.effort(
+    public static let thinkingSupport = ModelThinkingSupport.effort(
         levels: [.low, .medium, .high, .xhigh]
     )
 

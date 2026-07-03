@@ -14,7 +14,7 @@ public nonisolated enum AnthropicSubscriptionModel {
         public let subtitle: String
         public let contextWindowTokenLimit: Int?
         public let maxOutputTokens: Int
-        public let thinkingSupport: MLXModelThinkingSupport?
+        public let thinkingSupport: ModelThinkingSupport?
 
         public var id: String { modelID }
         public var llmID: String {
@@ -34,7 +34,7 @@ public nonisolated enum AnthropicSubscriptionModel {
     public static let largeContextWindowTokenLimit = 1_000_000
     public static let defaultMaxOutputTokens = 64_000
     public static let largeMaxOutputTokens = 128_000
-    public static let thinkingSupport = MLXModelThinkingSupport.effort(
+    public static let thinkingSupport = ModelThinkingSupport.effort(
         levels: [.low, .medium, .high, .xhigh]
     )
 

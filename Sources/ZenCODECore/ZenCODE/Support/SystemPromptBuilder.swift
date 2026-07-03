@@ -1,5 +1,5 @@
 //
-//  MLXSystemPromptBuilder.swift
+//  SystemPromptBuilder.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct MLXSystemPromptRequest: Sendable {
+public struct SystemPromptRequest: Sendable {
     public let baseSection: String
     public let workingDirectoryPath: String?
     public let preferredLanguageSection: String?
@@ -44,7 +44,7 @@ public struct MLXSystemPromptRequest: Sendable {
     }
 }
 
-public enum MLXSystemPromptBuilder {
+public enum SystemPromptBuilder {
     public static func defaultAgentInstructions(memoryToolEnabled: Bool = true) -> String {
         joined([
             standaloneBaseSection(memoryToolEnabled: memoryToolEnabled),
@@ -53,7 +53,7 @@ public enum MLXSystemPromptBuilder {
         ])
     }
 
-    public static func prompt(_ request: MLXSystemPromptRequest) -> String {
+    public static func prompt(_ request: SystemPromptRequest) -> String {
         joined([
             request.baseSection,
             request.workingDirectoryPath.map(workingDirectorySection(path:)),
@@ -77,7 +77,7 @@ public enum MLXSystemPromptBuilder {
         responseLanguageSection: String? = nil
     ) -> String {
         prompt(
-            MLXSystemPromptRequest(
+            SystemPromptRequest(
                 baseSection: standaloneBaseSection(memoryToolEnabled: memoryToolEnabled),
                 workingDirectoryPath: cwd,
                 preferredLanguageSection: responseLanguageSection ?? standaloneLanguageSection,

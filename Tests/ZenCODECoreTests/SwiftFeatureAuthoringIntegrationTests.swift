@@ -41,7 +41,7 @@ extension SwiftFeatureRuntimeTests {
             sessionID: "scripted-model-feature-test",
             modelID: "scripted-model",
             workingDirectory: workspaceURL,
-            systemPrompt: MLXSystemPromptBuilder.defaultAgentInstructions(),
+            systemPrompt: SystemPromptBuilder.defaultAgentInstructions(),
             cacheKey: nil,
             history: [],
             allowedToolNames: [

@@ -113,7 +113,7 @@ extension ZenCODESetupRunner {
     }
 
     static func printResult(
-        _ result: ZenCODESupportFileResult,
+        _ result: ZenFileResult,
         settingsWasWritten: Bool
     ) {
         if !result.createdFilenames.isEmpty {

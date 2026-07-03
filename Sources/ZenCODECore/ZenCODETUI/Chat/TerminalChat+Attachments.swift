@@ -188,9 +188,9 @@ extension TerminalChat {
     private func resolvedAttachmentURL(from rawPath: String) -> URL {
         let expandedPath: String
         if rawPath == "~" {
-            expandedPath = MLXUserHomeDirectory.current().path
+            expandedPath = UserHomeDirectory.current().path
         } else if rawPath.hasPrefix("~/") {
-            expandedPath = MLXUserHomeDirectory.current()
+            expandedPath = UserHomeDirectory.current()
                 .appendingPathComponent(String(rawPath.dropFirst(2)))
                 .path
         } else {

@@ -63,7 +63,7 @@ extension TerminalChat {
             cwd: configuration.workingDirectory.path,
             memoryToolEnabled: memoryToolEnabled,
             selectedAgentSection: selectedAgent?.promptSection(memoryToolEnabled: memoryToolEnabled),
-                        selectedSkillSection: MLXSystemPromptBuilder.selectedSkillSection(
+                        selectedSkillSection: SystemPromptBuilder.selectedSkillSection(
                 skills: selectedPromptSkills()
             ),
             responseLanguageSection: responseLanguageSystemPromptSection()

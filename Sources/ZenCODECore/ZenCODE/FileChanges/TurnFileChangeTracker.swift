@@ -562,7 +562,7 @@ public actor TurnFileChangeTracker {
             .standardizedFileURL
             ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).standardizedFileURL
         #else
-        MLXUserHomeDirectory.current()
+        UserHomeDirectory.current()
         #endif
     }
 }

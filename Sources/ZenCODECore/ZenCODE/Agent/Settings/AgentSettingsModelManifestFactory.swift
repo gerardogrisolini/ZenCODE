@@ -18,7 +18,7 @@ public enum AgentSettingsModelManifestFactory {
         chatEndpoint: AgentRemoteChatEndpoint,
         configuredContextWindowLimit: Int?,
         generationParameterOverrides: AgentGenerationParameterOverrides?,
-        thinkingSupport: MLXModelThinkingSupport?
+        thinkingSupport: ModelThinkingSupport?
     ) -> AgentSettingsModelManifest {
         let provider = AgentRemoteProvider(
             id: providerID,
@@ -47,7 +47,7 @@ public enum AgentSettingsModelManifestFactory {
     }
 
     public static func agentThinkingOptions(
-        from support: MLXModelThinkingSupport?
+        from support: ModelThinkingSupport?
     ) -> [AgentThinkingSelection]? {
         guard let support,
               support.supportsThinking else {
@@ -58,7 +58,7 @@ public enum AgentSettingsModelManifestFactory {
     }
 
     public static func agentThinkingSelection(
-        from selection: MLXThinkingSelection?
+        from selection: ThinkingSelection?
     ) -> AgentThinkingSelection? {
         guard let selection else {
             return nil

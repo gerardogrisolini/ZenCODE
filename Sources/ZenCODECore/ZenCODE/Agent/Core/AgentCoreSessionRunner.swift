@@ -49,7 +49,7 @@ public actor AgentCoreSessionRunner {
             preserveThinking: configuration.preserveThinking
         )
         sessions[configuration.sessionID] = configuration
-        SwiftMLXLogger.debug(
+        ZenLogger.debug(
             .viewModelRuntime,
             "agent core session runner created session id=\(configuration.sessionID) history=\(configuration.history.count) tools=\(configuration.allowedToolNames?.count ?? 0)."
         )
@@ -97,7 +97,7 @@ public actor AgentCoreSessionRunner {
             } catch is CancellationError {
                 continuation.finish(throwing: CancellationError())
             } catch {
-                SwiftMLXLogger.error(
+                ZenLogger.error(
                     .viewModelRuntime,
                     "agent core session runner preload failed: \(error.localizedDescription)"
                 )
@@ -339,7 +339,7 @@ public actor AgentCoreSessionRunner {
                 clearActivePromptTask(id: promptID)
                 continuation.finish(throwing: CancellationError())
             } catch {
-                SwiftMLXLogger.error(
+                ZenLogger.error(
                     .viewModelRuntime,
                     "agent core session runner stream failed: \(error.localizedDescription)"
                 )
@@ -510,7 +510,7 @@ public actor AgentCoreSessionRunner {
         )
         self.backend = backend
         activeRuntimeConfiguration = configuration
-        SwiftMLXLogger.debug(
+        ZenLogger.debug(
             .viewModelRuntime,
             "agent core session runner initialized model=\(configuration.modelID ?? "default") cwd=\(configuration.workingDirectoryPath)."
         )

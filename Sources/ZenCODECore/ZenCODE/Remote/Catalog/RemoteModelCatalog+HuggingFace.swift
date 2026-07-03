@@ -45,7 +45,7 @@ extension RemoteModelCatalogClient {
             let resolvedRepositoryID = apiResponse.repositoryID.nilIfBlank ?? repositoryID
                         var metadata = HuggingFaceModelMetadata(
                 contextLength: contextLengthValue(apiResponse.rootValue),
-                thinkingSupport: MLXModelThinkingSupport.fromModelMetadata(
+                thinkingSupport: ModelThinkingSupport.fromModelMetadata(
                     apiResponse.metadata.removingSparseIdentifierKeys()
                 )
             )
@@ -59,7 +59,7 @@ extension RemoteModelCatalogClient {
                ) {
                 metadata.merge(
                     contextLength: contextLengthValue(config),
-                    thinkingSupport: MLXModelThinkingSupport.fromModelMetadata(config.anyValueDictionary)
+                    thinkingSupport: ModelThinkingSupport.fromModelMetadata(config.anyValueDictionary)
                 )
             }
             if siblingNames.contains("tokenizer_config.json"),
@@ -69,7 +69,7 @@ extension RemoteModelCatalogClient {
                ) {
                 metadata.merge(
                     contextLength: contextLengthValue(tokenizerConfig),
-                    thinkingSupport: MLXModelThinkingSupport.fromModelMetadata(tokenizerConfig.anyValueDictionary)
+                    thinkingSupport: ModelThinkingSupport.fromModelMetadata(tokenizerConfig.anyValueDictionary)
                 )
             }
             if siblingNames.contains("generation_config.json"),
@@ -79,7 +79,7 @@ extension RemoteModelCatalogClient {
                ) {
                 metadata.merge(
                     contextLength: contextLengthValue(generationConfig),
-                    thinkingSupport: MLXModelThinkingSupport.fromModelMetadata(generationConfig.anyValueDictionary)
+                    thinkingSupport: ModelThinkingSupport.fromModelMetadata(generationConfig.anyValueDictionary)
                 )
             }
             if siblingNames.contains("readme.md"),
@@ -165,7 +165,7 @@ extension RemoteModelCatalogClient {
         return url
     }
 
-    static func thinkingSupport(fromHuggingFaceReadme readme: String) -> MLXModelThinkingSupport? {
+    static func thinkingSupport(fromHuggingFaceReadme readme: String) -> ModelThinkingSupport? {
         let lowercasedReadme = readme.lowercased()
         let compactReadme = normalizedMetadataKey(readme)
         let mentionsThinking = compactReadme.contains("reasoningmode")
@@ -179,8 +179,8 @@ extension RemoteModelCatalogClient {
             return nil
         }
 
-        var levels: [MLXThinkingSelection] = []
-        func append(_ selection: MLXThinkingSelection) {
+        var levels: [ThinkingSelection] = []
+        func append(_ selection: ThinkingSelection) {
             guard !levels.contains(selection) else {
                 return
             }
@@ -245,7 +245,7 @@ extension RemoteModelCatalogClient {
 
 struct HuggingFaceModelMetadata {
     var contextLength: Int?
-    var thinkingSupport: MLXModelThinkingSupport?
+    var thinkingSupport: ModelThinkingSupport?
 
     var isEmpty: Bool {
         contextLength == nil && thinkingSupport == nil
@@ -253,7 +253,7 @@ struct HuggingFaceModelMetadata {
 
     mutating func merge(
         contextLength: Int? = nil,
-        thinkingSupport: MLXModelThinkingSupport? = nil
+        thinkingSupport: ModelThinkingSupport? = nil
     ) {
         if self.contextLength == nil {
             self.contextLength = contextLength

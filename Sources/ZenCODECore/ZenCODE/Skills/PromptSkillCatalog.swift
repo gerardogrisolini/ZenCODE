@@ -26,7 +26,7 @@ public enum PromptSkillCatalog {
         var searchRoots = appCatalogSearchRoots(fileManager: fileManager)
 
         #if os(macOS)
-        let homeDirectory = MLXUserHomeDirectory.current(fileManager: fileManager)
+        let homeDirectory = UserHomeDirectory.current(fileManager: fileManager)
         let codexHome = homeDirectory
             .appendingPathComponent(".codex", isDirectory: true)
             .standardizedFileURL

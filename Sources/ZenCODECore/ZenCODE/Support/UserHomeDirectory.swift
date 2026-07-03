@@ -1,5 +1,5 @@
 //
-//  MLXUserHomeDirectory.swift
+//  UserHomeDirectory.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -10,7 +10,7 @@ import Foundation
 import Darwin
 #endif
 
-public enum MLXUserHomeDirectory {
+public enum UserHomeDirectory {
     public static func current(fileManager: FileManager = .default) -> URL {
         #if canImport(Darwin)
         if let homeDirectoryPath = passwordDatabaseHomeDirectoryPath() {

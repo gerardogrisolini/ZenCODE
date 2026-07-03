@@ -20,12 +20,12 @@ struct MLXAppStorageDirectoryTests {
             AgentSettingsManifestStore.resetDefaultCacheForTesting()
         }
 
-        let supportDirectory = MLXUserHomeDirectory.current()
+        let supportDirectory = UserHomeDirectory.current()
             .appendingPathComponent(".zencode", isDirectory: true)
             .standardizedFileURL
 
         #expect(AppStorageDirectory.defaultSupportDirectoryURL() == supportDirectory)
-        #expect(ZenCODESupportFileService.supportDirectoryURL() == supportDirectory)
+        #expect(ZenFileService.supportDirectoryURL() == supportDirectory)
         #expect(AgentsContextService().globalAgentsFileURL() == supportDirectory.appendingPathComponent("AGENTS.md"))
         #expect(MemoryService().globalMemoryFileURL() == supportDirectory.appendingPathComponent("MEMORY.md"))
         #expect(AgentSettingsManifestStore.settingsURL() == supportDirectory.appendingPathComponent("settings.json"))

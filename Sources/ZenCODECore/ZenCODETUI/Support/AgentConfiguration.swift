@@ -317,7 +317,7 @@ public struct AgentConfiguration: Sendable {
         if let xcodeProjectDirectory = xcodeProjectDirectoryURL() {
             return xcodeProjectDirectory
         }
-        return MLXUserHomeDirectory.current()
+        return UserHomeDirectory.current()
             .standardizedFileURL
             .resolvingSymlinksInPath()
     }

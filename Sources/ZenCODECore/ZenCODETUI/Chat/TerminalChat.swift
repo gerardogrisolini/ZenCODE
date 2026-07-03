@@ -169,7 +169,7 @@ public final class TerminalChat: @unchecked Sendable {
     }
 
     public func run() async throws {
-        let sleepAssertion = ZenCODESleepAssertion(
+        let sleepAssertion = ZenSleepAssertion(
             reason: "ZenCODE terminal session active"
         )
         defer {

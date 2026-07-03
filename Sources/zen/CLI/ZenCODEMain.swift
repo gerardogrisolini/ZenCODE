@@ -97,7 +97,7 @@ struct ZenCODEMain {
             Foundation.exit(1)
         }
 
-        if ZenCODESetupInspector.status().requiresSetup {
+        if ZenInspector.status().requiresSetup {
             do {
                 try await ZenCODESetupRunner.run(
                     arguments: [],

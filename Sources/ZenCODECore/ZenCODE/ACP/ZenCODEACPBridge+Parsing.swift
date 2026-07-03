@@ -576,7 +576,7 @@ extension ZenCODEACPBridge {
             availableSkills: availableSkills
         )
         let selectedSkills = availableSkills.filter { selectedSkillIDs.contains($0.id) }
-        return MLXSystemPromptBuilder.selectedSkillSection(skills: selectedSkills)
+        return SystemPromptBuilder.selectedSkillSection(skills: selectedSkills)
     }
 
 }

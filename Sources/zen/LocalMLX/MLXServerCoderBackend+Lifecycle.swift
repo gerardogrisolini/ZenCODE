@@ -223,7 +223,7 @@ extension MLXServerCoderBackend {
         do {
             _ = try await runtime.restoreChatSessionCacheFromDisk(request: request)
         } catch {
-            SwiftMLXLogger.warning(
+            ZenLogger.warning(
                 .viewModelRuntime,
                 "failed to restore MLX session cache id=\(id): \(error.localizedDescription)"
             )

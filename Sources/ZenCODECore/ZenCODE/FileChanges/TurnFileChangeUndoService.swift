@@ -37,7 +37,7 @@ public enum TurnFileChangeUndoService {
                 return
             }
         } catch {
-            SwiftMLXLogger.warning(
+            ZenLogger.warning(
                 .turnFileChangeTracker,
                 "Patch undo failed, falling back to captured file snapshots: \(error.localizedDescription)"
             )

@@ -1,5 +1,5 @@
 //
-//  ZenCODESupportFileService.swift
+//  ZenFileService.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct ZenCODESupportFileResult: Sendable {
+public struct ZenFileResult: Sendable {
     public let supportDirectoryURL: URL
     public let agentsFileURL: URL
     public let memoryFileURL: URL
@@ -35,7 +35,7 @@ public struct ZenCODESupportFileResult: Sendable {
     }
 }
 
-public enum ZenCODESupportFileService {
+public enum ZenFileService {
     public static let requiredFilenames: [String] = [
         AgentsContextService.filename,
         MemoryService.filename,
@@ -46,7 +46,7 @@ public enum ZenCODESupportFileService {
     @discardableResult
     public static func ensureBaseFiles(
         fileManager: FileManager = .default
-    ) throws -> ZenCODESupportFileResult {
+    ) throws -> ZenFileResult {
         let supportDirectoryURL = supportDirectoryURL(fileManager: fileManager)
         try fileManager.createDirectory(
             at: supportDirectoryURL,
@@ -97,7 +97,7 @@ public enum ZenCODESupportFileService {
             preservedFilenames.append(AgentSettingsManifestStore.settingsFilename)
         }
 
-        return ZenCODESupportFileResult(
+        return ZenFileResult(
             supportDirectoryURL: supportDirectoryURL,
             agentsFileURL: ensuredAgentsFileURL,
             memoryFileURL: ensuredMemoryFileURL,
@@ -113,7 +113,7 @@ public enum ZenCODESupportFileService {
         settingsManifest: AgentSettingsManifest?,
         overwriteSettings: Bool = false,
         fileManager: FileManager = .default
-    ) throws -> ZenCODESupportFileResult {
+    ) throws -> ZenFileResult {
         let baseResult = try ensureBaseFiles(fileManager: fileManager)
         guard let settingsManifest else {
             return baseResult
@@ -137,7 +137,7 @@ public enum ZenCODESupportFileService {
             )
         }
 
-        return ZenCODESupportFileResult(
+        return ZenFileResult(
             supportDirectoryURL: baseResult.supportDirectoryURL,
             agentsFileURL: baseResult.agentsFileURL,
             memoryFileURL: baseResult.memoryFileURL,

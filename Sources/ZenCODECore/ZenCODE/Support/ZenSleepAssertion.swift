@@ -7,7 +7,7 @@
 
 import Foundation
 
-public final class ZenCODESleepAssertion {
+public final class ZenSleepAssertion {
     #if os(macOS)
     private let lock = NSLock()
     private var activity: NSObjectProtocol?

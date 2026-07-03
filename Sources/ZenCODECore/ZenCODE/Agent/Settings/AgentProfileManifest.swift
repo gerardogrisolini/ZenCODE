@@ -104,12 +104,12 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         guard let instructions else {
             return ""
         }
-        let defaultInstructionsWithMemory = MLXSystemPromptBuilder.defaultAgentInstructions(memoryToolEnabled: true)
-        let defaultInstructionsWithoutMemory = MLXSystemPromptBuilder.defaultAgentInstructions(memoryToolEnabled: false)
+        let defaultInstructionsWithMemory = SystemPromptBuilder.defaultAgentInstructions(memoryToolEnabled: true)
+        let defaultInstructionsWithoutMemory = SystemPromptBuilder.defaultAgentInstructions(memoryToolEnabled: false)
         guard instructions == defaultInstructionsWithMemory || instructions == defaultInstructionsWithoutMemory else {
             return instructions
         }
-        return MLXSystemPromptBuilder.defaultAgentInstructions(memoryToolEnabled: memoryToolEnabled)
+        return SystemPromptBuilder.defaultAgentInstructions(memoryToolEnabled: memoryToolEnabled)
     }
 
     public func allowedToolNames() -> Set<String> {

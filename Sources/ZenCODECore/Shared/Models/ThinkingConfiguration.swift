@@ -1,5 +1,5 @@
 //
-//  MLXThinkingConfiguration.swift
+//  ThinkingConfiguration.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -7,7 +7,7 @@
 
 import Foundation
 
-public nonisolated enum MLXThinkingSelection: String, Codable, CaseIterable, Identifiable, Sendable {
+public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identifiable, Sendable {
     case off
     case enabled
     case minimal
@@ -80,7 +80,7 @@ public nonisolated enum MLXThinkingSelection: String, Codable, CaseIterable, Ide
         }
     }
 
-    public static func openRouterReasoningSelection(from value: JSONValue?) -> MLXThinkingSelection? {
+    public static func openRouterReasoningSelection(from value: JSONValue?) -> ThinkingSelection? {
         guard let value else {
             return nil
         }
@@ -120,19 +120,19 @@ public nonisolated enum MLXThinkingSelection: String, Codable, CaseIterable, Ide
     }
 }
 
-public nonisolated struct MLXModelThinkingSupport: Codable, Hashable, Sendable {
+public nonisolated struct ModelThinkingSupport: Codable, Hashable, Sendable {
     public let supportsThinking: Bool
     public let supportsReasoningEffort: Bool
     public let supportsPreserveThinking: Bool
-    public let availableSelections: [MLXThinkingSelection]
-    public let defaultSelection: MLXThinkingSelection
+    public let availableSelections: [ThinkingSelection]
+    public let defaultSelection: ThinkingSelection
 
     public init(
         supportsThinking: Bool,
         supportsReasoningEffort: Bool,
         supportsPreserveThinking: Bool,
-        availableSelections: [MLXThinkingSelection],
-        defaultSelection: MLXThinkingSelection
+        availableSelections: [ThinkingSelection],
+        defaultSelection: ThinkingSelection
     ) {
         self.supportsThinking = supportsThinking
         self.supportsReasoningEffort = supportsReasoningEffort
@@ -141,7 +141,7 @@ public nonisolated struct MLXModelThinkingSupport: Codable, Hashable, Sendable {
         self.defaultSelection = defaultSelection
     }
 
-    public static let generic = MLXModelThinkingSupport(
+    public static let generic = ModelThinkingSupport(
         supportsThinking: true,
         supportsReasoningEffort: false,
         supportsPreserveThinking: false,
@@ -150,18 +150,18 @@ public nonisolated struct MLXModelThinkingSupport: Codable, Hashable, Sendable {
     )
 
     public static func effort(
-        levels: [MLXThinkingSelection] = [.minimal, .low, .medium, .high, .xhigh],
+        levels: [ThinkingSelection] = [.minimal, .low, .medium, .high, .xhigh],
         supportsPreserveThinking: Bool = false
-    ) -> MLXModelThinkingSupport {
+    ) -> ModelThinkingSupport {
         let normalizedLevels = effortLevels(from: levels)
         let resolvedLevels = normalizedLevels.isEmpty
             ? [.minimal, .low, .medium, .high, .xhigh]
             : normalizedLevels
         let defaultSelection = resolvedLevels.contains(.medium)
-            ? MLXThinkingSelection.medium
+            ? ThinkingSelection.medium
             : (resolvedLevels.first ?? .medium)
 
-        return MLXModelThinkingSupport(
+        return ModelThinkingSupport(
             supportsThinking: true,
             supportsReasoningEffort: true,
             supportsPreserveThinking: supportsPreserveThinking,
@@ -172,7 +172,7 @@ public nonisolated struct MLXModelThinkingSupport: Codable, Hashable, Sendable {
 
     public static func fromModelMetadata(
         _ metadata: [String: Any]
-    ) -> MLXModelThinkingSupport? {
+    ) -> ModelThinkingSupport? {
         var detector = MetadataDetector()
         detector.scan(metadata)
         return detector.support
@@ -180,7 +180,7 @@ public nonisolated struct MLXModelThinkingSupport: Codable, Hashable, Sendable {
 
     public static func fromMetadataFiles(
         in directories: [URL]
-    ) -> MLXModelThinkingSupport? {
+    ) -> ModelThinkingSupport? {
         var detector = MetadataDetector()
         for directory in directories {
             for filename in ["config.json", "tokenizer_config.json", "chat_template.jinja"] {

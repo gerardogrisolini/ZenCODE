@@ -29,7 +29,7 @@ extension TerminalChat {
     guard let activeResponseLanguageName else {
       return nil
     }
-    return MLXSystemPromptBuilder.lockedResponseLanguageSection(
+    return SystemPromptBuilder.lockedResponseLanguageSection(
       languageName: activeResponseLanguageName
     )
   }

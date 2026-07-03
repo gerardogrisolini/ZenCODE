@@ -212,7 +212,7 @@ extension ZenCODEACPBridge {
                 await verboseACPLog(
                     "failed ACP MCP server name=\(definition.name): \(error.localizedDescription)"
                 )
-                SwiftMLXLogger.warning(
+                ZenLogger.warning(
                     .viewModelRuntime,
                     "failed to install ACP MCP server '\(definition.name)': \(error.localizedDescription)"
                 )

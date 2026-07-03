@@ -126,7 +126,7 @@ public nonisolated struct ToolDescriptor: Codable, Identifiable, Hashable, Senda
                 )
             }
         } catch {
-            SwiftMLXLogger.warning(
+            ZenLogger.warning(
                 .toolDescriptor,
                 "Error parsing ToolDescriptor JSON: \(error)"
             )

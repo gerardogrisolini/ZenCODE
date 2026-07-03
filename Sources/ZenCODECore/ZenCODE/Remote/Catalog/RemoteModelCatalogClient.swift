@@ -79,8 +79,8 @@ public final class RemoteModelCatalogClient {
         fromModelMetadata metadata: [String: Any],
         baseURL _: String,
         modelID _: String
-    ) -> MLXModelThinkingSupport? {
-        MLXModelThinkingSupport.fromModelMetadata(
+    ) -> ModelThinkingSupport? {
+        ModelThinkingSupport.fromModelMetadata(
             metadata.removingSparseIdentifierKeys()
         )
     }
@@ -89,13 +89,13 @@ public final class RemoteModelCatalogClient {
 public struct OpenRouterModelMetadata: Equatable, Sendable {
     public let id: String
     public let contextLength: Int?
-    public let thinkingSupport: MLXModelThinkingSupport?
+    public let thinkingSupport: ModelThinkingSupport?
     public let generationParameterOverrides: AgentGenerationParameterOverrides?
 
     public init(
         id: String,
         contextLength: Int?,
-        thinkingSupport: MLXModelThinkingSupport?,
+        thinkingSupport: ModelThinkingSupport?,
         generationParameterOverrides: AgentGenerationParameterOverrides? = nil
     ) {
         self.id = id
@@ -110,7 +110,7 @@ public struct OpenRouterModelInfo: Identifiable, Equatable, Sendable {
     public let name: String
     public let contextLength: Int?
     public let pricing: OpenRouterModelPricing?
-    public let thinkingSupport: MLXModelThinkingSupport?
+    public let thinkingSupport: ModelThinkingSupport?
     public let generationParameterOverrides: AgentGenerationParameterOverrides?
     public let installed: Bool?
     public let loaded: Bool?
@@ -121,7 +121,7 @@ public struct OpenRouterModelInfo: Identifiable, Equatable, Sendable {
         name: String,
         contextLength: Int?,
         pricing: OpenRouterModelPricing?,
-        thinkingSupport: MLXModelThinkingSupport? = nil,
+        thinkingSupport: ModelThinkingSupport? = nil,
         generationParameterOverrides: AgentGenerationParameterOverrides? = nil,
         installed: Bool? = nil,
         loaded: Bool? = nil,

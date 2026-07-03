@@ -138,7 +138,7 @@ public enum AgentCoreAppSessionFactory {
             .compactMap { $0?.nilIfBlank }
             let sections = contextSections + [
                 providedSystemPrompt,
-                MLXSystemPromptBuilder.responseLanguageSection
+                SystemPromptBuilder.responseLanguageSection
             ]
             return sections
                 .joined(separator: "\n\n")
@@ -304,6 +304,6 @@ public enum AgentCoreAppSessionFactory {
             )
         }
         let selectedSkills = availableSkills.filter { selectedSkillIDs.contains($0.id) }
-        return MLXSystemPromptBuilder.selectedSkillSection(skills: selectedSkills)
+        return SystemPromptBuilder.selectedSkillSection(skills: selectedSkills)
     }
 }

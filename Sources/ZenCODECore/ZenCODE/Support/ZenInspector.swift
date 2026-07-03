@@ -1,5 +1,5 @@
 //
-//  ZenCODESetupInspector.swift
+//  ZenInspector.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -7,7 +7,7 @@
 
 import Foundation
 
-public enum ZenCODESetupStatus: Equatable, Sendable {
+public enum SetupStatus: Equatable, Sendable {
     case ready(settingsFileURL: URL)
     case missingSettings(settingsFileURL: URL)
     case invalidSettings(settingsFileURL: URL, message: String)
@@ -46,20 +46,20 @@ public enum ZenCODESetupStatus: Equatable, Sendable {
     }
 }
 
-public enum ZenCODESetupInspector {
+public enum ZenInspector {
     public static func status(
         ensureBaseFiles: Bool = true,
         fileManager: FileManager = .default
-    ) -> ZenCODESetupStatus {
+    ) -> SetupStatus {
         do {
-            let supportFiles: ZenCODESupportFileResult
+            let supportFiles: ZenFileResult
             if ensureBaseFiles {
-                supportFiles = try ZenCODESupportFileService.ensureBaseFiles(
+                supportFiles = try ZenFileService.ensureBaseFiles(
                     fileManager: fileManager
                 )
             } else {
-                supportFiles = ZenCODESupportFileResult(
-                    supportDirectoryURL: ZenCODESupportFileService.supportDirectoryURL(
+                supportFiles = ZenFileResult(
+                    supportDirectoryURL: ZenFileService.supportDirectoryURL(
                         fileManager: fileManager
                     ),
                     agentsFileURL: AgentsContextService(fileManager: fileManager)

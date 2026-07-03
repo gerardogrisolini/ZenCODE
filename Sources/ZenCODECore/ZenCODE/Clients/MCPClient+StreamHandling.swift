@@ -248,7 +248,7 @@ extension MCPClient {
     }
 
     public func importantLog(_ message: String) {
-        SwiftMLXLogger.info(.mcpClient, message)
+        ZenLogger.info(.mcpClient, message)
     }
 
     public func logBufferedPrefixIfNeeded() {
@@ -273,7 +273,7 @@ extension MCPClient {
             return
         }
 
-        SwiftMLXLogger.debug(.mcpClient, message)
+        ZenLogger.debug(.mcpClient, message)
         appendDebugLogLine(message)
     }
 

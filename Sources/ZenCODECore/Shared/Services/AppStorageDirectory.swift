@@ -29,7 +29,7 @@ public enum AppStorageDirectory {
     public static func defaultSupportDirectoryURL(
         fileManager: FileManager = .default
     ) -> URL {
-        MLXUserHomeDirectory.current(fileManager: fileManager)
+        UserHomeDirectory.current(fileManager: fileManager)
             .appendingPathComponent(supportDirectoryName, isDirectory: true)
             .standardizedFileURL
     }
