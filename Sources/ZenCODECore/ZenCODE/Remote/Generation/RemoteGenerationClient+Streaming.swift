@@ -11,6 +11,12 @@ import FoundationNetworking
 #endif
 
 extension RemoteGenerationClient {
+    /// Shared decoder reused across the SSE streaming hot path. `jsonObject` is
+    /// invoked once per streamed line, so recreating a `JSONDecoder` each call
+    /// is pure allocation overhead. The decoder is never mutated after creation,
+    /// which makes concurrent `decode` calls safe.
+    static let sharedStreamJSONDecoder = JSONDecoder()
+
     public func validateConfiguration() throws {
         guard URL(string: provider.baseURL) != nil else {
             throw RemoteGenerationClientError.invalidBaseURL(provider.baseURL)
@@ -457,7 +463,7 @@ extension RemoteGenerationClient {
 
     public static func jsonObject(from payload: String) -> [String: Any]? {
         guard let data = payload.data(using: .utf8),
-              let value = try? JSONDecoder().decode(JSONValue.self, from: data),
+              let value = try? sharedStreamJSONDecoder.decode(JSONValue.self, from: data),
               let object = value.objectValue else {
             return nil
         }

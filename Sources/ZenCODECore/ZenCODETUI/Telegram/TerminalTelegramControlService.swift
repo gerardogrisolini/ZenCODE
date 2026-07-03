@@ -159,6 +159,10 @@ public actor TerminalTelegramControlService {
 
     deinit {
         pollingTask?.cancel()
+        // Terminate the stream so any `for await` consumer of `incomingMessages`
+        // (e.g. the Telegram forwarding task) resumes and unwinds instead of
+        // staying suspended after the service is deallocated.
+        incomingContinuation.finish()
     }
 
     public func currentState() -> TerminalTelegramControlState {

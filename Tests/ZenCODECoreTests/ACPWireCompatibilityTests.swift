@@ -66,7 +66,7 @@ extension ACPCompatibilityTests {
         let create = ZenCODEACPBridge.toolCallCreateUpdate(for: toolCall)
         #expect(create["sessionUpdate"] as? String == "tool_call")
         #expect(create["toolCallId"] as? String == "call_001")
-        #expect(create["title"] as? String == "Run swift test")
+        #expect(create["title"] as? String == "local.exec swift test")
         #expect(create["kind"] as? String == "execute")
         #expect(create["status"] as? String == "pending")
         #expect(create["tool_call_id"] == nil)
@@ -74,7 +74,7 @@ extension ACPCompatibilityTests {
         let progress = ZenCODEACPBridge.toolCallProgressUpdate(for: toolCall)
         #expect(progress["sessionUpdate"] as? String == "tool_call_update")
         #expect(progress["toolCallId"] as? String == "call_001")
-        #expect(progress["title"] as? String == "Run swift test")
+        #expect(progress["title"] as? String == "local.exec swift test")
         #expect(progress["kind"] as? String == "execute")
         #expect(progress["status"] as? String == "in_progress")
 
@@ -87,7 +87,7 @@ extension ACPCompatibilityTests {
         )
         #expect(completion["sessionUpdate"] as? String == "tool_call_update")
         #expect(completion["toolCallId"] as? String == "call_001")
-        #expect(completion["title"] as? String == "Run swift test")
+        #expect(completion["title"] as? String == "local.exec swift test")
         #expect(completion["kind"] as? String == "execute")
         #expect(completion["status"] as? String == "completed")
     }

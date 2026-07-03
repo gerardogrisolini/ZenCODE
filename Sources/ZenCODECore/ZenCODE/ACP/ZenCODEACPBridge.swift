@@ -71,6 +71,7 @@ public actor ZenCODEACPBridge {
         }
         sessions.removeAll()
         updateSessionSleepAssertion()
+        await writer.failAllPending()
         await sessionRunner.shutdown()
     }
 

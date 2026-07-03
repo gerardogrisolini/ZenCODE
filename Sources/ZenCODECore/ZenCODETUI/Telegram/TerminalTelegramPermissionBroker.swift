@@ -229,13 +229,13 @@ actor TerminalTelegramPermissionBroker {
         guard timeoutNanoseconds > 0 else {
             return nil
         }
-        return Task {
+        return Task { [weak self] in
             do {
                 try await Task.sleep(nanoseconds: timeoutNanoseconds)
             } catch {
                 return
             }
-            _ = self.resolveRequest(id: requestID, resolution: .timedOut)
+            _ = await self?.resolveRequest(id: requestID, resolution: .timedOut)
         }
     }
 

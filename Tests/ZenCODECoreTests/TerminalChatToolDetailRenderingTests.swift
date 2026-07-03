@@ -101,7 +101,7 @@ extension TerminalChatRenderingTests {
 
         let lines = TerminalChat.compactToolLines(for: toolCall, statusIcon: "⏳")
 
-        #expect(lines.contains("🛠️  Edit:"))
+        #expect(lines.contains("🛠️  local.editFile:"))
         #expect(lines.contains { $0.contains("Sources/App.swift") })
     }
 
@@ -170,7 +170,7 @@ extension TerminalChatRenderingTests {
         let lines = TerminalChat.compactToolLines(for: toolCall, statusIcon: "✅")
 
         #expect(lines.count == 2)
-        #expect(lines[0] == "🛠️  Run:")
+        #expect(lines[0] == "🛠️  local.exec:")
         #expect(lines[1].contains("python3 - <<'PY' from pathlib import Path"))
         #expect(!lines[1].contains("\n"))
         #expect(lines[1].hasSuffix(" ✅"))
@@ -213,7 +213,7 @@ extension TerminalChatRenderingTests {
 
         let lines = TerminalChat.detailedToolCallStartedLines(for: toolCall)
 
-        #expect(lines.contains("🛠️  Read /tmp/project/Sources/App.swift"))
+        #expect(lines.contains("🛠️  local.readFile /tmp/project/Sources/App.swift"))
         #expect(lines.contains("status: ⏳"))
         #expect(lines.last == "status: ⏳")
         #expect(lines.contains("kind: read"))

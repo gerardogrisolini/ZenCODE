@@ -63,6 +63,22 @@ public actor ACPWriter {
         continuation.resume(throwing: CancellationError())
     }
 
+    /// Fails every in-flight `request(...)` continuation and clears the pending
+    /// table. Call this when the ACP transport is shutting down so callers do
+    /// not remain suspended forever waiting for a host response that will never
+    /// arrive (which would also leak the actor and everything the continuation
+    /// captured).
+    public func failAllPending(_ error: Error = ACPError.internalError("ACP transport closed.")) {
+        guard !pendingRequests.isEmpty else {
+            return
+        }
+        let pending = pendingRequests
+        pendingRequests.removeAll()
+        for continuation in pending.values {
+            continuation.resume(throwing: error)
+        }
+    }
+
     public func sendResultIfRequest(id: JSONValue?, result: JSONValue) async {
         guard let id else {
             return

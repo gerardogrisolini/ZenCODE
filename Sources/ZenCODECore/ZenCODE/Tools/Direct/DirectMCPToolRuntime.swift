@@ -307,6 +307,13 @@ public actor DirectMCPToolRuntime {
         allowedToolNames: Set<String>? = nil,
         preferredWorkspaceRootURL: URL? = nil
     ) async -> Bool {
+        // Fast path: if the tool already resolves to a connected server there is
+        // nothing to discover. This avoids re-running the discovery pass (which
+        // can touch the filesystem via symlink resolution) on every tool call
+        // once the relevant MCP server is connected.
+        if serverAndToolName(for: toolName) != nil {
+            return true
+        }
         let discoveryToolNames = allowedToolNames ?? [toolName]
         await discoverIfNeeded(
             allowedToolNames: discoveryToolNames,

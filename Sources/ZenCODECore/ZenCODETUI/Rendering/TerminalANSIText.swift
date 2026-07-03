@@ -287,6 +287,37 @@ enum TerminalANSIText {
         return scalars.index(after: afterEscape)
     }
     
+    /// Counts trailing visible newlines while skipping ANSI escape sequences,
+    /// without materializing the stripped string. Mirrors the visibility rules
+    /// of `stripANSI` but only accumulates counters, which keeps the streaming
+    /// hot path allocation-free.
+    ///
+    /// - Returns: `hasVisible` indicates whether any visible (non-ANSI)
+    ///   character exists; `trailingNewlines` is the number of `\n` at the end
+    ///   of the visible text.
+    static func trailingVisibleNewlineInfo(
+        _ text: String
+    ) -> (hasVisible: Bool, trailingNewlines: Int) {
+        let scalars = Array(text.unicodeScalars)
+        var index = 0
+        var hasVisible = false
+        var trailingNewlines = 0
+        while index < scalars.count {
+            if scalars[index] == "\u{1B}" {
+                index = endOfEscapeSequence(in: scalars, from: index)
+                continue
+            }
+            hasVisible = true
+            if scalars[index] == "\n" {
+                trailingNewlines += 1
+            } else {
+                trailingNewlines = 0
+            }
+            index += 1
+        }
+        return (hasVisible, trailingNewlines)
+    }
+
     /// Strips all ANSI escape sequences (CSI and OSC) from `text`, returning
     /// only the visible characters. Used to compare rendered labels against raw
     /// URLs so autolinks are not annotated with a redundant `<url>`.

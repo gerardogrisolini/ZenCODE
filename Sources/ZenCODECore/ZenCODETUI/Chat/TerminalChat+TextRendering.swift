@@ -257,20 +257,12 @@ extension TerminalChat {
             return
         }
 
-        let visibleText = TerminalANSIText.stripANSI(text)
-        guard !visibleText.isEmpty else {
+        let info = TerminalANSIText.trailingVisibleNewlineInfo(text)
+        guard info.hasVisible else {
             return
         }
 
-        var count = 0
-        for character in visibleText.reversed() {
-            if character == "\n" {
-                count += 1
-            } else {
-                break
-            }
-        }
-        trailingNewlineCount = count
+        trailingNewlineCount = info.trailingNewlines
     }
 
     func writeFailureMessage(_ text: String) {
@@ -394,6 +386,15 @@ extension TerminalChat {
         return colorFileChangeSummaryHint(line)
     }
 
+    // Compiled once: these headers/entries are colored per line of the
+    // file-change summary, so recompiling the pattern each call is wasteful.
+    private static let fileChangeSummaryHeaderRegex = try? NSRegularExpression(
+        pattern: #"^(Summary:) (.+)  (\+\d+) ([-]\d+)$"#
+    )
+    private static let fileChangeSummaryEntryRegex = try? NSRegularExpression(
+        pattern: #"^  (\S+) (.+?)(?:  (\+\d+) ([-]\d+)| (\(binary\)))$"#
+    )
+
     static func colorFileChangeSummaryHeader(_ line: String) -> String {
         let reset = "\u{1B}[0m"
         let color = fileChangeSummaryHeaderANSIColor
@@ -401,8 +402,7 @@ extension TerminalChat {
         let white = "\u{1B}[97m"
         let addition = "\u{1B}[38;5;114m"
         let deletion = "\u{1B}[38;5;203m"
-        let pattern = #"^(Summary:) (.+)  (\+\d+) ([-]\d+)$"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
+        guard let regex = fileChangeSummaryHeaderRegex,
               let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
               match.numberOfRanges == 5,
               let titleRange = Range(match.range(at: 1), in: line),
@@ -441,8 +441,7 @@ extension TerminalChat {
         let addition = "\u{1B}[38;5;114m"
         let deletion = "\u{1B}[38;5;203m"
         let binary = "\u{1B}[38;5;244m"
-        let pattern = #"^  (\S+) (.+?)(?:  (\+\d+) ([-]\d+)| (\(binary\)))$"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
+        guard let regex = fileChangeSummaryEntryRegex,
               let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
               match.numberOfRanges == 6,
               let statusRange = Range(match.range(at: 1), in: line),
