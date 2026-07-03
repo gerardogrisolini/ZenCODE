@@ -48,7 +48,6 @@ extension SwiftFeatureRuntimeTests {
             ]
         )
         let executor = DirectToolExecutor(
-            outputLimit: 24_000,
             swiftFeatureRuntime: runtime,
             subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
         )
@@ -120,7 +119,6 @@ extension SwiftFeatureRuntimeTests {
             ]
         )
         let executor = DirectToolExecutor(
-            outputLimit: 24_000,
             swiftFeatureRuntime: runtime,
             subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
         )
@@ -171,7 +169,6 @@ extension SwiftFeatureRuntimeTests {
         )
 
         let executor = DirectToolExecutor(
-            outputLimit: 24_000,
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
             subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
         )
@@ -209,7 +206,6 @@ extension SwiftFeatureRuntimeTests {
         try "ciao mondo\n".write(to: fileURL, atomically: true, encoding: .utf8)
 
         let executor = DirectToolExecutor(
-            outputLimit: 24_000,
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
             subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
         )
@@ -279,7 +275,6 @@ extension SwiftFeatureRuntimeTests {
             ]
         )
         let executor = DirectToolExecutor(
-            outputLimit: 24_000,
             swiftFeatureRuntime: runtime,
             subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
         )
@@ -341,7 +336,6 @@ extension SwiftFeatureRuntimeTests {
             ]
         )
         let executor = DirectToolExecutor(
-            outputLimit: 24_000,
             authorizationHandler: { request in
                 Issue.record("Unexpected authorization request: \(request.toolName) / \(request.kind)")
                 return false

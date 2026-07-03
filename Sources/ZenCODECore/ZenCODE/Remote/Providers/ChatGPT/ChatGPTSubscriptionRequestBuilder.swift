@@ -7,6 +7,9 @@
 
 #if os(macOS)
 import Foundation
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 
 public struct ChatGPTSubscriptionContinuationState: Equatable, Sendable {
     public let responseID: String
@@ -79,10 +82,16 @@ public enum ChatGPTSubscriptionRequestBuilder {
     }
 
     static func chatGPTInputPayload(from input: [Any]) -> [Any] {
-        input.compactMap(chatGPTInputItem)
+        var seenReasoningIDs: Set<String> = []
+        return input.compactMap { item in
+            chatGPTInputItem(item, seenReasoningIDs: &seenReasoningIDs)
+        }
     }
 
-    private static func chatGPTInputItem(_ item: Any) -> Any? {
+    private static func chatGPTInputItem(
+        _ item: Any,
+        seenReasoningIDs: inout Set<String>
+    ) -> Any? {
         guard let object = item as? [String: Any] else {
             return item
         }
@@ -92,38 +101,34 @@ public enum ChatGPTSubscriptionRequestBuilder {
         guard type == "reasoning" else {
             return item
         }
-        return chatGPTReasoningInputItem(from: object)
+        return chatGPTReasoningInputItem(
+            from: object,
+            seenReasoningIDs: &seenReasoningIDs
+        )
     }
 
-    private static func chatGPTReasoningInputItem(from item: [String: Any]) -> [String: Any]? {
-        var sanitized: [String: Any] = ["type": "reasoning"]
-        if let id = RemoteGenerationClient.stringValue(item["id"])?.nilIfBlank {
-            sanitized["id"] = id
-        }
-        if let encrypted = RemoteGenerationClient.stringValue(item["encrypted_content"])?.nilIfBlank
-            ?? RemoteGenerationClient.stringValue(item["encryptedContent"])?.nilIfBlank {
-            sanitized["encrypted_content"] = encrypted
-            sanitized["summary"] = item["summary"] ?? []
-            return sanitized
-        }
-        guard let summary = item["summary"], !chatGPTReasoningSummaryIsEmpty(summary) else {
+    private static func chatGPTReasoningInputItem(
+        from item: [String: Any],
+        seenReasoningIDs: inout Set<String>
+    ) -> [String: Any]? {
+        // Summary-only reasoning items cannot restore the reasoning chain
+        // without the encrypted payload; replaying them only spends tokens.
+        guard let encrypted = RemoteGenerationClient.stringValue(item["encrypted_content"])?.nilIfBlank
+            ?? RemoteGenerationClient.stringValue(item["encryptedContent"])?.nilIfBlank else {
             return nil
         }
-        sanitized["summary"] = summary
-        return sanitized
-    }
-
-    private static func chatGPTReasoningSummaryIsEmpty(_ value: Any) -> Bool {
-        if let text = value as? String {
-            return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // The "id" is used only for local deduplication and intentionally not
+        // replayed: with store=false the API tries to resolve it server-side
+        // and rejects the request. encrypted_content is self-contained.
+        if let id = RemoteGenerationClient.stringValue(item["id"])?.nilIfBlank,
+           !seenReasoningIDs.insert(id).inserted {
+            return nil
         }
-        if let items = value as? [Any] {
-            return items.isEmpty
-        }
-        if let items = value as? [[String: Any]] {
-            return items.isEmpty
-        }
-        return false
+        return [
+            "type": "reasoning",
+            "encrypted_content": encrypted,
+            "summary": item["summary"] ?? []
+        ]
     }
 
     public static func requestBody(
@@ -148,7 +153,11 @@ public enum ChatGPTSubscriptionRequestBuilder {
             "include": [
                 "reasoning.encrypted_content"
             ],
-            "prompt_cache_key": sessionID
+            "prompt_cache_key": promptCacheKey(
+                instructions: instructions,
+                toolPayloads: toolPayloads,
+                fallbackSessionID: sessionID
+            )
         ]
 
         if case let .array(tools) = toolPayloads, !tools.isEmpty {
@@ -173,6 +182,35 @@ public enum ChatGPTSubscriptionRequestBuilder {
         }
 
         return body
+    }
+
+    /// Content-addressed prompt cache key derived from the static request
+    /// prefix (instructions + tool schemas). Requests sharing the same prefix
+    /// are routed to the same cache shard even across sessions, unlike a
+    /// per-session identifier which is always cache-cold on a new session.
+    public static func promptCacheKey(
+        instructions: String?,
+        toolPayloads: JSONValue,
+        fallbackSessionID: String
+    ) -> String {
+        let normalizedInstructions = instructions?.nilIfBlank ?? ""
+        var toolsPart = ""
+        if case let .array(tools) = toolPayloads,
+           !tools.isEmpty,
+           let data = try? toolPayloads.jsonData(
+               outputFormatting: [.withoutEscapingSlashes, .sortedKeys]
+           ) {
+            toolsPart = String(decoding: data, as: UTF8.self)
+        }
+        guard !(normalizedInstructions.isEmpty && toolsPart.isEmpty) else {
+            return fallbackSessionID
+        }
+        // \u{0} separator so instructions ending in the tool JSON cannot
+        // collide with a request embedding that JSON in the instructions.
+        let content = "\(normalizedInstructions)\u{0}\(toolsPart)"
+        let digest = SHA256.hash(data: Data(content.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return "pck_\(String(hex.prefix(24)))"
     }
 
     public static func estimatedContextTokenCount(

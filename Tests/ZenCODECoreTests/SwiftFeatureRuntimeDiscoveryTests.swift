@@ -230,7 +230,6 @@ extension SwiftFeatureRuntimeTests {
             ]
         )
         let executor = DirectToolExecutor(
-            outputLimit: 24_000,
             swiftFeatureRuntime: runtime,
             subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
         )
@@ -303,7 +302,6 @@ extension SwiftFeatureRuntimeTests {
             ]
         )
         let executor = DirectToolExecutor(
-            outputLimit: 24_000,
             mcpRuntime: mcpRuntime,
             swiftFeatureRuntime: runtime,
             subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }

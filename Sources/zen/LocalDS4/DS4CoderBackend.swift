@@ -39,7 +39,6 @@ actor DS4CoderBackend: AgentRuntimeBackend {
         self.options = options
         self.sharedEngine = resolvedSharedEngine
         self.toolExecutor = DirectToolExecutor(
-            outputLimit: 24_000,
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
             preferredWorkspaceRootURL: configuration.workingDirectory,

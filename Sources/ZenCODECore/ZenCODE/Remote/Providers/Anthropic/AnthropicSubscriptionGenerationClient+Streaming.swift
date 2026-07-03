@@ -36,7 +36,7 @@ extension AnthropicSubscriptionGenerationClient {
             from: toolCatalog.wireMessages(from: session.messages),
             includeThinkingBlocks: thinkingEnabled
         )
-                let requestMessages = Self.addingCacheControlToLastUserMessage(
+        let requestMessages = Self.addingCacheControlBreakpoints(
             anthropicPayload.messages
         )
                 let systemBlocks = Self.subscriptionSystemBlocks(

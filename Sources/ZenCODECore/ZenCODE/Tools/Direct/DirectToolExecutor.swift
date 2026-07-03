@@ -37,7 +37,7 @@ public actor DirectToolExecutor {
     public var toolProviderRegistry = AgentToolProviderRegistry()
 
     public init(
-        outputLimit: Int,
+        outputLimit: Int = 48_000,
         authorizationHandler: AgentToolAuthorizationHandler? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
         swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
@@ -57,7 +57,7 @@ public actor DirectToolExecutor {
     }
 
     public init(
-        outputLimit: Int,
+        outputLimit: Int = 48_000,
         authorizationHandler: AgentToolAuthorizationHandler? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
         swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),

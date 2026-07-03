@@ -49,7 +49,6 @@ actor MLXServerCoderBackend: AgentRuntimeBackend {
         self.model = model
         self.kvCacheSettings = kvCacheSettings
         self.toolExecutor = DirectToolExecutor(
-            outputLimit: 24_000,
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
             preferredWorkspaceRootURL: configuration.workingDirectory,

@@ -203,5 +203,88 @@ struct AnthropicThinkingBlockTests {
         #expect(diagnostic?.contains("new=200") == true)
         #expect(diagnostic?.contains("cache_hit=80%") == true)
     }
+
+    @Test
+    func subscriptionSystemBlocksMarkOnlyLastBlockForCaching() {
+        let withUserPrompt = AnthropicSubscriptionGenerationClient.subscriptionSystemBlocks(
+            userSystemPrompt: "Project instructions"
+        )
+        let spineOnly = AnthropicSubscriptionGenerationClient.subscriptionSystemBlocks(
+            userSystemPrompt: nil
+        )
+
+        #expect(withUserPrompt.count == 2)
+        #expect(withUserPrompt[0]["cache_control"] == nil)
+        #expect(withUserPrompt[1]["cache_control"] != nil)
+        #expect(spineOnly.count == 1)
+        #expect(spineOnly[0]["cache_control"] != nil)
+    }
+
+    @Test
+    func anthropicToolsCarryNoCacheBreakpoint() throws {
+        let descriptor = DirectToolDescriptor(
+            name: "local.exec",
+            description: "Runs a command",
+            inputSchema: #"{"type":"object","properties":{}}"#
+        )
+        let tools = AnthropicSubscriptionGenerationClient.anthropicTools(
+            from: RemoteToolWireCatalog(descriptors: [descriptor]).bindings
+        )
+
+        #expect(tools.count == 1)
+        #expect(tools.allSatisfy { $0["cache_control"] == nil })
+    }
+
+    @Test
+    func cacheControlBreakpointsMarkLastThreeMessagesSkippingThinkingBlocks() throws {
+        let messages: [[String: Any]] = [
+            ["role": "user", "content": [["type": "text", "text": "first"]]],
+            ["role": "assistant", "content": [["type": "text", "text": "old answer"]]],
+            ["role": "user", "content": [["type": "text", "text": "second"]]],
+            [
+                "role": "assistant",
+                "content": [
+                    ["type": "thinking", "thinking": "hidden", "signature": "sig"],
+                    ["type": "tool_use", "id": "toolu_1", "name": "local.exec", "input": [:]]
+                ]
+            ],
+            ["role": "user", "content": [["type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"]]]
+        ]
+        let marked = AnthropicSubscriptionGenerationClient.addingCacheControlBreakpoints(messages)
+
+        func lastBlock(_ index: Int) throws -> [String: Any] {
+            let content = try #require(marked[index]["content"] as? [[String: Any]])
+            return try #require(content.last)
+        }
+        func anyMarked(_ index: Int) throws -> Bool {
+            let content = try #require(marked[index]["content"] as? [[String: Any]])
+            return content.contains { $0["cache_control"] != nil }
+        }
+
+        // Last three messages carry a breakpoint; earlier ones do not.
+        #expect(try anyMarked(0) == false)
+        #expect(try anyMarked(1) == false)
+        #expect(try lastBlock(2)["cache_control"] != nil)
+        #expect(try lastBlock(4)["cache_control"] != nil)
+
+        // On the assistant tool-use turn the breakpoint lands on the
+        // tool_use block, never on the thinking block.
+        let assistantContent = try #require(marked[3]["content"] as? [[String: Any]])
+        #expect(assistantContent[0]["cache_control"] == nil)
+        #expect(assistantContent[1]["cache_control"] != nil)
+    }
+
+    @Test
+    func cacheControlBreakpointsUpgradeStringContent() throws {
+        let messages: [[String: Any]] = [
+            ["role": "user", "content": "plain text"]
+        ]
+        let marked = AnthropicSubscriptionGenerationClient.addingCacheControlBreakpoints(messages)
+        let content = try #require(marked[0]["content"] as? [[String: Any]])
+
+        #expect(content.first?["type"] as? String == "text")
+        #expect(content.first?["text"] as? String == "plain text")
+        #expect(content.first?["cache_control"] != nil)
+    }
 }
 #endif

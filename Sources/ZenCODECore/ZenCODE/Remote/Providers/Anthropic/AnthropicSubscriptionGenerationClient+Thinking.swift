@@ -199,14 +199,19 @@ extension AnthropicSubscriptionGenerationClient {
         if let userSystemPrompt = userSystemPrompt?.nilIfBlank {
             blocks.append(subscriptionSystemTextBlock(userSystemPrompt))
         }
+        // A single cache breakpoint on the last system block covers the whole
+        // static prefix (tools + system). Marking every block wastes
+        // breakpoints from Anthropic's per-request budget of 4.
+        if let lastIndex = blocks.indices.last {
+            blocks[lastIndex]["cache_control"] = cacheControl()
+        }
         return blocks
     }
 
     static func subscriptionSystemTextBlock(_ text: String) -> [String: Any] {
         [
             "type": "text",
-            "text": text,
-            "cache_control": cacheControl()
+            "text": text
         ]
     }
 

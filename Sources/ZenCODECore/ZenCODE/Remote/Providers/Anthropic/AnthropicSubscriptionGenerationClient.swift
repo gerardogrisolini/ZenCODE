@@ -58,7 +58,6 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
             self.urlSession = URLSession(configuration: sessionConfiguration)
         }
         self.toolExecutor = DirectToolExecutor(
-            outputLimit: 24_000,
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
             preferredWorkspaceRootURL: configuration.workingDirectory,

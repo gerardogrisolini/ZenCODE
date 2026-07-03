@@ -116,35 +116,63 @@ extension AnthropicSubscriptionGenerationClient {
     }
 
 
-    static func addingCacheControlToLastUserMessage(
+    /// Number of trailing conversation messages that receive a moving cache
+    /// breakpoint. Together with the single system breakpoint this uses the
+    /// full Anthropic budget of 4 breakpoints per request. Multiple moving
+    /// breakpoints keep prefix-cache hits alive even when a turn appends more
+    /// than ~20 content blocks (the server-side lookback limit per breakpoint).
+    static let cacheControlMessageBreakpointCount = 3
+
+    static let cacheableBlockTypes: Set<String> = [
+        "text", "image", "tool_result", "tool_use"
+    ]
+
+    static func addingCacheControlBreakpoints(
         _ messages: [[String: Any]]
     ) -> [[String: Any]] {
         var messages = messages
-        guard let lastIndex = messages.indices.last,
-              (messages[lastIndex]["role"] as? String) == "user" else {
-            return messages
-        }
-
-        if var content = messages[lastIndex]["content"] as? [[String: Any]],
-           let lastBlockIndex = content.indices.last {
-            let blockType = stringValue(content[lastBlockIndex]["type"])?.lowercased()
-            if blockType == "text" || blockType == "image" || blockType == "tool_result" {
-                content[lastBlockIndex]["cache_control"] = cacheControl()
-                messages[lastIndex]["content"] = content
+        var remaining = cacheControlMessageBreakpointCount
+        for index in messages.indices.reversed() {
+            guard remaining > 0 else {
+                break
             }
-            return messages
+            if markLastCacheableBlock(in: &messages[index]) {
+                remaining -= 1
+            }
+        }
+        return messages
+    }
+
+    /// Adds a cache breakpoint to the last cacheable block of the message.
+    /// Thinking blocks are never marked: cache_control on a thinking block
+    /// interferes with Anthropic's signature validation.
+    private static func markLastCacheableBlock(
+        in message: inout [String: Any]
+    ) -> Bool {
+        if var content = message["content"] as? [[String: Any]] {
+            for blockIndex in content.indices.reversed() {
+                guard let type = stringValue(content[blockIndex]["type"])?.lowercased(),
+                      cacheableBlockTypes.contains(type) else {
+                    continue
+                }
+                content[blockIndex]["cache_control"] = cacheControl()
+                message["content"] = content
+                return true
+            }
+            return false
         }
 
-        if let text = stringValue(messages[lastIndex]["content"])?.nilIfBlank {
-            messages[lastIndex]["content"] = [
+        if let text = stringValue(message["content"])?.nilIfBlank {
+            message["content"] = [
                 [
                     "type": "text",
                     "text": text,
                     "cache_control": cacheControl()
                 ]
             ]
+            return true
         }
-        return messages
+        return false
     }
 
     static func userContentBlocks(from value: Any?) -> [[String: Any]] {
@@ -252,20 +280,19 @@ extension AnthropicSubscriptionGenerationClient {
     }
 
     static func anthropicTools(from bindings: [RemoteToolWireCatalog.Binding]) -> [[String: Any]] {
-        bindings.enumerated().compactMap { index, binding in
+        bindings.compactMap { binding in
             guard let schema = binding.descriptor.schemaObject else {
                 return nil
             }
-            var tool: [String: Any] = [
+            // No cache breakpoint on tools: they precede the system blocks in
+            // Anthropic's cacheable prefix, so the system breakpoint already
+            // covers them.
+            return [
                 "name": binding.wireName,
                 "description": binding.descriptor.description,
                 "eager_input_streaming": true,
                 "input_schema": schema
             ]
-            if index == bindings.count - 1 {
-                tool["cache_control"] = cacheControl()
-            }
-            return tool
         }
     }
 }

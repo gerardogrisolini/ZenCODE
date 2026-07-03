@@ -205,7 +205,7 @@ extension RemoteSessionSnapshotTests {
                 .first { $0["type"] as? String == "reasoning" }
         )
 
-        #expect(reasoningItem["id"] as? String == "rs_1")
+        #expect(reasoningItem["id"] == nil)
         #expect(reasoningItem["encrypted_content"] as? String == "encrypted-state")
         #expect(reasoningItem["summary"] != nil)
         #expect(reasoningItem["content"] == nil)
@@ -582,6 +582,88 @@ extension RemoteSessionSnapshotTests {
         let descriptors = await client.activeToolDescriptors()
 
         #expect(descriptors.map(\.name) == ["xcode.BuildProject"])
+    }
+
+    @Test
+    func chatGPTSubscriptionPromptCacheKeyIsContentAddressed() throws {
+        let tools = JSONValue.acpValue(from: [
+            [
+                "type": "function",
+                "name": "tool_local_exec",
+                "parameters": ["type": "object"]
+            ] as [String: Any]
+        ])
+        let key = ChatGPTSubscriptionRequestBuilder.promptCacheKey(
+            instructions: "System prompt",
+            toolPayloads: tools,
+            fallbackSessionID: "session-a"
+        )
+        let sameContentDifferentSession = ChatGPTSubscriptionRequestBuilder.promptCacheKey(
+            instructions: "System prompt",
+            toolPayloads: tools,
+            fallbackSessionID: "session-b"
+        )
+        let differentInstructions = ChatGPTSubscriptionRequestBuilder.promptCacheKey(
+            instructions: "Another prompt",
+            toolPayloads: tools,
+            fallbackSessionID: "session-a"
+        )
+        let emptyPrefix = ChatGPTSubscriptionRequestBuilder.promptCacheKey(
+            instructions: nil,
+            toolPayloads: .array([]),
+            fallbackSessionID: "session-fallback"
+        )
+
+        #expect(key.hasPrefix("pck_"))
+        #expect(key.count == 28)
+        #expect(key == sameContentDifferentSession)
+        #expect(key != differentInstructions)
+        #expect(emptyPrefix == "session-fallback")
+    }
+
+    @Test
+    func chatGPTSubscriptionRequestBodyUsesContentAddressedPromptCacheKey() throws {
+        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
+            input: .array([]),
+            model: "gpt-5.5",
+            instructions: "System prompt",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "session-chatgpt"
+        )
+        let cacheKey = try #require(body["prompt_cache_key"] as? String)
+
+        #expect(cacheKey.hasPrefix("pck_"))
+        #expect(cacheKey != "session-chatgpt")
+    }
+
+    @Test
+    func chatGPTSubscriptionReplayDropsSummaryOnlyReasoningAndDeduplicates() throws {
+        let input: [Any] = [
+            [
+                "type": "reasoning",
+                "id": "rs_summary",
+                "summary": [["type": "summary_text", "text": "a summary"]]
+            ] as [String: Any],
+            [
+                "type": "reasoning",
+                "id": "rs_enc",
+                "encrypted_content": "blob",
+                "summary": []
+            ] as [String: Any],
+            [
+                "type": "reasoning",
+                "id": "rs_enc",
+                "encrypted_content": "blob",
+                "summary": []
+            ] as [String: Any]
+        ]
+        let sanitized = ChatGPTSubscriptionRequestBuilder.chatGPTInputPayload(from: input)
+            .compactMap { $0 as? [String: Any] }
+
+        #expect(sanitized.count == 1)
+        #expect(sanitized.first?["encrypted_content"] as? String == "blob")
+        #expect(sanitized.first?["id"] == nil)
     }
 }
 #endif
