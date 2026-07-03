@@ -12,9 +12,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
-#if canImport(os)
-import os
-#endif
+import Synchronization
 
 public struct ACPError: LocalizedError {
     public let code: Int
@@ -55,9 +53,11 @@ extension FileHandle {
 }
 
 private enum TerminalOutputSynchronization {
-    private static let outputLock = OSAllocatedUnfairLock()
+    private static let outputLock = Mutex(())
 
     static func withLock(_ body: @Sendable () -> Void) {
-        outputLock.withLock(body)
+        outputLock.withLock { _ in
+            body()
+        }
     }
 }

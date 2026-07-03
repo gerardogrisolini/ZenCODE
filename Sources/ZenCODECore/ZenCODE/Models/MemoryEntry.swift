@@ -1,5 +1,5 @@
 //
-//  MLXMemoryEntry.swift
+//  MemoryEntry.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -7,20 +7,20 @@
 
 import Foundation
 
-public nonisolated enum MLXMemoryScope: String, Codable, CaseIterable, Hashable, Sendable {
+public nonisolated enum MemoryScope: String, Codable, CaseIterable, Hashable, Sendable {
     case global
     case project
 }
 
-public nonisolated struct MLXMemoryEntry: Identifiable, Codable, Hashable, Sendable {
+public nonisolated struct MemoryEntry: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
-    public var scope: MLXMemoryScope
+    public var scope: MemoryScope
     public var content: String
     public var isArchived: Bool
 
     public init(
         content: String,
-        scope: MLXMemoryScope = .project,
+        scope: MemoryScope = .project,
         id: UUID = UUID(),
         isArchived: Bool = false
     ) {

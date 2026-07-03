@@ -59,7 +59,7 @@ struct MLXPromptSkillInstallerTests {
 
     @Test
     func destinationDirectoryNameIsStableAndFilesystemSafe() {
-        let payload = MLXPromptSkillPayload(
+        let payload = PromptSkillPayload(
             canonicalName: "UI Polish++",
             title: "UI Polish",
             summary: "Tighten terminal rendering.",
@@ -69,7 +69,7 @@ struct MLXPromptSkillInstallerTests {
             sourceHash: "abc123"
         )
 
-        #expect(MLXPromptSkillInstaller.destinationDirectoryName(for: payload) == "ui-polish")
+        #expect(PromptSkillInstaller.destinationDirectoryName(for: payload) == "ui-polish")
     }
 
     @Test
@@ -108,7 +108,7 @@ struct MLXPromptSkillInstallerTests {
             encoding: .utf8
         )
 
-        let result = try MLXPromptSkillInstaller.install(
+        let result = try PromptSkillInstaller.install(
             fromLocalURL: sourceURL,
             destinationRootURL: destinationRootURL
         )

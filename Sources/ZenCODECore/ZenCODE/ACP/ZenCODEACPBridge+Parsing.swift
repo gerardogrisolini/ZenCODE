@@ -569,8 +569,8 @@ extension ZenCODEACPBridge {
             return nil
         }
 
-        let availableSkills = MLXPromptSkillCatalog.discoverSkills(
-            searchRoots: MLXPromptSkillCatalog.appCatalogSearchRoots()
+        let availableSkills = PromptSkillCatalog.discoverSkills(
+            searchRoots: PromptSkillCatalog.appCatalogSearchRoots()
         )
         let selectedSkillIDs = selectedAgent.selectedSkillIDs(
             availableSkills: availableSkills

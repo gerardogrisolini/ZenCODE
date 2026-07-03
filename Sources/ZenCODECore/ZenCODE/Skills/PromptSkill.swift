@@ -1,5 +1,5 @@
 //
-//  MLXPromptSkill.swift
+//  PromptSkill.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -13,7 +13,7 @@ import Crypto
 #endif
 import Foundation
 
-public struct MLXPromptSkillPayload: Equatable, Sendable {
+public struct PromptSkillPayload: Equatable, Sendable {
     public let canonicalName: String
     public let title: String
     public let summary: String
@@ -59,7 +59,7 @@ public struct MLXPromptSkillPayload: Equatable, Sendable {
     }
 }
 
-public struct MLXPromptSkill: Identifiable, Hashable, Sendable {
+public struct PromptSkill: Identifiable, Hashable, Sendable {
     public let id: String
     public let canonicalName: String
     public let title: String
@@ -91,7 +91,7 @@ public struct MLXPromptSkill: Identifiable, Hashable, Sendable {
         self.id = sourceHash.nilIfBlank ?? canonicalName.nilIfBlank ?? UUID().uuidString.lowercased()
     }
 
-    public init(payload: MLXPromptSkillPayload) {
+    public init(payload: PromptSkillPayload) {
         self.init(
             canonicalName: payload.canonicalName,
             title: payload.title,

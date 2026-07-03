@@ -7,9 +7,7 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
-#if canImport(os)
-import os
-#endif
+import Synchronization
 
 extension RemoteModelCatalogClient {
     func shouldEnrichWithHuggingFace(baseURL: String) -> Bool {
@@ -218,9 +216,7 @@ extension RemoteModelCatalogClient {
         return .generic
     }
 
-    private static let wholeWordRegexCache = OSAllocatedUnfairLock(
-        initialState: [String: NSRegularExpression]()
-    )
+    private static let wholeWordRegexCache = Mutex([String: NSRegularExpression]())
 
     static func containsWholeWord(
         _ word: String,

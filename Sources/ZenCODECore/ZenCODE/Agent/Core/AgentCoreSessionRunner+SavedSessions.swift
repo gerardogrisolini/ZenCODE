@@ -25,8 +25,8 @@ public extension AgentCoreSessionRunner {
     nonisolated func savedSessions(
         for workingDirectory: URL,
         supportDirectoryURL: URL? = nil
-    ) throws -> [MLXTerminalSavedSession] {
-        try MLXTerminalSessionStore.savedSessions(
+    ) throws -> [TerminalSavedSession] {
+        try TerminalSessionStore.savedSessions(
             for: workingDirectory,
             supportDirectoryURL: supportDirectoryURL
         )
@@ -44,22 +44,22 @@ public extension AgentCoreSessionRunner {
         selectedTools: [String],
         selectedSkillIDs: [String],
         thinkingSelection: String?,
-        contextWindow: MLXTerminalSavedSessionContextWindow?,
+        contextWindow: TerminalSavedSessionContextWindow?,
         transcriptHistory: [AgentRuntimeMessage]?,
         supportDirectoryURL: URL? = nil
-    ) async throws -> MLXTerminalSavedSession {
+    ) async throws -> TerminalSavedSession {
         guard let snapshot = await snapshotSession(id: sessionID) ?? fallbackSnapshot else {
             throw AgentCoreSessionRunnerError.missingSessionSnapshot(sessionID)
         }
 
         let name = Self.normalizedSavedSessionName(rawName)
         let workingDirectory = URL(fileURLWithPath: snapshot.workingDirectoryPath)
-        let existingSession = try? MLXTerminalSessionStore.load(
+        let existingSession = try? TerminalSessionStore.load(
             name: name,
             workingDirectory: workingDirectory,
             supportDirectoryURL: supportDirectoryURL
         )
-        let savedSession = MLXTerminalSavedSession(
+        let savedSession = TerminalSavedSession(
             name: name,
             sessionID: snapshot.sessionID,
             cacheKey: snapshot.cacheKey,
@@ -78,7 +78,7 @@ public extension AgentCoreSessionRunner {
             transcriptHistory: transcriptHistory
         )
 
-        _ = try MLXTerminalSessionStore.save(
+        _ = try TerminalSessionStore.save(
             savedSession,
             supportDirectoryURL: supportDirectoryURL
         )
@@ -91,7 +91,7 @@ public extension AgentCoreSessionRunner {
         workingDirectory: URL,
         supportDirectoryURL: URL? = nil
     ) throws -> Bool {
-        try MLXTerminalSessionStore.delete(
+        try TerminalSessionStore.delete(
             name: name,
             workingDirectory: workingDirectory,
             supportDirectoryURL: supportDirectoryURL

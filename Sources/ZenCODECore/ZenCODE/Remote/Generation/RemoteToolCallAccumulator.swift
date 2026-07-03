@@ -118,11 +118,7 @@ public struct RemoteToolCallAccumulator {
     }
 
     public func finalize() throws -> [DirectAgentToolCall] {
-        try partialsByIndex.keys.sorted().compactMap { index in
-            guard let partial = partialsByIndex[index],
-                  !partial.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return nil
-            }
+        try coalescedPartials().map { partial in
             let argumentsObject = try Self.argumentsObject(from: partial.arguments)
             return DirectAgentToolCall(
                 id: partial.id.isEmpty ? "call_\(UUID().uuidString.lowercased())" : partial.id,
@@ -133,6 +129,90 @@ public struct RemoteToolCallAccumulator {
         }
     }
 
+    /// Collapses partials that describe the same logical tool call before emitting.
+    ///
+    /// A streamed `output_item.added` event can carry a tool call's `call_id`
+    /// while the argument-delta/`done` events key off the response `item_id`.
+    /// When those identifiers resolve to different indices the single call is
+    /// split into an empty-argument partial plus a fully populated one. Emitting
+    /// both duplicates the tool in the UI ("first call empty") and replays two
+    /// `function_call` items sharing the same `call_id` back to the provider,
+    /// which rejects the request with a generic server error. Merging by shared
+    /// `id`/`responseItemID` keeps a single, complete call.
+    func coalescedPartials() -> [PartialToolCall] {
+        var merged: [PartialToolCall] = []
+        var indexByCallID: [String: Int] = [:]
+        var indexByItemID: [String: Int] = [:]
+
+        for index in partialsByIndex.keys.sorted() {
+            guard let partial = partialsByIndex[index] else {
+                continue
+            }
+            let callID = partial.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            let itemID = partial.responseItemID.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let targetIndex: Int?
+            if !callID.isEmpty, let existing = indexByCallID[callID] {
+                targetIndex = existing
+            } else if !itemID.isEmpty, let existing = indexByItemID[itemID] {
+                targetIndex = existing
+            } else {
+                targetIndex = nil
+            }
+
+            if let targetIndex {
+                merged[targetIndex] = Self.mergedPartial(merged[targetIndex], partial)
+            } else {
+                merged.append(partial)
+            }
+
+            let resolvedIndex = targetIndex ?? (merged.count - 1)
+            let resolvedCallID = merged[resolvedIndex].id
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedItemID = merged[resolvedIndex].responseItemID
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !resolvedCallID.isEmpty {
+                indexByCallID[resolvedCallID] = resolvedIndex
+            }
+            if !resolvedItemID.isEmpty {
+                indexByItemID[resolvedItemID] = resolvedIndex
+            }
+        }
+
+        return merged.filter {
+            !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    /// Merges `addition` into `base`, preferring non-empty identifiers/names and
+    /// the most meaningful arguments (a real JSON object over an empty `{}`).
+    static func mergedPartial(
+        _ base: PartialToolCall,
+        _ addition: PartialToolCall
+    ) -> PartialToolCall {
+        var result = base
+        if result.id.isEmpty {
+            result.id = addition.id
+        }
+        if result.responseItemID.isEmpty {
+            result.responseItemID = addition.responseItemID
+        }
+        if result.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            result.name = addition.name
+        }
+
+        let baseArguments = result.arguments.trimmingCharacters(in: .whitespacesAndNewlines)
+        let additionArguments = addition.arguments.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseIsMeaningful = !baseArguments.isEmpty && baseArguments != "{}"
+        let additionIsMeaningful = !additionArguments.isEmpty && additionArguments != "{}"
+        if additionIsMeaningful, !baseIsMeaningful {
+            result.arguments = addition.arguments
+        } else if baseArguments.isEmpty, !additionArguments.isEmpty {
+            result.arguments = addition.arguments
+        }
+        return result
+    }
+
     public static func argumentsObject(from rawArguments: String) throws -> [String: Any] {
         let trimmed = rawArguments.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -140,7 +220,7 @@ public struct RemoteToolCallAccumulator {
         }
         guard let data = trimmed.data(using: .utf8),
               let value = try? JSONDecoder().decode(JSONValue.self, from: data),
-              let object = value.mlxObjectValue else {
+              let object = value.objectValue else {
             throw RemoteGenerationClientError.invalidToolArguments
         }
         return object.mapValues(\.jsonObject)

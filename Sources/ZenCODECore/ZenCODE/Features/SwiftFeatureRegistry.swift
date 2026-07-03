@@ -11,7 +11,7 @@ public enum SwiftFeatureStateStore {
     public static let stateFilename = "feature-state.json"
 
     public static func stateURL(fileManager: FileManager = .default) -> URL {
-        MLXAppStorageDirectory
+        AppStorageDirectory
             .appSupportDirectoryURL(fileManager: fileManager)
             .appendingPathComponent(stateFilename)
             .standardizedFileURL
@@ -89,7 +89,7 @@ public enum SwiftFeatureRegistry {
     public static func appFeatureRootURL(
         fileManager: FileManager = .default
     ) -> URL {
-        MLXAppStorageDirectory
+        AppStorageDirectory
             .appSupportDirectoryURL(fileManager: fileManager)
             .appendingPathComponent("features", isDirectory: true)
             .standardizedFileURL
@@ -208,7 +208,7 @@ public enum SwiftFeatureRegistry {
     ) throws {
         let data = try Data(contentsOf: manifestURL)
         let value = try JSONDecoder().decode(JSONValue.self, from: data)
-        guard var dictionary = value.mlxObjectValue?.mapValues(\.jsonObject) else {
+        guard var dictionary = value.objectValue?.mapValues(\.jsonObject) else {
             throw DirectToolError.permissionDenied(
                 "Feature manifest is not a JSON object: \(manifestURL.path)"
             )

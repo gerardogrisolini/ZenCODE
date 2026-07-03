@@ -425,7 +425,7 @@ extension RemoteGenerationClient {
     public static func responseErrorMessage(from output: String) -> String? {
         guard let data = output.data(using: .utf8),
               let value = try? JSONDecoder().decode(JSONValue.self, from: data),
-              let object = value.mlxObjectValue else {
+              let object = value.objectValue else {
             return output.nilIfBlank
         }
         return responseErrorMessage(from: object.mapValues(\.jsonObject))
@@ -458,7 +458,7 @@ extension RemoteGenerationClient {
     public static func jsonObject(from payload: String) -> [String: Any]? {
         guard let data = payload.data(using: .utf8),
               let value = try? JSONDecoder().decode(JSONValue.self, from: data),
-              let object = value.mlxObjectValue else {
+              let object = value.objectValue else {
             return nil
         }
         return object.mapValues(\.jsonObject)

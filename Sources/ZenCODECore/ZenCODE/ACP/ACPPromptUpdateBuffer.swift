@@ -12,9 +12,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
-#if canImport(os)
-import os
-#endif
+import Synchronization
 
 public final class ACPPromptUpdateBuffer: Sendable {
     private struct State {
@@ -24,16 +22,16 @@ public final class ACPPromptUpdateBuffer: Sendable {
         var lastMetadataFlushAt = Date()
     }
 
-    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let state = Mutex(State())
 
     public func consume(_ update: JSONValue) -> [JSONValue] {
         state.withLock { state in
-            guard let object = update.mlxObjectValue else {
+            guard let object = update.objectValue else {
                 return Self.flushAll(state: &state) + [update]
             }
             switch object["sessionUpdate"]?.acpStringValue {
             case "agent_message_chunk":
-                guard let content = object["content"]?.mlxObjectValue,
+                guard let content = object["content"]?.objectValue,
                       let text = content["text"]?.acpStringValue,
                       !text.isEmpty else {
                     return []

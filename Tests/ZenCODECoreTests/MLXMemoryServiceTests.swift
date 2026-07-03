@@ -13,23 +13,23 @@ import Testing
 struct MLXMemoryServiceTests {
     @Test
     func memoryTemplatesDescribeGlobalAndProjectResponsibilities() {
-        #expect(MLXMemoryService.defaultGlobalMemoryContent.contains("Lightweight global project index"))
-        #expect(MLXMemoryService.defaultGlobalMemoryContent.contains("saved-session pointers keyed by project"))
-        #expect(MLXMemoryService.defaultGlobalMemoryContent.contains("latest saved session name/id for each project"))
-        #expect(MLXMemoryService.defaultGlobalMemoryContent.contains("user preferences or operating rules"))
-        #expect(MLXMemoryService.defaultProjectMemoryContent.contains("Durable project journal"))
-        #expect(MLXMemoryService.defaultProjectMemoryContent.contains("Timestamp: YYYY-MM-DD HH:mm TimeZone"))
-        #expect(MLXMemoryService.toolUsagePromptSection().contains("project memory as the codebase journal"))
-        #expect(MLXMemoryService.toolUsagePromptSection().contains("global memory only as a lightweight project/session index"))
-        #expect(MLXMemoryService.toolUsagePromptSection().contains("one active saved-session pointer per project"))
-        #expect(MLXMemoryService.toolUsagePromptSection().contains("At the end of a substantial project turn"))
+        #expect(MemoryService.defaultGlobalMemoryContent.contains("Lightweight global project index"))
+        #expect(MemoryService.defaultGlobalMemoryContent.contains("saved-session pointers keyed by project"))
+        #expect(MemoryService.defaultGlobalMemoryContent.contains("latest saved session name/id for each project"))
+        #expect(MemoryService.defaultGlobalMemoryContent.contains("user preferences or operating rules"))
+        #expect(MemoryService.defaultProjectMemoryContent.contains("Durable project journal"))
+        #expect(MemoryService.defaultProjectMemoryContent.contains("Timestamp: YYYY-MM-DD HH:mm TimeZone"))
+        #expect(MemoryService.toolUsagePromptSection().contains("project memory as the codebase journal"))
+        #expect(MemoryService.toolUsagePromptSection().contains("global memory only as a lightweight project/session index"))
+        #expect(MemoryService.toolUsagePromptSection().contains("one active saved-session pointer per project"))
+        #expect(MemoryService.toolUsagePromptSection().contains("At the end of a substantial project turn"))
 
-        let projectDefault = MLXProjectContextFileService.defaultContent(
+        let projectDefault = ProjectContextFileService.defaultContent(
             kind: .memory,
             projectName: "TestProject",
             rootPath: "/tmp/TestProject"
         )
-        #expect(projectDefault == MLXMemoryService.defaultProjectMemoryContent)
+        #expect(projectDefault == MemoryService.defaultProjectMemoryContent)
     }
 
     @Test
@@ -46,13 +46,13 @@ struct MLXMemoryServiceTests {
             at: workspaceURL,
             withIntermediateDirectories: true
         )
-        let service = MLXMemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
+        let service = MemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
         try service.ensureGlobalMemoryFileExists()
-        try MLXMemoryService.defaultProjectMemoryContent
+        try MemoryService.defaultProjectMemoryContent
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .appending("\n")
             .write(
-                to: workspaceURL.appendingPathComponent(MLXMemoryService.filename),
+                to: workspaceURL.appendingPathComponent(MemoryService.filename),
                 atomically: true,
                 encoding: .utf8
             )
@@ -87,7 +87,7 @@ struct MLXMemoryServiceTests {
             at: workspaceURL,
             withIntermediateDirectories: true
         )
-        let service = MLXMemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
+        let service = MemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
 
         try service.writeEntry(
             content: "Last project: \(workspaceURL.path)",
@@ -102,7 +102,7 @@ struct MLXMemoryServiceTests {
 
         let globalContent = try String(contentsOf: service.globalMemoryFileURL(), encoding: .utf8)
         let projectContent = try String(
-            contentsOf: workspaceURL.appendingPathComponent(MLXMemoryService.filename),
+            contentsOf: workspaceURL.appendingPathComponent(MemoryService.filename),
             encoding: .utf8
         )
 
@@ -140,7 +140,7 @@ struct MLXMemoryServiceTests {
             at: workspaceURL,
             withIntermediateDirectories: true
         )
-        let service = MLXMemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
+        let service = MemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
         let journalContent = """
         Timestamp: 2026-06-03 11:45 Europe/Rome
         Summary: completed the memory journal framing.
@@ -154,7 +154,7 @@ struct MLXMemoryServiceTests {
             workspaceRootURL: workspaceURL
         )
         let projectContent = try String(
-            contentsOf: workspaceURL.appendingPathComponent(MLXMemoryService.filename),
+            contentsOf: workspaceURL.appendingPathComponent(MemoryService.filename),
             encoding: .utf8
         )
         let readEntry = try #require(
@@ -200,8 +200,8 @@ struct MLXMemoryServiceTests {
             at: workspaceURL,
             withIntermediateDirectories: true
         )
-        let service = MLXMemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
-        _ = try MLXMemoryTool.execute(
+        let service = MemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
+        _ = try MemoryTool.execute(
             ToolRequest(
                 name: "memory.write",
                 arguments: [
@@ -212,7 +212,7 @@ struct MLXMemoryServiceTests {
                     """)
                 ]
             ),
-            context: MLXMemoryToolContext(
+            context: MemoryToolContext(
                 workingDirectory: workspaceURL,
                 currentDate: date,
                 currentTimeZone: timeZone
@@ -251,7 +251,7 @@ struct MLXMemoryServiceTests {
             withIntermediateDirectories: true
         )
 
-        let service = MLXMemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
+        let service = MemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
         try service.recordSavedSessionIndexEntry(
             projectPath: firstProjectURL.path,
             sessionName: "first checkpoint",
@@ -312,7 +312,7 @@ struct MLXMemoryServiceTests {
             at: workspaceURL,
             withIntermediateDirectories: true
         )
-        let service = MLXMemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
+        let service = MemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
         try service.writeEntry(
             content: "Last project: architecture-lab.",
             scope: .global,
@@ -324,12 +324,12 @@ struct MLXMemoryServiceTests {
             workspaceRootURL: workspaceURL
         )
 
-        let output = try MLXMemoryTool.execute(
+        let output = try MemoryTool.execute(
             ToolRequest(
                 name: "memory.search",
                 arguments: ["query": .string("architecture")]
             ),
-            context: MLXMemoryToolContext(workingDirectory: workspaceURL),
+            context: MemoryToolContext(workingDirectory: workspaceURL),
             memoryService: service
         )
         guard case let .object(result)? = output.rawResult,

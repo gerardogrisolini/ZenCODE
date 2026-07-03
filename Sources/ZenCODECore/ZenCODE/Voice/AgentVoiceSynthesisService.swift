@@ -6,9 +6,7 @@
 //
 
 import Foundation
-#if canImport(os)
-import os
-#endif
+import Synchronization
 
 public typealias AgentVoiceSynthesisProgress = AgentVoiceToolProgress
 
@@ -313,7 +311,7 @@ private enum AgentVoiceSpeechWriter {
 }
 
 private final class SynthesisResumeGuard: Sendable {
-    private let didResume = OSAllocatedUnfairLock(initialState: false)
+    private let didResume = Mutex(false)
 
     func consume() -> Bool {
         didResume.withLock { didResume in

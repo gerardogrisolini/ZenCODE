@@ -517,7 +517,7 @@ extension ChatGPTSubscriptionGenerationClient {
         guard let rawInput = rawInput?.nilIfBlank,
               let data = rawInput.data(using: .utf8),
               let value = try? JSONDecoder().decode(JSONValue.self, from: data),
-              let object = value.mlxObjectValue else {
+              let object = value.objectValue else {
             return [:]
         }
         return object.mapValues(\.jsonObject)

@@ -142,7 +142,7 @@ public enum DirectToolCatalog {
         )
     ]
 
-    public static let memoryDescriptors: [DirectToolDescriptor] = MLXMemoryTool.toolDescriptors.map {
+    public static let memoryDescriptors: [DirectToolDescriptor] = MemoryTool.toolDescriptors.map {
         DirectToolDescriptor(
             name: $0.name,
             description: $0.description,

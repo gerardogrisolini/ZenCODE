@@ -25,6 +25,13 @@ public actor TurnFileChangeCoordinator {
         self.baseDirectoryURL = tracker.baseDirectoryURL
     }
 
+    /// Captures the initial worktree baseline so end-of-turn reconciliation can
+    /// attribute changes made by tools whose paths cannot be predicted (such as
+    /// `local.exec`, sub-agents, and MCP tools). Call once at the start of a turn.
+    public func prepareForTurn() async {
+        await tracker.prepareInitialWorktreeBaselineIfNeeded()
+    }
+
     public func captureBaselineIfNeeded(forAgentToolCall toolCall: DirectAgentToolCall) async {
         await tracker.captureBaselineIfNeeded(forAgentToolCall: toolCall)
     }

@@ -1,5 +1,5 @@
 //
-//  MLXPromptSkillInstaller.swift
+//  PromptSkillInstaller.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
@@ -7,13 +7,13 @@
 
 import Foundation
 
-public struct MLXPromptSkillInstallResult: Sendable {
-    public let skill: MLXPromptSkill
+public struct PromptSkillInstallResult: Sendable {
+    public let skill: PromptSkill
     public let destinationURL: URL
     public let sourceURL: URL
 }
 
-public enum MLXPromptSkillInstallerError: LocalizedError, Sendable {
+public enum PromptSkillInstallerError: LocalizedError, Sendable {
     case invalidGitHubURL(String)
     case gitCommandFailed(String)
     case unresolvedGitReference(String)
@@ -42,11 +42,11 @@ public enum MLXPromptSkillInstallerError: LocalizedError, Sendable {
     }
 }
 
-public enum MLXPromptSkillInstaller {
+public enum PromptSkillInstaller {
     public static func install(
         fromGitHubURL url: URL,
         fileManager: FileManager = .default
-    ) async throws -> MLXPromptSkillInstallResult {
+    ) async throws -> PromptSkillInstallResult {
         let source = try GitHubSkillSource(url: url)
         let tempRoot = fileManager.temporaryDirectory
             .appendingPathComponent("zencode-skill-\(UUID().uuidString)", isDirectory: true)
@@ -78,16 +78,16 @@ public enum MLXPromptSkillInstaller {
         fromLocalURL url: URL,
         destinationRootURL: URL? = nil,
         fileManager: FileManager = .default
-    ) throws -> MLXPromptSkillInstallResult {
+    ) throws -> PromptSkillInstallResult {
         let standardizedURL = url.standardizedFileURL
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: standardizedURL.path, isDirectory: &isDirectory) else {
-            throw MLXPromptSkillInstallerError.skillNotFound(standardizedURL.path)
+            throw PromptSkillInstallerError.skillNotFound(standardizedURL.path)
         }
 
         if !isDirectory.boolValue,
            standardizedURL.lastPathComponent != "SKILL.md" {
-            throw MLXPromptSkillInstallerError.skillNotFound(standardizedURL.path)
+            throw PromptSkillInstallerError.skillNotFound(standardizedURL.path)
         }
 
         let rootURL = isDirectory.boolValue
@@ -112,15 +112,15 @@ public enum MLXPromptSkillInstaller {
         sourceURL: URL,
         destinationRootURL explicitDestinationRootURL: URL? = nil,
         fileManager: FileManager = .default
-    ) throws -> MLXPromptSkillInstallResult {
+    ) throws -> PromptSkillInstallResult {
         let standardizedSourceDirectoryURL = sourceDirectoryURL.standardizedFileURL
         let sourceSkillURL = standardizedSourceDirectoryURL
             .appendingPathComponent("SKILL.md")
             .standardizedFileURL
-        let payload = try MLXPromptSkillMarkdownParser.parse(url: sourceSkillURL)
+        let payload = try PromptSkillMarkdownParser.parse(url: sourceSkillURL)
         let destinationRootURL = (
             explicitDestinationRootURL
-                ?? MLXPromptSkillCatalog.appCatalogSearchRoots(fileManager: fileManager)[0]
+                ?? PromptSkillCatalog.appCatalogSearchRoots(fileManager: fileManager)[0]
         ).standardizedFileURL
         let destinationURL = destinationRootURL
             .appendingPathComponent(destinationDirectoryName(for: payload), isDirectory: true)
@@ -134,14 +134,14 @@ public enum MLXPromptSkillInstaller {
         let sourcePath = standardizedSourceDirectoryURL.path
         let destinationPath = destinationURL.path
         if sourcePath == destinationPath {
-            return MLXPromptSkillInstallResult(
-                skill: MLXPromptSkill(payload: payload),
+            return PromptSkillInstallResult(
+                skill: PromptSkill(payload: payload),
                 destinationURL: destinationURL,
                 sourceURL: sourceURL
             )
         }
         if sourcePath.hasPrefix(destinationPath + "/") {
-            throw MLXPromptSkillInstallerError.unsafeInstallDestination(
+            throw PromptSkillInstallerError.unsafeInstallDestination(
                 source: sourcePath,
                 destination: destinationPath
             )
@@ -156,17 +156,17 @@ public enum MLXPromptSkillInstaller {
             fileManager: fileManager
         )
 
-        let installedPayload = try MLXPromptSkillMarkdownParser.parse(
+        let installedPayload = try PromptSkillMarkdownParser.parse(
             url: destinationURL.appendingPathComponent("SKILL.md")
         )
-        return MLXPromptSkillInstallResult(
-            skill: MLXPromptSkill(payload: installedPayload),
+        return PromptSkillInstallResult(
+            skill: PromptSkill(payload: installedPayload),
             destinationURL: destinationURL,
             sourceURL: sourceURL
         )
     }
 
-    static func destinationDirectoryName(for payload: MLXPromptSkillPayload) -> String {
+    static func destinationDirectoryName(for payload: PromptSkillPayload) -> String {
         let candidate = payload.canonicalName.nilIfBlank
             ?? payload.title.nilIfBlank
             ?? payload.sourceHash
@@ -227,7 +227,7 @@ public enum MLXPromptSkillInstaller {
     ) async throws -> (checkoutReference: String, pathComponents: [String]) {
         let components = selector.components
         guard !components.isEmpty else {
-            throw MLXPromptSkillInstallerError.unresolvedGitReference("")
+            throw PromptSkillInstallerError.unresolvedGitReference("")
         }
 
         for refLength in stride(from: components.count, through: 1, by: -1) {
@@ -245,7 +245,7 @@ public enum MLXPromptSkillInstaller {
             }
         }
 
-        throw MLXPromptSkillInstallerError.unresolvedGitReference(
+        throw PromptSkillInstallerError.unresolvedGitReference(
             components.joined(separator: "/")
         )
     }
@@ -274,7 +274,7 @@ public enum MLXPromptSkillInstaller {
         let standardizedRootURL = cloneRootURL.standardizedFileURL
         guard standardizedURL.path == standardizedRootURL.path
                 || standardizedURL.path.hasPrefix(standardizedRootURL.path + "/") else {
-            throw MLXPromptSkillInstallerError.unsafeSkillPath(standardizedURL.path)
+            throw PromptSkillInstallerError.unsafeSkillPath(standardizedURL.path)
         }
 
         let directSkillURL = standardizedURL.appendingPathComponent("SKILL.md")
@@ -287,11 +287,11 @@ public enum MLXPromptSkillInstaller {
             fileManager: fileManager
         )
         guard !skillURLs.isEmpty else {
-            throw MLXPromptSkillInstallerError.skillNotFound(standardizedURL.path)
+            throw PromptSkillInstallerError.skillNotFound(standardizedURL.path)
         }
         guard skillURLs.count == 1,
               let skillURL = skillURLs.first else {
-            throw MLXPromptSkillInstallerError.multipleSkillsFound(standardizedURL.path)
+            throw PromptSkillInstallerError.multipleSkillsFound(standardizedURL.path)
         }
         return skillURL.deletingLastPathComponent().standardizedFileURL
     }
@@ -378,7 +378,7 @@ public enum MLXPromptSkillInstaller {
             timeout: timeout
         )
         guard result.exitCode == 0 else {
-            throw MLXPromptSkillInstallerError.gitCommandFailed(
+            throw PromptSkillInstallerError.gitCommandFailed(
                 gitFailureMessage(result)
             )
         }
@@ -427,12 +427,12 @@ struct GitHubSkillSource: Equatable {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let host = components.host?.lowercased(),
               host == "github.com" || host == "www.github.com" else {
-            throw MLXPromptSkillInstallerError.invalidGitHubURL(url.absoluteString)
+            throw PromptSkillInstallerError.invalidGitHubURL(url.absoluteString)
         }
 
         let pathComponents = url.pathComponents.filter { $0 != "/" }
         guard pathComponents.count >= 2 else {
-            throw MLXPromptSkillInstallerError.invalidGitHubURL(url.absoluteString)
+            throw PromptSkillInstallerError.invalidGitHubURL(url.absoluteString)
         }
 
         let owner = pathComponents[0]
@@ -441,7 +441,7 @@ struct GitHubSkillSource: Equatable {
             ? String(repositoryComponent.dropLast(4))
             : repositoryComponent
         guard !owner.isEmpty, !repository.isEmpty else {
-            throw MLXPromptSkillInstallerError.invalidGitHubURL(url.absoluteString)
+            throw PromptSkillInstallerError.invalidGitHubURL(url.absoluteString)
         }
 
         self.originalURL = url

@@ -1,5 +1,5 @@
 //
-//  MLXPromptSkillCatalog.swift
+//  PromptSkillCatalog.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -13,9 +13,9 @@ import Crypto
 #endif
 import Foundation
 
-public enum MLXPromptSkillCatalog {
+public enum PromptSkillCatalog {
     public static func appCatalogSearchRoots(fileManager: FileManager = .default) -> [URL] {
-        let skillsDirectoryURL = MLXAppStorageDirectory
+        let skillsDirectoryURL = AppStorageDirectory
             .appSupportDirectoryURL(fileManager: fileManager)
             .appendingPathComponent("skills", isDirectory: true)
             .standardizedFileURL
@@ -45,15 +45,15 @@ public enum MLXPromptSkillCatalog {
     public static func discoverSkills(
         searchRoots: [URL]? = nil,
         fileManager: FileManager = .default
-    ) -> [MLXPromptSkill] {
+    ) -> [PromptSkill] {
         let roots = searchRoots ?? defaultSearchRoots(fileManager: fileManager)
-        var skillsByKey: [String: MLXPromptSkill] = [:]
+        var skillsByKey: [String: PromptSkill] = [:]
 
         for skillMarkdownURL in skillMarkdownURLs(in: roots, fileManager: fileManager) {
-            guard let payload = try? MLXPromptSkillMarkdownParser.parse(url: skillMarkdownURL) else {
+            guard let payload = try? PromptSkillMarkdownParser.parse(url: skillMarkdownURL) else {
                 continue
             }
-            let skill = MLXPromptSkill(payload: payload)
+            let skill = PromptSkill(payload: payload)
             let key = skill.sourceHash.nilIfBlank ?? skill.canonicalName
             guard skillsByKey[key] == nil else {
                 continue

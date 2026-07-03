@@ -129,7 +129,7 @@ extension TerminalChat {
         return "Active tools: \(renderedGroups.joined(separator: ", "))\n"
     }
 
-    public static func renderSelectedSkills(_ skills: [MLXPromptSkill]) -> String {
+    public static func renderSelectedSkills(_ skills: [PromptSkill]) -> String {
         guard !skills.isEmpty else {
             return "Selected skills: none\n"
         }

@@ -158,6 +158,75 @@ struct TurnFileChangeCoordinatorTests {
         #expect(try Data(contentsOf: fileURL) == before)
     }
 
+    @Test
+    func summaryReconcilesChangesMadeOutsideTrackedTools() async throws {
+        let repository = try temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: repository)
+        }
+        let fileURL = repository.appendingPathComponent("Sources/App.swift")
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("let value = 1\n".utf8).write(to: fileURL)
+        try initializeGitRepository(at: repository)
+
+        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
+        await coordinator.prepareForTurn()
+
+        // Simulate a change produced by a tool the tracker cannot predict
+        // (e.g. local.exec / sub-agent) by editing without capturing a baseline.
+        try Data("let value = 2\n".utf8).write(to: fileURL)
+
+        let summary = await coordinator.publishSummaryIfNeeded()
+        let paths = summary?.entries.map(\.path) ?? []
+        #expect(paths.contains("Sources/App.swift"))
+    }
+
+    @Test
+    func summaryExcludesFilesDirtyBeforeTheTurn() async throws {
+        let repository = try temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: repository)
+        }
+        let fileURL = repository.appendingPathComponent("Sources/App.swift")
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("let value = 1\n".utf8).write(to: fileURL)
+        try initializeGitRepository(at: repository)
+
+        // File is already modified before the turn begins.
+        try Data("let value = 99\n".utf8).write(to: fileURL)
+
+        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
+        await coordinator.prepareForTurn()
+
+        // No further change during the turn.
+        let summary = await coordinator.publishSummaryIfNeeded()
+        #expect(summary == nil)
+    }
+
+    private func initializeGitRepository(at directory: URL) throws {
+        try runGit(["init"], in: directory)
+        try runGit(["config", "user.email", "test@example.com"], in: directory)
+        try runGit(["config", "user.name", "ZenCODE Test"], in: directory)
+        try runGit(["add", "."], in: directory)
+        try runGit(["commit", "-m", "initial"], in: directory)
+    }
+
+    private func runGit(_ arguments: [String], in directory: URL) throws {
+        let process = Process()
+        process.executableURL = GitExecutableResolver.executableURL()
+        process.arguments = ["-C", directory.path] + arguments
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+    }
+
     private func temporaryDirectory() throws -> URL {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(

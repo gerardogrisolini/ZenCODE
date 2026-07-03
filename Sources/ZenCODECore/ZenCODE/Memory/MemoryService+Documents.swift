@@ -1,11 +1,11 @@
 //
-//  MLXMemoryService+Documents.swift
+//  MemoryService+Documents.swift
 //  ZenCODE
 //
 
 import Foundation
 
-extension MLXMemoryService {
+extension MemoryService {
     func memoryDocuments(workspaceRootURL: URL?) -> [MemoryDocument] {
         var documents = [
             MemoryDocument(scope: .global, fileURL: globalMemoryFileURL())
@@ -24,7 +24,7 @@ extension MLXMemoryService {
     }
 
     func memoryDocument(
-        scope: MLXMemoryScope,
+        scope: MemoryScope,
         workspaceRootURL: URL?
     ) throws -> MemoryDocument {
         switch scope {
@@ -32,7 +32,7 @@ extension MLXMemoryService {
             return MemoryDocument(scope: .global, fileURL: globalMemoryFileURL())
         case .project:
             guard let workspaceRootURL else {
-                throw MLXMemoryServiceError.scopeUnavailable("project")
+                throw MemoryServiceError.scopeUnavailable("project")
             }
             return MemoryDocument(
                 scope: .project,
@@ -43,13 +43,13 @@ extension MLXMemoryService {
         }
     }
 
-    func readEntries(from document: MemoryDocument) -> [MLXMemoryEntry] {
+    func readEntries(from document: MemoryDocument) -> [MemoryEntry] {
         guard fileManager.fileExists(atPath: document.fileURL.path),
               let content = try? String(contentsOf: document.fileURL, encoding: .utf8) else {
             return []
         }
 
-        var entries: [MLXMemoryEntry] = []
+        var entries: [MemoryEntry] = []
         var sectionIsActive = false
         var sectionIsArchived = false
         var currentEntryLines: [String] = []
@@ -106,9 +106,9 @@ extension MLXMemoryService {
 
     static func entry(
         fromEntryContent content: String,
-        scope: MLXMemoryScope,
+        scope: MemoryScope,
         isArchived: Bool
-    ) -> MLXMemoryEntry? {
+    ) -> MemoryEntry? {
         let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedContent.isEmpty else {
             return nil
@@ -124,7 +124,7 @@ extension MLXMemoryService {
             guard let id = UUID(uuidString: rawID), !content.isEmpty else {
                 return nil
             }
-            return MLXMemoryEntry(
+            return MemoryEntry(
                 content: content,
                 scope: scope,
                 id: id,
@@ -132,7 +132,7 @@ extension MLXMemoryService {
             )
         }
 
-        return MLXMemoryEntry(
+        return MemoryEntry(
             content: trimmedContent,
             scope: scope,
             isArchived: isArchived
@@ -150,7 +150,7 @@ extension MLXMemoryService {
     }
 
     func writeEntries(
-        _ entries: [MLXMemoryEntry],
+        _ entries: [MemoryEntry],
         to document: MemoryDocument
     ) throws {
         try fileManager.createDirectory(
@@ -172,9 +172,9 @@ extension MLXMemoryService {
     }
 
     static func documentContent(
-        scope: MLXMemoryScope,
-        activeEntries: [MLXMemoryEntry],
-        archivedEntries: [MLXMemoryEntry]
+        scope: MemoryScope,
+        activeEntries: [MemoryEntry],
+        archivedEntries: [MemoryEntry]
     ) -> String {
         let template: String
         switch scope {
@@ -191,7 +191,7 @@ extension MLXMemoryService {
             .replacingOccurrences(of: "## Archived", with: "## Archived\n\n\(archived)")
     }
 
-    static func render(entries: [MLXMemoryEntry]) -> String {
+    static func render(entries: [MemoryEntry]) -> String {
         guard !entries.isEmpty else {
             return ""
         }
@@ -209,7 +209,7 @@ extension MLXMemoryService {
     }
 
     static func normalizedBulletContent(_ content: String) -> String {
-        MLXMemoryEntry.normalizedContent(content)
+        MemoryEntry.normalizedContent(content)
     }
 
     func archiveActiveSavedSessionIndexEntries(forProjectPath projectPath: String) throws {
@@ -230,7 +230,7 @@ extension MLXMemoryService {
         }
     }
 
-    static func savedSessionIndexProjectPath(in entry: MLXMemoryEntry) -> String? {
+    static func savedSessionIndexProjectPath(in entry: MemoryEntry) -> String? {
         let lines = entry.content
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -263,7 +263,7 @@ extension MLXMemoryService {
         return "\(formatter.string(from: date)) \(timeZone.identifier)"
     }
 
-    func searchScore(entry: MLXMemoryEntry, terms: [String]) -> Int {
+    func searchScore(entry: MemoryEntry, terms: [String]) -> Int {
         let content = entry.content.lowercased()
         var score = 0
         for term in terms {
@@ -295,18 +295,18 @@ extension MLXMemoryService {
             return globalMemoryDirectoryURL.standardizedFileURL
         }
 
-        return MLXAppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
+        return AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
     }
 
 }
 
 
 struct MemoryDocument {
-    let scope: MLXMemoryScope
+    let scope: MemoryScope
     let fileURL: URL
 }
 
-public enum MLXMemoryServiceError: LocalizedError {
+public enum MemoryServiceError: LocalizedError {
     case missingField(String)
     case scopeUnavailable(String)
     case invalidIdentifier(String)

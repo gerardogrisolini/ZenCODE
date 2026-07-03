@@ -6,9 +6,7 @@
 //
 
 import Foundation
-#if canImport(os)
-import os
-#endif
+import Synchronization
 #if canImport(Speech)
 import Speech
 #endif
@@ -170,7 +168,7 @@ public actor AgentVoiceTranscriptionService {
 
 /// Ensures a single resume of the recognition continuation.
 private final class ResumeGuard: Sendable {
-    private let didResume = OSAllocatedUnfairLock(initialState: false)
+    private let didResume = Mutex(false)
 
     func consume() -> Bool {
         didResume.withLock { didResume in

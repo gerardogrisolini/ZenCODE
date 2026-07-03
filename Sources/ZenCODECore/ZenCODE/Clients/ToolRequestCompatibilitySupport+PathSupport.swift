@@ -161,11 +161,11 @@ nonisolated func indentationAdjustedReplacementLines(
 nonisolated func xcodeMutationResultObject(
     from result: JSONValue
 ) -> [String: JSONValue]? {
-    guard let rootObject = result.mlxObjectValue else {
+    guard let rootObject = result.objectValue else {
         return nil
     }
 
-    if let structuredObject = rootObject["structuredContent"]?.mlxObjectValue {
+    if let structuredObject = rootObject["structuredContent"]?.objectValue {
         return structuredObject
     }
 

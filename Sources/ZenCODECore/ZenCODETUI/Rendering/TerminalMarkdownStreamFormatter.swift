@@ -12,9 +12,7 @@ import Glibc
 #endif
 import Foundation
 import Markdown
-#if canImport(os)
-import os
-#endif
+import Synchronization
 
 public struct TerminalMarkdownStreamFormatter {
     private static let reset = "\u{1B}[0m"
@@ -576,9 +574,7 @@ public struct TerminalMarkdownStreamFormatter {
     /// Short-lived cache so streaming a long response does not issue one `ioctl`
     /// per rendered line. The TTL keeps width adaptive to live terminal resizes.
     private static let terminalWidthCacheTTL: TimeInterval = 0.25
-    private static let terminalWidthCache = OSAllocatedUnfairLock<CachedTerminalWidth?>(
-        initialState: nil
-    )
+    private static let terminalWidthCache = Mutex<CachedTerminalWidth?>(nil)
 
     private static func detectTerminalWidth() -> Int {
         let now = Date()

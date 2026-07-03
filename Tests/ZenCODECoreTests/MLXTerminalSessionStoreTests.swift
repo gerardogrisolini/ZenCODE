@@ -25,7 +25,7 @@ struct MLXTerminalSessionStoreTests {
             workingDirectory: projectURL
         )
 
-        let fileURL = try MLXTerminalSessionStore.save(
+        let fileURL = try TerminalSessionStore.save(
             session,
             supportDirectoryURL: supportDirectory
         )
@@ -35,9 +35,9 @@ struct MLXTerminalSessionStoreTests {
             encoding: .utf8
         )
 
-        #expect(fileURL.pathExtension == MLXTerminalSessionStore.fileExtension)
+        #expect(fileURL.pathExtension == TerminalSessionStore.fileExtension)
         #expect(storedPrefix == "bplist")
-        #expect(try MLXTerminalSessionStore.load(from: fileURL) == session)
+        #expect(try TerminalSessionStore.load(from: fileURL) == session)
     }
 
     @Test
@@ -60,16 +60,16 @@ struct MLXTerminalSessionStoreTests {
             name: "second",
             workingDirectory: secondProject
         )
-        _ = try MLXTerminalSessionStore.save(
+        _ = try TerminalSessionStore.save(
             firstSession,
             supportDirectoryURL: supportDirectory
         )
-        _ = try MLXTerminalSessionStore.save(
+        _ = try TerminalSessionStore.save(
             secondSession,
             supportDirectoryURL: supportDirectory
         )
 
-        let listedSessions = try MLXTerminalSessionStore.savedSessions(
+        let listedSessions = try TerminalSessionStore.savedSessions(
             for: firstProject,
             supportDirectoryURL: supportDirectory
         )
@@ -90,17 +90,17 @@ struct MLXTerminalSessionStoreTests {
             name: "daily checkpoint",
             workingDirectory: projectURL
         )
-        _ = try MLXTerminalSessionStore.save(
+        _ = try TerminalSessionStore.save(
             session,
             supportDirectoryURL: supportDirectory
         )
 
-        let didDelete = try MLXTerminalSessionStore.delete(
+        let didDelete = try TerminalSessionStore.delete(
             name: "daily checkpoint",
             workingDirectory: projectURL,
             supportDirectoryURL: supportDirectory
         )
-        let sessions = try MLXTerminalSessionStore.savedSessions(
+        let sessions = try TerminalSessionStore.savedSessions(
             for: projectURL,
             supportDirectoryURL: supportDirectory
         )
@@ -144,7 +144,7 @@ struct MLXTerminalSessionStoreTests {
             selectedTools: ["shell"],
             selectedSkillIDs: ["skill-a"],
             thinkingSelection: nil,
-            contextWindow: MLXTerminalSavedSessionContextWindow(
+            contextWindow: TerminalSavedSessionContextWindow(
                 usedTokens: 32,
                 maxTokens: 128,
                 modelID: "model-test",
@@ -197,7 +197,7 @@ struct MLXTerminalSessionStoreTests {
     func displayHistoryFallsBackToCompactionSummary() {
         let projectURL = temporaryDirectory()
             .appendingPathComponent("Project", isDirectory: true)
-        let session = MLXTerminalSavedSession(
+        let session = TerminalSavedSession(
             name: "old compacted",
             sessionID: "terminal-test",
             cacheKey: "cache-test",
@@ -234,17 +234,17 @@ struct MLXTerminalSessionStoreTests {
     @Test
     func filenameStemSanitizesSessionName() {
         #expect(
-            MLXTerminalSessionStore.filenameStem(for: " daily/checkpoint ") == "daily_checkpoint"
+            TerminalSessionStore.filenameStem(for: " daily/checkpoint ") == "daily_checkpoint"
         )
-        #expect(MLXTerminalSessionStore.filenameStem(for: "///") == "session")
+        #expect(TerminalSessionStore.filenameStem(for: "///") == "session")
     }
 
     private func sampleSession(
         name: String,
         workingDirectory: URL,
         transcriptHistory: [AgentRuntimeMessage]? = nil
-    ) -> MLXTerminalSavedSession {
-        MLXTerminalSavedSession(
+    ) -> TerminalSavedSession {
+        TerminalSavedSession(
             name: name,
             sessionID: "terminal-test",
             cacheKey: "cache-test",
@@ -260,7 +260,7 @@ struct MLXTerminalSessionStoreTests {
             ],
             selectedSkillIDs: ["skill-a"],
             thinkingSelection: "on",
-            contextWindow: MLXTerminalSavedSessionContextWindow(
+            contextWindow: TerminalSavedSessionContextWindow(
                 usedTokens: 2_048,
                 maxTokens: 65_536,
                 modelID: "model-test",

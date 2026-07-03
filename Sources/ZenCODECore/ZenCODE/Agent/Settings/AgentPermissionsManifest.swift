@@ -122,7 +122,7 @@ public enum AgentPermissionsManifestStore {
     }
 
     public static func permissionsURL(fileManager: FileManager = .default) -> URL {
-        MLXAppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
+        AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
             .appendingPathComponent(permissionsFilename)
             .standardizedFileURL
     }

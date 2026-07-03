@@ -8,9 +8,7 @@
 import Foundation
 #if os(macOS)
 import Network
-#if canImport(os)
-import os
-#endif
+import Synchronization
 
 public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
     public let redirectURL: URL
@@ -28,7 +26,7 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
         var didResumeCallback = false
     }
 
-    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let state = Mutex(State())
 
     public init(redirectURL: URL, serviceName: String) throws {
         guard redirectURL.scheme == "http",

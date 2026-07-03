@@ -63,7 +63,7 @@ extension TerminalChat {
 
     public func handleSavedSessionList() async {
         do {
-            let sessions = try MLXTerminalSessionStore.savedSessions(
+            let sessions = try TerminalSessionStore.savedSessions(
                 for: configuration.workingDirectory
             )
             guard !sessions.isEmpty else {
@@ -98,7 +98,7 @@ extension TerminalChat {
 
     public func handleSavedSessionDelete() async {
         do {
-            let sessions = try MLXTerminalSessionStore.savedSessions(
+            let sessions = try TerminalSessionStore.savedSessions(
                 for: configuration.workingDirectory
             )
             guard !sessions.isEmpty else {
@@ -125,7 +125,7 @@ extension TerminalChat {
 
             let selectedSessions = sessions.filter { selectedNames.contains($0.name) }
             for selectedSession in selectedSessions {
-                let didDelete = try MLXTerminalSessionStore.delete(
+                let didDelete = try TerminalSessionStore.delete(
                     name: selectedSession.name,
                     workingDirectory: configuration.workingDirectory
                 )
@@ -175,12 +175,12 @@ extension TerminalChat {
             return
         }
 
-        let existingSession = try? MLXTerminalSessionStore.load(
+        let existingSession = try? TerminalSessionStore.load(
             name: name,
             workingDirectory: configuration.workingDirectory
         )
         let now = Date()
-        let savedSession = MLXTerminalSavedSession(
+        let savedSession = TerminalSavedSession(
             name: name,
             sessionID: snapshot.sessionID,
             cacheKey: snapshot.cacheKey
@@ -199,7 +199,7 @@ extension TerminalChat {
             selectedSkillIDs: selectedSkillIDs.sorted(),
             thinkingSelection: currentAgentThinkingSelection()?.rawValue,
             contextWindow: statusBar.currentContextWindowStatus().map {
-                MLXTerminalSavedSessionContextWindow($0)
+                TerminalSavedSessionContextWindow($0)
             },
             systemPrompt: snapshot.systemPrompt,
             history: snapshot.history,
@@ -207,7 +207,7 @@ extension TerminalChat {
         )
 
         do {
-            _ = try MLXTerminalSessionStore.save(savedSession)
+            _ = try TerminalSessionStore.save(savedSession)
             await sessionRunner.saveSessionRuntimeCache(id: savedSession.sessionID)
             recordSavedSessionIndex(savedSession)
             activeSavedSessionName = savedSession.name
@@ -255,9 +255,9 @@ extension TerminalChat {
         }
     }
 
-    public func recordSavedSessionIndex(_ savedSession: MLXTerminalSavedSession) {
+    public func recordSavedSessionIndex(_ savedSession: TerminalSavedSession) {
         do {
-            try MLXMemoryService().recordSavedSessionIndexEntry(
+            try MemoryService().recordSavedSessionIndexEntry(
                 projectPath: savedSession.workingDirectoryPath,
                 sessionName: savedSession.name,
                 sessionID: savedSession.sessionID,
@@ -271,7 +271,7 @@ extension TerminalChat {
         }
     }
 
-    public func loadSavedSession(_ savedSession: MLXTerminalSavedSession) async throws {
+    public func loadSavedSession(_ savedSession: TerminalSavedSession) async throws {
         await sessionRunner.resetSession(id: sessionID)
         sessionID = savedSession.sessionID
         activeSessionCacheKey = savedSession.cacheKey
@@ -487,7 +487,7 @@ extension TerminalChat {
     }
 
     public static func savedSessionDisplayHistory(
-        _ savedSession: MLXTerminalSavedSession
+        _ savedSession: TerminalSavedSession
     ) -> [AgentRuntimeMessage] {
         if let transcriptHistory = savedSession.transcriptHistory {
             return transcriptHistory
@@ -528,7 +528,7 @@ extension TerminalChat {
         """
     }
 
-    public func renderSavedSessionList(_ sessions: [MLXTerminalSavedSession]) {
+    public func renderSavedSessionList(_ sessions: [TerminalSavedSession]) {
         writeSystemMessage("\nSaved sessions:\n")
         for (offset, session) in sessions.enumerated() {
             let marker = activeSavedSessionName == session.name ? " *" : ""
@@ -540,7 +540,7 @@ extension TerminalChat {
     }
 
     public func savedSessionSelectionItems(
-        _ sessions: [MLXTerminalSavedSession]
+        _ sessions: [TerminalSavedSession]
     ) -> [TerminalCheckboxMenuItem<String>] {
         sessions.map { session in
             TerminalCheckboxMenuItem(
@@ -551,7 +551,7 @@ extension TerminalChat {
         }
     }
 
-    public func savedSessionDetail(_ session: MLXTerminalSavedSession) -> String {
+    public func savedSessionDetail(_ session: TerminalSavedSession) -> String {
         var parts: [String] = []
         if let modelID = session.modelID {
             parts.append(modelID)
@@ -565,7 +565,7 @@ extension TerminalChat {
     }
 
     public func restoredAgent(
-        for savedSession: MLXTerminalSavedSession
+        for savedSession: TerminalSavedSession
     ) throws -> AgentProfile? {
         guard savedSession.agentID != nil || savedSession.agentName != nil else {
             return nil

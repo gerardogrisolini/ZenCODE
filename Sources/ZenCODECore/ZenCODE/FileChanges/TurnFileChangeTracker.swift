@@ -27,6 +27,12 @@ public actor TurnFileChangeTracker {
     var snapshotsByPath: [String: Snapshot] = [:]
     var cachedSummary: TurnFileChangeSummary?
     var didFinalizeSummary = false
+    /// Content of files already dirty (vs. the index/HEAD) when the turn began,
+    /// keyed by absolute path. A present key with `nil` value means the path did
+    /// not exist on disk at turn start. Used to bound worktree reconciliation to
+    /// changes that actually happened during this turn.
+    var initialWorktreeDirtyContents: [String: Data?] = [:]
+    var didCaptureInitialWorktree = false
 
     public init(workspacePath: String?) {
         let baseURL: URL
@@ -94,12 +100,32 @@ public actor TurnFileChangeTracker {
         captureBaselineIfNeeded(for: request)
     }
 
+    /// Records the set of files already modified relative to `HEAD`/index when
+    /// the turn starts, so end-of-turn worktree reconciliation can attribute
+    /// only the changes produced during the turn (including those made by tools
+    /// whose paths cannot be predicted, such as `local.exec`, sub-agents, and
+    /// MCP tools). Must be invoked once at the beginning of a turn to enable
+    /// reconciliation.
+    public func prepareInitialWorktreeBaselineIfNeeded() async {
+        guard !didCaptureInitialWorktree else {
+            return
+        }
+        didCaptureInitialWorktree = true
+        #if canImport(Darwin) || canImport(Glibc)
+        await captureInitialWorktreeBaseline()
+        #endif
+    }
+
     public func makeSummary() async -> TurnFileChangeSummary? {
         if didFinalizeSummary {
             return cachedSummary
         }
 
         didFinalizeSummary = true
+
+        #if canImport(Darwin) || canImport(Glibc)
+        await reconcileWorktreeChangesIfNeeded()
+        #endif
 
         var entries: [TurnFileChangeSummary.Entry] = []
         for snapshot in snapshotsByPath.values {

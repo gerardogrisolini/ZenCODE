@@ -6,11 +6,9 @@
 //
 
 import Foundation
-#if canImport(os)
-import os
-#endif
+import Synchronization
 
-public enum MLXAppStorageDirectory {
+public enum AppStorageDirectory {
     public static let supportDirectoryEnvironmentKey = "ZENCODE_SUPPORT_DIRECTORY"
     private static let supportDirectoryName = ".zencode"
     private static let supportDirectoryOverride = SupportDirectoryOverride()
@@ -54,7 +52,7 @@ public enum MLXAppStorageDirectory {
 }
 
 private final class SupportDirectoryOverride: Sendable {
-    private let value = OSAllocatedUnfairLock<URL?>(initialState: nil)
+    private let value = Mutex<URL?>(nil)
 
     func set(_ url: URL?) {
         value.withLock { value in

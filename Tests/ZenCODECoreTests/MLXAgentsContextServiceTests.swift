@@ -13,7 +13,7 @@ import Testing
 struct MLXAgentsContextServiceTests {
     @Test
     func globalAgentsTemplateFramesAssistantBehavior() {
-        let content = MLXAgentsContextService.defaultGlobalAgentsContent
+        let content = AgentsContextService.defaultGlobalAgentsContent
 
         #expect(content.contains("do what the user asked"))
         #expect(content.contains("on the user's machine"))
@@ -42,7 +42,7 @@ struct MLXAgentsContextServiceTests {
         )
         try Data().write(to: rootURL.appendingPathComponent("Package.swift"))
 
-        let content = MLXProjectContextFileService.defaultContent(
+        let content = ProjectContextFileService.defaultContent(
             kind: .agents,
             projectName: "PackageOnly",
             rootPath: rootURL.path
@@ -71,7 +71,7 @@ struct MLXAgentsContextServiceTests {
         )
         try Data().write(to: schemesURL.appendingPathComponent("App.xcscheme"))
 
-        let content = MLXProjectContextFileService.defaultContent(
+        let content = ProjectContextFileService.defaultContent(
             kind: .agents,
             projectName: "XcodeApp",
             rootPath: rootURL.path
@@ -111,12 +111,12 @@ struct MLXAgentsContextServiceTests {
         - This line is editor guidance and should not enter the runtime prompt.
         """
         try projectContent.write(
-            to: workspaceURL.appendingPathComponent(MLXAgentsContextService.filename),
+            to: workspaceURL.appendingPathComponent(AgentsContextService.filename),
             atomically: true,
             encoding: .utf8
         )
 
-        let prompt = MLXAgentsContextService(globalAgentsDirectoryURL: globalURL)
+        let prompt = AgentsContextService(globalAgentsDirectoryURL: globalURL)
             .promptSection(workspaceRootURL: workspaceURL)
 
         #expect(prompt?.contains("Global context:") == true)

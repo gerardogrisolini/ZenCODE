@@ -212,7 +212,7 @@ extension MLXServerCoderBackend {
 
     static func sendableJSONObject(from jsonString: String) -> [String: any Sendable]? {
         guard let data = jsonString.data(using: .utf8),
-              let object = try? JSONDecoder().decode(ZenCODECore.JSONValue.self, from: data).mlxObjectValue else {
+              let object = try? JSONDecoder().decode(ZenCODECore.JSONValue.self, from: data).objectValue else {
             return nil
         }
         var sendableObject: [String: any Sendable] = [:]

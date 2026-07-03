@@ -90,7 +90,7 @@ extension AnthropicSubscriptionGenerationClient {
     static func errorMessage(fromJSONString string: String) -> String? {
         guard let data = string.data(using: .utf8),
               let value = try? JSONDecoder().decode(JSONValue.self, from: data),
-              let object = value.mlxObjectValue else {
+              let object = value.objectValue else {
             return nil
         }
         let jsonObject = object.mapValues(\.jsonObject)
@@ -106,7 +106,7 @@ extension AnthropicSubscriptionGenerationClient {
     static func jsonObject(fromJSONString string: String) -> [String: Any] {
         guard let data = string.data(using: .utf8),
               let value = try? JSONDecoder().decode(JSONValue.self, from: data),
-              let object = value.mlxObjectValue else {
+              let object = value.objectValue else {
             return [:]
         }
         return object.mapValues(\.jsonObject)

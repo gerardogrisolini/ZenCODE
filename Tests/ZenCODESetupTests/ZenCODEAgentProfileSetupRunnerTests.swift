@@ -91,7 +91,7 @@ struct ZenCODEAgentProfileSetupRunnerTests {
 
     @Test
     func skillCheckboxItemsPreserveMissingSelectedSkills() {
-        let skill = MLXPromptSkill(
+        let skill = PromptSkill(
             canonicalName: "swift-review",
             title: "Swift Review",
             summary: "Review Swift code.",

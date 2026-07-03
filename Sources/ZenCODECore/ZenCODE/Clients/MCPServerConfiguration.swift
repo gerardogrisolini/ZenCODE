@@ -12,11 +12,9 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
-#if canImport(os)
-import os
-#endif
 #if canImport(Network)
 import Network
+import Synchronization
 #endif
 
 public nonisolated struct MCPBrowserOAuthConfiguration: Hashable, Sendable {
@@ -308,7 +306,7 @@ public nonisolated struct MCPServerConfiguration: Hashable, Sendable {
     ) async -> Bool {
         await withCheckedContinuation { continuation in
             final class ReachabilityContinuationState: Sendable {
-                private let didResume = OSAllocatedUnfairLock(initialState: false)
+                private let didResume = Mutex(false)
 
                 func beginFinishing() -> Bool {
                     didResume.withLock { didResume in

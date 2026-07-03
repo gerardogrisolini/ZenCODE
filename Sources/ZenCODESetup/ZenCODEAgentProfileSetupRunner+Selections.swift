@@ -63,8 +63,8 @@ extension ZenCODEAgentProfileSetupRunner {
     ) -> [AgentProfileSkill] {
         let selectedSkillIDs = Set(defaultSkills.compactMap { $0.id.nilIfBlank })
         let items = skillCheckboxItems(
-            availableSkills: MLXPromptSkillCatalog.discoverSkills(
-                searchRoots: MLXPromptSkillCatalog.appCatalogSearchRoots()
+            availableSkills: PromptSkillCatalog.discoverSkills(
+                searchRoots: PromptSkillCatalog.appCatalogSearchRoots()
             ),
             selectedSkillIDs: selectedSkillIDs
         )
@@ -81,7 +81,7 @@ extension ZenCODEAgentProfileSetupRunner {
     }
 
     static func skillCheckboxItems(
-        availableSkills: [MLXPromptSkill],
+        availableSkills: [PromptSkill],
         selectedSkillIDs: Set<String>
     ) -> [TerminalCheckboxMenuItem<String>] {
         let availableIDs = Set(availableSkills.map(\.id))

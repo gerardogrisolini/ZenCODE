@@ -17,51 +17,53 @@ import os
 #endif
 
 extension TerminalStatusBar {
-    func configureTerminalLocked(moveCursorToPrompt: Bool = true) -> Bool {
+    func configureTerminalLocked(state: inout State, moveCursorToPrompt: Bool = true) -> Bool {
         guard let output,
               let geometry = Self.currentTerminalGeometry(fileDescriptor: output.fileDescriptor),
-              geometry.rows >= minimumRowsLocked(),
+              geometry.rows >= minimumRowsLocked(state: &state),
               geometry.columns >= 40 else {
             return false
         }
         
-        row = geometry.rows
-        columns = geometry.columns
-        writeScrollRegionLocked(moveCursorToPrompt: moveCursorToPrompt)
+        state.row = geometry.rows
+        state.columns = geometry.columns
+        writeScrollRegionLocked(state: &state, moveCursorToPrompt: moveCursorToPrompt)
         return true
     }
     
-    func refreshTerminalGeometryLocked() -> Bool {
+    func refreshTerminalGeometryLocked(state: inout State) -> Bool {
         guard let output,
               let geometry = Self.currentTerminalGeometry(fileDescriptor: output.fileDescriptor),
-              geometry.rows >= minimumRowsLocked(),
+              geometry.rows >= minimumRowsLocked(state: &state),
               geometry.columns >= 40 else {
             return false
         }
-        guard geometry.rows != row || geometry.columns != columns else {
+        guard geometry.rows != state.row || geometry.columns != state.columns else {
             return true
         }
         
-        let oldColumns = columns
-        let oldReservedRows = reservedBottomRowsLocked()
-        row = geometry.rows
-        columns = geometry.columns
-        let newReservedRows = reservedBottomRowsLocked()
+        let oldColumns = state.columns
+        let oldReservedRows = reservedBottomRowsLocked(state: &state)
+        state.row = geometry.rows
+        state.columns = geometry.columns
+        let newReservedRows = reservedBottomRowsLocked(state: &state)
         let oldRowWrapFactor = max(1, (oldColumns + geometry.columns - 1) / geometry.columns)
         let rowsToClear = min(
-            row,
+            state.row,
             max(newReservedRows, oldReservedRows * oldRowWrapFactor) + 2
         )
         clearReservedRowsLocked(
+            state: &state,
             count: rowsToClear,
-            bottomRow: row
+            bottomRow: state.row
         )
-        writeScrollRegionLocked(moveCursorToPrompt: true)
+        writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
         return true
     }
     
-    func writeScrollRegionLocked(moveCursorToPrompt: Bool) {
-        let scrollBottom = max(1, row - reservedBottomRowsLocked())
+    func writeScrollRegionLocked(state: inout State, moveCursorToPrompt: Bool) {
+        let reservedRows = reservedBottomRowsLocked(state: &state)
+        let scrollBottom = max(1, state.row - reservedRows)
         let scrollTop = 1
         var sequence = "\u{1B}[\(scrollTop);\(scrollBottom)r"
         if moveCursorToPrompt {
@@ -70,12 +72,12 @@ extension TerminalStatusBar {
         writeLocked(sequence)
     }
     
-    func scrollOutputRegionUpLocked(by count: Int, reservedRows: Int) {
-        guard count > 0, row > reservedRows else {
+    func scrollOutputRegionUpLocked(state: inout State, by count: Int, reservedRows: Int) {
+        guard count > 0, state.row > reservedRows else {
             return
         }
         
-        let scrollBottom = max(1, row - reservedRows)
+        let scrollBottom = max(1, state.row - reservedRows)
         let scrollTop = 1
         let newlines = String(repeating: "\n", count: count)
         writeLocked(
@@ -85,33 +87,36 @@ extension TerminalStatusBar {
         )
     }
     
-    func renderLocked() {
-        guard row > 0, columns > 0, !isResizePending else {
+    func renderLocked(state: inout State) {
+        guard state.row > 0, state.columns > 0, !state.isResizePending else {
             return
         }
         
-        let sequence = "\u{1B}[?25l" + inputPanelRenderSequenceLocked() + statusRenderSequenceLocked()
+        let sequence = "\u{1B}[?25l" + inputPanelRenderSequenceLocked(state: &state) + statusRenderSequenceLocked(state: &state)
         writeLocked(sequence)
     }
     
-    func inputPanelRenderSequenceLocked() -> String {
-        guard let inputPanelState else {
+    func inputPanelRenderSequenceLocked(state: inout State) -> String {
+        guard let inputPanelState = state.inputPanelState else {
             return ""
         }
         
-        let topRow = max(1, row - reservedBottomRowsLocked() + 1)
-        let startColumn = statusBoxStartColumnLocked()
-        let boxWidth = statusBoxWidthLocked()
+        let reservedRows = reservedBottomRowsLocked(state: &state)
+        let topRow = max(1, state.row - reservedRows + 1)
+        let startColumn = statusBoxStartColumnLocked(state: &state)
+        let boxWidth = statusBoxWidthLocked(state: &state)
         let orange = "\u{1B}[38;5;208m"
         let dim = "\u{1B}[90m"
         let reset = "\u{1B}[0m"
         let horizontalRule = String(repeating: "─", count: max(0, boxWidth - 2))
-        let contentWidth = statusBoxContentWidthLocked()
+        let contentWidth = statusBoxContentWidthLocked(state: &state)
         let inputRows = inputPanelDisplayRowsLocked(
+            state: &state,
             text: inputPanelState.text,
             cursorIndex: inputPanelState.cursorIndex
         )
         let suggestionRows = inputPanelSuggestionRowsLocked(
+            state: &state,
             lines: inputPanelState.suggestionLines
         )
         let modeLine = Self.padded(
@@ -191,19 +196,19 @@ extension TerminalStatusBar {
         return parts.joined()
     }
     
-    func statusRenderSequenceLocked() -> String {
-        let startColumn = statusBoxStartColumnLocked()
-        let boxWidth = statusBoxWidthLocked()
-        let contentWidth = statusBoxContentWidthLocked()
+    func statusRenderSequenceLocked(state: inout State) -> String {
+        let startColumn = statusBoxStartColumnLocked(state: &state)
+        let boxWidth = statusBoxWidthLocked(state: &state)
+        let contentWidth = statusBoxContentWidthLocked(state: &state)
         let orange = "\u{1B}[38;5;208m"
         let reset = "\u{1B}[0m"
         let horizontalRule = String(repeating: "─", count: max(0, boxWidth - 2))
-        let text = Self.fit(statusTextLocked(), width: contentWidth)
+        let text = Self.fit(statusTextLocked(state: &state), width: contentWidth)
         let padding = max(0, contentWidth - Self.visibleCharacterCount(text))
-        let isAttachedToInputPanel = inputPanelState != nil
+        let isAttachedToInputPanel = state.inputPanelState != nil
         var sequence = "\u{1B}7"
         if !isAttachedToInputPanel {
-            sequence += "\u{1B}[\(max(1, row - 2));\(startColumn)H"
+            sequence += "\u{1B}[\(max(1, state.row - 2));\(startColumn)H"
             + "\u{1B}[2K"
             + orange
             + "┌"
@@ -211,7 +216,7 @@ extension TerminalStatusBar {
             + "┐"
             + reset
         }
-        sequence += "\u{1B}[\(max(1, row - 1));\(startColumn)H"
+        sequence += "\u{1B}[\(max(1, state.row - 1));\(startColumn)H"
         + "\u{1B}[2K"
         + orange
         + "│"
@@ -223,7 +228,7 @@ extension TerminalStatusBar {
         + orange
         + "│"
         + reset
-        + "\u{1B}[\(row);\(startColumn)H"
+        + "\u{1B}[\(state.row);\(startColumn)H"
         + "\u{1B}[2K"
         + orange
         + "└"
@@ -234,19 +239,20 @@ extension TerminalStatusBar {
         return sequence
     }
     
-    func clearLocked() {
-        clearLocked(row: row)
+    func clearLocked(state: inout State) {
+        clearLocked(state: &state, row: state.row)
     }
     
-    func clearLocked(row: Int) {
+    func clearLocked(state: inout State, row: Int) {
         guard row > 0 else {
             return
         }
-        clearReservedRowsLocked(count: reservedBottomRowsLocked(), bottomRow: row)
+        let reservedRows = reservedBottomRowsLocked(state: &state)
+        clearReservedRowsLocked(state: &state, count: reservedRows, bottomRow: row)
     }
     
-    func clearReservedRowsLocked(count: Int, bottomRow: Int? = nil) {
-        let resolvedBottomRow = bottomRow ?? row
+    func clearReservedRowsLocked(state: inout State, count: Int, bottomRow: Int? = nil) {
+        let resolvedBottomRow = bottomRow ?? state.row
         guard resolvedBottomRow > 0, count > 0 else {
             return
         }
@@ -259,12 +265,13 @@ extension TerminalStatusBar {
         writeLocked(sequence)
     }
     
-    func reservedBottomRowsLocked() -> Int {
-        guard let inputPanelState else {
+    func reservedBottomRowsLocked(state: inout State) -> Int {
+        guard let inputPanelState = state.inputPanelState else {
             return Self.standaloneStatusRows
         }
         return Self.inputPanelChromeRows
         + inputPanelDisplayLineCountLocked(
+            state: &state,
             text: inputPanelState.text,
             cursorIndex: inputPanelState.cursorIndex
         )
@@ -272,9 +279,9 @@ extension TerminalStatusBar {
         + Self.attachedStatusRows
     }
     
-    func minimumRowsLocked() -> Int {
+    func minimumRowsLocked(state: inout State) -> Int {
         let minimumReservedRows: Int
-        if inputPanelState == nil {
+        if state.inputPanelState == nil {
             minimumReservedRows = Self.standaloneStatusRows
         } else {
             minimumReservedRows = Self.inputPanelChromeRows + Self.attachedStatusRows + 1
@@ -282,46 +289,46 @@ extension TerminalStatusBar {
         return max(5, minimumReservedRows + Self.minimumScrollableRows)
     }
     
-    func statusTextLocked() -> String {
-        let tokensUsed = latestContextWindow?.usedTokens
-        ?? latestMetrics?.totalTokenCount
+    func statusTextLocked(state: inout State) -> String {
+        let tokensUsed = state.latestContextWindow?.usedTokens
+        ?? state.latestMetrics?.totalTokenCount
         var fragments: [String] = []
-        if let latestModelID {
+        if let latestModelID = state.latestModelID {
             let model = Self.modelStatusFragment(
                 modelID: latestModelID,
-                thinkingSelection: latestThinkingSelection
+                thinkingSelection: state.latestThinkingSelection
             )
-            if isProcessing {
-                let loader = Self.spinnerFrames[spinnerIndex % Self.spinnerFrames.count]
+            if state.isProcessing {
+                let loader = Self.spinnerFrames[state.spinnerIndex % Self.spinnerFrames.count]
                 fragments.append(loader)
             }
             fragments.append(model)
         }
-        if let latestModelRuntime {
+        if let latestModelRuntime = state.latestModelRuntime {
             fragments.append(latestModelRuntime)
         }
-        if tokensUsed != nil || latestContextWindow?.maxTokens != nil {
+        if tokensUsed != nil || state.latestContextWindow?.maxTokens != nil {
             let contextText = Self.tokenWindowText(
-                usedTokens: latestContextWindow?.usedTokens,
+                usedTokens: state.latestContextWindow?.usedTokens,
                 metricUsedTokens: tokensUsed,
-                maxTokens: latestContextWindow?.maxTokens
+                maxTokens: state.latestContextWindow?.maxTokens
             )
             fragments.append(contextText)
         }
-        if let duration = latestMetrics?.responseDurationSeconds {
+        if let duration = state.latestMetrics?.responseDurationSeconds {
             fragments.append("time \(Self.durationText(duration))")
         }
-        if let prefillRate = latestMetrics?.promptTokensPerSecond {
+        if let prefillRate = state.latestMetrics?.promptTokensPerSecond {
             fragments.append("pre \(Self.rateText(prefillRate)) tok/s")
         }
-        if let generationRate = latestMetrics?.completionTokensPerSecond {
+        if let generationRate = state.latestMetrics?.completionTokensPerSecond {
             fragments.append("gen \(Self.rateText(generationRate)) tok/s")
         }
-        if let latestSubscriptionUsage,
+        if let latestSubscriptionUsage = state.latestSubscriptionUsage,
            let usageText = Self.subscriptionUsageFragment(latestSubscriptionUsage) {
             fragments.append(usageText)
         }
-        if let latestGitStatusSummary {
+        if let latestGitStatusSummary = state.latestGitStatusSummary {
             fragments.append(Self.gitStatusFragment(summary: latestGitStatusSummary))
         }
         return fragments.joined(separator: " · ")

@@ -31,7 +31,7 @@ extension ChatGPTSubscriptionResponsesClient {
         }
 
         if let value = try? JSONDecoder().decode(JSONValue.self, from: data),
-           let jsonObject = value.mlxObjectValue {
+           let jsonObject = value.objectValue {
             return [jsonObject.mapValues(\.jsonObject)]
         }
 
@@ -48,7 +48,7 @@ extension ChatGPTSubscriptionResponsesClient {
                 break
             }
             guard let value = try? JSONDecoder().decode(JSONValue.self, from: nextObjectData),
-                  let jsonObject = value.mlxObjectValue else {
+                  let jsonObject = value.objectValue else {
                 continue
             }
             objects.append(jsonObject.mapValues(\.jsonObject))

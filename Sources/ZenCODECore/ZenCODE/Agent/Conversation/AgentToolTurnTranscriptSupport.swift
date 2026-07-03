@@ -198,7 +198,7 @@ public enum AgentToolTurnTranscriptSupport {
     ) -> AgentToolTurnTranscriptToolCall? {
         guard let data = text.data(using: .utf8),
               let value = try? JSONDecoder().decode(JSONValue.self, from: data),
-              let object = value.mlxObjectValue?.mapValues(\.jsonObject) else {
+              let object = value.objectValue?.mapValues(\.jsonObject) else {
             return nil
         }
 
@@ -387,7 +387,7 @@ public enum AgentJSONSupport {
         guard !trimmedJSON.isEmpty,
               let data = trimmedJSON.data(using: .utf8),
               let value = try? JSONDecoder().decode(JSONValue.self, from: data),
-              let object = value.mlxObjectValue else {
+              let object = value.objectValue else {
             return nil
         }
 

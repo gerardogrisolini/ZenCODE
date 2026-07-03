@@ -109,7 +109,7 @@ public nonisolated struct ToolDescriptor: Codable, Identifiable, Hashable, Senda
         }
 
         do {
-            if let dict = try JSONDecoder().decode(JSONValue.self, from: data).mlxObjectValue {
+            if let dict = try JSONDecoder().decode(JSONValue.self, from: data).objectValue {
                 let name = dict["name"]?.stringValue ?? jsonString
                 let title = dict["title"]?.stringValue
                 let description = dict["description"]?.stringValue ?? ""

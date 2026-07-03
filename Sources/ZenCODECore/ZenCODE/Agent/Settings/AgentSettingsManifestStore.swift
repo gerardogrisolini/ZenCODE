@@ -6,9 +6,7 @@
 //
 
 import Foundation
-#if canImport(os)
-import os
-#endif
+import Synchronization
 
 public enum AgentSettingsManifestStore {
     public static let settingsFilename = "settings.json"
@@ -178,7 +176,7 @@ public enum AgentSettingsManifestStore {
     }
 
     public static func settingsURL(fileManager: FileManager = .default) -> URL {
-        MLXAppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
+        AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
             .appendingPathComponent(settingsFilename)
             .standardizedFileURL
     }
@@ -190,7 +188,7 @@ public enum AgentSettingsManifestStore {
             case failed(Error)
         }
 
-        private let state = OSAllocatedUnfairLock(initialState: State.notLoaded)
+        private let state = Mutex(State.notLoaded)
 
         func load(
             _ loader: @Sendable () throws -> AgentSettingsManifest

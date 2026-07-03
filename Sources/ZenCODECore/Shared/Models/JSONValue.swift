@@ -231,4 +231,18 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
     public func encoded() -> Data {
         (try? JSONEncoder().encode(self)) ?? Data("null".utf8)
     }
+    
+    public var objectValue: [String: JSONValue]? {
+        guard case let .object(value) = self else {
+            return nil
+        }
+        return value
+    }
+
+    public var arrayValue: [JSONValue]? {
+        guard case let .array(value) = self else {
+            return nil
+        }
+        return value
+    }
 }

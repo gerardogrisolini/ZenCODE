@@ -184,7 +184,7 @@ enum JiraConfigurationStore {
     }
 
     private static func configurationURL(fileManager: FileManager = .default) -> URL {
-        MLXAppStorageDirectory
+        AppStorageDirectory
             .appSupportDirectoryURL(fileManager: fileManager)
             .appendingPathComponent(filename)
             .standardizedFileURL

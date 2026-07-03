@@ -1,5 +1,5 @@
 //
-//  MLXMemoryTool.swift
+//  MemoryTool.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct MLXMemoryToolContext: Sendable {
+public struct MemoryToolContext: Sendable {
     public let workspaceContext: XcodeWorkspaceContext?
     public let workingDirectory: URL?
     public let currentDate: Date
@@ -26,7 +26,7 @@ public struct MLXMemoryToolContext: Sendable {
     }
 }
 
-public enum MLXMemoryTool {
+public enum MemoryTool {
     public static let toolDescriptors: [ToolDescriptor] = [
         ToolDescriptor(
             name: "memory.read",
@@ -102,8 +102,8 @@ public enum MLXMemoryTool {
 
     public static func execute(
         _ request: ToolRequest,
-        context: MLXMemoryToolContext,
-        memoryService: MLXMemoryService = MLXMemoryService()
+        context: MemoryToolContext,
+        memoryService: MemoryService = MemoryService()
     ) throws -> ToolExecutionOutput {
         switch request.name {
         case "memory.read":
@@ -137,14 +137,14 @@ public enum MLXMemoryTool {
 
     private static func read(
         arguments: [String: JSONValue],
-        context: MLXMemoryToolContext,
-        memoryService: MLXMemoryService
+        context: MemoryToolContext,
+        memoryService: MemoryService
     ) throws -> ToolExecutionOutput {
         let scope = parsedScope(from: arguments)
         let includeArchived = parsedIncludeArchived(from: arguments)
         let limit = parsedLimit(from: arguments)
 
-        func readEntries(for scope: MLXMemoryScope?) -> [MLXMemoryEntry] {
+        func readEntries(for scope: MemoryScope?) -> [MemoryEntry] {
             if let workspaceContext = context.workspaceContext {
                 return memoryService.readEntries(
                     scope: scope,
@@ -162,7 +162,7 @@ public enum MLXMemoryTool {
             )
         }
 
-        let resolvedEntries: [MLXMemoryEntry]
+        let resolvedEntries: [MemoryEntry]
         if let scope {
             resolvedEntries = readEntries(for: scope)
         } else {
@@ -180,20 +180,20 @@ public enum MLXMemoryTool {
 
     private static func search(
         arguments: [String: JSONValue],
-        context: MLXMemoryToolContext,
-        memoryService: MLXMemoryService
+        context: MemoryToolContext,
+        memoryService: MemoryService
     ) throws -> ToolExecutionOutput {
         guard let query = arguments["query"]?.stringValue?
             .trimmingCharacters(in: .whitespacesAndNewlines),
               !query.isEmpty else {
-            throw MLXMemoryServiceError.missingField("query")
+            throw MemoryServiceError.missingField("query")
         }
 
         let scope = parsedScope(from: arguments)
         let includeArchived = parsedIncludeArchived(from: arguments)
         let limit = parsedLimit(from: arguments)
 
-        func searchEntries(for scope: MLXMemoryScope?) -> [MLXMemoryEntry] {
+        func searchEntries(for scope: MemoryScope?) -> [MemoryEntry] {
             if let workspaceContext = context.workspaceContext {
                 return memoryService.searchEntries(
                     query: query,
@@ -230,11 +230,11 @@ public enum MLXMemoryTool {
 
     private static func write(
         arguments: [String: JSONValue],
-        context: MLXMemoryToolContext,
-        memoryService: MLXMemoryService
+        context: MemoryToolContext,
+        memoryService: MemoryService
     ) throws -> ToolExecutionOutput {
         guard let content = parsedContent(from: arguments) else {
-            throw MLXMemoryServiceError.missingField("content")
+            throw MemoryServiceError.missingField("content")
         }
 
         let scope = parsedWriteScope(from: arguments)
@@ -244,7 +244,7 @@ public enum MLXMemoryTool {
             scope: scope,
             context: context
         )
-        let entry: MLXMemoryEntry
+        let entry: MemoryEntry
         if let workspaceContext = context.workspaceContext {
             entry = try memoryService.writeEntry(
                 content: contentToWrite,
@@ -273,16 +273,16 @@ public enum MLXMemoryTool {
 
     private static func archive(
         arguments: [String: JSONValue],
-        context: MLXMemoryToolContext,
-        memoryService: MLXMemoryService
+        context: MemoryToolContext,
+        memoryService: MemoryService
     ) throws -> ToolExecutionOutput {
         guard let entryID = arguments["id"]?.stringValue?
             .trimmingCharacters(in: .whitespacesAndNewlines),
               !entryID.isEmpty else {
-            throw MLXMemoryServiceError.missingField("id")
+            throw MemoryServiceError.missingField("id")
         }
 
-        let entry: MLXMemoryEntry
+        let entry: MemoryEntry
         if let workspaceContext = context.workspaceContext {
             entry = try memoryService.archiveEntry(
                 id: entryID,
@@ -313,13 +313,13 @@ public enum MLXMemoryTool {
         let content = arguments["content"]?.stringValue
             ?? arguments["text"]?.stringValue
             ?? arguments["note"]?.stringValue
-        return MLXMemoryEntry.normalizedContent(content ?? "").isEmpty ? nil : content
+        return MemoryEntry.normalizedContent(content ?? "").isEmpty ? nil : content
     }
 
     private static func contentWithTimestampIfNeeded(
         _ content: String,
-        scope: MLXMemoryScope,
-        context: MLXMemoryToolContext
+        scope: MemoryScope,
+        context: MemoryToolContext
     ) -> String {
         guard scope == .project,
               !contentContainsTimestamp(content) else {
@@ -327,7 +327,7 @@ public enum MLXMemoryTool {
         }
 
         return """
-        Timestamp: \(MLXMemoryService.timestampString(context.currentDate, timeZone: context.currentTimeZone))
+        Timestamp: \(MemoryService.timestampString(context.currentDate, timeZone: context.currentTimeZone))
         \(content)
         """
     }
@@ -342,7 +342,7 @@ public enum MLXMemoryTool {
             }
     }
 
-    private static func parsedScope(from arguments: [String: JSONValue]) -> MLXMemoryScope? {
+    private static func parsedScope(from arguments: [String: JSONValue]) -> MemoryScope? {
         guard let rawValue = arguments["scope"]?.stringValue?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased(),
@@ -357,10 +357,10 @@ public enum MLXMemoryTool {
         default:
             break
         }
-        return MLXMemoryScope(rawValue: rawValue)
+        return MemoryScope(rawValue: rawValue)
     }
 
-    private static func parsedWriteScope(from arguments: [String: JSONValue]) -> MLXMemoryScope? {
+    private static func parsedWriteScope(from arguments: [String: JSONValue]) -> MemoryScope? {
         guard let rawValue = arguments["scope"]?.stringValue?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() else {
@@ -374,7 +374,7 @@ public enum MLXMemoryTool {
         default:
             break
         }
-        return MLXMemoryScope(rawValue: rawValue)
+        return MemoryScope(rawValue: rawValue)
     }
 
     private static func parsedIncludeArchived(from arguments: [String: JSONValue]) -> Bool {
@@ -388,20 +388,20 @@ public enum MLXMemoryTool {
     }
 
     private static func defaultWriteScope(
-        context: MLXMemoryToolContext
-    ) -> MLXMemoryScope {
+        context: MemoryToolContext
+    ) -> MemoryScope {
         if context.workspaceContext != nil || context.workingDirectory != nil {
             return .project
         }
         return .global
     }
 
-    private static func renderEntries(_ entries: [MLXMemoryEntry]) -> String {
+    private static func renderEntries(_ entries: [MemoryEntry]) -> String {
         guard !entries.isEmpty else {
             return "No memory entries matched."
         }
 
-        return [MLXMemoryScope.global, .project]
+        return [MemoryScope.global, .project]
             .compactMap { scope -> String? in
                 let scopedEntries = entries.filter { $0.scope == scope }
                 guard !scopedEntries.isEmpty else {
@@ -424,7 +424,7 @@ public enum MLXMemoryTool {
             .joined(separator: "\n\n")
     }
 
-    private static func renderEntry(_ entry: MLXMemoryEntry) -> String {
+    private static func renderEntry(_ entry: MemoryEntry) -> String {
         var lines = [
             "[\(entry.scope.rawValue)] \(entry.content)",
             "ID: \(entry.id.uuidString)"
@@ -435,7 +435,7 @@ public enum MLXMemoryTool {
         return lines.joined(separator: "\n")
     }
 
-    private static func memoryJSONValue(_ entry: MLXMemoryEntry) -> JSONValue {
+    private static func memoryJSONValue(_ entry: MemoryEntry) -> JSONValue {
         .object([
             "id": .string(entry.id.uuidString),
             "scope": .string(entry.scope.rawValue),

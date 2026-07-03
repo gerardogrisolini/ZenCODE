@@ -155,17 +155,17 @@ public actor ACPPermissionBroker {
         if let optionID = result?.acpStringValue {
             return optionID
         }
-        guard let object = result?.mlxObjectValue else {
+        guard let object = result?.objectValue else {
             return nil
         }
         if let optionID = selectedOptionID(in: object) {
             return optionID
         }
-        if let outcome = object["outcome"]?.mlxObjectValue,
+        if let outcome = object["outcome"]?.objectValue,
            let optionID = selectedOptionID(in: outcome) {
             return optionID
         }
-        if let selected = object["selected"]?.mlxObjectValue,
+        if let selected = object["selected"]?.objectValue,
            let optionID = selectedOptionID(in: selected) {
             return optionID
         }

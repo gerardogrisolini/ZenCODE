@@ -209,15 +209,15 @@ extension ACPCompatibilityTests {
             ]
         ])
 
-        let object = notification.mlxObjectValue
+        let object = notification.objectValue
         #expect(object?["method"]?.acpStringValue == "session/update")
-        let params = object?["params"]?.mlxObjectValue
+        let params = object?["params"]?.objectValue
         #expect(params?["sessionId"]?.acpStringValue == "session-1")
-        let update = params?["update"]?.mlxObjectValue
+        let update = params?["update"]?.objectValue
         #expect(update?["sessionUpdate"]?.acpStringValue == "usage_update")
         #expect(update?["used"]?.intValue == 42)
         #expect(update?["size"]?.intValue == 4096)
-        let meta = update?["_meta"]?.mlxObjectValue
+        let meta = update?["_meta"]?.objectValue
         #expect(meta?["modelID"]?.acpStringValue == "local-model")
     }
 

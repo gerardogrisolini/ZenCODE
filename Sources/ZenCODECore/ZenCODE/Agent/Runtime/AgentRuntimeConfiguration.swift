@@ -369,7 +369,7 @@ public enum AgentStandaloneSystemPrompt {
         responseLanguageSection: String? = nil
     ) -> String {
         let workingDirectory = URL(fileURLWithPath: cwd)
-        let agentsNotice = MLXAgentsContextService(
+        let agentsNotice = AgentsContextService(
             fileManager: fileManager,
             globalAgentsDirectoryURL: globalAgentsDirectoryURL
         )
@@ -381,7 +381,7 @@ public enum AgentStandaloneSystemPrompt {
         return MLXSystemPromptBuilder.standalonePrompt(
             cwd: cwd,
             agentsSection: agentsSection,
-            memorySection: memoryToolEnabled ? MLXMemoryService.toolUsagePromptSection() : nil,
+            memorySection: memoryToolEnabled ? MemoryService.toolUsagePromptSection() : nil,
             memoryToolEnabled: memoryToolEnabled,
             selectedSkillSection: selectedSkillSection,
             responseLanguageSection: responseLanguageSection

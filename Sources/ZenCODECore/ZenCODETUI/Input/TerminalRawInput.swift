@@ -10,11 +10,9 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
-#if canImport(os)
-import os
-#endif
+import Synchronization
 
-public final class TerminalRawInput: @unchecked Sendable {
+public final class TerminalRawInput: Sendable {
     private struct InputFileDescriptor {
         let fileDescriptor: Int32
         let shouldClose: Bool
@@ -22,16 +20,19 @@ public final class TerminalRawInput: @unchecked Sendable {
         let canWrite: Bool
     }
 
-    private var fileDescriptor: Int32
-    private var shouldCloseFileDescriptor: Bool
-    private var controlFileDescriptor: Int32
-    private var shouldCloseControlFileDescriptor: Bool
-    private var inputFileDescriptorLabel: String
-    private var rawModeFailureDescription: String?
-    private let lock = OSAllocatedUnfairLock()
-    private var originalAttributes: termios?
-    private var didRequestEnhancedKeyboardProtocol = false
-    private var didRequestBracketedPaste = false
+    private struct State {
+        var rawModeFailureDescription: String?
+        var originalAttributes: termios?
+        var didRequestEnhancedKeyboardProtocol = false
+        var didRequestBracketedPaste = false
+    }
+
+    private let fileDescriptor: Int32
+    private let shouldCloseFileDescriptor: Bool
+    private let controlFileDescriptor: Int32
+    private let shouldCloseControlFileDescriptor: Bool
+    private let inputFileDescriptorLabel: String
+    private let state: Mutex<State>
     public init() {
         if let inputFileDescriptor = Self.openPreferredInputFileDescriptor() {
             let controlFileDescriptor = Self.openTerminalControlFileDescriptor(
@@ -43,13 +44,14 @@ public final class TerminalRawInput: @unchecked Sendable {
             self.controlFileDescriptor = controlFileDescriptor.fileDescriptor
             self.shouldCloseControlFileDescriptor = controlFileDescriptor.shouldClose
             self.inputFileDescriptorLabel = inputFileDescriptor.label
+            self.state = Mutex(State())
         } else {
             self.fileDescriptor = -1
             self.shouldCloseFileDescriptor = false
             self.controlFileDescriptor = -1
             self.shouldCloseControlFileDescriptor = false
             self.inputFileDescriptorLabel = "terminal"
-            self.rawModeFailureDescription = Self.noForegroundTerminalDescription
+            self.state = Mutex(State(rawModeFailureDescription: Self.noForegroundTerminalDescription))
         }
     }
 
@@ -196,22 +198,22 @@ public final class TerminalRawInput: @unchecked Sendable {
 
     @discardableResult
     public func beginRawMode() -> Bool {
-        lock.withLock {
-            if originalAttributes != nil {
+        state.withLock { state in
+            if state.originalAttributes != nil {
                 return true
             }
 
-            rawModeFailureDescription = nil
+            state.rawModeFailureDescription = nil
 
             guard fileDescriptor >= 0 else {
-                rawModeFailureDescription = Self.noForegroundTerminalDescription
+                state.rawModeFailureDescription = Self.noForegroundTerminalDescription
                 return false
             }
 
             _ = Self.ensureForegroundTerminal(fileDescriptor: fileDescriptor)
 
-            if activateRawModeLocked(fileDescriptor: fileDescriptor) {
-                rawModeFailureDescription = nil
+            if activateRawModeLocked(fileDescriptor: fileDescriptor, state: &state) {
+                state.rawModeFailureDescription = nil
                 return true
             }
 
@@ -219,10 +221,10 @@ public final class TerminalRawInput: @unchecked Sendable {
         }
     }
 
-    private func activateRawModeLocked(fileDescriptor: Int32) -> Bool {
+    private func activateRawModeLocked(fileDescriptor: Int32, state: inout State) -> Bool {
         var attributes = termios()
         guard tcgetattr(fileDescriptor, &attributes) == 0 else {
-            rawModeFailureDescription = "\(inputFileDescriptorLabel): tcgetattr failed: \(Self.errnoDescription())"
+            state.rawModeFailureDescription = "\(inputFileDescriptorLabel): tcgetattr failed: \(Self.errnoDescription())"
             return false
         }
 
@@ -231,13 +233,13 @@ public final class TerminalRawInput: @unchecked Sendable {
             tcsetattr(fileDescriptor, TCSANOW, &rawAttributes) == 0
         }
         guard didSetAttributes else {
-            rawModeFailureDescription = "\(inputFileDescriptorLabel): tcsetattr failed: \(Self.errnoDescription())"
+            state.rawModeFailureDescription = "\(inputFileDescriptorLabel): tcsetattr failed: \(Self.errnoDescription())"
             return false
         }
 
-        originalAttributes = attributes
-        requestEnhancedKeyboardProtocolLocked()
-        enableBracketedPasteLocked()
+        state.originalAttributes = attributes
+        requestEnhancedKeyboardProtocolLocked(state: &state)
+        enableBracketedPasteLocked(state: &state)
         return true
     }
 
@@ -252,49 +254,49 @@ public final class TerminalRawInput: @unchecked Sendable {
     }
 
     public func restoreRawMode() {
-        lock.withLock {
-            guard var attributes = originalAttributes else {
+        state.withLock { state in
+            guard var attributes = state.originalAttributes else {
                 return
             }
-            disableBracketedPasteLocked()
-            restoreEnhancedKeyboardProtocolLocked()
+            disableBracketedPasteLocked(state: &state)
+            restoreEnhancedKeyboardProtocolLocked(state: &state)
             _ = Self.withSIGTTOUIgnored {
                 tcsetattr(fileDescriptor, TCSANOW, &attributes)
             }
-            originalAttributes = nil
+            state.originalAttributes = nil
         }
     }
 
-    private func requestEnhancedKeyboardProtocolLocked() {
-        guard !didRequestEnhancedKeyboardProtocol else {
+    private func requestEnhancedKeyboardProtocolLocked(state: inout State) {
+        guard !state.didRequestEnhancedKeyboardProtocol else {
             return
         }
         writeToTerminal("\u{1B}[>1u\u{1B}[>4;2m")
-        didRequestEnhancedKeyboardProtocol = true
+        state.didRequestEnhancedKeyboardProtocol = true
     }
 
-    private func restoreEnhancedKeyboardProtocolLocked() {
-        guard didRequestEnhancedKeyboardProtocol else {
+    private func restoreEnhancedKeyboardProtocolLocked(state: inout State) {
+        guard state.didRequestEnhancedKeyboardProtocol else {
             return
         }
         writeToTerminal("\u{1B}[<u\u{1B}[>4;0m")
-        didRequestEnhancedKeyboardProtocol = false
+        state.didRequestEnhancedKeyboardProtocol = false
     }
 
-    private func enableBracketedPasteLocked() {
-        guard !didRequestBracketedPaste else {
+    private func enableBracketedPasteLocked(state: inout State) {
+        guard !state.didRequestBracketedPaste else {
             return
         }
         writeToTerminal("\u{1B}[?2004h")
-        didRequestBracketedPaste = true
+        state.didRequestBracketedPaste = true
     }
 
-    private func disableBracketedPasteLocked() {
-        guard didRequestBracketedPaste else {
+    private func disableBracketedPasteLocked(state: inout State) {
+        guard state.didRequestBracketedPaste else {
             return
         }
         writeToTerminal("\u{1B}[?2004l")
-        didRequestBracketedPaste = false
+        state.didRequestBracketedPaste = false
     }
 
     private static func rawTerminalAttributes(from attributes: termios) -> termios {
@@ -333,8 +335,8 @@ public final class TerminalRawInput: @unchecked Sendable {
     }
 
     public func lastRawModeFailureDescription() -> String? {
-        lock.withLock {
-            rawModeFailureDescription
+        state.withLock { state in
+            state.rawModeFailureDescription
         }
     }
 

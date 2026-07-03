@@ -1,5 +1,5 @@
 //
-//  MLXAgentsContextService.swift
+//  AgentsContextService.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct MLXAgentsContextDocument: Hashable, Sendable {
+public struct AgentsContextDocument: Hashable, Sendable {
     public enum Scope: String, Hashable, Sendable {
         case global
         case project
@@ -19,7 +19,7 @@ public struct MLXAgentsContextDocument: Hashable, Sendable {
     public let digest: String
 }
 
-public final class MLXAgentsContextService {
+public final class AgentsContextService {
     public static let filename = "AGENTS.md"
 
     public static var defaultGlobalAgentsContent: String {
@@ -113,8 +113,8 @@ public final class MLXAgentsContextService {
 
     public func agentsDocuments(
         workspaceRootURL: URL?
-    ) -> [MLXAgentsContextDocument] {
-        var documents: [MLXAgentsContextDocument] = []
+    ) -> [AgentsContextDocument] {
+        var documents: [AgentsContextDocument] = []
 
         if let globalDocument = globalDocumentCreatingIfNeeded() {
             documents.append(globalDocument)
@@ -167,7 +167,7 @@ public final class MLXAgentsContextService {
             .standardizedFileURL
     }
 
-    private func globalDocumentCreatingIfNeeded() -> MLXAgentsContextDocument? {
+    private func globalDocumentCreatingIfNeeded() -> AgentsContextDocument? {
         guard let fileURL = ensureGlobalAgentsFileExists() else {
             return nil
         }
@@ -176,8 +176,8 @@ public final class MLXAgentsContextService {
 
     private func document(
         at fileURL: URL,
-        scope: MLXAgentsContextDocument.Scope
-    ) -> MLXAgentsContextDocument? {
+        scope: AgentsContextDocument.Scope
+    ) -> AgentsContextDocument? {
         let standardizedFileURL = fileURL.standardizedFileURL
         guard fileManager.fileExists(atPath: standardizedFileURL.path),
               let content = try? String(contentsOf: standardizedFileURL, encoding: .utf8) else {
@@ -189,7 +189,7 @@ public final class MLXAgentsContextService {
             return nil
         }
 
-        return MLXAgentsContextDocument(
+        return AgentsContextDocument(
             scope: scope,
             fileURL: standardizedFileURL,
             content: normalizedContent,
@@ -197,7 +197,7 @@ public final class MLXAgentsContextService {
         )
     }
 
-    private func renderDocument(_ document: MLXAgentsContextDocument) -> String? {
+    private func renderDocument(_ document: AgentsContextDocument) -> String? {
         let title: String
         switch document.scope {
         case .global:
@@ -327,7 +327,7 @@ public final class MLXAgentsContextService {
             return globalAgentsDirectoryURL.standardizedFileURL
         }
 
-        return MLXAppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
+        return AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
     }
 
     private static func digest(_ value: String) -> String {

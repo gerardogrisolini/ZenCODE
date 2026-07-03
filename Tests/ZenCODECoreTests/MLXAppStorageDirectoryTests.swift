@@ -13,10 +13,10 @@ import Testing
 struct MLXAppStorageDirectoryTests {
     @Test
     func coderSupportFilesDefaultToHomeMlxCoderDirectory() {
-        MLXAppStorageDirectory.configureSupportDirectoryURL(nil)
+        AppStorageDirectory.configureSupportDirectoryURL(nil)
         AgentSettingsManifestStore.resetDefaultCacheForTesting()
         defer {
-            MLXAppStorageDirectory.configureSupportDirectoryURL(nil)
+            AppStorageDirectory.configureSupportDirectoryURL(nil)
             AgentSettingsManifestStore.resetDefaultCacheForTesting()
         }
 
@@ -24,10 +24,10 @@ struct MLXAppStorageDirectoryTests {
             .appendingPathComponent(".zencode", isDirectory: true)
             .standardizedFileURL
 
-        #expect(MLXAppStorageDirectory.defaultSupportDirectoryURL() == supportDirectory)
+        #expect(AppStorageDirectory.defaultSupportDirectoryURL() == supportDirectory)
         #expect(ZenCODESupportFileService.supportDirectoryURL() == supportDirectory)
-        #expect(MLXAgentsContextService().globalAgentsFileURL() == supportDirectory.appendingPathComponent("AGENTS.md"))
-        #expect(MLXMemoryService().globalMemoryFileURL() == supportDirectory.appendingPathComponent("MEMORY.md"))
+        #expect(AgentsContextService().globalAgentsFileURL() == supportDirectory.appendingPathComponent("AGENTS.md"))
+        #expect(MemoryService().globalMemoryFileURL() == supportDirectory.appendingPathComponent("MEMORY.md"))
         #expect(AgentSettingsManifestStore.settingsURL() == supportDirectory.appendingPathComponent("settings.json"))
         #expect(AgentProfileStore.agentsManifestURL() == supportDirectory.appendingPathComponent("agents.json"))
         #expect(MLXPromptSkillCatalog.appCatalogSearchRoots() == [

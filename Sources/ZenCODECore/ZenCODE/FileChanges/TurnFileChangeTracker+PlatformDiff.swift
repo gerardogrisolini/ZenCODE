@@ -121,12 +121,148 @@ extension TurnFileChangeTracker {
     }
 
     private func runGitDiff(arguments: [String]) async throws -> AsyncProcessResult {
+        try await runGit(arguments: arguments)
+    }
+
+    func runGit(arguments: [String]) async throws -> AsyncProcessResult {
         try await AsyncProcessRunner.run(
             executableURL: GitExecutableResolver.executableURL(),
             arguments: arguments,
             environment: DeveloperToolEnvironment.processEnvironment(),
             timeout: 5
         )
+    }
+
+    // MARK: - Worktree reconciliation
+
+    /// Reads and stores the current content of every file that is already dirty
+    /// (relative to `HEAD`/index) when the turn begins.
+    func captureInitialWorktreeBaseline() async {
+        guard let repositoryRoot = await repositoryRootPath() else {
+            return
+        }
+
+        for relativePath in await gitStatusDirtyRelativePaths(repositoryRoot: repositoryRoot) {
+            let absolutePath = URL(fileURLWithPath: repositoryRoot)
+                .appendingPathComponent(relativePath)
+                .standardizedFileURL
+                .path
+            guard !initialWorktreeDirtyContents.keys.contains(absolutePath) else {
+                continue
+            }
+
+            var isDirectory: ObjCBool = false
+            let exists = fileManager.fileExists(atPath: absolutePath, isDirectory: &isDirectory)
+            if exists && isDirectory.boolValue {
+                continue
+            }
+            let content = exists
+                ? try? Data(contentsOf: URL(fileURLWithPath: absolutePath))
+                : nil
+            initialWorktreeDirtyContents[absolutePath] = .some(content)
+        }
+    }
+
+    /// Adds snapshots for files changed during the turn that were not captured
+    /// through per-tool baselines (e.g. changes made by `local.exec`,
+    /// sub-agents, or MCP tools). Only runs when the initial worktree baseline
+    /// was captured, so changes that predate the turn are never reported.
+    func reconcileWorktreeChangesIfNeeded() async {
+        guard didCaptureInitialWorktree,
+              let repositoryRoot = await repositoryRootPath() else {
+            return
+        }
+
+        let basePath = baseDirectoryURL.path
+        for relativePath in await gitStatusDirtyRelativePaths(repositoryRoot: repositoryRoot) {
+            let absolutePath = URL(fileURLWithPath: repositoryRoot)
+                .appendingPathComponent(relativePath)
+                .standardizedFileURL
+                .path
+            guard absolutePath == basePath || absolutePath.hasPrefix(basePath + "/") else {
+                continue
+            }
+            guard snapshotsByPath[absolutePath] == nil else {
+                continue
+            }
+
+            var isDirectory: ObjCBool = false
+            let exists = fileManager.fileExists(atPath: absolutePath, isDirectory: &isDirectory)
+            if exists && isDirectory.boolValue {
+                continue
+            }
+
+            let beforeData: Data?
+            if let storedContent = initialWorktreeDirtyContents[absolutePath] {
+                // File was already dirty at turn start: baseline is its content then.
+                beforeData = storedContent
+            } else {
+                // File was clean at turn start: baseline is the committed HEAD content.
+                beforeData = await gitHeadContent(
+                    repositoryRoot: repositoryRoot,
+                    relativePath: relativePath
+                )
+            }
+
+            snapshotsByPath[absolutePath] = Snapshot(
+                absolutePath: absolutePath,
+                displayPath: displayPath(for: absolutePath),
+                beforeData: beforeData,
+                existedInitially: beforeData != nil
+            )
+        }
+    }
+
+    func repositoryRootPath() async -> String? {
+        guard let result = try? await runGit(
+            arguments: ["-C", baseDirectoryURL.path, "rev-parse", "--show-toplevel"]
+        ),
+            !result.timedOut,
+            result.exitCode == 0 else {
+            return nil
+        }
+        let path = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        return path.isEmpty ? nil : URL(fileURLWithPath: path).standardizedFileURL.path
+    }
+
+    func gitStatusDirtyRelativePaths(repositoryRoot: String) async -> [String] {
+        guard let result = try? await runGit(
+            arguments: [
+                "-C", repositoryRoot,
+                "status", "--porcelain", "-z",
+                "--no-renames", "--untracked-files=all"
+            ]
+        ),
+            !result.timedOut,
+            result.exitCode == 0 else {
+            return []
+        }
+
+        var relativePaths: [String] = []
+        for token in result.stdoutData.split(separator: 0, omittingEmptySubsequences: true) {
+            // Porcelain v1 records are "XY <path>": two status columns, one
+            // separator space, then the repository-root-relative path.
+            guard token.count > 3 else {
+                continue
+            }
+            let pathBytes = token.dropFirst(3)
+            let relativePath = String(decoding: pathBytes, as: UTF8.self)
+            if !relativePath.isEmpty {
+                relativePaths.append(relativePath)
+            }
+        }
+        return relativePaths
+    }
+
+    func gitHeadContent(repositoryRoot: String, relativePath: String) async -> Data? {
+        guard let result = try? await runGit(
+            arguments: ["-C", repositoryRoot, "show", "HEAD:\(relativePath)"]
+        ),
+            !result.timedOut,
+            result.exitCode == 0 else {
+            return nil
+        }
+        return result.stdoutData
     }
 }
 #endif

@@ -13,12 +13,10 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
-#if canImport(os)
-import os
-#endif
+import Synchronization
 
 public final class StdioLineReader: Sendable {
-    private let buffer = OSAllocatedUnfairLock<[UInt8]>(initialState: [])
+    private let buffer = Mutex<[UInt8]>([])
 
     public init() {}
 

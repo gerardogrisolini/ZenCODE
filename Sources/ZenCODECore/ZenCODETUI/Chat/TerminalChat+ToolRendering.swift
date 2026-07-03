@@ -211,7 +211,13 @@ extension TerminalChat {
     ) -> String {
         let columns = max(20, terminalColumnCount() - contentInsetWidth)
         let suffixWidth = displayWidth(statusIcon)
-        let textWidthLimit = max(1, columns - suffixWidth - 1)
+        // Reserve one extra trailing column so the rendered line (inset + target
+        // + " " + status icon) never occupies the full terminal width. A line
+        // that is exactly terminal-width triggers ambiguous auto-wrap behavior:
+        // terminals without deferred wrap advance the cursor an extra row, so
+        // the in-place rewrite on completion moves up one row too few and leaves
+        // the previous title line behind, duplicating the tool header.
+        let textWidthLimit = max(1, columns - suffixWidth - 2)
         let fittedTarget = fitDisplayWidth(
             compactToolInlineTarget(target),
             width: textWidthLimit

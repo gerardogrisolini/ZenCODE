@@ -258,7 +258,7 @@ extension TerminalChat {
     public func installSkill(fromGitHubURL url: URL) async {
         writeSystemMessage("Installing skill from \(url.absoluteString)...\n")
         do {
-            let result = try await MLXPromptSkillInstaller.install(fromGitHubURL: url)
+            let result = try await PromptSkillInstaller.install(fromGitHubURL: url)
             await finishInstalledSkill(result)
         } catch {
             writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
@@ -269,7 +269,7 @@ extension TerminalChat {
     public func installSkill(fromLocalURL url: URL) async {
         writeSystemMessage("Installing skill from \(url.path)...\n")
         do {
-            let result = try MLXPromptSkillInstaller.install(fromLocalURL: url)
+            let result = try PromptSkillInstaller.install(fromLocalURL: url)
             await finishInstalledSkill(result)
         } catch {
             writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
@@ -277,7 +277,7 @@ extension TerminalChat {
         }
     }
 
-    private func finishInstalledSkill(_ result: MLXPromptSkillInstallResult) async {
+    private func finishInstalledSkill(_ result: PromptSkillInstallResult) async {
         availableSkillsCache = nil
         selectedSkillIDs.insert(result.skill.id)
         activeSessionSystemPromptOverride = nil
@@ -336,19 +336,19 @@ extension TerminalChat {
         }
     }
 
-    public func availableSkills() -> [MLXPromptSkill] {
+    public func availableSkills() -> [PromptSkill] {
         if let availableSkillsCache {
             return availableSkillsCache
         }
 
-        let skills = MLXPromptSkillCatalog.discoverSkills(
-            searchRoots: MLXPromptSkillCatalog.appCatalogSearchRoots()
+        let skills = PromptSkillCatalog.discoverSkills(
+            searchRoots: PromptSkillCatalog.appCatalogSearchRoots()
         )
         availableSkillsCache = skills
         return skills
     }
 
-    public func selectedPromptSkills() -> [MLXPromptSkill] {
+    public func selectedPromptSkills() -> [PromptSkill] {
         let skills = availableSkills()
         guard !selectedSkillIDs.isEmpty else {
             return []
@@ -439,7 +439,7 @@ extension TerminalChat {
 
     public static func parseSkillSelection(
         _ rawSelection: String,
-        availableSkills: [MLXPromptSkill]
+        availableSkills: [PromptSkill]
     ) throws -> Set<String> {
         let tokens = rawSelection
             .replacingOccurrences(of: ",", with: " ")
@@ -477,8 +477,8 @@ extension TerminalChat {
 
     public static func skill(
         matching rawToken: String,
-        in availableSkills: [MLXPromptSkill]
-    ) -> MLXPromptSkill? {
+        in availableSkills: [PromptSkill]
+    ) -> PromptSkill? {
         let token = selectionKey(rawToken)
         guard !token.isEmpty else {
             return nil

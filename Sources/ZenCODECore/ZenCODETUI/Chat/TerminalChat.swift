@@ -70,7 +70,7 @@ public final class TerminalChat: @unchecked Sendable {
     public var pendingAttachments: [AgentRuntimeAttachment] = []
     public var lastFileChangeSummary: TurnFileChangeSummary?
     public var lastRenderedSubAgentOverviewSignature: String?
-    public var availableSkillsCache: [MLXPromptSkill]?
+    public var availableSkillsCache: [PromptSkill]?
     public var toolOutputDetailLevel: ToolOutputDetailLevel = .compact
     public var activeCompactToolCallID: String?
     public var activeCompactToolRenderedRowCount = 0

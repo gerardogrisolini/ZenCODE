@@ -6,10 +6,10 @@
 //
 
 import Testing
+import Synchronization
 @testable import MLXServerCore
 import Foundation
 import MLXLMCommon
-import os
 
 func testChatSessionCacheKey(
     sessionKey: String,
@@ -30,7 +30,7 @@ func testFingerprint(_ text: String) -> MLXServerChatTranscriptFingerprint {
 }
 
 final class DiskKVCacheIndexRebuildProbe: Sendable {
-    private let rebuildCountStorage = OSAllocatedUnfairLock(initialState: 0)
+    private let rebuildCountStorage = Mutex(0)
 
     var rebuildCount: Int {
         rebuildCountStorage.withLock { count in

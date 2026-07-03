@@ -77,7 +77,7 @@ extension TerminalChat {
         name: String,
         workingDirectory: URL
     ) -> String {
-        let stem = MLXTerminalSessionStore.filenameStem(for: name)
+        let stem = TerminalSessionStore.filenameStem(for: name)
         return "\(AgentKVCachePersistencePolicy.terminalDiskCacheKey(workingDirectoryPath: workingDirectory.path)):session:\(stem)"
     }
 

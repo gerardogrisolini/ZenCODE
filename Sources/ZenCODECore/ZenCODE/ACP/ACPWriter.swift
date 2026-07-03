@@ -41,13 +41,13 @@ public actor ACPWriter {
     }
 
     public func handleResponse(_ message: JSONValue) {
-        guard let object = message.mlxObjectValue,
+        guard let object = message.objectValue,
               let rawID = object["id"],
               let continuation = pendingRequests.removeValue(forKey: requestKey(for: rawID)) else {
             return
         }
 
-        if let errorObject = object["error"]?.mlxObjectValue {
+        if let errorObject = object["error"]?.objectValue {
             let message = errorObject["message"]?.acpStringValue ?? "ACP host request failed."
             continuation.resume(throwing: ACPError.internalError(message))
             return

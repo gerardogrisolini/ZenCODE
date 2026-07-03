@@ -37,8 +37,8 @@ public struct ZenCODESupportFileResult: Sendable {
 
 public enum ZenCODESupportFileService {
     public static let requiredFilenames: [String] = [
-        MLXAgentsContextService.filename,
-        MLXMemoryService.filename,
+        AgentsContextService.filename,
+        MemoryService.filename,
         AgentProfileStore.manifestFilename,
         AgentSettingsManifestStore.settingsFilename
     ]
@@ -56,25 +56,25 @@ public enum ZenCODESupportFileService {
         var createdFilenames: [String] = []
         var preservedFilenames: [String] = []
 
-        let agentsService = MLXAgentsContextService(fileManager: fileManager)
+        let agentsService = AgentsContextService(fileManager: fileManager)
         let agentsFileURL = agentsService.globalAgentsFileURL()
         let hadAgentsFile = fileManager.fileExists(atPath: agentsFileURL.path)
         guard let ensuredAgentsFileURL = agentsService.ensureGlobalAgentsFileExists() else {
             throw ZenCODESupportFileServiceError.unableToCreate(agentsFileURL)
         }
         record(
-            filename: MLXAgentsContextService.filename,
+            filename: AgentsContextService.filename,
             existedBefore: hadAgentsFile,
             createdFilenames: &createdFilenames,
             preservedFilenames: &preservedFilenames
         )
 
-        let memoryService = MLXMemoryService(fileManager: fileManager)
+        let memoryService = MemoryService(fileManager: fileManager)
         let memoryFileURL = memoryService.globalMemoryFileURL()
         let hadMemoryFile = fileManager.fileExists(atPath: memoryFileURL.path)
         let ensuredMemoryFileURL = try memoryService.ensureGlobalMemoryFileExists()
         record(
-            filename: MLXMemoryService.filename,
+            filename: MemoryService.filename,
             existedBefore: hadMemoryFile,
             createdFilenames: &createdFilenames,
             preservedFilenames: &preservedFilenames
@@ -161,7 +161,7 @@ public enum ZenCODESupportFileService {
     public static func supportDirectoryURL(
         fileManager: FileManager = .default
     ) -> URL {
-        MLXAppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
+        AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
             .standardizedFileURL
     }
 

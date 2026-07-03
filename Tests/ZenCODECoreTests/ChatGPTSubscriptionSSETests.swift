@@ -120,6 +120,62 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func subscriptionToolCallsCoalesceSplitItemAndCallIdentifiers() throws {
+        // Reproduces a backend variant where the streamed `output_item.added`
+        // event only carries the `call_id` (empty arguments) while the argument
+        // delta/done events key off the response `item_id` without an
+        // `output_index`, resolving to a different accumulator slot. This used
+        // to yield two tool calls (an empty first one) sharing the same
+        // `call_id`, duplicating the tool in the UI and making the provider
+        // reject the replayed request.
+        let objects: [[String: Any]] = [
+            [
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": [
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "tool_local_exec",
+                    "arguments": ""
+                ]
+            ],
+            [
+                "type": "response.function_call_arguments.delta",
+                "item_id": "fc_1",
+                "delta": "{\"command\":\"ls\"}"
+            ],
+            [
+                "type": "response.function_call_arguments.done",
+                "item_id": "fc_1",
+                "arguments": "{\"command\":\"ls\"}"
+            ],
+            [
+                "type": "response.completed",
+                "response": [
+                    "id": "resp_1",
+                    "output": [
+                        [
+                            "type": "function_call",
+                            "id": "fc_1",
+                            "call_id": "call_1",
+                            "name": "tool_local_exec",
+                            "arguments": "{\"command\":\"ls\"}"
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+        let toolCalls = try subscriptionToolCalls(from: objects)
+
+        #expect(toolCalls.count == 1)
+        #expect(toolCalls.first?.id == "call_1")
+        #expect(toolCalls.first?.name == "tool_local_exec")
+        #expect(toolCalls.first?.argumentsObject["command"] as? String == "ls")
+        #expect(Set(toolCalls.map(\.id)).count == toolCalls.count)
+    }
+
+    @Test
     func chatGPTSubscriptionContextEstimateIncludesInstructionsAndTools() throws {
         let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
             from: chatGPTContinuationMessages(),

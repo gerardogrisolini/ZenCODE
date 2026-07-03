@@ -6,9 +6,7 @@
 //
 
 import Foundation
-#if canImport(os)
-import os
-#endif
+import Synchronization
 #if canImport(AVFoundation)
 import AVFoundation
 #endif
@@ -18,12 +16,15 @@ public struct TerminalVoiceRecordingSession: Equatable, Sendable {
     public let startedAt: Date
 }
 
-public final class TerminalVoiceRecordingService: @unchecked Sendable {
-    private let lock = OSAllocatedUnfairLock()
-    #if canImport(AVFoundation)
-    private var recorder: AVAudioRecorder?
-    #endif
-    private var activeSession: TerminalVoiceRecordingSession?
+public final class TerminalVoiceRecordingService: Sendable {
+    private struct State {
+        #if canImport(AVFoundation)
+        var recorder: AVAudioRecorder?
+        #endif
+        var activeSession: TerminalVoiceRecordingSession?
+    }
+
+    private let state = Mutex(State())
 
     public init() {}
 
@@ -58,11 +59,11 @@ public final class TerminalVoiceRecordingService: @unchecked Sendable {
 
     public func stopRecording() throws -> AgentVoiceAudioInput {
         #if canImport(AVFoundation)
-        let (recorder, session) = lock.withLock {
-            let state = (recorder: self.recorder, session: activeSession)
-            self.recorder = nil
-            activeSession = nil
-            return state
+        let (recorder, session) = state.withLock { state in
+            let result = (recorder: state.recorder, session: state.activeSession)
+            state.recorder = nil
+            state.activeSession = nil
+            return result
         }
 
         guard let recorder, let session else {
@@ -91,11 +92,11 @@ public final class TerminalVoiceRecordingService: @unchecked Sendable {
 
     public func cancelRecording() {
         #if canImport(AVFoundation)
-        let (recorder, fileURL) = lock.withLock {
-            let state = (recorder: self.recorder, fileURL: activeSession?.fileURL)
-            self.recorder = nil
-            activeSession = nil
-            return state
+        let (recorder, fileURL) = state.withLock { state in
+            let result = (recorder: state.recorder, fileURL: state.activeSession?.fileURL)
+            state.recorder = nil
+            state.activeSession = nil
+            return result
         }
 
         recorder?.stop()
@@ -110,9 +111,9 @@ public final class TerminalVoiceRecordingService: @unchecked Sendable {
         _ recorder: AVAudioRecorder,
         session: TerminalVoiceRecordingSession
     ) {
-        lock.withLock {
-            self.recorder = recorder
-            activeSession = session
+        state.withLock { state in
+            state.recorder = recorder
+            state.activeSession = session
         }
     }
 

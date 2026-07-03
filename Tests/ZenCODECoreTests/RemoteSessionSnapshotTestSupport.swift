@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import os
+import Synchronization
 @testable import ZenCODECore
 import Testing
 
@@ -250,7 +250,7 @@ extension RemoteSessionSnapshotTests {
 }
 
 final class CapturedDirectAgentEvents: Sendable {
-    private let events = OSAllocatedUnfairLock<[DirectAgentEvent]>(initialState: [])
+    private let events = Mutex<[DirectAgentEvent]>([])
 
     func append(_ event: DirectAgentEvent) {
         events.withLock { events in
@@ -305,7 +305,7 @@ struct CapturedRemoteRequest: Sendable {
 
     func jsonObject() throws -> [String: Any] {
         let value = try JSONDecoder().decode(JSONValue.self, from: body)
-        return try #require(value.mlxObjectValue).mapValues(\.jsonObject)
+        return try #require(value.objectValue).mapValues(\.jsonObject)
     }
 }
 

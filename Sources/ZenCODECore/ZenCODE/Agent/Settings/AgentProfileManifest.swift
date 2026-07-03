@@ -150,7 +150,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         return allowedToolNames
     }
 
-    public func selectedSkillIDs(availableSkills: [MLXPromptSkill]) -> Set<String> {
+    public func selectedSkillIDs(availableSkills: [PromptSkill]) -> Set<String> {
         return Set(
             skills.compactMap { skill in
                 skill.matchingSkillID(in: availableSkills)
@@ -198,7 +198,7 @@ public struct AgentProfileSkill: Codable, Hashable, Sendable {
         case symbolName
     }
 
-    public func matchingSkillID(in availableSkills: [MLXPromptSkill]) -> String? {
+    public func matchingSkillID(in availableSkills: [PromptSkill]) -> String? {
         let idKey = id.selectionKey.nilIfBlank
         let canonicalNameKey = canonicalName?.selectionKey.nilIfBlank
         let titleKey = title?.selectionKey.nilIfBlank

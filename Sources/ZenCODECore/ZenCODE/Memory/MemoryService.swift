@@ -7,7 +7,7 @@
 
 import Foundation
 
-public final class MLXMemoryService {
+public final class MemoryService {
     public static let filename = "MEMORY.md"
     public static let entriesDidChangeNotification = Notification.Name("MLXMemoryEntriesDidChange")
     public static let defaultGlobalMemoryContent: String = """
@@ -97,11 +97,11 @@ public final class MLXMemoryService {
     }
 
     public func readEntries(
-        scope: MLXMemoryScope?,
+        scope: MemoryScope?,
         for workspaceContext: XcodeWorkspaceContext?,
         includeArchived: Bool = false,
         limit: Int
-    ) -> [MLXMemoryEntry] {
+    ) -> [MemoryEntry] {
         readEntries(
             scope: scope,
             workspaceRootURL: workspaceRootURL(for: workspaceContext),
@@ -111,11 +111,11 @@ public final class MLXMemoryService {
     }
 
     public func readEntries(
-        scope: MLXMemoryScope?,
+        scope: MemoryScope?,
         workingDirectory: URL?,
         includeArchived: Bool = false,
         limit: Int
-    ) -> [MLXMemoryEntry] {
+    ) -> [MemoryEntry] {
         readEntries(
             scope: scope,
             workspaceRootURL: workingDirectory?.standardizedFileURL,
@@ -125,11 +125,11 @@ public final class MLXMemoryService {
     }
 
     public func readEntries(
-        scope: MLXMemoryScope?,
+        scope: MemoryScope?,
         workspaceRootURL: URL?,
         includeArchived: Bool = false,
         limit: Int
-    ) -> [MLXMemoryEntry] {
+    ) -> [MemoryEntry] {
         memoryDocuments(workspaceRootURL: workspaceRootURL)
             .filter { document in
                 scope == nil || document.scope == scope
@@ -142,11 +142,11 @@ public final class MLXMemoryService {
 
     public func searchEntries(
         query: String,
-        scope: MLXMemoryScope?,
+        scope: MemoryScope?,
         for workspaceContext: XcodeWorkspaceContext?,
         includeArchived: Bool = false,
         limit: Int
-    ) -> [MLXMemoryEntry] {
+    ) -> [MemoryEntry] {
         searchEntries(
             query: query,
             scope: scope,
@@ -158,11 +158,11 @@ public final class MLXMemoryService {
 
     public func searchEntries(
         query: String,
-        scope: MLXMemoryScope?,
+        scope: MemoryScope?,
         workingDirectory: URL?,
         includeArchived: Bool = false,
         limit: Int
-    ) -> [MLXMemoryEntry] {
+    ) -> [MemoryEntry] {
         searchEntries(
             query: query,
             scope: scope,
@@ -174,11 +174,11 @@ public final class MLXMemoryService {
 
     public func searchEntries(
         query: String,
-        scope: MLXMemoryScope?,
+        scope: MemoryScope?,
         workspaceRootURL: URL?,
         includeArchived: Bool = false,
         limit: Int
-    ) -> [MLXMemoryEntry] {
+    ) -> [MemoryEntry] {
         let terms = query
             .lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
@@ -215,9 +215,9 @@ public final class MLXMemoryService {
     @discardableResult
     public func writeEntry(
         content: String,
-        scope: MLXMemoryScope,
+        scope: MemoryScope,
         workspaceContext: XcodeWorkspaceContext?
-    ) throws -> MLXMemoryEntry {
+    ) throws -> MemoryEntry {
         try writeEntry(
             content: content,
             scope: scope,
@@ -228,9 +228,9 @@ public final class MLXMemoryService {
     @discardableResult
     public func writeEntry(
         content: String,
-        scope: MLXMemoryScope,
+        scope: MemoryScope,
         workingDirectory: URL?
-    ) throws -> MLXMemoryEntry {
+    ) throws -> MemoryEntry {
         try writeEntry(
             content: content,
             scope: scope,
@@ -241,12 +241,12 @@ public final class MLXMemoryService {
     @discardableResult
     public func writeEntry(
         content: String,
-        scope: MLXMemoryScope,
+        scope: MemoryScope,
         workspaceRootURL: URL?
-    ) throws -> MLXMemoryEntry {
-        let normalizedContent = MLXMemoryEntry.normalizedContent(content)
+    ) throws -> MemoryEntry {
+        let normalizedContent = MemoryEntry.normalizedContent(content)
         guard !normalizedContent.isEmpty else {
-            throw MLXMemoryServiceError.missingField("content")
+            throw MemoryServiceError.missingField("content")
         }
 
         return try writeLock.withLock {
@@ -258,7 +258,7 @@ public final class MLXMemoryService {
                 return existingEntry
             }
 
-            let entry = MLXMemoryEntry(
+            let entry = MemoryEntry(
                 content: normalizedContent,
                 scope: scope
             )
@@ -273,19 +273,19 @@ public final class MLXMemoryService {
     public func replaceEntry(
         id: UUID,
         content: String,
-        scope: MLXMemoryScope,
+        scope: MemoryScope,
         workspaceRootURL: URL?
-    ) throws -> MLXMemoryEntry {
-        let normalizedContent = MLXMemoryEntry.normalizedContent(content)
+    ) throws -> MemoryEntry {
+        let normalizedContent = MemoryEntry.normalizedContent(content)
         guard !normalizedContent.isEmpty else {
-            throw MLXMemoryServiceError.missingField("content")
+            throw MemoryServiceError.missingField("content")
         }
 
         return try writeLock.withLock {
             let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
             var entries = readEntries(from: document)
             guard let index = entries.firstIndex(where: { $0.id == id }) else {
-                throw MLXMemoryServiceError.entryNotFound(id.uuidString)
+                throw MemoryServiceError.entryNotFound(id.uuidString)
             }
 
             entries[index].content = normalizedContent
@@ -298,9 +298,9 @@ public final class MLXMemoryService {
     @discardableResult
     public func archiveEntry(
         id rawIdentifier: String,
-        scope: MLXMemoryScope?,
+        scope: MemoryScope?,
         for workspaceContext: XcodeWorkspaceContext?
-    ) throws -> MLXMemoryEntry {
+    ) throws -> MemoryEntry {
         try archiveEntry(
             id: rawIdentifier,
             scope: scope,
@@ -311,9 +311,9 @@ public final class MLXMemoryService {
     @discardableResult
     public func archiveEntry(
         id rawIdentifier: String,
-        scope: MLXMemoryScope?,
+        scope: MemoryScope?,
         workingDirectory: URL?
-    ) throws -> MLXMemoryEntry {
+    ) throws -> MemoryEntry {
         try archiveEntry(
             id: rawIdentifier,
             scope: scope,
@@ -324,11 +324,11 @@ public final class MLXMemoryService {
     @discardableResult
     public func archiveEntry(
         id rawIdentifier: String,
-        scope: MLXMemoryScope?,
+        scope: MemoryScope?,
         workspaceRootURL: URL?
-    ) throws -> MLXMemoryEntry {
+    ) throws -> MemoryEntry {
         guard let id = UUID(uuidString: rawIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-            throw MLXMemoryServiceError.invalidIdentifier(rawIdentifier)
+            throw MemoryServiceError.invalidIdentifier(rawIdentifier)
         }
 
         return try writeLock.withLock {
@@ -346,7 +346,7 @@ public final class MLXMemoryService {
                 return entries[index]
             }
 
-            throw MLXMemoryServiceError.entryNotFound(rawIdentifier)
+            throw MemoryServiceError.entryNotFound(rawIdentifier)
         }
     }
 
@@ -354,14 +354,14 @@ public final class MLXMemoryService {
     public func setArchived(
         _ isArchived: Bool,
         id: UUID,
-        scope: MLXMemoryScope,
+        scope: MemoryScope,
         workspaceRootURL: URL?
-    ) throws -> MLXMemoryEntry {
+    ) throws -> MemoryEntry {
         return try writeLock.withLock {
             let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
             var entries = readEntries(from: document)
             guard let index = entries.firstIndex(where: { $0.id == id }) else {
-                throw MLXMemoryServiceError.entryNotFound(id.uuidString)
+                throw MemoryServiceError.entryNotFound(id.uuidString)
             }
             entries[index].isArchived = isArchived
             try writeEntries(entries, to: document)
@@ -372,14 +372,14 @@ public final class MLXMemoryService {
 
     public func deleteEntry(
         id: UUID,
-        scope: MLXMemoryScope,
+        scope: MemoryScope,
         workspaceRootURL: URL?
     ) throws {
         try writeLock.withLock {
             let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
             var entries = readEntries(from: document)
             guard let index = entries.firstIndex(where: { $0.id == id }) else {
-                throw MLXMemoryServiceError.entryNotFound(id.uuidString)
+                throw MemoryServiceError.entryNotFound(id.uuidString)
             }
             entries.remove(at: index)
             try writeEntries(entries, to: document)
@@ -398,7 +398,7 @@ public final class MLXMemoryService {
         sessionID: String,
         savedAt: Date,
         timeZone: TimeZone = .current
-    ) throws -> MLXMemoryEntry {
+    ) throws -> MemoryEntry {
         let normalizedProjectPath = URL(fileURLWithPath: projectPath)
             .standardizedFileURL
             .path
@@ -407,13 +407,13 @@ public final class MLXMemoryService {
         let normalizedSessionID = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !normalizedProjectPath.isEmpty else {
-            throw MLXMemoryServiceError.missingField("projectPath")
+            throw MemoryServiceError.missingField("projectPath")
         }
         guard !normalizedSessionName.isEmpty else {
-            throw MLXMemoryServiceError.missingField("sessionName")
+            throw MemoryServiceError.missingField("sessionName")
         }
         guard !normalizedSessionID.isEmpty else {
-            throw MLXMemoryServiceError.missingField("sessionID")
+            throw MemoryServiceError.missingField("sessionID")
         }
 
         try archiveActiveSavedSessionIndexEntries(forProjectPath: normalizedProjectPath)

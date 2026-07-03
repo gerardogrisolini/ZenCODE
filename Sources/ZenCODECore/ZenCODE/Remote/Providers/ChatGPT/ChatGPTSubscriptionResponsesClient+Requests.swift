@@ -120,7 +120,7 @@ extension ChatGPTSubscriptionResponsesClient {
     static func resetSeconds(fromOutput output: String) -> Double? {
         guard let data = output.data(using: .utf8),
               let value = try? JSONDecoder().decode(JSONValue.self, from: data),
-              let object = value.mlxObjectValue else {
+              let object = value.objectValue else {
             return nil
         }
         let jsonObject = object.mapValues(\.jsonObject)

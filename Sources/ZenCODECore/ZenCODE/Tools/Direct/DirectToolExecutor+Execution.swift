@@ -86,14 +86,14 @@ extension DirectToolExecutor {
                 toolCall: toolCall
             )
         }
-        if MLXMemoryTool.isMemoryToolName(toolCall.name) {
+        if MemoryTool.isMemoryToolName(toolCall.name) {
             let request = ToolRequest(
                 name: toolCall.name,
                 arguments: Self.toolArguments(from: toolCall.argumentsJSON)
             )
-            return try MLXMemoryTool.execute(
+            return try MemoryTool.execute(
                 request,
-                context: MLXMemoryToolContext(workingDirectory: workingDirectory)
+                context: MemoryToolContext(workingDirectory: workingDirectory)
             ).text
         }
 

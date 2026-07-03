@@ -62,9 +62,9 @@ public enum ZenCODESetupInspector {
                     supportDirectoryURL: ZenCODESupportFileService.supportDirectoryURL(
                         fileManager: fileManager
                     ),
-                    agentsFileURL: MLXAgentsContextService(fileManager: fileManager)
+                    agentsFileURL: AgentsContextService(fileManager: fileManager)
                         .globalAgentsFileURL(),
-                    memoryFileURL: MLXMemoryService(fileManager: fileManager)
+                    memoryFileURL: MemoryService(fileManager: fileManager)
                         .globalMemoryFileURL(),
                     agentsManifestURL: AgentProfileStore.agentsManifestURL(
                         fileManager: fileManager

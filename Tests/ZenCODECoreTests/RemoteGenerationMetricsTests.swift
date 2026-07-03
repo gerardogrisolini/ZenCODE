@@ -242,9 +242,9 @@ struct RemoteGenerationMetricsTests {
             outputFormatting: [.withoutEscapingSlashes]
         )
         let decoded = try JSONDecoder().decode(JSONValue.self, from: data)
-        let decodedObject = try #require(decoded.mlxObjectValue)
+        let decodedObject = try #require(decoded.objectValue)
         let decodedKey = try #require(decodedObject.keys.first)
-        let decodedNestedObject = try #require(decodedObject[decodedKey]?.mlxObjectValue)
+        let decodedNestedObject = try #require(decodedObject[decodedKey]?.objectValue)
         let decodedText = try #require(decodedNestedObject["text"]?.stringValue)
 
         #expect(String(data: data, encoding: .utf8) != nil)

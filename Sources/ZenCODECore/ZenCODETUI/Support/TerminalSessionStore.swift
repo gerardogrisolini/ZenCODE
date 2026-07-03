@@ -1,5 +1,5 @@
 //
-//  MLXTerminalSessionStore.swift
+//  TerminalSessionStore.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
@@ -8,7 +8,7 @@
 import Crypto
 import Foundation
 
-public struct MLXTerminalSavedSessionContextWindow: Codable, Equatable, Sendable {
+public struct TerminalSavedSessionContextWindow: Codable, Equatable, Sendable {
     public let usedTokens: Int?
     public let maxTokens: Int?
     public let modelID: String
@@ -48,7 +48,7 @@ public struct MLXTerminalSavedSessionContextWindow: Codable, Equatable, Sendable
     }
 }
 
-public struct MLXTerminalSavedSession: Codable, Equatable, Sendable {
+public struct TerminalSavedSession: Codable, Equatable, Sendable {
     public static let currentVersion = 2
 
     public let version: Int
@@ -64,7 +64,7 @@ public struct MLXTerminalSavedSession: Codable, Equatable, Sendable {
     public let selectedTools: [String]
     public let selectedSkillIDs: [String]
     public let thinkingSelection: String?
-    public let contextWindow: MLXTerminalSavedSessionContextWindow?
+    public let contextWindow: TerminalSavedSessionContextWindow?
     public let systemPrompt: String?
     public let history: [AgentRuntimeMessage]
     public let transcriptHistory: [AgentRuntimeMessage]?
@@ -83,7 +83,7 @@ public struct MLXTerminalSavedSession: Codable, Equatable, Sendable {
         selectedTools: [String],
         selectedSkillIDs: [String],
         thinkingSelection: String?,
-        contextWindow: MLXTerminalSavedSessionContextWindow? = nil,
+        contextWindow: TerminalSavedSessionContextWindow? = nil,
         systemPrompt: String?,
         history: [AgentRuntimeMessage],
         transcriptHistory: [AgentRuntimeMessage]? = nil
@@ -118,11 +118,11 @@ public struct MLXTerminalSavedSession: Codable, Equatable, Sendable {
     }
 }
 
-public enum MLXTerminalSessionStore {
+public enum TerminalSessionStore {
     public static let fileExtension = "mlxsession"
 
     public static func save(
-        _ session: MLXTerminalSavedSession,
+        _ session: TerminalSavedSession,
         fileManager: FileManager = .default,
         supportDirectoryURL: URL? = nil
     ) throws -> URL {
@@ -154,7 +154,7 @@ public enum MLXTerminalSessionStore {
         workingDirectory: URL,
         fileManager: FileManager = .default,
         supportDirectoryURL: URL? = nil
-    ) throws -> MLXTerminalSavedSession {
+    ) throws -> TerminalSavedSession {
         try load(
             from: sessionFileURL(
                 name: name,
@@ -167,10 +167,10 @@ public enum MLXTerminalSessionStore {
 
     public static func load(
         from fileURL: URL
-    ) throws -> MLXTerminalSavedSession {
+    ) throws -> TerminalSavedSession {
         let data = try Data(contentsOf: fileURL)
         let session = try PropertyListDecoder().decode(
-            MLXTerminalSavedSession.self,
+            TerminalSavedSession.self,
             from: data
         )
         try validate(session)
@@ -181,7 +181,7 @@ public enum MLXTerminalSessionStore {
         for workingDirectory: URL,
         fileManager: FileManager = .default,
         supportDirectoryURL: URL? = nil
-    ) throws -> [MLXTerminalSavedSession] {
+    ) throws -> [TerminalSavedSession] {
         let directoryURL = sessionsDirectoryURL(
             for: workingDirectory,
             fileManager: fileManager,
@@ -248,7 +248,7 @@ public enum MLXTerminalSessionStore {
         supportDirectoryURL: URL? = nil
     ) -> URL {
         (supportDirectoryURL?.standardizedFileURL
-            ?? MLXAppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager))
+            ?? AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager))
             .appendingPathComponent("sessions", isDirectory: true)
             .appendingPathComponent(projectKey(for: workingDirectory), isDirectory: true)
     }
@@ -290,8 +290,8 @@ public enum MLXTerminalSessionStore {
         workingDirectory.standardizedFileURL.path
     }
 
-    private static func validate(_ session: MLXTerminalSavedSession) throws {
-        guard session.version == MLXTerminalSavedSession.currentVersion else {
+    private static func validate(_ session: TerminalSavedSession) throws {
+        guard session.version == TerminalSavedSession.currentVersion else {
             throw MLXTerminalSessionStoreError.unsupportedVersion(session.version)
         }
         guard session.name.nilIfBlank != nil else {

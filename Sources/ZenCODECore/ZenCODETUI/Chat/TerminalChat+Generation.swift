@@ -25,6 +25,7 @@ extension TerminalChat {
         let fileChanges = TurnFileChangeCoordinator(
             baseDirectoryURL: configuration.workingDirectory
         )
+        await fileChanges.prepareForTurn()
         let telegramProgressReporter = telegramControlState.isActive
             ? makeTelegramTurnProgressReporter(for: attempt.origin)
             : nil

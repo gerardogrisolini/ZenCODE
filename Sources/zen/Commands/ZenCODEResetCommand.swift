@@ -11,8 +11,8 @@ import ZenCODECore
 enum ZenCODEResetConfigurationCommand {
     static func run(fileManager: FileManager = .default) throws {
         let fileURLs = uniqueURLs([
-            MLXAgentsContextService(fileManager: fileManager).globalAgentsFileURL(),
-            MLXMemoryService(fileManager: fileManager).globalMemoryFileURL(),
+            AgentsContextService(fileManager: fileManager).globalAgentsFileURL(),
+            MemoryService(fileManager: fileManager).globalMemoryFileURL(),
             AgentProfileStore.agentsManifestURL(fileManager: fileManager),
             AgentSettingsManifestStore.settingsURL(fileManager: fileManager),
             AgentPermissionsManifestStore.permissionsURL(fileManager: fileManager)

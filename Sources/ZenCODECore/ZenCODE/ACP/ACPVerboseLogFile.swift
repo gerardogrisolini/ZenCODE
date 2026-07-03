@@ -19,7 +19,7 @@ public actor ACPVerboseLogFile {
 
     public static func open(
         fileManager: FileManager = .default,
-        supportDirectoryURL: URL = MLXAppStorageDirectory.appSupportDirectoryURL()
+        supportDirectoryURL: URL = AppStorageDirectory.appSupportDirectoryURL()
     ) -> ACPVerboseLogFile? {
         let directoryURL = supportDirectoryURL
             .appendingPathComponent("logs", isDirectory: true)

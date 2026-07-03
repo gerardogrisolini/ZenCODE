@@ -213,56 +213,61 @@ extension TerminalStatusBar {
     }
     
     func inputPanelDisplayLineCountLocked(
+        state: inout State,
         text: String,
         cursorIndex: Int
     ) -> Int {
-        inputPanelDisplayRowsLocked(text: text, cursorIndex: cursorIndex).count
+        inputPanelDisplayRowsLocked(state: &state, text: text, cursorIndex: cursorIndex).count
     }
     
     func inputPanelDisplayRowsLocked(
+        state: inout State,
         text: String,
         cursorIndex: Int
     ) -> [String] {
-        Self.inputPanelDisplayRows(
+        let contentWidth = statusBoxContentWidthLocked(state: &state)
+        let maxRows = maximumInputPanelTextRowsLocked(state: &state)
+        return Self.inputPanelDisplayRows(
             text: text,
             cursorIndex: cursorIndex,
-            contentWidth: statusBoxContentWidthLocked(),
-            maxRows: maximumInputPanelTextRowsLocked()
+            contentWidth: contentWidth,
+            maxRows: maxRows
         )
     }
     
-    func inputPanelSuggestionRowsLocked(lines: [String]) -> [String] {
-        let contentWidth = statusBoxContentWidthLocked()
+    func inputPanelSuggestionRowsLocked(state: inout State, lines: [String]) -> [String] {
+        let contentWidth = statusBoxContentWidthLocked(state: &state)
         return lines.prefix(6).map { line in
             Self.padded(Self.fit(line, width: contentWidth), width: contentWidth)
         }
     }
     
-    func statusBoxHorizontalInsetLocked() -> Int {
+    func statusBoxHorizontalInsetLocked(state: inout State) -> Int {
         0
     }
     
-    func statusBoxStartColumnLocked() -> Int {
-        statusBoxHorizontalInsetLocked() + 1
+    func statusBoxStartColumnLocked(state: inout State) -> Int {
+        statusBoxHorizontalInsetLocked(state: &state) + 1
     }
     
-    func statusBoxWidthLocked() -> Int {
-        max(20, columns - statusBoxHorizontalInsetLocked() * 2)
+    func statusBoxWidthLocked(state: inout State) -> Int {
+        let horizontalInset = statusBoxHorizontalInsetLocked(state: &state)
+        return max(20, state.columns - horizontalInset * 2)
     }
     
-    func statusBoxContentWidthLocked() -> Int {
-        max(1, statusBoxWidthLocked() - 4)
+    func statusBoxContentWidthLocked(state: inout State) -> Int {
+        max(1, statusBoxWidthLocked(state: &state) - 4)
     }
     
-    func maximumInputPanelTextRowsLocked() -> Int {
-        let suggestionLineCount = inputPanelState?.suggestionLines.count ?? 0
-        guard row > 0 else {
+    func maximumInputPanelTextRowsLocked(state: inout State) -> Int {
+        let suggestionLineCount = state.inputPanelState?.suggestionLines.count ?? 0
+        guard state.row > 0 else {
             return 1
         }
         
         return max(
             1,
-            row
+            state.row
             - Self.inputPanelChromeRows
             - suggestionLineCount
             - Self.attachedStatusRows

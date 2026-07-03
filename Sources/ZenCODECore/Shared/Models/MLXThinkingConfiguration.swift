@@ -191,7 +191,7 @@ public nonisolated struct MLXModelThinkingSupport: Codable, Hashable, Sendable {
                 }
 
                 if filename.hasSuffix(".json"),
-                   let object = try? JSONDecoder().decode(JSONValue.self, from: data).mlxObjectValue {
+                   let object = try? JSONDecoder().decode(JSONValue.self, from: data).objectValue {
                     let metadata = object.mapValues(\.jsonObject)
                     detector.scan(metadata)
                 } else if let text = String(data: data, encoding: .utf8) {

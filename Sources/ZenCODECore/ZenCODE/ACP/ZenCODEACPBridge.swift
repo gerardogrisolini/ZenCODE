@@ -108,7 +108,7 @@ public actor ZenCODEACPBridge {
 
         do {
             let value = try JSONDecoder().decode(JSONValue.self, from: data)
-            guard let object = value.mlxObjectValue else {
+            guard let object = value.objectValue else {
                 await writer.sendError(id: .null, code: -32600, message: "JSON-RPC message must be an object.")
                 return
             }

@@ -17,8 +17,8 @@ import os
 #endif
 
 extension TerminalStatusBar {
-    func startSpinnerTimerLocked() {
-        guard isStarted, spinnerTimer == nil else {
+    func startSpinnerTimerLocked(state: inout State) {
+        guard state.isStarted, state.spinnerTimer == nil else {
             return
         }
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInteractive))
@@ -26,28 +26,28 @@ extension TerminalStatusBar {
         timer.setEventHandler { [weak self] in
             self?.advanceSpinner()
         }
-        spinnerTimer = timer
+        state.spinnerTimer = timer
         timer.resume()
     }
     
-    func stopSpinnerTimerLocked() {
-        spinnerTimer?.setEventHandler {}
-        spinnerTimer?.cancel()
-        spinnerTimer = nil
+    func stopSpinnerTimerLocked(state: inout State) {
+        state.spinnerTimer?.setEventHandler {}
+        state.spinnerTimer?.cancel()
+        state.spinnerTimer = nil
     }
     
     func advanceSpinner() {
-        lock.withLock {
-            guard isStarted, isProcessing else {
+        state.withLock { state in
+            guard state.isStarted, state.isProcessing else {
                 return
             }
-            spinnerIndex = (spinnerIndex + 1) % Self.spinnerFrames.count
-            renderLocked()
+            state.spinnerIndex = (state.spinnerIndex + 1) % Self.spinnerFrames.count
+            renderLocked(state: &state)
         }
     }
     
-    func startResizeSignalSourceLocked() {
-        guard resizeSignalSource == nil else {
+    func startResizeSignalSourceLocked(state: inout State) {
+        guard state.resizeSignalSource == nil else {
             return
         }
         signal(SIGWINCH, SIG_IGN)
@@ -58,24 +58,24 @@ extension TerminalStatusBar {
         source.setEventHandler { [weak self] in
             self?.scheduleTerminalResize()
         }
-        resizeSignalSource = source
+        state.resizeSignalSource = source
         source.resume()
     }
     
-    func stopResizeSignalSourceLocked() {
-        resizeSignalSource?.setEventHandler {}
-        resizeSignalSource?.cancel()
-        resizeSignalSource = nil
+    func stopResizeSignalSourceLocked(state: inout State) {
+        state.resizeSignalSource?.setEventHandler {}
+        state.resizeSignalSource?.cancel()
+        state.resizeSignalSource = nil
     }
     
     func scheduleTerminalResize() {
-        let generation = lock.withLock { () -> Int? in
-            guard isStarted else {
+        let generation = state.withLock { state -> Int? in
+            guard state.isStarted else {
                 return nil
             }
-            resizeGeneration += 1
-            isResizePending = true
-            return resizeGeneration
+            state.resizeGeneration += 1
+            state.isResizePending = true
+            return state.resizeGeneration
         }
         guard let generation else {
             return
@@ -89,18 +89,18 @@ extension TerminalStatusBar {
     }
     
     func handleTerminalResize(generation: Int) {
-        lock.withLock {
-            guard isStarted, generation == resizeGeneration else {
+        state.withLock { state in
+            guard state.isStarted, generation == state.resizeGeneration else {
                 return
             }
             defer {
-                isResizePending = false
+                state.isResizePending = false
             }
-            guard refreshTerminalGeometryLocked() else {
+            guard refreshTerminalGeometryLocked(state: &state) else {
                 return
             }
-            isResizePending = false
-            renderLocked()
+            state.isResizePending = false
+            renderLocked(state: &state)
         }
     }
     

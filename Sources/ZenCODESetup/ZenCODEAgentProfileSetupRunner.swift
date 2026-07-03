@@ -69,7 +69,7 @@ public enum ZenCODEAgentProfileSetupRunner {
     }
 
     private static func ensureGlobalAgentsFile() throws -> (url: URL, created: Bool) {
-        let service = MLXAgentsContextService()
+        let service = AgentsContextService()
         let url = service.globalAgentsFileURL()
         let existedBefore = FileManager.default.fileExists(atPath: url.path)
         guard let ensuredURL = service.ensureGlobalAgentsFileExists() else {

@@ -7,9 +7,7 @@
 
 #if os(macOS)
 import Foundation
-#if canImport(os)
-import os
-#endif
+import Synchronization
 
 public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private struct Entry {
@@ -24,7 +22,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     }
 
     private let idleTTL: TimeInterval = 5 * 60
-    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let state = Mutex(State())
 
     public init() {}
 

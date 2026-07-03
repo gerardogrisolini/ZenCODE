@@ -1,5 +1,5 @@
 //
-//  MLXPromptSkillMarkdownParser.swift
+//  PromptSkillMarkdownParser.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -13,8 +13,8 @@ import Crypto
 #endif
 import Foundation
 
-public enum MLXPromptSkillMarkdownParser {
-    public static func parse(url: URL) throws -> MLXPromptSkillPayload {
+public enum PromptSkillMarkdownParser {
+    public static func parse(url: URL) throws -> PromptSkillPayload {
         #if os(macOS)
         let didStartAccessing = url.startAccessingSecurityScopedResource()
         defer {
@@ -40,7 +40,7 @@ public enum MLXPromptSkillMarkdownParser {
         markdown: String,
         sourceFilename: String,
         sourceDirectoryPath: String? = nil
-    ) throws -> MLXPromptSkillPayload {
+    ) throws -> PromptSkillPayload {
         let normalizedMarkdown = markdown
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
@@ -83,7 +83,7 @@ public enum MLXPromptSkillMarkdownParser {
         )
         let symbolName = metadata["symbol"] ?? metadata["symbolName"] ?? metadata["sf_symbol"]
 
-        return MLXPromptSkillPayload(
+        return PromptSkillPayload(
             canonicalName: canonicalName,
             title: title,
             summary: summary,
