@@ -151,7 +151,7 @@ enum DS4SettingsStore {
     }
 
     static func settingsDirectoryURL(fileManager: FileManager = .default) -> URL {
-        MLXAppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
+        AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
             .appendingPathComponent("ds4", isDirectory: true)
             .standardizedFileURL
     }

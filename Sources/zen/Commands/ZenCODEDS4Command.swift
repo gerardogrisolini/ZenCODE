@@ -235,13 +235,13 @@ enum ZenCODEDS4Command {
     private static func ensureProjectAgentsFileExists(workingDirectory: URL) throws {
         let standardizedWorkingDirectory = workingDirectory.standardizedFileURL
         let agentsFileURL = standardizedWorkingDirectory
-            .appendingPathComponent(MLXAgentsContextService.filename)
+            .appendingPathComponent(AgentsContextService.filename)
         guard !FileManager.default.fileExists(atPath: agentsFileURL.path) else {
             return
         }
 
         do {
-            _ = try MLXProjectContextFileService().createDefaultDocument(
+            _ = try ProjectContextFileService().createDefaultDocument(
                 kind: .agents,
                 at: standardizedWorkingDirectory,
                 projectName: standardizedWorkingDirectory.lastPathComponent
