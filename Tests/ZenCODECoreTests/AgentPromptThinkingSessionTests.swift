@@ -40,7 +40,9 @@ extension AgentConfigurationTests {
 //        #expect(instructions.contains("files or areas you expect to edit and what you expect to change"))
 //        #expect(instructions.contains("intended edits must be visible before the confirmation question"))
 //        #expect(instructions.contains("Do not modify files until the user confirms"))
-        #expect(instructions.contains("do not use this final report as a substitute for the required pre-edit list"))
+        #expect(!instructions.contains("required pre-edit list"))
+        #expect(!instructions.contains("files you modified"))
+        #expect(!instructions.contains("If you did not modify files"))
         #expect(instructions.contains("Once the requested work is complete and no tool call is needed, stop."))
     }
 

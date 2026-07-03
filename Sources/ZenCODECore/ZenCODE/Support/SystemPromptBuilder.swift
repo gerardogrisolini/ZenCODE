@@ -168,7 +168,7 @@ public enum SystemPromptBuilder {
     }
 
     private static var standaloneTurnClosingInstruction: String {
-        "When you provide the final direct answer for a turn, include a concise report of any files you modified and what changed in each one. If you did not modify files, say that explicitly, but do not use this final report as a substitute for the required pre-edit list of intended files/areas and changes when asking for confirmation. Keep the answer concise and grounded in the tool evidence you gathered. Once the requested work is complete and no tool call is needed, stop."
+        "Once the requested work is complete and no tool call is needed, stop."
     }
 
     private static func skillPromptSection(skill: PromptSkill) -> String {
