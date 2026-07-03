@@ -108,6 +108,33 @@ extension ChatGPTSubscriptionGenerationClient {
         )
     }
 
+    func compactSessionForEstimatedContextIfNeeded(
+        _ session: inout AgentSession,
+        estimatedContextTokens: Int?,
+        maxTokens: Int?,
+        maxOutputTokens: Int?,
+        sessionIdentity: SessionIdentity
+    ) -> AgentConversationCompactionResult? {
+        guard let result = Self.compactedMessagesForEstimatedContextIfNeeded(
+            session.messages,
+            estimatedContextTokens: estimatedContextTokens,
+            maxTokens: maxTokens,
+            maxOutputTokens: maxOutputTokens
+        ) else {
+            return nil
+        }
+
+        session.messages = RemoteGenerationClient.remoteMessages(
+            compactionResult: result,
+            preservingRecentFrom: session.messages
+        )
+        resetContinuationAfterCompaction(
+            session: &session,
+            sessionIdentity: sessionIdentity
+        )
+        return result
+    }
+
     func resetContinuationAfterCompaction(
         session: inout AgentSession,
         sessionIdentity: SessionIdentity
@@ -177,7 +204,18 @@ extension ChatGPTSubscriptionGenerationClient {
         maxOutputTokens: Int?,
         messageCount: Int
     ) -> Bool {
-        false
+        guard let estimatedContextTokens,
+              let compactionLimit = compactionPolicyMaxTokens(
+                  for: maxTokens,
+                  maxOutputTokens: maxOutputTokens
+              ) else {
+            return false
+        }
+        return AgentConversationCompactionPolicy.shouldCompactHistory(
+            usedTokens: estimatedContextTokens,
+            maxTokens: compactionLimit,
+            messageCount: messageCount
+        )
     }
 
     static func conversationMessageCount(in messages: [[String: Any]]) -> Int {

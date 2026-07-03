@@ -80,6 +80,38 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionFreshWebSocketCanUseContinuationDeltaWhenAllowed() throws {
+        let messages = chatGPTContinuationMessages()
+        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: messages,
+            continuation: ChatGPTSubscriptionContinuationState(
+                responseID: "resp_previous",
+                messageCount: 3,
+                instructions: "System prompt",
+                allowsFreshTransport: true
+            )
+        )
+        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
+            input: JSONValue.acpValue(from: payload.input),
+            model: "gpt-5.5",
+            instructions: payload.instructions ?? "",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "session-chatgpt"
+        )
+        let freshPayload = ChatGPTSubscriptionResponsesClient.webSocketRequestPayload(
+            body: body,
+            cachedInput: payload.cachedWebSocketInput.map { JSONValue.acpValue(from: $0) },
+            previousResponseID: payload.previousResponseID,
+            useCachedContinuation: true
+        )
+
+        #expect(freshPayload["previous_response_id"] as? String == "resp_previous")
+        #expect((freshPayload["input"] as? [Any])?.count == payload.cachedWebSocketInput?.count)
+        #expect((freshPayload["input"] as? [Any])?.count == 1)
+    }
+
+    @Test
     func chatGPTSubscriptionRestoresContinuationFromSavedResponseID() throws {
         let history = [
             AgentRuntimeMessage(role: .user, content: "First prompt"),
@@ -132,6 +164,47 @@ extension RemoteSessionSnapshotTests {
         #expect(payload.cachedWebSocketInput?.count == 1)
         #expect(resumedPayload["previous_response_id"] as? String == "resp_saved")
         #expect((resumedPayload["input"] as? [Any])?.count == 1)
+    }
+
+    @Test
+    func chatGPTSubscriptionToolSelectionNoticeDisablesRestoredContinuation() throws {
+        let history = [
+            AgentRuntimeMessage(role: .user, content: "First prompt"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "First answer",
+                providerResponseID: "resp_before_tools"
+            ),
+            TerminalChat.toolSelectionChangedMessage(
+                previousAllowedToolNames: ["local.exec"],
+                currentAllowedToolNames: []
+            )
+        ]
+        var messages = RemoteGenerationClient.initialMessages(
+            cwd: "/tmp/project",
+            systemPrompt: "System prompt",
+            history: history,
+            allowedToolNames: []
+        )
+        let continuation = try #require(
+            ChatGPTSubscriptionGenerationClient.restoredContinuation(from: messages)
+        )
+        messages.append(
+            RemoteGenerationClient.remoteMessage(
+                role: "user",
+                content: "Next prompt",
+                attachments: []
+            )
+        )
+        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: messages,
+            continuation: continuation
+        )
+
+        #expect(continuation.responseID == "resp_before_tools")
+        #expect(payload.previousResponseID == nil)
+        #expect(payload.cachedWebSocketInput == nil)
+        #expect(payload.instructions?.contains("Tool selection changed during this session.") == true)
     }
 
     @Test

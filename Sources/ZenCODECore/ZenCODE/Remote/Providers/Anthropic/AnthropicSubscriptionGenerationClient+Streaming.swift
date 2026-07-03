@@ -32,14 +32,14 @@ extension AnthropicSubscriptionGenerationClient {
         let expectsPromptCache = RemoteGenerationClient.messagesExpectPromptCache(
             session.messages
         )
-                let anthropicPayload = Self.anthropicMessagesPayload(
+        let anthropicPayload = Self.anthropicMessagesPayload(
             from: toolCatalog.wireMessages(from: session.messages),
             includeThinkingBlocks: thinkingEnabled
         )
         let requestMessages = Self.addingCacheControlBreakpoints(
             anthropicPayload.messages
         )
-                let systemBlocks = Self.subscriptionSystemBlocks(
+        let systemBlocks = Self.subscriptionSystemBlocks(
             userSystemPrompt: anthropicPayload.system
         )
         let tools = Self.anthropicTools(from: toolCatalog.bindings)
@@ -47,6 +47,27 @@ extension AnthropicSubscriptionGenerationClient {
             forLLMID: modelLLMID,
             thinkingSelection: session.thinkingSelection
         )
+        let estimatedContextTokens = AnthropicSubscriptionRequestBuilder
+            .estimatedContextTokenCount(
+                system: systemBlocks,
+                messages: requestMessages,
+                tools: tools
+            )
+        if let result = compactSessionForEstimatedContextIfNeeded(
+            &session,
+            estimatedContextTokens: estimatedContextTokens,
+            modelLLMID: modelLLMID,
+            maxOutputTokens: maxOutputTokens
+        ) {
+            await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
+            return try await streamAnthropicMessages(
+                session: &session,
+                modelID: modelID,
+                modelLLMID: modelLLMID,
+                credentials: credentials,
+                onEvent: onEvent
+            )
+        }
 
         var body: [String: Any] = [
             "model": modelID,

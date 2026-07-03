@@ -55,6 +55,42 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionSSEPayloadCanUseContinuationDeltaWhenAllowed() throws {
+        let catalog = remoteXcodeToolCatalog()
+        let messages = catalog.wireMessages(from: remoteXcodeHistoryMessages())
+        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: messages,
+            continuation: ChatGPTSubscriptionContinuationState(
+                responseID: "resp_previous_xcode",
+                messageCount: messages.count - 1,
+                instructions: "System prompt",
+                allowsFreshTransport: true
+            )
+        )
+        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
+            input: JSONValue.acpValue(from: payload.input),
+            model: "gpt-5.5",
+            instructions: payload.instructions ?? "",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "session-chatgpt-xcode-sse",
+            toolPayloads: JSONValue.acpValue(from: catalog.responsesToolPayloads)
+        )
+        let continuationPayload = ChatGPTSubscriptionResponsesClient.continuationRequestPayload(
+            body: body,
+            cachedInput: payload.cachedWebSocketInput.map { JSONValue.acpValue(from: $0) },
+            previousResponseID: payload.previousResponseID,
+            useContinuation: true
+        )
+        let input = try #require(continuationPayload["input"] as? [[String: Any]])
+
+        #expect(continuationPayload["previous_response_id"] as? String == "resp_previous_xcode")
+        #expect(input.count == 1)
+        #expect(input.first?["type"] as? String == "function_call_output")
+        #expect(continuationPayload["type"] == nil)
+    }
+
+    @Test
     func chatGPTSubscriptionSSERequestSendsWireSafeXcodeToolNamesAndRestoresLocalCall() async throws {
         let response = """
         data: {"type":"response.output_item.done","output_index":0,"item":{"id":"item_xcode","type":"function_call","call_id":"call_xcode","name":"tool_xcode_BuildProject","arguments":"{\\"scheme\\":\\"App\\"}"}}
@@ -315,10 +351,15 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionDoesNotPreflightCompactWhenEstimatedPayloadExceedsUsableContext() throws {
+    func chatGPTSubscriptionPreflightCompactsWhenEstimatedPayloadExceedsUsableContext() throws {
         let maxTokens = 50_000
         let maxOutputTokens = 1_000
         let messages = chatGPTPreflightCompactionMessages()
+        let normalResult = ChatGPTSubscriptionGenerationClient.compactedMessagesIfNeeded(
+            messages,
+            maxTokens: maxTokens,
+            maxOutputTokens: maxOutputTokens
+        )
         let requestPayload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
             from: messages,
             continuation: nil
@@ -352,8 +393,9 @@ extension RemoteSessionSnapshotTests {
             maxOutputTokens: maxOutputTokens
         )
 
+        #expect(normalResult.wasCompacted == false)
         #expect(estimatedContextTokens > AgentConversationCompactionPolicy.triggerTokenCount(for: policyMaxTokens))
-        #expect(preflightResult == nil)
+        #expect(preflightResult?.wasCompacted == true)
     }
 
     @Test

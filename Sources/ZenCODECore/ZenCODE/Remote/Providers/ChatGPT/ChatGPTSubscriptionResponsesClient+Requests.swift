@@ -263,19 +263,34 @@ extension ChatGPTSubscriptionResponsesClient {
         return components.url ?? codexResponsesURL(baseURL: baseURL)
     }
 
+    static func continuationRequestPayload(
+        body: [String: Any],
+        cachedInput: JSONValue? = nil,
+        previousResponseID: String? = nil,
+        useContinuation: Bool = false
+    ) -> [String: Any] {
+        var payload = body
+        if useContinuation,
+           let previousResponseID = previousResponseID?.nilIfBlank,
+           let cachedInput {
+            payload["previous_response_id"] = previousResponseID
+            payload["input"] = cachedInput.acpJSONObject
+        }
+        return payload
+    }
+
     static func webSocketRequestPayload(
         body: [String: Any],
         cachedInput: JSONValue? = nil,
         previousResponseID: String? = nil,
         useCachedContinuation: Bool = false
     ) -> [String: Any] {
-        var payload = body
-        if useCachedContinuation,
-           let previousResponseID = previousResponseID?.nilIfBlank,
-           let cachedInput {
-            payload["previous_response_id"] = previousResponseID
-            payload["input"] = cachedInput.acpJSONObject
-        }
+        var payload = continuationRequestPayload(
+            body: body,
+            cachedInput: cachedInput,
+            previousResponseID: previousResponseID,
+            useContinuation: useCachedContinuation
+        )
         payload["type"] = "response.create"
         return payload
     }

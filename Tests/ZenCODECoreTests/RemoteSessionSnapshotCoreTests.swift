@@ -104,6 +104,88 @@ extension RemoteSessionSnapshotTests {
         #expect(snapshot?.history == history)
     }
 
+#if os(macOS)
+    @Test
+    func anthropicSubscriptionStreamingPreflightCompactsEstimatedPayloadBeforeRequest() async throws {
+        let response = """
+        data: {"type":"message_start","message":{"usage":{"input_tokens":1,"output_tokens":0}}}
+
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"ok"}}
+
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
+
+        """
+        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+            responseBody: Data(response.utf8)
+        )
+        let configuration = AgentRuntimeConfiguration(
+            modelID: "claude-haiku-4-5",
+            bearerToken: nil,
+            workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
+            configuredContextWindowLimit: 30_000,
+            maxToolRounds: 4,
+            maxOutputTokens: 4_000,
+            verboseLogging: false,
+            toolAuthorizationHandler: nil
+        )
+        let client = AnthropicSubscriptionGenerationClient(
+            configuration: configuration,
+            provider: AgentRemoteProvider(
+                name: "Anthropic Subscription",
+                baseURL: AgentRemoteProvider.anthropicSubscriptionBaseURL,
+                modelID: "claude-haiku-4-5",
+                chatEndpoint: .responses
+            ),
+            urlSession: urlSession
+        )
+        await client.updateToolProviders([
+            AgentToolProvider(
+                tools: [
+                    ToolDescriptor(
+                        name: "custom.large",
+                        description: String(repeating: "large tool description ", count: 6_000),
+                        inputSchema: #"{"type":"object","properties":{"query":{"type":"string"}}}"#
+                    )
+                ],
+                executor: { _ in "" }
+            )
+        ])
+        var session = AnthropicSubscriptionGenerationClient.AgentSession(
+            id: "session-anthropic-preflight",
+            cwd: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
+            systemPrompt: "System prompt",
+            cacheKey: nil,
+            allowedToolNames: ["custom.large"],
+            thinkingSelection: nil,
+            preserveThinking: false,
+            messages: chatGPTPreflightCompactionMessages()
+        )
+
+        let result = try await client.streamAnthropicMessages(
+            session: &session,
+            modelID: "claude-haiku-4-5",
+            modelLLMID: "claude-haiku-4-5",
+            credentials: AnthropicSubscriptionCredentials(
+                accessToken: "test-access-token",
+                refreshToken: "test-refresh-token",
+                expiresAt: Date().addingTimeInterval(3600)
+            ),
+            onEvent: { _ in }
+        )
+
+        let requests = RemoteRequestCapturingURLProtocol.capturedRequests()
+        let request = try #require(requests.first)
+        let body = try request.jsonObject()
+        let systemBlocks = try #require(body["system"] as? [[String: Any]])
+        let systemText = systemBlocks.compactMap { $0["text"] as? String }
+            .joined(separator: "\n")
+
+        #expect(result.text == "ok")
+        #expect(requests.count == 1)
+        #expect(systemText.contains(AgentConversationCompactionSupport.memorySummaryHeader))
+    }
+#endif
+
     @Test
     func remoteToolWireCatalogRewritesResponsesHistoryNames() throws {
         let catalog = RemoteToolWireCatalog(

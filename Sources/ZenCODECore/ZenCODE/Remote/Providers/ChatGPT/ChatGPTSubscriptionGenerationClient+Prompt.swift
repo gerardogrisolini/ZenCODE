@@ -105,15 +105,35 @@ extension ChatGPTSubscriptionGenerationClient {
                     from: toolCatalog.wireMessages(from: session.messages),
                     continuation: session.continuation
                 )
-                let usesRestoredContinuation = session.continuation?.allowsFreshTransport == true
+                let usesFreshContinuationReplay = session.continuation?.allowsFreshTransport == true
                     && requestPayload.previousResponseID?.nilIfBlank != nil
                     && requestPayload.cachedWebSocketInput != nil
-                let expectsPromptCache = RemoteGenerationClient.messagesExpectPromptCache(
-                    session.messages
-                )
                 let instructions = requestPayload.instructions?.nilIfBlank
                     ?? "You are a helpful coding assistant."
                 let toolPayloads = toolCatalog.responsesToolPayloads
+                let estimatedRequestInput = usesFreshContinuationReplay
+                    ? (requestPayload.cachedWebSocketInput ?? requestPayload.input)
+                    : requestPayload.input
+                let estimatedContextTokens = ChatGPTSubscriptionRequestBuilder
+                    .estimatedContextTokenCount(
+                        instructions: instructions,
+                        input: estimatedRequestInput,
+                        toolPayloads: toolPayloads
+                    )
+                if let result = compactSessionForEstimatedContextIfNeeded(
+                    &session,
+                    estimatedContextTokens: estimatedContextTokens,
+                    maxTokens: maxContextWindowTokens,
+                    maxOutputTokens: configuration.maxOutputTokens,
+                    sessionIdentity: sessionIdentity
+                ) {
+                    sessions[sessionID] = session
+                    await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
+                    continue
+                }
+                let expectsPromptCache = RemoteGenerationClient.messagesExpectPromptCache(
+                    session.messages
+                )
                 let requestStartedAt = Date()
                 let streamAccumulator = StreamAccumulator()
                 let completion: ChatGPTSubscriptionResponsesClient.StreamCompletion
@@ -130,7 +150,7 @@ extension ChatGPTSubscriptionGenerationClient {
                             JSONValue.acpValue(from: $0)
                         },
                         previousResponseID: requestPayload.previousResponseID,
-                        allowsFreshWebSocketContinuation: usesRestoredContinuation,
+                        allowsFreshWebSocketContinuation: usesFreshContinuationReplay,
                         toolPayloads: JSONValue.acpValue(from: toolPayloads),
                         maxOutputTokens: configuration.maxOutputTokens
                     ) { object in
@@ -141,13 +161,13 @@ extension ChatGPTSubscriptionGenerationClient {
                         }
                     }
                 } catch {
-                    if usesRestoredContinuation,
+                    if usesFreshContinuationReplay,
                        Self.isContinuationReplayRejected(error) {
                         session.continuation = nil
                         sessions[sessionID] = session
                         await onEvent(
                             .diagnostic(
-                                "ChatGPT restored continuation was rejected; retrying with full conversation replay."
+                                "ChatGPT continuation was rejected; retrying with full conversation replay."
                             )
                         )
                         continue
@@ -217,7 +237,8 @@ extension ChatGPTSubscriptionGenerationClient {
                     session.continuation = ChatGPTSubscriptionContinuationState(
                         responseID: responseID,
                         messageCount: session.messages.count,
-                        instructions: instructions
+                        instructions: instructions,
+                        allowsFreshTransport: true
                     )
                 } else {
                     session.continuation = nil

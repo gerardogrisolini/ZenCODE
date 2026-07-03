@@ -212,15 +212,36 @@ extension TerminalChat {
     public func updateCurrentSessionToolOptions(
         discoverExternalTools: Bool = true
     ) async -> Set<String> {
+        let previousSnapshot = await sessionRunner.snapshotSession(id: sessionID)
+        let previousAllowedToolNames = previousSnapshot?.allowedToolNames
         let allowedToolNames = await selectedAllowedToolNames(
             discoverExternalTools: discoverExternalTools
         )
         do {
-            try await sessionRunner.updateSessionOptions(
-                configuration: currentSessionConfiguration(
-                    allowedToolNames: allowedToolNames
+            if previousSnapshot != nil, previousAllowedToolNames != .some(allowedToolNames) {
+                activeSessionCacheKey = previousSnapshot?.cacheKey ?? activeSessionCacheKey
+                activeSessionHistory = previousSnapshot?.history ?? activeSessionHistory
+                if !activeSessionHistory.isEmpty {
+                    activeSessionHistory.append(
+                        Self.toolSelectionChangedMessage(
+                            previousAllowedToolNames: previousAllowedToolNames ?? [],
+                            currentAllowedToolNames: allowedToolNames
+                        )
+                    )
+                }
+                await sessionRunner.resetSession(id: sessionID)
+                try await sessionRunner.createSession(
+                    configuration: currentSessionConfiguration(
+                        allowedToolNames: allowedToolNames
+                    )
                 )
-            )
+            } else {
+                try await sessionRunner.updateSessionOptions(
+                    configuration: currentSessionConfiguration(
+                        allowedToolNames: allowedToolNames
+                    )
+                )
+            }
         } catch {
             writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
@@ -261,5 +282,38 @@ extension TerminalChat {
             """
         )
         #endif
+    }
+
+    public static func toolSelectionChangedMessage(
+        previousAllowedToolNames: Set<String>,
+        currentAllowedToolNames: Set<String>
+    ) -> AgentRuntimeMessage {
+        let addedToolNames = currentAllowedToolNames.subtracting(previousAllowedToolNames)
+        let removedToolNames = previousAllowedToolNames.subtracting(currentAllowedToolNames)
+        let currentTools = toolSelectionChangedToolList(currentAllowedToolNames)
+        let addedTools = toolSelectionChangedToolList(addedToolNames)
+        let removedTools = toolSelectionChangedToolList(removedToolNames)
+
+        return AgentRuntimeMessage(
+            role: .system,
+            content: """
+            Tool selection changed during this session.
+            Current available tool names: \(currentTools).
+            Added tool names: \(addedTools).
+            Removed tool names: \(removedTools).
+            Only call tools currently exposed by the native tool interface. Treat earlier calls or results for removed tools as historical context, not as available capabilities.
+            """
+        )
+    }
+
+    private static func toolSelectionChangedToolList(_ toolNames: Set<String>) -> String {
+        let names = toolNames
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .sorted()
+        guard !names.isEmpty else {
+            return "none"
+        }
+        return names.joined(separator: ", ")
     }
 }

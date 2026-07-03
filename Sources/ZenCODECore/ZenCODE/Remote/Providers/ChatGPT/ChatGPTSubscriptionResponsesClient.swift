@@ -107,11 +107,17 @@ public struct ChatGPTSubscriptionResponsesClient {
             }
         }
 
+        let requestBody = Self.continuationRequestPayload(
+            body: body,
+            cachedInput: cachedWebSocketInput,
+            previousResponseID: previousResponseID,
+            useContinuation: allowsFreshWebSocketContinuation
+        )
         for attempt in 0...Self.maxRetries {
             try Task.checkCancellation()
 
             do {
-                let request = try request(for: body, sessionID: sessionID)
+                let request = try request(for: requestBody, sessionID: sessionID)
                 let (bytes, response) = try await urlSession.bytes(for: request)
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw ChatGPTSubscriptionGenerationError.invalidResponse

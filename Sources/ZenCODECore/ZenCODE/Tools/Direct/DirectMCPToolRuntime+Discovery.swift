@@ -17,11 +17,15 @@ extension DirectMCPToolRuntime {
 
         switch family {
         case .xcode:
-            if let existingServer = servers.first(where: { $0.family == .xcode }),
-               serverMatchesPreferredWorkspace(
-                   existingServer,
-                   preferredWorkspaceRootURL: preferredWorkspaceRootURL
-               ) {
+            if let existingServer = servers.first(where: { $0.family == .xcode }) {
+                if !serverMatchesPreferredWorkspace(
+                    existingServer,
+                    preferredWorkspaceRootURL: preferredWorkspaceRootURL
+                ) {
+                    // Keep the process-scoped Xcode authorization alive; descriptor filtering
+                    // hides this server from workspaces it does not belong to.
+                    return
+                }
                 return
             }
             let previousXcodeServers = servers.filter { $0.family == .xcode }

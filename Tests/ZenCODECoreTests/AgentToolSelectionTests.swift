@@ -129,6 +129,67 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    func toolSelectionChangeResetsSessionAndInformsModel() async throws {
+        let workingDirectory = URL(
+            fileURLWithPath: "/tmp/ZenCODE-tool-selection",
+            isDirectory: true
+        )
+        let configuration = try AgentConfiguration(
+            hostedModelID: "mlx-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: workingDirectory
+        )
+        let runner = AgentCoreSessionRunner()
+        let terminal = TerminalChat(
+            configuration: configuration,
+            stdinIsTerminal: false,
+            sessionRunner: runner
+        )
+        let items = TerminalChat.toolSelectionItems(featureStatuses: [])
+        terminal.selectedToolKeys = try TerminalChat.parseToolSelection(
+            "shell",
+            items: items
+        )
+        terminal.activeSessionHistory = [
+            AgentRuntimeMessage(role: .user, content: "First request"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "I used shell.",
+                toolCalls: [
+                    AgentRuntimeToolCall(
+                        id: "call_shell",
+                        name: "local.exec",
+                        argumentsJSON: #"{"cmd":"pwd"}"#
+                    )
+                ]
+            ),
+            AgentRuntimeMessage(
+                role: .tool,
+                content: workingDirectory.path,
+                toolCallID: "call_shell",
+                toolName: "local.exec"
+            )
+        ]
+
+        try await terminal.createCurrentSession(discoverExternalTools: false)
+        terminal.selectedToolKeys = []
+        let allowedToolNames = await terminal.updateCurrentSessionToolOptions(
+            discoverExternalTools: false
+        )
+        let snapshot = try #require(await runner.snapshotSession(id: terminal.sessionID))
+        let notice = try #require(snapshot.history.last)
+
+        #expect(allowedToolNames.isEmpty)
+        #expect(snapshot.allowedToolNames == [])
+        #expect(notice.role == .system)
+        #expect(notice.content.contains("Tool selection changed during this session."))
+        #expect(notice.content.contains("Current available tool names: none."))
+        #expect(notice.content.contains("Removed tool names:"))
+        #expect(notice.content.contains("local.exec"))
+        #expect(notice.content.contains("historical context"))
+    }
+
+    @Test
     func xcodeWorkspaceRootMatchesNestedWorkingDirectoryButRejectsSiblings() {
         #expect(
             XcodeWorkspaceContext.workspaceRootPath(
@@ -180,6 +241,34 @@ extension AgentConfigurationTests {
         )
 
         #expect(descriptors.map(\.name) == ["xcode.BuildProject"])
+    }
+
+    @Test
+    func xcodeDiscoveryKeepsGrantedSessionForMismatchedWorkspace() async {
+        let discoveryProbe = XcodeDiscoveryProbe()
+        let runtime = DirectMCPToolRuntime(
+            xcodeDiscoveryProvider: {
+                await discoveryProbe.discovery(workspacePath: "/tmp/XcodeApp/XcodeApp.xcodeproj")
+            }
+        )
+
+        let initialDescriptors = await runtime.discoverDescriptors(
+            allowedToolNames: ["xcode."],
+            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/XcodeApp")
+        )
+        let otherWorkspaceDescriptors = await runtime.discoverDescriptors(
+            allowedToolNames: ["xcode."],
+            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/OtherApp")
+        )
+        let restoredWorkspaceDescriptors = await runtime.discoverDescriptors(
+            allowedToolNames: ["xcode."],
+            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/XcodeApp")
+        )
+
+        #expect(initialDescriptors.map(\.name) == ["xcode.BuildProject"])
+        #expect(otherWorkspaceDescriptors.isEmpty)
+        #expect(restoredWorkspaceDescriptors.map(\.name) == ["xcode.BuildProject"])
+        #expect(await discoveryProbe.count() == 1)
     }
 
     @Test
