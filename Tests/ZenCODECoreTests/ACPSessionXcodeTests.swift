@@ -517,4 +517,27 @@ extension ACPCompatibilityTests {
         #expect(capturedParams["name"] as? String == "XcodeRead")
         #expect(capturedArguments["filePath"] as? String == "Sources/App/File.swift")
     }
+
+    #if os(macOS)
+    @Test
+    func xcodeAuthorizationFailuresAreDetectedFromBridgeStderr() async throws {
+        let configuration = MCPServerConfiguration(
+            executablePath: "/usr/bin/xcrun",
+            arguments: ["mcpbridge"],
+            environment: [:]
+        )
+        let client = MCPClient(configuration: configuration)
+
+        let detectedError = await client.permissionErrorIfPresent(
+            in: "The operation couldn’t be completed. (com.apple.dt.Xcode.MCPBridge.Authorization error 1.)"
+        )
+
+        #expect(detectedError?.localizedDescription == MCPClientError.xcodePermissionRequired.localizedDescription)
+    }
+    #endif
+
+    @Test
+    func automaticXcodeDiscoveryDoesNotWaitOneMinuteForConsent() {
+        #expect(DirectMCPToolRuntime.xcodeDiscoveryTimeoutNanoseconds <= 2_000_000_000)
+    }
 }

@@ -52,8 +52,7 @@ extension ChatGPTSubscriptionGenerationClient {
                         let client = ChatGPTSubscriptionResponsesClient(
             credentials: credentials,
             urlSession: urlSession,
-            webSocketPool: webSocketPool,
-            usesWebSocketTransport: usesWebSocketTransport
+            webSocketPool: webSocketPool
         )
         let reasoningEffort = session.thinkingSelection
             .flatMap(Self.chatGPTReasoningEffort(for:))
@@ -162,15 +161,8 @@ extension ChatGPTSubscriptionGenerationClient {
                     }
                 } catch {
                     if usesFreshContinuationReplay,
-                       Self.isContinuationReplayRejected(error) {
-                        session.continuation = nil
-                        sessions[sessionID] = session
-                        await onEvent(
-                            .diagnostic(
-                                "ChatGPT continuation was rejected; retrying with full conversation replay."
-                            )
-                        )
-                        continue
+                       let continuationError = Self.continuationUnavailableError(from: error) {
+                        throw continuationError
                     }
                     guard Self.isContextLimitError(error), !didRetryAfterContextLimit else {
                         throw error
@@ -294,6 +286,58 @@ extension ChatGPTSubscriptionGenerationClient {
 
         sessions[sessionID] = session
         throw ChatGPTSubscriptionGenerationError.tooManyToolRounds(configuration.maxToolRounds)
+    }
+
+    static func continuationUnavailableError(
+        from error: Error
+    ) -> ChatGPTSubscriptionGenerationError? {
+        if let error = error as? ChatGPTSubscriptionGenerationError {
+            switch error {
+            case .continuationUnavailable:
+                return error
+            case let .http(_, output), let .responseFailed(output):
+                guard messageIndicatesContinuationUnavailable(output) else {
+                    return nil
+                }
+                return .continuationUnavailable(output)
+            default:
+                return nil
+            }
+        }
+
+        let message = error.localizedDescription
+        guard messageIndicatesContinuationUnavailable(message) else {
+            return nil
+        }
+        return .continuationUnavailable(message)
+    }
+
+    static func messageIndicatesContinuationUnavailable(_ message: String) -> Bool {
+        let normalized = message
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard normalized.contains("previous_response_id")
+                || normalized.contains("previous response")
+                || normalized.contains("response id") else {
+            return false
+        }
+
+        if normalized.contains("unsupported parameter")
+            && normalized.contains("previous_response_id") {
+            return true
+        }
+
+        return normalized.contains("not found")
+            || normalized.contains("cannot be found")
+            || normalized.contains("could not be found")
+            || normalized.contains("not available")
+            || normalized.contains("unavailable")
+            || normalized.contains("cannot resolve")
+            || normalized.contains("could not resolve")
+            || normalized.contains("does not exist")
+            || normalized.contains("expired")
+            || normalized.contains("invalid")
+            || normalized.contains("missing")
     }
 }
 #endif

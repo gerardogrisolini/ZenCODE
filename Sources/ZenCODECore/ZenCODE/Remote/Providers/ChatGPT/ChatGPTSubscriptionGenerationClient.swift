@@ -112,7 +112,6 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
     let urlSession: URLSession
     let toolExecutor: DirectToolExecutor
     let webSocketPool: ChatGPTSubscriptionWebSocketPool
-    let usesWebSocketTransport: Bool
     var sessions: [String: AgentSession] = [:]
     var sessionIDsByIdentity = ChatGPTSubscriptionGenerationClient.loadStoredSessionIDs()
 
@@ -120,12 +119,10 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         configuration: AgentRuntimeConfiguration,
         urlSession: URLSession? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
-        webSocketPool: ChatGPTSubscriptionWebSocketPool = ChatGPTSubscriptionWebSocketPool(),
-        usesWebSocketTransport: Bool = true
+        webSocketPool: ChatGPTSubscriptionWebSocketPool = ChatGPTSubscriptionWebSocketPool()
     ) {
         self.configuration = configuration
         self.webSocketPool = webSocketPool
-        self.usesWebSocketTransport = usesWebSocketTransport
         if let urlSession {
             self.urlSession = urlSession
         } else {
@@ -149,8 +146,7 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
                     configuration: configuration.applyingSubAgentBackendContext(context),
                     mcpRuntime: mcpRuntime,
                     fallbackProvider: fallbackProvider,
-                    urlSession: urlSession,
-                    chatGPTUsesWebSocketTransport: usesWebSocketTransport
+                    urlSession: urlSession
                 )
             }
         )

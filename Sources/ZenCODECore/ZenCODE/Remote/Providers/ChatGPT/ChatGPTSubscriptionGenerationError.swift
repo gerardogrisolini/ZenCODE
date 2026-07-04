@@ -14,6 +14,7 @@ enum ChatGPTSubscriptionGenerationError: LocalizedError {
     case invalidResponse
     case http(status: Int, output: String)
     case responseFailed(String)
+    case continuationUnavailable(String)
     case tooManyToolRounds(Int)
 
     var errorDescription: String? {
@@ -32,6 +33,12 @@ enum ChatGPTSubscriptionGenerationError: LocalizedError {
             return "ChatGPT Subscription request failed with HTTP \(status): \(detail)"
         case let .responseFailed(message):
             return message
+        case let .continuationUnavailable(detail):
+            let message = """
+            ChatGPT Subscription cannot continue this saved session because its previous response id is no longer available. ZenCODE did not replay the full conversation. Compact the session and retry, or start a new compacted session.
+            """
+            let trimmedDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmedDetail.isEmpty ? message : "\(message) Backend detail: \(trimmedDetail)"
         case let .tooManyToolRounds(limit):
             return "The ChatGPT Subscription model requested tools for \(limit) rounds without finishing."
         }

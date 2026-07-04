@@ -112,6 +112,54 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionContinuationUnavailableErrorAsksForCompaction() throws {
+        let errors = [
+            ChatGPTSubscriptionGenerationError.responseFailed(
+                "Previous response id resp_saved could not be found."
+            ),
+            ChatGPTSubscriptionGenerationError.responseFailed(
+                "Unsupported parameter: previous_response_id"
+            )
+        ]
+
+        for backendError in errors {
+            let error = try #require(
+                ChatGPTSubscriptionGenerationClient.continuationUnavailableError(
+                    from: backendError
+                )
+            )
+            guard case let .continuationUnavailable(detail) = error else {
+                Issue.record("Expected a continuation unavailable error.")
+                return
+            }
+            #expect(!detail.isEmpty)
+            #expect(
+                error.localizedDescription.contains(
+                    "ZenCODE did not replay the full conversation"
+                )
+            )
+            #expect(
+                error.localizedDescription.contains(
+                    "Compact the session and retry"
+                )
+            )
+        }
+    }
+
+    @Test
+    func chatGPTSubscriptionContinuationUnavailableErrorIgnoresUnrelatedFailures() {
+        let error = ChatGPTSubscriptionGenerationError.responseFailed(
+            "ChatGPT Subscription request failed because the service is overloaded."
+        )
+
+        #expect(
+            ChatGPTSubscriptionGenerationClient.continuationUnavailableError(
+                from: error
+            ) == nil
+        )
+    }
+
+    @Test
     func chatGPTSubscriptionRestoresContinuationFromSavedResponseID() throws {
         let history = [
             AgentRuntimeMessage(role: .user, content: "First prompt"),
@@ -708,6 +756,21 @@ extension RemoteSessionSnapshotTests {
 
         #expect(cacheKey.hasPrefix("pck_"))
         #expect(cacheKey != "session-chatgpt")
+    }
+
+    @Test
+    func chatGPTSubscriptionRequestBodyOmitsUnsupportedMaxOutputTokens() throws {
+        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
+            input: .array([]),
+            model: "gpt-5.5",
+            instructions: "System prompt",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "session-chatgpt",
+            maxOutputTokens: 128
+        )
+
+        #expect(body["max_output_tokens"] == nil)
     }
 
     @Test

@@ -141,9 +141,9 @@ extension DirectMCPToolRuntime {
 
     /// Maximum time to wait for the Xcode MCP handshake and tool listing.
     /// The handshake stays pending while Xcode shows the user-consent dialog;
-    /// if the user does not accept it, the discovery would otherwise hang
-    /// forever and block the caller (for example the TUI input prompt).
-    public static let xcodeDiscoveryTimeoutNanoseconds: UInt64 = 60_000_000_000
+    /// if the user does not accept it, discovery must give control back to the
+    /// caller quickly instead of blocking the TUI prompt for a long fallback.
+    public static let xcodeDiscoveryTimeoutNanoseconds: UInt64 = 2_000_000_000
 
     public static func defaultXcodeDiscovery() async -> XcodeDiscovery? {
         guard MCPServerConfiguration.isXcodeRunning(),

@@ -18,29 +18,12 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
 
     private struct State {
         var entries: [String: Entry] = [:]
-        var sseFallbackSessionIDs: Set<String> = []
     }
 
     private let idleTTL: TimeInterval = 5 * 60
     private let state = Mutex(State())
 
     public init() {}
-
-    public func isFallbackToSSEActive(sessionID: String) -> Bool {
-        state.withLock { state in
-            state.sseFallbackSessionIDs.contains(sessionID)
-        }
-    }
-
-    public func activateSSEFallback(sessionID: String) {
-        let entry = state.withLock { state in
-            state.sseFallbackSessionIDs.insert(sessionID)
-            return state.entries.removeValue(forKey: sessionID)
-        }
-        if let entry {
-            Self.close(entry.task)
-        }
-    }
 
     /// Closes idle entries whose `idleTTL` has elapsed. Without this sweep,
     /// web sockets for short-lived sessions that are never re-acquired would
@@ -149,7 +132,6 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
 
     public func closeSession(sessionID: String) {
         let entry = state.withLock { state in
-            state.sseFallbackSessionIDs.remove(sessionID)
             return state.entries.removeValue(forKey: sessionID)
         }
         if let entry {
@@ -161,7 +143,6 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         let openTasks = state.withLock { state in
             let openTasks = state.entries.values.map(\.task)
             state.entries.removeAll()
-            state.sseFallbackSessionIDs.removeAll()
             return openTasks
         }
 

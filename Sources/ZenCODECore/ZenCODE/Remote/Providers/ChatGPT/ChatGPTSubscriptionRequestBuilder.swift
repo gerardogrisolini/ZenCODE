@@ -166,10 +166,6 @@ public enum ChatGPTSubscriptionRequestBuilder {
             body["parallel_tool_calls"] = true
         }
 
-        if let maxOutputTokens, maxOutputTokens > 0 {
-            body["max_output_tokens"] = maxOutputTokens
-        }
-
         let normalizedReasoningEffort = reasoningEffort?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfBlank

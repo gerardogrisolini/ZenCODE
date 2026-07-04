@@ -234,12 +234,16 @@ extension MCPClient {
         let lowered = stderrMessage.lowercased()
         guard lowered.contains("permission")
             || lowered.contains("authorize")
+            || lowered.contains("authorization")
+            || lowered.contains("authorisation")
             || lowered.contains("consent")
             || lowered.contains("denied")
             || lowered.contains("not allowed")
             || lowered.contains("not permitted")
             || lowered.contains("rejected")
             || lowered.contains("declined")
+            || lowered.contains("cancelled")
+            || lowered.contains("canceled")
         else {
             return nil
         }
