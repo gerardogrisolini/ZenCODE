@@ -75,8 +75,7 @@ public nonisolated enum CodexAgentModel {
         selectionID(forModelID: defaultModelID)
     }
     public static let modelID = defaultModelID
-    public static let legacyContextWindowTokenLimit = 272_000
-    public static let contextWindowTokenLimit = 1_000_000
+    public static let contextWindowTokenLimit = 258_000
     public static let displayTitle = "ChatGPT Subscription"
     public static let displaySubtitle = "ChatGPT Plus/Pro"
     public static let availableModels: [ModelOption] = [
@@ -90,19 +89,13 @@ public nonisolated enum CodexAgentModel {
             modelID: "gpt-5.4",
             title: "GPT-5.4",
             subtitle: "Everyday coding",
-            contextWindowTokenLimit: legacyContextWindowTokenLimit
+            contextWindowTokenLimit: contextWindowTokenLimit
         ),
         ModelOption(
             modelID: "gpt-5.4-mini",
             title: "GPT-5.4 Mini",
             subtitle: "Fast small model",
-            contextWindowTokenLimit: legacyContextWindowTokenLimit
-        ),
-        ModelOption(
-            modelID: "gpt-5.3-codex",
-            title: "GPT-5.3 Codex",
-            subtitle: "Coding-optimized",
-            contextWindowTokenLimit: legacyContextWindowTokenLimit
+            contextWindowTokenLimit: contextWindowTokenLimit
         ),
         ModelOption(
             modelID: "gpt-5.3-codex-spark",
