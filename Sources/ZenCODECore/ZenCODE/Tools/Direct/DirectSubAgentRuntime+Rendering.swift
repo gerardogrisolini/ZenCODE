@@ -16,7 +16,7 @@ extension DirectSubAgentRuntime {
         var lines = [
             "You are ZenCODE delegated sub-agent \(name).",
             "Role: \(role)",
-            SystemPromptBuilder.responseLanguageSection,
+            SystemPromptBuilder.responseLanguageSection(),
             "You are running inside ZenCODE and receive the complete direct toolset available to this process, including local, shell, git, MCP, and sub-agent tools when exposed.",
             "Work only on the delegated scope. Be concise, concrete, and report blockers clearly."
         ]

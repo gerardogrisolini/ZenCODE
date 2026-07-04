@@ -138,7 +138,7 @@ public enum AgentCoreAppSessionFactory {
             .compactMap { $0?.nilIfBlank }
             let sections = contextSections + [
                 providedSystemPrompt,
-                SystemPromptBuilder.responseLanguageSection
+                SystemPromptBuilder.responseLanguageSection()
             ]
             return sections
                 .joined(separator: "\n\n")

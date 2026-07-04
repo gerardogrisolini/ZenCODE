@@ -47,6 +47,27 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    func defaultAgentInstructionsRequireConciseProgressCommentsAroundToolWork() {
+        let instructions = SystemPromptBuilder.defaultAgentInstructions()
+
+        #expect(instructions.contains("briefly comment before the first tool call in a phase"))
+        #expect(instructions.contains("concise progress updates at phase boundaries"))
+        #expect(instructions.contains("do not narrate every trivial call"))
+        #expect(instructions.contains("Keep any narration as natural-language assistant text"))
+        #expect(!instructions.contains("explanations around tool calls"))
+    }
+
+    @Test
+    func responseLanguageSectionSupportsGenericAndLockedPrompts() {
+        let genericPrompt = SystemPromptBuilder.responseLanguageSection()
+        let lockedPrompt = SystemPromptBuilder.responseLanguageSection(languageName: "Italian")
+
+        #expect(genericPrompt.contains("Use the operating system language"))
+        #expect(lockedPrompt.contains("locked to Italian"))
+        #expect(lockedPrompt.contains("Use Italian for all natural-language replies"))
+    }
+
+    @Test
     func standalonePromptKeepsResponseLanguageInstructionAfterContextSections() throws {
         let prompt = SystemPromptBuilder.standalonePrompt(
             cwd: "/tmp/project",
