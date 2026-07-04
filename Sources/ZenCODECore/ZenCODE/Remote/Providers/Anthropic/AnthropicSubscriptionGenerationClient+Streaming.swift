@@ -17,6 +17,7 @@ extension AnthropicSubscriptionGenerationClient {
         modelID: String,
         modelLLMID: String,
         credentials: AnthropicSubscriptionCredentials,
+        includeThinkingBlocks: Bool = true,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> RemoteStreamResult {
         let toolDescriptors = await toolExecutor.descriptors(
@@ -29,12 +30,13 @@ extension AnthropicSubscriptionGenerationClient {
         let toolCatalog = RemoteToolWireCatalog(descriptors: toolDescriptors)
         let thinkingEnabled = Self.supportsThinking(modelID: modelID)
             && (session.thinkingSelection?.isEnabled ?? false)
+        let replayThinkingBlocks = thinkingEnabled && includeThinkingBlocks
         let expectsPromptCache = RemoteGenerationClient.messagesExpectPromptCache(
             session.messages
         )
         let anthropicPayload = Self.anthropicMessagesPayload(
             from: toolCatalog.wireMessages(from: session.messages),
-            includeThinkingBlocks: thinkingEnabled
+            includeThinkingBlocks: replayThinkingBlocks
         )
         let requestMessages = Self.addingCacheControlBreakpoints(
             anthropicPayload.messages
@@ -65,6 +67,7 @@ extension AnthropicSubscriptionGenerationClient {
                 modelID: modelID,
                 modelLLMID: modelLLMID,
                 credentials: credentials,
+                includeThinkingBlocks: includeThinkingBlocks,
                 onEvent: onEvent
             )
         }

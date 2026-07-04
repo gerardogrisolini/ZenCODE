@@ -71,7 +71,8 @@ extension AnthropicSubscriptionGenerationClient {
                     from: message,
                     includeThinkingBlocks: includeThinkingBlocks
                 )
-                if !blocks.isEmpty {
+                if !blocks.isEmpty,
+                   containsNonThinkingBlock(blocks) {
                     anthropicMessages.append([
                         "role": "assistant",
                         "content": blocks
@@ -116,12 +117,9 @@ extension AnthropicSubscriptionGenerationClient {
     }
 
 
-    /// Number of trailing conversation messages that receive a moving cache
-    /// breakpoint. Together with the single system breakpoint this uses the
-    /// full Anthropic budget of 4 breakpoints per request. Multiple moving
-    /// breakpoints keep prefix-cache hits alive even when a turn appends more
-    /// than ~20 content blocks (the server-side lookback limit per breakpoint).
-    static let cacheControlMessageBreakpointCount = 3
+    /// Claude Code uses exactly one message-level cache breakpoint per request;
+    /// the system breakpoint covers the stable tools + system prefix.
+    static let cacheControlMessageBreakpointCount = 1
 
     static let cacheableBlockTypes: Set<String> = [
         "text", "image", "tool_result", "tool_use"
@@ -225,7 +223,7 @@ extension AnthropicSubscriptionGenerationClient {
 
     static func thinkingBlocks(from value: Any?) -> [[String: Any]] {
         if let blocks = value as? [[String: Any]] {
-            return blocks
+            return blocks.compactMap(validThinkingBlock(from:))
         }
         guard let json = stringValue(value)?.nilIfBlank,
               let data = json.data(using: .utf8),
@@ -233,7 +231,44 @@ extension AnthropicSubscriptionGenerationClient {
               case let .array(items) = decoded else {
             return []
         }
-        return items.compactMap { $0.jsonObject as? [String: Any] }
+        return items.compactMap { item in
+            guard let block = item.jsonObject as? [String: Any] else {
+                return nil
+            }
+            return validThinkingBlock(from: block)
+        }
+    }
+
+    static func validThinkingBlock(from block: [String: Any]) -> [String: Any]? {
+        switch stringValue(block["type"])?.lowercased() {
+        case "thinking":
+            guard let thinking = stringValue(block["thinking"])?.nilIfBlank,
+                  let signature = stringValue(block["signature"])?.nilIfBlank else {
+                return nil
+            }
+            return [
+                "type": "thinking",
+                "thinking": thinking,
+                "signature": signature
+            ]
+        case "redacted_thinking":
+            guard let data = stringValue(block["data"])?.nilIfBlank else {
+                return nil
+            }
+            return [
+                "type": "redacted_thinking",
+                "data": data
+            ]
+        default:
+            return nil
+        }
+    }
+
+    static func containsNonThinkingBlock(_ blocks: [[String: Any]]) -> Bool {
+        blocks.contains { block in
+            let type = stringValue(block["type"])?.lowercased()
+            return type != "thinking" && type != "redacted_thinking"
+        }
     }
 
     static func toolUseBlock(from toolCall: [String: Any]) -> [String: Any]? {

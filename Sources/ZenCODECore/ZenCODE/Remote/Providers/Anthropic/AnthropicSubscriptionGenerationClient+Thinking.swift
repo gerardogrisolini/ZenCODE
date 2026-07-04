@@ -203,7 +203,7 @@ extension AnthropicSubscriptionGenerationClient {
         // static prefix (tools + system). Marking every block wastes
         // breakpoints from Anthropic's per-request budget of 4.
         if let lastIndex = blocks.indices.last {
-            blocks[lastIndex]["cache_control"] = cacheControl()
+            blocks[lastIndex]["cache_control"] = systemCacheControl()
         }
         return blocks
     }
@@ -220,12 +220,28 @@ extension AnthropicSubscriptionGenerationClient {
         ["type": "ephemeral", "ttl": "1h"]
     }
 
+    static func systemCacheControl() -> [String: Any] {
+        var value = cacheControl()
+        value["scope"] = "global"
+        return value
+    }
+
     static func oauthBetaHeader(forModelID modelID: String) -> String {
         var headers = [
             claudeCodeBetaHeader,
             oauthBetaHeader,
+            contextManagementBetaHeader,
+            promptCachingScopeBetaHeader,
             extendedCacheTTLHeader
         ]
+        if AnthropicSubscriptionModel
+            .option(forModelID: modelID)
+            .contextWindowTokenLimit == AnthropicSubscriptionModel.largeContextWindowTokenLimit {
+            headers.append(longContextBetaHeader)
+        }
+        if usesAdaptiveThinking(modelID: modelID) {
+            headers.append(effortBetaHeader)
+        }
         if !usesAdaptiveThinking(modelID: modelID) {
             headers.append(interleavedThinkingBetaHeader)
         }

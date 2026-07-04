@@ -41,6 +41,7 @@ extension AnthropicSubscriptionGenerationClient {
         var accumulatedText = ""
         var generationStats: [RemoteGenerationStats] = []
         var didRetryAfterContextLimit = false
+        var didRetryAfterThinkingReplayRejection = false
 
         for round in 0..<configuration.maxToolRounds {
             if let result = compactSessionIfNeeded(
@@ -58,9 +59,22 @@ extension AnthropicSubscriptionGenerationClient {
                         modelID: modelID,
                         modelLLMID: modelLLMID,
                         credentials: credentials,
+                        includeThinkingBlocks: !didRetryAfterThinkingReplayRejection,
                         onEvent: onEvent
                     )
                 } catch {
+                    if !didRetryAfterThinkingReplayRejection,
+                       Self.isThinkingReplayRejected(error) {
+                        didRetryAfterThinkingReplayRejection = true
+                        session.messages = Self.removingThinkingBlocks(from: session.messages)
+                        sessions[sessionID] = session
+                        await onEvent(
+                            .diagnostic(
+                                "Anthropic rejected saved thinking blocks; retrying without replaying prior thinking blocks."
+                            )
+                        )
+                        continue
+                    }
                     guard Self.isContextLimitError(error), !didRetryAfterContextLimit else {
                         throw error
                     }
@@ -128,6 +142,49 @@ extension AnthropicSubscriptionGenerationClient {
         }
         sessions[sessionID] = session
         throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)
+    }
+
+    static func removingThinkingBlocks(
+        from messages: [[String: Any]]
+    ) -> [[String: Any]] {
+        messages.map { message in
+            guard message["thinking_blocks"] != nil else {
+                return message
+            }
+            var copy = message
+            copy.removeValue(forKey: "thinking_blocks")
+            return copy
+        }
+    }
+
+    static func isThinkingReplayRejected(_ error: Error) -> Bool {
+        let message: String
+        if let error = error as? RemoteGenerationClientError {
+            switch error {
+            case let .remoteFailure(output):
+                message = output
+            default:
+                message = error.localizedDescription
+            }
+        } else {
+            message = error.localizedDescription
+        }
+        return messageIndicatesThinkingReplayRejected(message)
+    }
+
+    static func messageIndicatesThinkingReplayRejected(_ message: String) -> Bool {
+        let normalized = message
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard normalized.contains("thinking") else {
+            return false
+        }
+        return normalized.contains("invalid_thinking_signature")
+            || normalized.contains("thinking_blocks_modified")
+            || normalized.contains("signature")
+            || normalized.contains("cannot be modified")
+            || normalized.contains("redacted_thinking")
+            || normalized.contains("thinking block")
     }
 }
 #endif

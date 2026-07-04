@@ -28,9 +28,13 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
     }
 
     static let apiBaseURL = URL(string: "https://api.anthropic.com/v1")!
-    static let claudeCodeVersion = "2.1.75"
+    static let claudeCodeVersion = "2.1.201"
     static let claudeCodeBetaHeader = "claude-code-20250219"
     static let oauthBetaHeader = "oauth-2025-04-20"
+    static let longContextBetaHeader = "context-1m-2025-08-07"
+    static let contextManagementBetaHeader = "context-management-2025-06-27"
+    static let effortBetaHeader = "effort-2025-11-24"
+    static let promptCachingScopeBetaHeader = "prompt-caching-scope-2026-01-05"
     static let interleavedThinkingBetaHeader = "interleaved-thinking-2025-05-14"
     static let extendedCacheTTLHeader = "extended-cache-ttl-2025-04-11"
     static let minimumOutputTokensForThinking = 1_024

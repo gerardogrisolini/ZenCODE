@@ -137,6 +137,54 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
+    func messagesPayloadDropsThinkingOnlyAssistantMessages() {
+        let messages: [[String: Any]] = [
+            ["role": "user", "content": "Hello"],
+            [
+                "role": "assistant",
+                "thinking_blocks": "[{\"type\":\"thinking\",\"thinking\":\"step\",\"signature\":\"sig\"}]"
+            ],
+            ["role": "user", "content": "continue"]
+        ]
+
+        let payload = AnthropicSubscriptionGenerationClient.anthropicMessagesPayload(
+            from: messages,
+            includeThinkingBlocks: true
+        )
+
+        #expect(payload.messages.map { $0["role"] as? String } == ["user", "user"])
+    }
+
+    @Test
+    func messagesPayloadDropsInvalidThinkingBlocksBeforeReplay() throws {
+        let messages: [[String: Any]] = [
+            [
+                "role": "assistant",
+                "content": "Working on it.",
+                "thinking_blocks": """
+                [
+                  {"type":"thinking","thinking":"unsigned"},
+                  {"type":"redacted_thinking"},
+                  {"type":"thinking","thinking":"valid","signature":"sig"}
+                ]
+                """
+            ]
+        ]
+
+        let payload = AnthropicSubscriptionGenerationClient.anthropicMessagesPayload(
+            from: messages,
+            includeThinkingBlocks: true
+        )
+        let assistant = try #require(payload.messages.first)
+        let blocks = try #require(assistant["content"] as? [[String: Any]])
+
+        #expect(blocks.count == 2)
+        #expect(blocks[0]["type"] as? String == "thinking")
+        #expect(blocks[0]["thinking"] as? String == "valid")
+        #expect(blocks[1]["type"] as? String == "text")
+    }
+
+    @Test
     func savedSessionRoundTripPreservesThinkingBlocksForResumeReplay() {
         let thinkingBlocksJSON = #"[{"type":"thinking","thinking":"step","signature":"sig"}]"#
         let history = [
@@ -175,13 +223,23 @@ struct AnthropicThinkingBlockTests {
     @Test
     func anthropicCacheControlUsesOneHourTTLForSavedSessionResume() {
         let cacheControl = AnthropicSubscriptionGenerationClient.cacheControl()
+        let systemCacheControl = AnthropicSubscriptionGenerationClient.systemCacheControl()
 
         #expect(cacheControl["type"] as? String == "ephemeral")
         #expect(cacheControl["ttl"] as? String == "1h")
+        #expect(cacheControl["scope"] == nil)
+        #expect(systemCacheControl["type"] as? String == "ephemeral")
+        #expect(systemCacheControl["ttl"] as? String == "1h")
+        #expect(systemCacheControl["scope"] as? String == "global")
         #expect(
             AnthropicSubscriptionGenerationClient.oauthBetaHeader(
                 forModelID: "claude-sonnet-4-20250514"
             ).contains("extended-cache-ttl")
+        )
+        #expect(
+            AnthropicSubscriptionGenerationClient.oauthBetaHeader(
+                forModelID: "claude-sonnet-4-20250514"
+            ).contains("prompt-caching-scope")
         )
     }
 
@@ -205,7 +263,7 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
-    func subscriptionSystemBlocksMarkOnlyLastBlockForCaching() {
+    func subscriptionSystemBlocksMarkOnlyLastBlockForCaching() throws {
         let withUserPrompt = AnthropicSubscriptionGenerationClient.subscriptionSystemBlocks(
             userSystemPrompt: "Project instructions"
         )
@@ -215,9 +273,15 @@ struct AnthropicThinkingBlockTests {
 
         #expect(withUserPrompt.count == 2)
         #expect(withUserPrompt[0]["cache_control"] == nil)
-        #expect(withUserPrompt[1]["cache_control"] != nil)
+        let withUserCacheControl = try #require(
+            withUserPrompt[1]["cache_control"] as? [String: Any]
+        )
+        #expect(withUserCacheControl["scope"] as? String == "global")
         #expect(spineOnly.count == 1)
-        #expect(spineOnly[0]["cache_control"] != nil)
+        let spineCacheControl = try #require(
+            spineOnly[0]["cache_control"] as? [String: Any]
+        )
+        #expect(spineCacheControl["scope"] as? String == "global")
     }
 
     @Test
@@ -236,7 +300,7 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
-    func cacheControlBreakpointsMarkLastThreeMessagesSkippingThinkingBlocks() throws {
+    func cacheControlBreakpointsMarkLastMessageSkippingThinkingBlocks() throws {
         let messages: [[String: Any]] = [
             ["role": "user", "content": [["type": "text", "text": "first"]]],
             ["role": "assistant", "content": [["type": "text", "text": "old answer"]]],
@@ -261,17 +325,34 @@ struct AnthropicThinkingBlockTests {
             return content.contains { $0["cache_control"] != nil }
         }
 
-        // Last three messages carry a breakpoint; earlier ones do not.
+        // Claude Code uses one moving message-level breakpoint per request.
         #expect(try anyMarked(0) == false)
         #expect(try anyMarked(1) == false)
-        #expect(try lastBlock(2)["cache_control"] != nil)
+        #expect(try anyMarked(2) == false)
+        #expect(try anyMarked(3) == false)
         #expect(try lastBlock(4)["cache_control"] != nil)
+    }
 
-        // On the assistant tool-use turn the breakpoint lands on the
-        // tool_use block, never on the thinking block.
-        let assistantContent = try #require(marked[3]["content"] as? [[String: Any]])
+    @Test
+    func cacheControlBreakpointSkipsThinkingBlocks() throws {
+        let messages: [[String: Any]] = [
+            [
+                "role": "assistant",
+                "content": [
+                    ["type": "thinking", "thinking": "hidden", "signature": "sig"],
+                    ["type": "tool_use", "id": "toolu_1", "name": "local.exec", "input": [:]]
+                ]
+            ]
+        ]
+        let marked = AnthropicSubscriptionGenerationClient.addingCacheControlBreakpoints(messages)
+        let assistantContent = try #require(marked[0]["content"] as? [[String: Any]])
+
         #expect(assistantContent[0]["cache_control"] == nil)
-        #expect(assistantContent[1]["cache_control"] != nil)
+        let assistantCacheControl = try #require(
+            assistantContent[1]["cache_control"] as? [String: Any]
+        )
+        #expect(assistantCacheControl["ttl"] as? String == "1h")
+        #expect(assistantCacheControl["scope"] == nil)
     }
 
     @Test
@@ -285,6 +366,64 @@ struct AnthropicThinkingBlockTests {
         #expect(content.first?["type"] as? String == "text")
         #expect(content.first?["text"] as? String == "plain text")
         #expect(content.first?["cache_control"] != nil)
+    }
+
+    @Test
+    func oauthBetaHeaderMatchesClaudeCodeCachingAndThinkingBetas() {
+        let adaptiveHeader = AnthropicSubscriptionGenerationClient.oauthBetaHeader(
+            forModelID: "claude-opus-4-8"
+        )
+        let interleavedHeader = AnthropicSubscriptionGenerationClient.oauthBetaHeader(
+            forModelID: "claude-haiku-4-5"
+        )
+
+        #expect(adaptiveHeader.contains("claude-code-20250219"))
+        #expect(adaptiveHeader.contains("oauth-2025-04-20"))
+        #expect(adaptiveHeader.contains("context-management-2025-06-27"))
+        #expect(adaptiveHeader.contains("prompt-caching-scope-2026-01-05"))
+        #expect(adaptiveHeader.contains("extended-cache-ttl-2025-04-11"))
+        #expect(adaptiveHeader.contains("context-1m-2025-08-07"))
+        #expect(adaptiveHeader.contains("effort-2025-11-24"))
+        #expect(!adaptiveHeader.contains("advanced-tool-use-2025-11-20"))
+        #expect(!adaptiveHeader.contains("afk-mode-2026-01-31"))
+        #expect(!adaptiveHeader.contains("interleaved-thinking-2025-05-14"))
+
+        #expect(interleavedHeader.contains("interleaved-thinking-2025-05-14"))
+        #expect(!interleavedHeader.contains("context-1m-2025-08-07"))
+    }
+
+    @Test
+    func thinkingReplayRejectionStripsSavedThinkingBlocks() {
+        let messages: [[String: Any]] = [
+            ["role": "user", "content": "Hello"],
+            [
+                "role": "assistant",
+                "content": "Working.",
+                "thinking_blocks": "[{\"type\":\"thinking\",\"thinking\":\"step\",\"signature\":\"sig\"}]"
+            ]
+        ]
+        let stripped = AnthropicSubscriptionGenerationClient.removingThinkingBlocks(
+            from: messages
+        )
+
+        #expect(stripped[0]["thinking_blocks"] == nil)
+        #expect(stripped[1]["thinking_blocks"] == nil)
+        #expect(stripped[1]["content"] as? String == "Working.")
+        #expect(
+            AnthropicSubscriptionGenerationClient.messageIndicatesThinkingReplayRejected(
+                "invalid_thinking_signature: invalid signature in thinking block"
+            )
+        )
+        #expect(
+            AnthropicSubscriptionGenerationClient.messageIndicatesThinkingReplayRejected(
+                "Thinking blocks cannot be modified between requests."
+            )
+        )
+        #expect(
+            !AnthropicSubscriptionGenerationClient.messageIndicatesThinkingReplayRejected(
+                "The service is overloaded."
+            )
+        )
     }
 }
 #endif
