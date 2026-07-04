@@ -139,6 +139,12 @@ extension DirectMCPToolRuntime {
         }
     }
 
+    /// Maximum time to wait for the Xcode MCP handshake and tool listing.
+    /// The handshake stays pending while Xcode shows the user-consent dialog;
+    /// if the user does not accept it, the discovery would otherwise hang
+    /// forever and block the caller (for example the TUI input prompt).
+    public static let xcodeDiscoveryTimeoutNanoseconds: UInt64 = 60_000_000_000
+
     public static func defaultXcodeDiscovery() async -> XcodeDiscovery? {
         guard MCPServerConfiguration.isXcodeRunning(),
               let configuration = MCPServerConfiguration.xcodeFromEnvironment() else {
@@ -146,18 +152,53 @@ extension DirectMCPToolRuntime {
         }
 
         let executor = XcodeToolExecutor(configuration: configuration)
-        do {
-            let tools = try await executor.loadTools()
-            let workspaceContexts = try await executor.loadWorkspaceContexts()
-            return XcodeDiscovery(
-                executor: executor,
-                tools: tools,
-                workspaceContexts: workspaceContexts
-            )
-        } catch {
+        let discovery = await firstResultBeforeTimeout(
+            timeoutNanoseconds: xcodeDiscoveryTimeoutNanoseconds
+        ) { () async -> XcodeDiscovery? in
+            do {
+                let tools = try await executor.loadTools()
+                let workspaceContexts = try await executor.loadWorkspaceContexts()
+                return XcodeDiscovery(
+                    executor: executor,
+                    tools: tools,
+                    workspaceContexts: workspaceContexts
+                )
+            } catch {
+                return nil
+            }
+        }
+
+        guard let discovery else {
             await executor.disconnect()
             return nil
         }
+        return discovery
+    }
+
+    /// Races `operation` against a timeout and returns the first outcome.
+    /// Unlike a task group, this does not wait for a non-cancellable pending
+    /// operation to finish before returning after the timeout fires.
+    static func firstResultBeforeTimeout<T: Sendable>(
+        timeoutNanoseconds: UInt64,
+        operation: @escaping @Sendable () async -> T?
+    ) async -> T? {
+        let (stream, continuation) = AsyncStream<T?>.makeStream()
+        let operationTask = Task {
+            continuation.yield(await operation())
+        }
+        let timeoutTask = Task {
+            try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+            continuation.yield(nil)
+        }
+        defer {
+            operationTask.cancel()
+            timeoutTask.cancel()
+        }
+
+        for await result in stream {
+            return result
+        }
+        return nil
     }
 
     public static func externalToolPrefix(for serverName: String) -> String {

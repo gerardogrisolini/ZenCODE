@@ -423,6 +423,16 @@ public actor AgentCoreSessionRunner {
     }
 
     public func shutdown() async {
+        await shutdownBackendKeepingExternalTools()
+        await mcpRuntime.shutdown()
+    }
+
+    /// Shuts down the model backend and all session state while keeping the
+    /// connected external MCP servers (for example the already-authorized
+    /// Xcode connection) alive. Use this for in-process resets such as model
+    /// or agent switching, where tearing down MCP connections would force the
+    /// user to grant external-tool consents again.
+    public func shutdownBackendKeepingExternalTools() async {
         for task in activePromptTasks.values {
             task.cancel()
         }
@@ -436,7 +446,6 @@ public actor AgentCoreSessionRunner {
         let backendToShutdown = backend
         backend = nil
         await backendToShutdown?.shutdown()
-        await mcpRuntime.shutdown()
     }
 
     private func registerActivePromptTask(

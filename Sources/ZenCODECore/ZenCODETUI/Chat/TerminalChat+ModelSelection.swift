@@ -105,7 +105,7 @@ extension TerminalChat {
             return
         }
 
-        await sessionRunner.shutdown()
+        await sessionRunner.shutdownBackendKeepingExternalTools()
         printedModelID = nil
         statusBar.reset()
         try await createCurrentSession()

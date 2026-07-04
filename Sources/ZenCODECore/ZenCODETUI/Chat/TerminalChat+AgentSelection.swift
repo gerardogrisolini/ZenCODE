@@ -68,7 +68,7 @@ extension TerminalChat {
         manualThinkingSelectionOverride = nil
         await ensureWorkspaceAccessIfNeeded()
 
-        await sessionRunner.shutdown()
+        await sessionRunner.shutdownBackendKeepingExternalTools()
         printedModelID = nil
         didPrintActiveTools = false
         statusBar.reset()
