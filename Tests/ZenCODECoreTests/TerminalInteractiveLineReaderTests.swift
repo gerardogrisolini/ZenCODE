@@ -92,4 +92,27 @@ struct TerminalInteractiveLineReaderTests {
         )
     }
 
+    @Test
+    func redrawSequenceReusesCurrentLine() {
+        let sequence = TerminalInteractiveLineReader.redrawSequence(
+            prompt: "Feature id: ",
+            buffer: Array("github"),
+            cursorIndex: 6
+        )
+
+        #expect(sequence == "\r\u{1B}[2KFeature id: github")
+        #expect(!sequence.hasPrefix("\n"))
+    }
+
+    @Test
+    func redrawSequenceRestoresCursorPosition() {
+        let sequence = TerminalInteractiveLineReader.redrawSequence(
+            prompt: "Feature id: ",
+            buffer: Array("github"),
+            cursorIndex: 3
+        )
+
+        #expect(sequence == "\r\u{1B}[2KFeature id: github\u{1B}[3D")
+    }
+
 }

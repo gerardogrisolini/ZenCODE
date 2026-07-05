@@ -59,12 +59,20 @@ extension TerminalInteractiveLineReader {
         return Array(history[nextIndex])
     }
 
-    func redraw(prompt: String, buffer: [Character], cursorIndex: Int) {
-        AgentOutput.standardError.writeString("\n\u{1B}[2K\(prompt)\(String(buffer))")
-        let charactersAfterCursor = buffer.count - cursorIndex
+    static func redrawSequence(prompt: String, buffer: [Character], cursorIndex: Int) -> String {
+        var sequence = "\r\u{1B}[2K\(prompt)\(String(buffer))"
+        let boundedCursorIndex = min(max(cursorIndex, 0), buffer.count)
+        let charactersAfterCursor = buffer.count - boundedCursorIndex
         if charactersAfterCursor > 0 {
-            AgentOutput.standardError.writeString("\u{1B}[\(charactersAfterCursor)D")
+            sequence += "\u{1B}[\(charactersAfterCursor)D"
         }
+        return sequence
+    }
+
+    func redraw(prompt: String, buffer: [Character], cursorIndex: Int) {
+        AgentOutput.standardError.writeString(
+            Self.redrawSequence(prompt: prompt, buffer: buffer, cursorIndex: cursorIndex)
+        )
     }
 
 }
