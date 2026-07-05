@@ -77,6 +77,14 @@ products += [
         targets: ["FeatureKit"]
     ),
     .library(
+        name: "ToolCore",
+        targets: ["ToolCore"]
+    ),
+    .library(
+        name: "FeatureMCPBridgeKit",
+        targets: ["FeatureMCPBridgeKit"]
+    ),
+    .library(
         name: "LocalToolsSupport",
         targets: ["LocalToolsSupport"]
     ),
@@ -189,6 +197,8 @@ targets += [
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "Markdown", package: "swift-markdown"),
             "FeatureKit",
+            "ToolCore",
+            "FeatureMCPBridgeKit",
             "LocalToolsSupport",
             "ZenPackageMetadata"
         ],
@@ -199,6 +209,17 @@ targets += [
     .target(
         name: "FeatureKit",
         dependencies: []
+    ),
+    .target(
+        name: "ToolCore",
+        dependencies: []
+    ),
+    .target(
+        name: "FeatureMCPBridgeKit",
+        dependencies: [
+            "ToolCore",
+            .product(name: "Crypto", package: "swift-crypto")
+        ]
     ),
     .target(
         name: "LocalToolsSupport",
@@ -219,7 +240,10 @@ targets += [
     ),
     .testTarget(
         name: "ZenCODECoreTests",
-        dependencies: ["ZenCODECore"]
+        dependencies: [
+            "ZenCODECore",
+            "FeatureMCPBridgeKit"
+        ]
     ),
     .testTarget(
         name: "ZenCODESetupTests",
@@ -254,24 +278,26 @@ targets += [
     .executableTarget(
         name: "xcode-tools-feature",
         dependencies: [
-            "ZenCODECore",
-            "FeatureKit"
+            "FeatureKit",
+            "ToolCore",
+            "FeatureMCPBridgeKit"
         ],
         path: "Sources/Features/XcodeTools"
     ),
     .executableTarget(
         name: "figma-tools-feature",
         dependencies: [
-            "ZenCODECore",
-            "FeatureKit"
+            "FeatureKit",
+            "ToolCore",
+            "FeatureMCPBridgeKit"
         ],
         path: "Sources/Features/FigmaTools"
     ),
     .executableTarget(
         name: "jira-tools-feature",
         dependencies: [
-            "ZenCODECore",
-            "FeatureKit"
+            "FeatureKit",
+            "ToolCore"
         ],
         path: "Sources/Features/JiraTools"
     )

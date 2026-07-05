@@ -330,6 +330,7 @@ Generated features are reusable Swift tool packages managed by the Builder agent
 ```text
 /feature
 /feature list
+/feature status
 /feature enable <id|name|#>
 /feature disable <id|name|#>
 /feature build <id|name|#>
@@ -338,7 +339,10 @@ Generated features are reusable Swift tool packages managed by the Builder agent
 /feature delete <id|name|#>
 ```
 
-Features are discovered from bundled feature binaries and generated packages under `~/.zencode/features`. Generated packages are plain Swift 6.3 packages and run out-of-process over a JSON stdin/stdout protocol.
+`/feature list` opens the enable/disable menu. `/feature status` prints the
+known feature packages. Features are discovered from bundled feature binaries and
+generated packages under `~/.zencode/features`. Generated packages are plain
+Swift 6.3 packages and run out-of-process over a JSON stdin/stdout protocol.
 
 See the [Builder agent guide](builder.md) for Builder usage and technical feature package notes.
 

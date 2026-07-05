@@ -33,14 +33,6 @@ public nonisolated struct ToolDescriptor: Codable, Identifiable, Hashable, Senda
         self.outputSchema = outputSchema
     }
 
-    public init(remoteTool: MCPRemoteTool) {
-        self.name = remoteTool.name
-        self.title = remoteTool.title
-        self.description = remoteTool.description ?? "No description provided by the tool backend."
-        self.inputSchema = remoteTool.inputSchema?.prettyPrinted() ?? "{}"
-        self.outputSchema = remoteTool.outputSchema?.prettyPrinted()
-    }
-
     public func promptDescription() -> String {
         let titleLine = title.map { "\n  title: \($0)" } ?? ""
         let requiredLine = requiredInputArgumentNames().isEmpty
@@ -126,10 +118,7 @@ public nonisolated struct ToolDescriptor: Codable, Identifiable, Hashable, Senda
                 )
             }
         } catch {
-            ZenLogger.warning(
-                .toolDescriptor,
-                "Error parsing ToolDescriptor JSON: \(error)"
-            )
+            return ToolDescriptor(name: jsonString, description: "", inputSchema: "{}")
         }
 
         return ToolDescriptor(name: jsonString, description: "", inputSchema: "{}")

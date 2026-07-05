@@ -218,8 +218,9 @@ extension SwiftFeatureRuntime {
                 .executableTarget(
                     name: "\(targetName)",
                     dependencies: [
-                        .product(name: "ZenCODECore", package: "ZenCODE"),
-                        .product(name: "FeatureKit", package: "ZenCODE")
+                        .product(name: "FeatureKit", package: "ZenCODE"),
+                        .product(name: "ToolCore", package: "ZenCODE"),
+                        .product(name: "FeatureMCPBridgeKit", package: "ZenCODE")
                     ]
                 )
             ]

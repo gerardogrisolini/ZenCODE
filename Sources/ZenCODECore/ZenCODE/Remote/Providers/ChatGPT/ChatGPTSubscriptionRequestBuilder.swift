@@ -7,6 +7,7 @@
 
 #if os(macOS)
 import Foundation
+import ToolCore
 #if canImport(CryptoKit)
 import CryptoKit
 #endif

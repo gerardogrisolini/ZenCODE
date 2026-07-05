@@ -18,12 +18,13 @@ extension AgentConfigurationTests {
         #expect(TerminalChat.featureCommandRequiresActiveBuilder(rawArguments: "delete test1"))
         #expect(TerminalChat.featureCommandRequiresActiveBuilder(rawArguments: "list"))
         #expect(TerminalChat.featureCommandRequiresActiveBuilder(rawArguments: "status"))
+        #expect(!TerminalChat.renderFeatureCommandUsage().contains("adopt"))
         #expect(TerminalChat.renderFeatureBuilderInactiveWarning().contains("Builder agent"))
         #expect(!TerminalChat.renderFeatureBuilderInactiveWarning().contains("/tools"))
     }
 
     @Test
-    func featuresCommandIsVisibleOnlyWithBuilderAgent() {
+    func featureCommandIsVisibleOnlyWithBuilderAgent() {
         let normalCommands = TerminalChat.visibleCommandDescriptors(
             builderAgentEnabled: false,
             telegramEnabled: false,
@@ -35,9 +36,8 @@ extension AgentConfigurationTests {
             voiceEnabled: false
         ).map(\.command)
 
-        #expect(!normalCommands.contains("/features"))
         #expect(!normalCommands.contains("/feature"))
-        #expect(builderCommands.contains("/features"))
+        #expect(!builderCommands.contains("/features"))
         #expect(builderCommands.contains("/feature"))
     }
 
@@ -299,6 +299,11 @@ extension AgentConfigurationTests {
                 enabled: false
             ),
             featureStatus(
+                id: "git-tools",
+                source: .bundled,
+                tools: ["git.status"]
+            ),
+            featureStatus(
                 id: "custom-linear",
                 displayName: "Linear",
                 source: .generated,
@@ -309,27 +314,70 @@ extension AgentConfigurationTests {
         let rendered = TerminalChat.renderFeatureStatusList(statuses)
 
         #expect(rendered.contains("Xcode [xcode-tools] - disabled, bundled, discovers tools at runtime"))
-        #expect(rendered.contains("Linear [custom-linear] - enabled, generated, 1 tool: linear.issue.list"))
-        #expect(rendered.contains("Run /features to open the enable/disable menu."))
+        #expect(rendered.contains("Linear [custom-linear] - enabled, generated, editable, 1 tool: linear.issue.list"))
+        #expect(rendered.contains("Git [git-tools] - enabled, bundled, 1 tool: git.status"))
+        #expect(!rendered.contains("core"))
+        #expect(rendered.contains("Run /feature list to open the enable/disable menu."))
         #expect(try TerminalChat.resolvedFeatureID("xcode", statuses: statuses) == "xcode-tools")
         #expect(try TerminalChat.resolvedFeatureID("Linear", statuses: statuses) == "custom-linear")
     }
 
     @Test
-    func featureCheckboxItemShowsFeatureIdentityAndTools() {
-        let item = TerminalChat.featureCheckboxItem(
-            featureStatus(
-                id: "jira-tools",
-                source: .bundled,
-                tools: ["jira.read", "jira.search", "jira.signOut"],
-                enabled: false
-            )
+    func featureCheckboxItemUsesToolSelectionDescription() {
+        let status = featureStatus(
+            id: "jira-tools",
+            description: "Query and manage Jira issues and projects.",
+            source: .bundled,
+            tools: ["jira.read", "jira.search", "jira.signOut"]
         )
+        let item = TerminalChat.featureCheckboxItem(
+            status
+        )
+        let toolsItem = TerminalChat.toolSelectionItems(featureStatuses: [status])
+            .first { $0.title == "Jira" }
 
         #expect(item.value == "jira-tools")
         #expect(item.title == "Jira [jira-tools]")
-        #expect(item.detail == "available, 3 tools: jira.read, jira.search, jira.signOut")
-        #expect(item.groupTitle == "Bundled")
+        #expect(item.detail == toolsItem?.detail)
+        #expect(item.groupTitle == nil)
+    }
+
+    @Test
+    func featureStatusSortOrderKeepsVisibleFeaturesUngrouped() {
+        let statuses = [
+            featureStatus(id: "figma-tools", source: .bundled, tools: []),
+            featureStatus(id: "git-tools", source: .bundled, tools: []),
+            featureStatus(id: "jira-tools", source: .bundled, tools: []),
+            featureStatus(id: "search-tools", source: .bundled, tools: []),
+            featureStatus(id: "custom-linear", displayName: "Linear", source: .generated, tools: []),
+            featureStatus(
+                id: "xcode-tools",
+                source: .generated,
+                tools: [],
+                adoptedFrom: "xcode-tools"
+            )
+        ]
+
+        let items = statuses
+            .sorted(by: TerminalChat.featureStatusSortOrder)
+            .map(TerminalChat.featureCheckboxItem)
+
+        #expect(items.map(\.groupTitle) == [
+            nil,
+            nil,
+            nil,
+            nil,
+            nil,
+            nil
+        ])
+        #expect(items.map(\.title) == [
+            "Figma [figma-tools]",
+            "Git [git-tools]",
+            "Jira [jira-tools]",
+            "Linear [custom-linear]",
+            "Search [search-tools]",
+            "Xcode [xcode-tools]"
+        ])
     }
 
     @Test

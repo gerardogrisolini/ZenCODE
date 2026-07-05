@@ -107,8 +107,7 @@ ZENCODE_BUILD_DS4=1 ZENCODE_DS4_ROOT=/path/to/ds4 swift build -c release --produ
 /undo        Revert the latest tracked agent changes
 /plan        Delegate read-only planning to Planner sub-agents
 /review      Delegate a read-only review to Reviewer sub-agents
-/features    Enable or disable feature packages with the Builder agent
-/feature     Create and manage Swift features with the Builder agent
+/feature     List, enable, disable, create, and manage Swift features with the Builder agent
 /telegram    Turn Telegram remote control on/off when paired in setup
 /voice       Record a voice prompt when local voice tools are enabled in setup
 /speak       Play the last assistant response aloud when local voice tools are enabled

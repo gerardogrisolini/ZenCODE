@@ -10,6 +10,7 @@
 import Darwin
 #endif
 import Foundation
+import ToolCore
 
 #if os(macOS)
 extension MCPClient {
@@ -79,7 +80,7 @@ extension MCPClient {
         let initializeParams = MCPInitializeParams(
             protocolVersion: configuration.preferredProtocolVersion,
             capabilities: MCPClientCapabilities(),
-            clientInfo: MCPClientInfo(name: "ZenCODE", version: agentVersion)
+            clientInfo: MCPClientInfo(name: "Feature MCP client", version: "1.0")
         )
 
         if configuration.usesMCPBridgeExecutable {

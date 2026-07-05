@@ -6,8 +6,9 @@
 //
 
 import Foundation
-import ZenCODECore
 import FeatureKit
+import FeatureMCPBridgeKit
+import ToolCore
 
 @main
 enum FigmaToolsFeature {

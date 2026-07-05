@@ -218,7 +218,8 @@ extension SwiftFeatureRuntimeTests {
         )
 
         #expect(packageContents.components(separatedBy: .newlines).first == "// swift-tools-version: 6.3")
-        #expect(packageContents.contains(#".product(name: "ZenCODECore", package: "ZenCODE")"#))
+        #expect(!packageContents.contains(#".product(name: "ZenCODECore", package: "ZenCODE")"#))
+        #expect(packageContents.contains(#".product(name: "FeatureMCPBridgeKit", package: "ZenCODE")"#))
         #expect(sourceContents.contains("RemoteMCPToolExecutor"))
         #expect(sourceContents.contains("http://127.0.0.1:65535/mcp"))
         #expect(manifest.discoversToolsAtRuntime)
@@ -524,29 +525,34 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
-    func featureAdoptRejectsCoreBundledFeature() async throws {
+    func featureEditCreatesLocalCopyForBundledSearchFeature() async throws {
         let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("swift-feature-adopt-core-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("swift-feature-adopt-search-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
         }
 
         let runtime = SwiftFeatureRuntime(featureSearchRoots: [rootURL])
-        do {
-            _ = try await runtime.executeManagementTool(
-                toolCall: featureManagementCall(
-                    name: "feature.adopt",
-                    arguments: ["id": "search-tools"]
-                )
+        let output = try await runtime.executeManagementTool(
+            toolCall: featureManagementCall(
+                name: "feature.edit",
+                arguments: ["id": "search-tools"]
             )
-            Issue.record("feature.adopt unexpectedly adopted a core bundled feature.")
-        } catch {
-            #expect(error.localizedDescription.contains("Core Swift feature 'search-tools'"))
-        }
+        )
+        let report = try JSONDecoder().decode(
+            SwiftFeatureEditReport.self,
+            from: Data(output.utf8)
+        )
+
+        #expect(report.ok)
+        #expect(report.id == "search-tools")
+        #expect(report.adopted)
+        #expect(report.adoptedFrom == "search-tools")
+        #expect(report.manifestPath.hasSuffix("/search-tools/feature.json"))
     }
 
     @Test
-    func featureEditAdoptsNonCoreBundledFeatureAndDeleteRestoresBundledRecord() async throws {
+    func featureEditCreatesLocalCopyForBundledFeatureAndDeleteRestoresBundledRecord() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-feature-edit-adopt-\(UUID().uuidString)", isDirectory: true)
         defer {

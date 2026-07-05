@@ -12,6 +12,7 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
+import ToolCore
 #if canImport(Network)
 import Network
 import Synchronization
@@ -27,7 +28,7 @@ public nonisolated struct MCPBrowserOAuthConfiguration: Hashable, Sendable {
     public let callbackTimeout: TimeInterval
 
     public init(
-        clientName: String = "ZenCODE",
+        clientName: String = "MCP client",
         serviceName: String = "MCP service",
         redirectHost: String = "127.0.0.1",
         redirectPort: UInt16 = 8787,
@@ -234,7 +235,7 @@ public nonisolated struct MCPServerConfiguration: Hashable, Sendable {
             httpHeaders: [:],
             httpAuthentication: .browserOAuth(
                 MCPBrowserOAuthConfiguration(
-                    clientName: "ZenCODE Figma",
+                    clientName: "Figma MCP client",
                     serviceName: "Figma",
                     redirectHost: "127.0.0.1",
                     redirectPort: 8788,
@@ -321,7 +322,7 @@ public nonisolated struct MCPServerConfiguration: Hashable, Sendable {
             }
 
             let connection = NWConnection(host: host, port: port, using: .tcp)
-            let queue = DispatchQueue(label: "ZenCODE.MCPReachability")
+            let queue = DispatchQueue(label: "FeatureMCPBridgeKit.MCPReachability")
             let state = ReachabilityContinuationState()
 
             let finish: @Sendable (Bool) -> Void = { isReachable in

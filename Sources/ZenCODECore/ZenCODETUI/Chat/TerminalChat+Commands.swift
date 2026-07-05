@@ -223,15 +223,9 @@ extension TerminalChat {
             help: "/tools selects which tool groups are available to the model."
         ),
         TerminalChatCommandDescriptor(
-            command: "/features",
-            summary: "select feature packages",
-            help: "/features selects which bundled and local Swift feature packages are enabled.",
-            availability: .builderAgent
-        ),
-        TerminalChatCommandDescriptor(
             command: "/feature",
-            summary: "create/manage features",
-            help: "/feature creates and manages generated Swift feature packages.",
+            summary: "list/manage features",
+            help: "/feature list selects enabled feature packages. /feature status prints known feature packages. Builder-only management remains under /feature.",
             availability: .builderAgent
         ),
         TerminalChatCommandDescriptor(

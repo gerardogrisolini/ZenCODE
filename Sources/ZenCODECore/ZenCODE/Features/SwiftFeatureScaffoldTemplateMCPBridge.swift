@@ -22,8 +22,9 @@ extension SwiftFeatureRuntime {
         let environmentLiteral = swiftStringDictionaryLiteral(environment)
         return #"""
         import Foundation
-        import ZenCODECore
         import FeatureKit
+        import FeatureMCPBridgeKit
+        import ToolCore
         #if canImport(Darwin)
         import Darwin
         #elseif canImport(Glibc)

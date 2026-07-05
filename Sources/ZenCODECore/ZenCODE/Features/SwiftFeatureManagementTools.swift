@@ -40,10 +40,6 @@ extension SwiftFeatureRuntime {
             let report = try await deleteFeature(arguments: arguments)
             reloadFeatureBundles()
             return try renderJSON(report)
-        case "feature.adopt", "feature.fork":
-            let report = try adoptFeature(arguments: arguments)
-            reloadFeatureBundles()
-            return try renderJSON(report)
         case "feature.edit", "feature.update":
             let report = try editFeature(arguments: arguments)
             if report.adopt != nil {

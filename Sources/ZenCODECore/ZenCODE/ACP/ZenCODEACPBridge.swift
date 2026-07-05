@@ -11,6 +11,7 @@ import Darwin
 import Glibc
 #endif
 import Dispatch
+import FeatureMCPBridgeKit
 import Foundation
 
 public actor ZenCODEACPBridge {

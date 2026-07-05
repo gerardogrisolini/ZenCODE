@@ -7,11 +7,7 @@ import Foundation
 
 extension TerminalChat {
     public static func renderFeatureCommandUsage() -> String {
-        "Usage: /feature [list|reload|enable <id|name|#>|disable <id|name|#>|adopt <id|name|#>|edit <id|name|#> [requirements]|delete <id|name|#>|build <id|name|#>|validate <id|name|#>]\n"
-    }
-
-    public static func renderFeaturesCommandUsage() -> String {
-        "Usage: /features\n"
+        "Usage: /feature [list|status|reload|enable <id|name|#>|disable <id|name|#>|edit <id|name|#> [requirements]|delete <id|name|#>|build <id|name|#>|validate <id|name|#>]\n"
     }
 
     public static func renderFeatureBuilderInactiveWarning() -> String {
@@ -41,7 +37,7 @@ extension TerminalChat {
 
         var lines = ["Feature '\(id)' \(actions.joined(separator: ", "))."]
         if !enabled {
-            lines.append("It is not active yet. Enable it from /features, then select it from /tools.")
+            lines.append("It is not active yet. Enable it from /feature list, then select it from /tools.")
         } else if !selected {
             lines.append("It is enabled. Select it from /tools to expose its tools in this session.")
         } else {
@@ -106,7 +102,7 @@ extension TerminalChat {
             : report.sourcePaths.map { "- \($0)" }.joined(separator: "\n")
         let packageLine = report.packagePath.map { "- Package: \($0)" } ?? "- Package: not found; inspect the feature directory"
         let adoptedLine = report.adoptedFrom.map {
-            "\nThis is an adopted local copy of bundled feature `\($0)`. Do not edit core bundled sources."
+            "\nThis is a local editable copy of bundled feature `\($0)`. Do not edit bundled sources directly."
         } ?? ""
 
         var sections = [
@@ -179,10 +175,6 @@ extension TerminalChat {
             if let report = decodeFeatureOutput(SwiftFeatureInstallReport.self, from: trimmedOutput) {
                 return renderFeatureInstallReport(report)
             }
-        case "feature.adopt", "feature.fork":
-            if let report = decodeFeatureOutput(SwiftFeatureAdoptReport.self, from: trimmedOutput) {
-                return renderFeatureAdoptReport(report)
-            }
         case "feature.edit", "feature.update":
             if let report = decodeFeatureOutput(SwiftFeatureEditReport.self, from: trimmedOutput) {
                 return renderFeatureEditReport(report)
@@ -214,8 +206,6 @@ extension TerminalChat {
             return decodeFeatureOutput(SwiftFeatureBuildReport.self, from: trimmedOutput)?.ok ?? true
         case "feature.install":
             return decodeFeatureOutput(SwiftFeatureInstallReport.self, from: trimmedOutput)?.ok ?? true
-        case "feature.adopt", "feature.fork":
-            return decodeFeatureOutput(SwiftFeatureAdoptReport.self, from: trimmedOutput)?.ok ?? true
         case "feature.edit", "feature.update":
             return decodeFeatureOutput(SwiftFeatureEditReport.self, from: trimmedOutput)?.ok ?? true
         case "feature.delete":
@@ -294,10 +284,10 @@ extension TerminalChat {
         _ report: SwiftFeatureAdoptReport
     ) -> String {
         guard report.ok else {
-            return "Adoption failed for Swift feature '\(report.id)'.\n"
+            return "Could not create a local copy for Swift feature '\(report.id)'.\n"
         }
         return """
-        Adopted Swift feature '\(report.id)' from bundled feature '\(report.adoptedFrom)'.
+        Created local editable copy of Swift feature '\(report.id)' from bundled feature '\(report.adoptedFrom)'.
           Destination: \(report.destinationPath)
           Manifest: \(report.manifestPath)
 
@@ -312,7 +302,7 @@ extension TerminalChat {
         }
         var lines = ["Ready to edit Swift feature '\(report.id)'."]
         if report.adopted {
-            lines.append("  Adopted local copy created first.")
+            lines.append("  Local editable copy created first.")
         }
         lines.append("  Directory: \(report.directoryPath)")
         lines.append("  Manifest: \(report.manifestPath)")
@@ -401,7 +391,7 @@ extension TerminalChat {
                 "  \(offset + 1). \(featureDisplayName(status)) [\(status.id)] - \(state)\(availability), \(source)\(tools)\n"
             )
         }
-        lines.append("\nRun /features to open the enable/disable menu. Builder-only management remains under /feature.\n")
+        lines.append("\nRun /feature list to open the enable/disable menu. Builder-only management remains under /feature.\n")
         return lines.joined()
     }
 
@@ -410,7 +400,7 @@ extension TerminalChat {
             value: status.id,
             title: "\(featureDisplayName(status)) [\(status.id)]",
             detail: featureMenuDetail(status),
-            groupTitle: featureMenuGroupTitle(status)
+            groupTitle: nil
         )
     }
 
@@ -499,42 +489,17 @@ extension TerminalChat {
     }
 
     static func featureMenuDetail(_ status: SwiftFeatureStatus) -> String {
-        let availability = status.available ? "available" : "unavailable"
-        let mutability: String
-        if status.isCore {
-            mutability = ", core"
-        } else if status.editable {
-            mutability = ", editable"
-        } else if status.adoptable {
-            mutability = ", adoptable"
-        } else {
-            mutability = ""
-        }
-        let tools = featureStatusToolsSummary(status)
-        return "\(availability)\(mutability)\(tools)"
+        TerminalToolSelectionCatalog.featureDetail(status)
     }
 
     static func featureSourceSummary(_ status: SwiftFeatureStatus) -> String {
-        if status.isCore {
-            return "core bundled"
-        }
         if status.adoptedFrom != nil {
-            return "adopted"
+            return "local copy"
         }
         if status.source == .bundled {
-            return status.adoptable ? "bundled, adoptable" : "bundled"
+            return "bundled"
         }
         return status.editable ? "generated, editable" : "generated"
-    }
-
-    static func featureMenuGroupTitle(_ status: SwiftFeatureStatus) -> String {
-        if status.isCore {
-            return "Core bundled"
-        }
-        if status.adoptedFrom != nil {
-            return "Adopted"
-        }
-        return status.source == .bundled ? "Bundled" : "Generated"
     }
 
     static func featureLookupKeys(_ status: SwiftFeatureStatus) -> Set<String> {
@@ -569,7 +534,7 @@ extension TerminalChat {
         lhs: SwiftFeatureStatus,
         rhs: SwiftFeatureStatus
     ) -> Bool {
-        featureDisplayName(lhs).localizedStandardCompare(featureDisplayName(rhs)) == .orderedAscending
+        return featureDisplayName(lhs).localizedStandardCompare(featureDisplayName(rhs)) == .orderedAscending
     }
 
     static func featureStatusToolsSummary(_ status: SwiftFeatureStatus) -> String {

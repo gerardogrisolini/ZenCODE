@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public nonisolated enum MCPTransportCodec {
     public static func frame(_ payload: Data) -> Data {

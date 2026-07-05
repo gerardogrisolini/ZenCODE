@@ -7,7 +7,7 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
-import ZenCODECore
+import ToolCore
 
 struct JiraIssueSummary: Hashable, Sendable {
     let key: String

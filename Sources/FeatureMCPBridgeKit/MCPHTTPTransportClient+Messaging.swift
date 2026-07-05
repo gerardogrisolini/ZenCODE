@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 #if os(macOS)
 extension MCPHTTPTransportClient {
@@ -37,7 +38,7 @@ extension MCPHTTPTransportClient {
         let initializeParams = MCPInitializeParams(
             protocolVersion: preferredProtocolVersion,
             capabilities: MCPClientCapabilities(),
-            clientInfo: MCPClientInfo(name: "ZenCODE", version: agentVersion)
+            clientInfo: MCPClientInfo(name: "Feature MCP client", version: "1.0")
         )
 
         _ = try await request(

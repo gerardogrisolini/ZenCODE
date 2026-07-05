@@ -7,7 +7,7 @@ import Foundation
 #if os(macOS)
 import Security
 #endif
-import ZenCODECore
+import ToolCore
 
 enum JiraToolRenderer {
     static func renderSearchResults(_ issues: [JiraIssueSummary], query: String) -> String {

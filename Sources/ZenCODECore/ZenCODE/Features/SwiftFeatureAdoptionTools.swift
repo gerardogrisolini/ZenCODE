@@ -72,7 +72,7 @@ extension SwiftFeatureRuntime {
         guard Self.path(destinationDirectoryURL, isDescendantOf: featureRootURL()),
               destinationDirectoryURL.path != featureRootURL().path else {
             throw DirectToolError.permissionDenied(
-                "feature.adopt can only create packages under the generated features directory: \(featureRootURL().path)."
+                "Feature adoption can only create packages under the generated features directory: \(featureRootURL().path)."
             )
         }
 
@@ -154,7 +154,7 @@ extension SwiftFeatureRuntime {
             }
             guard arguments.bool("adopt", "fork") ?? true else {
                 throw DirectToolError.permissionDenied(
-                    "Bundled Swift feature '\(id)' must be adopted before editing. Run feature.adopt first or call feature.edit with adopt=true."
+                    "Bundled Swift feature '\(id)' must be copied into the generated feature root before editing."
                 )
             }
             adoptReport = try adoptFeature(arguments: arguments)
@@ -196,7 +196,7 @@ extension SwiftFeatureRuntime {
         var warnings: [String] = []
         if let adoptedFrom = record.adoptedFrom {
             warnings.append(
-                "This feature is an adopted copy of bundled feature '\(adoptedFrom)'; future app updates will not update this local copy automatically."
+                "This feature is a local editable copy of bundled feature '\(adoptedFrom)'; future app updates will not update this local copy automatically."
             )
         }
         if !record.executableAvailable {
@@ -341,8 +341,9 @@ extension SwiftFeatureRuntime {
                 .executableTarget(
                     name: "\(targetName)",
                     dependencies: [
-                        .product(name: "ZenCODECore", package: "ZenCODE"),
-                        .product(name: "FeatureKit", package: "ZenCODE")
+                        .product(name: "FeatureKit", package: "ZenCODE"),
+                        .product(name: "ToolCore", package: "ZenCODE"),
+                        .product(name: "FeatureMCPBridgeKit", package: "ZenCODE")
                     ]
                 )
             ]

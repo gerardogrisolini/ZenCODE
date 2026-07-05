@@ -17,8 +17,6 @@ public actor SwiftFeatureRuntime {
              "feature.enable",
              "feature.disable",
              "feature.delete",
-             "feature.adopt",
-             "feature.fork",
              "feature.edit",
              "feature.update",
              "feature.reload",

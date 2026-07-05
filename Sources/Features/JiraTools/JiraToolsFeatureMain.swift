@@ -13,8 +13,8 @@ import Security
 #elseif os(Linux)
 import Glibc
 #endif
-import ZenCODECore
 import FeatureKit
+import ToolCore
 
 struct JiraSearchTool: FeatureTool {
     struct Input: Decodable, Sendable {

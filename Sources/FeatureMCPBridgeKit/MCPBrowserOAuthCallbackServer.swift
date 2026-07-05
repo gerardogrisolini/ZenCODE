@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 #if os(macOS)
 import Network
 import Synchronization
@@ -13,7 +14,7 @@ import Synchronization
 public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
     public let redirectURL: URL
     public let serviceName: String
-    public let queue = DispatchQueue(label: "ZenCODE.MCPBrowserOAuthCallbackServer")
+    public let queue = DispatchQueue(label: "FeatureMCPBridgeKit.MCPBrowserOAuthCallbackServer")
     public let listener: NWListener
 
     private struct State {
@@ -126,7 +127,7 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
             resumeReadinessIfNeeded(with: .success(()))
         case let .failed(error):
             let wrappedError = MCPClientError.browserAuthenticationFailed(
-                "ZenCODE could not start the local \(serviceName) sign-in callback server. \(error.localizedDescription)"
+                "The MCP client could not start the local \(serviceName) sign-in callback server. \(error.localizedDescription)"
             )
             resumeReadinessIfNeeded(with: .failure(wrappedError))
             resumeCallbackIfNeeded(with: .failure(wrappedError))
@@ -176,7 +177,7 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
             sendResponse(
                 statusCode: 400,
                 title: "Invalid Callback",
-                message: "ZenCODE received an invalid \(serviceName) sign-in callback.",
+                message: "The MCP client received an invalid \(serviceName) sign-in callback.",
                 on: connection
             )
             return
@@ -187,7 +188,7 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
             sendResponse(
                 statusCode: 400,
                 title: "Invalid Callback",
-                message: "ZenCODE received an invalid \(serviceName) sign-in callback.",
+                message: "The MCP client received an invalid \(serviceName) sign-in callback.",
                 on: connection
             )
             return
@@ -200,7 +201,7 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
             sendResponse(
                 statusCode: 404,
                 title: "Unknown Callback",
-                message: "This browser callback does not belong to ZenCODE.",
+                message: "This browser callback does not belong to the MCP client.",
                 on: connection
             )
             return
@@ -250,7 +251,7 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
         sendResponse(
             statusCode: 200,
             title: "\(serviceName) Connected",
-            message: "ZenCODE has completed \(serviceName) sign-in. You can close this browser tab and return to the app.",
+            message: "The MCP client has completed \(serviceName) sign-in. You can close this browser tab and return to the app.",
             on: connection
         )
         resumeCallbackIfNeeded(with: .success(MCPOAuthCallback(code: code, state: state)))

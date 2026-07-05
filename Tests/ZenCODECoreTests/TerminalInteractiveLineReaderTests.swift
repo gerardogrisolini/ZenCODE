@@ -70,7 +70,6 @@ struct TerminalInteractiveLineReaderTests {
     @Test
     func commandSuggestionsPreferExactCommandBeforePrefixMatches() {
         let suggestions = [
-            TerminalCommandSuggestion(command: "/features", summary: "select feature packages"),
             TerminalCommandSuggestion(command: "/feature", summary: "create/manage features"),
             TerminalCommandSuggestion(command: "/featurex", summary: "another prefix match")
         ]
@@ -81,7 +80,7 @@ struct TerminalInteractiveLineReaderTests {
             suggestions: suggestions
         )
 
-        #expect(matches.map(\.command) == ["/feature", "/features", "/featurex"])
+        #expect(matches.map(\.command) == ["/feature", "/featurex"])
     }
 
     @Test

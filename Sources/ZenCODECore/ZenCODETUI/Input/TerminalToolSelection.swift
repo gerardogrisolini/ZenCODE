@@ -530,7 +530,7 @@ public enum TerminalToolSelectionCatalog {
             .joined(separator: " ")
     }
 
-    private static func featureDetail(_ status: SwiftFeatureStatus) -> String {
+    static func featureDetail(_ status: SwiftFeatureStatus) -> String {
         if let description = status.description?.nilIfBlank {
             return description
         }

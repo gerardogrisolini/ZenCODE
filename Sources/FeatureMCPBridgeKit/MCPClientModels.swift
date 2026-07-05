@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public nonisolated struct MCPRequest<Params: Encodable>: Encodable {
     public let jsonrpc: String

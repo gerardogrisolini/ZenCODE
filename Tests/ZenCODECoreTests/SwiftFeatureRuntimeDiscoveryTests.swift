@@ -384,18 +384,20 @@ extension SwiftFeatureRuntimeTests {
 
     @Test
     func defaultFeatureStatusesIncludeBundledPackagesEvenWhenManaged() {
-        let ids = Set(
-            SwiftFeatureRuntime.defaultFeatureStatuses(
-                includeTools: false,
-                includeDisabled: true
-            ).map(\.id)
+        let statuses = SwiftFeatureRuntime.defaultFeatureStatuses(
+            includeTools: false,
+            includeDisabled: true
         )
+        let ids = Set(statuses.map(\.id))
 
         #expect(ids.contains("search-tools"))
         #expect(ids.contains("web-tools"))
         #expect(ids.contains("git-tools"))
+        #expect(ids.contains("swift-tools"))
         #expect(ids.contains("xcode-tools"))
         #expect(ids.contains("figma-tools"))
+        #expect(statuses.filter { $0.source == .bundled }.allSatisfy { !$0.isCore })
+        #expect(statuses.filter { $0.source == .bundled }.allSatisfy { $0.adoptable })
     }
 
     @Test

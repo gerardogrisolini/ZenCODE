@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import FeatureMCPBridgeKit
 
 public enum ExternalToolAvailability {
     public static func resolvedAllowedToolNames(

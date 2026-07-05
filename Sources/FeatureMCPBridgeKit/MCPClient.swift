@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 #if os(macOS)
 public actor MCPClient {

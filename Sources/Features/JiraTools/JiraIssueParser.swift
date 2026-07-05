@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import ZenCODECore
+import ToolCore
 
 enum JiraIssueParser {
     static func issueSummaries(

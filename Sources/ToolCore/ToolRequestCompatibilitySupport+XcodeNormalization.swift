@@ -90,7 +90,7 @@ nonisolated func normalizedXcodeTestSpecifier(
     return .object(normalized)
 }
 
-nonisolated func retriedXcodeUpdateRequestForIndentationMismatch(
+public nonisolated func retriedXcodeUpdateRequestForIndentationMismatch(
     originalRequest: ToolRequest,
     failureResult: JSONValue
 ) -> ToolRequest? {

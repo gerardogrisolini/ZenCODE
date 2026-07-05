@@ -10,6 +10,7 @@
 import Darwin
 #endif
 import Foundation
+import ToolCore
 
 #if os(macOS)
 extension MCPClient {
@@ -463,7 +464,7 @@ extension MCPClient {
     }
 
     public func importantLog(_ message: String) {
-        ZenLogger.info(.mcpClient, message)
+        log(message)
     }
 
     public func logBufferedPrefixIfNeeded() {
@@ -488,7 +489,6 @@ extension MCPClient {
             return
         }
 
-        ZenLogger.debug(.mcpClient, message)
         appendDebugLogLine(message)
     }
 
@@ -523,7 +523,7 @@ extension MCPClient {
 
     public func traceURLs(fileName: String) -> [URL] {
         let homeLogsDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/ZenCODE", isDirectory: true)
+            .appendingPathComponent("Library/Logs/FeatureMCPBridgeKit", isDirectory: true)
         return [homeLogsDirectory.appendingPathComponent(fileName)]
     }
 
@@ -565,7 +565,7 @@ extension MCPClient {
 
     public func debugLogURLs() -> [URL] {
         let homeLogsDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/ZenCODE", isDirectory: true)
+            .appendingPathComponent("Library/Logs/FeatureMCPBridgeKit", isDirectory: true)
         return [homeLogsDirectory.appendingPathComponent("mcpclient.log")]
     }
 

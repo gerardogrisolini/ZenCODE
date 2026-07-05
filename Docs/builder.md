@@ -10,7 +10,7 @@ Builder can:
 - scaffold new Swift feature packages;
 - build and validate generated feature packages;
 - prepare existing generated packages for editing;
-- adopt editable copies of bundled non-core feature packages;
+- prepare local editable copies of bundled feature packages;
 - enable, disable, reload, or delete feature packages;
 - configure bundled feature packages such as Jira;
 - expose generated and bundled feature packages to normal sessions through the
@@ -21,13 +21,13 @@ Builder can:
 Start directly with Builder:
 
 ```bash
-zen --agent Builder --cwd /path/to/project
+zen --agent Builder
 ```
 
 Or use the fully local MLX runtime:
 
 ```bash
-zen --mlx --agent Builder --cwd /path/to/project
+zen --mlx --agent Builder
 ```
 
 Inside an existing TUI session, switch to Builder with:
@@ -39,20 +39,19 @@ Inside an existing TUI session, switch to Builder with:
 Switching agents resets the active conversation so the Builder system prompt and
 intrinsic feature-management tools are applied cleanly.
 
-## Command Split
+## Feature Commands
 
-Builder exposes two feature commands with different jobs:
+Builder exposes one feature command with several subcommands:
 
 ```text
 /feature
-/features
 ```
 
-`/feature` is the Builder management command. It creates and manages feature
-packages.
+`/feature` create, enable, disable, edit, build, validate, reload,
+and list feature packages.
 
-`/features` opens the checkbox menu for enabling or disabling available feature
-packages. It intentionally accepts no arguments.
+`/feature list` opens the checkbox menu for enabling or disabling available
+feature packages. `/feature status` prints the same package inventory as text.
 
 After a feature package is enabled, use `/tools` to decide whether its tools are
 exposed to the current model session.
@@ -99,9 +98,9 @@ Use these commands from the Builder agent:
 
 ```text
 /feature list
+/feature status
 /feature enable <id|name|#>
 /feature disable <id|name|#>
-/feature adopt <id|name|#>
 /feature edit <id|name|#> [requirements]
 /feature build <id|name|#>
 /feature validate <id|name|#>
@@ -122,13 +121,13 @@ Typical generated-feature flow:
 Use `/feature reload` after rebuilding an already enabled feature when the
 runtime needs to refresh manifests or runtime-discovered tools.
 
-Use `/feature delete <id|name|#>` only for generated or adopted packages you
-want to remove. For adopted packages, delete removes the local editable copy and
-the original bundled package becomes visible again.
+Use `/feature delete <id|name|#>` only for generated packages or local editable
+copies of bundled packages you want to remove. For bundled copies, delete
+removes the local copy and the original bundled package becomes visible again.
 
 ## Editing Existing Features
 
-Use Builder to edit an existing generated or non-core bundled feature:
+Use Builder to edit an existing generated or bundled feature:
 
 ```text
 /feature edit <id|name|#> [requirements]
@@ -138,22 +137,17 @@ For a generated feature, `/feature edit` opens the existing package and prepares
 an implementation prompt that points Builder at the manifest, package file, and
 Swift sources.
 
-For a bundled non-core feature, `/feature edit` first adopts the feature into the
-generated feature root, then prepares the same edit prompt. You can also run the
-adoption step explicitly:
+For a bundled feature, `/feature edit` first creates a local editable copy in the
+generated feature root, then prepares the same edit prompt.
 
-```text
-/feature adopt <id|name|#>
-```
+Local copies keep the same feature id as the bundled package. While the local
+copy exists, it shadows the bundled package with that id. Removing the local copy
+with `/feature delete <id|name|#>` restores the bundled package.
 
-Adopted packages keep the same feature id as the bundled package. While the
-adopted package exists, it shadows the bundled package with that id. Removing the
-adopted package with `/feature delete <id|name|#>` restores the bundled package.
-
-Core bundled feature packages are protected. They can be enabled or disabled, but
-cannot be adopted, edited, deleted, or replaced by a generated package. The core
-set is currently Search, Web, Git, and Swift. Non-core bundled integrations such
-as Jira, Xcode, and Figma are adoptable when their source is available.
+Bundled feature packages can be enabled, disabled, and edited through local
+copies when their source is available. Core tools such as shell, file/text tools,
+memory, and sub-agents are not feature packages and are managed through `/tools`,
+not `/feature`.
 
 After editing any feature:
 
@@ -168,7 +162,7 @@ After editing any feature:
 Use:
 
 ```text
-/features
+/feature list
 ```
 
 This opens the enable/disable menu with checkboxes. It lists bundled feature
@@ -182,9 +176,8 @@ enable/disable result, such as:
 Feature 'jira-tools' enabled.
 ```
 
-`/features` does not create new features and does not accept subcommands such as
-`list`, `reload`, `enable`, or `disable`. Use `/feature` for those management
-operations.
+Use `/feature status` when you want the textual package list instead of the
+interactive menu.
 
 ## Exposing Tools To The Model
 
@@ -211,13 +204,13 @@ Bundled feature packages can include Search, Web, Git, Swift, Xcode, Figma, and 
 Availability depends on the local environment and on whether a package discovers
 tools at runtime.
 
-Bundled packages are grouped by mutability:
+Bundled packages are optional feature packages. They can be enabled directly, or
+copied into `~/.zencode/features/<feature-id>/` when you want a local editable
+copy.
 
-- **Core bundled**: Search, Web, Git, and Swift. These are part of the base tool
-  surface and cannot be adopted or modified by Builder.
-- **Non-core bundled**: Jira, Xcode, and Figma. These can be enabled directly, or
-  adopted into `~/.zencode/features/<feature-id>/` when you want a local editable
-  copy.
+Core tools are the intrinsic tool groups exposed through `/tools`, such as shell,
+file/text tools, memory, and sub-agents. They are not feature packages and do not
+appear in `/feature list`.
 
 Some bundled integrations need extra configuration. For Jira, run:
 
@@ -225,9 +218,8 @@ Some bundled integrations need extra configuration. For Jira, run:
 /feature enable jira-tools
 ```
 
-That command runs the Jira configuration flow when needed. The `/features`
-checkbox menu only toggles package state; it does not run interactive
-configuration prompts.
+That command runs the Jira configuration flow when needed. `/feature list` only
+toggles package state and does not run interactive configuration prompts.
 
 After configuring and enabling a bundled package, run `/tools` if you want to
 expose it to the current session.
@@ -257,7 +249,7 @@ Good Builder tasks:
 - package a repeated workflow behind a typed JSON schema;
 - create an MCP bridge for an existing MCP service;
 - fix, validate, or rebuild an existing generated feature;
-- adopt and customize a non-core bundled integration.
+- customize a bundled integration through a local editable copy.
 
 Poor Builder tasks:
 
@@ -282,9 +274,10 @@ runtime. They are discovered from:
 - bundled feature binaries next to the `zen` executable;
 - generated feature packages under `~/.zencode/features`.
 
-Generated packages have precedence over bundled non-core packages with the same
-id. That is how adopted packages shadow their bundled source. Generated packages
-cannot override core bundled feature ids.
+Generated packages have precedence over bundled packages with the same id. That
+is how local editable copies shadow their bundled source. Generated packages cannot
+override intrinsic core tool namespaces such as `local.*`, `text.*`, or
+`feature.*`.
 
 The runtime never loads feature code in process. It starts the compiled
 executable, sends JSON on stdin, and expects a JSON response on stdout.
@@ -345,8 +338,7 @@ backward compatible with the original minimal manifest.
   "generated": {
     "by": "ZenCODE",
     "prompt": "Original user or agent request.",
-    "createdAt": "2026-05-30T12:00:00Z",
-    "adoptedFrom": "optional-bundled-feature-id"
+    "createdAt": "2026-05-30T12:00:00Z"
   },
   "tools": [
     {
@@ -384,8 +376,7 @@ Optional fields:
   has listed them.
 - `toolNameAliases`: exact non-prefixed tool names accepted by the feature.
 - `build`: SwiftPM build metadata.
-- `generated`: provenance metadata from the agent. Adopted packages set
-  `generated.adoptedFrom` to the bundled feature id they were copied from.
+- `generated`: provenance metadata from the agent.
 
 ### Runtime Rules
 
@@ -395,13 +386,10 @@ Optional fields:
   `~/.zencode/feature-state.json`.
 - Generated features are enabled or disabled by updating their own
   `feature.json`.
-- Core bundled feature ids cannot be adopted, edited, deleted, or shadowed by a
-  generated package.
-- `feature.adopt` copies a bundled non-core feature into the generated feature
-  root as an editable package and records `generated.adoptedFrom` in its
-  manifest.
+- Bundled feature ids cannot be deleted directly; disable them with
+  `/feature list` or `/feature disable <id|name|#>`.
 - `feature.edit` returns the editable package context for generated packages; for
-  bundled non-core packages it adopts first unless adoption is disabled.
+  bundled packages it first creates a local editable copy.
 - `feature.reload` reloads manifests and clears runtime-discovered tool caches.
 - `feature.scaffold` creates SwiftPM packages only under the generated features
   root. Packages prepared elsewhere are installed through `feature.install`.
@@ -419,9 +407,9 @@ Optional fields:
 
 ## Troubleshooting
 
-- `/feature` or `/features` is unknown: switch to Builder with `/agents Builder`.
-- `/feature` starts the creation wizard; `/features` opens only the enable/disable
-  menu.
+- `/feature` is unknown: switch to Builder with `/agents Builder`.
+- `/feature` starts the creation wizard; `/feature list` opens the
+  enable/disable menu.
 - A feature is enabled but not callable: run `/tools` and select its package.
 - A generated feature is listed but unavailable: run `/feature build <id|name|#>`
   and then `/feature validate <id|name|#>`.

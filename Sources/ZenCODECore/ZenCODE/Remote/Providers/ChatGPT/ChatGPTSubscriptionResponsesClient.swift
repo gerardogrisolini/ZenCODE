@@ -7,6 +7,7 @@
 
 #if os(macOS)
 import Foundation
+import ToolCore
 
 public struct ChatGPTSubscriptionResponsesClient {
     public struct StreamCompletion: Sendable {

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public actor RemoteMCPToolExecutor {
     private let client: MCPClient

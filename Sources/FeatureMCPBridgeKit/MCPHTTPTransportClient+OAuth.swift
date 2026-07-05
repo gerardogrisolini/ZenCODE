@@ -12,6 +12,7 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
+import ToolCore
 
 #if os(macOS)
 import AppKit
@@ -187,7 +188,7 @@ extension MCPHTTPTransportClient {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
             throw MCPClientError.browserAuthenticationFailed(
-                "Unable to register ZenCODE for \(oauthConfiguration.serviceName) sign-in. \(message)"
+                "Unable to register the MCP client for \(oauthConfiguration.serviceName) sign-in. \(message)"
             )
         }
 
@@ -365,7 +366,7 @@ extension MCPHTTPTransportClient {
         }
         guard didOpen else {
             throw MCPClientError.browserAuthenticationFailed(
-                "ZenCODE could not open the browser for \(serviceName) sign-in."
+                "The MCP client could not open the browser for \(serviceName) sign-in."
             )
         }
     }

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public actor XcodeToolExecutor {
     private let client: MCPClient
@@ -31,29 +32,8 @@ public actor XcodeToolExecutor {
     }
 
     public func execute(_ request: ToolRequest) async throws -> ToolExecutionOutput {
-        ZenLogger.debug(
-            .xcodeToolExecutor,
-            "\(request.name) request arguments:\n\(JSONValue.object(request.arguments).prettyPrinted())"
-        )
         let result = try await executeRequestRetryingIndentationMismatchIfNeeded(request)
         let renderedResult = MCPToolResultRenderer.stringify(result)
-
-        if request.name == "XcodeUpdate" || request.name == "XcodeWrite" {
-            if let summary = summarizedMutationResult(from: result) {
-                ZenLogger.info(
-                    .xcodeToolExecutor,
-                    "\(request.name) outcome: \(summary)"
-                )
-            }
-            ZenLogger.debug(
-                .xcodeToolExecutor,
-                "\(request.name) rendered result:\n\(renderedResult)"
-            )
-            ZenLogger.debug(
-                .xcodeToolExecutor,
-                "\(request.name) raw result:\n\(result.prettyPrinted())"
-            )
-        }
 
         return ToolExecutionOutput(
             text: renderedResult,
@@ -76,17 +56,6 @@ public actor XcodeToolExecutor {
               ) else {
             return initialResult
         }
-
-        if let summary = summarizedMutationResult(from: initialResult) {
-            ZenLogger.info(
-                .xcodeToolExecutor,
-                "XcodeUpdate initial outcome before indentation retry: \(summary)"
-            )
-        }
-        ZenLogger.debug(
-            .xcodeToolExecutor,
-            "XcodeUpdate retrying with indentation fallback arguments:\n\(JSONValue.object(retryRequest.arguments).prettyPrinted())"
-        )
 
         return try await client.callTool(
             named: retryRequest.name,

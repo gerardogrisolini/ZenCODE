@@ -219,18 +219,13 @@ public enum DirectToolCatalog {
         ),
         DirectToolDescriptor(
             name: "feature.delete",
-            description: "Deletes a generated Swift feature package by id and reloads the feature runtime. Bundled and core features cannot be deleted.",
+            description: "Deletes a generated Swift feature package by id and reloads the feature runtime. Bundled features cannot be deleted directly.",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"featureID":{"type":"string"},"feature_id":{"type":"string"},"name":{"type":"string"}},"required":["id"]}"#
         ),
         DirectToolDescriptor(
-            name: "feature.adopt",
-            description: "Copies a bundled non-core Swift feature into the generated feature root so the Builder can edit it. Core features cannot be adopted.",
-            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"featureID":{"type":"string"},"feature_id":{"type":"string"},"name":{"type":"string"},"overwrite":{"type":"boolean"},"enabled":{"type":"boolean"},"sourcePath":{"type":"string"},"source_path":{"type":"string"},"zenPackagePath":{"type":"string"},"zen_package_path":{"type":"string"},"dependencyPath":{"type":"string"},"dependency_path":{"type":"string"}},"required":["id"]}"#
-        ),
-        DirectToolDescriptor(
             name: "feature.edit",
-            description: "Prepares an editable Swift feature package context. Generated features are opened directly; bundled non-core features are adopted first unless adopt=false. Core features cannot be edited.",
-            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"featureID":{"type":"string"},"feature_id":{"type":"string"},"name":{"type":"string"},"adopt":{"type":"boolean"},"fork":{"type":"boolean"},"overwrite":{"type":"boolean"},"enabled":{"type":"boolean"},"sourcePath":{"type":"string"},"source_path":{"type":"string"},"zenPackagePath":{"type":"string"},"zen_package_path":{"type":"string"},"dependencyPath":{"type":"string"},"dependency_path":{"type":"string"}},"required":["id"]}"#
+            description: "Prepares an editable Swift feature package context. Generated features are opened directly; bundled features are copied into the generated feature root first.",
+            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"featureID":{"type":"string"},"feature_id":{"type":"string"},"name":{"type":"string"},"overwrite":{"type":"boolean"},"enabled":{"type":"boolean"},"sourcePath":{"type":"string"},"source_path":{"type":"string"},"zenPackagePath":{"type":"string"},"zen_package_path":{"type":"string"},"dependencyPath":{"type":"string"},"dependency_path":{"type":"string"}},"required":["id"]}"#
         ),
         DirectToolDescriptor(
             name: "feature.reload",

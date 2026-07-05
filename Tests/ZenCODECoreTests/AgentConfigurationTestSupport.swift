@@ -13,18 +13,23 @@ extension AgentConfigurationTests {
     func featureStatus(
         id: String,
         displayName: String? = nil,
+        description: String? = nil,
         source: SwiftFeatureBundleSource,
         tools: [String],
         toolNamePrefixes: [String] = [],
         discoversToolsAtRuntime: Bool = false,
+        isCore: Bool = false,
+        adoptedFrom: String? = nil,
         enabled: Bool = true,
         available: Bool = true
     ) -> SwiftFeatureStatus {
         SwiftFeatureStatus(
             id: id,
             displayName: displayName,
-            description: nil,
+            description: description,
             source: source,
+            isCore: isCore,
+            adoptedFrom: adoptedFrom,
             enabled: enabled,
             available: available,
             executablePath: "/tmp/\(id)",

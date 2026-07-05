@@ -6,6 +6,7 @@
 //
 
 import Foundation
+@testable import FeatureMCPBridgeKit
 @testable import ZenCODECore
 import Testing
 
@@ -179,10 +180,10 @@ extension ACPCompatibilityTests {
             ]
         )
         let expectedExecutableURL = try #require(DeveloperToolEnvironment.executableURL(named: "env"))
-        let resolvedEnvironment = MCPClient.resolvedEnvironment(for: configuration)
+        let resolvedEnvironment = FeatureMCPBridgeKit.MCPClient.resolvedEnvironment(for: configuration)
         let resolvedPathParts = Set((resolvedEnvironment["PATH"] ?? "").split(separator: ":").map(String.init))
 
-        #expect(MCPClient.resolvedExecutableURL(for: configuration).path == expectedExecutableURL.path)
+        #expect(FeatureMCPBridgeKit.MCPClient.resolvedExecutableURL(for: configuration).path == expectedExecutableURL.path)
         #expect(resolvedEnvironment["MCP_XCODE_SESSION_ID"] == "session-1")
         #expect(resolvedPathParts.contains("/custom/bin"))
         #expect(resolvedPathParts.contains("/usr/bin"))

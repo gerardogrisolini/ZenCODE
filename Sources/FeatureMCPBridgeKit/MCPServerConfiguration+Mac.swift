@@ -9,6 +9,7 @@
 import AppKit
 import Darwin
 import Foundation
+import ToolCore
 
 extension MCPServerConfiguration {
     public static func platformDetectedXcodePID() -> String? {

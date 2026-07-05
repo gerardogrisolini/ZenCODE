@@ -9,7 +9,7 @@ import Darwin
 #elseif os(Linux)
 import Glibc
 #endif
-import ZenCODECore
+import ToolCore
 
 enum JiraSetupRunner {
     static func run() async -> Int32 {
@@ -184,9 +184,42 @@ enum JiraConfigurationStore {
     }
 
     private static func configurationURL(fileManager: FileManager = .default) -> URL {
-        AppStorageDirectory
-            .appSupportDirectoryURL(fileManager: fileManager)
+        JiraFeatureStorageDirectory
+            .supportDirectoryURL(fileManager: fileManager)
             .appendingPathComponent(filename)
             .standardizedFileURL
+    }
+}
+
+private enum JiraFeatureStorageDirectory {
+    private static let supportDirectoryEnvironmentKey = "ZENCODE_SUPPORT_DIRECTORY"
+    private static let supportDirectoryName = ".zencode"
+
+    static func supportDirectoryURL(fileManager: FileManager = .default) -> URL {
+        if let configuredPath = normalizedPath(ProcessInfo.processInfo.environment[supportDirectoryEnvironmentKey]) {
+            return URL(fileURLWithPath: configuredPath, isDirectory: true)
+                .standardizedFileURL
+        }
+        return homeDirectoryURL(fileManager: fileManager)
+            .appendingPathComponent(supportDirectoryName, isDirectory: true)
+            .standardizedFileURL
+    }
+
+    private static func homeDirectoryURL(fileManager: FileManager) -> URL {
+        #if os(Windows)
+        if let profile = normalizedPath(ProcessInfo.processInfo.environment["USERPROFILE"]) {
+            return URL(fileURLWithPath: profile, isDirectory: true)
+        }
+        #else
+        if let home = normalizedPath(ProcessInfo.processInfo.environment["HOME"]) {
+            return URL(fileURLWithPath: home, isDirectory: true)
+        }
+        #endif
+        return fileManager.homeDirectoryForCurrentUser
+    }
+
+    private static func normalizedPath(_ value: String?) -> String? {
+        let trimmedValue = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmedValue.isEmpty ? nil : trimmedValue
     }
 }

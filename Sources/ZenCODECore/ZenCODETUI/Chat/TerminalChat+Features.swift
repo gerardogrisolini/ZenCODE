@@ -14,41 +14,6 @@ enum TerminalFeatureCommandResult: Sendable {
 }
 
 extension TerminalChat {
-    func handleFeaturesCommand(_ command: String) async {
-        let rawArguments = String(command.dropFirst("/features".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard rawArguments.isEmpty else {
-            writeFailureMessage("ZenCODE: /features does not accept arguments.\n")
-            writeSystemMessage(Self.renderFeaturesCommandUsage())
-            return
-        }
-
-        guard stdinIsTerminal else {
-            writeFailureMessage("ZenCODE: /features requires an interactive terminal.\n")
-            return
-        }
-
-        let statuses = await SwiftFeatureRuntime().featureStatuses(
-            includeTools: true,
-            includeDisabled: true
-        )
-        let sortedStatuses = statuses.sorted(by: Self.featureStatusSortOrder)
-        let selectedIDs = Set(sortedStatuses.filter(\.enabled).map(\.id))
-        let requestedIDs = TerminalCheckboxMenu.select(
-            title: "Features",
-            items: sortedStatuses.map(Self.featureCheckboxItem),
-            selected: selectedIDs,
-            reservedBottomRows: statusBar.reservedRowsForOverlay()
-        )
-        if let requestedIDs {
-            await applyFeatureSelection(
-                requestedIDs: requestedIDs,
-                statuses: sortedStatuses
-            )
-        }
-    }
-
     func handleFeatureCommand(_ command: String) async -> TerminalFeatureCommandResult {
         let rawArguments = String(command.dropFirst("/feature".count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -74,7 +39,15 @@ extension TerminalChat {
         var tokens = rawArguments.split(separator: " ").map(String.init)
         let action = tokens.removeFirst().lowercased()
         switch action {
-        case "list", "ls", "status":
+        case "list", "ls":
+            guard tokens.isEmpty else {
+                writeFailureMessage("ZenCODE: /feature \(action) does not accept arguments.\n")
+                writeSystemMessage(Self.renderFeatureCommandUsage())
+                return .none
+            }
+            await openFeatureSelectionMenu()
+            return .none
+        case "status":
             await printFeatureList()
             return .none
         case "reload":
@@ -84,28 +57,6 @@ extension TerminalChat {
             )
             await updateCurrentSessionToolOptions(discoverExternalTools: false)
             await printFeatureList()
-            return .none
-        case "adopt", "fork":
-            guard let rawID = tokens.first?.nilIfBlank else {
-                writeFailureMessage("ZenCODE: /feature \(action) requires a feature id, name, or list number.\n")
-                writeSystemMessage(Self.renderFeatureCommandUsage())
-                return .none
-            }
-            let id: String
-            do {
-                id = try await resolvedFeatureID(rawID)
-            } catch {
-                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-                return .none
-            }
-            let didSucceed = await runFeatureManagementTool(
-                name: "feature.adopt",
-                arguments: ["id": id]
-            )
-            if didSucceed {
-                await updateCurrentSessionToolOptions(discoverExternalTools: false)
-                await printFeatureList()
-            }
             return .none
         case "edit", "modify", "update":
             guard let rawID = tokens.first?.nilIfBlank else {
@@ -195,6 +146,32 @@ extension TerminalChat {
             includeDisabled: true
         )
         writeSystemMessage(Self.renderFeatureStatusList(statuses))
+    }
+
+    private func openFeatureSelectionMenu() async {
+        guard stdinIsTerminal else {
+            writeFailureMessage("ZenCODE: /feature list requires an interactive terminal.\n")
+            return
+        }
+
+        let statuses = await SwiftFeatureRuntime().featureStatuses(
+            includeTools: true,
+            includeDisabled: true
+        )
+        let sortedStatuses = statuses.sorted(by: Self.featureStatusSortOrder)
+        let selectedIDs = Set(sortedStatuses.filter(\.enabled).map(\.id))
+        let requestedIDs = TerminalCheckboxMenu.select(
+            title: "Features",
+            items: sortedStatuses.map(Self.featureCheckboxItem),
+            selected: selectedIDs,
+            reservedBottomRows: statusBar.reservedRowsForOverlay()
+        )
+        if let requestedIDs {
+            await applyFeatureSelection(
+                requestedIDs: requestedIDs,
+                statuses: sortedStatuses
+            )
+        }
     }
 
     private func applyFeatureSelection(

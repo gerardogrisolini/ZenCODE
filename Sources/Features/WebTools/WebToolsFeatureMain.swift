@@ -157,7 +157,7 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
     }
 
     static func render(url: URL, timeout: TimeInterval) async throws -> RenderedPage {
-        let renderer = await WebKitPageRenderer()
+        let renderer = WebKitPageRenderer()
         return try await renderer.load(url: url, timeout: timeout)
     }
 

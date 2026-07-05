@@ -6,6 +6,7 @@
 //
 
 import Foundation
+@testable import FeatureMCPBridgeKit
 @testable import ZenCODECore
 import Testing
 

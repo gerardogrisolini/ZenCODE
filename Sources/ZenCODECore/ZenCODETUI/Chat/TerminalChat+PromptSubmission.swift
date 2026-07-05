@@ -93,13 +93,6 @@ extension TerminalChat {
         case let command where command == "/tools" || command.hasPrefix("/tools "):
             await handleToolsCommand(command)
             return .continueChat
-        case let command where command == "/features" || command.hasPrefix("/features "):
-            guard AgentProfileStore.isBuilderAgent(selectedAgent) else {
-                writeFailureMessage(Self.renderFeatureCommandUnavailableForAgent())
-                return .continueChat
-            }
-            await handleFeaturesCommand(command)
-            return .continueChat
         case let command where command == "/feature" || command.hasPrefix("/feature "):
             guard AgentProfileStore.isBuilderAgent(selectedAgent) else {
                 writeFailureMessage(Self.renderFeatureCommandUnavailableForAgent())
