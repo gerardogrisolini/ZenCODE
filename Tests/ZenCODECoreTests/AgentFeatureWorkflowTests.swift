@@ -229,7 +229,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    func runtimeDiscoveredFeaturePackagesDoNotCountPrefixesAsTools() throws {
+    func featurePackageSelectionDetailsShowOnlyDescriptions() throws {
         let items = TerminalChat.toolSelectionItems(
             featureStatuses: [
                 featureStatus(
@@ -254,9 +254,13 @@ extension AgentConfigurationTests {
         let xcodeDetail = try #require(xcodeItem.detail)
         let figmaDetail = try #require(figmaItem.detail)
 
-        #expect(xcodeDetail.contains("discovers tools at runtime"))
+        #expect(xcodeDetail == "Build, test, preview, and inspect Xcode projects.")
+        #expect(figmaDetail == "Inspect Figma files, frames, and design data.")
+        #expect(!xcodeDetail.contains(";"))
+        #expect(!figmaDetail.contains(";"))
+        #expect(!xcodeDetail.contains("discovers tools at runtime"))
         #expect(!xcodeDetail.contains("1 tool: xcode."))
-        #expect(figmaDetail.contains("2 tools: figma.get_code, figma.get_variable_defs"))
+        #expect(!figmaDetail.contains("2 tools: figma.get_code, figma.get_variable_defs"))
     }
 
     @Test
@@ -390,7 +394,7 @@ extension AgentConfigurationTests {
             selectedKeys: selectedKeys
         )
 
-        #expect(xcodeItem.detail?.contains("1 tool: xcode.BuildProject") == true)
+        #expect(xcodeItem.detail == "Build, test, preview, and inspect Xcode projects.")
         #expect(allowedToolNames.contains("xcode.BuildProject"))
         #expect(rendered.contains("Xcode (1)"))
         #expect(!rendered.contains("xcode.BuildProject"))

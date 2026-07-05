@@ -527,29 +527,10 @@ public enum TerminalToolSelectionCatalog {
     }
 
     private static func featureDetail(_ status: SwiftFeatureStatus) -> String {
-        var parts: [String] = []
         if let description = status.description?.nilIfBlank {
-            parts.append(description)
-        } else {
-            parts.append(status.source == .bundled ? "bundled Swift feature package" : "generated Swift feature package")
+            return description
         }
-        if !status.enabled {
-            parts.append("disabled")
-        } else if !status.available {
-            parts.append("unavailable")
-        }
-        if !status.tools.isEmpty {
-            let renderedTools = status.tools.prefix(4).joined(separator: ", ")
-            let suffix = status.tools.count > 4 ? ", ..." : ""
-            let toolLabel = status.tools.count == 1 ? "tool" : "tools"
-            parts.append("\(status.tools.count) \(toolLabel): \(renderedTools)\(suffix)")
-        } else if status.discoversToolsAtRuntime {
-            parts.append("discovers tools at runtime")
-        }
-        if let issue = status.issue?.nilIfBlank {
-            parts.append(issue)
-        }
-        return parts.joined(separator: "; ")
+        return status.source == .bundled ? "bundled Swift feature package" : "generated Swift feature package"
     }
 
     private static func featureAliases(_ status: SwiftFeatureStatus) -> Set<String> {
