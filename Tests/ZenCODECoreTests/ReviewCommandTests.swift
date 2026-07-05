@@ -28,7 +28,9 @@ struct ReviewCommandTests {
             name: AgentProfileStore.reviewerAgentName,
             tools: [
                 "local.readFile",
+                "local.inspectFile",
                 "search.grep",
+                "search.locate",
                 "git.diff",
                 "memory.read"
             ]
@@ -37,7 +39,9 @@ struct ReviewCommandTests {
         let tools = TerminalChat.reviewerSubAgentToolNames(for: reviewer)
 
         #expect(tools.contains("local.readFile"))
+        #expect(tools.contains("local.inspectFile"))
         #expect(tools.contains("search.grep"))
+        #expect(tools.contains("search.locate"))
         #expect(!tools.contains("git.diff"))
         #expect(!tools.contains("memory.read"))
     }

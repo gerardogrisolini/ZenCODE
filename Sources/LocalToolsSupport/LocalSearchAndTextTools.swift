@@ -83,6 +83,98 @@ struct SearchGrepTool: FeatureTool {
     }
 }
 
+struct SearchLocateTool: FeatureTool {
+    struct Input: Decodable, Sendable {
+        let pattern: String?
+        let path: String?
+        let maxResults: Int?
+        let max_results: Int?
+        let context: Int?
+    }
+
+    static let name = "search.locate"
+    static let description = "Locates text matches compactly and returns file:line snippets plus local.readFile suggestions for focused follow-up reads."
+    static let inputSchema = #"{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"maxResults":{"type":"number"},"max_results":{"type":"number"},"context":{"type":"number"}},"required":["pattern"]}"#
+
+    func run(_ input: Input, context: FeatureContext) async throws -> String {
+        guard let pattern = input.pattern?.nilIfBlank else {
+            throw LocalToolsFeatureError.missingArgument("pattern")
+        }
+
+        let path = context.resolvePath(input.path ?? ".")
+        let maxResults = min(max(1, input.maxResults ?? input.max_results ?? 40), 500)
+        var processArguments = ["-E", "-R", "-n", "-I"]
+        for excludedDirectory in [".git", ".build", ".swiftpm", "node_modules", "DerivedData"] {
+            processArguments.append("--exclude-dir=\(excludedDirectory)")
+        }
+        processArguments.append(contentsOf: ["-m", "\(maxResults)", "-e", pattern, "--", path.path])
+
+        let result = try await FeatureProcessRunner.run(
+            executableURL: URL(fileURLWithPath: "/usr/bin/grep"),
+            arguments: processArguments,
+            workingDirectory: context.workingDirectory,
+            environment: context.environment,
+            timeout: 60
+        )
+        if result.exitCode == 1,
+           result.stdout.isEmpty,
+           result.stderr.isEmpty {
+            return "No matches found."
+        }
+
+        let allMatchLines = result.stdout
+            .components(separatedBy: .newlines)
+            .filter { !$0.isEmpty }
+        let matchLines = Array(allMatchLines.prefix(upTo: min(maxResults, allMatchLines.count)))
+        var output = ["matches: \(matchLines.count)"]
+        output.append(contentsOf: matchLines)
+
+        let suggestions = readSuggestions(
+            from: matchLines,
+            contextLines: input.context ?? 20,
+            maxSuggestions: 8
+        )
+        if !suggestions.isEmpty {
+            output.append("suggested_reads:")
+            output.append(contentsOf: suggestions)
+        }
+        if result.exitCode != 0,
+           !result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            output.append("stderr:\n\(result.stderr)")
+        }
+        return output.joined(separator: "\n")
+    }
+
+    private func readSuggestions(
+        from matchLines: [String],
+        contextLines: Int,
+        maxSuggestions: Int
+    ) -> [String] {
+        let safeContext = min(max(contextLines, 0), 100)
+        let readLimit = min(max((safeContext * 2) + 1, 20), 220)
+        var seen = Set<String>()
+        var suggestions: [String] = []
+        for line in matchLines {
+            let parts = line.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+            guard parts.count >= 3,
+                  let lineNumber = Int(parts[1]) else {
+                continue
+            }
+            let path = String(parts[0])
+            let offset = max(1, lineNumber - (readLimit / 2))
+            let key = "\(path):\(offset):\(readLimit)"
+            guard seen.insert(key).inserted else {
+                continue
+            }
+            suggestions.append("- local.readFile path=\"\(path)\" offset=\(offset) limit=\(readLimit)")
+            if suggestions.count >= maxSuggestions {
+                break
+            }
+        }
+        return suggestions
+    }
+}
+
 struct TextHeadTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let path: String?

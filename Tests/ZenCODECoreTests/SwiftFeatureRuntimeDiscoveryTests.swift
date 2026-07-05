@@ -63,6 +63,73 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
+    func bundledSwiftOutlineReturnsCompactDeclarationMap() async throws {
+        let status = try #require(
+            SwiftFeatureRuntime.defaultFeatureStatuses()
+                .first { $0.id == "swift-tools" }
+        )
+        let executablePath = status.executablePath
+        let executableURL = URL(fileURLWithPath: executablePath)
+        try #require(FileManager.default.isExecutableFile(atPath: executableURL.path))
+
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-outline-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+        let sourceURL = rootURL.appendingPathComponent("Feature.swift")
+        try """
+        import Foundation
+
+        // MARK: Feature
+        struct Feature {
+            let title: String
+
+            func render() {}
+        }
+
+        extension Feature {
+            class func make() -> Feature {
+                Feature(title: "demo")
+            }
+        }
+        """.write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        let runtime = SwiftFeatureRuntime(
+            features: [
+                SwiftFeatureBundle(
+                    id: "swift-tools",
+                    executableURL: executableURL,
+                    tools: DirectToolCatalog.swiftDescriptors.map(\.toolDescriptor)
+                )
+            ]
+        )
+        let output = try await runtime.executeIfAvailable(
+            toolCall: DirectAgentToolCall(
+                id: "swift-outline-call",
+                name: "swift.outline",
+                argumentsObject: ["path": "Feature.swift"],
+                argumentsJSON: #"{"path":"Feature.swift"}"#
+            ),
+            workingDirectory: rootURL
+        )
+
+        let rendered = try #require(output)
+        #expect(rendered.contains("File: \(sourceURL.path)"))
+        #expect(rendered.contains("read_hint: local.readFile"))
+        #expect(rendered.contains("mark\tFeature"))
+        #expect(rendered.contains("struct\tFeature"))
+        #expect(rendered.contains("let\tFeature.title"))
+        #expect(rendered.contains("func\tFeature.render"))
+        #expect(rendered.contains("extension\tFeature"))
+        #expect(rendered.contains("func\tFeature.make"))
+    }
+
+    @Test
     func runtimeDiscoversDynamicFeatureToolsOnlyWhenRelevant() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-feature-dynamic-\(UUID().uuidString)", isDirectory: true)

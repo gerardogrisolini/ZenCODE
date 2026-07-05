@@ -21,6 +21,7 @@ public enum LocalFeatureTools {
             AnyFeatureTool(LocalListDirectoryTool()),
             AnyFeatureTool(LocalReadFileTool()),
             AnyFeatureTool(LocalReadFilesTool()),
+            AnyFeatureTool(LocalInspectFileTool()),
             AnyFeatureTool(LocalWriteFileTool()),
             AnyFeatureTool(LocalReplaceTool()),
             AnyFeatureTool(LocalEditFileTool()),
@@ -36,7 +37,8 @@ public enum LocalFeatureTools {
     public static func searchTools() -> [AnyFeatureTool] {
         [
             AnyFeatureTool(SearchGlobTool()),
-            AnyFeatureTool(SearchGrepTool())
+            AnyFeatureTool(SearchGrepTool()),
+            AnyFeatureTool(SearchLocateTool())
         ]
     }
 
@@ -65,6 +67,12 @@ enum LocalToolsFeatureError: LocalizedError {
 }
 
 enum LocalToolsSupport {
+    struct FileOutlineEntry {
+        let line: Int
+        let kind: String
+        let name: String
+    }
+
     static func requiredPath(
         _ paths: String?...,
         context: FeatureContext
@@ -126,6 +134,134 @@ enum LocalToolsSupport {
         return (startIndex..<endIndex)
             .map { index in "\(index + 1)\t\(lines[index])" }
             .joined(separator: "\n")
+    }
+
+    static func inspectFile(_ url: URL, maxSymbols: Int?) throws -> String {
+        let data = try Data(contentsOf: url)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
+        let lines = text.isEmpty ? [] : text.components(separatedBy: .newlines)
+        let lineCount = lines.count
+        let readLimit = min(max(lineCount, 1), 80)
+        var output = [
+            "File: \(url.path)",
+            "bytes: \(data.count)",
+            "lines: \(lineCount)",
+            "characters: \(text.count)",
+            "suggested_reads:"
+        ]
+
+        if lineCount == 0 {
+            output.append("- <empty>")
+        } else {
+            output.append("- local.readFile path=\"\(url.path)\" offset=1 limit=\(readLimit)")
+            if lineCount > readLimit {
+                let tailOffset = max(lineCount - readLimit + 1, 1)
+                output.append("- local.readFile path=\"\(url.path)\" offset=\(tailOffset) limit=\(readLimit)")
+            }
+        }
+
+        let maxEntries = max(maxSymbols ?? 80, 1)
+        let outline = outlineEntries(in: lines, maxEntries: maxEntries)
+        output.append("outline:")
+        if outline.entries.isEmpty {
+            output.append("<no symbol-like lines found>")
+        } else {
+            output.append(contentsOf: outline.entries.map {
+                "\($0.line)\t\($0.kind)\t\($0.name)"
+            })
+            if outline.truncated {
+                output.append("... outline truncated to \(maxEntries) entries ...")
+            }
+        }
+        return output.joined(separator: "\n")
+    }
+
+    static func outlineEntries(
+        in lines: [String],
+        maxEntries: Int
+    ) -> (entries: [FileOutlineEntry], truncated: Bool) {
+        var entries: [FileOutlineEntry] = []
+        for (index, line) in lines.enumerated() {
+            guard let entry = outlineEntry(for: line, lineNumber: index + 1) else {
+                continue
+            }
+            guard entries.count < maxEntries else {
+                return (entries, true)
+            }
+            entries.append(entry)
+        }
+        return (entries, false)
+    }
+
+    static func outlineEntry(for line: String, lineNumber: Int) -> FileOutlineEntry? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if trimmed.hasPrefix("// MARK:") {
+            let name = trimmed.replacingOccurrences(of: "// MARK:", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return name.isEmpty ? nil : FileOutlineEntry(line: lineNumber, kind: "mark", name: name)
+        }
+
+        if trimmed.hasPrefix("#") {
+            let title = trimmed.drop { $0 == "#" || $0.isWhitespace }
+            return title.isEmpty ? nil : FileOutlineEntry(line: lineNumber, kind: "heading", name: String(title))
+        }
+
+        guard !trimmed.hasPrefix("//"),
+              !trimmed.hasPrefix("*"),
+              !trimmed.hasPrefix("/*") else {
+            return nil
+        }
+
+        var tokens = trimmed.split { character in
+            character.isWhitespace || "({:<=".contains(character)
+        }.map(String.init)
+        let modifiers: Set<String> = [
+            "public", "private", "fileprivate", "internal", "open",
+            "static", "final", "override", "mutating",
+            "nonmutating", "nonisolated", "async", "throws", "rethrows"
+        ]
+        while let first = tokens.first,
+              first.hasPrefix("@") || modifiers.contains(first) {
+            tokens.removeFirst()
+        }
+
+        guard let keyword = tokens.first else {
+            return nil
+        }
+        switch keyword {
+        case "class" where tokens.count > 2 && tokens[1] == "func":
+            return FileOutlineEntry(line: lineNumber, kind: "func", name: tokens[2])
+        case "struct", "class", "enum", "protocol", "actor", "extension":
+            guard tokens.count > 1 else {
+                return nil
+            }
+            return FileOutlineEntry(line: lineNumber, kind: keyword, name: tokens[1])
+        case "func":
+            guard tokens.count > 1 else {
+                return nil
+            }
+            return FileOutlineEntry(line: lineNumber, kind: "func", name: tokens[1])
+        case "init":
+            return FileOutlineEntry(line: lineNumber, kind: "init", name: "init")
+        case "def":
+            guard tokens.count > 1 else {
+                return nil
+            }
+            return FileOutlineEntry(line: lineNumber, kind: "func", name: tokens[1])
+        case "function":
+            guard tokens.count > 1 else {
+                return nil
+            }
+            return FileOutlineEntry(line: lineNumber, kind: "func", name: tokens[1])
+        default:
+            return nil
+        }
     }
 
     static func glob(input: SearchGlobTool.Input, context: FeatureContext) throws -> String {

@@ -20,18 +20,22 @@ struct DirectToolExecutorLocalIOTests {
 
         #expect(baseToolNames.contains("local.exec"))
         #expect(baseToolNames.contains("local.readFile"))
+        #expect(baseToolNames.contains("local.inspectFile"))
         #expect(baseToolNames.contains("local.writeFile"))
         #expect(baseToolNames.contains("text.wc"))
         #expect(baseToolNames.contains("feature.list"))
         #expect(baseToolNames.contains("feature.enable"))
         #expect(baseToolNames.contains("feature.delete"))
         #expect(!baseToolNames.contains("search.glob"))
+        #expect(!baseToolNames.contains("search.locate"))
         #expect(!baseToolNames.contains("web.search"))
         #expect(!baseToolNames.contains("git.status"))
 
         #expect(selectableToolNames.contains("local.readFile"))
+        #expect(selectableToolNames.contains("local.inspectFile"))
         #expect(selectableToolNames.contains("local.writeFile"))
         #expect(selectableToolNames.contains("search.glob"))
+        #expect(selectableToolNames.contains("search.locate"))
         #expect(selectableToolNames.contains("text.wc"))
         #expect(selectableToolNames.contains("web.search"))
         #expect(selectableToolNames.contains("git.status"))
@@ -44,6 +48,24 @@ struct DirectToolExecutorLocalIOTests {
         workingDirectory: URL
     ) async throws -> String {
         let tool = LocalFeatureTools.fileTools().first { $0.descriptor.name == name }
+        let unwrapped = try #require(tool)
+        let data = try JSONSerialization.data(withJSONObject: arguments)
+        let output = try await unwrapped.invoke(
+            inputData: data,
+            context: FeatureContext(workingDirectory: workingDirectory, environment: [:])
+        )
+        if let decoded = try? JSONDecoder().decode(String.self, from: output) {
+            return decoded
+        }
+        return String(decoding: output, as: UTF8.self)
+    }
+
+    private func runSearchTool(
+        _ name: String,
+        arguments: [String: Any],
+        workingDirectory: URL
+    ) async throws -> String {
+        let tool = LocalFeatureTools.searchTools().first { $0.descriptor.name == name }
         let unwrapped = try #require(tool)
         let data = try JSONSerialization.data(withJSONObject: arguments)
         let output = try await unwrapped.invoke(
@@ -218,6 +240,73 @@ struct DirectToolExecutorLocalIOTests {
         #expect(output.contains(fileB.path))
         #expect(output.contains("alpha"))
         #expect(output.contains("beta"))
+    }
+
+    @Test
+    func inspectFileReturnsMetadataOutlineAndReadSuggestions() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("inspectfile-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let source = root.appendingPathComponent("App.swift")
+        try """
+        import Foundation
+
+        // MARK: View
+        struct AppView {
+            func render() {}
+        }
+
+        extension AppView {
+            class func update() {}
+        }
+        """.write(to: source, atomically: true, encoding: .utf8)
+
+        let output = try await runFileTool(
+            "local.inspectFile",
+            arguments: ["path": "App.swift"],
+            workingDirectory: root
+        )
+
+        #expect(output.contains("File: \(source.path)"))
+        #expect(output.contains("lines:"))
+        #expect(output.contains("suggested_reads:"))
+        #expect(output.contains("local.readFile path=\"\(source.path)\" offset=1"))
+        #expect(output.contains("outline:"))
+        #expect(output.contains("mark\tView"))
+        #expect(output.contains("struct\tAppView"))
+        #expect(output.contains("func\trender"))
+        #expect(output.contains("extension\tAppView"))
+        #expect(output.contains("func\tupdate"))
+    }
+
+    @Test
+    func searchLocateReturnsCompactMatchesAndReadSuggestions() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("searchlocate-\(UUID().uuidString)")
+        let sources = root.appendingPathComponent("Sources")
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let source = sources.appendingPathComponent("App.swift")
+        try """
+        struct App {
+            func targetFeature() {}
+        }
+        """.write(to: source, atomically: true, encoding: .utf8)
+
+        let output = try await runSearchTool(
+            "search.locate",
+            arguments: ["pattern": "targetFeature", "path": ".", "maxResults": 5],
+            workingDirectory: root
+        )
+
+        #expect(output.contains("matches: 1"))
+        #expect(output.contains(source.path))
+        #expect(output.contains("targetFeature"))
+        #expect(output.contains("suggested_reads:"))
+        #expect(output.contains("local.readFile path=\"\(source.path)\""))
     }
 }
 

@@ -71,9 +71,19 @@ public enum DirectToolCatalog {
             inputSchema: #"{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"file_paths":{"type":"array","items":{"type":"string"}},"offset":{"type":"number"},"limit":{"type":"number"}},"required":["paths"]}"#
         ),
         DirectToolDescriptor(
+            name: "local.inspectFile",
+            description: "Returns compact file metadata, suggested read ranges, and symbol-like outline entries without returning the full file contents.",
+            inputSchema: #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"},"maxSymbols":{"type":"number"},"max_symbols":{"type":"number"}},"required":["path"]}"#
+        ),
+        DirectToolDescriptor(
             name: "search.glob",
             description: "Finds files under a local path. Pass pattern for a glob such as **/*.swift; omit pattern to list files recursively.",
             inputSchema: #"{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"maxResults":{"type":"number"},"max_results":{"type":"number"}}}"#
+        ),
+        DirectToolDescriptor(
+            name: "search.locate",
+            description: "Locates text matches compactly and returns file:line snippets plus local.readFile suggestions for focused follow-up reads.",
+            inputSchema: #"{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"maxResults":{"type":"number"},"max_results":{"type":"number"},"context":{"type":"number"}},"required":["pattern"]}"#
         ),
         DirectToolDescriptor(
             name: "text.head",
@@ -183,6 +193,11 @@ public enum DirectToolCatalog {
             name: "swift.package",
             description: "Runs `swift package` subcommands. action is one of: resolve, update, clean, reset, describe, dump-package. describe and dump-package report targets, products, and dependencies without reading Package.swift by hand.",
             inputSchema: #"{"type":"object","properties":{"path":{"type":"string"},"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"action":{"type":"string","enum":["resolve","update","clean","reset","describe","dump-package"]},"timeoutSeconds":{"type":"number"},"timeout":{"type":"number"}}}"#
+        ),
+        DirectToolDescriptor(
+            name: "swift.outline",
+            description: "Returns a compact outline of Swift declarations in a source file without returning the full file contents.",
+            inputSchema: #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"},"maxSymbols":{"type":"number"},"max_symbols":{"type":"number"}},"required":["path"]}"#
         )
     ]
 

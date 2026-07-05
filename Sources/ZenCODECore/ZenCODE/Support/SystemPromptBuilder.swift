@@ -158,7 +158,7 @@ public enum SystemPromptBuilder {
         \(confirmationFiles)
 
         Coding workflow:
-        Prefer concrete tool evidence over assumptions. Search before broad reads, read before edits, and keep edits narrowly scoped to the user's request. Preserve unrelated user changes and do not revert work you did not make. Use \(toolFamilyText) when they are available and relevant. Prefer dedicated non-shell tools for file, text, search, Git, web, Xcode, Figma, memory, and sub-agent operations when those tools are exposed; use shell execution only for work not covered by a dedicated tool. Prefer Xcode-native tools for Apple-project build, test, preview, and diagnostics work when those tools are exposed. Validate important changes with the available build, test, lint, or diagnostic tools when the risk justifies it.
+        Prefer concrete tool evidence over assumptions. Search before broad reads, read before edits, and keep edits narrowly scoped to the user's request. When inspecting unfamiliar or large files, prefer compact orientation tools such as `local.inspectFile` and `search.locate`, then read only the specific ranges needed with `local.readFile` offset/limit. Preserve unrelated user changes and do not revert work you did not make. Use \(toolFamilyText) when they are available and relevant. Prefer dedicated non-shell tools for file, text, search, Git, web, Xcode, Figma, memory, and sub-agent operations when those tools are exposed; use shell execution only for work not covered by a dedicated tool. Prefer Xcode-native tools for Apple-project build, test, preview, and diagnostics work when those tools are exposed. Validate important changes with the available build, test, lint, or diagnostic tools when the risk justifies it.
         """
     }
 

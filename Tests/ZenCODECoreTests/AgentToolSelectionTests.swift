@@ -17,7 +17,7 @@ extension AgentConfigurationTests {
                 featureStatus(
                     id: "search-tools",
                     source: .bundled,
-                    tools: ["search.glob", "search.grep"]
+                    tools: ["search.glob", "search.grep", "search.locate"]
                 ),
                 featureStatus(
                     id: "git-tools",
@@ -38,9 +38,11 @@ extension AgentConfigurationTests {
 
         #expect(allowedToolNames.contains("local.exec"))
         #expect(allowedToolNames.contains("local.readFile"))
+        #expect(allowedToolNames.contains("local.inspectFile"))
         #expect(allowedToolNames.contains("text.wc"))
         #expect(!allowedToolNames.contains("feature.list"))
         #expect(allowedToolNames.contains("search.grep"))
+        #expect(allowedToolNames.contains("search.locate"))
         #expect(allowedToolNames.contains("git.status"))
     }
 
@@ -55,7 +57,9 @@ extension AgentConfigurationTests {
 
         #expect(allowedToolNames.contains("local.exec"))
         #expect(allowedToolNames.contains("local.readFile"))
+        #expect(allowedToolNames.contains("local.inspectFile"))
         #expect(allowedToolNames.contains("search.grep"))
+        #expect(allowedToolNames.contains("search.locate"))
         #expect(allowedToolNames.contains("text.wc"))
         #expect(!allowedToolNames.contains("feature.list"))
     }
@@ -86,6 +90,41 @@ extension AgentConfigurationTests {
 
         #expect(selectedKeys == Set([xcodeKey]))
         #expect(discoveryPrefixes.contains("xcode."))
+    }
+
+    @Test
+    func swiftOutlineStaysInSwiftFeaturePackageSelection() throws {
+        let items = TerminalChat.toolSelectionItems(
+            featureStatuses: [
+                featureStatus(
+                    id: "swift-tools",
+                    source: .bundled,
+                    tools: ["swift.build", "swift.test", "swift.run", "swift.package", "swift.outline"]
+                )
+            ]
+        )
+
+        let selectedKeys = try TerminalChat.parseToolSelection(
+            "swift",
+            items: items
+        )
+        let allowedToolNames = TerminalToolSelectionCatalog.allowedToolNames(
+            for: selectedKeys,
+            items: items
+        )
+
+        #expect(allowedToolNames.contains("swift.outline"))
+        #expect(allowedToolNames.contains("swift.build"))
+
+        let defaultProfile = AgentProfile(
+            id: "default",
+            name: "Default",
+            tools: AgentProfileStore.defaultToolNames
+        )
+        let defaultAllowedToolNames = defaultProfile.allowedToolNames()
+
+        #expect(!defaultAllowedToolNames.contains("swift.outline"))
+        #expect(!defaultAllowedToolNames.contains("swift.build"))
     }
 
     @Test

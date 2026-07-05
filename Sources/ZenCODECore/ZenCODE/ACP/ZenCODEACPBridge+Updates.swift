@@ -174,12 +174,13 @@ extension ZenCODEACPBridge {
 
     public static func toolKind(for toolName: String) -> String {
         switch toolName {
-        case "local.readFile", "local.readFiles", "local.ls", "local.pwd",
+        case "local.readFile", "local.readFiles", "local.inspectFile", "local.ls", "local.pwd",
              "text.head", "text.tail", "text.sort", "text.wc",
              "git.status", "git.diff", "git.show", "git.log",
-             "git.branch", "git.remote", "git.lsFiles", "git.grep", "git.blame":
+             "git.branch", "git.remote", "git.lsFiles", "git.grep", "git.blame",
+             "swift.outline":
             return "read"
-        case "search.grep", "search.glob":
+        case "search.grep", "search.glob", "search.locate":
             return "search"
         case "local.writeFile", "local.replace", "local.append", "local.mkdir",
              "local.editFile", "local.multiEdit", "local.applyPatch":

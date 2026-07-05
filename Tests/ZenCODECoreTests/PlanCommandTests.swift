@@ -113,8 +113,10 @@ struct PlanCommandTests {
             name: AgentProfileStore.plannerAgentName,
             tools: [
                 "local.readFile",
+                "local.inspectFile",
                 "local.writeFile",
                 "local.exec",
+                "search.locate",
                 "git.diff",
                 "git.add",
                 "memory.read",
@@ -128,6 +130,8 @@ struct PlanCommandTests {
         let tools = TerminalChat.plannerSubAgentToolNames(for: planner)
 
         #expect(tools.contains("local.readFile"))
+        #expect(tools.contains("local.inspectFile"))
+        #expect(tools.contains("search.locate"))
         #expect(tools.contains("git.diff"))
         #expect(tools.contains("memory.read"))
         #expect(tools.contains("task.list"))
@@ -151,6 +155,8 @@ struct PlanCommandTests {
         #expect(!planner.tools.contains("shell"))
         #expect(!planner.tools.contains("local.readFile"))
         #expect(tools.contains("local.readFile"))
+        #expect(tools.contains("local.inspectFile"))
+        #expect(tools.contains("search.locate"))
         #expect(tools.contains("git.diff"))
         #expect(tools.contains("memory.read"))
         #expect(tools.contains("web.search"))

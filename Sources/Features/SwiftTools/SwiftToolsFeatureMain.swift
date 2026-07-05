@@ -187,6 +187,27 @@ struct SwiftPackageTool: FeatureTool {
     }
 }
 
+struct SwiftOutlineTool: FeatureTool {
+    struct Input: Decodable, Sendable {
+        let path: String?
+        let file_path: String?
+        let maxSymbols: Int?
+        let max_symbols: Int?
+    }
+
+    static let name = "swift.outline"
+    static let description = "Returns a compact outline of Swift declarations in a source file without returning the full file contents."
+    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"},"maxSymbols":{"type":"number"},"max_symbols":{"type":"number"}},"required":["path"]}"#
+
+    func run(_ input: Input, context: FeatureContext) async throws -> String {
+        let path = try SwiftToolsSupport.requiredPath(input.path, input.file_path, context: context)
+        return try SwiftToolsSupport.renderSwiftOutline(
+            fileURL: path,
+            maxSymbols: input.maxSymbols ?? input.max_symbols
+        )
+    }
+}
+
 @main
 struct SwiftToolsFeatureMain {
     static func main() async {
@@ -194,12 +215,30 @@ struct SwiftToolsFeatureMain {
             AnyFeatureTool(SwiftBuildTool()),
             AnyFeatureTool(SwiftTestTool()),
             AnyFeatureTool(SwiftRunTool()),
-            AnyFeatureTool(SwiftPackageTool())
+            AnyFeatureTool(SwiftPackageTool()),
+            AnyFeatureTool(SwiftOutlineTool())
         ])
     }
 }
 
 private enum SwiftToolsSupport {
+    struct OutlineEntry {
+        let line: Int
+        let depth: Int
+        let kind: String
+        let name: String
+    }
+
+    static func requiredPath(
+        _ paths: String?...,
+        context: FeatureContext
+    ) throws -> URL {
+        guard let path = paths.compactMap({ $0?.nilIfBlank }).first else {
+            throw SwiftToolsFeatureError.invalidArgument("path is required.")
+        }
+        return context.resolvePath(path)
+    }
+
     static func workingDirectory(
         path: String?,
         workingDirectory: String?,
@@ -225,6 +264,257 @@ private enum SwiftToolsSupport {
             environment: environment,
             timeout: timeout
         )
+    }
+
+    static func renderSwiftOutline(fileURL: URL, maxSymbols: Int?) throws -> String {
+        let data = try Data(contentsOf: fileURL)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw SwiftToolsFeatureError.invalidArgument("File is not valid UTF-8: \(fileURL.path)")
+        }
+
+        let lines = text.isEmpty ? [] : text.components(separatedBy: .newlines)
+        let maxEntries = max(maxSymbols ?? 120, 1)
+        let outline = swiftOutlineEntries(in: lines, maxEntries: maxEntries)
+        var output = [
+            "File: \(fileURL.path)",
+            "lines: \(lines.count)",
+            "symbols: \(outline.entries.count)",
+            "read_hint: local.readFile path=\"\(fileURL.path)\" offset=<line> limit=80",
+            "outline:"
+        ]
+
+        if outline.entries.isEmpty {
+            output.append("<no Swift declarations found>")
+        } else {
+            output.append(contentsOf: outline.entries.map { entry in
+                "\(entry.line)\t\(entry.depth)\t\(entry.kind)\t\(entry.name)"
+            })
+            if outline.truncated {
+                output.append("... outline truncated to \(maxEntries) entries ...")
+            }
+        }
+        return output.joined(separator: "\n")
+    }
+
+    static func swiftOutlineEntries(
+        in lines: [String],
+        maxEntries: Int
+    ) -> (entries: [OutlineEntry], truncated: Bool) {
+        var entries: [OutlineEntry] = []
+        var braceDepth = 0
+        var typeStack: [(name: String, depth: Int)] = []
+        var inBlockComment = false
+
+        for (index, rawLine) in lines.enumerated() {
+            let sanitized = codePortion(
+                of: rawLine,
+                inBlockComment: &inBlockComment
+            )
+            let currentDepth = max(braceDepth, 0)
+            while let last = typeStack.last, currentDepth <= last.depth {
+                typeStack.removeLast()
+            }
+
+            if let entry = swiftOutlineEntry(
+                for: sanitized,
+                lineNumber: index + 1,
+                depth: currentDepth,
+                parentTypeName: typeStack.last?.name
+            ) {
+                guard entries.count < maxEntries else {
+                    return (entries, true)
+                }
+                entries.append(entry)
+
+                if entry.kind == "struct"
+                    || entry.kind == "class"
+                    || entry.kind == "enum"
+                    || entry.kind == "actor"
+                    || entry.kind == "protocol"
+                    || entry.kind == "extension" {
+                    typeStack.append((entry.name, currentDepth))
+                }
+            }
+
+            braceDepth += braceDelta(in: sanitized)
+            braceDepth = max(braceDepth, 0)
+        }
+
+        return (entries, false)
+    }
+
+    private static func swiftOutlineEntry(
+        for line: String,
+        lineNumber: Int,
+        depth: Int,
+        parentTypeName: String?
+    ) -> OutlineEntry? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if trimmed.hasPrefix("// MARK:") {
+            let name = trimmed.replacingOccurrences(of: "// MARK:", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return name.isEmpty ? nil : OutlineEntry(line: lineNumber, depth: depth, kind: "mark", name: name)
+        }
+
+        guard !trimmed.hasPrefix("//") else {
+            return nil
+        }
+
+        var tokens = swiftTokens(from: trimmed)
+        let modifiers: Set<String> = [
+            "public", "private", "fileprivate", "internal", "open",
+            "static", "final", "override", "mutating", "nonmutating",
+            "nonisolated", "isolated", "async", "throws", "rethrows",
+            "convenience", "required", "optional", "indirect", "lazy",
+            "weak", "unowned"
+        ]
+        while let first = tokens.first,
+              first.hasPrefix("@") || modifiers.contains(first) {
+            tokens.removeFirst()
+        }
+
+        guard let keyword = tokens.first else {
+            return nil
+        }
+
+        switch keyword {
+        case "class" where tokens.count > 2 && tokens[1] == "func":
+            return OutlineEntry(
+                line: lineNumber,
+                depth: depth,
+                kind: "func",
+                name: qualified(tokens[2], parent: parentTypeName)
+            )
+        case "struct", "class", "enum", "actor", "protocol", "extension":
+            guard tokens.count > 1 else {
+                return nil
+            }
+            return OutlineEntry(line: lineNumber, depth: depth, kind: keyword, name: tokens[1])
+        case "func":
+            guard tokens.count > 1 else {
+                return nil
+            }
+            return OutlineEntry(
+                line: lineNumber,
+                depth: depth,
+                kind: "func",
+                name: qualified(tokens[1], parent: parentTypeName)
+            )
+        case "init":
+            return OutlineEntry(
+                line: lineNumber,
+                depth: depth,
+                kind: "init",
+                name: qualified("init", parent: parentTypeName)
+            )
+        case "subscript":
+            return OutlineEntry(
+                line: lineNumber,
+                depth: depth,
+                kind: "subscript",
+                name: qualified("subscript", parent: parentTypeName)
+            )
+        case "var", "let":
+            guard depth <= 1,
+                  tokens.count > 1 else {
+                return nil
+            }
+            return OutlineEntry(
+                line: lineNumber,
+                depth: depth,
+                kind: keyword,
+                name: qualified(tokens[1], parent: parentTypeName)
+            )
+        case "case":
+            guard parentTypeName != nil,
+                  tokens.count > 1 else {
+                return nil
+            }
+            return OutlineEntry(line: lineNumber, depth: depth, kind: "case", name: tokens[1])
+        default:
+            return nil
+        }
+    }
+
+    private static func qualified(_ name: String, parent: String?) -> String {
+        guard let parent, !name.contains(".") else {
+            return name
+        }
+        return "\(parent).\(name)"
+    }
+
+    private static func swiftTokens(from line: String) -> [String] {
+        line.split { character in
+            character.isWhitespace
+                || "({[,:<>=})]".contains(character)
+        }.map(String.init)
+    }
+
+    private static func codePortion(
+        of line: String,
+        inBlockComment: inout Bool
+    ) -> String {
+        var result = ""
+        var index = line.startIndex
+        while index < line.endIndex {
+            if inBlockComment {
+                if line[index...].hasPrefix("*/") {
+                    inBlockComment = false
+                    index = line.index(index, offsetBy: 2)
+                } else {
+                    index = line.index(after: index)
+                }
+                continue
+            }
+
+            if line[index...].hasPrefix("/*") {
+                inBlockComment = true
+                index = line.index(index, offsetBy: 2)
+                continue
+            }
+            if line[index...].hasPrefix("//") {
+                if result.trimmingCharacters(in: .whitespaces).isEmpty {
+                    return String(line[index...])
+                }
+                break
+            }
+            result.append(line[index])
+            index = line.index(after: index)
+        }
+        return result
+    }
+
+    private static func braceDelta(in line: String) -> Int {
+        var delta = 0
+        var inString = false
+        var escaped = false
+        for character in line {
+            if escaped {
+                escaped = false
+                continue
+            }
+            if character == "\\" {
+                escaped = inString
+                continue
+            }
+            if character == "\"" {
+                inString.toggle()
+                continue
+            }
+            guard !inString else {
+                continue
+            }
+            if character == "{" {
+                delta += 1
+            } else if character == "}" {
+                delta -= 1
+            }
+        }
+        return delta
     }
 
     // MARK: - Rendering

@@ -95,8 +95,11 @@ extension ACPCompatibilityTests {
     @Test
     func toolKindsUseClientRecognizedACPCategories() {
         #expect(ZenCODEACPBridge.toolKind(for: "local.readFile") == "read")
+        #expect(ZenCODEACPBridge.toolKind(for: "local.inspectFile") == "read")
         #expect(ZenCODEACPBridge.toolKind(for: "git.status") == "read")
+        #expect(ZenCODEACPBridge.toolKind(for: "swift.outline") == "read")
         #expect(ZenCODEACPBridge.toolKind(for: "search.grep") == "search")
+        #expect(ZenCODEACPBridge.toolKind(for: "search.locate") == "search")
         #expect(ZenCODEACPBridge.toolKind(for: "web.search") == "search")
         #expect(ZenCODEACPBridge.toolKind(for: "web.fetch") == "read")
         #expect(ZenCODEACPBridge.toolKind(for: "local.writeFile") == "edit")

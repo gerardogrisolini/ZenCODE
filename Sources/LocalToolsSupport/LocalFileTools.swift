@@ -100,6 +100,27 @@ struct LocalReadFilesTool: FeatureTool {
         return sections.joined(separator: "\n\n")
     }
 }
+
+struct LocalInspectFileTool: FeatureTool {
+    struct Input: Decodable, Sendable {
+        let path: String?
+        let file_path: String?
+        let maxSymbols: Int?
+        let max_symbols: Int?
+    }
+
+    static let name = "local.inspectFile"
+    static let description = "Returns compact file metadata, suggested read ranges, and symbol-like outline entries without returning the full file contents."
+    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"},"maxSymbols":{"type":"number"},"max_symbols":{"type":"number"}},"required":["path"]}"#
+
+    func run(_ input: Input, context: FeatureContext) async throws -> String {
+        try LocalToolsSupport.inspectFile(
+            LocalToolsSupport.requiredPath(input.path, input.file_path, context: context),
+            maxSymbols: input.maxSymbols ?? input.max_symbols
+        )
+    }
+}
+
 struct LocalWriteFileTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let path: String?
