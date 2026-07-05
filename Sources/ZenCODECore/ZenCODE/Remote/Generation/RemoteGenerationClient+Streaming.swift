@@ -223,6 +223,7 @@ extension RemoteGenerationClient {
         private var firstDeltaAt: Date?
         private var usage: RemoteGenerationUsage?
         private var contentNormalizer = ThinkingBoundarySpacingNormalizer()
+        private var reasoningContentClosed = false
         private var reasoningItems: [[String: Any]] = []
         private var reasoningItemIndexByID: [String: Int] = [:]
 
@@ -320,6 +321,38 @@ extension RemoteGenerationClient {
             guard !delta.isEmpty else {
                 return
             }
+            if reasoningContentClosed {
+                await appendContent(delta, onEvent: onEvent)
+                return
+            }
+
+            let previousReasoning = accumulatedReasoningText
+            let combinedReasoning = previousReasoning + delta
+            if let closingMarker = Self.firstReasoningClosingMarker(in: combinedReasoning) {
+                let deltaStart = combinedReasoning.index(
+                    combinedReasoning.startIndex,
+                    offsetBy: previousReasoning.count
+                )
+                let thoughtEnd = max(deltaStart, closingMarker.range.upperBound)
+                let thoughtDelta = String(combinedReasoning[deltaStart..<thoughtEnd])
+                let contentDelta = String(combinedReasoning[thoughtEnd...])
+
+                await appendThoughtDelta(thoughtDelta, onEvent: onEvent)
+                reasoningContentClosed = true
+                await appendContent(contentDelta, onEvent: onEvent)
+                return
+            }
+
+            await appendThoughtDelta(delta, onEvent: onEvent)
+        }
+
+        private mutating func appendThoughtDelta(
+            _ delta: String,
+            onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+        ) async {
+            guard !delta.isEmpty else {
+                return
+            }
             markFirstDelta()
             accumulatedReasoningText.append(delta)
             await onEvent(.thought(delta))
@@ -356,6 +389,20 @@ extension RemoteGenerationClient {
                 return nil
             }
             return String(decoding: data, as: UTF8.self)
+        }
+
+        private static func firstReasoningClosingMarker(
+            in text: String
+        ) -> (range: Range<String.Index>, text: String)? {
+            ["</think>", "</thinking>", "<channel|>"]
+                .compactMap { marker in
+                    text.range(of: marker).map { range in
+                        (range: range, text: marker)
+                    }
+                }
+                .min { lhs, rhs in
+                    lhs.range.lowerBound < rhs.range.lowerBound
+                }
         }
     }
 

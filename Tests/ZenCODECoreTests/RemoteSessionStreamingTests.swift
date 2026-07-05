@@ -247,9 +247,9 @@ extension RemoteSessionSnapshotTests {
             }
         )
 
-                #expect(result.text == "")
-        #expect(capturedEvents.thoughtText() == "Analisi.</think>Risposta visibile.")
-        #expect(capturedEvents.contentText() == "")
+        #expect(result.text == "Risposta visibile.")
+        #expect(capturedEvents.thoughtText() == "Analisi.</think>")
+        #expect(capturedEvents.contentText() == "Risposta visibile.")
     }
 
     @Test

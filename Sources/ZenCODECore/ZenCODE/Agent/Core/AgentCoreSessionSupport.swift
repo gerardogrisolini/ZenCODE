@@ -69,7 +69,7 @@ actor AgentCorePromptTurnRecorder {
             history.append(
                 AgentRuntimeMessage(
                     role: .tool,
-                    content: result.output,
+                    content: result.modelOutput,
                     toolCallID: toolCall.id,
                     toolName: toolCall.name
                 )

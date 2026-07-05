@@ -8,6 +8,8 @@
 import Foundation
 
 public actor DirectToolExecutor {
+    public static let defaultModelOutputLimit = 12_000
+
     public enum DirectToolExecutorError: LocalizedError {
         case toolNotAllowed(String)
 
@@ -191,7 +193,8 @@ public actor DirectToolExecutor {
             )
             return DirectAgentToolResult(
                 output: truncated(output),
-                summary: summary(from: output)
+                summary: summary(from: output),
+                modelOutput: modelOutput(from: output)
             )
         } catch {
             let output = "Tool error: \(error.localizedDescription)"

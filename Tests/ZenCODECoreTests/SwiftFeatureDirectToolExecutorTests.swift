@@ -194,6 +194,22 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
+    func directToolExecutorCapsModelFacingToolOutput() async throws {
+        let executor = DirectToolExecutor(
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+        )
+        let output = String(repeating: "a", count: DirectToolExecutor.defaultModelOutputLimit + 100)
+
+        let modelOutput = await executor.modelOutput(from: output)
+
+        #expect(modelOutput.count < output.count)
+        #expect(modelOutput.count <= DirectToolExecutor.defaultModelOutputLimit)
+        #expect(modelOutput.contains("truncated for model context"))
+        #expect(modelOutput.contains("offset/limit"))
+    }
+
+    @Test
     func directToolExecutorMarksSwiftFeaturePermissionFailures() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-feature-permission-denied-\(UUID().uuidString)", isDirectory: true)

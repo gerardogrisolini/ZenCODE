@@ -120,6 +120,22 @@ extension DirectToolExecutor {
         return String(text.prefix(outputLimit)) + "\n... truncated to \(outputLimit) characters ..."
     }
 
+    public func modelOutput(from output: String) -> String {
+        let limit = min(outputLimit, Self.defaultModelOutputLimit)
+        guard output.count > limit else {
+            return output
+        }
+        let footer = """
+
+        ... truncated for model context to \(limit) characters ...
+        Re-run the tool with a narrower query, offset/limit, or more focused command if more output is needed.
+        """
+        let prefixLimit = max(limit - footer.count, 1)
+        return """
+        \(String(output.prefix(prefixLimit)))\(footer)
+        """
+    }
+
     public func summary(from output: String) -> String {
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {

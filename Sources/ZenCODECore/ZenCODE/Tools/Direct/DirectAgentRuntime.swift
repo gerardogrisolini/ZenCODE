@@ -52,15 +52,18 @@ public struct DirectAgentToolResult: Sendable {
 
     public let output: String
     public let summary: String
+    public let modelOutput: String
     public let status: Status
 
     public init(
         output: String,
         summary: String,
+        modelOutput: String? = nil,
         status: Status = .completed
     ) {
         self.output = output
         self.summary = summary
+        self.modelOutput = modelOutput ?? output
         self.status = status
     }
 

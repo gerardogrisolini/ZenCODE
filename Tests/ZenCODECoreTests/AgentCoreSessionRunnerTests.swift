@@ -102,6 +102,48 @@ struct AgentCoreSessionRunnerTests {
     }
 
     @Test
+    func toolResultsPersistModelOutputInRecoveredHistory() async throws {
+        let recorder = AgentCorePromptTurnRecorder(
+            initialSnapshot: AgentRuntimeSessionSnapshot(
+                sessionID: "session-tool-output",
+                modelID: "test-model",
+                workingDirectoryPath: "/tmp/project",
+                systemPrompt: nil,
+                cacheKey: nil,
+                history: [],
+                allowedToolNames: ["local.readFile"],
+                thinkingSelection: nil,
+                preserveThinking: false
+            ),
+            prompt: "read file",
+            attachments: []
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "call_read",
+            name: "local.readFile",
+            argumentsObject: ["path": "big.swift"],
+            argumentsJSON: #"{"path":"big.swift"}"#
+        )
+
+        await recorder.record(.toolCallStarted(toolCall))
+        await recorder.record(.toolCallCompleted(
+            toolCall,
+            DirectAgentToolResult(
+                output: "full output shown in UI",
+                summary: "read big.swift",
+                modelOutput: "compact output sent back to the model"
+            )
+        ))
+
+        let history = await recorder.snapshot().history
+        let toolMessage = try #require(history.last)
+        #expect(toolMessage.role == .tool)
+        #expect(toolMessage.content == "compact output sent back to the model")
+        #expect(toolMessage.toolCallID == "call_read")
+        #expect(toolMessage.toolName == "local.readFile")
+    }
+
+    @Test
     func cancelPromptBySessionIDPublishesCancelledOutcome() async throws {
         let backend = BlockingAgentRuntimeBackend()
         let runner = AgentCoreSessionRunner(

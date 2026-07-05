@@ -270,7 +270,7 @@ extension ChatGPTSubscriptionGenerationClient {
                         "role": "tool",
                         "tool_call_id": toolCall.id,
                         "name": toolCall.name,
-                        "content": result.output
+                        "content": result.modelOutput
                     ])
                 }
 
