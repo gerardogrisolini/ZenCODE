@@ -9,6 +9,9 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+#if canImport(WebKit)
+import WebKit
+#endif
 import FeatureKit
 
 struct WebSearchTool: FeatureTool {
@@ -77,7 +80,7 @@ struct WebFetchTool: FeatureTool {
     }
 
     static let name = "web.fetch"
-    static let description = "Fetches an HTTP or HTTPS URL and returns response metadata plus a UTF-8 text preview."
+    static let description = "Opens an HTTP or HTTPS URL. On Apple platforms it renders the page in a silent in-process WebKit view (JavaScript executed) and returns extracted Markdown; on other platforms it falls back to a raw HTTP fetch preview."
     static let inputSchema = #"{"type":"object","properties":{"url":{"type":"string"},"maxBytes":{"type":"number"},"timeoutSeconds":{"type":"number"}},"required":["url"]}"#
 
     func run(_ input: Input, context _: FeatureContext) async throws -> String {
@@ -90,28 +93,27 @@ struct WebFetchTool: FeatureTool {
 
         let maxBytes = max(1_024, min(input.maxBytes ?? 120_000, 1_000_000))
         let timeout = TimeInterval(max(1, min(input.timeoutSeconds ?? 20, 120)))
-        var request = URLRequest(url: url)
-        request.timeoutInterval = timeout
-        request.setValue("ZenCODE/1.0", forHTTPHeaderField: "User-Agent")
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let httpResponse = response as? HTTPURLResponse
-        try WebToolsSupport.validateHTTPResponse(response)
-        let bodyData = Data(data.prefix(maxBytes))
-        let body = String(data: bodyData, encoding: .utf8)
-            ?? "<non-UTF-8 response body: \(bodyData.count) bytes>"
-        let truncatedSuffix = data.count > bodyData.count
-            ? "\n\n<truncated: \(data.count - bodyData.count) bytes omitted>"
+        #if canImport(WebKit)
+        let page = try await WebKitPageRenderer.render(url: url, timeout: timeout)
+        let markdown = String(page.markdown.prefix(maxBytes))
+        let truncatedSuffix = page.markdown.utf8.count > markdown.utf8.count
+            ? "\n\n<truncated: \(page.markdown.utf8.count - markdown.utf8.count) bytes omitted>"
             : ""
-
         return """
-        url: \(response.url?.absoluteString ?? url.absoluteString)
-        status: \(httpResponse?.statusCode ?? 0)
-        content-type: \(httpResponse?.value(forHTTPHeaderField: "Content-Type") ?? "unknown")
-        bytes: \(data.count)
+        url: \(page.finalURL)
+        title: \(page.title)
+        engine: WebKit (rendered, JavaScript executed)
 
-        \(body)\(truncatedSuffix)
+        \(markdown)\(truncatedSuffix)
         """
+        #else
+        return try await WebToolsSupport.rawFetchPreview(
+            url: url,
+            maxBytes: maxBytes,
+            timeout: timeout
+        )
+        #endif
     }
 }
 
@@ -124,6 +126,209 @@ struct WebToolsFeatureMain {
         ])
     }
 }
+
+// MARK: - WebKit rendering (Apple platforms only)
+
+#if canImport(WebKit)
+
+struct RenderedPage: Sendable {
+    let finalURL: String
+    let title: String
+    let markdown: String
+}
+
+@MainActor
+final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
+    private let webView: WKWebView
+    private var loadContinuation: CheckedContinuation<Void, Error>?
+    private var didResume = false
+    private var timeoutTask: Task<Void, Never>?
+
+    private override init() {
+        let configuration = WKWebViewConfiguration()
+        self.webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 1365, height: 900),
+            configuration: configuration
+        )
+        super.init()
+        self.webView.navigationDelegate = self
+        self.webView.customUserAgent =
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) ZenCODE/1.0"
+    }
+
+    static func render(url: URL, timeout: TimeInterval) async throws -> RenderedPage {
+        let renderer = await WebKitPageRenderer()
+        return try await renderer.load(url: url, timeout: timeout)
+    }
+
+    private func load(url: URL, timeout: TimeInterval) async throws -> RenderedPage {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            self.loadContinuation = continuation
+            self.didResume = false
+            self.timeoutTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                self?.resume(.failure(WebToolsFeatureError.permissionDenied(
+                    "Timed out rendering the page after \(Int(timeout))s."
+                )))
+            }
+            self.webView.load(URLRequest(url: url))
+        }
+
+        // Wait for client-side scripts to settle instead of a fixed delay:
+        // poll until the document is ready and the rendered text length is
+        // stable, bounded by the same timeout budget as the navigation.
+        await waitUntilSettled(timeout: timeout)
+
+        let title = (try? await evaluateString("document.title")) ?? ""
+        let finalURL = (try? await evaluateString("location.href")) ?? url.absoluteString
+        let markdown = try await evaluateString(WebKitPageRenderer.extractionJS)
+        return RenderedPage(finalURL: finalURL, title: title, markdown: markdown)
+    }
+
+    /// Polls the page until it reports a ready state and the rendered text
+    /// length stops growing, so dynamically injected content is captured.
+    /// Bounded by `timeout` (shared with the navigation budget).
+    private func waitUntilSettled(timeout: TimeInterval) async {
+        // Cap the settle wait so pages that mutate continuously (clocks,
+        // animations) can't stall extraction for the full navigation budget.
+        let start = Date()
+        let deadline = start.addingTimeInterval(min(timeout, 6))
+        let pollInterval: UInt64 = 200_000_000 // 200 ms
+        // Always observe the page for at least this long before trusting a
+        // stable measurement, so short delayed injections are still captured.
+        let minSettle: TimeInterval = 0.8
+        let requiredStableChecks = 2
+        var lastLength = -1
+        var stableChecks = 0
+
+        // Minimal settle so very fast client scripts run at least once.
+        try? await Task.sleep(nanoseconds: pollInterval)
+
+        while Date() < deadline {
+            let ready = (try? await evaluateString("document.readyState")) ?? ""
+            let lengthString = (try? await evaluateString(
+                "String(((document.body && document.body.innerText) || '').length)"
+            )) ?? "0"
+            let length = Int(lengthString) ?? 0
+            let isReady = ready == "complete" || ready == "interactive"
+
+            if isReady, length > 0, length == lastLength {
+                stableChecks += 1
+                if stableChecks >= requiredStableChecks,
+                   Date().timeIntervalSince(start) >= minSettle {
+                    return
+                }
+            } else {
+                stableChecks = 0
+            }
+            lastLength = length
+            try? await Task.sleep(nanoseconds: pollInterval)
+        }
+    }
+
+    private func resume(_ result: Result<Void, Error>) {
+        guard !didResume else { return }
+        didResume = true
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        let continuation = loadContinuation
+        loadContinuation = nil
+        switch result {
+        case .success:
+            continuation?.resume()
+        case let .failure(error):
+            continuation?.resume(throwing: error)
+        }
+    }
+
+    private func evaluateString(_ javaScript: String) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            webView.evaluateJavaScript(javaScript) { value, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                if let string = value as? String {
+                    continuation.resume(returning: string)
+                } else if let value {
+                    continuation.resume(returning: String(describing: value))
+                } else {
+                    continuation.resume(returning: "")
+                }
+            }
+        }
+    }
+
+    // MARK: WKNavigationDelegate
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        resume(.success(()))
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        resume(.failure(error))
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        resume(.failure(error))
+    }
+
+    // Extract a compact Markdown snapshot of the rendered DOM.
+    static let extractionJS = #"""
+    (() => {
+      const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+      const visible = el => {
+        const r = el.getBoundingClientRect();
+        const st = getComputedStyle(el);
+        return r.width > 0 && r.height > 0 &&
+          st.display !== 'none' && st.visibility !== 'hidden' && st.opacity !== '0';
+      };
+      const lines = [
+        '# ' + (clean(document.title) || location.href),
+        '',
+        'URL: ' + location.href,
+        '',
+        '## Content'
+      ];
+      const blocks = [...document.body.querySelectorAll(
+        'h1,h2,h3,h4,h5,h6,p,li,pre,blockquote,td,th'
+      )];
+      const seen = new Set();
+      for (const el of blocks) {
+        if (!visible(el)) continue;
+        const tag = el.tagName;
+        let s = '';
+        if (/^H[1-6]$/.test(tag)) s = '#'.repeat(Number(tag[1])) + ' ' + clean(el.innerText);
+        else if (tag === 'LI') s = '- ' + clean(el.innerText);
+        else if (tag === 'PRE') s = '```\n' + (el.innerText || '').replace(/\s+$/, '') + '\n```';
+        else if (tag === 'BLOCKQUOTE') s = '> ' + clean(el.innerText);
+        else s = clean(el.innerText);
+        s = s.trim();
+        if (!s || seen.has(s)) continue;
+        seen.add(s);
+        lines.push('', s);
+        if (lines.join('\n').length > 400000) { lines.push('', '[Content truncated by extractor.]'); break; }
+      }
+      lines.push('', '## Visible links');
+      let n = 0;
+      const linkSeen = new Set();
+      for (const a of document.querySelectorAll('a[href]')) {
+        if (!visible(a)) continue;
+        const text = clean(a.innerText || a.textContent);
+        if (text.length < 3) continue;
+        let u;
+        try { u = new URL(a.href); } catch (e) { continue; }
+        if (!/^https?:$/.test(u.protocol) || linkSeen.has(u.href)) continue;
+        linkSeen.add(u.href);
+        lines.push('- [' + text.slice(0, 160) + '](' + u.href + ')');
+        if (++n >= 80) break;
+      }
+      return lines.join('\n');
+    })()
+    """#
+}
+
+#endif
 
 private enum WebToolsFeatureError: LocalizedError {
     case missingArgument(String)
@@ -153,6 +358,37 @@ private enum WebToolsSupport {
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw WebToolsFeatureError.permissionDenied("The web request failed with HTTP status \(httpResponse.statusCode).")
         }
+    }
+
+    /// Raw HTTP fetch used as the non-Apple fallback for `web.fetch`.
+    static func rawFetchPreview(
+        url: URL,
+        maxBytes: Int,
+        timeout: TimeInterval
+    ) async throws -> String {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        request.setValue("ZenCODE/1.0", forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let httpResponse = response as? HTTPURLResponse
+        try validateHTTPResponse(response)
+        let bodyData = Data(data.prefix(maxBytes))
+        let body = String(data: bodyData, encoding: .utf8)
+            ?? "<non-UTF-8 response body: \(bodyData.count) bytes>"
+        let truncatedSuffix = data.count > bodyData.count
+            ? "\n\n<truncated: \(data.count - bodyData.count) bytes omitted>"
+            : ""
+
+        return """
+        url: \(response.url?.absoluteString ?? url.absoluteString)
+        status: \(httpResponse?.statusCode ?? 0)
+        content-type: \(httpResponse?.value(forHTTPHeaderField: "Content-Type") ?? "unknown")
+        engine: URLSession (raw fetch)
+        bytes: \(data.count)
+
+        \(body)\(truncatedSuffix)
+        """
     }
 
     static func normalizedDomains(from domains: [String]) -> [String] {
