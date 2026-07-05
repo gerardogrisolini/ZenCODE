@@ -26,16 +26,17 @@ extension SwiftFeatureRuntime {
     private static func discoverRuntimeTools(
         feature: SwiftFeatureBundle
     ) async throws -> [ToolDescriptor] {
+        // No timeout: features such as xcode-tools trigger a user-consent
+        // dialog while listing tools, and the process must wait until the
+        // user either grants or denies the consent.
         let result = try await AsyncProcessRunner.run(
             executableURL: feature.executableURL,
             arguments: ["--list-tools"],
             workingDirectory: feature.executableURL.deletingLastPathComponent(),
-            environment: DeveloperToolEnvironment.processEnvironment(),
-            timeout: 10
+            environment: DeveloperToolEnvironment.processEnvironment()
         )
 
-        guard !result.timedOut,
-              result.exitCode == 0 else {
+        guard result.exitCode == 0 else {
             return []
         }
 

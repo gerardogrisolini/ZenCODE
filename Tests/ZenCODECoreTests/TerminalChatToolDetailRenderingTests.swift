@@ -251,6 +251,30 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
+    func detailedCompletionUsesPermissionDeniedStatusForErrors() {
+        let toolCall = DirectAgentToolCall(
+            id: "call_1",
+            name: "xcode.BuildProject",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        let result = DirectAgentToolResult(
+            output: "Consent denied",
+            summary: "Consent denied",
+            status: .permissionDenied
+        )
+
+        let lines = TerminalChat.detailedToolCallCompletedLines(
+            for: toolCall,
+            result: result
+        )
+
+        #expect(lines.contains("error:"))
+        #expect(lines.contains("  Consent denied"))
+        #expect(lines.last == "status: ⚠️")
+    }
+
+    @Test
     func detailedWriteCompletionShowsAppliedChangeSnippet() {
         let toolCall = DirectAgentToolCall(
             id: "call_1",

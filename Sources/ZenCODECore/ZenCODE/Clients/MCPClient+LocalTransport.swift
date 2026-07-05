@@ -61,6 +61,7 @@ extension MCPClient {
 
         self.process = process
         inputHandle = standardInput.fileHandleForWriting
+        startMCPBridgeLogMonitor(for: process)
 
         signal(SIGPIPE, SIG_IGN)
         prepareStdoutTracingFiles()
@@ -107,6 +108,7 @@ extension MCPClient {
             _ = try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { continuation in
                     pendingResponses[initializeRequestID] = continuation
+                    pendingRequestMethods[initializeRequestID] = "initialize"
 
                     do {
                         try write(initializePayload)
@@ -114,6 +116,7 @@ extension MCPClient {
                         try write(initializedPayload)
                     } catch {
                         pendingResponses.removeValue(forKey: initializeRequestID)
+                        pendingRequestMethods.removeValue(forKey: initializeRequestID)
                         continuation.resume(throwing: error)
                     }
                 }
@@ -149,6 +152,7 @@ extension MCPClient {
         readLoopTask = nil
         errorLoopTask?.cancel()
         errorLoopTask = nil
+        stopMCPBridgeLogMonitor()
 
         inputHandle?.closeFile()
         inputHandle = nil
@@ -167,6 +171,54 @@ extension MCPClient {
         stdoutChunkTraceURLs.removeAll(keepingCapacity: false)
         stdoutReassembledBufferURLs.removeAll(keepingCapacity: false)
         lastReassembledBufferSize = -1
+    }
+
+    func startMCPBridgeLogMonitor(for bridgeProcess: Process) {
+        guard configuration.usesMCPBridgeExecutable,
+              mcpBridgeLogMonitorProcess == nil else {
+            return
+        }
+
+        // Xcode's mcpbridge reports consent denial only through Unified Logging
+        // in the failure path we observed, so watch the child PID without adding
+        // discovery timers.
+        let monitorProcess = Process()
+        monitorProcess.executableURL = URL(fileURLWithPath: "/usr/bin/log")
+        monitorProcess.arguments = [
+            "stream",
+            "--style", "compact",
+            "--predicate", "processID == \(bridgeProcess.processIdentifier)",
+            "--info",
+            "--debug"
+        ]
+
+        let outputPipe = Pipe()
+        monitorProcess.standardOutput = outputPipe
+        monitorProcess.standardError = outputPipe
+
+        do {
+            try monitorProcess.run()
+        } catch {
+            log("Unable to start mcpbridge log monitor: \(error.localizedDescription)")
+            return
+        }
+
+        mcpBridgeLogMonitorProcess = monitorProcess
+        let outputHandle = outputPipe.fileHandleForReading
+        mcpBridgeLogMonitorTask = Task.detached { [self] in
+            await Self.logMonitorLoop(from: outputHandle, client: self)
+        }
+    }
+
+    func stopMCPBridgeLogMonitor() {
+        mcpBridgeLogMonitorTask?.cancel()
+        mcpBridgeLogMonitorTask = nil
+
+        if let monitorProcess = mcpBridgeLogMonitorProcess,
+           monitorProcess.isRunning {
+            monitorProcess.terminate()
+        }
+        mcpBridgeLogMonitorProcess = nil
     }
 
     nonisolated static func resolvedExecutableURL(for configuration: MCPServerConfiguration) -> URL {
@@ -242,12 +294,14 @@ extension MCPClient {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 pendingResponses[requestID] = continuation
+                pendingRequestMethods[requestID] = method
 
                 do {
                     try write(payload)
                     onRequestWritten?()
                 } catch {
                     pendingResponses.removeValue(forKey: requestID)
+                    pendingRequestMethods.removeValue(forKey: requestID)
                     continuation.resume(throwing: error)
                 }
             }

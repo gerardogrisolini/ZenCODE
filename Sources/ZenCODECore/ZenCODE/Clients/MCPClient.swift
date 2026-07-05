@@ -15,6 +15,8 @@ public actor MCPClient {
     public var inputHandle: FileHandle?
     public var readLoopTask: Task<Void, Never>?
     public var errorLoopTask: Task<Void, Never>?
+    var mcpBridgeLogMonitorProcess: Process?
+    var mcpBridgeLogMonitorTask: Task<Void, Never>?
     public var buffer = Data()
     public var stderrBuffer = Data()
     public var terminalBridgeError: MCPClientError?
@@ -26,6 +28,7 @@ public actor MCPClient {
     public var stdoutChunkTraceURLs: [URL] = []
     public var stdoutReassembledBufferURLs: [URL] = []
     public var lastReassembledBufferSize: Int = -1
+    var pendingRequestMethods: [Int: String] = [:]
 
     public init(configuration: MCPServerConfiguration) {
         self.configuration = configuration

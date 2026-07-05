@@ -534,10 +534,98 @@ extension ACPCompatibilityTests {
 
         #expect(detectedError?.localizedDescription == MCPClientError.xcodePermissionRequired.localizedDescription)
     }
-    #endif
 
     @Test
-    func automaticXcodeDiscoveryDoesNotWaitOneMinuteForConsent() {
-        #expect(DirectMCPToolRuntime.xcodeDiscoveryTimeoutNanoseconds <= 2_000_000_000)
+    func xcodeBridgeListToolsErrorsAreTreatedAsPermissionRequired() async throws {
+        let configuration = MCPServerConfiguration(
+            executablePath: "/usr/bin/xcrun",
+            arguments: ["mcpbridge"],
+            environment: [:]
+        )
+        let client = MCPClient(configuration: configuration)
+
+        let mappedError = await client.serverError(
+            MCPErrorResponse(
+                code: -32000,
+                message: "Internal error"
+            ),
+            requestMethod: "tools/list"
+        )
+
+        #expect(mappedError.localizedDescription == MCPClientError.xcodePermissionRequired.localizedDescription)
     }
+
+    @Test
+    func xcodePermissionDeniedTerminationStoresPermissionError() async throws {
+        let configuration = MCPServerConfiguration(
+            executablePath: "/usr/bin/xcrun",
+            arguments: ["mcpbridge"],
+            environment: [:]
+        )
+        let client = MCPClient(configuration: configuration)
+
+        await client.terminateLocalBridgeAfterPermissionDenied(.xcodePermissionRequired)
+
+        let storedError = await client.terminalBridgeError
+        #expect(storedError?.localizedDescription == MCPClientError.xcodePermissionRequired.localizedDescription)
+    }
+
+    @Test
+    func xcodeBridgeStdoutPermissionErrorsTerminatePendingBridge() async throws {
+        let configuration = MCPServerConfiguration(
+            executablePath: "/usr/bin/xcrun",
+            arguments: ["mcpbridge"],
+            environment: [:]
+        )
+        let client = MCPClient(configuration: configuration)
+
+        await client.append(
+            Data("""
+            {"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"Error Domain=IDEIntelligenceMessaging.BridgeError Code=1"}}
+            """.utf8)
+        )
+
+        let storedError = await client.terminalBridgeError
+        #expect(storedError?.localizedDescription == MCPClientError.xcodePermissionRequired.localizedDescription)
+    }
+
+    @Test
+    func xcodeBridgeUnroutedErrorsTerminatePendingBridge() async throws {
+        let configuration = MCPServerConfiguration(
+            executablePath: "/usr/bin/xcrun",
+            arguments: ["mcpbridge"],
+            environment: [:]
+        )
+        let client = MCPClient(configuration: configuration)
+        await client.recordPendingRequestMethodForTesting(id: 2, method: "tools/list")
+
+        await client.append(
+            Data("""
+            {"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"Internal error"}}
+            """.utf8)
+        )
+
+        let storedError = await client.terminalBridgeError
+        #expect(storedError?.localizedDescription == MCPClientError.xcodePermissionRequired.localizedDescription)
+    }
+
+    @Test
+    func xcodeBridgeSystemLogPermissionErrorsTerminatePendingBridge() async throws {
+        let configuration = MCPServerConfiguration(
+            executablePath: "/usr/bin/xcrun",
+            arguments: ["mcpbridge"],
+            environment: [:]
+        )
+        let client = MCPClient(configuration: configuration)
+        await client.recordPendingRequestMethodForTesting(id: 2, method: "tools/list")
+
+        await client.handleMCPBridgeDiagnosticLine(
+            "mcpbridge[28755] listTools request failed: Error Domain=IDEIntelligenceMessaging.BridgeError Code=1"
+        )
+
+        let storedError = await client.terminalBridgeError
+        #expect(storedError?.localizedDescription == MCPClientError.xcodePermissionRequired.localizedDescription)
+    }
+    #endif
+
 }

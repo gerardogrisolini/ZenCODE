@@ -66,6 +66,7 @@ extension SwiftFeatureRuntimeTests {
         )
 
         #expect(result.output == "feature-dynamic-output")
+        #expect(result.status == .completed)
     }
 
     @Test
@@ -189,6 +190,146 @@ extension SwiftFeatureRuntimeTests {
         )
 
         #expect(result.output == "Tool error: Unknown tool: search.glob")
+        #expect(result.status == .failed)
+    }
+
+    @Test
+    func directToolExecutorMarksSwiftFeaturePermissionFailures() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-permission-denied-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+        let executableURL = rootURL.appendingPathComponent("feature")
+        try """
+        #!/bin/sh
+        cat >/dev/null
+        printf '{"ok":false,"error":"Consent denied"}\n'
+        """.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+
+        let runtime = SwiftFeatureRuntime(
+            features: [
+                SwiftFeatureBundle(
+                    id: "denied-fixture",
+                    executableURL: executableURL,
+                    tools: [
+                        ToolDescriptor(
+                            name: "denied.fixture",
+                            description: "Returns a denied feature response",
+                            inputSchema: #"{"type":"object","properties":{}}"#
+                        )
+                    ]
+                )
+            ]
+        )
+        let executor = DirectToolExecutor(
+            swiftFeatureRuntime: runtime,
+            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+        )
+
+        let result = await executor.execute(
+            sessionID: "test-session",
+            toolCall: DirectAgentToolCall(
+                id: "denied-call-1",
+                name: "denied.fixture",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            workingDirectory: rootURL,
+            allowedToolNames: ["denied.fixture"]
+        )
+
+        #expect(result.status == .permissionDenied)
+        #expect(result.isPermissionDenied)
+        #expect(result.output == "Tool error: Consent denied")
+    }
+
+    @Test
+    func directToolExecutorMarksUnavailableXcodeToolsAsPermissionDenied() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("xcode-permission-denied-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+        let executor = DirectToolExecutor(
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+        )
+
+        let result = await executor.execute(
+            sessionID: "test-session",
+            toolCall: DirectAgentToolCall(
+                id: "xcode-call-1",
+                name: "xcode.BuildProject",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            workingDirectory: rootURL,
+            allowedToolNames: ["xcode.BuildProject"]
+        )
+
+        #expect(result.status == .permissionDenied)
+        #expect(result.isPermissionDenied)
+        #expect(result.output.contains("Xcode MCP is not connected"))
+    }
+
+    @Test
+    func directToolExecutorMarksGenericMCPPermissionFailures() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mcp-permission-denied-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+        let executor = DirectToolExecutor(
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+        )
+        await executor.updateToolProviders([
+            AgentToolProvider(
+                tools: [
+                    ToolDescriptor(
+                        name: "remote.denied",
+                        description: "Denied remote tool",
+                        inputSchema: #"{"type":"object","properties":{}}"#
+                    )
+                ],
+                executor: { _ in
+                    throw MCPClientError.serverError(code: -32000, message: "Permission denied")
+                }
+            )
+        ])
+
+        let result = await executor.execute(
+            sessionID: "test-session",
+            toolCall: DirectAgentToolCall(
+                id: "mcp-denied-call-1",
+                name: "remote.denied",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            workingDirectory: rootURL,
+            allowedToolNames: ["remote.denied"]
+        )
+
+        #expect(result.status == .permissionDenied)
+        #expect(result.isPermissionDenied)
+        #expect(result.output == "Tool error: MCP server error -32000: Permission denied")
     }
 
     @Test

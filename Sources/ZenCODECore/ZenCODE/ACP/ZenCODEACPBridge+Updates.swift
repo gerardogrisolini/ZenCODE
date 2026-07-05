@@ -129,15 +129,12 @@ extension ZenCODEACPBridge {
         for toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) -> [String: Any] {
-        let failed = result.output
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .hasPrefix("Tool error:")
         return [
             "sessionUpdate": "tool_call_update",
             "toolCallId": toolCall.id,
             "title": toolTitle(for: toolCall),
             "kind": toolKind(for: toolCall.name),
-            "status": failed ? "failed" : "completed",
+            "status": result.isFailure ? "failed" : "completed",
             "rawInput": toolCall.argumentsObject,
             "rawOutput": [
                 "output": result.output,

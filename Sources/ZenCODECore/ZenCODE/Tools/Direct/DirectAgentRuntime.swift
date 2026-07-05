@@ -44,15 +44,34 @@ public struct DirectAgentToolCall: @unchecked Sendable {
 }
 
 public struct DirectAgentToolResult: Sendable {
+    public enum Status: String, Sendable, Equatable {
+        case completed
+        case failed
+        case permissionDenied
+    }
+
     public let output: String
     public let summary: String
+    public let status: Status
 
     public init(
         output: String,
-        summary: String
+        summary: String,
+        status: Status = .completed
     ) {
         self.output = output
         self.summary = summary
+        self.status = status
+    }
+
+    public var isFailure: Bool {
+        status != .completed
+            || output.trimmingCharacters(in: .whitespacesAndNewlines)
+            .hasPrefix("Tool error:")
+    }
+
+    public var isPermissionDenied: Bool {
+        status == .permissionDenied
     }
 }
 

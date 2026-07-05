@@ -23,12 +23,9 @@ extension TerminalChat {
         result: DirectAgentToolResult,
         level: ToolOutputDetailLevel = .medium
     ) -> [String] {
-                let failed = result.output
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .hasPrefix("Tool error:")
         var lines = detailedToolBaseLines(for: toolCall, level: level)
 
-        if failed {
+        if result.isFailure {
             lines.append("error:")
             lines.append(contentsOf: indentedSnippet(result.output, level: level))
             lines.append("status: ⚠️")

@@ -41,11 +41,12 @@ private enum XcodeFeatureRunner {
                 terminate(code: 64)
             }
         } catch {
+            let mappedError = consentMappedError(error)
             try? emitJSON(
                 InvocationResponse(
                     ok: false,
                     output: nil,
-                    error: error.localizedDescription
+                    error: mappedError.localizedDescription
                 )
             )
             terminate(code: 1)
@@ -60,13 +61,16 @@ private enum XcodeFeatureRunner {
             return []
         }
 
+        // Connecting triggers the user-consent dialog inside Xcode. The feature
+        // waits without any timeout until the user answers, then maps a denied
+        // consent to an explicit error that the caller can catch.
         let executor = XcodeToolExecutor(configuration: configuration)
         let tools: [ToolDescriptor]
         do {
             tools = try await executor.loadTools()
         } catch {
             await executor.disconnect()
-            throw error
+            throw consentMappedError(error)
         }
         await executor.disconnect()
 
@@ -111,8 +115,49 @@ private enum XcodeFeatureRunner {
             return output.text
         } catch {
             await executor.disconnect()
-            throw error
+            throw consentMappedError(error)
         }
+    }
+
+    /// Intercepts the negative Xcode consent and maps the bridge authorization
+    /// exception to an explicit consent-denied error.
+    private static func consentMappedError(_ error: Error) -> Error {
+        if isXcodeConsentDenied(error) {
+            return XcodeFeatureError.consentDenied
+        }
+        return error
+    }
+
+    private static func isXcodeConsentDenied(_ error: Error) -> Bool {
+        if let clientError = error as? MCPClientError {
+            switch clientError {
+            case .xcodePermissionRequired:
+                return true
+            case let .serverExited(_, message),
+                 let .serverError(_, message):
+                return messageLooksLikeConsentDenied(message)
+            default:
+                return false
+            }
+        }
+
+        return messageLooksLikeConsentDenied(error.localizedDescription)
+    }
+
+    private static func messageLooksLikeConsentDenied(_ message: String) -> Bool {
+        let lowered = message.lowercased()
+        return lowered.contains("xcode.mcpbridge.authorization")
+            || lowered.contains("authorization error")
+            || lowered.contains("consent denied")
+            || lowered.contains("permission denied")
+            || lowered.contains("not authorized")
+            || lowered.contains("not authorised")
+            || lowered.contains("not allowed")
+            || lowered.contains("not permitted")
+            || lowered.contains("rejected")
+            || lowered.contains("declined")
+            || lowered.contains("cancelled")
+            || lowered.contains("canceled")
     }
 
     private static func decodeArguments(from data: Data) throws -> [String: JSONValue] {
@@ -189,6 +234,7 @@ private enum ParsedFeatureCommand {
 private enum XcodeFeatureError: LocalizedError {
     case unavailable
     case invalidArguments
+    case consentDenied
 
     var errorDescription: String? {
         switch self {
@@ -196,6 +242,8 @@ private enum XcodeFeatureError: LocalizedError {
             return "Xcode MCP is not available. Open Xcode and approve the MCP connection, then retry."
         case .invalidArguments:
             return "Expected a JSON object as tool arguments."
+        case .consentDenied:
+            return "Xcode MCP consent was denied. The Xcode tools stay unavailable until you approve the MCP connection in Xcode."
         }
     }
 }

@@ -195,8 +195,56 @@ public actor DirectToolExecutor {
             )
         } catch {
             let output = "Tool error: \(error.localizedDescription)"
-            return DirectAgentToolResult(output: output, summary: output)
+            return DirectAgentToolResult(
+                output: output,
+                summary: output,
+                status: Self.toolResultStatus(for: error)
+            )
         }
+    }
+
+    private static func toolResultStatus(for error: Error) -> DirectAgentToolResult.Status {
+        isPermissionDenied(error) ? .permissionDenied : .failed
+    }
+
+    private static func isPermissionDenied(_ error: Error) -> Bool {
+        if let directToolError = error as? DirectToolError,
+           case .permissionDenied = directToolError {
+            return true
+        }
+        if let executorError = error as? DirectToolExecutorError,
+           case .toolNotAllowed = executorError {
+            return true
+        }
+        if let mcpError = error as? MCPClientError,
+           mcpErrorIsPermissionDenied(mcpError) {
+            return true
+        }
+        return false
+    }
+
+    private static func mcpErrorIsPermissionDenied(_ error: MCPClientError) -> Bool {
+        switch error {
+        case .xcodePermissionRequired:
+            return true
+        case let .serverExited(_, message),
+             let .serverError(_, message):
+            return errorMessageLooksPermissionDenied(message)
+        default:
+            return false
+        }
+    }
+
+    private static func errorMessageLooksPermissionDenied(_ message: String) -> Bool {
+        let lowered = message.lowercased()
+        return lowered.contains("permission denied")
+            || lowered.contains("consent denied")
+            || lowered.contains("not authorized")
+            || lowered.contains("not authorised")
+            || lowered.contains("not allowed")
+            || lowered.contains("not permitted")
+            || lowered.contains("rejected")
+            || lowered.contains("declined")
     }
 
     public static func filtered(

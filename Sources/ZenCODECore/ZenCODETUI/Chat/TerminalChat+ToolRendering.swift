@@ -106,10 +106,7 @@ extension TerminalChat {
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) {
-        let failed = result.output
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .hasPrefix("Tool error:")
-        let icon = failed ? "⚠️" : "✅"
+        let icon = result.isFailure ? "⚠️" : "✅"
         let lines = Self.compactToolLines(
             for: toolCall,
             statusIcon: icon,

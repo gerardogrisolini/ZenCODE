@@ -220,10 +220,9 @@ extension TerminalChat {
             writeSystemMessage("  \(group.title):\n")
             for model in group.models {
                 let marker = selectedModelID.map(model.matches) == true ? " *" : ""
-                let thinking = modelThinkingSuffix(model)
                 let title = AgentModelCatalogPresentation.modelTitle(for: model, in: group)
                 writeSystemMessage(
-                    "    \(offset). \(title)\(thinking)\(marker)\n"
+                    "    \(offset). \(title)\(marker)\n"
                 )
                 offset += 1
             }
@@ -276,7 +275,7 @@ extension TerminalChat {
                 TerminalCheckboxMenuItem(
                     value: model,
                     title: AgentModelCatalogPresentation.modelTitle(for: model, in: group),
-                    detail: modelThinkingDetail(model),
+                    detail: nil,
                     groupTitle: group.title
                 )
             }
