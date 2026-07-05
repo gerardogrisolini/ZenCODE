@@ -111,7 +111,8 @@ public enum SwiftFeatureRegistry {
                     toolNamePrefixes: record.toolNamePrefixes,
                     toolNameAliases: record.toolNameAliases,
                     discoversToolsAtRuntime: record.discoversToolsAtRuntime,
-                    source: .generated
+                    source: .generated,
+                    isCore: false
                 )
             }
     }
@@ -176,6 +177,7 @@ public enum SwiftFeatureRegistry {
             displayName: manifest.displayName,
             description: manifest.description,
             source: .generated,
+            isCore: false,
             executableURL: executableURL,
             manifestURL: manifestURL,
             manifestEnabled: manifest.enabled,
@@ -186,6 +188,7 @@ public enum SwiftFeatureRegistry {
             discoversToolsAtRuntime: manifest.discoversToolsAtRuntime,
             build: manifest.build,
             generated: manifest.generated,
+            adoptedFrom: manifest.generated?.adoptedFrom,
             issue: executableAvailable ? nil : "Executable not found or not executable."
         )
     }

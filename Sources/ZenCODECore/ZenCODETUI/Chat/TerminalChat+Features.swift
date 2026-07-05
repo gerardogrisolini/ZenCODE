@@ -85,6 +85,67 @@ extension TerminalChat {
             await updateCurrentSessionToolOptions(discoverExternalTools: false)
             await printFeatureList()
             return .none
+        case "adopt", "fork":
+            guard let rawID = tokens.first?.nilIfBlank else {
+                writeFailureMessage("ZenCODE: /feature \(action) requires a feature id, name, or list number.\n")
+                writeSystemMessage(Self.renderFeatureCommandUsage())
+                return .none
+            }
+            let id: String
+            do {
+                id = try await resolvedFeatureID(rawID)
+            } catch {
+                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+                return .none
+            }
+            let didSucceed = await runFeatureManagementTool(
+                name: "feature.adopt",
+                arguments: ["id": id]
+            )
+            if didSucceed {
+                await updateCurrentSessionToolOptions(discoverExternalTools: false)
+                await printFeatureList()
+            }
+            return .none
+        case "edit", "modify", "update":
+            guard let rawID = tokens.first?.nilIfBlank else {
+                writeFailureMessage("ZenCODE: /feature \(action) requires a feature id, name, or list number.\n")
+                writeSystemMessage(Self.renderFeatureCommandUsage())
+                return .none
+            }
+            let id: String
+            do {
+                id = try await resolvedFeatureID(rawID)
+            } catch {
+                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+                return .none
+            }
+            let requirements = tokens.dropFirst().joined(separator: " ").nilIfBlank
+            guard let output = await executeFeatureManagementTool(
+                name: "feature.edit",
+                arguments: ["id": id]
+            ) else {
+                return .none
+            }
+            writeSystemMessage(Self.renderFeatureManagementToolOutput(name: "feature.edit", output: output))
+            guard let report = Self.decodeFeatureOutput(
+                SwiftFeatureEditReport.self,
+                from: output.trimmingCharacters(in: .whitespacesAndNewlines)
+            ) else {
+                return .none
+            }
+            if report.adopt != nil {
+                await updateCurrentSessionToolOptions(discoverExternalTools: false)
+                await printFeatureList()
+            }
+            let prompt = Self.featureModificationPrompt(
+                report: report,
+                requirements: requirements
+            )
+            if requirements != nil {
+                return .runPrompt(prompt)
+            }
+            return .prefillPrompt(prompt)
         case "enable", "disable", "delete", "build", "validate":
             guard let rawID = tokens.first?.nilIfBlank else {
                 writeFailureMessage("ZenCODE: /feature \(action) requires a feature id, name, or list number.\n")

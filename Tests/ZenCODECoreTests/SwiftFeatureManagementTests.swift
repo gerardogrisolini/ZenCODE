@@ -522,4 +522,146 @@ extension SwiftFeatureRuntimeTests {
         )
         #expect(disabledRecords.first?.manifestEnabled == false)
     }
+
+    @Test
+    func featureAdoptRejectsCoreBundledFeature() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-adopt-core-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let runtime = SwiftFeatureRuntime(featureSearchRoots: [rootURL])
+        do {
+            _ = try await runtime.executeManagementTool(
+                toolCall: featureManagementCall(
+                    name: "feature.adopt",
+                    arguments: ["id": "search-tools"]
+                )
+            )
+            Issue.record("feature.adopt unexpectedly adopted a core bundled feature.")
+        } catch {
+            #expect(error.localizedDescription.contains("Core Swift feature 'search-tools'"))
+        }
+    }
+
+    @Test
+    func featureEditAdoptsNonCoreBundledFeatureAndDeleteRestoresBundledRecord() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-edit-adopt-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let runtime = SwiftFeatureRuntime(featureSearchRoots: [rootURL])
+        let editOutput = try await runtime.executeManagementTool(
+            toolCall: featureManagementCall(
+                name: "feature.edit",
+                arguments: ["id": "figma-tools"]
+            )
+        )
+        let edit = try JSONDecoder().decode(
+            SwiftFeatureEditReport.self,
+            from: Data(editOutput.utf8)
+        )
+
+        #expect(edit.ok)
+        #expect(edit.adopted)
+        #expect(edit.adoptedFrom == "figma-tools")
+        #expect(edit.packagePath?.hasSuffix("/figma-tools/Package.swift") == true)
+        #expect(edit.sourcePaths.contains { $0.hasSuffix("FigmaToolsFeatureMain.swift") })
+
+        let visibleRecords = SwiftFeatureRuntime.defaultFeatureStatuses(
+            searchRoots: [rootURL],
+            includeTools: false,
+            includeDisabled: true
+        )
+        let figmaRecords = visibleRecords.filter { $0.id == "figma-tools" }
+        #expect(figmaRecords.count == 1)
+        #expect(figmaRecords.first?.source == .generated)
+        #expect(figmaRecords.first?.adoptedFrom == "figma-tools")
+        #expect(figmaRecords.first?.editable == true)
+
+        let manifest = try JSONDecoder().decode(
+            SwiftFeatureManifest.self,
+            from: Data(contentsOf: URL(fileURLWithPath: edit.manifestPath))
+        )
+        #expect(manifest.generated?.adoptedFrom == "figma-tools")
+        #expect(manifest.discoversToolsAtRuntime)
+        #expect(manifest.toolNamePrefixes == ["figma."])
+
+        let deleteOutput = try await runtime.executeManagementTool(
+            toolCall: featureManagementCall(
+                name: "feature.delete",
+                arguments: ["id": "figma-tools"]
+            )
+        )
+        let delete = try JSONDecoder().decode(
+            SwiftFeatureDeleteReport.self,
+            from: Data(deleteOutput.utf8)
+        )
+        #expect(delete.ok)
+        #expect(!FileManager.default.fileExists(atPath: delete.directoryPath))
+
+        let restoredStatuses = SwiftFeatureRuntime.defaultFeatureStatuses(
+            searchRoots: [rootURL],
+            includeTools: false,
+            includeDisabled: true
+        )
+        let restoredFigma = restoredStatuses.first { $0.id == "figma-tools" }
+        #expect(restoredFigma?.source == .bundled)
+        #expect(restoredFigma?.adoptable == true)
+        #expect(restoredFigma?.editable == false)
+    }
+
+    @Test
+    func featureEditGeneratedFeatureReturnsEditableContextWithoutAdoption() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-edit-generated-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let runtime = SwiftFeatureRuntime(featureSearchRoots: [rootURL])
+        _ = try await runtime.executeManagementTool(
+            toolCall: featureManagementCall(
+                name: "feature.scaffold",
+                arguments: [
+                    "id": "editable-feature",
+                    "toolName": "editable.echo"
+                ]
+            )
+        )
+
+        let editOutput = try await runtime.executeManagementTool(
+            toolCall: featureManagementCall(
+                name: "feature.edit",
+                arguments: ["id": "editable-feature"]
+            )
+        )
+        let edit = try JSONDecoder().decode(
+            SwiftFeatureEditReport.self,
+            from: Data(editOutput.utf8)
+        )
+
+        #expect(edit.ok)
+        #expect(!edit.adopted)
+        #expect(edit.adopt == nil)
+        #expect(edit.directoryPath == rootURL.appendingPathComponent("editable-feature").path)
+        #expect(edit.packagePath?.hasSuffix("/editable-feature/Package.swift") == true)
+        #expect(edit.sourcePaths.contains { $0.hasSuffix("/Sources/EditableFeature/main.swift") })
+        #expect(edit.instructions.contains { $0.contains("feature.validate") })
+    }
+
+    private func featureManagementCall(
+        name: String,
+        arguments: [String: Any]
+    ) -> DirectAgentToolCall {
+        DirectAgentToolCall(
+            id: "\(name)-\(UUID().uuidString)",
+            name: name,
+            argumentsObject: arguments,
+            argumentsJSON: "{}"
+        )
+    }
 }

@@ -192,6 +192,23 @@ extension ChatGPTSubscriptionResponsesClient {
         isRetryableTransportError(error)
     }
 
+    static func shouldRetryTransportError(
+        _ error: Error,
+        attempt: Int
+    ) -> Bool {
+        guard attempt >= 0, attempt < maxRetries else {
+            return false
+        }
+        if error is CancellationError {
+            return false
+        }
+        if let error = error as? ChatGPTSubscriptionGenerationError,
+           case .cancelled = error {
+            return false
+        }
+        return isRetryableTransportError(error)
+    }
+
     static func isRetryableURLCode(_ code: URLError.Code) -> Bool {
         switch code {
         case .timedOut,

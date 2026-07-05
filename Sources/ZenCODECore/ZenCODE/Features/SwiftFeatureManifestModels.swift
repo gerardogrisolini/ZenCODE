@@ -20,6 +20,7 @@ public struct SwiftFeatureBundle: Hashable, Sendable {
     public let toolNameAliases: [String]
     public let discoversToolsAtRuntime: Bool
     public let source: SwiftFeatureBundleSource
+    public let isCore: Bool
 
     public init(
         id: String,
@@ -28,7 +29,8 @@ public struct SwiftFeatureBundle: Hashable, Sendable {
         toolNamePrefixes: [String] = [],
         toolNameAliases: [String] = [],
         discoversToolsAtRuntime: Bool = false,
-        source: SwiftFeatureBundleSource = .generated
+        source: SwiftFeatureBundleSource = .generated,
+        isCore: Bool = false
     ) {
         self.id = id.nilIfBlank ?? executableURL.lastPathComponent
         self.executableURL = executableURL.standardizedFileURL
@@ -37,6 +39,7 @@ public struct SwiftFeatureBundle: Hashable, Sendable {
         self.toolNameAliases = toolNameAliases
         self.discoversToolsAtRuntime = discoversToolsAtRuntime
         self.source = source
+        self.isCore = isCore
     }
 
     public func contains(toolName: String) -> Bool {
@@ -270,22 +273,27 @@ public struct SwiftFeatureGeneratedManifest: Codable, Sendable {
     public let by: String?
     public let prompt: String?
     public let createdAt: String?
+    public let adoptedFrom: String?
 
     private enum CodingKeys: String, CodingKey {
         case by
         case prompt
         case createdAt
         case created_at
+        case adoptedFrom
+        case adopted_from
     }
 
     public init(
         by: String? = nil,
         prompt: String? = nil,
-        createdAt: String? = nil
+        createdAt: String? = nil,
+        adoptedFrom: String? = nil
     ) {
         self.by = by?.nilIfBlank
         self.prompt = prompt?.nilIfBlank
         self.createdAt = createdAt?.nilIfBlank
+        self.adoptedFrom = adoptedFrom?.nilIfBlank
     }
 
     public init(from decoder: Decoder) throws {
@@ -294,7 +302,9 @@ public struct SwiftFeatureGeneratedManifest: Codable, Sendable {
             by: try container.decodeIfPresent(String.self, forKey: .by),
             prompt: try container.decodeIfPresent(String.self, forKey: .prompt),
             createdAt: try container.decodeIfPresent(String.self, forKey: .createdAt)
-                ?? container.decodeIfPresent(String.self, forKey: .created_at)
+                ?? container.decodeIfPresent(String.self, forKey: .created_at),
+            adoptedFrom: try container.decodeIfPresent(String.self, forKey: .adoptedFrom)
+                ?? container.decodeIfPresent(String.self, forKey: .adopted_from)
         )
     }
 
@@ -303,6 +313,7 @@ public struct SwiftFeatureGeneratedManifest: Codable, Sendable {
         try container.encodeIfPresent(by, forKey: .by)
         try container.encodeIfPresent(prompt, forKey: .prompt)
         try container.encodeIfPresent(createdAt, forKey: .createdAt)
+        try container.encodeIfPresent(adoptedFrom, forKey: .adoptedFrom)
     }
 }
 
@@ -383,6 +394,7 @@ public struct SwiftFeatureRecord: Sendable {
     public let displayName: String?
     public let description: String?
     public let source: SwiftFeatureBundleSource
+    public let isCore: Bool
     public let executableURL: URL
     public let manifestURL: URL?
     public let manifestEnabled: Bool
@@ -393,10 +405,15 @@ public struct SwiftFeatureRecord: Sendable {
     public let discoversToolsAtRuntime: Bool
     public let build: SwiftFeatureBuildManifest?
     public let generated: SwiftFeatureGeneratedManifest?
+    public let adoptedFrom: String?
     public let issue: String?
 
     public var enabled: Bool {
         manifestEnabled && executableAvailable
+    }
+
+    public var isAdopted: Bool {
+        adoptedFrom != nil
     }
 }
 
@@ -405,6 +422,10 @@ public struct SwiftFeatureStatus: Codable, Sendable {
     public let displayName: String?
     public let description: String?
     public let source: SwiftFeatureBundleSource
+    public let isCore: Bool
+    public let adoptedFrom: String?
+    public let editable: Bool
+    public let adoptable: Bool
     public let enabled: Bool
     public let available: Bool
     public let executablePath: String
@@ -423,6 +444,10 @@ public struct SwiftFeatureStatus: Codable, Sendable {
         displayName: String?,
         description: String?,
         source: SwiftFeatureBundleSource,
+        isCore: Bool = false,
+        adoptedFrom: String? = nil,
+        editable: Bool? = nil,
+        adoptable: Bool? = nil,
         enabled: Bool,
         available: Bool,
         executablePath: String,
@@ -439,6 +464,10 @@ public struct SwiftFeatureStatus: Codable, Sendable {
         self.displayName = displayName
         self.description = description
         self.source = source
+        self.isCore = isCore
+        self.adoptedFrom = adoptedFrom?.nilIfBlank
+        self.editable = editable ?? (source == .generated && !isCore)
+        self.adoptable = adoptable ?? (source == .bundled && !isCore)
         self.enabled = enabled
         self.available = available
         self.executablePath = executablePath
@@ -522,6 +551,36 @@ public struct SwiftFeatureDeleteReport: Codable, Sendable {
     public let manifestPath: String
     public let removed: Bool
     public let wasEnabled: Bool
+}
+
+public struct SwiftFeatureAdoptReport: Codable, Sendable {
+    public let ok: Bool
+    public let id: String
+    public let adoptedFrom: String
+    public let sourcePath: String
+    public let destinationPath: String
+    public let manifestPath: String
+    public let packagePath: String
+    public let sourcePaths: [String]
+    public let enabled: Bool
+    public let copied: Bool
+}
+
+public struct SwiftFeatureEditReport: Codable, Sendable {
+    public let ok: Bool
+    public let id: String
+    public let source: SwiftFeatureBundleSource
+    public let adopted: Bool
+    public let adoptedFrom: String?
+    public let directoryPath: String
+    public let manifestPath: String
+    public let packagePath: String?
+    public let sourcePaths: [String]
+    public let executablePath: String
+    public let enabled: Bool
+    public let instructions: [String]
+    public let warnings: [String]
+    public let adopt: SwiftFeatureAdoptReport?
 }
 
 public struct SwiftFeatureState: Codable, Sendable {

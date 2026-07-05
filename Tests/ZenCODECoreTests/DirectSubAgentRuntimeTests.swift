@@ -55,6 +55,40 @@ struct DirectSubAgentRuntimeTests {
         #expect(snapshot.modelID == "planner-model")
         #expect(output.contains("model=planner-model"))
     }
+
+    @Test
+    func createAgentsUseUniqueEphemeralSessionsWithoutCacheKeys() async throws {
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend }
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "agents": .array([
+                    .object([
+                        "name": .string("planner-one"),
+                        "prompt": .string("Plan one")
+                    ]),
+                    .object([
+                        "name": .string("planner-two"),
+                        "prompt": .string("Plan two")
+                    ])
+                ])
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
+            parentAllowedToolNames: nil
+        )
+
+        let createdSessions = await backend.createdSessions()
+        let sessionIDs = createdSessions.map(\.id)
+
+        #expect(createdSessions.count == 2)
+        #expect(Set(sessionIDs).count == 2)
+        #expect(sessionIDs.allSatisfy { $0.hasPrefix("agent_") && $0.hasSuffix("_session") })
+        #expect(createdSessions.allSatisfy { $0.cacheKey == nil })
+        #expect(createdSessions.allSatisfy { $0.historyCount == 0 })
+    }
 }
 
 private final class SubAgentFactoryRecorder: @unchecked Sendable {
@@ -75,18 +109,32 @@ private final class SubAgentFactoryRecorder: @unchecked Sendable {
 }
 
 private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
+    struct CreatedSession: Sendable {
+        let id: String
+        let cacheKey: String?
+        let historyCount: Int
+    }
+
     private var thinkingSelection: AgentThinkingSelection?
+    private var sessions: [CreatedSession] = []
 
     func createSession(
-        id _: String,
+        id: String,
         cwd _: String,
         systemPrompt _: String?,
-        history _: [AgentRuntimeMessage],
-        cacheKey _: String?,
+        history: [AgentRuntimeMessage],
+        cacheKey: String?,
         allowedToolNames _: Set<String>?,
         thinkingSelection: AgentThinkingSelection?,
         preserveThinking _: Bool
     ) {
+        sessions.append(
+            CreatedSession(
+                id: id,
+                cacheKey: cacheKey,
+                historyCount: history.count
+            )
+        )
         self.thinkingSelection = thinkingSelection
     }
 
@@ -153,5 +201,9 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
 
     func createdThinkingSelection() -> AgentThinkingSelection? {
         thinkingSelection
+    }
+
+    func createdSessions() -> [CreatedSession] {
+        sessions
     }
 }

@@ -71,6 +71,7 @@ extension ChatGPTSubscriptionGenerationClient {
         var accumulatedText = ""
         var generationStats: [RemoteGenerationStats] = []
         var didRetryAfterContextLimit = false
+        var didFallbackAfterContinuationUnavailable = false
 
 
         for round in 0..<configuration.maxToolRounds {
@@ -104,9 +105,10 @@ extension ChatGPTSubscriptionGenerationClient {
                     from: toolCatalog.wireMessages(from: session.messages),
                     continuation: session.continuation
                 )
-                let usesFreshContinuationReplay = session.continuation?.allowsFreshTransport == true
-                    && requestPayload.previousResponseID?.nilIfBlank != nil
+                let hasContinuationReplay = requestPayload.previousResponseID?.nilIfBlank != nil
                     && requestPayload.cachedWebSocketInput != nil
+                let usesFreshContinuationReplay = session.continuation?.allowsFreshTransport == true
+                    && hasContinuationReplay
                 let instructions = requestPayload.instructions?.nilIfBlank
                     ?? "You are a helpful coding assistant."
                 let toolPayloads = toolCatalog.responsesToolPayloads
@@ -160,9 +162,19 @@ extension ChatGPTSubscriptionGenerationClient {
                         }
                     }
                 } catch {
-                    if usesFreshContinuationReplay,
+                    if hasContinuationReplay,
                        let continuationError = Self.continuationUnavailableError(from: error) {
-                        throw continuationError
+                        guard !didFallbackAfterContinuationUnavailable else {
+                            throw continuationError
+                        }
+                        didFallbackAfterContinuationUnavailable = true
+                        resetContinuationAndTransport(
+                            session: &session,
+                            sessionIdentity: sessionIdentity
+                        )
+                        sessions[sessionID] = session
+                        await onEvent(.diagnostic(Self.continuationReplayFallbackDiagnostic()))
+                        continue
                     }
                     guard Self.isContextLimitError(error), !didRetryAfterContextLimit else {
                         throw error
@@ -286,6 +298,10 @@ extension ChatGPTSubscriptionGenerationClient {
 
         sessions[sessionID] = session
         throw ChatGPTSubscriptionGenerationError.tooManyToolRounds(configuration.maxToolRounds)
+    }
+
+    static func continuationReplayFallbackDiagnostic() -> String {
+        "ChatGPT Subscription previous response id is no longer available; retrying with the full local conversation."
     }
 
     static func continuationUnavailableError(

@@ -223,6 +223,16 @@ public enum DirectToolCatalog {
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"featureID":{"type":"string"},"feature_id":{"type":"string"},"name":{"type":"string"}},"required":["id"]}"#
         ),
         DirectToolDescriptor(
+            name: "feature.adopt",
+            description: "Copies a bundled non-core Swift feature into the generated feature root so the Builder can edit it. Core features cannot be adopted.",
+            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"featureID":{"type":"string"},"feature_id":{"type":"string"},"name":{"type":"string"},"overwrite":{"type":"boolean"},"enabled":{"type":"boolean"},"sourcePath":{"type":"string"},"source_path":{"type":"string"},"zenPackagePath":{"type":"string"},"zen_package_path":{"type":"string"},"dependencyPath":{"type":"string"},"dependency_path":{"type":"string"}},"required":["id"]}"#
+        ),
+        DirectToolDescriptor(
+            name: "feature.edit",
+            description: "Prepares an editable Swift feature package context. Generated features are opened directly; bundled non-core features are adopted first unless adopt=false. Core features cannot be edited.",
+            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"featureID":{"type":"string"},"feature_id":{"type":"string"},"name":{"type":"string"},"adopt":{"type":"boolean"},"fork":{"type":"boolean"},"overwrite":{"type":"boolean"},"enabled":{"type":"boolean"},"sourcePath":{"type":"string"},"source_path":{"type":"string"},"zenPackagePath":{"type":"string"},"zen_package_path":{"type":"string"},"dependencyPath":{"type":"string"},"dependency_path":{"type":"string"}},"required":["id"]}"#
+        ),
+        DirectToolDescriptor(
             name: "feature.reload",
             description: "Reloads Swift feature bundles from bundled executables and generated feature manifests.",
             inputSchema: #"{"type":"object","properties":{"includeTools":{"type":"boolean"},"include_tools":{"type":"boolean"},"includeDisabled":{"type":"boolean"},"include_disabled":{"type":"boolean"},"discoverRuntimeTools":{"type":"boolean"},"discover_runtime_tools":{"type":"boolean"}}}"#

@@ -12,6 +12,8 @@ extension SwiftFeatureRuntime {
         let id: String
         let executableName: String
         let description: String?
+        let isCore: Bool
+        let sourceRelativePath: String?
         let tools: [ToolDescriptor]
         let toolNamePrefixes: [String]
         let toolNameAliases: [String]
@@ -21,6 +23,8 @@ extension SwiftFeatureRuntime {
             id: String,
             executableName: String,
             description: String? = nil,
+            isCore: Bool = true,
+            sourceRelativePath: String? = nil,
             tools: [ToolDescriptor],
             toolNamePrefixes: [String] = [],
             toolNameAliases: [String] = [],
@@ -29,6 +33,8 @@ extension SwiftFeatureRuntime {
             self.id = id
             self.executableName = executableName
             self.description = description?.nilIfBlank
+            self.isCore = isCore
+            self.sourceRelativePath = sourceRelativePath?.nilIfBlank
             self.tools = ToolDescriptor.canonicalized(tools)
             self.toolNamePrefixes = toolNamePrefixes
             self.toolNameAliases = toolNameAliases
@@ -43,7 +49,8 @@ extension SwiftFeatureRuntime {
                 toolNamePrefixes: toolNamePrefixes,
                 toolNameAliases: toolNameAliases,
                 discoversToolsAtRuntime: discoversToolsAtRuntime,
-                source: .bundled
+                source: .bundled,
+                isCore: isCore
             )
         }
     }
@@ -52,11 +59,25 @@ extension SwiftFeatureRuntime {
         searchRoots: [URL]? = nil,
         fileManager: FileManager = .default
     ) -> [SwiftFeatureBundle] {
-        bundledFeatureBundles(fileManager: fileManager)
-            + SwiftFeatureRegistry.discoverFeatureBundles(
-                searchRoots: searchRoots,
-                fileManager: fileManager
+        let records = defaultFeatureRecords(
+            searchRoots: searchRoots,
+            fileManager: fileManager
+        )
+        return records.compactMap { record in
+            guard record.enabled else {
+                return nil
+            }
+            return SwiftFeatureBundle(
+                id: record.id,
+                executableURL: record.executableURL,
+                tools: record.tools,
+                toolNamePrefixes: record.toolNamePrefixes,
+                toolNameAliases: record.toolNameAliases,
+                discoversToolsAtRuntime: record.discoversToolsAtRuntime,
+                source: record.source,
+                isCore: record.isCore
             )
+        }
     }
 
     public static func defaultFeatureToolDescriptors(
@@ -64,20 +85,15 @@ extension SwiftFeatureRuntime {
         fileManager: FileManager = .default,
         includeDisabled: Bool = false
     ) -> [DirectToolDescriptor] {
-        let bundledTools = bundledFeatureToolDescriptors(
-            fileManager: fileManager,
-            includeDisabled: includeDisabled
-        )
         let records = defaultFeatureRecords(
             searchRoots: searchRoots,
             fileManager: fileManager
         )
         let tools = records
-            .filter { $0.source != .bundled }
             .filter { includeDisabled || $0.enabled }
             .flatMap(\.tools)
         return DirectToolExecutor.canonicalized(
-            bundledTools + ToolDescriptor.canonicalized(tools).map {
+            ToolDescriptor.canonicalized(tools).map {
                 DirectToolDescriptor(
                     name: $0.name,
                     description: $0.description,
@@ -106,23 +122,6 @@ extension SwiftFeatureRuntime {
         }
     }
 
-    private static func bundledFeatureToolDescriptors(
-        fileManager: FileManager,
-        includeDisabled: Bool
-    ) -> [DirectToolDescriptor] {
-        let state = SwiftFeatureStateStore.load(fileManager: fileManager)
-        let tools = bundledFeatureDefinitions()
-            .filter { includeDisabled || state.bundledFeatureIsEnabled(id: $0.id) }
-            .flatMap(\.tools)
-        return ToolDescriptor.canonicalized(tools).map {
-            DirectToolDescriptor(
-                name: $0.name,
-                description: $0.description,
-                inputSchema: $0.inputSchema
-            )
-        }
-    }
-
     private static func bundledFeatureBundles(
         fileManager: FileManager
     ) -> [SwiftFeatureBundle] {
@@ -146,36 +145,44 @@ extension SwiftFeatureRuntime {
                 id: "search-tools",
                 executableName: "search-tools-feature",
                 description: "Find files by glob and search file contents with grep.",
+                sourceRelativePath: "Sources/Features/SearchTools",
                 tools: bundledSearchToolDescriptors()
             ),
             BundledFeatureDefinition(
                 id: "web-tools",
                 executableName: "web-tools-feature",
                 description: "Search the web and fetch URLs as text.",
+                sourceRelativePath: "Sources/Features/WebTools",
                 tools: bundledWebToolDescriptors()
             ),
             BundledFeatureDefinition(
                 id: "git-tools",
                 executableName: "git-tools-feature",
                 description: "Run Git operations: status, diff, commit, branch, log, and more.",
+                sourceRelativePath: "Sources/Features/GitTools",
                 tools: bundledGitToolDescriptors()
             ),
             BundledFeatureDefinition(
                 id: "swift-tools",
                 executableName: "swift-tools-feature",
                 description: "Build, test, run, and inspect SwiftPM packages.",
+                sourceRelativePath: "Sources/Features/SwiftTools",
                 tools: bundledSwiftToolDescriptors()
             ),
             BundledFeatureDefinition(
                 id: "jira-tools",
                 executableName: "jira-tools-feature",
                 description: "Query and manage Jira issues and projects.",
+                isCore: false,
+                sourceRelativePath: "Sources/Features/JiraTools",
                 tools: bundledJiraToolDescriptors()
             ),
             BundledFeatureDefinition(
                 id: "xcode-tools",
                 executableName: "xcode-tools-feature",
                 description: "Build, test, preview, and inspect Xcode projects.",
+                isCore: false,
+                sourceRelativePath: "Sources/Features/XcodeTools",
                 tools: [],
                 toolNamePrefixes: ["xcode.", "Xcode"],
                 toolNameAliases: [
@@ -194,6 +201,8 @@ extension SwiftFeatureRuntime {
                 id: "figma-tools",
                 executableName: "figma-tools-feature",
                 description: "Inspect Figma files, frames, and design data.",
+                isCore: false,
+                sourceRelativePath: "Sources/Features/FigmaTools",
                 tools: [],
                 toolNamePrefixes: ["figma."],
                 discoversToolsAtRuntime: true
@@ -201,12 +210,25 @@ extension SwiftFeatureRuntime {
         ]
     }
 
+    static func bundledFeatureDefinition(id: String) -> BundledFeatureDefinition? {
+        bundledFeatureDefinitions().first { $0.id == id }
+    }
+
     static func defaultFeatureRecords(
         searchRoots: [URL]?,
         fileManager: FileManager
     ) -> [SwiftFeatureRecord] {
         let state = SwiftFeatureStateStore.load(fileManager: fileManager)
-        let bundledRecords = bundledFeatureDefinitions().map { feature in
+        let bundledDefinitions = bundledFeatureDefinitions()
+        let coreBundledIDs = Set(bundledDefinitions.filter(\.isCore).map(\.id))
+        let generatedRecords = SwiftFeatureRegistry.discoverFeatureRecords(
+            searchRoots: searchRoots,
+            fileManager: fileManager
+        )
+        .filter { !coreBundledIDs.contains($0.id) }
+        let generatedShadowIDs = Set(generatedRecords.map(\.id))
+
+        let bundledRecords = bundledDefinitions.map { feature in
             let executableURL = bundledExecutableStatusURL(
                 named: feature.executableName,
                 fileManager: fileManager
@@ -216,6 +238,7 @@ extension SwiftFeatureRuntime {
                 displayName: nil,
                 description: feature.description,
                 source: .bundled,
+                isCore: feature.isCore,
                 executableURL: executableURL,
                 manifestURL: nil,
                 manifestEnabled: state.bundledFeatureIsEnabled(id: feature.id),
@@ -226,13 +249,13 @@ extension SwiftFeatureRuntime {
                 discoversToolsAtRuntime: feature.discoversToolsAtRuntime,
                 build: nil,
                 generated: nil,
+                adoptedFrom: nil,
                 issue: nil
             )
         }
-        return bundledRecords + SwiftFeatureRegistry.discoverFeatureRecords(
-            searchRoots: searchRoots,
-            fileManager: fileManager
-        )
+        .filter { !generatedShadowIDs.contains($0.id) }
+
+        return bundledRecords + generatedRecords
     }
 
     static func status(
@@ -244,6 +267,10 @@ extension SwiftFeatureRuntime {
             displayName: record.displayName,
             description: record.description,
             source: record.source,
+            isCore: record.isCore,
+            adoptedFrom: record.adoptedFrom,
+            editable: record.source == .generated && !record.isCore,
+            adoptable: record.source == .bundled && !record.isCore,
             executableURL: record.executableURL,
             enabled: record.enabled,
             available: record.executableAvailable,
@@ -271,6 +298,10 @@ extension SwiftFeatureRuntime {
             displayName: nil,
             description: nil,
             source: feature.source,
+            isCore: feature.isCore,
+            adoptedFrom: nil,
+            editable: feature.source == .generated && !feature.isCore,
+            adoptable: feature.source == .bundled && !feature.isCore,
             executableURL: feature.executableURL,
             enabled: enabled,
             available: available,
@@ -290,6 +321,10 @@ extension SwiftFeatureRuntime {
         displayName: String?,
         description: String?,
         source: SwiftFeatureBundleSource,
+        isCore: Bool,
+        adoptedFrom: String?,
+        editable: Bool,
+        adoptable: Bool,
         executableURL: URL,
         enabled: Bool,
         available: Bool,
@@ -307,6 +342,10 @@ extension SwiftFeatureRuntime {
             displayName: displayName,
             description: description,
             source: source,
+            isCore: isCore,
+            adoptedFrom: adoptedFrom,
+            editable: editable,
+            adoptable: adoptable,
             enabled: enabled,
             available: available,
             executablePath: executableURL.path,
@@ -549,7 +588,7 @@ extension SwiftFeatureRuntime {
         ]
     }
 
-    private static func sourcePackageRootURL(fileManager: FileManager) -> URL? {
+    static func sourcePackageRootURL(fileManager: FileManager) -> URL? {
         var directoryURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .standardizedFileURL

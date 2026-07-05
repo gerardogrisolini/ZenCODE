@@ -9,6 +9,8 @@ Builder can:
 
 - scaffold new Swift feature packages;
 - build and validate generated feature packages;
+- prepare existing generated packages for editing;
+- adopt editable copies of bundled non-core feature packages;
 - enable, disable, reload, or delete feature packages;
 - configure bundled feature packages such as Jira;
 - expose generated and bundled feature packages to normal sessions through the
@@ -99,6 +101,8 @@ Use these commands from the Builder agent:
 /feature list
 /feature enable <id|name|#>
 /feature disable <id|name|#>
+/feature adopt <id|name|#>
+/feature edit <id|name|#> [requirements]
 /feature build <id|name|#>
 /feature validate <id|name|#>
 /feature reload
@@ -118,7 +122,46 @@ Typical generated-feature flow:
 Use `/feature reload` after rebuilding an already enabled feature when the
 runtime needs to refresh manifests or runtime-discovered tools.
 
-Use `/feature delete <id|name|#>` only for generated packages you want to remove.
+Use `/feature delete <id|name|#>` only for generated or adopted packages you
+want to remove. For adopted packages, delete removes the local editable copy and
+the original bundled package becomes visible again.
+
+## Editing Existing Features
+
+Use Builder to edit an existing generated or non-core bundled feature:
+
+```text
+/feature edit <id|name|#> [requirements]
+```
+
+For a generated feature, `/feature edit` opens the existing package and prepares
+an implementation prompt that points Builder at the manifest, package file, and
+Swift sources.
+
+For a bundled non-core feature, `/feature edit` first adopts the feature into the
+generated feature root, then prepares the same edit prompt. You can also run the
+adoption step explicitly:
+
+```text
+/feature adopt <id|name|#>
+```
+
+Adopted packages keep the same feature id as the bundled package. While the
+adopted package exists, it shadows the bundled package with that id. Removing the
+adopted package with `/feature delete <id|name|#>` restores the bundled package.
+
+Core bundled feature packages are protected. They can be enabled or disabled, but
+cannot be adopted, edited, deleted, or replaced by a generated package. The core
+set is currently Search, Web, Git, and Swift. Non-core bundled integrations such
+as Jira, Xcode, and Figma are adoptable when their source is available.
+
+After editing any feature:
+
+1. Run `/feature validate <id|name|#>`.
+2. Run `/feature build <id|name|#>`.
+3. Run `/feature reload` if the feature was already enabled.
+4. Run `/tools` if you need to expose or refresh the package in the current
+   session.
 
 ## Enabling Packages
 
@@ -164,9 +207,17 @@ are not exposed by normal profiles.
 
 ## Bundled Integrations
 
-Bundled feature packages can include Search, Web, Git, Xcode, Figma, and Jira.
+Bundled feature packages can include Search, Web, Git, Swift, Xcode, Figma, and Jira.
 Availability depends on the local environment and on whether a package discovers
 tools at runtime.
+
+Bundled packages are grouped by mutability:
+
+- **Core bundled**: Search, Web, Git, and Swift. These are part of the base tool
+  surface and cannot be adopted or modified by Builder.
+- **Non-core bundled**: Jira, Xcode, and Figma. These can be enabled directly, or
+  adopted into `~/.zencode/features/<feature-id>/` when you want a local editable
+  copy.
 
 Some bundled integrations need extra configuration. For Jira, run:
 
@@ -205,7 +256,8 @@ Good Builder tasks:
 - add a project-specific integration that will be used across sessions;
 - package a repeated workflow behind a typed JSON schema;
 - create an MCP bridge for an existing MCP service;
-- fix, validate, or rebuild an existing generated feature.
+- fix, validate, or rebuild an existing generated feature;
+- adopt and customize a non-core bundled integration.
 
 Poor Builder tasks:
 
@@ -229,6 +281,10 @@ runtime. They are discovered from:
 
 - bundled feature binaries next to the `zen` executable;
 - generated feature packages under `~/.zencode/features`.
+
+Generated packages have precedence over bundled non-core packages with the same
+id. That is how adopted packages shadow their bundled source. Generated packages
+cannot override core bundled feature ids.
 
 The runtime never loads feature code in process. It starts the compiled
 executable, sends JSON on stdin, and expects a JSON response on stdout.
@@ -289,7 +345,8 @@ backward compatible with the original minimal manifest.
   "generated": {
     "by": "ZenCODE",
     "prompt": "Original user or agent request.",
-    "createdAt": "2026-05-30T12:00:00Z"
+    "createdAt": "2026-05-30T12:00:00Z",
+    "adoptedFrom": "optional-bundled-feature-id"
   },
   "tools": [
     {
@@ -310,7 +367,6 @@ backward compatible with the original minimal manifest.
 Required fields:
 
 - `id`: stable feature identifier.
-- `enabled`: whether the runtime should load the feature.
 - `executable`: path to the executable, relative to `feature.json` unless
   absolute.
 - `tools`: static tool descriptors. Use an empty array when the feature
@@ -319,6 +375,8 @@ Required fields:
 Optional fields:
 
 - `schemaVersion`: schema version; omit for legacy manifests.
+- `enabled`: whether the runtime should load the feature; defaults to `true`
+  when omitted.
 - `displayName`, `description`: shown by `feature.list`.
 - `discoversToolsAtRuntime`: when true, the runtime calls `--list-tools` only
   when the feature is relevant to selected tools.
@@ -326,7 +384,8 @@ Optional fields:
   has listed them.
 - `toolNameAliases`: exact non-prefixed tool names accepted by the feature.
 - `build`: SwiftPM build metadata.
-- `generated`: provenance metadata from the agent.
+- `generated`: provenance metadata from the agent. Adopted packages set
+  `generated.adoptedFrom` to the bundled feature id they were copied from.
 
 ### Runtime Rules
 
@@ -336,6 +395,13 @@ Optional fields:
   `~/.zencode/feature-state.json`.
 - Generated features are enabled or disabled by updating their own
   `feature.json`.
+- Core bundled feature ids cannot be adopted, edited, deleted, or shadowed by a
+  generated package.
+- `feature.adopt` copies a bundled non-core feature into the generated feature
+  root as an editable package and records `generated.adoptedFrom` in its
+  manifest.
+- `feature.edit` returns the editable package context for generated packages; for
+  bundled non-core packages it adopts first unless adoption is disabled.
 - `feature.reload` reloads manifests and clears runtime-discovered tool caches.
 - `feature.scaffold` creates SwiftPM packages only under the generated features
   root. Packages prepared elsewhere are installed through `feature.install`.

@@ -7,7 +7,7 @@ import Foundation
 
 extension TerminalChat {
     public static func renderFeatureCommandUsage() -> String {
-        "Usage: /feature [list|reload|enable <id|name|#>|disable <id|name|#>|delete <id|name|#>|build <id|name|#>|validate <id|name|#>]\n"
+        "Usage: /feature [list|reload|enable <id|name|#>|disable <id|name|#>|adopt <id|name|#>|edit <id|name|#> [requirements]|delete <id|name|#>|build <id|name|#>|validate <id|name|#>]\n"
     }
 
     public static func renderFeaturesCommandUsage() -> String {
@@ -97,6 +97,57 @@ extension TerminalChat {
         return sections.joined()
     }
 
+    public static func featureModificationPrompt(
+        report: SwiftFeatureEditReport,
+        requirements: String?
+    ) -> String {
+        let sourceList = report.sourcePaths.isEmpty
+            ? "- Source files: inspect the package under \(report.directoryPath)"
+            : report.sourcePaths.map { "- \($0)" }.joined(separator: "\n")
+        let packageLine = report.packagePath.map { "- Package: \($0)" } ?? "- Package: not found; inspect the feature directory"
+        let adoptedLine = report.adoptedFrom.map {
+            "\nThis is an adopted local copy of bundled feature `\($0)`. Do not edit core bundled sources."
+        } ?? ""
+
+        var sections = [
+            """
+            Modify the Swift feature `\(report.id)`.
+
+            Feature directory:
+            \(report.directoryPath)
+
+            Main files:
+            - Manifest: \(report.manifestPath)
+            \(packageLine)
+            - Executable: \(report.executablePath)
+
+            Source files:
+            \(sourceList)
+            \(adoptedLine)
+
+            Work on the existing package using the available file/text tools. Preserve the feature id and existing tool names unless I explicitly ask to rename them. After edits, run `feature.validate` and `feature.build` for `\(report.id)`, then `feature.reload` if the build passes.
+            """
+        ]
+
+        if let requirements {
+            sections.append(
+                """
+
+                Goal / requirements:
+                \(requirements)
+                """
+            )
+        } else {
+            sections.append(
+                """
+
+                Goal / requirements:
+                """
+            )
+        }
+        return sections.joined()
+    }
+
     public static func renderFeatureManagementToolOutput(
         name: String,
         output: String
@@ -128,6 +179,14 @@ extension TerminalChat {
             if let report = decodeFeatureOutput(SwiftFeatureInstallReport.self, from: trimmedOutput) {
                 return renderFeatureInstallReport(report)
             }
+        case "feature.adopt", "feature.fork":
+            if let report = decodeFeatureOutput(SwiftFeatureAdoptReport.self, from: trimmedOutput) {
+                return renderFeatureAdoptReport(report)
+            }
+        case "feature.edit", "feature.update":
+            if let report = decodeFeatureOutput(SwiftFeatureEditReport.self, from: trimmedOutput) {
+                return renderFeatureEditReport(report)
+            }
         case "feature.delete":
             if let report = decodeFeatureOutput(SwiftFeatureDeleteReport.self, from: trimmedOutput) {
                 return renderFeatureDeleteReport(report)
@@ -155,6 +214,10 @@ extension TerminalChat {
             return decodeFeatureOutput(SwiftFeatureBuildReport.self, from: trimmedOutput)?.ok ?? true
         case "feature.install":
             return decodeFeatureOutput(SwiftFeatureInstallReport.self, from: trimmedOutput)?.ok ?? true
+        case "feature.adopt", "feature.fork":
+            return decodeFeatureOutput(SwiftFeatureAdoptReport.self, from: trimmedOutput)?.ok ?? true
+        case "feature.edit", "feature.update":
+            return decodeFeatureOutput(SwiftFeatureEditReport.self, from: trimmedOutput)?.ok ?? true
         case "feature.delete":
             return decodeFeatureOutput(SwiftFeatureDeleteReport.self, from: trimmedOutput)?.ok ?? true
         default:
@@ -227,6 +290,43 @@ extension TerminalChat {
         """
     }
 
+    static func renderFeatureAdoptReport(
+        _ report: SwiftFeatureAdoptReport
+    ) -> String {
+        guard report.ok else {
+            return "Adoption failed for Swift feature '\(report.id)'.\n"
+        }
+        return """
+        Adopted Swift feature '\(report.id)' from bundled feature '\(report.adoptedFrom)'.
+          Destination: \(report.destinationPath)
+          Manifest: \(report.manifestPath)
+
+        """
+    }
+
+    static func renderFeatureEditReport(
+        _ report: SwiftFeatureEditReport
+    ) -> String {
+        guard report.ok else {
+            return "Edit preparation failed for Swift feature '\(report.id)'.\n"
+        }
+        var lines = ["Ready to edit Swift feature '\(report.id)'."]
+        if report.adopted {
+            lines.append("  Adopted local copy created first.")
+        }
+        lines.append("  Directory: \(report.directoryPath)")
+        lines.append("  Manifest: \(report.manifestPath)")
+        if let packagePath = report.packagePath {
+            lines.append("  Package: \(packagePath)")
+        }
+        if let firstSource = report.sourcePaths.first {
+            let extra = report.sourcePaths.count > 1 ? " (+\(report.sourcePaths.count - 1) more)" : ""
+            lines.append("  Source: \(firstSource)\(extra)")
+        }
+        lines.append(contentsOf: report.warnings.map { "  Warning: \($0)" })
+        return lines.joined(separator: "\n") + "\n"
+    }
+
     static func renderFeatureDeleteReport(
         _ report: SwiftFeatureDeleteReport
     ) -> String {
@@ -295,7 +395,7 @@ extension TerminalChat {
         for (offset, status) in statuses.sorted(by: featureStatusSortOrder).enumerated() {
             let availability = status.available ? "" : ", unavailable"
             let state = status.enabled ? "enabled" : "disabled"
-            let source = status.source == .bundled ? "bundled" : "generated"
+            let source = featureSourceSummary(status)
             let tools = featureStatusToolsSummary(status)
             lines.append(
                 "  \(offset + 1). \(featureDisplayName(status)) [\(status.id)] - \(state)\(availability), \(source)\(tools)\n"
@@ -310,7 +410,7 @@ extension TerminalChat {
             value: status.id,
             title: "\(featureDisplayName(status)) [\(status.id)]",
             detail: featureMenuDetail(status),
-            groupTitle: status.source == .bundled ? "Bundled" : "Generated"
+            groupTitle: featureMenuGroupTitle(status)
         )
     }
 
@@ -400,8 +500,41 @@ extension TerminalChat {
 
     static func featureMenuDetail(_ status: SwiftFeatureStatus) -> String {
         let availability = status.available ? "available" : "unavailable"
+        let mutability: String
+        if status.isCore {
+            mutability = ", core"
+        } else if status.editable {
+            mutability = ", editable"
+        } else if status.adoptable {
+            mutability = ", adoptable"
+        } else {
+            mutability = ""
+        }
         let tools = featureStatusToolsSummary(status)
-        return "\(availability)\(tools)"
+        return "\(availability)\(mutability)\(tools)"
+    }
+
+    static func featureSourceSummary(_ status: SwiftFeatureStatus) -> String {
+        if status.isCore {
+            return "core bundled"
+        }
+        if status.adoptedFrom != nil {
+            return "adopted"
+        }
+        if status.source == .bundled {
+            return status.adoptable ? "bundled, adoptable" : "bundled"
+        }
+        return status.editable ? "generated, editable" : "generated"
+    }
+
+    static func featureMenuGroupTitle(_ status: SwiftFeatureStatus) -> String {
+        if status.isCore {
+            return "Core bundled"
+        }
+        if status.adoptedFrom != nil {
+            return "Adopted"
+        }
+        return status.source == .bundled ? "Bundled" : "Generated"
     }
 
     static func featureLookupKeys(_ status: SwiftFeatureStatus) -> Set<String> {

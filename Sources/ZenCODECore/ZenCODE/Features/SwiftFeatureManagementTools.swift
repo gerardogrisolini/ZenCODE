@@ -40,6 +40,16 @@ extension SwiftFeatureRuntime {
             let report = try await deleteFeature(arguments: arguments)
             reloadFeatureBundles()
             return try renderJSON(report)
+        case "feature.adopt", "feature.fork":
+            let report = try adoptFeature(arguments: arguments)
+            reloadFeatureBundles()
+            return try renderJSON(report)
+        case "feature.edit", "feature.update":
+            let report = try editFeature(arguments: arguments)
+            if report.adopt != nil {
+                reloadFeatureBundles()
+            }
+            return try renderJSON(report)
         case "feature.reload":
             reloadFeatureBundles()
             return try await renderFeatureList(
@@ -80,6 +90,27 @@ extension SwiftFeatureRuntime {
             )
         }
 
+        if let record = SwiftFeatureRegistry
+            .discoverFeatureRecords(
+                searchRoots: featureSearchRoots,
+                fileManager: fileManager
+            )
+            .first(where: { $0.id == id }),
+            let manifestURL = record.manifestURL {
+            if Self.bundledFeatureDefinition(id: id)?.isCore == true {
+                throw DirectToolError.permissionDenied(
+                    "Core Swift feature '\(id)' cannot be overridden by a generated feature."
+                )
+            }
+            try SwiftFeatureRegistry.setFeatureManifestEnabled(
+                manifestURL: manifestURL,
+                enabled: enabled,
+                fileManager: fileManager
+            )
+            reloadFeatureBundles()
+            return
+        }
+
         let bundledIDs = Set(Self.bundledFeatureDefinitions().map(\.id))
         if bundledIDs.contains(id) {
             try SwiftFeatureStateStore.setBundledFeature(
@@ -91,22 +122,7 @@ extension SwiftFeatureRuntime {
             return
         }
 
-        guard let record = SwiftFeatureRegistry
-            .discoverFeatureRecords(
-                searchRoots: featureSearchRoots,
-                fileManager: fileManager
-            )
-            .first(where: { $0.id == id }),
-            let manifestURL = record.manifestURL else {
-            throw DirectToolError.permissionDenied("Unknown Swift feature: \(id).")
-        }
-
-        try SwiftFeatureRegistry.setFeatureManifestEnabled(
-            manifestURL: manifestURL,
-            enabled: enabled,
-            fileManager: fileManager
-        )
-        reloadFeatureBundles()
+        throw DirectToolError.permissionDenied("Unknown Swift feature: \(id).")
     }
 
     private func validateFeature(
@@ -150,6 +166,9 @@ extension SwiftFeatureRuntime {
 
         if !Self.isValidFeatureID(manifest.id) {
             errors.append("Feature id '\(manifest.id)' is invalid. Use letters, numbers, dots, underscores, and hyphens.")
+        }
+        if Self.bundledFeatureDefinition(id: manifest.id)?.isCore == true {
+            errors.append("Core Swift feature id '\(manifest.id)' cannot be implemented by a generated feature.")
         }
         if manifest.schemaVersion > SwiftFeatureManifest.currentSchemaVersion {
             errors.append("Unsupported feature schemaVersion \(manifest.schemaVersion). Current supported version is \(SwiftFeatureManifest.currentSchemaVersion).")
@@ -496,43 +515,48 @@ extension SwiftFeatureRuntime {
         }
 
         let id = try Self.requiredFeatureID(arguments)
+        if Self.bundledFeatureDefinition(id: id)?.isCore == true {
+            throw DirectToolError.permissionDenied(
+                "Core Swift feature '\(id)' cannot be deleted. Use feature.disable instead."
+            )
+        }
+
+        if let record = SwiftFeatureRegistry.featureRecord(
+            id: id,
+            searchRoots: featureSearchRoots,
+            fileManager: fileManager
+        ),
+           let manifestURL = record.manifestURL {
+            let rootURLs = featureRootURLs()
+            let directoryURL = manifestURL.deletingLastPathComponent().standardizedFileURL
+            guard rootURLs.contains(where: { Self.path(directoryURL, isDescendantOf: $0) }),
+                  !rootURLs.contains(where: { $0.path == directoryURL.path }) else {
+                throw DirectToolError.permissionDenied(
+                    "feature.delete can only remove generated feature packages under the configured features directory."
+                )
+            }
+
+            try fileManager.removeItem(at: directoryURL)
+            return SwiftFeatureDeleteReport(
+                ok: true,
+                id: id,
+                directoryPath: directoryURL.path,
+                manifestPath: manifestURL.path,
+                removed: true,
+                wasEnabled: record.manifestEnabled
+            )
+        }
+
         let bundledIDs = Set(Self.bundledFeatureDefinitions().map(\.id))
         guard !bundledIDs.contains(id) else {
             throw DirectToolError.permissionDenied(
                 "Bundled Swift feature '\(id)' cannot be deleted. Use feature.disable instead."
             )
         }
-
-        guard let record = SwiftFeatureRegistry.featureRecord(
-            id: id,
-            searchRoots: featureSearchRoots,
-            fileManager: fileManager
-        ),
-            let manifestURL = record.manifestURL else {
-            throw DirectToolError.permissionDenied("Unknown generated Swift feature: \(id).")
-        }
-
-        let rootURLs = featureRootURLs()
-        let directoryURL = manifestURL.deletingLastPathComponent().standardizedFileURL
-        guard rootURLs.contains(where: { Self.path(directoryURL, isDescendantOf: $0) }),
-              !rootURLs.contains(where: { $0.path == directoryURL.path }) else {
-            throw DirectToolError.permissionDenied(
-                "feature.delete can only remove generated feature packages under the configured features directory."
-            )
-        }
-
-        try fileManager.removeItem(at: directoryURL)
-        return SwiftFeatureDeleteReport(
-            ok: true,
-            id: id,
-            directoryPath: directoryURL.path,
-            manifestPath: manifestURL.path,
-            removed: true,
-            wasEnabled: record.manifestEnabled
-        )
+        throw DirectToolError.permissionDenied("Unknown generated Swift feature: \(id).")
     }
 
-    private func reloadFeatureBundles() {
+    func reloadFeatureBundles() {
         runtimeDiscoveredToolsByFeatureID.removeAll()
         features = explicitFeatures ?? Self.defaultFeatureBundles(
             searchRoots: featureSearchRoots,

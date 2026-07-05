@@ -29,6 +29,11 @@ public struct ChatGPTSubscriptionResponsesClient {
         }
     }
 
+    private struct WebSocketStreamFailure: Error {
+        let underlying: Error
+        let receivedReplayUnsafeEvent: Bool
+    }
+
     public let credentials: CodexAgentCredentials
     public let baseURL: URL
     public let urlSession: URLSession
@@ -77,17 +82,36 @@ public struct ChatGPTSubscriptionResponsesClient {
             maxOutputTokens: maxOutputTokens
         )
 
-        do {
-            return try await streamEventsOverWebSocket(
-                body: body,
-                cachedInput: cachedWebSocketInput,
-                previousResponseID: previousResponseID,
-                allowsFreshContinuation: allowsFreshWebSocketContinuation,
-                sessionID: sessionID,
-                onEvent: onEvent
-            )
-        } catch is CancellationError {
-            throw ChatGPTSubscriptionGenerationError.cancelled
+        var attempt = 0
+        while true {
+            do {
+                return try await streamEventsOverWebSocket(
+                    body: body,
+                    cachedInput: cachedWebSocketInput,
+                    previousResponseID: previousResponseID,
+                    allowsFreshContinuation: allowsFreshWebSocketContinuation,
+                    sessionID: sessionID,
+                    onEvent: onEvent
+                )
+            } catch let failure as WebSocketStreamFailure {
+                guard !failure.receivedReplayUnsafeEvent,
+                      Self.shouldRetryTransportError(
+                          failure.underlying,
+                          attempt: attempt
+                      ) else {
+                    throw failure.underlying
+                }
+                try await Self.sleepForRetry(attempt: attempt)
+                attempt += 1
+            } catch is CancellationError {
+                throw ChatGPTSubscriptionGenerationError.cancelled
+            } catch {
+                guard Self.shouldRetryTransportError(error, attempt: attempt) else {
+                    throw error
+                }
+                try await Self.sleepForRetry(attempt: attempt)
+                attempt += 1
+            }
         }
     }
 
@@ -108,6 +132,7 @@ public struct ChatGPTSubscriptionResponsesClient {
         var keepConnection = false
         var responseID: String?
         var didReceiveTerminalEvent = false
+        var didReceiveReplayUnsafeEvent = false
 
         defer {
             webSocketPool.release(
@@ -145,6 +170,9 @@ public struct ChatGPTSubscriptionResponsesClient {
                 }
                 let objects = try Self.decodedJSONObjectSequence(from: data)
                 for object in objects {
+                    if Self.isReplayUnsafeWebSocketEvent(object) {
+                        didReceiveReplayUnsafeEvent = true
+                    }
                     if responseID == nil {
                         responseID = ChatGPTSubscriptionGenerationClient.responseID(from: object)
                     }
@@ -159,6 +187,11 @@ public struct ChatGPTSubscriptionResponsesClient {
             return StreamCompletion(responseID: responseID)
         } catch is CancellationError {
             throw ChatGPTSubscriptionGenerationError.cancelled
+        } catch {
+            throw WebSocketStreamFailure(
+                underlying: error,
+                receivedReplayUnsafeEvent: didReceiveReplayUnsafeEvent
+            )
         }
     }
 

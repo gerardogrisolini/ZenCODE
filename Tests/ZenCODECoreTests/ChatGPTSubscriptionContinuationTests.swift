@@ -160,6 +160,64 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionFallbackReplayDropsUnavailablePreviousResponseID() throws {
+        let messages = chatGPTContinuationMessages()
+        let continuation = ChatGPTSubscriptionContinuationState(
+            responseID: "resp_missing",
+            messageCount: 3,
+            instructions: "System prompt",
+            allowsFreshTransport: true
+        )
+        let continuationPayload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: messages,
+            continuation: continuation
+        )
+        let backendError = ChatGPTSubscriptionGenerationError.responseFailed(
+            "Previous response with id 'resp_missing' not found."
+        )
+        let unavailable = try #require(
+            ChatGPTSubscriptionGenerationClient.continuationUnavailableError(
+                from: backendError
+            )
+        )
+        guard case .continuationUnavailable = unavailable else {
+            Issue.record("Expected a continuation-unavailable error.")
+            return
+        }
+
+        let fallbackPayload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: messages,
+            continuation: nil
+        )
+        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
+            input: JSONValue.acpValue(from: fallbackPayload.input),
+            model: "gpt-5.5",
+            instructions: fallbackPayload.instructions ?? "",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "session-chatgpt"
+        )
+        let fallbackWebSocketPayload = ChatGPTSubscriptionResponsesClient.webSocketRequestPayload(
+            body: body,
+            cachedInput: fallbackPayload.cachedWebSocketInput.map { JSONValue.acpValue(from: $0) },
+            previousResponseID: fallbackPayload.previousResponseID,
+            useCachedContinuation: true
+        )
+
+        #expect(continuationPayload.previousResponseID == "resp_missing")
+        #expect(continuationPayload.cachedWebSocketInput != nil)
+        #expect(fallbackPayload.previousResponseID == nil)
+        #expect(fallbackPayload.cachedWebSocketInput == nil)
+        #expect(fallbackWebSocketPayload["previous_response_id"] == nil)
+        #expect((fallbackWebSocketPayload["input"] as? [Any])?.count == fallbackPayload.input.count)
+        #expect((fallbackWebSocketPayload["input"] as? [Any])?.count == continuationPayload.input.count)
+        #expect(
+            ChatGPTSubscriptionGenerationClient.continuationReplayFallbackDiagnostic()
+                .contains("full local conversation")
+        )
+    }
+
+    @Test
     func chatGPTSubscriptionRestoresContinuationFromSavedResponseID() throws {
         let history = [
             AgentRuntimeMessage(role: .user, content: "First prompt"),
@@ -393,6 +451,43 @@ extension RemoteSessionSnapshotTests {
         #expect(ChatGPTSubscriptionResponsesClient.isRetryableTransportError(nsPosixError))
         #expect(ChatGPTSubscriptionResponsesClient.isRetryableTransportError(localizedSocketError))
         #expect(!ChatGPTSubscriptionResponsesClient.isRetryableTransportError(URLError(.badServerResponse)))
+        #expect(ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(posixError, attempt: 0))
+        #expect(
+            ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
+                nsPosixError,
+                attempt: ChatGPTSubscriptionResponsesClient.maxRetries - 1
+            )
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
+                localizedSocketError,
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
+                posixError,
+                attempt: ChatGPTSubscriptionResponsesClient.maxRetries
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
+                URLError(.badServerResponse),
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
+                ChatGPTSubscriptionGenerationError.cancelled,
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
+                CancellationError(),
+                attempt: 0
+            )
+        )
     }
 
     @Test

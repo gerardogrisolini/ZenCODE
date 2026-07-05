@@ -64,7 +64,7 @@ extension ChatGPTSubscriptionGenerationClient {
             compactionResult: result,
             preservingRecentFrom: session.messages
         )
-        resetContinuationAfterCompaction(
+        resetContinuationAndTransport(
             session: &session,
             sessionIdentity: sessionIdentity
         )
@@ -128,14 +128,14 @@ extension ChatGPTSubscriptionGenerationClient {
             compactionResult: result,
             preservingRecentFrom: session.messages
         )
-        resetContinuationAfterCompaction(
+        resetContinuationAndTransport(
             session: &session,
             sessionIdentity: sessionIdentity
         )
         return result
     }
 
-    func resetContinuationAfterCompaction(
+    func resetContinuationAndTransport(
         session: inout AgentSession,
         sessionIdentity: SessionIdentity
     ) {
