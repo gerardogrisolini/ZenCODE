@@ -393,6 +393,47 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
+    func adaptiveThinkingModelsOmitDisabledThinkingPayload() throws {
+        let nilSelection = AnthropicSubscriptionGenerationClient.thinkingPayload(
+            for: nil,
+            modelID: "claude-fable-5",
+            maxTokens: 4096
+        )
+        let offSelection = AnthropicSubscriptionGenerationClient.thinkingPayload(
+            for: .off,
+            modelID: "claude-fable-5",
+            maxTokens: 4096
+        )
+        let nonAdaptiveOff = AnthropicSubscriptionGenerationClient.thinkingPayload(
+            for: .off,
+            modelID: "claude-haiku-4-5",
+            maxTokens: 4096
+        )
+
+        #expect(nilSelection.thinking == nil)
+        #expect(nilSelection.outputConfig == nil)
+        #expect(offSelection.thinking == nil)
+        #expect(offSelection.outputConfig == nil)
+        #expect(nonAdaptiveOff.thinking?["type"] as? String == "disabled")
+    }
+
+    @Test
+    func adaptiveThinkingModelsUseEnabledBudgetForExtendedThinking() throws {
+        let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
+            for: .high,
+            modelID: "claude-fable-5",
+            maxTokens: 8192
+        )
+        let thinking = try #require(payload.thinking)
+        let outputConfig = try #require(payload.outputConfig)
+
+        #expect(thinking["type"] as? String == "enabled")
+        #expect((thinking["budget_tokens"] as? Int ?? 0) > 0)
+        #expect(thinking["display"] as? String == "summarized")
+        #expect(outputConfig["effort"] as? String == "high")
+    }
+
+    @Test
     func thinkingReplayRejectionStripsSavedThinkingBlocks() {
         let messages: [[String: Any]] = [
             ["role": "user", "content": "Hello"],

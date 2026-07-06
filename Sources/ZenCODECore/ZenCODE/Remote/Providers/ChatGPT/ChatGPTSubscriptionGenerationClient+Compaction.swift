@@ -84,6 +84,7 @@ extension ChatGPTSubscriptionGenerationClient {
             workingDirectory: session.cwd,
             systemPrompt: session.systemPrompt ?? "",
             sessionKey: session.cacheKey?.nilIfBlank ?? session.id,
+            connectionScopeID: connectionScopeID,
             history: [],
             allowedToolNames: session.allowedToolNames,
             thinkingSelection: session.thinkingSelection,

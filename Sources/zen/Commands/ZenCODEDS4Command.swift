@@ -12,13 +12,15 @@ private struct DS4AgentRuntimeBackendFactory: @unchecked Sendable {
 
     func makeBackend(
         configuration: AgentRuntimeConfiguration,
-        mcpRuntime: DirectMCPToolRuntime
+        mcpRuntime: DirectMCPToolRuntime,
+        chatGPTConnectionScopeID: String? = nil
     ) throws -> any AgentRuntimeBackend {
         if let modelID = configuration.modelID?.nilIfBlank,
            modelID.caseInsensitiveCompare(runtimeOptions.modelID) != .orderedSame {
             return try AgentCoreBackend.makeRemoteBackend(
                 configuration: configuration,
-                mcpRuntime: mcpRuntime
+                mcpRuntime: mcpRuntime,
+                chatGPTConnectionScopeID: chatGPTConnectionScopeID
             )
         }
 
@@ -29,7 +31,8 @@ private struct DS4AgentRuntimeBackendFactory: @unchecked Sendable {
             subAgentContextualBackendFactory: { context in
                 try makeBackend(
                     configuration: configuration.applyingSubAgentBackendContext(context),
-                    mcpRuntime: mcpRuntime
+                    mcpRuntime: mcpRuntime,
+                    chatGPTConnectionScopeID: UUID().uuidString
                 )
             }
         )

@@ -89,41 +89,64 @@ extension AnthropicSubscriptionGenerationClient {
         guard Self.supportsThinking(modelID: modelID) else {
             return
         }
-        guard let selection, selection.isEnabled else {
-            body["thinking"] = ["type": "disabled"]
-            return
-        }
-
-        if Self.usesAdaptiveThinking(modelID: modelID) {
-            body["thinking"] = [
-                "type": "adaptive",
-                "display": "summarized"
-            ]
-            if let effort = Self.adaptiveThinkingEffort(
-                for: selection,
-                modelID: modelID
-            ) {
-                body["output_config"] = ["effort": effort]
-            }
-            return
-        }
-
         let maxTokens = resolvedMaxOutputTokens(
             forLLMID: modelLLMID,
             thinkingSelection: selection
         )
-        let budget = Self.adjustedThinkingBudget(
-            Self.thinkingBudgetTokens(for: selection),
+        let payload = Self.thinkingPayload(
+            for: selection,
+            modelID: modelID,
+            maxTokens: maxTokens
+        )
+        if let thinking = payload.thinking {
+            body["thinking"] = thinking
+        }
+        if let outputConfig = payload.outputConfig {
+            body["output_config"] = outputConfig
+        }
+    }
+
+    static func thinkingPayload(
+        for selection: AgentThinkingSelection?,
+        modelID: String,
+        maxTokens: Int
+    ) -> (thinking: [String: Any]?, outputConfig: [String: Any]?) {
+        guard supportsThinking(modelID: modelID) else {
+            return (nil, nil)
+        }
+        guard let selection, selection.isEnabled else {
+            if usesAdaptiveThinking(modelID: modelID) {
+                return (nil, nil)
+            }
+            return (["type": "disabled"], nil)
+        }
+
+        let budget = adjustedThinkingBudget(
+            thinkingBudgetTokens(for: selection),
             maxTokens: maxTokens
         )
         guard budget > 0 else {
-            return
+            return (nil, nil)
         }
-        body["thinking"] = [
-            "type": "enabled",
-            "budget_tokens": budget,
-            "display": "summarized"
-        ]
+
+        let outputConfig: [String: Any]?
+        if usesAdaptiveThinking(modelID: modelID),
+           let effort = adaptiveThinkingEffort(
+               for: selection,
+               modelID: modelID
+           ) {
+            outputConfig = ["effort": effort]
+        } else {
+            outputConfig = nil
+        }
+        return (
+            [
+                "type": "enabled",
+                "budget_tokens": budget,
+                "display": "summarized"
+            ],
+            outputConfig
+        )
     }
 
     static func supportsThinking(modelID: String) -> Bool {

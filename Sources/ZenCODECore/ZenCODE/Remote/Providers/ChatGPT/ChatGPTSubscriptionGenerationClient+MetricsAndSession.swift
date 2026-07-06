@@ -97,6 +97,9 @@ extension ChatGPTSubscriptionGenerationClient {
 
     func storeSessionID(_ sessionID: String, for identity: SessionIdentity) {
         sessionIDsByIdentity[identity] = sessionID
+        guard identity.connectionScopeID == nil else {
+            return
+        }
         Self.storeSessionIDs(sessionIDsByIdentity)
     }
 
@@ -116,11 +119,13 @@ extension ChatGPTSubscriptionGenerationClient {
     }
 
     static func storeSessionIDs(_ values: [SessionIdentity: String]) {
-        let rawValues = Dictionary(
-            uniqueKeysWithValues: values.map { identity, sessionID in
-                (identity.storageKey, sessionID)
+        let persistedValues: [(String, String)] = values.compactMap { identity, sessionID in
+            guard identity.connectionScopeID == nil else {
+                return nil
             }
-        )
+            return (identity.storageKey, sessionID)
+        }
+        let rawValues = Dictionary(uniqueKeysWithValues: persistedValues)
         UserDefaults.standard.set(rawValues, forKey: sessionStoreUserDefaultsKey)
     }
 

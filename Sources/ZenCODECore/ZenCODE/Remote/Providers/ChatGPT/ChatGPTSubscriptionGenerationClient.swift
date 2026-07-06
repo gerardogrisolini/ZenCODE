@@ -34,6 +34,7 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         let workingDirectory: String
         let systemPrompt: String
         let sessionKey: String
+        let connectionScopeID: String?
         let history: [AgentRuntimeMessage]
         let allowedToolNames: Set<String>?
         let thinkingSelection: AgentThinkingSelection?
@@ -47,6 +48,7 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         let systemPrompt: String
         let toolSelection: String?
         let appMode: Bool
+        let connectionScopeID: String?
 
         init(configuration: RequestConfiguration) {
             let key = configuration.sessionKey
@@ -64,6 +66,7 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
                 configuration.allowedToolNames
             )
             appMode = configuration.appMode
+            connectionScopeID = configuration.connectionScopeID?.nilIfBlank
         }
 
         init?(storageKey: String) {
@@ -82,7 +85,8 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
                     workingDirectory,
                     systemPrompt,
                     toolSelection ?? "tools:any",
-                    appMode ? "app" : "cli"
+                    appMode ? "app" : "cli",
+                    connectionScopeID ?? "connection:default"
                 ].joined(separator: "\u{1f}")
             }
             return data.base64EncodedString()
@@ -112,6 +116,7 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
     let urlSession: URLSession
     let toolExecutor: DirectToolExecutor
     let webSocketPool: ChatGPTSubscriptionWebSocketPool
+    let connectionScopeID: String?
     var sessions: [String: AgentSession] = [:]
     var sessionIDsByIdentity = ChatGPTSubscriptionGenerationClient.loadStoredSessionIDs()
 
@@ -119,10 +124,12 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         configuration: AgentRuntimeConfiguration,
         urlSession: URLSession? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
-        webSocketPool: ChatGPTSubscriptionWebSocketPool = ChatGPTSubscriptionWebSocketPool()
+        webSocketPool: ChatGPTSubscriptionWebSocketPool = ChatGPTSubscriptionWebSocketPool(),
+        connectionScopeID: String? = nil
     ) {
         self.configuration = configuration
         self.webSocketPool = webSocketPool
+        self.connectionScopeID = connectionScopeID?.nilIfBlank
         if let urlSession {
             self.urlSession = urlSession
         } else {
@@ -146,7 +153,8 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
                     configuration: configuration.applyingSubAgentBackendContext(context),
                     mcpRuntime: mcpRuntime,
                     fallbackProvider: fallbackProvider,
-                    urlSession: urlSession
+                    urlSession: urlSession,
+                    chatGPTConnectionScopeID: UUID().uuidString
                 )
             }
         )

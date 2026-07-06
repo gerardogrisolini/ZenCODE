@@ -20,14 +20,16 @@ private struct MLXAgentRuntimeBackendFactory: @unchecked Sendable {
 
     func makeBackend(
         configuration: AgentRuntimeConfiguration,
-        mcpRuntime: DirectMCPToolRuntime
+        mcpRuntime: DirectMCPToolRuntime,
+        chatGPTConnectionScopeID: String? = nil
     ) throws -> any AgentRuntimeBackend {
         guard let model = try? modelCatalog.resolve(
             id: configuration.modelID ?? initialModelID
         ) else {
             return try AgentCoreBackend.makeRemoteBackend(
                 configuration: configuration,
-                mcpRuntime: mcpRuntime
+                mcpRuntime: mcpRuntime,
+                chatGPTConnectionScopeID: chatGPTConnectionScopeID
             )
         }
 
@@ -40,7 +42,8 @@ private struct MLXAgentRuntimeBackendFactory: @unchecked Sendable {
             subAgentContextualBackendFactory: { context in
                 try makeBackend(
                     configuration: configuration.applyingSubAgentBackendContext(context),
-                    mcpRuntime: mcpRuntime
+                    mcpRuntime: mcpRuntime,
+                    chatGPTConnectionScopeID: UUID().uuidString
                 )
             }
         )

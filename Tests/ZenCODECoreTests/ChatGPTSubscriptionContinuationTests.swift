@@ -314,6 +314,46 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionConnectionScopeSeparatesTransportSessionIdentities() throws {
+        func configuration(
+            connectionScopeID: String?
+        ) -> ChatGPTSubscriptionGenerationClient.RequestConfiguration {
+            ChatGPTSubscriptionGenerationClient.RequestConfiguration(
+                modelID: "gpt-5.5",
+                workingDirectory: "/tmp/project",
+                systemPrompt: "System prompt",
+                sessionKey: "session-main",
+                connectionScopeID: connectionScopeID,
+                history: [],
+                allowedToolNames: ["local.exec"],
+                thinkingSelection: nil,
+                appMode: false
+            )
+        }
+
+        let parentIdentity = ChatGPTSubscriptionGenerationClient.SessionIdentity(
+            configuration: configuration(connectionScopeID: nil)
+        )
+        let subAgentIdentity = ChatGPTSubscriptionGenerationClient.SessionIdentity(
+            configuration: configuration(connectionScopeID: "sub-agent-connection")
+        )
+
+        #expect(parentIdentity != subAgentIdentity)
+        #expect(parentIdentity.connectionScopeID == nil)
+        #expect(subAgentIdentity.connectionScopeID == "sub-agent-connection")
+        #expect(
+            ChatGPTSubscriptionGenerationClient.SessionIdentity(
+                storageKey: parentIdentity.storageKey
+            ) == parentIdentity
+        )
+        #expect(
+            ChatGPTSubscriptionGenerationClient.SessionIdentity(
+                storageKey: subAgentIdentity.storageKey
+            ) == subAgentIdentity
+        )
+    }
+
+    @Test
     func chatGPTSubscriptionFullReplayDropsPlainReasoningTextFallback() throws {
         let messages: [[String: Any]] = [
             ["role": "system", "content": "System prompt"],

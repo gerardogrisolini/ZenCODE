@@ -44,7 +44,8 @@ public actor AgentCoreBackend {
         mcpRuntime: DirectMCPToolRuntime,
         fallbackProvider: AgentRemoteProvider? = nil,
         fallbackAPIKey: String? = nil,
-        urlSession: URLSession? = nil
+        urlSession: URLSession? = nil,
+        chatGPTConnectionScopeID: String? = nil
     ) throws -> any AgentRuntimeBackend {
         let selection = AgentSettingsStore.defaultSelection(
             explicitModelID: configuration.modelID
@@ -94,7 +95,8 @@ public actor AgentCoreBackend {
             return ChatGPTSubscriptionGenerationClient(
                 configuration: resolvedConfiguration,
                 urlSession: urlSession,
-                mcpRuntime: mcpRuntime
+                mcpRuntime: mcpRuntime,
+                connectionScopeID: chatGPTConnectionScopeID
             )
 #else
             throw AgentCoreBackendError.missingRemoteProvider

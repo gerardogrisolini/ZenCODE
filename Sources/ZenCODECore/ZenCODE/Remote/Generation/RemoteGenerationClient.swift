@@ -58,7 +58,8 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                     mcpRuntime: mcpRuntime,
                     fallbackProvider: provider,
                     fallbackAPIKey: apiKey,
-                    urlSession: urlSession
+                    urlSession: urlSession,
+                    chatGPTConnectionScopeID: UUID().uuidString
                 )
             }
         )

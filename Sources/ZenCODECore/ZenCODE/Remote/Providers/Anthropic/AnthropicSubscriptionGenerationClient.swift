@@ -70,7 +70,8 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
                     configuration: configuration.applyingSubAgentBackendContext(context),
                     mcpRuntime: mcpRuntime,
                     fallbackProvider: provider,
-                    urlSession: urlSession
+                    urlSession: urlSession,
+                    chatGPTConnectionScopeID: UUID().uuidString
                 )
             }
         )
