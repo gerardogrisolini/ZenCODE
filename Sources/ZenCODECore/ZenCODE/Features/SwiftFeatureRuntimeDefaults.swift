@@ -181,7 +181,8 @@ extension SwiftFeatureRuntime {
                 executableName: "jira-tools-feature",
                 description: "Query and manage Jira issues and projects.",
                 sourceRelativePath: "Sources/Features/JiraTools",
-                tools: bundledJiraToolDescriptors()
+                tools: bundledJiraToolDescriptors(),
+                invocationTimeoutSeconds: 660
             ),
             BundledFeatureDefinition(
                 id: "xcode-tools",

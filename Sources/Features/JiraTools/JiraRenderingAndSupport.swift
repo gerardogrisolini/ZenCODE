@@ -92,7 +92,8 @@ enum JiraToolsError: LocalizedError {
     case invalidConfiguration(String)
     case missingCredentials
     case authenticationFailed(statusCode: Int, message: String)
-    case interactiveAuthenticationUnavailable
+    case browserSetupFailed(String)
+    case browserSetupTimedOut
     case requestFailed(String)
     case issueNotFound(String)
     case keychain(Int32)
@@ -109,8 +110,10 @@ enum JiraToolsError: LocalizedError {
             return "Jira API token was not found. The next interactive Jira tool call will start setup."
         case let .authenticationFailed(statusCode, message):
             return "Jira authentication failed with HTTP \(statusCode). \(message)"
-        case .interactiveAuthenticationUnavailable:
-            return "Jira authentication is required, but no interactive terminal is available for setup. Run a Jira tool from an interactive ZenCODE terminal or run `jira-tools-feature --setup`."
+        case let .browserSetupFailed(message):
+            return message
+        case .browserSetupTimedOut:
+            return "Jira setup timed out waiting for the browser sign-in. Run the Jira tool again to retry."
         case let .requestFailed(message):
             return message
         case let .issueNotFound(issueKey):
