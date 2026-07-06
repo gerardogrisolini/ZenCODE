@@ -75,7 +75,9 @@ enum DS4RuntimeError: LocalizedError {
     }
 }
 
-final class DS4Engine {
+/// `@unchecked Sendable`: `pointer` is only mutated in `init`/`deinit`, and all
+/// engine-touching C calls are serialized by `DS4SharedEngine`.
+final class DS4Engine: @unchecked Sendable {
     private var pointer: OpaquePointer?
     let options: DS4RuntimeOptions
 
@@ -144,7 +146,7 @@ final class DS4Engine {
         guard message.returnCode == 0, let session else {
             throw DS4RuntimeError.sessionFailed(message.error)
         }
-        return DS4Session(pointer: session)
+        return DS4Session(pointer: session, engine: self)
     }
 
     var modelName: String? {
@@ -185,9 +187,14 @@ final class DS4Engine {
 
 final class DS4Session: @unchecked Sendable {
     private var pointer: OpaquePointer?
+    /// Keeps the engine (and the dlopened DS4 library) alive for as long as this
+    /// session exists: the C session references engine memory and library code,
+    /// so the engine must never be closed before every session is freed.
+    private let engine: DS4Engine
 
-    init(pointer: OpaquePointer) {
+    init(pointer: OpaquePointer, engine: DS4Engine) {
         self.pointer = pointer
+        self.engine = engine
     }
 
     deinit {
@@ -228,6 +235,7 @@ final class DS4Session: @unchecked Sendable {
         minP: Float,
         seed: UInt64,
         thinkMode: zencode_ds4_think_mode,
+        shouldContinue: (@Sendable () -> Bool)? = nil,
         onChunk: (@Sendable (String) -> Void)? = nil
     ) throws -> DS4GenerationResult {
         guard let pointer else {
@@ -235,35 +243,44 @@ final class DS4Session: @unchecked Sendable {
         }
 
         let collector = DS4ChunkCollector(onChunk: onChunk)
+        let control = DS4GenerationControl(shouldContinue: shouldContinue)
         var stats = zencode_ds4_generation_stats()
         let userData = Unmanaged.passUnretained(collector).toOpaque()
-        let message = DS4Engine.withErrorBuffer { errorBuffer, errorLength in
-            let generate: (UnsafePointer<CChar>?) -> Int32 = { promptPointer in
-                zencode_ds4_session_generate(
-                    pointer,
-                    promptPointer,
-                    Int32(maxTokens),
-                    temperature,
-                    Int32(topK),
-                    topP,
-                    minP,
-                    seed,
-                    thinkMode,
-                    ds4ChunkCollectorCallback,
-                    userData,
-                    &stats,
-                    errorBuffer,
-                    errorLength
-                )
+        let controlData = Unmanaged.passUnretained(control).toOpaque()
+        let message = withExtendedLifetime(control) {
+            DS4Engine.withErrorBuffer { errorBuffer, errorLength in
+                let generate: (UnsafePointer<CChar>?) -> Int32 = { promptPointer in
+                    zencode_ds4_session_generate(
+                        pointer,
+                        promptPointer,
+                        Int32(maxTokens),
+                        temperature,
+                        Int32(topK),
+                        topP,
+                        minP,
+                        seed,
+                        thinkMode,
+                        ds4ChunkCollectorCallback,
+                        userData,
+                        ds4ShouldContinueCallback,
+                        controlData,
+                        &stats,
+                        errorBuffer,
+                        errorLength
+                    )
+                }
+                guard let prompt else {
+                    return generate(nil)
+                }
+                return prompt.withCString { generate($0) }
             }
-            guard let prompt else {
-                return generate(nil)
-            }
-            return prompt.withCString { generate($0) }
         }
         collector.finish()
         guard message.returnCode == 0 else {
             throw DS4RuntimeError.generationFailed(message.error)
+        }
+        if stats.finish_reason == 4 {
+            throw CancellationError()
         }
         return DS4GenerationResult(
             rawText: String(decoding: collector.data, as: UTF8.self),
@@ -368,6 +385,28 @@ struct DS4UTF8StreamDecoder {
         }
         return String(decoding: pendingBytes, as: UTF8.self)
     }
+}
+
+private final class DS4GenerationControl {
+    private let shouldContinueClosure: (@Sendable () -> Bool)?
+
+    init(shouldContinue: (@Sendable () -> Bool)?) {
+        self.shouldContinueClosure = shouldContinue
+    }
+
+    func shouldContinue() -> Bool {
+        shouldContinueClosure?() ?? true
+    }
+}
+
+private let ds4ShouldContinueCallback: zencode_ds4_should_continue_fn = { userData in
+    guard let userData else {
+        return true
+    }
+    return Unmanaged<DS4GenerationControl>
+        .fromOpaque(userData)
+        .takeUnretainedValue()
+        .shouldContinue()
 }
 
 private let ds4ChunkCollectorCallback: zencode_ds4_emit_fn = { userData, bytes, length in

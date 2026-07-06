@@ -25,6 +25,7 @@ actor DS4CoderBackend: AgentRuntimeBackend {
 
     private let sharedEngine: DS4SharedEngine
     private var sessions: [String: SessionState] = [:]
+    private var activeSessionID: String?
     private var didEmitLoadedModel = false
 
     init(
@@ -73,6 +74,7 @@ actor DS4CoderBackend: AgentRuntimeBackend {
             preserveThinking: preserveThinking,
             ds4Session: nil
         )
+        activeSessionID = id
     }
 
     func createSessionIfNeeded(
@@ -86,6 +88,7 @@ actor DS4CoderBackend: AgentRuntimeBackend {
         preserveThinking: Bool
     ) {
         guard sessions[id] == nil else {
+            activeSessionID = id
             return
         }
         createSession(
@@ -119,14 +122,19 @@ actor DS4CoderBackend: AgentRuntimeBackend {
         session.thinkingSelection = thinkingSelection
         session.preserveThinking = preserveThinking
         sessions[id] = session
+        activeSessionID = id
     }
 
     func closeSession(id: String) async {
         sessions.removeValue(forKey: id)
+        if activeSessionID == id {
+            activeSessionID = nil
+        }
     }
 
     func shutdown() async {
         sessions.removeAll(keepingCapacity: false)
+        activeSessionID = nil
         await toolExecutor.shutdown()
     }
 
@@ -166,8 +174,18 @@ actor DS4CoderBackend: AgentRuntimeBackend {
         return options.modelID
     }
 
+    private func activeSessionForToolDescriptors() -> SessionState? {
+        if let activeSessionID, let session = sessions[activeSessionID] {
+            return session
+        }
+        if sessions.count == 1 {
+            return sessions.values.first
+        }
+        return nil
+    }
+
     func activeToolDescriptors() async -> [DirectToolDescriptor] {
-        guard let session = sessions.values.first else {
+        guard let session = activeSessionForToolDescriptors() else {
             return await toolExecutor.descriptors(allowedToolNames: [])
         }
         return await toolExecutor.descriptors(
@@ -194,9 +212,18 @@ actor DS4CoderBackend: AgentRuntimeBackend {
                 preserveThinking: false
             )
         }
+        activeSessionID = sessionID
         _ = try await preloadModel(onEvent: onEvent)
         guard var session = sessions[sessionID] else {
             throw DS4CoderBackendError.missingSession
+        }
+        // Persist the session state on every exit path (including thrown
+        // errors) so the user prompt and tool results are never lost; skip it
+        // only if the session was closed while this prompt was in flight.
+        defer {
+            if sessions[sessionID] != nil {
+                sessions[sessionID] = session
+            }
         }
         if !attachments.isEmpty {
             await onEvent(.diagnostic("DS4 local mode currently ignores attachments."))
@@ -223,19 +250,28 @@ actor DS4CoderBackend: AgentRuntimeBackend {
                 thinkMode,
                 contextWindow: options.contextWindow
             ).rawValue != ZENCODE_DS4_THINK_NONE.rawValue
-            let result = try await streamGeneration(
-                ds4Session,
-                prompt: nextPrompt,
-                maxTokens: maxTokens,
-                temperature: options.temperature,
-                topK: options.topK,
-                topP: options.topP,
-                minP: options.minP,
-                seed: options.seed,
-                thinkMode: thinkMode,
-                startsInThinking: generationStartsInThinking,
-                onEvent: onEvent
-            )
+            let result: DS4GenerationResult
+            do {
+                result = try await streamGeneration(
+                    ds4Session,
+                    prompt: nextPrompt,
+                    maxTokens: maxTokens,
+                    temperature: options.temperature,
+                    topK: options.topK,
+                    topP: options.topP,
+                    minP: options.minP,
+                    seed: Self.generationSeed(base: options.seed, round: round),
+                    thinkMode: thinkMode,
+                    startsInThinking: generationStartsInThinking,
+                    onEvent: onEvent
+                )
+            } catch {
+                // The C transcript may have rolled back or diverged from the
+                // Swift history; drop it so the next prompt rebuilds the
+                // transcript from the persisted history.
+                session.ds4Session = nil
+                throw error
+            }
             nextPrompt = nil
             lastStopReason = Self.finishReason(from: result.stats.finish_reason)
 
@@ -287,14 +323,12 @@ actor DS4CoderBackend: AgentRuntimeBackend {
                 await sharedEngine.appendMessage(ds4Session, role: "tool", content: toolError)
                 session.history.append(AgentRuntimeMessage(role: .tool, content: toolError))
                 if round == maxToolRounds - 1 {
-                    sessions[sessionID] = session
                     throw DS4CoderBackendError.tooManyToolRounds(maxToolRounds)
                 }
                 continue
             }
 
             guard !toolCalls.isEmpty else {
-                sessions[sessionID] = session
                 return DirectAgentResponse(
                     text: accumulatedVisibleText,
                     stopReason: lastStopReason,
@@ -323,12 +357,10 @@ actor DS4CoderBackend: AgentRuntimeBackend {
             }
 
             if round == maxToolRounds - 1 {
-                sessions[sessionID] = session
                 throw DS4CoderBackendError.tooManyToolRounds(maxToolRounds)
             }
         }
 
-        sessions[sessionID] = session
         return DirectAgentResponse(
             text: accumulatedVisibleText,
             stopReason: lastStopReason,
@@ -532,34 +564,47 @@ actor DS4CoderBackend: AgentRuntimeBackend {
 ///
 /// The engine loads the model weights once; every backend reuses it. All
 /// engine-touching operations (session creation, transcript appends, and
-/// generation) are serialized on this actor so concurrently running sub-agents
-/// never decode on the shared engine at the same time.
+/// generation) are serialized on a dedicated serial queue so concurrently
+/// running sub-agents never decode on the shared engine at the same time, and
+/// the blocking C calls never occupy a Swift Concurrency cooperative thread.
 actor DS4SharedEngine {
     private let options: DS4RuntimeOptions
     private var engine: DS4Engine?
+    private var engineLoadTask: Task<DS4Engine, Error>?
+    /// Serializes every engine-touching C call off the cooperative pool.
+    private let engineQueue = DispatchQueue(label: "zencode.ds4.shared-engine")
 
     init(options: DS4RuntimeOptions) {
         self.options = options
     }
 
-    func loadIfNeeded() throws {
-        _ = try ensureEngine()
+    func loadIfNeeded() async throws {
+        _ = try await ensureEngine()
     }
 
-    func makeSession(contextWindow: Int) throws -> DS4Session {
-        try ensureEngine().createSession(contextWindow: contextWindow)
+    func makeSession(contextWindow: Int) async throws -> DS4Session {
+        let engine = try await ensureEngine()
+        return try await Self.runThrowing(on: engineQueue) {
+            try engine.createSession(contextWindow: contextWindow)
+        }
     }
 
-    func appendMessage(_ session: DS4Session, role: String, content: String) {
-        session.appendMessage(role: role, content: content)
+    func appendMessage(_ session: DS4Session, role: String, content: String) async {
+        await Self.run(on: engineQueue) {
+            session.appendMessage(role: role, content: content)
+        }
     }
 
-    func appendEOS(_ session: DS4Session) {
-        session.appendEOS()
+    func appendEOS(_ session: DS4Session) async {
+        await Self.run(on: engineQueue) {
+            session.appendEOS()
+        }
     }
 
-    func reset(_ session: DS4Session) {
-        session.reset()
+    func reset(_ session: DS4Session) async {
+        await Self.run(on: engineQueue) {
+            session.reset()
+        }
     }
 
     func generate(
@@ -573,33 +618,102 @@ actor DS4SharedEngine {
         seed: UInt64,
         thinkMode: zencode_ds4_think_mode,
         onChunk: (@Sendable (String) -> Void)? = nil
-    ) throws -> DS4GenerationResult {
-        try session.generate(
-            prompt: prompt,
-            maxTokens: maxTokens,
-            temperature: temperature,
-            topK: topK,
-            topP: topP,
-            minP: minP,
-            seed: seed,
-            thinkMode: thinkMode,
-            onChunk: onChunk
-        )
+    ) async throws -> DS4GenerationResult {
+        let cancellationFlag = DS4CancellationFlag()
+        return try await withTaskCancellationHandler {
+            try await Self.runThrowing(on: engineQueue) {
+                try session.generate(
+                    prompt: prompt,
+                    maxTokens: maxTokens,
+                    temperature: temperature,
+                    topK: topK,
+                    topP: topP,
+                    minP: minP,
+                    seed: seed,
+                    thinkMode: thinkMode,
+                    shouldContinue: { !cancellationFlag.isCancelled },
+                    onChunk: onChunk
+                )
+            }
+        } onCancel: {
+            cancellationFlag.cancel()
+        }
     }
 
     func effectiveThinkMode(
         _ thinkMode: zencode_ds4_think_mode,
         contextWindow: Int
-    ) throws -> zencode_ds4_think_mode {
-        try ensureEngine().effectiveThinkMode(thinkMode, contextWindow: contextWindow)
+    ) async throws -> zencode_ds4_think_mode {
+        let engine = try await ensureEngine()
+        return await Self.run(on: engineQueue) {
+            engine.effectiveThinkMode(thinkMode, contextWindow: contextWindow)
+        }
     }
 
-    private func ensureEngine() throws -> DS4Engine {
+    private static func run<T: Sendable>(
+        on queue: DispatchQueue,
+        _ body: @escaping @Sendable () -> T
+    ) async -> T {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                continuation.resume(returning: body())
+            }
+        }
+    }
+
+    private static func runThrowing<T: Sendable>(
+        on queue: DispatchQueue,
+        _ body: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                continuation.resume(with: Result { try body() })
+            }
+        }
+    }
+
+    private func ensureEngine() async throws -> DS4Engine {
         if let engine {
             return engine
         }
-        let opened = try DS4Engine(options: options)
-        engine = opened
-        return opened
+        if let engineLoadTask {
+            return try await engineLoadTask.value
+        }
+
+        let options = options
+        let engineQueue = engineQueue
+        let task = Task<DS4Engine, Error> {
+            try await Self.runThrowing(on: engineQueue) {
+                try DS4Engine(options: options)
+            }
+        }
+        engineLoadTask = task
+
+        do {
+            let opened = try await task.value
+            engine = opened
+            engineLoadTask = nil
+            return opened
+        } catch {
+            engineLoadTask = nil
+            throw error
+        }
+    }
+}
+
+private final class DS4CancellationFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func cancel() {
+        lock.lock()
+        defer { lock.unlock() }
+        cancelled = true
     }
 }

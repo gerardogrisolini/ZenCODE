@@ -2,10 +2,7 @@
 //  SetupConfigurationResolver.swift
 //  ZenCODE
 //
-//  Shared helper for the "configuration file exists but is invalid" branch
-//  used across the interactive setup runners. It loads an existing
-//  configuration value and, when loading fails, asks the operator whether the
-//  file should be overwritten with defaults.
+//  Created by Gerardo Grisolini on 03/06/26.
 //
 
 import Foundation

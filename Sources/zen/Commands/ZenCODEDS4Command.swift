@@ -405,7 +405,7 @@ private struct ZenCODEDS4Options {
             case "--threads", "-t":
                 nThreads = try Self.positiveInt(argument, arguments: arguments, index: &index)
             case "--prefill-chunk":
-                prefillChunk = UInt32(try Self.positiveInt(argument, arguments: arguments, index: &index))
+                prefillChunk = try Self.nonNegativeUInt32(argument, arguments: arguments, index: &index)
             case "--max-output-tokens", "--tokens", "-n":
                 maxOutputTokens = try Self.positiveInt(argument, arguments: arguments, index: &index)
             case "--max-tool-rounds":
@@ -446,9 +446,7 @@ private struct ZenCODEDS4Options {
                 ssdStreamingCacheExperts = parsed.experts
                 ssdStreamingCacheBytes = parsed.bytes
             case "--ssd-streaming-preload-experts":
-                ssdStreamingPreloadExperts = UInt32(
-                    try Self.positiveInt(argument, arguments: arguments, index: &index)
-                )
+                ssdStreamingPreloadExperts = try Self.nonNegativeUInt32(argument, arguments: arguments, index: &index)
             case "--mtp":
                 mtpPath = try Self.requiredValue(after: argument, in: arguments, index: &index)
             case "--mtp-draft-tokens":
@@ -597,6 +595,18 @@ private struct ZenCODEDS4Options {
     ) throws -> Int {
         let value = try requiredValue(after: flag, in: arguments, index: &index)
         guard let parsed = Int(value), parsed >= 0 else {
+            throw ZenCODEDS4Error.invalidArgument(flag, value)
+        }
+        return parsed
+    }
+
+    private static func nonNegativeUInt32(
+        _ flag: String,
+        arguments: [String],
+        index: inout Array<String>.Index
+    ) throws -> UInt32 {
+        let value = try requiredValue(after: flag, in: arguments, index: &index)
+        guard let parsed = UInt32(value) else {
             throw ZenCODEDS4Error.invalidArgument(flag, value)
         }
         return parsed

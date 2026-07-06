@@ -208,6 +208,11 @@ settings_dir="${support_dir}/ds4"
 settings_file="${settings_dir}/settings.json"
 tmp_file="${settings_file}.tmp.$$"
 
+cleanup_tmp_file() {
+  rm -f -- "$tmp_file"
+}
+trap cleanup_tmp_file EXIT
+
 mkdir -p "$settings_dir"
 write_settings
 mv "$tmp_file" "$settings_file"

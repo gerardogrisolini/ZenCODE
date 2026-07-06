@@ -28,6 +28,14 @@ struct DS4SetupScriptTests {
         #expect(!installScript.contains("${SCRIPT_DIR}/setup-ds4.sh"))
         #expect(installScript.contains("${SCRIPT_DIR}/build-ds4-runtime.sh"))
         #expect(installScript.contains("configuration files were left unchanged"))
+
+        let setupScript = try String(
+            contentsOf: packageRoot.appendingPathComponent("Scripts/setup-ds4.sh"),
+            encoding: .utf8
+        )
+        #expect(setupScript.contains("cleanup_tmp_file()"))
+        #expect(setupScript.contains("rm -f -- \"$tmp_file\""))
+        #expect(setupScript.contains("trap cleanup_tmp_file EXIT"))
     }
 
     @Test

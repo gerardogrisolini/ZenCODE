@@ -234,9 +234,18 @@ extension DS4CoderBackend {
             return "error"
         case 3:
             return "tool_calls"
+        case 4:
+            return "cancelled"
         default:
             return "end_turn"
         }
+    }
+
+    static func generationSeed(base seed: UInt64, round: Int) -> UInt64 {
+        guard seed != 0, round > 0 else {
+            return seed
+        }
+        return seed &+ UInt64(round)
     }
 
     static func format(_ value: Float) -> String {

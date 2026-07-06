@@ -1,3 +1,10 @@
+//
+//  PortableToolRuntimeCompatibility.swift
+//  ZenCODE
+//
+//  Created by Gerardo Grisolini on 03/06/26.
+//
+
 import FeatureMCPBridgeKit
 import ToolCore
 

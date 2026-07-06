@@ -62,6 +62,13 @@ typedef struct zencode_ds4_session zencode_ds4_session;
 
 typedef void (*zencode_ds4_emit_fn)(void *user_data, const char *bytes, size_t len);
 
+/*
+ * Cooperative cancellation callback. Checked before prompt processing and
+ * before sampling each token. Return false to stop generation: the call
+ * completes normally with generation_stats.finish_reason == 4 (cancelled).
+ */
+typedef bool (*zencode_ds4_should_continue_fn)(void *user_data);
+
 int zencode_ds4_engine_open(
     const zencode_ds4_engine_options *options,
     zencode_ds4_engine **out,
@@ -107,6 +114,8 @@ int zencode_ds4_session_generate(
     zencode_ds4_think_mode think_mode,
     zencode_ds4_emit_fn emit,
     void *emit_user_data,
+    zencode_ds4_should_continue_fn should_continue,
+    void *should_continue_user_data,
     zencode_ds4_generation_stats *stats,
     char *error,
     size_t error_len

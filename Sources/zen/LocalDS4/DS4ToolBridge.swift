@@ -352,7 +352,8 @@ enum DS4ToolBridge {
         let rawValue = String(text[valueStart..<valueEnd])
         let parsedValue = parseParameterValue(
             rawValue,
-            isString: (attribute("string", in: parameterTag) ?? "true") == "true"
+            isString: (attribute("string", in: parameterTag) ?? "true") == "true",
+            syntax: syntax
         )
         return (
             name: parameterName,
@@ -364,10 +365,11 @@ enum DS4ToolBridge {
 
     private static func parseParameterValue(
         _ rawValue: String,
-        isString: Bool
+        isString: Bool,
+        syntax: Syntax
     ) -> (json: String, value: AnyHashable) {
         if isString {
-            let value = dsmlUnescaped(rawValue)
+            let value = dsmlParameterTextUnescaped(rawValue, syntax: syntax)
             return (jsonString(value), AnyHashable(value))
         }
         let minified = minifiedJSONFragment(rawValue) ?? "null"
@@ -409,6 +411,16 @@ enum DS4ToolBridge {
             of: "</｜DSML｜parameter>",
             with: "&lt;/｜DSML｜parameter>"
         )
+    }
+
+    /// String parameter values are raw text: the model is instructed to keep
+    /// every character intact and only escape the closing parameter tag, so
+    /// only that escape is reversed here. Reversing generic XML entities would
+    /// silently corrupt legitimate values containing `&amp;`, `&lt;`, etc.
+    private static func dsmlParameterTextUnescaped(_ value: String, syntax: Syntax) -> String {
+        let closingTag = syntax.parameterEnd
+        let escapedClosingTag = "&lt;" + closingTag.dropFirst()
+        return value.replacingOccurrences(of: escapedClosingTag, with: closingTag)
     }
 
     private static func dsmlJSONLiteralEscaped(_ value: String) -> String {

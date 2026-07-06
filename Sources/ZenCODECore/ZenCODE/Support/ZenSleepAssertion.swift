@@ -1,8 +1,8 @@
 //
-//  ZenCODESleepAssertion.swift
+//  ZenSleepAssertion.swift
 //  ZenCODE
 //
-//  Keeps macOS from entering idle system sleep while an ZenCODE session is active.
+//  Created by Gerardo Grisolini on 03/06/26.
 //
 
 import Foundation

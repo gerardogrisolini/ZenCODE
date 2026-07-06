@@ -98,17 +98,34 @@ struct DS4ToolBridgeTests {
     }
 
     @Test
-    func unescapesEntitiesInStringParameters() {
+    func preservesRawStringParameterCharacters() {
+        // String parameter values are raw text: entity-like sequences must be
+        // preserved exactly so file contents containing `&amp;`/`&gt;` are not
+        // silently corrupted.
         let text = """
         <｜DSML｜tool_calls>
         <｜DSML｜invoke name="run">
-        <｜DSML｜parameter name="cmd" string="true">a &amp;&amp; b &gt; c</｜DSML｜parameter>
+        <｜DSML｜parameter name="cmd" string="true">a && b &gt; c &amp; d</｜DSML｜parameter>
         </｜DSML｜invoke>
         </｜DSML｜tool_calls>
         """
         let parsed = DS4ToolBridge.parseGeneratedMessage(text, requireThinkingClosed: false)
         #expect(parsed.parseError == nil)
-        #expect(parsed.toolCalls[0].argumentsObject["cmd"] == AnyHashable("a && b > c"))
+        #expect(parsed.toolCalls[0].argumentsObject["cmd"] == AnyHashable("a && b &gt; c &amp; d"))
+    }
+
+    @Test
+    func unescapesOnlyEscapedClosingParameterTagInStringParameters() {
+        let text = """
+        <｜DSML｜tool_calls>
+        <｜DSML｜invoke name="write">
+        <｜DSML｜parameter name="content" string="true">tag: &lt;/｜DSML｜parameter> done</｜DSML｜parameter>
+        </｜DSML｜invoke>
+        </｜DSML｜tool_calls>
+        """
+        let parsed = DS4ToolBridge.parseGeneratedMessage(text, requireThinkingClosed: false)
+        #expect(parsed.parseError == nil)
+        #expect(parsed.toolCalls[0].argumentsObject["content"] == AnyHashable("tag: </｜DSML｜parameter> done"))
     }
 
     @Test

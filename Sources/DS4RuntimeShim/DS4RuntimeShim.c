@@ -449,6 +449,8 @@ int zencode_ds4_session_generate(
     zencode_ds4_think_mode think_mode,
     zencode_ds4_emit_fn emit,
     void *emit_user_data,
+    zencode_ds4_should_continue_fn should_continue,
+    void *should_continue_user_data,
     zencode_ds4_generation_stats *stats,
     char *error,
     size_t error_len
@@ -476,6 +478,10 @@ int zencode_ds4_session_generate(
         stats->effective_think_mode = (int)effective_think_mode;
     }
     int rollback_len = session->transcript.len;
+    if (should_continue && !should_continue(should_continue_user_data)) {
+        if (stats) stats->finish_reason = 4;
+        return 0;
+    }
     if (prompt && prompt[0]) {
         sym->chat_append_message(session->owner->engine, &session->transcript, "user", prompt);
     }
@@ -505,21 +511,26 @@ int zencode_ds4_session_generate(
         return 1;
     }
 
+    int finish_reason = 0;
     int room = sym->session_ctx(session->session) - sym->session_pos(session->session);
     if (room <= 1) {
         max_tokens = 0;
+        finish_reason = 1;
     } else if (max_tokens > room - 1) {
         max_tokens = room - 1;
     }
 
     uint64_t rng = seed ? seed : default_seed();
     int generated = 0;
-    int finish_reason = 0;
     int eos = sym->token_eos(session->owner->engine);
     char tool_stop_tail[96] = {0};
     size_t tool_stop_tail_len = 0;
     double generation_start = monotonic_seconds();
     while (generated < max_tokens) {
+        if (should_continue && !should_continue(should_continue_user_data)) {
+            finish_reason = 4;
+            break;
+        }
         int token = sym->session_sample(session->session, temperature, top_k, top_p, min_p, &rng);
         if (token == eos) {
             finish_reason = 0;
@@ -551,7 +562,7 @@ int zencode_ds4_session_generate(
         free(text);
         generated++;
     }
-    if (generated >= max_tokens && max_tokens > 0) {
+    if (finish_reason == 0 && generated >= max_tokens && max_tokens > 0) {
         finish_reason = 1;
     }
     sym->tokens_push(&session->transcript, eos);
