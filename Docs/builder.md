@@ -12,7 +12,6 @@ Builder can:
 - prepare existing generated packages for editing;
 - prepare local editable copies of bundled feature packages;
 - enable, disable, reload, or delete feature packages;
-- configure bundled feature packages such as Jira;
 - expose generated and bundled feature packages to normal sessions through the
   same tool-selection flow used by `/tools`.
 
@@ -212,14 +211,17 @@ Core tools are the intrinsic tool groups exposed through `/tools`, such as shell
 file/text tools, memory, and sub-agents. They are not feature packages and do not
 appear in `/feature list`.
 
-Some bundled integrations need extra configuration. For Jira, run:
+Some bundled integrations need extra configuration. Jira owns its setup inside
+the Jira feature package: the first interactive `jira.search` or `jira.read` call
+starts setup automatically when no valid stored token is available, validates the
+credentials, and stores the token for later calls.
 
 ```text
-/feature enable jira-tools
+jira.search
 ```
 
-That command runs the Jira configuration flow when needed. `/feature list` only
-toggles package state and does not run interactive configuration prompts.
+`/feature enable jira-tools` and `/feature list` only toggle package state; they
+do not run Jira authentication prompts.
 
 After configuring and enabling a bundled package, run `/tools` if you want to
 expose it to the current session.
@@ -414,4 +416,5 @@ Optional fields:
 - A generated feature is listed but unavailable: run `/feature build <id|name|#>`
   and then `/feature validate <id|name|#>`.
 - Runtime-discovered tools are missing after a rebuild: run `/feature reload`.
-- Jira says it is not configured: run `/feature enable jira-tools`.
+- Jira says authentication is required: call `jira.search` or `jira.read` from an
+  interactive ZenCODE terminal so the Jira feature package can start setup.

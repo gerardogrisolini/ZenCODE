@@ -86,11 +86,6 @@ extension TerminalChat {
             guard let id = await resolveFeatureIDOrReport(action: action, rawID: tokens.first) else {
                 return .none
             }
-            if action == "enable",
-               id == Self.jiraFeatureID,
-               !(await runJiraFeatureSetupBeforeEnable()) {
-                return .none
-            }
             let didSucceed: Bool
             switch action {
             case "enable", "disable":
@@ -215,58 +210,6 @@ extension TerminalChat {
             selectedToolKeys.remove(TerminalToolSelectionCatalog.featurePackageKey(id: id))
         }
         return true
-    }
-
-    private func runJiraFeatureSetupBeforeEnable() async -> Bool {
-        guard stdinIsTerminal else {
-            writeFailureMessage("ZenCODE: Jira setup requires an interactive terminal.\n")
-            return false
-        }
-
-        let statuses = await featureRuntime.featureStatuses(
-            includeTools: false,
-            includeDisabled: true
-        )
-        guard let status = statuses.first(where: { $0.id == Self.jiraFeatureID }) else {
-            writeFailureMessage("ZenCODE: Jira feature is not available in this build.\n")
-            return false
-        }
-        guard status.available else {
-            writeFailureMessage("ZenCODE: Jira feature executable was not found at \(status.executablePath).\n")
-            return false
-        }
-
-        do {
-            let exitCode = try runInteractiveFeatureSetupProcess(
-                executablePath: status.executablePath,
-                arguments: ["--setup"]
-            )
-            guard exitCode == 0 else {
-                writeFailureMessage("ZenCODE: Jira setup did not complete.\n")
-                return false
-            }
-            return true
-        } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            return false
-        }
-    }
-
-    private func runInteractiveFeatureSetupProcess(
-        executablePath: String,
-        arguments: [String]
-    ) throws -> Int32 {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executablePath)
-        process.arguments = arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        process.environment = ProcessInfo.processInfo.environment
-        process.standardInput = FileHandle.standardInput
-        process.standardOutput = FileHandle.standardOutput
-        process.standardError = FileHandle.standardError
-        try process.run()
-        process.waitUntilExit()
-        return process.terminationStatus
     }
 
     private func resolvedFeatureID(_ rawValue: String) async throws -> String {

@@ -132,9 +132,16 @@ actor JiraRESTService {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw JiraToolsError.requestFailed("Invalid Jira response.")
         }
+        let responseText = responseMessage(from: data)
+        if httpResponse.statusCode == 401 {
+            throw JiraToolsError.authenticationFailed(
+                statusCode: httpResponse.statusCode,
+                message: responseText
+            )
+        }
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw JiraToolsError.requestFailed(
-                "Jira request failed with HTTP \(httpResponse.statusCode). \(responseMessage(from: data))"
+                "Jira request failed with HTTP \(httpResponse.statusCode). \(responseText)"
             )
         }
 
@@ -161,5 +168,60 @@ actor JiraRESTService {
             }
         }
         return String(decoding: data.prefix(400), as: UTF8.self)
+    }
+}
+
+enum JiraAuthenticatedService {
+    static func run<T>(
+        _ operation: (JiraRESTService) async throws -> T
+    ) async throws -> T {
+        let resolved = try await configuredService()
+        do {
+            return try await operation(resolved.service)
+        } catch let error as JiraToolsError {
+            guard !resolved.didAuthenticate,
+                  let reason = error.authenticationReason else {
+                throw error
+            }
+            let service = try await JiraSetupRunner.authenticateFromTool(reason: reason)
+            return try await operation(service)
+        }
+    }
+
+    private static func configuredService() async throws -> ServiceResolution {
+        do {
+            return ServiceResolution(
+                service: try JiraRESTService.loadConfigured(),
+                didAuthenticate: false
+            )
+        } catch let error as JiraToolsError {
+            guard let reason = error.authenticationReason else {
+                throw error
+            }
+            return ServiceResolution(
+                service: try await JiraSetupRunner.authenticateFromTool(reason: reason),
+                didAuthenticate: true
+            )
+        }
+    }
+
+    private struct ServiceResolution: Sendable {
+        let service: JiraRESTService
+        let didAuthenticate: Bool
+    }
+}
+
+extension JiraToolsError {
+    var authenticationReason: JiraAuthenticationReason? {
+        switch self {
+        case .notConfigured:
+            return .missingConfiguration
+        case .missingCredentials:
+            return .missingCredentials
+        case .authenticationFailed:
+            return .invalidCredentials
+        default:
+            return nil
+        }
     }
 }

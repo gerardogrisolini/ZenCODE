@@ -32,8 +32,9 @@ struct JiraSearchTool: FeatureTool {
             throw JiraToolsError.missingArgument("query")
         }
 
-        let service = try JiraRESTService.loadConfigured()
-        let issues = try await service.searchIssues(matching: query)
+        let issues = try await JiraAuthenticatedService.run { service in
+            try await service.searchIssues(matching: query)
+        }
         guard !issues.isEmpty else {
             return "Jira search: \(query)\nNo issues found."
         }
@@ -69,8 +70,9 @@ struct JiraReadTool: FeatureTool {
             throw JiraToolsError.missingArgument("issueKey")
         }
 
-        let service = try JiraRESTService.loadConfigured()
-        let issue = try await service.loadIssue(matching: query)
+        let issue = try await JiraAuthenticatedService.run { service in
+            try await service.loadIssue(matching: query)
+        }
         return JiraToolRenderer.renderTaskContext(
             issue,
             includeRaw: input.includeRaw ?? input.include_raw ?? false
@@ -89,7 +91,7 @@ struct JiraSignOutTool: FeatureTool {
     func run(_: Input, context _: FeatureContext) async throws -> String {
         let configuration = try JiraConfigurationStore.load()
         try JiraCredentialStore.remove(account: configuration.credentialAccount)
-        return "Jira credentials cleared. Run `/feature enable jira-tools` to configure Jira again."
+        return "Jira credentials cleared. The next Jira tool call will start setup again."
     }
 }
 

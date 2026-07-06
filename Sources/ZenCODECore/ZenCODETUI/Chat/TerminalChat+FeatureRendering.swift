@@ -208,8 +208,6 @@ extension TerminalChat {
         }
     }
 
-    static let jiraFeatureID = "jira-tools"
-
     static func renderFeatureScaffoldReport(
         _ report: SwiftFeatureScaffoldReport
     ) -> String {

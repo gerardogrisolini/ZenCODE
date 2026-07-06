@@ -14,43 +14,7 @@ import ToolCore
 enum JiraSetupRunner {
     static func run() async -> Int32 {
         do {
-            writeLine("Jira setup")
-            writeLine("Configure a Jira Cloud site for ZenCODE.")
-            writeLine("")
-
-            let currentConfiguration = try? JiraConfigurationStore.load()
-            let sitePromptDefault = currentConfiguration?.siteURLString
-            guard let rawSiteURL = promptLine(
-                "Jira site URL",
-                defaultValue: sitePromptDefault,
-                required: true
-            ) else {
-                throw JiraToolsError.invalidConfiguration("Jira site URL is required.")
-            }
-
-            let siteURL = try JiraStoredConfiguration.normalizedSiteURL(from: rawSiteURL)
-            guard let email = promptLine(
-                "Atlassian email",
-                defaultValue: currentConfiguration?.email,
-                required: true
-            ) else {
-                throw JiraToolsError.invalidConfiguration("Atlassian email is required.")
-            }
-            guard let apiToken = promptSecretLine("Atlassian API token", required: true) else {
-                throw JiraToolsError.invalidConfiguration("Atlassian API token is required.")
-            }
-
-            let configuration = JiraStoredConfiguration(
-                siteURLString: siteURL.absoluteString,
-                email: email
-            )
-            let service = JiraRESTService(configuration: configuration, apiToken: apiToken)
-            let accountName = try await service.validateCredentials()
-            try JiraConfigurationStore.save(configuration)
-            try JiraCredentialStore.save(apiToken, account: configuration.credentialAccount)
-
-            writeLine("")
-            writeLine("Jira connected: \(siteURL.host ?? siteURL.absoluteString) as \(accountName).")
+            _ = try await authenticate(reason: .manual, console: .standard)
             return 0
         } catch {
             writeLine("", stderr: true)
@@ -59,7 +23,116 @@ enum JiraSetupRunner {
         }
     }
 
-    private static func promptLine(
+    static func authenticateFromTool(reason: JiraAuthenticationReason) async throws -> JiraRESTService {
+        let console = try JiraSetupConsole.terminal()
+        let result = try await authenticate(reason: reason, console: console)
+        return JiraRESTService(configuration: result.configuration, apiToken: result.apiToken)
+    }
+
+    private static func authenticate(
+        reason: JiraAuthenticationReason,
+        console: JiraSetupConsole
+    ) async throws -> JiraAuthenticatedConfiguration {
+        console.writeLine("Jira setup")
+        console.writeLine(reason.message)
+        console.writeLine("")
+
+        let currentConfiguration = try? JiraConfigurationStore.load()
+        let sitePromptDefault = currentConfiguration?.siteURLString
+        guard let rawSiteURL = console.promptLine(
+            "Jira site URL",
+            defaultValue: sitePromptDefault,
+            required: true
+        ) else {
+            throw JiraToolsError.invalidConfiguration("Jira site URL is required.")
+        }
+
+        let siteURL = try JiraStoredConfiguration.normalizedSiteURL(from: rawSiteURL)
+        guard let email = console.promptLine(
+            "Atlassian email",
+            defaultValue: currentConfiguration?.email,
+            required: true
+        ) else {
+            throw JiraToolsError.invalidConfiguration("Atlassian email is required.")
+        }
+        guard let apiToken = console.promptSecretLine("Atlassian API token", required: true) else {
+            throw JiraToolsError.invalidConfiguration("Atlassian API token is required.")
+        }
+
+        let configuration = JiraStoredConfiguration(
+            siteURLString: siteURL.absoluteString,
+            email: email
+        )
+        let service = JiraRESTService(configuration: configuration, apiToken: apiToken)
+        let accountName = try await service.validateCredentials()
+        try JiraConfigurationStore.save(configuration)
+        try JiraCredentialStore.save(apiToken, account: configuration.credentialAccount)
+
+        console.writeLine("")
+        console.writeLine("Jira connected: \(siteURL.host ?? siteURL.absoluteString) as \(accountName).")
+        return JiraAuthenticatedConfiguration(configuration: configuration, apiToken: apiToken)
+    }
+}
+
+enum JiraAuthenticationReason {
+    case manual
+    case missingConfiguration
+    case missingCredentials
+    case invalidCredentials
+
+    var message: String {
+        switch self {
+        case .manual:
+            return "Configure a Jira Cloud site for ZenCODE."
+        case .missingConfiguration:
+            return "No Jira configuration was found. Configure a Jira Cloud site to continue."
+        case .missingCredentials:
+            return "No Jira API token was found. Enter a token to continue."
+        case .invalidCredentials:
+            return "The stored Jira API token is not valid. Enter a new token to continue."
+        }
+    }
+}
+
+private struct JiraAuthenticatedConfiguration {
+    let configuration: JiraStoredConfiguration
+    let apiToken: String
+}
+
+private struct JiraSetupConsole: @unchecked Sendable {
+    let input: FileHandle
+    let output: FileHandle
+    let terminalFileDescriptor: Int32?
+
+    static var standard: JiraSetupConsole {
+        JiraSetupConsole(
+            input: .standardInput,
+            output: .standardOutput,
+            terminalFileDescriptor: STDIN_FILENO
+        )
+    }
+
+    static func terminal() throws -> JiraSetupConsole {
+        #if os(macOS) || os(Linux)
+        let fileDescriptor = open("/dev/tty", O_RDWR)
+        guard fileDescriptor >= 0, isatty(fileDescriptor) == 1 else {
+            if fileDescriptor >= 0 {
+                close(fileDescriptor)
+            }
+            throw JiraToolsError.interactiveAuthenticationUnavailable
+        }
+        let terminal = FileHandle(fileDescriptor: fileDescriptor, closeOnDealloc: true)
+        return JiraSetupConsole(
+            input: terminal,
+            output: terminal,
+            terminalFileDescriptor: fileDescriptor
+        )
+        #else
+        throw JiraToolsError.interactiveAuthenticationUnavailable
+        #endif
+    }
+
+    func promptLine(
         _ label: String,
         defaultValue: String? = nil,
         required: Bool = false
@@ -79,30 +152,31 @@ enum JiraSetupRunner {
         }
     }
 
-    private static func promptSecretLine(
+    func promptSecretLine(
         _ label: String,
         required: Bool = false
     ) -> String? {
-        #if os(macOS)
-        guard isatty(STDIN_FILENO) == 1 else {
+        #if os(macOS) || os(Linux)
+        guard let terminalFileDescriptor,
+              isatty(terminalFileDescriptor) == 1 else {
             return promptLine(label, required: required)
         }
 
         while true {
             write("\(label): ")
             var originalAttributes = termios()
-            guard tcgetattr(STDIN_FILENO, &originalAttributes) == 0 else {
+            guard tcgetattr(terminalFileDescriptor, &originalAttributes) == 0 else {
                 return promptLine(label, required: required)
             }
 
             var hiddenAttributes = originalAttributes
             hiddenAttributes.c_lflag &= ~tcflag_t(ECHO)
-            guard tcsetattr(STDIN_FILENO, TCSANOW, &hiddenAttributes) == 0 else {
+            guard tcsetattr(terminalFileDescriptor, TCSANOW, &hiddenAttributes) == 0 else {
                 return promptLine(label, required: required)
             }
             let value = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines)
             var restoreAttributes = originalAttributes
-            _ = tcsetattr(STDIN_FILENO, TCSANOW, &restoreAttributes)
+            _ = tcsetattr(terminalFileDescriptor, TCSANOW, &restoreAttributes)
             writeLine("")
 
             if let value = value?.trimmedNonEmpty {
@@ -116,6 +190,28 @@ enum JiraSetupRunner {
         #else
         return promptLine(label, required: required)
         #endif
+    }
+
+    func write(_ string: String) {
+        output.write(Data(string.utf8))
+    }
+
+    func writeLine(_ string: String) {
+        write(string + "\n")
+    }
+
+    func readLine() -> String? {
+        var data = Data()
+        while true {
+            let chunk = input.readData(ofLength: 1)
+            guard let byte = chunk.first else {
+                return data.isEmpty ? nil : String(data: data, encoding: .utf8)
+            }
+            if byte == UInt8(ascii: "\n") || byte == UInt8(ascii: "\r") {
+                return String(data: data, encoding: .utf8)
+            }
+            data.append(byte)
+        }
     }
 }
 
