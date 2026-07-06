@@ -12,15 +12,9 @@ import Testing
 extension AgentConfigurationTests {
     @Test
     func featureCommandWarnsWhenBuilderIsNotActive() {
-        #expect(TerminalChat.featureCommandRequiresActiveBuilder(rawArguments: ""))
-        #expect(TerminalChat.featureCommandRequiresActiveBuilder(rawArguments: "reload"))
-        #expect(TerminalChat.featureCommandRequiresActiveBuilder(rawArguments: "enable git"))
-        #expect(TerminalChat.featureCommandRequiresActiveBuilder(rawArguments: "delete test1"))
-        #expect(TerminalChat.featureCommandRequiresActiveBuilder(rawArguments: "list"))
-        #expect(TerminalChat.featureCommandRequiresActiveBuilder(rawArguments: "status"))
         #expect(!TerminalChat.renderFeatureCommandUsage().contains("adopt"))
-        #expect(TerminalChat.renderFeatureBuilderInactiveWarning().contains("Builder agent"))
-        #expect(!TerminalChat.renderFeatureBuilderInactiveWarning().contains("/tools"))
+        #expect(TerminalChat.renderFeatureCommandUnavailableForAgent().contains("Builder agent"))
+        #expect(!TerminalChat.renderFeatureCommandUnavailableForAgent().contains("/tools"))
     }
 
     @Test

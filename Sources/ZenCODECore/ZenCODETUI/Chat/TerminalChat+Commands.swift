@@ -225,7 +225,7 @@ extension TerminalChat {
         TerminalChatCommandDescriptor(
             command: "/feature",
             summary: "list/manage features",
-            help: "/feature list selects enabled feature packages. /feature status prints known feature packages. Builder-only management remains under /feature.",
+            help: "/feature creates and manages Swift feature packages (Builder agent only). /feature list opens the enable/disable menu, /feature status prints known feature packages.",
             availability: .builderAgent
         ),
         TerminalChatCommandDescriptor(

@@ -135,7 +135,7 @@ extension TerminalChat {
         let knownMCPDescriptors = await sessionRunner.knownMCPToolDescriptors(
             preferredWorkspaceRootURL: configuration.workingDirectory
         )
-        let featureStatuses = await SwiftFeatureRuntime().featureStatuses(
+        let featureStatuses = await featureRuntime.featureStatuses(
             includeTools: true,
             includeDisabled: true
         )

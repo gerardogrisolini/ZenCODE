@@ -10,10 +10,6 @@ extension TerminalChat {
         "Usage: /feature [list|status|reload|enable <id|name|#>|disable <id|name|#>|edit <id|name|#> [requirements]|delete <id|name|#>|build <id|name|#>|validate <id|name|#>]\n"
     }
 
-    public static func renderFeatureBuilderInactiveWarning() -> String {
-        renderFeatureCommandUnavailableForAgent()
-    }
-
     public static func renderFeatureCommandUnavailableForAgent() -> String {
         "ZenCODE: /feature is only available with the Builder agent. Switch with /agents Builder.\n"
     }
@@ -156,12 +152,7 @@ extension TerminalChat {
         switch name {
         case "feature.scaffold":
             if let report = decodeFeatureOutput(SwiftFeatureScaffoldReport.self, from: trimmedOutput) {
-                return """
-                Created Swift feature '\(report.id)'.
-                  Source: \(report.directoryPath)
-                  Tool: \(report.toolName)
-
-                """
+                return renderFeatureScaffoldReport(report)
             }
         case "feature.validate":
             if let report = decodeFeatureOutput(SwiftFeatureValidationReport.self, from: trimmedOutput) {
@@ -202,6 +193,8 @@ extension TerminalChat {
         switch name {
         case "feature.validate":
             return decodeFeatureOutput(SwiftFeatureValidationReport.self, from: trimmedOutput)?.ok ?? true
+        case "feature.scaffold":
+            return decodeFeatureOutput(SwiftFeatureScaffoldReport.self, from: trimmedOutput)?.ok ?? true
         case "feature.build":
             return decodeFeatureOutput(SwiftFeatureBuildReport.self, from: trimmedOutput)?.ok ?? true
         case "feature.install":
@@ -215,11 +208,33 @@ extension TerminalChat {
         }
     }
 
-    public static func featureCommandRequiresActiveBuilder(rawArguments _: String) -> Bool {
-        true
-    }
-
     static let jiraFeatureID = "jira-tools"
+
+    static func renderFeatureScaffoldReport(
+        _ report: SwiftFeatureScaffoldReport
+    ) -> String {
+        var lines = [
+            "Created Swift feature '\(report.id)'.",
+            "  Source: \(report.directoryPath)",
+            "  Tool: \(report.toolName)"
+        ]
+        if let validation = report.validation, !validation.ok {
+            lines.append("  Validation failed.")
+            lines.append(contentsOf: validation.errors.map { "  Error: \($0)" })
+        }
+        if let build = report.build {
+            if build.ok {
+                lines.append("  Executable: \(build.executablePath)")
+            } else {
+                lines.append("  Build failed (exit code \(build.exitCode)).")
+                let error = build.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !error.isEmpty {
+                    lines.append("  \(truncatedInline(error, limit: 180))")
+                }
+            }
+        }
+        return lines.joined(separator: "\n") + "\n\n"
+    }
 
     static func renderFeatureValidationReport(
         _ report: SwiftFeatureValidationReport
@@ -391,7 +406,7 @@ extension TerminalChat {
                 "  \(offset + 1). \(featureDisplayName(status)) [\(status.id)] - \(state)\(availability), \(source)\(tools)\n"
             )
         }
-        lines.append("\nRun /feature list to open the enable/disable menu. Builder-only management remains under /feature.\n")
+        lines.append("\nRun /feature list to open the enable/disable menu.\n")
         return lines.joined()
     }
 

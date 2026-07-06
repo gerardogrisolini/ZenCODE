@@ -18,12 +18,6 @@ extension TerminalChat {
         let rawArguments = String(command.dropFirst("/feature".count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if Self.featureCommandRequiresActiveBuilder(rawArguments: rawArguments),
-           !(await featureBuilderIsActive()) {
-            writeFailureMessage(Self.renderFeatureBuilderInactiveWarning())
-            return .none
-        }
-
         if rawArguments.isEmpty {
             guard stdinIsTerminal else {
                 await runFeatureManagementTool(
@@ -59,16 +53,7 @@ extension TerminalChat {
             await printFeatureList()
             return .none
         case "edit", "modify", "update":
-            guard let rawID = tokens.first?.nilIfBlank else {
-                writeFailureMessage("ZenCODE: /feature \(action) requires a feature id, name, or list number.\n")
-                writeSystemMessage(Self.renderFeatureCommandUsage())
-                return .none
-            }
-            let id: String
-            do {
-                id = try await resolvedFeatureID(rawID)
-            } catch {
-                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            guard let id = await resolveFeatureIDOrReport(action: action, rawID: tokens.first) else {
                 return .none
             }
             let requirements = tokens.dropFirst().joined(separator: " ").nilIfBlank
@@ -83,31 +68,22 @@ extension TerminalChat {
                 SwiftFeatureEditReport.self,
                 from: output.trimmingCharacters(in: .whitespacesAndNewlines)
             ) else {
+                writeFailureMessage("ZenCODE: could not decode the feature.edit report.\n")
                 return .none
             }
             if report.adopt != nil {
                 await updateCurrentSessionToolOptions(discoverExternalTools: false)
                 await printFeatureList()
             }
-            let prompt = Self.featureModificationPrompt(
-                report: report,
+            return Self.featurePromptResult(
+                Self.featureModificationPrompt(
+                    report: report,
+                    requirements: requirements
+                ),
                 requirements: requirements
             )
-            if requirements != nil {
-                return .runPrompt(prompt)
-            }
-            return .prefillPrompt(prompt)
         case "enable", "disable", "delete", "build", "validate":
-            guard let rawID = tokens.first?.nilIfBlank else {
-                writeFailureMessage("ZenCODE: /feature \(action) requires a feature id, name, or list number.\n")
-                writeSystemMessage(Self.renderFeatureCommandUsage())
-                return .none
-            }
-            let id: String
-            do {
-                id = try await resolvedFeatureID(rawID)
-            } catch {
-                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            guard let id = await resolveFeatureIDOrReport(action: action, rawID: tokens.first) else {
                 return .none
             }
             if action == "enable",
@@ -115,16 +91,20 @@ extension TerminalChat {
                !(await runJiraFeatureSetupBeforeEnable()) {
                 return .none
             }
-            let toolName = "feature.\(action)"
-            let didSucceed = await runFeatureManagementTool(
-                name: toolName,
-                arguments: ["id": id]
-            )
-            if didSucceed, action == "delete" {
-                selectedToolKeys.remove(TerminalToolSelectionCatalog.featurePackageKey(id: id))
+            let didSucceed: Bool
+            switch action {
+            case "enable", "disable":
+                didSucceed = await setFeatureEnabled(id: id, enabled: action == "enable")
+            default:
+                didSucceed = await runFeatureManagementTool(
+                    name: "feature.\(action)",
+                    arguments: ["id": id]
+                )
+                if didSucceed, action == "delete" {
+                    selectedToolKeys.remove(TerminalToolSelectionCatalog.featurePackageKey(id: id))
+                }
             }
-            if didSucceed,
-               action == "enable" || action == "disable" || action == "delete" || action == "build" {
+            if didSucceed, action != "validate" {
                 await updateCurrentSessionToolOptions(discoverExternalTools: false)
                 await printFeatureList()
             }
@@ -136,12 +116,32 @@ extension TerminalChat {
         }
     }
 
-    private func featureBuilderIsActive() async -> Bool {
-        AgentProfileStore.isBuilderAgent(selectedAgent)
+    static func featurePromptResult(
+        _ prompt: String,
+        requirements: String?
+    ) -> TerminalFeatureCommandResult {
+        requirements != nil ? .runPrompt(prompt) : .prefillPrompt(prompt)
+    }
+
+    private func resolveFeatureIDOrReport(
+        action: String,
+        rawID: String?
+    ) async -> String? {
+        guard let rawID = rawID?.nilIfBlank else {
+            writeFailureMessage("ZenCODE: /feature \(action) requires a feature id, name, or list number.\n")
+            writeSystemMessage(Self.renderFeatureCommandUsage())
+            return nil
+        }
+        do {
+            return try await resolvedFeatureID(rawID)
+        } catch {
+            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            return nil
+        }
     }
 
     private func printFeatureList() async {
-        let statuses = await SwiftFeatureRuntime().featureStatuses(
+        let statuses = await featureRuntime.featureStatuses(
             includeTools: true,
             includeDisabled: true
         )
@@ -154,7 +154,7 @@ extension TerminalChat {
             return
         }
 
-        let statuses = await SwiftFeatureRuntime().featureStatuses(
+        let statuses = await featureRuntime.featureStatuses(
             includeTools: true,
             includeDisabled: true
         )
@@ -223,7 +223,7 @@ extension TerminalChat {
             return false
         }
 
-        let statuses = await SwiftFeatureRuntime().featureStatuses(
+        let statuses = await featureRuntime.featureStatuses(
             includeTools: false,
             includeDisabled: true
         )
@@ -270,7 +270,7 @@ extension TerminalChat {
     }
 
     private func resolvedFeatureID(_ rawValue: String) async throws -> String {
-        let statuses = await SwiftFeatureRuntime().featureStatuses(
+        let statuses = await featureRuntime.featureStatuses(
             includeTools: false,
             includeDisabled: true
         )

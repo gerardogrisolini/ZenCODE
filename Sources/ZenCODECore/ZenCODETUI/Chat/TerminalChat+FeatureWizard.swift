@@ -24,29 +24,25 @@ extension TerminalChat {
             selected: .mcpBridge,
             reservedBottomRows: statusBar.reservedRowsForOverlay()
         ) else {
-            writeSystemMessage("Feature creation cancelled.\n")
-            return .none
+            return cancelledFeatureWizard()
         }
 
         guard let id = promptFeatureLine("Feature id", required: true) else {
-            writeSystemMessage("Feature creation cancelled.\n")
-            return .none
+            return cancelledFeatureWizard()
         }
         let defaultDisplayName = Self.featureWizardDisplayName(from: id)
         guard let displayName = promptFeatureLine(
             "Display name",
             defaultValue: defaultDisplayName
         ) else {
-            writeSystemMessage("Feature creation cancelled.\n")
-            return .none
+            return cancelledFeatureWizard()
         }
         let description = promptFeatureLine(
             "Description",
             defaultValue: template.defaultDescription(displayName: displayName)
         )
         guard let description else {
-            writeSystemMessage("Feature creation cancelled.\n")
-            return .none
+            return cancelledFeatureWizard()
         }
 
         var arguments: [String: Any] = [
@@ -62,8 +58,7 @@ extension TerminalChat {
                 "Tool name",
                 defaultValue: defaultToolName
             ) else {
-                writeSystemMessage("Feature creation cancelled.\n")
-                return .none
+                return cancelledFeatureWizard()
             }
             arguments["toolName"] = toolName
         case .mcpBridge:
@@ -73,8 +68,7 @@ extension TerminalChat {
                 defaultValue: displayName
             )
             guard let serviceName else {
-                writeSystemMessage("Feature creation cancelled.\n")
-                return .none
+                return cancelledFeatureWizard()
             }
             arguments["serviceName"] = serviceName
 
@@ -82,8 +76,7 @@ extension TerminalChat {
                 "Tool prefix",
                 defaultValue: Self.featureWizardPrefix(from: id)
             ) else {
-                writeSystemMessage("Feature creation cancelled.\n")
-                return .none
+                return cancelledFeatureWizard()
             }
             arguments["toolPrefix"] = toolPrefix
 
@@ -104,21 +97,18 @@ extension TerminalChat {
                 selected: .http,
                 reservedBottomRows: statusBar.reservedRowsForOverlay()
             ) else {
-                writeSystemMessage("Feature creation cancelled.\n")
-                return .none
+                return cancelledFeatureWizard()
             }
 
             switch transport {
             case .http:
                 guard let endpointURL = promptFeatureLine("MCP endpoint URL", required: true) else {
-                    writeSystemMessage("Feature creation cancelled.\n")
-                    return .none
+                    return cancelledFeatureWizard()
                 }
                 arguments["endpointURL"] = endpointURL
             case .stdio:
                 guard let executablePath = promptFeatureLine("MCP executable path", required: true) else {
-                    writeSystemMessage("Feature creation cancelled.\n")
-                    return .none
+                    return cancelledFeatureWizard()
                 }
                 arguments["executablePath"] = executablePath
                 if let rawArguments = promptFeatureLine("Executable arguments", defaultValue: "") {
@@ -136,7 +126,6 @@ extension TerminalChat {
             }
         }
 
-        let shouldBuild = true
         let shouldEnable = promptFeatureYesNo("Enable feature after build?", defaultValue: true) ?? false
         let shouldSelect = shouldEnable
             ? (promptFeatureYesNo("Select feature for this session?", defaultValue: true) ?? false)
@@ -145,15 +134,13 @@ extension TerminalChat {
             "Goal / requirements (empty to edit the generated prompt)",
             required: false
         ) else {
-            writeSystemMessage("Feature creation cancelled.\n")
-            return .none
+            return cancelledFeatureWizard()
         }
 
         return await createFeatureFromWizard(
             id: id,
             displayName: displayName,
             arguments: arguments,
-            shouldBuild: shouldBuild,
             shouldEnable: shouldEnable,
             shouldSelect: shouldSelect,
             requirements: requirements.nilIfBlank
@@ -164,14 +151,16 @@ extension TerminalChat {
         id: String,
         displayName: String,
         arguments: [String: Any],
-        shouldBuild: Bool,
         shouldEnable: Bool,
         shouldSelect: Bool,
         requirements: String?
     ) async -> TerminalFeatureCommandResult {
+        var scaffoldArguments = arguments
+        scaffoldArguments["build"] = true
+        scaffoldArguments["enable"] = shouldEnable
         guard let scaffoldOutput = await executeFeatureManagementTool(
             name: "feature.scaffold",
-            arguments: arguments
+            arguments: scaffoldArguments
         ) else {
             return .none
         }
@@ -180,36 +169,20 @@ extension TerminalChat {
             SwiftFeatureScaffoldReport.self,
             from: scaffoldOutput.trimmingCharacters(in: .whitespacesAndNewlines)
         ) else {
+            writeFailureMessage("ZenCODE: could not decode the feature.scaffold report.\n")
+            return .none
+        }
+        guard scaffoldReport.ok ?? true else {
             return .none
         }
 
-        guard await runFeatureManagementTool(
-            name: "feature.validate",
-            arguments: ["id": id]
-        ) else {
-            return .none
-        }
-
-        if shouldBuild {
-            guard await runFeatureManagementTool(
-                name: "feature.build",
-                arguments: ["id": id]
-            ) else {
-                return .none
-            }
-        }
-
-        if shouldEnable {
-            guard await runFeatureManagementTool(
-                name: "feature.enable",
-                arguments: ["id": id]
-            ) else {
-                return .none
-            }
+        let enabled = scaffoldReport.enabled ?? false
+        if enabled {
             await updateCurrentSessionToolOptions(discoverExternalTools: false)
         }
 
-        if shouldSelect {
+        let selected = shouldSelect && enabled
+        if selected {
             var nextSelection = selectedToolKeys
             nextSelection.insert(TerminalToolSelectionCatalog.featurePackageKey(id: id))
             await applyToolSelection(nextSelection)
@@ -218,25 +191,29 @@ extension TerminalChat {
         writeSystemMessage(
             Self.renderFeatureWizardCompletion(
                 id: id,
-                built: shouldBuild,
-                enabled: shouldEnable,
-                selected: shouldSelect
+                built: scaffoldReport.built ?? false,
+                enabled: enabled,
+                selected: selected
             )
         )
 
-        let implementationPrompt = Self.featureImplementationPrompt(
-            id: id,
-            displayName: displayName,
-            directoryPath: scaffoldReport.directoryPath,
-            manifestPath: scaffoldReport.manifestPath,
-            sourcePath: scaffoldReport.sourcePath,
-            toolName: scaffoldReport.toolName,
+        return Self.featurePromptResult(
+            Self.featureImplementationPrompt(
+                id: id,
+                displayName: displayName,
+                directoryPath: scaffoldReport.directoryPath,
+                manifestPath: scaffoldReport.manifestPath,
+                sourcePath: scaffoldReport.sourcePath,
+                toolName: scaffoldReport.toolName,
+                requirements: requirements
+            ),
             requirements: requirements
         )
-        if requirements != nil {
-            return .runPrompt(implementationPrompt)
-        }
-        return .prefillPrompt(implementationPrompt)
+    }
+
+    private func cancelledFeatureWizard() -> TerminalFeatureCommandResult {
+        writeSystemMessage("Feature creation cancelled.\n")
+        return .none
     }
 
     @discardableResult
@@ -259,7 +236,7 @@ extension TerminalChat {
         arguments: [String: Any]
     ) async -> String? {
         do {
-            return try await SwiftFeatureRuntime().executeManagementTool(
+            return try await featureRuntime.executeManagementTool(
                 toolCall: DirectAgentToolCall(
                     id: "terminal-\(name)-\(UUID().uuidString)",
                     name: name,

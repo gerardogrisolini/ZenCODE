@@ -50,6 +50,7 @@ public final class TerminalChat: @unchecked Sendable {
     public let reader = StdioLineReader()
     public let interactiveReader = TerminalInteractiveLineReader()
     public let permissionAuthorizer: LocalExecPermissionAuthorizer
+    public let featureRuntime = SwiftFeatureRuntime()
     public var sessionID = TerminalChat.newTerminalSessionID()
     public var activeSessionCacheKey: String?
     public var activeSessionHistory: [AgentRuntimeMessage] = []

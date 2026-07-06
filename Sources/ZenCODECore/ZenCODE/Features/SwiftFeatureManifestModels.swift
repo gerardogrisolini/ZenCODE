@@ -529,6 +529,37 @@ public struct SwiftFeatureScaffoldReport: Codable, Sendable {
     public let packagePath: String
     public let sourcePath: String
     public let toolName: String
+    public let ok: Bool?
+    public let built: Bool?
+    public let enabled: Bool?
+    public let validation: SwiftFeatureValidationReport?
+    public let build: SwiftFeatureBuildReport?
+
+    public init(
+        id: String,
+        directoryPath: String,
+        manifestPath: String,
+        packagePath: String,
+        sourcePath: String,
+        toolName: String,
+        ok: Bool? = nil,
+        built: Bool? = nil,
+        enabled: Bool? = nil,
+        validation: SwiftFeatureValidationReport? = nil,
+        build: SwiftFeatureBuildReport? = nil
+    ) {
+        self.id = id
+        self.directoryPath = directoryPath
+        self.manifestPath = manifestPath
+        self.packagePath = packagePath
+        self.sourcePath = sourcePath
+        self.toolName = toolName
+        self.ok = ok
+        self.built = built
+        self.enabled = enabled
+        self.validation = validation
+        self.build = build
+    }
 }
 
 public struct SwiftFeatureInstallReport: Codable, Sendable {

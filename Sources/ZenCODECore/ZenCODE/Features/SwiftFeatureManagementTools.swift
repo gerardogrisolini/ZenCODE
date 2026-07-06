@@ -65,9 +65,8 @@ extension SwiftFeatureRuntime {
             }
             return try renderJSON(report)
         case "feature.scaffold":
-            return try renderJSON(
-                scaffoldFeature(arguments: arguments)
-            )
+            let report = try await scaffoldFeature(arguments: arguments)
+            return try renderJSON(report)
         case "feature.install":
             let report = try await installFeature(arguments: arguments)
             if report.ok {
@@ -299,7 +298,7 @@ extension SwiftFeatureRuntime {
 
     private func scaffoldFeature(
         arguments: [String: Any]
-    ) throws -> SwiftFeatureScaffoldReport {
+    ) async throws -> SwiftFeatureScaffoldReport {
         let id = try Self.requiredFeatureID(arguments)
         guard Self.isValidFeatureID(id) else {
             throw DirectToolError.permissionDenied(
@@ -403,13 +402,72 @@ extension SwiftFeatureRuntime {
             reportToolName = toolPrefix
         }
 
-        return SwiftFeatureScaffoldReport(
+        let scaffoldReport = SwiftFeatureScaffoldReport(
             id: id,
             directoryPath: directoryURL.path,
             manifestPath: manifestURL.path,
             packagePath: packageURL.path,
             sourcePath: sourceURL.path,
             toolName: reportToolName
+        )
+
+        let shouldBuild = arguments.bool("build") ?? false
+        let shouldEnable = arguments.bool("enable") ?? false
+        guard shouldBuild || shouldEnable else {
+            return scaffoldReport
+        }
+        return try await finalizeScaffoldedFeature(
+            report: scaffoldReport,
+            manifestURL: manifestURL,
+            shouldBuild: shouldBuild,
+            shouldEnable: shouldEnable,
+            arguments: arguments
+        )
+    }
+
+    private func finalizeScaffoldedFeature(
+        report: SwiftFeatureScaffoldReport,
+        manifestURL: URL,
+        shouldBuild: Bool,
+        shouldEnable: Bool,
+        arguments: [String: Any]
+    ) async throws -> SwiftFeatureScaffoldReport {
+        let validation = try validateFeature(
+            arguments: ["manifestPath": manifestURL.path]
+        )
+
+        var buildReport: SwiftFeatureBuildReport?
+        if validation.ok, shouldBuild {
+            var buildArguments: [String: Any] = [
+                "manifestPath": manifestURL.path
+            ]
+            if let timeout = arguments.int("timeoutSeconds", "timeout") {
+                buildArguments["timeoutSeconds"] = timeout
+            }
+            buildReport = try await buildFeature(arguments: buildArguments)
+        }
+
+        let canEnable = validation.ok && (buildReport?.ok ?? !shouldBuild)
+        var enabled = false
+        if shouldEnable, canEnable {
+            try await setFeature(id: report.id, enabled: true)
+            enabled = true
+        } else if buildReport?.ok == true {
+            reloadFeatureBundles()
+        }
+
+        return SwiftFeatureScaffoldReport(
+            id: report.id,
+            directoryPath: report.directoryPath,
+            manifestPath: report.manifestPath,
+            packagePath: report.packagePath,
+            sourcePath: report.sourcePath,
+            toolName: report.toolName,
+            ok: canEnable && (!shouldEnable || enabled),
+            built: buildReport?.ok ?? false,
+            enabled: enabled,
+            validation: validation,
+            build: buildReport
         )
     }
 
