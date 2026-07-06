@@ -68,7 +68,7 @@ extension SwiftFeatureRuntime {
             workingDirectory: workingDirectory,
             environment: DeveloperToolEnvironment.processEnvironment(),
             stdinData: Data(toolCall.argumentsJSON.utf8),
-            timeout: 60
+            timeout: feature.invocationTimeoutSeconds ?? 60
         )
         return try Self.renderInvocationResult(result, feature: feature)
     }

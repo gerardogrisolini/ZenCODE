@@ -63,6 +63,81 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
+    func runtimeHonorsFeatureInvocationTimeoutOverride() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-timeout-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+        let executableURL = rootURL.appendingPathComponent("feature")
+        try """
+        #!/bin/sh
+        cat >/dev/null
+        sleep 2
+        printf '{"ok":true,"output":"late-output"}\n'
+        """.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+
+        let runtime = SwiftFeatureRuntime(
+            features: [
+                SwiftFeatureBundle(
+                    id: "timeout-fixture",
+                    executableURL: executableURL,
+                    tools: [
+                        ToolDescriptor(
+                            name: "feature.timeout.wait",
+                            description: "Wait fixture",
+                            inputSchema: #"{"type":"object","properties":{}}"#
+                        )
+                    ],
+                    invocationTimeoutSeconds: 0.2
+                )
+            ]
+        )
+
+        await #expect(throws: (any Error).self) {
+            _ = try await runtime.executeIfAvailable(
+                toolCall: DirectAgentToolCall(
+                    id: "timeout-call-1",
+                    name: "feature.timeout.wait",
+                    argumentsObject: [:],
+                    argumentsJSON: "{}"
+                ),
+                workingDirectory: rootURL
+            )
+        }
+    }
+
+    @Test
+    func bundledFeatureToolsUseAppropriateInvocationTimeouts() throws {
+        let records = SwiftFeatureRuntime.defaultFeatureRecords(
+            searchRoots: nil,
+            fileManager: .default
+        )
+
+        let swiftDefinition = try #require(
+            SwiftFeatureRuntime.bundledFeatureDefinition(id: "swift-tools")
+        )
+        let swiftRecord = try #require(records.first { $0.id == "swift-tools" })
+        let webRecord = try #require(records.first { $0.id == "web-tools" })
+        let xcodeRecord = try #require(records.first { $0.id == "xcode-tools" })
+        let gitRecord = try #require(records.first { $0.id == "git-tools" })
+
+        #expect(swiftDefinition.invocationTimeoutSeconds == 3_660)
+        #expect(swiftRecord.invocationTimeoutSeconds == swiftDefinition.invocationTimeoutSeconds)
+        #expect(webRecord.invocationTimeoutSeconds == 180)
+        #expect(xcodeRecord.invocationTimeoutSeconds == 3_660)
+        #expect(gitRecord.invocationTimeoutSeconds == nil)
+    }
+
+    @Test
     func bundledSwiftOutlineReturnsCompactDeclarationMap() async throws {
         let status = try #require(
             SwiftFeatureRuntime.defaultFeatureStatuses()

@@ -18,6 +18,7 @@ extension SwiftFeatureRuntime {
         let toolNamePrefixes: [String]
         let toolNameAliases: [String]
         let discoversToolsAtRuntime: Bool
+        let invocationTimeoutSeconds: TimeInterval?
 
         init(
             id: String,
@@ -28,7 +29,8 @@ extension SwiftFeatureRuntime {
             tools: [ToolDescriptor],
             toolNamePrefixes: [String] = [],
             toolNameAliases: [String] = [],
-            discoversToolsAtRuntime: Bool = false
+            discoversToolsAtRuntime: Bool = false,
+            invocationTimeoutSeconds: TimeInterval? = nil
         ) {
             self.id = id
             self.executableName = executableName
@@ -39,6 +41,7 @@ extension SwiftFeatureRuntime {
             self.toolNamePrefixes = toolNamePrefixes
             self.toolNameAliases = toolNameAliases
             self.discoversToolsAtRuntime = discoversToolsAtRuntime
+            self.invocationTimeoutSeconds = invocationTimeoutSeconds
         }
 
         func bundle(executableURL: URL) -> SwiftFeatureBundle {
@@ -49,6 +52,7 @@ extension SwiftFeatureRuntime {
                 toolNamePrefixes: toolNamePrefixes,
                 toolNameAliases: toolNameAliases,
                 discoversToolsAtRuntime: discoversToolsAtRuntime,
+                invocationTimeoutSeconds: invocationTimeoutSeconds,
                 source: .bundled,
                 isCore: isCore
             )
@@ -74,6 +78,7 @@ extension SwiftFeatureRuntime {
                 toolNamePrefixes: record.toolNamePrefixes,
                 toolNameAliases: record.toolNameAliases,
                 discoversToolsAtRuntime: record.discoversToolsAtRuntime,
+                invocationTimeoutSeconds: record.invocationTimeoutSeconds,
                 source: record.source,
                 isCore: record.isCore
             )
@@ -153,7 +158,8 @@ extension SwiftFeatureRuntime {
                 executableName: "web-tools-feature",
                 description: "Search the web and fetch URLs as text.",
                 sourceRelativePath: "Sources/Features/WebTools",
-                tools: bundledWebToolDescriptors()
+                tools: bundledWebToolDescriptors(),
+                invocationTimeoutSeconds: 180
             ),
             BundledFeatureDefinition(
                 id: "git-tools",
@@ -167,7 +173,8 @@ extension SwiftFeatureRuntime {
                 executableName: "swift-tools-feature",
                 description: "Build, test, run, and inspect SwiftPM packages.",
                 sourceRelativePath: "Sources/Features/SwiftTools",
-                tools: bundledSwiftToolDescriptors()
+                tools: bundledSwiftToolDescriptors(),
+                invocationTimeoutSeconds: 3_660
             ),
             BundledFeatureDefinition(
                 id: "jira-tools",
@@ -193,7 +200,8 @@ extension SwiftFeatureRuntime {
                     "RunAllTests",
                     "RunSomeTests"
                 ],
-                discoversToolsAtRuntime: true
+                discoversToolsAtRuntime: true,
+                invocationTimeoutSeconds: 3_660
             ),
             BundledFeatureDefinition(
                 id: "figma-tools",
@@ -244,6 +252,7 @@ extension SwiftFeatureRuntime {
                 toolNamePrefixes: feature.toolNamePrefixes,
                 toolNameAliases: feature.toolNameAliases,
                 discoversToolsAtRuntime: feature.discoversToolsAtRuntime,
+                invocationTimeoutSeconds: feature.invocationTimeoutSeconds,
                 build: nil,
                 generated: nil,
                 adoptedFrom: nil,

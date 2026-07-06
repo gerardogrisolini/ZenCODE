@@ -113,6 +113,7 @@ extension SwiftFeatureRuntimeTests {
           "enabled": true,
           "executable": "feature",
           "discoversToolsAtRuntime": true,
+          "invocationTimeoutSeconds": 240,
           "toolNamePrefixes": ["custom."],
           "toolNameAliases": ["CustomDynamic"],
           "build": {
@@ -142,6 +143,7 @@ extension SwiftFeatureRuntimeTests {
         #expect(bundles.first?.toolNamePrefixes == ["custom."])
         #expect(bundles.first?.toolNameAliases == ["CustomDynamic"])
         #expect(bundles.first?.discoversToolsAtRuntime == true)
+        #expect(bundles.first?.invocationTimeoutSeconds == 240)
 
         let runtime = SwiftFeatureRuntime(featureSearchRoots: [rootURL])
         let statuses = await runtime.featureStatuses()

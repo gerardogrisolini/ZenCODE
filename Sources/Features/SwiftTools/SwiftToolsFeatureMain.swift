@@ -65,7 +65,7 @@ struct SwiftTestTool: FeatureTool {
     }
 
     static let name = "swift.test"
-    static let description = "Runs SwiftPM tests with `swift test` and returns a structured summary of failing tests and build errors instead of raw output."
+    static let description = "Runs SwiftPM tests with `swift test` and returns a structured summary of failing tests and build errors instead of raw output. Prefer this over local.exec for SwiftPM tests; pass filter for targeted tests and timeoutSeconds for long suites."
     static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"filter":{"type":"string"},"target":{"type":"string"},"configuration":{"type":"string"},"timeoutSeconds":{"type":"number"},"timeout":{"type":"number"}}}"#
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {

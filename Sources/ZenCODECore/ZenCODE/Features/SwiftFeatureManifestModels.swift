@@ -19,6 +19,7 @@ public struct SwiftFeatureBundle: Hashable, Sendable {
     public let toolNamePrefixes: [String]
     public let toolNameAliases: [String]
     public let discoversToolsAtRuntime: Bool
+    public let invocationTimeoutSeconds: TimeInterval?
     public let source: SwiftFeatureBundleSource
     public let isCore: Bool
 
@@ -29,6 +30,7 @@ public struct SwiftFeatureBundle: Hashable, Sendable {
         toolNamePrefixes: [String] = [],
         toolNameAliases: [String] = [],
         discoversToolsAtRuntime: Bool = false,
+        invocationTimeoutSeconds: TimeInterval? = nil,
         source: SwiftFeatureBundleSource = .generated,
         isCore: Bool = false
     ) {
@@ -38,6 +40,7 @@ public struct SwiftFeatureBundle: Hashable, Sendable {
         self.toolNamePrefixes = toolNamePrefixes
         self.toolNameAliases = toolNameAliases
         self.discoversToolsAtRuntime = discoversToolsAtRuntime
+        self.invocationTimeoutSeconds = invocationTimeoutSeconds
         self.source = source
         self.isCore = isCore
     }
@@ -97,6 +100,7 @@ public struct SwiftFeatureManifest: Codable, Sendable {
     public let toolNamePrefixes: [String]
     public let toolNameAliases: [String]
     public let discoversToolsAtRuntime: Bool
+    public let invocationTimeoutSeconds: TimeInterval?
     public let build: SwiftFeatureBuildManifest?
     public let generated: SwiftFeatureGeneratedManifest?
 
@@ -118,6 +122,8 @@ public struct SwiftFeatureManifest: Codable, Sendable {
         case tool_name_aliases
         case discoversToolsAtRuntime
         case discovers_tools_at_runtime
+        case invocationTimeoutSeconds
+        case invocation_timeout_seconds
         case build
         case generated
     }
@@ -152,6 +158,14 @@ public struct SwiftFeatureManifest: Codable, Sendable {
             Bool.self,
             forKey: .discovers_tools_at_runtime
         ) ?? false
+        let invocationTimeoutSeconds = try container.decodeIfPresent(
+            TimeInterval.self,
+            forKey: .invocationTimeoutSeconds
+        ) ?? container.decodeIfPresent(
+            TimeInterval.self,
+            forKey: .invocation_timeout_seconds
+        )
+        self.invocationTimeoutSeconds = invocationTimeoutSeconds.flatMap { $0 > 0 ? $0 : nil }
         self.build = try container.decodeIfPresent(SwiftFeatureBuildManifest.self, forKey: .build)
         self.generated = try container.decodeIfPresent(SwiftFeatureGeneratedManifest.self, forKey: .generated)
     }
@@ -174,6 +188,7 @@ public struct SwiftFeatureManifest: Codable, Sendable {
         if discoversToolsAtRuntime {
             try container.encode(discoversToolsAtRuntime, forKey: .discoversToolsAtRuntime)
         }
+        try container.encodeIfPresent(invocationTimeoutSeconds, forKey: .invocationTimeoutSeconds)
         try container.encodeIfPresent(build, forKey: .build)
         try container.encodeIfPresent(generated, forKey: .generated)
     }
@@ -403,6 +418,7 @@ public struct SwiftFeatureRecord: Sendable {
     public let toolNamePrefixes: [String]
     public let toolNameAliases: [String]
     public let discoversToolsAtRuntime: Bool
+    public let invocationTimeoutSeconds: TimeInterval?
     public let build: SwiftFeatureBuildManifest?
     public let generated: SwiftFeatureGeneratedManifest?
     public let adoptedFrom: String?
