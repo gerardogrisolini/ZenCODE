@@ -360,7 +360,7 @@ public actor DirectOrchestrationRuntime {
 
     public static func renderTodos(_ todos: [Todo]) -> String {
         guard !todos.isEmpty else {
-            return "No orchestration todos."
+            return "No todos."
         }
         return todos.map { todo in
             "[\(todo.status.rawValue)] \(todo.id): \(todo.content)"
@@ -369,7 +369,7 @@ public actor DirectOrchestrationRuntime {
 
     public static func renderTasks(_ tasks: [TaskItem]) -> String {
         guard !tasks.isEmpty else {
-            return "No orchestration tasks."
+            return "No tasks."
         }
         return tasks.map { task in
             var fragments = [
@@ -514,13 +514,13 @@ public enum DirectOrchestrationRuntimeError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case let .unknownTool(name):
-            return "Unknown orchestration tool: \(name)"
+            return "Unknown session tool: \(name)"
         case let .missingArgument(argument):
             return "Missing required argument: \(argument)"
         case let .invalidArgument(argument):
             return "Invalid argument: \(argument)"
         case let .taskNotFound(identifier):
-            return "No orchestration task matched '\(identifier)'."
+            return "No task matched '\(identifier)'."
         }
     }
 }

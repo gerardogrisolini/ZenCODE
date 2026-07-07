@@ -262,7 +262,7 @@ public enum AgentProfileStore {
     ]
     public static let defaultToolNames: [String] = codingToolNames + [
         TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools"),
-        "orchestration"
+        "sub-agents"
     ]
     public static let implementationToolNames: [String] = codingToolNames
     public static let builderToolNames: [String] = codingToolNames + [
@@ -361,7 +361,7 @@ public enum AgentProfileStore {
                 instructions: """
                 General coding agent. Solve the user's request with available tools and keep replies concise.
 
-                When the task involves broad codebase investigation, multiple independent files, unclear architecture, regression analysis, or parallelizable research, proactively delegate focused subtasks to sub-agents through orchestration tools. Use sub-agents to gather evidence in parallel, then synthesize their findings before editing or answering. Do not delegate trivial single-file changes or simple direct questions.
+                When the task involves broad codebase investigation, multiple independent files, unclear architecture, regression analysis, or parallelizable research, proactively delegate focused subtasks to sub-agents through sub-agent tooling. Use sub-agents to gather evidence in parallel, then synthesize their findings before editing or answering. Do not delegate trivial single-file changes or simple direct questions.
                 """,
                 symbolName: "person.crop.circle",
                 tools: defaultToolNames
@@ -390,7 +390,7 @@ public enum AgentProfileStore {
                 instructions: """
                 Xcode agent. Use ACP from Xcode, prefer Xcode-native tools for Apple project navigation, editing, diagnostics, builds, tests, previews, and device verification.
                 """,
-                                symbolName: "hammer.circle",
+                symbolName: "hammer.circle",
                 tools: xcodeToolNames
             ),
             AgentProfile(

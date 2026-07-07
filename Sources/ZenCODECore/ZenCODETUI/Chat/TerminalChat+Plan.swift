@@ -52,10 +52,10 @@ extension TerminalChat {
             return .continueChat
         }
 
-        if !isOrchestrationToolEnabled {
+        if !isSubAgentToolEnabled {
             writeFailureMessage(
                 """
-                ZenCODE: /plan requires the orchestration tool group. \
+                ZenCODE: /plan requires the sub-agents tool group. \
                 Enable it with /tools (or switch to an agent that includes it) and try again.
 
                 """
@@ -131,7 +131,7 @@ extension TerminalChat {
         return """
             You are the director of this planning pass. Stay on your current agent profile: \
             do not switch profiles. Delegate the actual planning to Planner sub-agents via \
-            the orchestration tools, then read their plans and produce one consolidated \
+            sub-agent tools, then read their plans and produce one consolidated \
             implementation plan.
 
             \(goalSection)

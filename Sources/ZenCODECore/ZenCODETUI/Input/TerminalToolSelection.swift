@@ -324,9 +324,9 @@ public enum TerminalToolSelectionCatalog {
                 requiresWorkspaceAccess: true
             ),
             TerminalToolSelectionItem(
-                key: "orchestration",
+                key: "sub-agents",
                 title: "Sub-Agents",
-                detail: "Delegate work to sub-agents and orchestrate tasks.",
+                detail: "Delegate work to sub-agents and coordinate session tasks.",
                 groupTitle: coreGroup,
                 allowedToolNames: descriptorNames.filter {
                     $0.hasPrefix("agent.") || $0.hasPrefix("task.")

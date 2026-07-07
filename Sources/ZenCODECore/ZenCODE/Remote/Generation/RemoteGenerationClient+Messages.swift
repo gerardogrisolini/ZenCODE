@@ -586,6 +586,67 @@ extension RemoteGenerationClient {
         return nil
     }
 
+    /// Returns a copy of `messages` with all `image_url` content blocks removed.
+    /// Content that was an array of blocks is collapsed back to a plain text
+    /// string when only text remains, or set to an empty string when the array
+    /// contained only image blocks.
+    public static func messagesStrippingImageContent(
+        from messages: [[String: Any]]
+    ) -> [[String: Any]] {
+        messages.map { message in
+            var stripped = message
+            guard let content = message["content"] else {
+                return stripped
+            }
+            if content is String {
+                return stripped
+            }
+            guard var items = content as? [[String: Any]] else {
+                return stripped
+            }
+            items.removeAll { item in
+                stringValue(item["type"])?.lowercased() == "image_url"
+            }
+            if items.isEmpty {
+                stripped["content"] = ""
+            } else if items.count == 1,
+                      stringValue(items[0]["type"])?.lowercased() == "text" {
+                stripped["content"] = stringValue(items[0]["text"]) ?? ""
+            } else {
+                stripped["content"] = items
+            }
+            return stripped
+        }
+    }
+
+    /// Returns `true` when any message in the array contains at least one
+    /// `image_url` content block.
+    public static func messagesContainImageContent(
+        _ messages: [[String: Any]]
+    ) -> Bool {
+        messages.contains { message in
+            !chatCompletionsImageContentItems(from: message["content"]).isEmpty
+        }
+    }
+
+    /// Returns `true` when the error indicates the remote provider rejected
+    /// `image_url` content blocks because it only accepts `text` blocks.
+    /// This is common with OpenAI-compatible proxies and non-vision models
+    /// that use strict serde deserialization on the server side.
+    public static func isImageContentRejectedError(_ error: Error) -> Bool {
+        let message = (error as? RemoteGenerationClientError)
+            .flatMap { error in
+                if case let .remoteFailure(msg) = error { return msg }
+                return nil
+            }
+            ?? String(describing: error)
+        let lowercased = message.lowercased()
+        return lowercased.contains("image_url")
+            && (lowercased.contains("expected `text`")
+                || lowercased.contains("expected text")
+                || lowercased.contains("unknown variant"))
+    }
+
     public static func chatCompletionsImageContentItems(from value: Any?) -> [[String: Any]] {
         guard let items = value as? [[String: Any]] else {
             return []

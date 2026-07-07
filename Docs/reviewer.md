@@ -40,13 +40,13 @@ To focus the session-change review on a specific area, pass a focus:
 /review only the documentation updates
 ```
 
-The command requires the `orchestration` tool group because it creates sub-agents. If it is unavailable, enable it with:
+The command requires the `sub-agents` tool group because it creates sub-agents. If it is unavailable, enable it with:
 
 ```text
-/tools
+/tools sub-agents
 ```
 
-or switch to a profile that includes orchestration.
+or switch to a profile that includes sub-agents.
 
 ## How Delegation Works
 

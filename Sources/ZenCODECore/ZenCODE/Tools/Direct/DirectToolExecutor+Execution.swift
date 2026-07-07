@@ -81,7 +81,7 @@ extension DirectToolExecutor {
             )
         }
         if DirectOrchestrationRuntime.isTodoOrTaskToolName(toolCall.name) {
-            return try await orchestrationRuntime.execute(
+            return try await sessionToolRuntime.execute(
                 sessionID: sessionID,
                 toolCall: toolCall
             )

@@ -542,10 +542,11 @@ private enum SwiftToolsSupport {
             lines.append("\nWarnings:")
             lines.append(contentsOf: warnings.prefix(30).map { "  " + $0.formatted })
         }
-        if errors.isEmpty, result.exitCode != 0 {
-            // No structured diagnostics but still failed; surface tail output.
-            lines.append("\nOutput tail:")
-            lines.append(tail(of: combined, lines: 40))
+        if result.exitCode != 0 {
+            // Always surface raw output tail when build fails, even when parsed diagnostics exist,
+            // so the model can see full context that structured parsing may have missed.
+            lines.append("\nRaw output:")
+            lines.append(tail(of: combined, lines: 60))
         }
         return lines.joined(separator: "\n")
     }
@@ -576,9 +577,10 @@ private enum SwiftToolsSupport {
             lines.append("\nFailing tests: \(failures.count)")
             lines.append(contentsOf: failures.prefix(50).map { "  " + $0 })
         }
-        if buildErrors.isEmpty, failures.isEmpty, result.exitCode != 0 {
-            lines.append("\nOutput tail:")
-            lines.append(tail(of: combined, lines: 40))
+        if result.exitCode != 0 {
+            // Always surface raw output tail when tests fail, so the model sees full context.
+            lines.append("\nRaw output:")
+            lines.append(tail(of: combined, lines: 60))
         }
         return lines.joined(separator: "\n")
     }
@@ -605,9 +607,12 @@ private enum SwiftToolsSupport {
             lines.append(stdout)
         }
         let trimmedStderr = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-        if errors.isEmpty, result.exitCode != 0, !trimmedStderr.isEmpty {
-            lines.append("\nstderr:")
-            lines.append(tail(of: trimmedStderr, lines: 40))
+        if result.exitCode != 0 {
+            // Always surface raw stderr tail when run fails, so the model sees full context.
+            if !trimmedStderr.isEmpty {
+                lines.append("\nstderr:")
+                lines.append(tail(of: trimmedStderr, lines: 60))
+            }
         }
         if stdout.isEmpty, errors.isEmpty, result.exitCode == 0 {
             lines.append("<no output>")

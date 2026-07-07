@@ -37,10 +37,10 @@ Pass the activity to plan as the command argument:
 /plan update docs and tests for the new Planner agent
 ```
 
-The command requires the `orchestration` tool group because it creates sub-agents. If it is unavailable, enable it with:
+The command requires the `sub-agents` tool group because it creates sub-agents. If it is unavailable, enable it with:
 
 ```text
-/tools orchestration
+/tools sub-agents
 ```
 
 or switch to a profile that includes sub-agent delegation, such as `Default`.

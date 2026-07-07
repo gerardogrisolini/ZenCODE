@@ -63,7 +63,7 @@ struct PlanCommandTests {
             configuration: configuration,
             stdinIsTerminal: false
         )
-        terminal.selectedToolKeys.insert("orchestration")
+        terminal.selectedToolKeys.insert("sub-agents")
 
         let action = terminal.handlePlanCommand("/plan")
 
@@ -91,7 +91,7 @@ struct PlanCommandTests {
             configuration: configuration,
             stdinIsTerminal: false
         )
-        terminal.selectedToolKeys.insert("orchestration")
+        terminal.selectedToolKeys.insert("sub-agents")
 
         let action = terminal.handlePlanCommand("/plan fix the planner command")
 

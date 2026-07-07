@@ -29,10 +29,10 @@ extension TerminalChat {
     let argument = String(command.dropFirst("/review".count))
       .trimmingCharacters(in: .whitespacesAndNewlines)
 
-    if !isOrchestrationToolEnabled {
+    if !isSubAgentToolEnabled {
       writeFailureMessage(
         """
-        ZenCODE: /review requires the orchestration tool group. \
+        ZenCODE: /review requires the sub-agents tool group. \
         Enable it with /tools (or switch to an agent that includes it) and try again.
 
         """
@@ -63,9 +63,9 @@ extension TerminalChat {
     )
   }
 
-  var isOrchestrationToolEnabled: Bool {
+  var isSubAgentToolEnabled: Bool {
     selectedToolKeys.contains { key in
-      key.caseInsensitiveCompare("orchestration") == .orderedSame
+      key.caseInsensitiveCompare("sub-agents") == .orderedSame
     }
   }
 
@@ -130,7 +130,7 @@ extension TerminalChat {
     return """
       You are the director of this review. Stay on your current agent profile: do \
       not switch profiles. Delegate the actual review to Reviewer sub-agents via the \
-      orchestration tools, then read their reviews and produce a correction plan.
+      sub-agent tools, then read their reviews and produce a correction plan.
 
       \(scopeSection)
 

@@ -14,7 +14,7 @@ This document summarizes the strengths of `ZenCODE`, my motivations for writing 
 
 ### Full control over tools
 - **Granular selection with `/tools`**: you decide exactly which tool groups
-  (filesystem, shell, text, search, Git, memory, orchestration, Xcode, Figma,
+  (filesystem, shell, text, search, Git, memory, sub-agents, Xcode, Figma,
   features) are exposed to the model, using `all`, `none`, tool name, package
   name, or number.
 - **You can disable everything** (`/tools none`) and work in a minimal or
@@ -76,6 +76,6 @@ This document summarizes the strengths of `ZenCODE`, my motivations for writing 
 5. **Efficient session continuity**: the persistent KV cache with a content-derived key drastically reduces re-prefill, even for statelessients.
 6. **Native Xcode integration via ACP**: it fits directly into the Apple workflow as an Xcode 27 coding agent.
 7. **Durable extensibility**: the agent not only uses tools but **creates new ones** as reusable Swift packages shared across sessions.
-8. **Planning, review, and orchestration safe by design**: planning and review sub-agents are read-only and scoped to the requested work or current session changes, reducing the risk of unwanted edits.
+8. **Planning, review, and sub-agent safe by design**: planning and review sub-agents are read-only and scoped to the requested work or current session changes, reducing the risk of unwanted edits.
 9. **Change safety**: change tracking and a dedicated `/undo` for the agent'sits.
 10. **Memory with separated responsibilities**: project journal, global index, and operating rules kept distinct, for cleaner context resumption.

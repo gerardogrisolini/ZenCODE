@@ -134,9 +134,9 @@ Inside chat mode, type a prompt and press return. Commands start with `/`:
 - `/changes diff`: include patches in the change summary.
 - `/undo`: revert the most recent tracked file changes created by the agent.
 - `/plan <goal>`: delegate planning for an explicit goal to one or more read-only `Planner` sub-agents. With no goal, the command reports the missing goal and does not create sub-agents.
-  This command requires the `orchestration` tool group; enable it with `/tools` or switch to a profile that includes it.
+  This command requires the `sub-agents` tool group; enable it with `/tools` or switch to a profile that includes it.
 - `/review [focus]`: delegate code review to one or more read-only `Reviewer` sub-agents. The command reviews only the tracked file changes made during the current session; an optional focus is applied within those session changes.
-  This command requires the `orchestration` tool group; enable it with `/tools` or switch to a profile that includes it.
+  This command requires the `sub-agents` tool group; enable it with `/tools` or switch to a profile that includes it.
 - Delegated sub-agent status is shown automatically in the chat flow while `/plan`, `/review`, or `agent.*` tool calls create and update sub-agents.
 - `/telegram`: show Telegram status for the current TUI session.
 - `/telegram on`: turn Telegram on for the current TUI session. This also sends a confirmation message to the linked Telegram chat, so the iOS client is woken up and you do not need to message the bot first to start receiving notifications.
@@ -183,7 +183,7 @@ Use `/plan` from a normal implementation session when you want a planning pass b
 
 `/plan` requires the goal as an argument; run `/plan <goal>` rather than a bare `/plan`.
 
-`/plan` keeps the current agent profile as the planning director and creates `Planner` sub-agents through the orchestration tools. The delegated planners run with `isolationMode "report"` and a read-only planning tool allowlist, so they can inspect but must not modify the workspace. After the planners finish, the director consolidates their output into one actionable plan for the loop `/plan -> implementation work -> /review`.
+`/plan` keeps the current agent profile as the planning director and creates `Planner` sub-agents through sub-agent tools. The delegated planners run with `isolationMode "report"` and a read-only planning tool allowlist, so they can inspect but must not modify the workspace. After the planners finish, the director consolidates their output into one actionable plan for the loop `/plan -> implementation work -> /review`.
 
 See the [Planner agent guide](planner.md) for details.
 
@@ -199,7 +199,7 @@ Use `/review` from a normal implementation session when you want a second pass b
 /review check the session restore flow and related tests
 ```
 
-`/review` keeps the current agent profile as the review director and creates `Reviewer` sub-agents through the orchestration tools. The delegated reviewers run with `isolationMode "report"` and a read-only tool allowlist, so they can inspect but must not modify the workspace. The review scope is the current session's tracked file changes, not git history or memory context. After the reviewers finish, the director consolidates findings and proposes a correction plan; it does not edit files as part of the review turn.
+`/review` keeps the current agent profile as the review director and creates `Reviewer` sub-agents through sub-agent tools. The delegated reviewers run with `isolationMode "report"` and a read-only tool allowlist, so they can inspect but must not modify the workspace. The review scope is the current session's tracked file changes, not git history or memory context. After the reviewers finish, the director consolidates findings and proposes a correction plan; it does not edit files as part of the review turn.
 
 See the [Reviewer agent guide](reviewer.md) for details.
 
@@ -427,8 +427,8 @@ zen --mlx \
 - No tools available: use `/tools`, switch to a profile that permits tools, or check ACP client tool exposure.
 - `/feature` unavailable: switch to the Builder agent with `/agents Builder`.
 - `/plan` says a goal is required: rerun it as `/plan <goal>` with the activity you want planned.
-- `/plan` says orchestration is required: enable the `orchestration` tool group with `/tools`, or switch to an agent profile that includes it.
-- `/review` says orchestration is required: enable the `orchestration` tool group with `/tools`, or switch to an agent profile that includes it.
+- `/plan` says sub-agents are required: enable the `sub-agents` tool group with `/tools`, or switch to an agent profile that includes it.
+- `/review` says sub-agents are required: enable the `sub-agents` tool group with `/tools`, or switch to an agent profile that includes it.
 - Xcode tools missing: make sure Xcode is running and MCP bridge tooling can expose tools. For Xcode 27 ACP setup, see [Xcode 27 ACP setup](xcode.md).
 - Figma tools missing: make sure the Figma desktop MCP server is enabled.
 - Resume picked the wrong project: start from the intended `--cwd` or project directory, then use `/sessions` for explicit snapshots.

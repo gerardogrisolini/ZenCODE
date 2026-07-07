@@ -207,7 +207,7 @@ extension TerminalChat {
             (TerminalToolSelectionCatalog.featurePackageKey(id: "swift-tools"), "swift"),
             ("memory", "memory"),
             (TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools"), "web"),
-            ("orchestration", "sub-agents"),
+            ("sub-agents", "sub-agents"),
             (TerminalToolSelectionCatalog.featurePackageKey(id: "xcode-tools"), "Xcode"),
             (TerminalToolSelectionCatalog.featurePackageKey(id: "figma-tools"), "Figma")
         ]

@@ -33,7 +33,7 @@ public actor DirectToolExecutor {
     public let subAgentRuntime: DirectSubAgentRuntime
     public let mcpRuntime: DirectMCPToolRuntime
     public let swiftFeatureRuntime: SwiftFeatureRuntime
-    public let orchestrationRuntime = DirectOrchestrationRuntime()
+    public let sessionToolRuntime = DirectOrchestrationRuntime()
     public let preferredWorkspaceRootURL: URL?
     public var borrowedOrchestrationToolExecutor: AgentBorrowedToolExecutor?
     public var toolProviderRegistry = AgentToolProviderRegistry()

@@ -261,6 +261,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
 
         var accumulatedText = ""
         var generationStats: [RemoteGenerationStats] = []
+        var didRetryWithoutImages = false
         for round in 0..<configuration.maxToolRounds {
             // Re-read shared state at the start of each round so changes applied
             // by concurrent operations between rounds are not lost.
@@ -269,25 +270,45 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             }
             let expectsPromptCache = Self.messagesExpectPromptCache(session.messages)
             let streamResult: RemoteStreamResult
-            switch provider.chatEndpoint {
-            case .chatCompletions:
-                streamResult = try await streamChatCompletions(
-                    messages: session.messages,
-                    sessionID: session.id,
-                    allowedToolNames: session.allowedToolNames,
-                    preferredWorkspaceRootURL: session.cwd,
-                    thinkingSelection: session.thinkingSelection,
-                    onEvent: onEvent
-                )
-            case .responses:
-                streamResult = try await streamResponses(
-                    messages: session.messages,
-                    sessionID: session.id,
-                    allowedToolNames: session.allowedToolNames,
-                    preferredWorkspaceRootURL: session.cwd,
-                    thinkingSelection: session.thinkingSelection,
-                    onEvent: onEvent
-                )
+            while true {
+                do {
+                    switch provider.chatEndpoint {
+                    case .chatCompletions:
+                        streamResult = try await streamChatCompletions(
+                            messages: session.messages,
+                            sessionID: session.id,
+                            allowedToolNames: session.allowedToolNames,
+                            preferredWorkspaceRootURL: session.cwd,
+                            thinkingSelection: session.thinkingSelection,
+                            onEvent: onEvent
+                        )
+                    case .responses:
+                        streamResult = try await streamResponses(
+                            messages: session.messages,
+                            sessionID: session.id,
+                            allowedToolNames: session.allowedToolNames,
+                            preferredWorkspaceRootURL: session.cwd,
+                            thinkingSelection: session.thinkingSelection,
+                            onEvent: onEvent
+                        )
+                    }
+                    break
+                } catch {
+                    if !didRetryWithoutImages,
+                       Self.isImageContentRejectedError(error),
+                       Self.messagesContainImageContent(session.messages) {
+                        didRetryWithoutImages = true
+                        session.messages = Self.messagesStrippingImageContent(
+                            from: session.messages
+                        )
+                        sessions[sessionID] = session
+                        await onEvent(.diagnostic(
+                            "\(provider.displayTitle) does not support image input with the selected model. Retrying without attached images."
+                        ))
+                        continue
+                    }
+                    throw error
+                }
             }
 
             accumulatedText.append(streamResult.text)
