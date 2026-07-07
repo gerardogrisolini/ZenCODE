@@ -8,6 +8,46 @@
 import Foundation
 
 extension TerminalChat {
+    private struct SubAgentOverviewLine {
+        let text: String
+        let indentation: Int
+        let maxWrappedLines: Int
+        let dimPrefix: Bool
+
+        static func summary(_ text: String) -> SubAgentOverviewLine {
+            SubAgentOverviewLine(
+                text: text,
+                indentation: 2,
+                maxWrappedLines: 3,
+                dimPrefix: true
+            )
+        }
+
+        static func regular(
+            _ text: String,
+            maxWrappedLines: Int = 3
+        ) -> SubAgentOverviewLine {
+            SubAgentOverviewLine(
+                text: text,
+                indentation: 2,
+                maxWrappedLines: maxWrappedLines,
+                dimPrefix: false
+            )
+        }
+
+        static func current(
+            _ text: String,
+            maxWrappedLines: Int = 6
+        ) -> SubAgentOverviewLine {
+            SubAgentOverviewLine(
+                text: text,
+                indentation: 4,
+                maxWrappedLines: maxWrappedLines,
+                dimPrefix: false
+            )
+        }
+    }
+
     public func publishSubAgentOverviewIfChanged(
         relatedToolName: String? = nil
     ) async {
@@ -46,31 +86,35 @@ extension TerminalChat {
     public static func renderSubAgentOverview(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
     ) -> String {
-        var lines = [renderSubAgentSummary(snapshots)]
+        var lines = [SubAgentOverviewLine.summary(renderSubAgentSummary(snapshots))]
 
         if snapshots.isEmpty {
-            lines.append("No delegated sub-agents.")
+            lines.append(.regular("No delegated sub-agents."))
             return renderSubAgentOverviewLines(lines)
         }
 
         for (index, snapshot) in snapshots.enumerated() {
             if index > 0 {
-                lines.append("")
+                lines.append(.regular("", maxWrappedLines: 1))
             }
-            lines.append(renderSubAgentHeader(snapshot))
+            lines.append(.regular(renderSubAgentHeader(snapshot)))
             if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                lines.append("\(dimText("role:")) \(snapshot.role)")
+                lines.append(.regular("\(dimText("role:")) \(snapshot.role)"))
             }
             if let model = renderSubAgentModel(snapshot) {
-                lines.append(model)
+                lines.append(.regular(model))
             }
-            if let activity = renderSubAgentActivity(snapshot) {
-                lines.append(activity)
+            let activityLines = renderSubAgentActivityLines(snapshot)
+            if !activityLines.isEmpty {
+                lines.append(contentsOf: activityLines)
             }
-            if let detail = renderSubAgentDetail(snapshot) {
+            if let detail = renderSubAgentDetail(
+                snapshot,
+                hasCurrentActivity: !activityLines.isEmpty
+            ) {
                 lines.append(detail)
             }
-            lines.append(dimText("id: \(snapshot.id)"))
+            lines.append(.regular(dimText("id: \(snapshot.id)"), maxWrappedLines: 1))
         }
 
         return renderSubAgentOverviewLines(lines)
@@ -126,42 +170,85 @@ extension TerminalChat {
         return "\(dimText("model:")) \(inlineText(text))"
     }
 
-    private static func renderSubAgentActivity(
+    private static func renderSubAgentActivityLines(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot
-    ) -> String? {
-        if let currentToolName = snapshot.currentToolName?.nilIfBlank {
-            let label = colorText("▸ tool:", code: "\u{1B}[38;5;208m")
-            return "\(label) \(inlineText(currentToolName))"
+    ) -> [SubAgentOverviewLine] {
+        let currentToolName = snapshot.currentToolName?.nilIfBlank
+        let currentActivity = snapshot.currentActivity?.nilIfBlank
+        let latestContentPreview = snapshot.latestContentPreview?.nilIfBlank
+        guard currentToolName != nil || currentActivity != nil || latestContentPreview != nil else {
+            return []
         }
-        guard let activity = snapshot.currentActivity?.nilIfBlank else {
-            return nil
+
+        let label = colorText("▸ current:", code: "\u{1B}[38;5;208m")
+        var lines = [SubAgentOverviewLine.regular(label, maxWrappedLines: 1)]
+
+        if let currentToolName {
+            lines.append(
+                .current("\(dimText("tool:")) \(inlineText(currentToolName))", maxWrappedLines: 2)
+            )
         }
-        let label = colorText("▸ activity:", code: "\u{1B}[38;5;208m")
-        return "\(label) \(inlineText(activity))"
+
+        if let currentActivity,
+           !isToolOnlyActivity(currentActivity, currentToolName: currentToolName) {
+            lines.append(
+                .current("\(dimText("activity:")) \(inlineText(currentActivity))")
+            )
+        }
+
+        if let latestContentPreview,
+           !hasSameInlineText(latestContentPreview, as: currentActivity) {
+            lines.append(
+                .current("\(dimText("preview:")) \(inlineText(latestContentPreview))")
+            )
+        }
+
+        return lines
     }
 
     private static func renderSubAgentDetail(
-        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
-    ) -> String? {
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
+        hasCurrentActivity: Bool
+    ) -> SubAgentOverviewLine? {
         if let latestError = snapshot.latestError?.nilIfBlank {
             let label = colorText("✗ error:", code: "\u{1B}[31m")
-            return "\(label) \(inlineText(latestError))"
+            return .regular("\(label) \(inlineText(latestError))")
         }
 
         guard let latestOutput = snapshot.latestOutput?.nilIfBlank else {
-            if snapshot.pending {
+            if snapshot.pending && !hasCurrentActivity {
                 let label = colorText("▸ working:", code: "\u{1B}[38;5;208m")
-                return "\(label) \(dimText("pending response"))"
+                return .regular("\(label) \(dimText("pending response"))")
             }
             return nil
         }
 
         if snapshot.pending {
             let label = colorText("▸ working:", code: "\u{1B}[38;5;208m")
-            return "\(label) \(inlineText(latestOutput))"
+            return .regular("\(label) \(inlineText(latestOutput))")
         }
         let label = colorText("✓ result:", code: "\u{1B}[32m")
-        return "\(label) \(inlineText(latestOutput))"
+        return .regular("\(label) \(inlineText(latestOutput))")
+    }
+
+    private static func isToolOnlyActivity(
+        _ activity: String,
+        currentToolName: String?
+    ) -> Bool {
+        guard let currentToolName else {
+            return false
+        }
+        return inlineText(activity) == "running \(currentToolName)"
+    }
+
+    private static func hasSameInlineText(
+        _ lhs: String,
+        as rhs: String?
+    ) -> Bool {
+        guard let rhs else {
+            return false
+        }
+        return inlineText(lhs) == inlineText(rhs)
     }
 
     private static func statusBadge(
@@ -238,7 +325,7 @@ extension TerminalChat {
         return "\(color)\(marker)\u{1B}[0m"
     }
 
-    private static func renderSubAgentOverviewLines(_ lines: [String]) -> String {
+    private static func renderSubAgentOverviewLines(_ lines: [SubAgentOverviewLine]) -> String {
         let columns = terminalColumnCount()
         let horizontalInset = terminalBoxHorizontalInset(columns: columns)
         let contentWidth = max(40, columns - horizontalInset)
@@ -250,20 +337,20 @@ extension TerminalChat {
             ? "👥 \(orange)Sub-Agents\(reset)"
             : "👥 Sub-Agents"
 
-        let maxWrappedLinesPerEntry = 3
         var output = ["\(linePrefix)\(title)"]
-        for (index, line) in lines.enumerated() {
-            let prefix: String
-            if index == 0 {
-                prefix = AgentOutput.standardErrorIsTerminal ? "\(dim)  \(reset)" : "  "
-            } else {
-                prefix = "  "
-            }
-            var wrapped = fitInline(line, width: contentWidth - 2)
+        for line in lines {
+            let indentation = max(0, line.indentation)
+            let indentationText = String(repeating: " ", count: indentation)
+            let prefix = line.dimPrefix && AgentOutput.standardErrorIsTerminal
+                ? "\(dim)\(indentationText)\(reset)"
+                : indentationText
+            let wrapWidth = max(1, contentWidth - indentation)
+            var wrapped = fitInline(line.text, width: wrapWidth)
                 .components(separatedBy: "\n")
-            if wrapped.count > maxWrappedLinesPerEntry {
-                wrapped = Array(wrapped.prefix(maxWrappedLinesPerEntry))
-                let lastIndex = maxWrappedLinesPerEntry - 1
+            let maxWrappedLines = max(1, line.maxWrappedLines)
+            if wrapped.count > maxWrappedLines {
+                wrapped = Array(wrapped.prefix(maxWrappedLines))
+                let lastIndex = maxWrappedLines - 1
                 let ellipsis = AgentOutput.standardErrorIsTerminal ? "\(reset)…" : "…"
                 wrapped[lastIndex] += ellipsis
             }

@@ -492,7 +492,9 @@ struct TerminalChatRenderingTests {
         let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
 
         #expect(rendered.contains("model: gpt-5 · remote"))
+        #expect(rendered.contains("▸ current:"))
         #expect(rendered.contains("tool: search.grep"))
+        #expect(rendered.contains("activity: reading project files"))
     }
 
     @Test
@@ -513,8 +515,71 @@ struct TerminalChatRenderingTests {
 
         let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
 
+        #expect(rendered.contains("▸ current:"))
         #expect(rendered.contains("activity: reading project files"))
         #expect(!rendered.contains("tool:"))
+    }
+
+    @Test
+    func subAgentOverviewRendersCurrentActivityAcrossMultipleWrappedLines() {
+        let longActivity = String(
+            repeating: "analysing renderer state while checking delegated agent progress ",
+            count: 5
+        ) + "ENDCURRENT"
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_current",
+            name: "worker",
+            role: "worker",
+            isolationMode: .report,
+            status: .running,
+            pending: true,
+            currentActivity: longActivity,
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+        let visibleLines = rendered
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { String($0) }
+
+        #expect(rendered.contains("▸ current:"))
+        #expect(rendered.contains("activity:"))
+        #expect(rendered.contains("ENDCURRENT"))
+
+        let currentIndex = visibleLines.firstIndex { $0.contains("▸ current:") }
+        let idIndex = visibleLines.firstIndex { $0.contains("id: agent_current") }
+        #expect(currentIndex != nil)
+        #expect(idIndex != nil)
+        if let currentIndex, let idIndex {
+            #expect(idIndex - currentIndex > 2)
+        }
+    }
+
+    @Test
+    func subAgentOverviewRendersCurrentContentPreviewWhenAvailable() {
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_preview",
+            name: "writer",
+            role: "writer",
+            isolationMode: .report,
+            status: .running,
+            pending: true,
+            currentActivity: "thinking through the answer",
+            latestContentPreview: "Drafting the final summary for the delegated investigation",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+
+        #expect(rendered.contains("▸ current:"))
+        #expect(rendered.contains("activity: thinking through the answer"))
+        #expect(rendered.contains("preview: Drafting the final summary"))
     }
 
     @Test
