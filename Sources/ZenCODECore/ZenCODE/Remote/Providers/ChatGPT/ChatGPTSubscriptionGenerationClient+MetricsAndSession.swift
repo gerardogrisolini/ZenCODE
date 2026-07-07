@@ -145,7 +145,7 @@ extension ChatGPTSubscriptionGenerationClient {
             return AgentThinkingSelection.medium.rawValue
         case .minimal:
             return AgentThinkingSelection.low.rawValue
-        case .low, .medium, .high, .xhigh:
+        case .low, .medium, .high, .xhigh, .max:
             return selection.rawValue
         }
     }

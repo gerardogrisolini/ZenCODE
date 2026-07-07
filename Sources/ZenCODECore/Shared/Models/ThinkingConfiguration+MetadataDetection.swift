@@ -20,7 +20,7 @@ extension ModelThinkingSupport {
         from selections: [ThinkingSelection]
     ) -> [ThinkingSelection] {
         let requestedLevels = Set(selections)
-        return [.minimal, .low, .medium, .high, .xhigh].filter {
+        return [.minimal, .low, .medium, .high, .xhigh, .max].filter {
             requestedLevels.contains($0)
         }
     }
@@ -40,7 +40,7 @@ extension ModelThinkingSupport {
             if supportsEffort {
                 let normalizedLevels = ModelThinkingSupport.effortLevels(from: effortLevels)
                 let resolvedLevels = normalizedLevels.isEmpty
-                    ? [.minimal, .low, .medium, .high, .xhigh]
+                    ? [.minimal, .low, .medium, .high, .xhigh, .max]
                     : normalizedLevels
                 let availableSelections = [.off] + resolvedLevels
                 let resolvedDefaultSelection = defaultSelection.flatMap {
@@ -412,7 +412,7 @@ extension ModelThinkingSupport {
             case "off", "none", "false", "disabled", "disable":
                 return .off
             case "max":
-                return .xhigh
+                return .max
             default:
                 return ThinkingSelection(rawValue: normalizedValue)
             }
@@ -422,7 +422,7 @@ extension ModelThinkingSupport {
             _ selection: ThinkingSelection
         ) -> Bool {
             switch selection {
-            case .minimal, .low, .medium, .high, .xhigh:
+            case .minimal, .low, .medium, .high, .xhigh, .max:
                 return true
             case .off, .enabled:
                 return false

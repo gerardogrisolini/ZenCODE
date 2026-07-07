@@ -15,6 +15,7 @@ public enum AgentThinkingSelection: String, Codable, CaseIterable, Hashable, Ide
     case medium
     case high
     case xhigh
+    case max
 
     public var id: String { rawValue }
 
@@ -38,6 +39,8 @@ public enum AgentThinkingSelection: String, Codable, CaseIterable, Hashable, Ide
             return "High"
         case .xhigh:
             return "XHigh"
+        case .max:
+            return "Max"
         }
     }
 
@@ -57,6 +60,8 @@ public enum AgentThinkingSelection: String, Codable, CaseIterable, Hashable, Ide
             return "High thinking"
         case .xhigh:
             return "XHigh thinking"
+        case .max:
+            return "Max thinking"
         }
     }
 
@@ -72,7 +77,7 @@ public enum AgentThinkingSelection: String, Codable, CaseIterable, Hashable, Ide
                 "enabled": true,
                 "exclude": false
             ]
-        case .minimal, .low, .medium, .high, .xhigh:
+        case .minimal, .low, .medium, .high, .xhigh, .max:
             [
                 "effort": rawValue,
                 "exclude": false
@@ -87,6 +92,8 @@ public enum AgentThinkingSelection: String, Codable, CaseIterable, Hashable, Ide
         case .minimal, .low, .medium, .high:
             rawValue
         case .xhigh:
+            "max"
+        case .max:
             "max"
         }
     }

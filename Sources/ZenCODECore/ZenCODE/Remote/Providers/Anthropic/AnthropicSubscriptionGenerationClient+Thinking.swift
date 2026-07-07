@@ -179,7 +179,8 @@ extension AnthropicSubscriptionGenerationClient {
             return "medium"
         case .high:
             return "high"
-        case .xhigh:
+        case .xhigh,
+             .max:
             switch modelID {
             case "claude-fable-5", "claude-opus-4-7", "claude-opus-4-8":
                 return "xhigh"
@@ -201,7 +202,7 @@ extension AnthropicSubscriptionGenerationClient {
             return 2_048
         case .medium:
             return 8_192
-        case .high, .xhigh:
+        case .high, .xhigh, .max:
             return 16_384
         }
     }

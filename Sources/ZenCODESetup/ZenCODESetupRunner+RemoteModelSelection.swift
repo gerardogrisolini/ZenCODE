@@ -15,7 +15,7 @@ extension ZenCODESetupRunner {
         apiKey: String?,
         existingModels: [AgentSettingsModelManifest]
     ) async throws -> [AgentSettingsModelManifest] {
-                        var models: [AgentSettingsModelManifest] = existingModels.map { model in
+        var models: [AgentSettingsModelManifest] = existingModels.map { model in
             modelWithProvider(
                 model,
                 providerID: providerID,
@@ -24,6 +24,10 @@ extension ZenCODESetupRunner {
                 chatEndpoint: chatEndpoint
             )
         }
+        models = try reconfigureExistingModelMetadata(
+            providerName: providerName,
+            models: models
+        )
 
         while try promptYesNo(
             "Add another model for \(providerName)?",
@@ -55,6 +59,84 @@ extension ZenCODESetupRunner {
 
         return models
 
+    }
+
+    static func reconfigureExistingModelMetadata(
+        providerName: String,
+        models: [AgentSettingsModelManifest]
+    ) throws -> [AgentSettingsModelManifest] {
+        let selectedModelIndexes = promptModelMetadataIndexes(
+            providerName: providerName,
+            models: models
+        )
+        guard !selectedModelIndexes.isEmpty else {
+            return models
+        }
+
+        var updatedModels = models
+        for index in selectedModelIndexes.sorted() where updatedModels.indices.contains(index) {
+            updatedModels[index] = try readModelMetadata(for: updatedModels[index])
+        }
+        return updatedModels
+    }
+
+    static func promptModelMetadataIndexes(
+        providerName: String,
+        models: [AgentSettingsModelManifest]
+    ) -> Set<Int> {
+        guard !models.isEmpty else {
+            return []
+        }
+
+        let items = models.enumerated().map { index, model in
+            TerminalCheckboxMenuItem(
+                value: index,
+                title: model.displayTitle,
+                detail: modelMetadataDetail(model)
+            )
+        }
+        return TerminalCheckboxMenu.select(
+            title: "Configure context window / thinking for \(providerName)",
+            items: items,
+            selected: defaultModelMetadataIndexes(models)
+        ) ?? []
+    }
+
+    static func defaultModelMetadataIndexes(
+        _ models: [AgentSettingsModelManifest]
+    ) -> Set<Int> {
+        Set(
+            models.enumerated().compactMap { index, model in
+                model.configuredContextWindowLimit == nil
+                    && (model.thinkingOptions?.isEmpty ?? true)
+                    ? index
+                    : nil
+            }
+        )
+    }
+
+    static func modelMetadataDetail(
+        _ model: AgentSettingsModelManifest
+    ) -> String {
+        var details: [String] = []
+        if let contextWindow = model.configuredContextWindowLimit {
+            details.append("ctx \(contextWindow)")
+        } else {
+            details.append("ctx not set")
+        }
+
+        if let thinkingOptions = model.thinkingOptions,
+           !thinkingOptions.isEmpty {
+            let options = thinkingOptions.map(\.rawValue).joined(separator: "/")
+            if let defaultThinkingSelection = model.defaultThinkingSelection {
+                details.append("thinking \(options), default \(defaultThinkingSelection.rawValue)")
+            } else {
+                details.append("thinking \(options)")
+            }
+        } else {
+            details.append("thinking not set")
+        }
+        return details.joined(separator: ", ")
     }
 
     static func promptModelIndexes(
@@ -103,7 +185,21 @@ extension ZenCODESetupRunner {
             AgentOutput.standardError.writeString(
                 "No additional models available from /models for \(providerName).\n"
             )
-            return []
+            guard try promptYesNo(
+                "Enter another model manually?",
+                defaultValue: false
+            ) else {
+                return []
+            }
+            return [
+                try readModel(
+                    providerID: providerID,
+                    providerName: providerName,
+                    baseURL: baseURL,
+                    chatEndpoint: chatEndpoint,
+                    modelIndex: existingModels.count
+                )
+            ]
         }
 
         let selectedModels = try selectRemoteModels(from: catalogModels)

@@ -15,6 +15,7 @@ public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identi
     case medium
     case high
     case xhigh
+    case max
 
     public var id: String { rawValue }
 
@@ -38,6 +39,8 @@ public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identi
             "High"
         case .xhigh:
             "XHigh"
+        case .max:
+            "Max"
         }
     }
 
@@ -57,6 +60,8 @@ public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identi
             "High thinking"
         case .xhigh:
             "XHigh thinking"
+        case .max:
+            "Max thinking"
         }
     }
 
@@ -72,7 +77,7 @@ public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identi
                 "enabled": true,
                 "exclude": false
             ]
-        case .minimal, .low, .medium, .high, .xhigh:
+        case .minimal, .low, .medium, .high, .xhigh, .max:
             [
                 "effort": rawValue,
                 "exclude": false
@@ -103,6 +108,8 @@ public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identi
                 return .high
             case "xhigh":
                 return .xhigh
+            case "max":
+                return .max
             default:
                 break
             }
@@ -155,7 +162,7 @@ public nonisolated struct ModelThinkingSupport: Codable, Hashable, Sendable {
     ) -> ModelThinkingSupport {
         let normalizedLevels = effortLevels(from: levels)
         let resolvedLevels = normalizedLevels.isEmpty
-            ? [.minimal, .low, .medium, .high, .xhigh]
+            ? [.minimal, .low, .medium, .high, .xhigh, .max]
             : normalizedLevels
         let defaultSelection = resolvedLevels.contains(.medium)
             ? ThinkingSelection.medium

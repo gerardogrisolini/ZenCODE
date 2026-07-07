@@ -207,6 +207,12 @@ extension RemoteModelCatalogClient {
             || compactReadme.contains("maximumreasoningeffort")
             || lowercasedReadme.contains(#"reasoning_effort":"max"#)
             || lowercasedReadme.contains(#"reasoning_effort="max""#) {
+            append(.max)
+        }
+
+        if compactReadme.contains("thinkxhigh")
+            || compactReadme.contains("reasoningeffortxhigh")
+            || compactReadme.contains("xhigh") {
             append(.xhigh)
         }
 

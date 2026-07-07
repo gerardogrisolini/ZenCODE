@@ -166,6 +166,102 @@ struct ZenCODEAgentProfileSetupRunnerTests {
         #expect(items.first?.title == "Enter in TextEdit")
     }
 
+    @Test
+    func setupModelMetadataDefaultIndexesSelectOnlyUnconfiguredModels() {
+        let missingMetadata = AgentSettingsModelManifest(
+            id: "missing-metadata",
+            kind: .remoteAPI,
+            modelID: "missing-metadata",
+            providerID: UUID(),
+            provider: AgentRemoteProvider(modelID: "missing-metadata")
+        )
+        let contextOnly = AgentSettingsModelManifest(
+            id: "context-only",
+            kind: .remoteAPI,
+            modelID: "context-only",
+            providerID: UUID(),
+            provider: AgentRemoteProvider(modelID: "context-only"),
+            configuredContextWindowLimit: 131_072
+        )
+        let thinkingOnly = AgentSettingsModelManifest(
+            id: "thinking-only",
+            kind: .remoteAPI,
+            modelID: "thinking-only",
+            providerID: UUID(),
+            provider: AgentRemoteProvider(modelID: "thinking-only"),
+            thinkingOptions: [.off, .low, .medium, .high],
+            defaultThinkingSelection: .medium
+        )
+
+        let indexes = ZenCODESetupRunner.defaultModelMetadataIndexes([
+            missingMetadata,
+            contextOnly,
+            thinkingOnly
+        ])
+
+        #expect(indexes == Set([0]))
+    }
+
+    @Test
+    func setupModelWithMetadataPreservesIdentityAndProvider() {
+        let providerID = UUID()
+        let provider = AgentRemoteProvider(
+            id: providerID,
+            name: "DeepSeek",
+            baseURL: "https://api.deepseek.com/v1",
+            modelID: "deepseek-reasoner",
+            chatEndpoint: .chatCompletions
+        )
+        let model = AgentSettingsModelManifest(
+            id: "remoteapi:test:deepseek-reasoner",
+            kind: .remoteAPI,
+            title: "DeepSeek Reasoner",
+            llmID: "remoteapi:test:deepseek-reasoner",
+            modelID: "deepseek-reasoner",
+            providerID: providerID,
+            provider: provider
+        )
+
+        let updated = ZenCODESetupRunner.modelWithMetadata(
+            model,
+            configuredContextWindowLimit: 131_072,
+            thinkingOptions: [.off, .low, .medium, .high],
+            defaultThinkingSelection: .medium
+        )
+
+        #expect(updated.id == model.id)
+        #expect(updated.title == model.title)
+        #expect(updated.llmID == model.llmID)
+        #expect(updated.modelID == model.modelID)
+        #expect(updated.providerID == model.providerID)
+        #expect(updated.provider == model.provider)
+        #expect(updated.configuredContextWindowLimit == 131_072)
+        #expect(updated.thinkingOptions == [.off, .low, .medium, .high])
+        #expect(updated.defaultThinkingSelection == .medium)
+    }
+
+    @Test
+    func setupThinkingSupportDefaultsPreserveExistingSelections() {
+        let availableOptions: [AgentThinkingSelection] = [.off, .enabled, .low, .medium, .high]
+
+        let indexes = ZenCODESetupRunner.thinkingSupportDefaultMenuSelection(
+            availableOptions: availableOptions,
+            existingOptions: [.enabled, .high]
+        )
+        let preservedDefault = ZenCODESetupRunner.defaultThinkingSelection(
+            existingDefaultSelection: .high,
+            selectedOptions: [.off, .low, .high]
+        )
+        let fallbackDefault = ZenCODESetupRunner.defaultThinkingSelection(
+            existingDefaultSelection: .xhigh,
+            selectedOptions: [.off, .low, .medium, .high]
+        )
+
+        #expect(indexes == Set([1, 4]))
+        #expect(preservedDefault == .high)
+        #expect(fallbackDefault == .medium)
+    }
+
     private func setupThinkingModel() -> AgentSettingsModelManifest {
         AgentSettingsModelManifest(
             id: "thinking",
