@@ -165,6 +165,23 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
         return normalizedValue.lowercased().contains("openrouter.ai")
     }
 
+    public static func isOpenAIBaseURL(_ value: String) -> Bool {
+        let normalizedValue = normalizedBaseURL(value)
+        if let host = URL(string: normalizedValue)?.host?.lowercased() {
+            return host == "api.openai.com" || host.hasSuffix(".openai.com")
+        }
+        let hostCandidate = normalizedValue
+            .lowercased()
+            .split(separator: "/", maxSplits: 1)
+            .first
+            .map(String.init) ?? ""
+        let hostWithoutPort = hostCandidate
+            .split(separator: ":", maxSplits: 1)
+            .first
+            .map(String.init) ?? hostCandidate
+        return hostWithoutPort == "api.openai.com" || hostWithoutPort.hasSuffix(".openai.com")
+    }
+
     public static func isNVIDIABaseURL(_ value: String) -> Bool {
         let normalizedValue = normalizedBaseURL(value)
         if let host = URL(string: normalizedValue)?.host?.lowercased() {

@@ -145,7 +145,9 @@ public enum SystemPromptBuilder {
 //        8. Ask for confirmation when the next step starts file modifications, is destructive, irreversible, or genuinely ambiguous.
 //        """
 
-        let toolFamilyText = "Git, Xcode, Shell, Web, Figma\(memoryToolEnabled ? ", Memory" : "") and Sub-Agents tools"
+        let toolFamilyText = memoryToolEnabled
+            ? "Git, Xcode, Shell, Web, Figma, memory, and delegated sub-agent tools"
+            : "Git, Xcode, Shell, Web, Figma and delegated sub-agent tools"
         return """
         You are ZenCODE running as an autonomous CLI/ACP coding agent on the user's machine.
 

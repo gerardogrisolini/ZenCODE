@@ -77,8 +77,6 @@ extension SwiftFeatureRuntimeTests {
         try """
         #!/bin/sh
         cat >/dev/null
-        sleep 2
-        printf '{"ok":true,"output":"late-output"}\n'
         """.write(to: executableURL, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755],

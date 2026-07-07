@@ -118,6 +118,7 @@ public enum ParsedRemoteStreamEvent {
     case responseReasoningItem([String: Any])
     case responseToolCallArgumentsDelta([String: Any])
     case responseToolCallArgumentsDone([String: Any])
+    case discardToolCalls
     case stop(String)
     case failure(String)
     case usage(RemoteGenerationUsage)
@@ -130,6 +131,7 @@ public enum RemoteGenerationClientError: LocalizedError {
     case missingSession
     case httpStatus(Int)
     case remoteFailure(String)
+    case invalidRequestPayload(String)
     case invalidToolArguments
     case tooManyToolRounds(Int)
 
@@ -145,6 +147,8 @@ public enum RemoteGenerationClientError: LocalizedError {
             return "Remote provider returned HTTP \(statusCode)."
         case let .remoteFailure(message):
             return "Remote provider failed: \(message)"
+        case let .invalidRequestPayload(message):
+            return "Invalid remote request payload: \(message)"
         case .invalidToolArguments:
             return "Remote provider returned invalid tool call arguments."
         case let .tooManyToolRounds(limit):

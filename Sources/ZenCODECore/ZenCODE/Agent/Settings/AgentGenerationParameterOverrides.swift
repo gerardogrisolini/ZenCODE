@@ -1,5 +1,5 @@
 //
-//  AgentSettingsManifest.swift
+//  AgentGenerationParameterOverrides.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -10,8 +10,95 @@ import Foundation
 import os
 #endif
 
+public struct AgentStructuredOutputFormat: Codable, Equatable, Hashable, Sendable {
+    public static let defaultName = "structured_output"
+
+    public var name: String?
+    public var schema: JSONValue?
+    public var strict: Bool
+
+    public init(
+        name: String? = nil,
+        schema: JSONValue? = nil,
+        strict: Bool = true
+    ) {
+        self.name = name?.nilIfBlank
+        self.schema = schema
+        self.strict = strict
+    }
+
+    public var isEmpty: Bool {
+        schema == nil || schema == .null
+    }
+
+    public var nilIfEmpty: AgentStructuredOutputFormat? {
+        isEmpty ? nil : self
+    }
+
+    public func normalized() -> Self {
+        Self(
+            name: Self.sanitizedName(name),
+            schema: schema,
+            strict: strict
+        )
+    }
+
+    public var responsesTextFormatPayload: [String: Any]? {
+        guard let normalized = nilIfEmpty?.normalized(), let schema = normalized.schema else {
+            return nil
+        }
+        return [
+            "type": "json_schema",
+            "name": Self.sanitizedName(normalized.name),
+            "schema": schema.jsonObject,
+            "strict": normalized.strict
+        ]
+    }
+
+    public var chatCompletionsResponseFormatPayload: [String: Any]? {
+        guard let normalized = nilIfEmpty?.normalized(), let schema = normalized.schema else {
+            return nil
+        }
+        return [
+            "type": "json_schema",
+            "json_schema": [
+                "name": Self.sanitizedName(normalized.name),
+                "schema": schema.jsonObject,
+                "strict": normalized.strict
+            ]
+        ]
+    }
+
+    public static func sanitizedName(_ value: String?) -> String {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else {
+            return defaultName
+        }
+
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+        var scalars = String.UnicodeScalarView()
+        var previousWasReplacement = false
+        for scalar in trimmed.unicodeScalars {
+            if allowed.contains(scalar) {
+                scalars.append(scalar)
+                previousWasReplacement = false
+            } else if !previousWasReplacement {
+                scalars.append("_")
+                previousWasReplacement = true
+            }
+            if scalars.count >= 64 {
+                break
+            }
+        }
+
+        let sanitized = String(scalars)
+        return sanitized.isEmpty ? defaultName : sanitized
+    }
+}
+
 public struct AgentGenerationParameterOverrides: Codable, Equatable, Hashable, Sendable {
     public var maxTokens: Int?
+    public var structuredOutput: AgentStructuredOutputFormat?
     public var maxKVSize: Int?
     public var temperature: Double?
     public var topP: Double?
@@ -30,6 +117,7 @@ public struct AgentGenerationParameterOverrides: Codable, Equatable, Hashable, S
 
     public init(
         maxTokens: Int? = nil,
+        structuredOutput: AgentStructuredOutputFormat? = nil,
         maxKVSize: Int? = nil,
         temperature: Double? = nil,
         topP: Double? = nil,
@@ -47,6 +135,7 @@ public struct AgentGenerationParameterOverrides: Codable, Equatable, Hashable, S
         quantizedKVStart: Int? = nil
     ) {
         self.maxTokens = maxTokens
+        self.structuredOutput = structuredOutput?.nilIfEmpty
         self.maxKVSize = maxKVSize
         self.temperature = temperature
         self.topP = topP
@@ -66,6 +155,7 @@ public struct AgentGenerationParameterOverrides: Codable, Equatable, Hashable, S
 
     public var isEmpty: Bool {
         maxTokens == nil
+            && structuredOutput?.nilIfEmpty == nil
             && maxKVSize == nil
             && temperature == nil
             && topP == nil
@@ -90,6 +180,7 @@ public struct AgentGenerationParameterOverrides: Codable, Equatable, Hashable, S
     public func normalized() -> Self {
         Self(
             maxTokens: maxTokens.map { min(max($0, 1), 1_048_576) },
+            structuredOutput: structuredOutput?.normalized().nilIfEmpty,
             maxKVSize: maxKVSize.map { min(max($0, 1), 1_048_576) },
             temperature: temperature.map { min(max($0, 0), 2) },
             topP: topP.map { min(max($0, 0.01), 1) },

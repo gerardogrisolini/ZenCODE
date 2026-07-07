@@ -57,7 +57,7 @@ extension ChatGPTSubscriptionGenerationClient {
 #if DEBUG
     public static func testIngestStreamObjects(
         _ objects: [[String: Any]]
-    ) async throws -> (text: String, contentText: String) {
+    ) async throws -> (text: String, contentText: String, stopReason: String) {
         let accumulator = StreamAccumulator()
         var contentText = ""
         for object in objects {
@@ -70,7 +70,7 @@ extension ChatGPTSubscriptionGenerationClient {
         let result = try await accumulator.result(
             toolCatalog: StreamAccumulatorToolCatalog(RemoteToolWireCatalog(descriptors: []))
         )
-        return (result.text, contentText)
+        return (result.text, contentText, result.stopReason)
     }
 #endif
 }

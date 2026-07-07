@@ -56,6 +56,61 @@ extension RemoteGenerationClient {
         return .openRouterReasoning
     }
 
+    private var shouldSendResponsesReplayMetadata: Bool {
+        AgentRemoteProvider.isOpenAIBaseURL(provider.baseURL)
+            || AgentRemoteProvider.isOpenRouterBaseURL(provider.baseURL)
+    }
+
+    public func applyStructuredOutputFormat(
+        to body: inout [String: Any],
+        endpoint: AgentRemoteChatEndpoint
+    ) {
+        guard let structuredOutput = configuration
+            .generationParameterOverrides
+            .structuredOutput?
+            .nilIfEmpty else {
+            return
+        }
+
+        switch endpoint {
+        case .chatCompletions:
+            if let responseFormat = structuredOutput.chatCompletionsResponseFormatPayload {
+                body["response_format"] = responseFormat
+            }
+        case .responses:
+            guard let format = structuredOutput.responsesTextFormatPayload else {
+                return
+            }
+            var text = body["text"] as? [String: Any] ?? [:]
+            text["format"] = format
+            body["text"] = text
+        }
+    }
+
+    public static func validateRemoteToolPayloads(
+        bindings: [RemoteToolWireCatalog.Binding],
+        endpoint: AgentRemoteChatEndpoint
+    ) throws {
+        let invalidNames = bindings.compactMap { binding -> String? in
+            switch endpoint {
+            case .chatCompletions:
+                return binding.chatCompletionToolPayload == nil
+                    ? binding.descriptor.name
+                    : nil
+            case .responses:
+                return binding.responsesToolPayload == nil
+                    ? binding.descriptor.name
+                    : nil
+            }
+        }
+
+        guard invalidNames.isEmpty else {
+            throw RemoteGenerationClientError.invalidRequestPayload(
+                "Cannot expose remote tools with invalid JSON schemas: \(invalidNames.sorted().joined(separator: ", "))."
+            )
+        }
+    }
+
     public func streamChatCompletions(
         messages: [[String: Any]],
         sessionID: String,
@@ -81,11 +136,16 @@ extension RemoteGenerationClient {
             ]
         ]
         applyThinkingSelection(thinkingSelection, to: &body)
+        applyStructuredOutputFormat(to: &body, endpoint: .chatCompletions)
         if provider.chatEndpoint.usesSessionID
             || AgentRemoteProvider.isOpenRouterBaseURL(provider.baseURL) {
             body["session_id"] = sessionID
         }
         let toolPayloads = toolCatalog.chatCompletionToolPayloads
+        try Self.validateRemoteToolPayloads(
+            bindings: toolCatalog.bindings,
+            endpoint: .chatCompletions
+        )
         if !toolPayloads.isEmpty {
             body["tools"] = toolPayloads
             body["tool_choice"] = "auto"
@@ -125,31 +185,39 @@ extension RemoteGenerationClient {
             await onEvent(.diagnostic(Self.toolExposureDiagnostic(from: toolDescriptors)))
         }
         let toolCatalog = RemoteToolWireCatalog(descriptors: toolDescriptors)
-        let normalizedInput = Self.responsesInputPayload(
+        let normalizedInput = try Self.validatedResponsesInputPayload(
             from: toolCatalog.wireMessages(from: messages)
         )
         var body: [String: Any] = [
             "model": provider.modelID,
             "input": normalizedInput.input,
-            "stream": true,
-            "store": false,
-            "include": [
-                "reasoning.encrypted_content"
-            ],
-            "prompt_cache_key": sessionID
+            "stream": true
         ]
+        if shouldSendResponsesReplayMetadata {
+            body["store"] = false
+            body["include"] = [
+                "reasoning.encrypted_content"
+            ]
+            body["prompt_cache_key"] = sessionID
+        }
         if let instructions = normalizedInput.instructions {
             body["instructions"] = instructions
         }
         applyThinkingSelection(thinkingSelection, to: &body)
+        applyStructuredOutputFormat(to: &body, endpoint: .responses)
         if provider.chatEndpoint.usesSessionID
             || AgentRemoteProvider.isOpenRouterBaseURL(provider.baseURL) {
             body["session_id"] = sessionID
         }
         let toolPayloads = toolCatalog.responsesToolPayloads
+        try Self.validateRemoteToolPayloads(
+            bindings: toolCatalog.bindings,
+            endpoint: .responses
+        )
         if !toolPayloads.isEmpty {
             body["tools"] = toolPayloads
             body["tool_choice"] = "auto"
+            body["parallel_tool_calls"] = true
         }
         if let maxTokens = configuration.maxOutputTokens {
             body["max_output_tokens"] = maxTokens
@@ -257,7 +325,12 @@ extension RemoteGenerationClient {
             case let .responseToolCallArgumentsDone(event):
                 markFirstDelta()
                 toolCallAccumulator.ingestResponseToolCallArgumentsDone(event)
+            case .discardToolCalls:
+                toolCallAccumulator = RemoteToolCallAccumulator()
             case let .stop(reason):
+                if stopReason == "refusal", reason == "end_turn" {
+                    break
+                }
                 stopReason = reason
             case let .failure(message):
                 throw RemoteGenerationClientError.remoteFailure(message)
@@ -479,6 +552,16 @@ extension RemoteGenerationClient {
         guard let data = output.data(using: .utf8),
               let value = try? JSONDecoder().decode(JSONValue.self, from: data),
               let object = value.objectValue else {
+            for line in output.split(whereSeparator: \.isNewline) {
+                guard let payload = ssePayload(from: String(line)),
+                      payload != "[DONE]",
+                      let object = jsonObject(from: payload) else {
+                    continue
+                }
+                if let message = responseErrorMessage(from: object)?.nilIfBlank {
+                    return message
+                }
+            }
             return output.nilIfBlank
         }
         return responseErrorMessage(from: object.mapValues(\.jsonObject))
@@ -567,11 +650,13 @@ extension RemoteGenerationClient {
             if let content = Self.streamContentText(from: delta["content"]) {
                 events.append(.content(content))
             }
-            if let reasoning = delta["reasoning"] as? String {
+            let reasoning = delta["reasoning"] as? String
+            let reasoningContent = delta["reasoning_content"] as? String
+            if let reasoning {
                 events.append(.reasoning(reasoning))
             }
-            if let reasoning = delta["reasoning_content"] as? String {
-                events.append(.reasoning(reasoning))
+            if let reasoningContent, reasoningContent != reasoning {
+                events.append(.reasoning(reasoningContent))
             }
             if let rawToolCalls = delta["tool_calls"] as? [[String: Any]] {
                 events.append(.toolCallDelta(rawToolCalls))
@@ -588,12 +673,36 @@ extension RemoteGenerationClient {
         _ object: [String: Any]
     ) -> [ParsedRemoteStreamEvent] {
         var usageEvents = usageEvents(from: object)
+        if let error = object["error"],
+           let message = responseErrorMessage(from: error)?.nilIfBlank {
+            usageEvents.append(.failure(message))
+            return usageEvents
+        }
         guard let type = object["type"] as? String else {
             return usageEvents.isEmpty ? [.ignored] : usageEvents
         }
         switch type {
+        case "error":
+            usageEvents.append(.failure(responseFailureMessage(from: object, fallbackType: type)))
+            return usageEvents
         case "response.output_text.delta":
             usageEvents.append(.content(object["delta"] as? String ?? ""))
+            return usageEvents
+        case "response.output_text.done":
+            if let text = Self.streamContentText(from: object["text"] ?? object["delta"] ?? object["content"]),
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                usageEvents.append(.contentSnapshot(text))
+            }
+            return usageEvents
+        case "response.refusal.delta":
+            usageEvents.append(.content(object["delta"] as? String ?? ""))
+            return usageEvents
+        case "response.refusal.done":
+            if let refusal = Self.streamContentText(from: object["refusal"] ?? object["text"]),
+               !refusal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                usageEvents.append(.contentSnapshot(refusal))
+            }
+            usageEvents.append(.stop("refusal"))
             return usageEvents
         case "response.content_part.delta":
             if let delta = Self.responseContentPartDelta(from: object) {
@@ -637,24 +746,70 @@ extension RemoteGenerationClient {
             return usageEvents
         case "response.completed", "response.done":
             var events = usageEvents
-            if let response = object["response"] as? [String: Any],
-               let outputItems = response["output"] as? [[String: Any]] {
-                for (index, item) in outputItems.enumerated() {
-                    if Self.isResponseToolCallItem(item) {
-                        events.append(.responseToolCallItem(item, outputIndex: index))
-                    } else if Self.isResponseReasoningItem(item) {
-                        events.append(.responseReasoningItem(item))
-                    }
-                }
+            if let response = object["response"] as? [String: Any] {
+                appendResponseOutputEvents(
+                    from: response,
+                    includeToolCalls: true,
+                    to: &events
+                )
             }
             events.append(.stop("end_turn"))
             return events
-        case "response.failed", "response.incomplete":
+        case "response.incomplete":
+            var events = usageEvents
+            if let response = object["response"] as? [String: Any] {
+                appendResponseOutputEvents(
+                    from: response,
+                    includeToolCalls: false,
+                    to: &events
+                )
+            }
+            events.append(.discardToolCalls)
+            events.append(.stop(responseIncompleteStopReason(from: object)))
+            return events
+        case "response.failed":
             usageEvents.append(.failure(responseFailureMessage(from: object, fallbackType: type)))
             return usageEvents
         default:
             return usageEvents.isEmpty ? [.ignored] : usageEvents
         }
+    }
+
+    private static func appendResponseOutputEvents(
+        from response: [String: Any],
+        includeToolCalls: Bool,
+        to events: inout [ParsedRemoteStreamEvent]
+    ) {
+        let canonicalOutputText = streamContentText(from: response["output_text"])?.nilIfBlank
+        if let outputText = canonicalOutputText {
+            events.append(.contentSnapshot(outputText))
+        }
+        guard let outputItems = response["output"] as? [[String: Any]] else {
+            return
+        }
+        var outputItemText = ""
+        for (index, item) in outputItems.enumerated() {
+            if includeToolCalls, Self.isResponseToolCallItem(item) {
+                events.append(.responseToolCallItem(item, outputIndex: index))
+            } else if Self.isResponseReasoningItem(item) {
+                events.append(.responseReasoningItem(item))
+            } else if let text = Self.responseOutputText(from: item)?.nilIfBlank {
+                outputItemText.append(text)
+            }
+        }
+        if canonicalOutputText == nil,
+           let snapshot = outputItemText.nilIfBlank {
+            events.append(.contentSnapshot(snapshot))
+        }
+    }
+
+    private static func responseIncompleteStopReason(from object: [String: Any]) -> String {
+        let response = object["response"] as? [String: Any]
+        let details = response?["incomplete_details"] as? [String: Any]
+            ?? object["incomplete_details"] as? [String: Any]
+        return stringValue(details?["reason"])?.nilIfBlank
+            ?? stringValue(response?["status"])?.nilIfBlank
+            ?? "incomplete"
     }
 
     static func streamContentDelta(

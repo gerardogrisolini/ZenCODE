@@ -464,6 +464,8 @@ struct TerminalChatRenderingTests {
             .map { ansiStripped(String($0)) }
 
         #expect(visibleLines.first == "👥 Sub-Agents")
+        #expect(!rendered.hasPrefix("\n"))
+        #expect(!rendered.hasSuffix("\n"))
         #expect(!rendered.contains("┌"))
         #expect(!rendered.contains("│"))
         #expect(!rendered.contains("└"))

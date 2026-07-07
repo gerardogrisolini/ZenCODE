@@ -205,6 +205,23 @@ extension RemoteGenerationClient {
     public static func responsesInputPayload(
         from messages: [[String: Any]]
     ) -> (instructions: String?, input: [Any]) {
+        guard let payload = try? responsesInputPayload(from: messages, validate: false) else {
+            assertionFailure("Unvalidated Responses input conversion unexpectedly failed.")
+            return (nil, [])
+        }
+        return payload
+    }
+
+    public static func validatedResponsesInputPayload(
+        from messages: [[String: Any]]
+    ) throws -> (instructions: String?, input: [Any]) {
+        try responsesInputPayload(from: messages, validate: true)
+    }
+
+    private static func responsesInputPayload(
+        from messages: [[String: Any]],
+        validate: Bool
+    ) throws -> (instructions: String?, input: [Any]) {
         var instructions: [String] = []
         var input: [Any] = []
 
@@ -231,6 +248,12 @@ extension RemoteGenerationClient {
             }
 
             if role != "tool" {
+                if validate {
+                    try validateResponsesContentItemsConvertible(
+                        from: message["content"],
+                        role: role
+                    )
+                }
                 let contentItems = responsesContentItems(
                     from: message["content"],
                     role: role
@@ -246,12 +269,33 @@ extension RemoteGenerationClient {
             }
 
             if let toolCalls = message["tool_calls"] as? [[String: Any]] {
-                input.append(contentsOf: toolCalls.compactMap(responseFunctionCallPayload(from:)))
+                for toolCall in toolCalls {
+                    if let payload = try responseFunctionCallPayload(
+                        from: toolCall,
+                        validate: validate
+                    ) {
+                        input.append(payload)
+                    }
+                }
             }
 
-            if role == "tool",
-               let callID = stringValue(message["tool_call_id"])?.nilIfBlank,
-               let output = contentString(from: message["content"]) {
+            if role == "tool" {
+                guard let callID = stringValue(message["tool_call_id"])?.nilIfBlank else {
+                    if validate, contentString(from: message["content"])?.nilIfBlank != nil {
+                        throw RemoteGenerationClientError.invalidRequestPayload(
+                            "Cannot convert tool output to Responses input without tool_call_id."
+                        )
+                    }
+                    continue
+                }
+                guard let output = contentString(from: message["content"]) else {
+                    if validate {
+                        throw RemoteGenerationClientError.invalidRequestPayload(
+                            "Cannot convert tool output for call_id '\(callID)' because content is missing."
+                        )
+                    }
+                    continue
+                }
                 input.append(
                     responseFunctionCallOutputPayload(
                         callID: callID,
@@ -353,6 +397,53 @@ extension RemoteGenerationClient {
         }
     }
 
+    private static func validateResponsesContentItemsConvertible(
+        from value: Any?,
+        role: String
+    ) throws {
+        guard let items = value as? [[String: Any]] else {
+            return
+        }
+        let textType = responsesTextContentType(forRole: role)
+        for item in items {
+            let type = stringValue(item["type"])?.lowercased()
+            switch type {
+            case "input_text", "output_text", "text":
+                guard stringValue(item["text"])?.nilIfBlank != nil else {
+                    throw RemoteGenerationClientError.invalidRequestPayload(
+                        "Cannot convert text content item to Responses input without text."
+                    )
+                }
+            case "refusal":
+                guard textType == "output_text",
+                      stringValue(item["refusal"])?.nilIfBlank != nil
+                          || stringValue(item["text"])?.nilIfBlank != nil else {
+                    throw RemoteGenerationClientError.invalidRequestPayload(
+                        "Cannot convert refusal content item to Responses input for role '\(role)'."
+                    )
+                }
+            case "input_image":
+                guard textType == "input_text",
+                      stringValue(item["image_url"])?.nilIfBlank != nil else {
+                    throw RemoteGenerationClientError.invalidRequestPayload(
+                        "Cannot convert input_image content item to Responses input for role '\(role)'."
+                    )
+                }
+            case "image_url":
+                guard textType == "input_text",
+                      chatCompletionsImageURL(from: item)?.nilIfBlank != nil else {
+                    throw RemoteGenerationClientError.invalidRequestPayload(
+                        "Cannot convert image_url content item to Responses input for role '\(role)'."
+                    )
+                }
+            default:
+                throw RemoteGenerationClientError.invalidRequestPayload(
+                    "Unsupported Responses content item type '\(type ?? "<missing>")' for role '\(role)'."
+                )
+            }
+        }
+    }
+
     public static func responsesTextContentType(forRole role: String) -> String {
         role.trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() == "assistant" ? "output_text" : "input_text"
@@ -361,13 +452,33 @@ extension RemoteGenerationClient {
     public static func responseFunctionCallPayload(
         from toolCall: [String: Any]
     ) -> [String: Any]? {
+        try? responseFunctionCallPayload(from: toolCall, validate: false)
+    }
+
+    private static func responseFunctionCallPayload(
+        from toolCall: [String: Any],
+        validate: Bool
+    ) throws -> [String: Any]? {
         guard let function = toolCall["function"] as? [String: Any],
               let name = stringValue(function["name"])?.nilIfBlank else {
+            if validate {
+                throw RemoteGenerationClientError.invalidRequestPayload(
+                    "Cannot convert assistant tool_call to Responses function_call without function name."
+                )
+            }
+            return nil
+        }
+        guard let callID = stringValue(toolCall["id"])?.nilIfBlank else {
+            if validate {
+                throw RemoteGenerationClientError.invalidRequestPayload(
+                    "Cannot convert assistant tool_call '\(name)' to Responses function_call without a stable call_id."
+                )
+            }
             return nil
         }
         return [
             "type": "function_call",
-            "call_id": stringValue(toolCall["id"]) ?? "call_\(UUID().uuidString.lowercased())",
+            "call_id": callID,
             "name": name,
             "arguments": stringValue(function["arguments"]) ?? "{}"
         ]

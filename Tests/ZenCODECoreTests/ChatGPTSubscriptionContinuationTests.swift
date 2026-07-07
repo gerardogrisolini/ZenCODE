@@ -160,7 +160,7 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionFallbackReplayDropsUnavailablePreviousResponseID() throws {
+    func chatGPTSubscriptionManualFreshReplayDropsUnavailablePreviousResponseID() throws {
         let messages = chatGPTContinuationMessages()
         let continuation = ChatGPTSubscriptionContinuationState(
             responseID: "resp_missing",
@@ -211,32 +211,6 @@ extension RemoteSessionSnapshotTests {
         #expect(fallbackWebSocketPayload["previous_response_id"] == nil)
         #expect((fallbackWebSocketPayload["input"] as? [Any])?.count == fallbackPayload.input.count)
         #expect((fallbackWebSocketPayload["input"] as? [Any])?.count == continuationPayload.input.count)
-        #expect(
-            ChatGPTSubscriptionGenerationClient.continuationReplayFallbackDiagnostic()
-                .contains("without previous_response_id")
-        )
-    }
-
-    @Test
-    func chatGPTSubscriptionContinuationFallbackDiagnosticReportsCompaction() {
-        let result = AgentConversationCompactionResult(
-            messages: [],
-            wasCompacted: true,
-            originalEstimatedTokenCount: 12_000,
-            estimatedTokenCount: 2_400,
-            maxTokens: 20_000,
-            compactedSystemPrompt: "Conversation memory summary from earlier turns.",
-            keptRecentMessageCount: 4
-        )
-        let diagnostic = ChatGPTSubscriptionGenerationClient.continuationReplayFallbackDiagnostic(
-            compactionResult: result
-        )
-
-        #expect(diagnostic.contains("previous response id is no longer available"))
-        #expect(diagnostic.contains("compacted local conversation history"))
-        #expect(diagnostic.contains("12000"))
-        #expect(diagnostic.contains("2400"))
-        #expect(diagnostic.contains("fresh WebSocket session"))
     }
 
     @Test
@@ -605,7 +579,7 @@ extension RemoteSessionSnapshotTests {
         #expect(result.contentText == result.text)
     }
 
-            @Test
+    @Test
     func chatGPTSubscriptionCorrectedDeltaSnapshotReplacesBufferedDraft() async throws {
         let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
             [
@@ -662,6 +636,46 @@ extension RemoteSessionSnapshotTests {
 
         #expect(result.text == "Confermi che proceda?\n\nFile modificati: nessuno.")
         #expect(result.contentText == result.text)
+    }
+
+    @Test
+    func chatGPTSubscriptionContentSnapshotExtendsBufferedContent() async throws {
+        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+            [
+                "type": "response.output_text.delta",
+                "delta": "Prima "
+            ],
+            [
+                "type": "response.content_part.done",
+                "part": [
+                    "type": "output_text",
+                    "text": "parte."
+                ]
+            ],
+            [
+                "type": "response.completed"
+            ]
+        ])
+
+        #expect(result.text == "Prima parte.")
+        #expect(result.contentText.isEmpty)
+    }
+
+    @Test
+    func chatGPTSubscriptionPreservesRefusalStopReasonAfterCompleted() async throws {
+        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+            [
+                "type": "response.refusal.done",
+                "refusal": "Non posso aiutare con questa richiesta."
+            ],
+            [
+                "type": "response.completed",
+                "response": ["output": []]
+            ]
+        ])
+
+        #expect(result.text == "Non posso aiutare con questa richiesta.")
+        #expect(result.stopReason == "refusal")
     }
 
     @Test

@@ -70,8 +70,9 @@ extension ChatGPTSubscriptionGenerationClient {
                     markFirstDelta()
                     didParseContentFromResponsesEvent = true
                 case let .contentSnapshot(snapshot):
-                    bufferContentSnapshot(snapshot)
-                    markFirstDelta()
+                    if bufferContentSnapshot(snapshot) {
+                        markFirstDelta()
+                    }
                     didParseContentFromResponsesEvent = true
                 case let .reasoning(delta):
                     guard !delta.isEmpty else {
@@ -96,11 +97,16 @@ extension ChatGPTSubscriptionGenerationClient {
                     markFirstDelta()
                     toolCallAccumulator.ingestResponseToolCallArgumentsDone(event)
                 case let .stop(reason):
+                    if stopReason == "refusal", reason == "end_turn" {
+                        break
+                    }
                     stopReason = reason
                 case let .failure(message):
                     throw ChatGPTSubscriptionGenerationError.responseFailed(message)
                 case let .usage(remoteUsage):
                     requestUsage = remoteUsage
+                case .discardToolCalls:
+                    toolCallAccumulator = RemoteToolCallAccumulator()
                 case .toolCallDelta, .ignored:
                     continue
                 }
@@ -224,11 +230,24 @@ extension ChatGPTSubscriptionGenerationClient {
             }
         }
 
-        private func bufferContentSnapshot(_ snapshot: String) {
+        private func bufferContentSnapshot(_ snapshot: String) -> Bool {
             guard !snapshot.isEmpty else {
-                return
+                return false
             }
-            responseText = snapshot
+            if !responseText.isEmpty,
+               Self.looksLikeRevisedSnapshot(snapshot, replacing: responseText) {
+                responseText = snapshot
+                return true
+            }
+            let delta = RemoteGenerationClient.streamContentDelta(
+                fromSnapshot: snapshot,
+                accumulatedText: responseText
+            )
+            guard !delta.isEmpty else {
+                return false
+            }
+            responseText.append(delta)
+            return true
         }
 
         private static func looksLikeRevisedSnapshot(
