@@ -169,12 +169,27 @@ extension ChatGPTSubscriptionGenerationClient {
                             throw continuationError
                         }
                         didFallbackAfterContinuationUnavailable = true
-                        resetContinuationAndTransport(
-                            session: &session,
-                            sessionIdentity: sessionIdentity
+                        let compactionResult = compactSession(
+                            &session,
+                            maxTokens: maxContextWindowTokens,
+                            maxOutputTokens: configuration.maxOutputTokens,
+                            sessionIdentity: sessionIdentity,
+                            force: true
                         )
+                        if compactionResult == nil {
+                            resetContinuationAndTransport(
+                                session: &session,
+                                sessionIdentity: sessionIdentity
+                            )
+                        }
                         sessions[sessionID] = session
-                        await onEvent(.diagnostic(Self.continuationReplayFallbackDiagnostic()))
+                        await onEvent(
+                            .diagnostic(
+                                Self.continuationReplayFallbackDiagnostic(
+                                    compactionResult: compactionResult
+                                )
+                            )
+                        )
                         continue
                     }
                     guard Self.isContextLimitError(error), !didRetryAfterContextLimit else {
@@ -301,8 +316,13 @@ extension ChatGPTSubscriptionGenerationClient {
         throw ChatGPTSubscriptionGenerationError.tooManyToolRounds(configuration.maxToolRounds)
     }
 
-    static func continuationReplayFallbackDiagnostic() -> String {
-        "ChatGPT Subscription previous response id is no longer available; retrying with the full local conversation."
+    static func continuationReplayFallbackDiagnostic(
+        compactionResult: AgentConversationCompactionResult? = nil
+    ) -> String {
+        if let compactionResult {
+            return "ChatGPT Subscription previous response id is no longer available. ZenCODE compacted local conversation history from \(compactionResult.originalEstimatedTokenCount) to \(compactionResult.estimatedTokenCount) estimated tokens before retrying on a fresh WebSocket session."
+        }
+        return "ChatGPT Subscription previous response id is no longer available. ZenCODE could not compact this short local history, so it is retrying once on a fresh WebSocket session without previous_response_id."
     }
 
     static func continuationUnavailableError(

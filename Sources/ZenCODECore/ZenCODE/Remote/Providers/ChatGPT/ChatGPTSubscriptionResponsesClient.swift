@@ -105,7 +105,7 @@ public struct ChatGPTSubscriptionResponsesClient {
                 try await Self.sleepForRetry(attempt: attempt)
                 attempt += 1
             } catch is CancellationError {
-                throw ChatGPTSubscriptionGenerationError.cancelled
+                throw CancellationError()
             } catch {
                 guard Self.shouldRetryTransportError(error, attempt: attempt) else {
                     throw error
@@ -143,52 +143,59 @@ public struct ChatGPTSubscriptionResponsesClient {
         }
 
         do {
-            let payload = try JSONValue(
-                jsonObject: Self.webSocketRequestPayload(
-                    body: body,
-                    cachedInput: cachedInput,
-                    previousResponseID: previousResponseID,
-                    useCachedContinuation: lease.isReused || allowsFreshContinuation
+            try await withTaskCancellationHandler {
+                let payload = try JSONValue(
+                    jsonObject: Self.webSocketRequestPayload(
+                        body: body,
+                        cachedInput: cachedInput,
+                        previousResponseID: previousResponseID,
+                        useCachedContinuation: lease.isReused || allowsFreshContinuation
+                    )
+                ).jsonData(
+                    outputFormatting: [.withoutEscapingSlashes]
                 )
-            ).jsonData(
-                outputFormatting: [.withoutEscapingSlashes]
-            )
-            guard let text = String(data: payload, encoding: .utf8) else {
-                throw ChatGPTSubscriptionGenerationError.invalidResponse
-            }
-            try await lease.task.send(
-                URLSessionWebSocketTask.Message.string(text)
-            )
+                guard let text = String(data: payload, encoding: .utf8) else {
+                    throw ChatGPTSubscriptionGenerationError.invalidResponse
+                }
+                try await lease.task.send(
+                    URLSessionWebSocketTask.Message.string(text)
+                )
 
-            while !didReceiveTerminalEvent {
-                try Task.checkCancellation()
-                let message = try await Self.receiveWebSocketMessage(
-                    from: lease.task,
-                    timeoutNanoseconds: Self.webSocketIdleTimeoutNanoseconds
-                )
-                guard let data = Self.webSocketData(from: message) else {
-                    continue
+                while !didReceiveTerminalEvent {
+                    try Task.checkCancellation()
+                    let message = try await Self.receiveWebSocketMessage(
+                        from: lease.task,
+                        timeoutNanoseconds: Self.webSocketIdleTimeoutNanoseconds
+                    )
+                    guard let data = Self.webSocketData(from: message) else {
+                        continue
+                    }
+                    let objects = try Self.decodedJSONObjectSequence(from: data)
+                    for object in objects {
+                        if Self.isReplayUnsafeWebSocketEvent(object) {
+                            didReceiveReplayUnsafeEvent = true
+                        }
+                        if responseID == nil {
+                            responseID = ChatGPTSubscriptionGenerationClient.responseID(from: object)
+                        }
+                        try await onEvent(object)
+                        if Self.isTerminalEvent(object) {
+                            didReceiveTerminalEvent = true
+                        }
+                    }
                 }
-                let objects = try Self.decodedJSONObjectSequence(from: data)
-                for object in objects {
-                    if Self.isReplayUnsafeWebSocketEvent(object) {
-                        didReceiveReplayUnsafeEvent = true
-                    }
-                    if responseID == nil {
-                        responseID = ChatGPTSubscriptionGenerationClient.responseID(from: object)
-                    }
-                    try await onEvent(object)
-                    if Self.isTerminalEvent(object) {
-                        didReceiveTerminalEvent = true
-                    }
-                }
+            } onCancel: {
+                lease.task.cancel(with: .goingAway, reason: nil)
             }
 
             keepConnection = true
             return StreamCompletion(responseID: responseID)
         } catch is CancellationError {
-            throw ChatGPTSubscriptionGenerationError.cancelled
+            throw CancellationError()
         } catch {
+            if Self.isCancellationError(error) || Task.isCancelled {
+                throw CancellationError()
+            }
             throw WebSocketStreamFailure(
                 underlying: error,
                 receivedReplayUnsafeEvent: didReceiveReplayUnsafeEvent

@@ -213,8 +213,30 @@ extension RemoteSessionSnapshotTests {
         #expect((fallbackWebSocketPayload["input"] as? [Any])?.count == continuationPayload.input.count)
         #expect(
             ChatGPTSubscriptionGenerationClient.continuationReplayFallbackDiagnostic()
-                .contains("full local conversation")
+                .contains("without previous_response_id")
         )
+    }
+
+    @Test
+    func chatGPTSubscriptionContinuationFallbackDiagnosticReportsCompaction() {
+        let result = AgentConversationCompactionResult(
+            messages: [],
+            wasCompacted: true,
+            originalEstimatedTokenCount: 12_000,
+            estimatedTokenCount: 2_400,
+            maxTokens: 20_000,
+            compactedSystemPrompt: "Conversation memory summary from earlier turns.",
+            keptRecentMessageCount: 4
+        )
+        let diagnostic = ChatGPTSubscriptionGenerationClient.continuationReplayFallbackDiagnostic(
+            compactionResult: result
+        )
+
+        #expect(diagnostic.contains("previous response id is no longer available"))
+        #expect(diagnostic.contains("compacted local conversation history"))
+        #expect(diagnostic.contains("12000"))
+        #expect(diagnostic.contains("2400"))
+        #expect(diagnostic.contains("fresh WebSocket session"))
     }
 
     @Test
@@ -525,6 +547,13 @@ extension RemoteSessionSnapshotTests {
         #expect(
             !ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
                 CancellationError(),
+                attempt: 0
+            )
+        )
+        #expect(ChatGPTSubscriptionResponsesClient.isCancellationError(URLError(.cancelled)))
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
+                URLError(.cancelled),
                 attempt: 0
             )
         )

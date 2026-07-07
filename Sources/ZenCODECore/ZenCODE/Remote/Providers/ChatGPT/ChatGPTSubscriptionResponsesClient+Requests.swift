@@ -199,14 +199,23 @@ extension ChatGPTSubscriptionResponsesClient {
         guard attempt >= 0, attempt < maxRetries else {
             return false
         }
-        if error is CancellationError {
-            return false
-        }
-        if let error = error as? ChatGPTSubscriptionGenerationError,
-           case .cancelled = error {
+        if isCancellationError(error) {
             return false
         }
         return isRetryableTransportError(error)
+    }
+
+    static func isCancellationError(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        if let error = error as? ChatGPTSubscriptionGenerationError,
+           case .cancelled = error {
+            return true
+        }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain
+            && nsError.code == URLError.cancelled.rawValue
     }
 
     static func isRetryableURLCode(_ code: URLError.Code) -> Bool {
