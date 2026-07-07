@@ -130,6 +130,7 @@ public struct ChatGPTSubscriptionResponsesClient {
             request: request,
             urlSession: urlSession
         )
+        var keepConnection = false
         var responseID: String?
         var didReceiveTerminalEvent = false
         var didReceiveReplayUnsafeEvent = false
@@ -137,7 +138,7 @@ public struct ChatGPTSubscriptionResponsesClient {
         defer {
             webSocketPool.release(
                 lease,
-                keepAlive: false
+                keepAlive: keepConnection && didReceiveTerminalEvent
             )
         }
 
@@ -187,6 +188,7 @@ public struct ChatGPTSubscriptionResponsesClient {
                 lease.task.cancel(with: .goingAway, reason: nil)
             }
 
+            keepConnection = true
             return StreamCompletion(responseID: responseID)
         } catch is CancellationError {
             throw CancellationError()
