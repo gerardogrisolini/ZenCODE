@@ -679,6 +679,51 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionReasoningItemContentStreamsThought() async throws {
+        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+            [
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": [
+                    "type": "reasoning",
+                    "id": "rs_plain",
+                    "summary": [],
+                    "content": [
+                        [
+                            "type": "reasoning_text",
+                            "text": "plain thought"
+                        ]
+                    ]
+                ]
+            ],
+            [
+                "type": "response.completed",
+                "response": ["output": []]
+            ]
+        ])
+
+        #expect(result.thoughtText == "plain thought")
+        #expect(result.reasoningText == "plain thought")
+    }
+
+    @Test
+    func chatGPTSubscriptionLegacyReasoningDeltaStreamsThought() async throws {
+        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
+            [
+                "type": "reasoning_content_delta",
+                "delta": "legacy thought"
+            ],
+            [
+                "type": "response.completed",
+                "response": ["output": []]
+            ]
+        ])
+
+        #expect(result.thoughtText == "legacy thought")
+        #expect(result.reasoningText == "legacy thought")
+    }
+
+    @Test
     func chatCompletionDeltaContentPartsAreParsedAsContent() {
         let events = RemoteGenerationClient.parseChatCompletionStreamEvent([
             "choices": [

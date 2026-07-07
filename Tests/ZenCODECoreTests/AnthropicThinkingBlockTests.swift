@@ -418,7 +418,7 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
-    func adaptiveThinkingModelsUseEnabledBudgetForExtendedThinking() throws {
+    func adaptiveThinkingModelsUseAdaptiveSummarizedThinking() throws {
         let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
             for: .high,
             modelID: "claude-fable-5",
@@ -427,10 +427,39 @@ struct AnthropicThinkingBlockTests {
         let thinking = try #require(payload.thinking)
         let outputConfig = try #require(payload.outputConfig)
 
-        #expect(thinking["type"] as? String == "enabled")
-        #expect((thinking["budget_tokens"] as? Int ?? 0) > 0)
+        #expect(thinking["type"] as? String == "adaptive")
+        #expect(thinking["budget_tokens"] == nil)
         #expect(thinking["display"] as? String == "summarized")
         #expect(outputConfig["effort"] as? String == "high")
+    }
+
+    @Test
+    func otherAdaptiveThinkingModelsDoNotForceSummarizedDisplay() throws {
+        let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
+            for: .high,
+            modelID: "claude-opus-4-8",
+            maxTokens: 8192
+        )
+        let thinking = try #require(payload.thinking)
+
+        #expect(thinking["type"] as? String == "adaptive")
+        #expect(thinking["display"] == nil)
+        #expect(payload.outputConfig?["effort"] as? String == "high")
+    }
+
+    @Test
+    func manualThinkingModelsUseEnabledBudgetWithoutForcedDisplay() throws {
+        let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
+            for: .high,
+            modelID: "claude-haiku-4-5",
+            maxTokens: 8192
+        )
+        let thinking = try #require(payload.thinking)
+
+        #expect(thinking["type"] as? String == "enabled")
+        #expect((thinking["budget_tokens"] as? Int ?? 0) > 0)
+        #expect(thinking["display"] == nil)
+        #expect(payload.outputConfig == nil)
     }
 
     @Test

@@ -121,14 +121,6 @@ extension AnthropicSubscriptionGenerationClient {
             return (["type": "disabled"], nil)
         }
 
-        let budget = adjustedThinkingBudget(
-            thinkingBudgetTokens(for: selection),
-            maxTokens: maxTokens
-        )
-        guard budget > 0 else {
-            return (nil, nil)
-        }
-
         let outputConfig: [String: Any]?
         if usesAdaptiveThinking(modelID: modelID),
            let effort = adaptiveThinkingEffort(
@@ -139,14 +131,35 @@ extension AnthropicSubscriptionGenerationClient {
         } else {
             outputConfig = nil
         }
+        if usesAdaptiveThinking(modelID: modelID) {
+            var thinking: [String: Any] = ["type": "adaptive"]
+            if usesSummarizedThinkingDisplay(modelID: modelID) {
+                thinking["display"] = "summarized"
+            }
+            return (
+                thinking,
+                outputConfig
+            )
+        }
+
+        let budget = adjustedThinkingBudget(
+            thinkingBudgetTokens(for: selection),
+            maxTokens: maxTokens
+        )
+        guard budget > 0 else {
+            return (nil, nil)
+        }
         return (
             [
                 "type": "enabled",
-                "budget_tokens": budget,
-                "display": "summarized"
+                "budget_tokens": budget
             ],
             outputConfig
         )
+    }
+
+    static func usesSummarizedThinkingDisplay(modelID: String) -> Bool {
+        modelID == "claude-fable-5"
     }
 
     static func supportsThinking(modelID: String) -> Bool {
@@ -159,7 +172,8 @@ extension AnthropicSubscriptionGenerationClient {
              "claude-opus-4-6",
              "claude-opus-4-7",
              "claude-opus-4-8",
-             "claude-sonnet-4-6":
+            "claude-sonnet-4-6",
+             "claude-sonnet-5":
             return true
         default:
             return false

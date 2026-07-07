@@ -89,6 +89,9 @@ extension ChatGPTSubscriptionGenerationClient {
                         outputIndex: outputIndex
                     )
                 case let .responseReasoningItem(item):
+                    if let event = appendReasoningItemSnapshot(item) {
+                        events.append(event)
+                    }
                     ingestReasoningItem(item)
                 case let .responseToolCallArgumentsDelta(event):
                     markFirstDelta()
@@ -128,7 +131,14 @@ extension ChatGPTSubscriptionGenerationClient {
                  "response_reasoning_text_delta",
                  "response_reasoning_delta",
                  "response_reasoning_summary_delta",
-                 "response_reasoning_raw_content_delta":
+                 "response_reasoning_raw_content_delta",
+                 "agent_reasoning",
+                 "agent_reasoning_raw_content",
+                 "agent_reasoning_section_break",
+                 "reasoning_content_delta",
+                 "reasoning_raw_content_delta",
+                 "reasoning_summary_delta",
+                 "reasoning_summary_part_added":
                 if !didParseReasoningDeltaFromResponsesEvent,
                    let delta = ChatGPTSubscriptionGenerationClient.responseReasoningDelta(from: object),
                    !delta.isEmpty {
@@ -248,6 +258,30 @@ extension ChatGPTSubscriptionGenerationClient {
             }
             responseText.append(delta)
             return true
+        }
+
+        private func appendReasoningItemSnapshot(_ item: [String: Any]) -> DirectAgentEvent? {
+            guard let snapshot = ChatGPTSubscriptionGenerationClient
+                .reasoningText(from: item)?
+                .nilIfBlank else {
+                return nil
+            }
+
+            let delta: String
+            if responseReasoningText.isEmpty {
+                delta = snapshot
+            } else if snapshot.hasPrefix(responseReasoningText) {
+                delta = String(snapshot.dropFirst(responseReasoningText.count))
+            } else {
+                return nil
+            }
+
+            guard !delta.isEmpty else {
+                return nil
+            }
+            markFirstDelta()
+            responseReasoningText.append(delta)
+            return .thought(delta)
         }
 
         private static func looksLikeRevisedSnapshot(

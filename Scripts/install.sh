@@ -492,6 +492,19 @@ if [ ! -x "${BIN_PATH}/zen" ]; then
     exit 1
 fi
 
+if [ "$WITH_MLX" = "1" ]; then
+    echo ""
+    echo "Preparing MLX Metal kernels..."
+    if ! "${BIN_PATH}/zen" --mlx --prepare-metal; then
+        echo "Error: failed to prepare the MLX Metal kernels." >&2
+        exit 1
+    fi
+    if [ ! -f "${BIN_PATH}/mlx.metallib" ]; then
+        echo "Error: MLX Metal kernel preparation did not produce ${BIN_PATH}/mlx.metallib." >&2
+        exit 1
+    fi
+fi
+
 SUDO=""
 if ! mkdir -p "$INSTALL_DIR" "$FEATURES_DIR" 2>/dev/null; then
     if command -v sudo &>/dev/null; then
@@ -519,9 +532,7 @@ $SUDO cp "${BIN_PATH}/zen" "${INSTALL_DIR}/zen"
 $SUDO chmod +x "${INSTALL_DIR}/zen"
 
 if [ "$WITH_MLX" = "1" ]; then
-    if [ -f "${BIN_PATH}/mlx.metallib" ]; then
-        $SUDO cp "${BIN_PATH}/mlx.metallib" "${INSTALL_DIR}/mlx.metallib"
-    fi
+    $SUDO cp "${BIN_PATH}/mlx.metallib" "${INSTALL_DIR}/mlx.metallib"
     if [ -f "${BIN_PATH}/mlx.metallib.manifest.json" ]; then
         $SUDO cp "${BIN_PATH}/mlx.metallib.manifest.json" "${INSTALL_DIR}/mlx.metallib.manifest.json"
     fi
