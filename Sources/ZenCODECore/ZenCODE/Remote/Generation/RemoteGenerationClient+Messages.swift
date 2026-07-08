@@ -163,6 +163,58 @@ extension RemoteGenerationClient {
         return "Analyze the attached media."
     }
 
+    /// Strips internal reasoning replay metadata from chat-completions history
+    /// messages so the wire payload stays within the OpenAI schema.
+    ///
+    /// `reasoning_items`, `thinking_blocks`, and `response_id` are internal
+    /// replay fields for the Responses/Anthropic endpoints; on
+    /// `/chat/completions` providers such as DeepSeek tokenize (and bill) them
+    /// as prompt content. `reasoning_content` is kept only on assistant
+    /// tool-call messages of the current round (after the last user message),
+    /// matching the DeepSeek thinking-mode tool-call replay contract; the CoT
+    /// of previous rounds must not be re-sent.
+    ///
+    /// When `requiresReasoningContentPlaceholder` is true (DeepSeek), assistant
+    /// messages whose reasoning is dropped keep an empty `reasoning_content`
+    /// field: the DeepSeek thinking mode rejects replayed assistant messages
+    /// that omit the field entirely.
+    public static func chatCompletionsWireHistoryMessages(
+        from messages: [[String: Any]],
+        requiresReasoningContentPlaceholder: Bool = false
+    ) -> [[String: Any]] {
+        let lastUserIndex = messages.lastIndex { message in
+            stringValue(message["role"])?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() == "user"
+        }
+        return messages.enumerated().compactMap { index, message -> [String: Any]? in
+            var message = message
+            message.removeValue(forKey: "reasoning_items")
+            message.removeValue(forKey: "thinking_blocks")
+            message.removeValue(forKey: "response_id")
+            message.removeValue(forKey: "provider_response_id")
+
+            let isCurrentRound = lastUserIndex.map { index > $0 } ?? false
+            let hasToolCalls = !((message["tool_calls"] as? [[String: Any]])?.isEmpty ?? true)
+            if !(isCurrentRound && hasToolCalls) {
+                message.removeValue(forKey: "reasoning_content")
+            }
+
+            let role = stringValue(message["role"])?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if role == "assistant", !responseMessagePayloadHasContent(message) {
+                return nil
+            }
+            if role == "assistant",
+               requiresReasoningContentPlaceholder,
+               message["reasoning_content"] == nil {
+                message["reasoning_content"] = ""
+            }
+            return message
+        }
+    }
+
     public static func responseMessagePayloadHasContent(_ message: [String: Any]) -> Bool {
         if let content = contentString(from: message["content"])?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -224,8 +276,13 @@ extension RemoteGenerationClient {
     ) throws -> (instructions: String?, input: [Any]) {
         var instructions: [String] = []
         var input: [Any] = []
+        let lastUserIndex = messages.lastIndex { message in
+            (message["role"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() == "user"
+        }
 
-        for message in messages {
+        for (index, message) in messages.enumerated() {
             let role = (message["role"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()
@@ -239,11 +296,19 @@ extension RemoteGenerationClient {
 
             if role == "assistant" {
                 let reasoningItems = responsesReasoningItems(from: message["reasoning_items"])
-                if reasoningItems.isEmpty,
-                   let reasoningText = responseReasoningText(from: message) {
-                    input.append(responseReasoningTextPayload(reasoningText))
-                } else {
+                if !reasoningItems.isEmpty {
+                    // Structured reasoning items (encrypted or plain) are the
+                    // provider's own replay format: keep them for every round so
+                    // stateless (`store: false`) providers retain reasoning state
+                    // and the prompt prefix stays append-only for caching.
                     input.append(contentsOf: reasoningItems)
+                } else if lastUserIndex.map({ index > $0 }) ?? true,
+                          let reasoningText = responseReasoningText(from: message) {
+                    // Loose reasoning text (for example imported from a
+                    // chat-completions provider) is only replayed for the
+                    // current round; re-sending the CoT of previous rounds
+                    // would just inflate billed input tokens on every turn.
+                    input.append(responseReasoningTextPayload(reasoningText))
                 }
             }
 

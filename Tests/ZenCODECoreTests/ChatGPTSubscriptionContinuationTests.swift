@@ -366,16 +366,14 @@ extension RemoteSessionSnapshotTests {
             continuation: nil
         )
         let genericPayload = RemoteGenerationClient.responsesInputPayload(from: messages)
-        let genericReasoningItem = try #require(
-            genericPayload.input.compactMap { $0 as? [String: Any] }
-                .first { $0["type"] as? String == "reasoning" }
-        )
-        let genericContent = try #require(
-            genericReasoningItem["content"] as? [[String: Any]]
-        )
 
-        #expect(genericContent.first?["type"] as? String == "reasoning_text")
-        #expect(genericContent.first?["text"] as? String == "hidden thought")
+        // Both the subscription builder and the generic Responses payload drop
+        // loose reasoning text from previous rounds: replaying it would only
+        // inflate billed input tokens on every turn.
+        #expect(
+            genericPayload.input.compactMap { $0 as? [String: Any] }
+                .contains { $0["type"] as? String == "reasoning" } == false
+        )
         #expect(
             payload.input.compactMap { $0 as? [String: Any] }
                 .contains { $0["type"] as? String == "reasoning" } == false
