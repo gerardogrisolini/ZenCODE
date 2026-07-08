@@ -66,7 +66,7 @@ public nonisolated struct OpenRouterToolCatalog: Sendable {
                     lookup[trimmed] = binding
                 }
             }
-            if let canonical = OrchestrationToolRequestCompatibility.canonicalToolName(
+            if let canonical = SubAgentToolRequestCompatibility.canonicalToolName(
                 for: binding.descriptor.name
             ) {
                 lookup[canonical] = binding
@@ -177,7 +177,7 @@ public nonisolated struct OpenRouterToolCatalog: Sendable {
             return match
         }
 
-        if let canonicalToolName = OrchestrationToolRequestCompatibility.canonicalToolName(
+        if let canonicalToolName = SubAgentToolRequestCompatibility.canonicalToolName(
             for: remoteToolName
         ),
            let match = _nameLookup[canonicalToolName] {

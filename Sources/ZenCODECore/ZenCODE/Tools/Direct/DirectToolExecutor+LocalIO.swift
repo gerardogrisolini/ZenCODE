@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import FeatureKit
 
 extension DirectToolExecutor {
     public func deniedLocalExecOutputIfNeeded(
@@ -87,20 +88,12 @@ extension DirectToolExecutor {
 #endif
 
     public func renderProcessResult(_ result: ProcessResult) -> String {
-        var sections = ["exit_code: \(result.status)"]
-        if result.timedOut {
-            sections.append("timed_out: true")
-        }
-        if !result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            sections.append("stdout:\n\(result.stdout)")
-        }
-        if !result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            sections.append("stderr:\n\(result.stderr)")
-        }
-        if sections.count == 1 {
-            sections.append("<no output>")
-        }
-        return sections.joined(separator: "\n")
+        FeatureProcessOutputRenderer.render(
+            exitCode: result.status,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            timedOut: result.timedOut
+        )
     }
 
     public static func toolArguments(from argumentsJSON: String) -> [String: JSONValue] {

@@ -1,5 +1,5 @@
 //
-//  DirectOrchestrationRuntime.swift
+//  DirectTodoTaskRuntime.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -7,7 +7,7 @@
 
 import Foundation
 
-public actor DirectOrchestrationRuntime {
+public actor DirectTodoTaskRuntime {
     public enum TodoStatus: String {
         case pending
         case inProgress = "in_progress"
@@ -132,7 +132,7 @@ public actor DirectOrchestrationRuntime {
     public var sessions: [String: SessionState] = [:]
 
     public static func isTodoOrTaskToolName(_ rawName: String) -> Bool {
-        guard let canonicalName = OrchestrationToolRequestCompatibility.canonicalToolName(for: rawName) else {
+        guard let canonicalName = SubAgentToolRequestCompatibility.canonicalToolName(for: rawName) else {
             return false
         }
         return canonicalName.hasPrefix("todo.") || canonicalName.hasPrefix("task.")
@@ -214,13 +214,13 @@ public actor DirectOrchestrationRuntime {
         case "task.get":
             let taskID = try Self.requiredString(["id"], in: request.arguments)
             guard let task = state.tasks.first(where: { $0.id == taskID }) else {
-                throw DirectOrchestrationRuntimeError.taskNotFound(taskID)
+                throw DirectTodoTaskRuntimeError.taskNotFound(taskID)
             }
             output = Self.renderTasks([task])
         case "task.update":
             let taskID = try Self.requiredString(["id"], in: request.arguments)
             guard let index = state.tasks.firstIndex(where: { $0.id == taskID }) else {
-                throw DirectOrchestrationRuntimeError.taskNotFound(taskID)
+                throw DirectTodoTaskRuntimeError.taskNotFound(taskID)
             }
             var task = state.tasks[index]
             if let title = Self.firstString(["title", "name"], in: request.arguments)?.nilIfBlank {
@@ -251,7 +251,7 @@ public actor DirectOrchestrationRuntime {
             state.tasks[index] = task
             output = Self.renderTasks([task])
         default:
-            throw DirectOrchestrationRuntimeError.unknownTool(toolCall.name)
+            throw DirectTodoTaskRuntimeError.unknownTool(toolCall.name)
         }
 
         sessions[sessionID] = state
@@ -276,7 +276,7 @@ public actor DirectOrchestrationRuntime {
             name: toolCall.name,
             arguments: jsonValueArguments(from: toolCall.argumentsObject)
         )
-        return OrchestrationToolRequestCompatibility.normalize(request) ?? request
+        return SubAgentToolRequestCompatibility.normalize(request) ?? request
     }
 
     public static func requestedTodos(from arguments: [String: JSONValue]) throws -> [Todo] {
@@ -294,15 +294,15 @@ public actor DirectOrchestrationRuntime {
             ]
         }
 
-        throw DirectOrchestrationRuntimeError.missingArgument("todos")
+        throw DirectTodoTaskRuntimeError.missingArgument("todos")
     }
 
     public static func decodeTodo(_ value: JSONValue) throws -> Todo {
         guard case let .object(object) = value else {
-            throw DirectOrchestrationRuntimeError.invalidArgument("todos")
+            throw DirectTodoTaskRuntimeError.invalidArgument("todos")
         }
         guard let content = firstString(["content", "title"], in: object)?.nilIfBlank else {
-            throw DirectOrchestrationRuntimeError.missingArgument("content")
+            throw DirectTodoTaskRuntimeError.missingArgument("content")
         }
         return Todo(
             id: firstString(["id"], in: object)?.nilIfBlank ?? "todo_\(UUID().uuidString.lowercased())",
@@ -333,11 +333,11 @@ public actor DirectOrchestrationRuntime {
         requireTitle: Bool
     ) throws -> TaskPayload {
         guard case let .object(object) = value else {
-            throw DirectOrchestrationRuntimeError.invalidArgument("task")
+            throw DirectTodoTaskRuntimeError.invalidArgument("task")
         }
         let title = firstString(["title", "name"], in: object)?.nilIfBlank
         if requireTitle, title == nil {
-            throw DirectOrchestrationRuntimeError.missingArgument("title")
+            throw DirectTodoTaskRuntimeError.missingArgument("title")
         }
         return TaskPayload(
             id: firstString(["id"], in: object)?.nilIfBlank,
@@ -411,7 +411,7 @@ public actor DirectOrchestrationRuntime {
         in arguments: [String: JSONValue]
     ) throws -> String {
         guard let value = firstString(keys, in: arguments)?.nilIfBlank else {
-            throw DirectOrchestrationRuntimeError.missingArgument(keys.first ?? "value")
+            throw DirectTodoTaskRuntimeError.missingArgument(keys.first ?? "value")
         }
         return value
     }
@@ -505,7 +505,7 @@ public actor DirectOrchestrationRuntime {
     }
 }
 
-public enum DirectOrchestrationRuntimeError: LocalizedError {
+public enum DirectTodoTaskRuntimeError: LocalizedError {
     case unknownTool(String)
     case missingArgument(String)
     case invalidArgument(String)

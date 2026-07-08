@@ -25,6 +25,89 @@ struct SetupSectionConfigurationResult {
     var additionalResult: ZenCODESetupAdditionalSectionResult = .unchanged
 }
 
+/// Pure, terminal-free state machine for a setup run.
+///
+/// It owns the manifest as it evolves plus the two bookkeeping flags that decide
+/// whether settings must be written. Keeping these transitions here (instead of
+/// inline mutable locals in `run()`) makes the "when do we persist?" rule
+/// testable without a real terminal and avoids silently dropping a
+/// `didChangeSettings` update when a new section type is added.
+struct SetupSession {
+    private(set) var originalManifest: AgentSettingsManifest?
+    private(set) var manifest: AgentSettingsManifest?
+    private(set) var didChangeSettings = false
+    private(set) var didRunAdditionalSection = false
+
+    /// The terminal outcome of a completed setup run.
+    enum Outcome: Equatable {
+        /// A usable manifest is present and should be finalized. When
+        /// `settingsWillBeWritten` is false the existing settings.json is kept
+        /// as-is (required files are still ensured).
+        case write(manifest: AgentSettingsManifest, settingsWillBeWritten: Bool)
+        /// No manifest, but an additional section ran to completion (e.g. a
+        /// standalone runtime was configured/removed). Setup is considered done.
+        case additionalOnly
+        /// No manifest and nothing meaningful happened: setup cannot complete.
+        case noModels
+    }
+
+    init(originalManifest: AgentSettingsManifest?) {
+        self.originalManifest = originalManifest
+        self.manifest = originalManifest
+    }
+
+    /// Records the manifest produced by quick setup, which always counts as a
+    /// settings change.
+    mutating func applyQuickSetup(_ manifest: AgentSettingsManifest) {
+        self.manifest = manifest
+        didChangeSettings = true
+    }
+
+    /// Folds the result of a configured section into the session state,
+    /// preserving the original branch semantics:
+    /// - a removed standalone configuration resets the manifest and change flag;
+    /// - an additional section only marks that additional work ran;
+    /// - a section that mutated the manifest marks a settings change;
+    /// - an unchanged section leaves the flags untouched.
+    mutating func apply(
+        section: SetupSection,
+        result: SetupSectionConfigurationResult
+    ) {
+        let previousManifest = manifest
+        if result.additionalResult == .removedStandaloneConfiguration {
+            manifest = nil
+            originalManifest = nil
+            didChangeSettings = false
+            didRunAdditionalSection = true
+        } else if section.isAdditional {
+            manifest = result.manifest
+            didRunAdditionalSection = true
+        } else if result.manifest != previousManifest {
+            manifest = result.manifest
+            didChangeSettings = true
+        } else {
+            manifest = result.manifest
+        }
+    }
+
+    /// Whether settings.json must be (re)written for the current manifest.
+    var shouldWriteSettings: Bool {
+        guard let manifest else {
+            return false
+        }
+        return didChangeSettings
+            || originalManifest == nil
+            || manifest != originalManifest
+    }
+
+    var outcome: Outcome {
+        guard let manifest else {
+            return didRunAdditionalSection ? .additionalOnly : .noModels
+        }
+        return .write(manifest: manifest, settingsWillBeWritten: shouldWriteSettings)
+    }
+}
+
 enum SetupSection: Equatable, Hashable {
     case providersAndModels
     case defaultModelSettings

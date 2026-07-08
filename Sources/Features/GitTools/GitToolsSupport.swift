@@ -66,20 +66,7 @@ enum GitToolsSupport {
     }
 
     static func renderProcessResult(_ result: FeatureProcessResult) -> String {
-        var sections = ["exit_code: \(result.exitCode)"]
-        if result.timedOut {
-            sections.append("timed_out: true")
-        }
-        if !result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            sections.append("stdout:\n\(result.stdout)")
-        }
-        if !result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            sections.append("stderr:\n\(result.stderr)")
-        }
-        if sections.count == 1 {
-            sections.append("<no output>")
-        }
-        return sections.joined(separator: "\n")
+        result.renderedProcessOutput
     }
 }
 

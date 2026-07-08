@@ -112,7 +112,6 @@ public enum ZenCODESetupRunner {
         )
 
                 let settingsURL = AgentSettingsManifestStore.settingsURL()
-        var originalManifest: AgentSettingsManifest?
         var manifest: AgentSettingsManifest?
         if FileManager.default.fileExists(atPath: settingsURL.path) {
             let resolution = try SetupConfigurationResolver.resolve {
@@ -124,7 +123,6 @@ public enum ZenCODESetupRunner {
                 )
             }
             if case let .loaded(loadedManifest) = resolution {
-                originalManifest = loadedManifest
                 manifest = loadedManifest
             }
         }
@@ -135,23 +133,22 @@ public enum ZenCODESetupRunner {
             )
         }
 
-        var didChangeSettings = false
-        var didRunAdditionalSection = false
+        var session = SetupSession(originalManifest: manifest)
         var shouldOpenSetupMenu = true
 
-                if manifest == nil,
+                if session.manifest == nil,
            try promptQuickSetupMode() {
-            manifest = try await runQuickSetup(
-                currentManifest: manifest,
+            let quickManifest = try await runQuickSetup(
+                currentManifest: session.manifest,
                 quickActions: quickActions
             )
-            didChangeSettings = true
+            session.applyQuickSetup(quickManifest)
             shouldOpenSetupMenu = false
         }
 
         while shouldOpenSetupMenu {
             let section = try promptSetupSection(
-                currentManifest: manifest,
+                currentManifest: session.manifest,
                 additionalSectionGroups: additionalSectionGroups
             )
             if section == .finish {
@@ -162,49 +159,32 @@ public enum ZenCODESetupRunner {
                 return
             }
 
-            let previousManifest = manifest
             let result = try await configureSetupSection(
                 section,
-                currentManifest: manifest,
+                currentManifest: session.manifest,
                 additionalSectionGroups: additionalSectionGroups
             )
-            if result.additionalResult == .removedStandaloneConfiguration {
-                manifest = nil
-                originalManifest = nil
-                didChangeSettings = false
-                didRunAdditionalSection = true
-            } else if section.isAdditional {
-                manifest = result.manifest
-                didRunAdditionalSection = true
-            } else if result.manifest != previousManifest {
-                manifest = result.manifest
-                didChangeSettings = true
-            } else {
-                manifest = result.manifest
-            }
+            session.apply(section: section, result: result)
         }
 
-        guard let finalManifest = manifest else {
-            if didRunAdditionalSection {
-                printCompletion()
-                return
-            }
+        switch session.outcome {
+        case .additionalOnly:
+            printCompletion()
+            return
+        case .noModels:
             throw ZenCODESetupError.noModelsConfigured
+        case let .write(finalManifest, shouldWriteSettings):
+            printSetupSummary(
+                manifest: finalManifest,
+                settingsWillBeWritten: shouldWriteSettings
+            )
+            let result = try ZenFileService.ensureRequiredFiles(
+                settingsManifest: finalManifest,
+                overwriteSettings: shouldWriteSettings
+            )
+            printResult(result, settingsWasWritten: shouldWriteSettings)
+            printCompletion()
         }
-
-        let shouldWriteSettings = didChangeSettings
-            || originalManifest == nil
-            || finalManifest != originalManifest
-        printSetupSummary(
-            manifest: finalManifest,
-            settingsWillBeWritten: shouldWriteSettings
-        )
-        let result = try ZenFileService.ensureRequiredFiles(
-            settingsManifest: finalManifest,
-            overwriteSettings: shouldWriteSettings
-        )
-        printResult(result, settingsWasWritten: shouldWriteSettings)
-        printCompletion()
     }
 
     static func printCompletion() {

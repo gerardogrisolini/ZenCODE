@@ -145,10 +145,10 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         sessions[id] = session
     }
 
-    public func updateBorrowedOrchestrationToolExecutor(
+    public func updateBorrowedSubAgentToolExecutor(
         _ executor: AgentBorrowedToolExecutor?
     ) async {
-        await toolExecutor.updateBorrowedOrchestrationToolExecutor(executor)
+        await toolExecutor.updateBorrowedSubAgentToolExecutor(executor)
     }
 
     public func updateToolProviders(_ providers: [AgentToolProvider]) async {

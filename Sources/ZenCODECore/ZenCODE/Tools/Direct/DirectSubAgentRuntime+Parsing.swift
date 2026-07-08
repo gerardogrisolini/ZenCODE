@@ -148,7 +148,7 @@ extension DirectSubAgentRuntime {
             name: toolCall.name,
             arguments: jsonArguments(from: toolCall.argumentsObject)
         )
-        return OrchestrationToolRequestCompatibility.normalize(request) ?? request
+        return SubAgentToolRequestCompatibility.normalize(request) ?? request
     }
 
     public static func jsonArguments(

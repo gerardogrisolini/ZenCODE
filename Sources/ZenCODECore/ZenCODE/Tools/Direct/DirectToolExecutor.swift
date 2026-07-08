@@ -33,9 +33,9 @@ public actor DirectToolExecutor {
     public let subAgentRuntime: DirectSubAgentRuntime
     public let mcpRuntime: DirectMCPToolRuntime
     public let swiftFeatureRuntime: SwiftFeatureRuntime
-    public let sessionToolRuntime = DirectOrchestrationRuntime()
+    public let sessionToolRuntime = DirectTodoTaskRuntime()
     public let preferredWorkspaceRootURL: URL?
-    public var borrowedOrchestrationToolExecutor: AgentBorrowedToolExecutor?
+    public var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
     public var toolProviderRegistry = AgentToolProviderRegistry()
 
     public init(
@@ -44,7 +44,7 @@ public actor DirectToolExecutor {
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
         swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
         preferredWorkspaceRootURL: URL? = nil,
-        borrowedOrchestrationToolExecutor: AgentBorrowedToolExecutor? = nil,
+        borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
         subAgentBackendFactory: @escaping DirectSubAgentBackendFactory
     ) {
         self.init(
@@ -53,7 +53,7 @@ public actor DirectToolExecutor {
             mcpRuntime: mcpRuntime,
             swiftFeatureRuntime: swiftFeatureRuntime,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
-            borrowedOrchestrationToolExecutor: borrowedOrchestrationToolExecutor,
+            borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
             subAgentContextualBackendFactory: { _ in subAgentBackendFactory() }
         )
     }
@@ -64,7 +64,7 @@ public actor DirectToolExecutor {
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
         swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
         preferredWorkspaceRootURL: URL? = nil,
-        borrowedOrchestrationToolExecutor: AgentBorrowedToolExecutor? = nil,
+        borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
         subAgentContextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
         subAgentProfileResolver: @escaping DirectSubAgentProfileResolver = DirectSubAgentRuntime.defaultProfileResolver
     ) {
@@ -73,17 +73,17 @@ public actor DirectToolExecutor {
         self.mcpRuntime = mcpRuntime
         self.swiftFeatureRuntime = swiftFeatureRuntime
         self.preferredWorkspaceRootURL = preferredWorkspaceRootURL?.standardizedFileURL
-        self.borrowedOrchestrationToolExecutor = borrowedOrchestrationToolExecutor
+        self.borrowedSubAgentToolExecutor = borrowedSubAgentToolExecutor
         self.subAgentRuntime = DirectSubAgentRuntime(
             contextualBackendFactory: subAgentContextualBackendFactory,
             profileResolver: subAgentProfileResolver
         )
     }
 
-    public func updateBorrowedOrchestrationToolExecutor(
+    public func updateBorrowedSubAgentToolExecutor(
         _ executor: AgentBorrowedToolExecutor?
     ) {
-        borrowedOrchestrationToolExecutor = executor
+        borrowedSubAgentToolExecutor = executor
     }
 
     public func updateToolProviders(_ providers: [AgentToolProvider]) {
@@ -294,8 +294,8 @@ public actor DirectToolExecutor {
             return true
         }
 
-        if let canonicalOrchestrationToolName = OrchestrationToolRequestCompatibility.canonicalToolName(for: toolName),
-           allowedToolNames.contains(canonicalOrchestrationToolName) {
+        if let canonicalCoordinationToolName = SubAgentToolRequestCompatibility.canonicalToolName(for: toolName),
+           allowedToolNames.contains(canonicalCoordinationToolName) {
             return true
         }
 
@@ -331,8 +331,8 @@ public actor DirectToolExecutor {
         return featureIDs
     }
 
-    public static func isOrchestrationToolName(_ toolName: String) -> Bool {
+    public static func isSubAgentCoordinationToolName(_ toolName: String) -> Bool {
         DirectSubAgentRuntime.isSubAgentToolName(toolName)
-            || DirectOrchestrationRuntime.isTodoOrTaskToolName(toolName)
+            || DirectTodoTaskRuntime.isTodoOrTaskToolName(toolName)
     }
 }

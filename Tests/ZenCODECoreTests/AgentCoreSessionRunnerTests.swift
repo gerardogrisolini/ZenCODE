@@ -362,7 +362,7 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
         updatedAllowedToolNames = allowedToolNames
     }
 
-    func updateBorrowedOrchestrationToolExecutor(
+    func updateBorrowedSubAgentToolExecutor(
         _: AgentBorrowedToolExecutor?
     ) async {}
 

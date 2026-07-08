@@ -63,9 +63,9 @@ extension DirectToolExecutor {
         ) {
             return output
         }
-        if let borrowedOrchestrationToolExecutor,
-           Self.isOrchestrationToolName(toolCall.name) {
-            return try await borrowedOrchestrationToolExecutor(
+        if let borrowedSubAgentToolExecutor,
+           Self.isSubAgentCoordinationToolName(toolCall.name) {
+            return try await borrowedSubAgentToolExecutor(
                 AgentBorrowedToolCall(
                     id: toolCall.id,
                     name: toolCall.name,
@@ -80,7 +80,7 @@ extension DirectToolExecutor {
                 allowedToolNames: allowedToolNames
             )
         }
-        if DirectOrchestrationRuntime.isTodoOrTaskToolName(toolCall.name) {
+        if DirectTodoTaskRuntime.isTodoOrTaskToolName(toolCall.name) {
             return try await sessionToolRuntime.execute(
                 sessionID: sessionID,
                 toolCall: toolCall

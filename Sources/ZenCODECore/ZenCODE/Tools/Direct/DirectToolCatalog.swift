@@ -26,9 +26,9 @@ public struct DirectToolDescriptor: Sendable {
 public enum DirectToolCatalog {
     public static var baseDescriptors: [DirectToolDescriptor] {
 #if canImport(Darwin) || canImport(Glibc)
-        coreLocalFileAndTextDescriptors + coreProcessDescriptors + featureDescriptors + memoryDescriptors + orchestrationDescriptors + subAgentDescriptors
+        coreLocalFileAndTextDescriptors + coreProcessDescriptors + featureDescriptors + memoryDescriptors + todoTaskDescriptors + subAgentDescriptors
 #else
-        coreLocalFileAndTextDescriptors + featureDescriptors + memoryDescriptors + orchestrationDescriptors + subAgentDescriptors
+        coreLocalFileAndTextDescriptors + featureDescriptors + memoryDescriptors + todoTaskDescriptors + subAgentDescriptors
 #endif
     }
 
@@ -358,7 +358,7 @@ public enum DirectToolCatalog {
     ]
 #endif
 
-    public static let orchestrationDescriptors: [DirectToolDescriptor] = [
+    public static let todoTaskDescriptors: [DirectToolDescriptor] = [
         DirectToolDescriptor(
             name: "todo.read",
             description: "Returns the session todo list.",

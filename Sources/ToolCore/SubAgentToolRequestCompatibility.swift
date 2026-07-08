@@ -1,5 +1,5 @@
 //
-//  OrchestrationToolRequestCompatibility.swift
+//  SubAgentToolRequestCompatibility.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -7,7 +7,7 @@
 
 import Foundation
 
-public nonisolated enum OrchestrationToolRequestCompatibility {
+public nonisolated enum SubAgentToolRequestCompatibility {
     private static let aliases: [String: String] = [
         "todo.read": "todo.read",
         "todo_read": "todo.read",

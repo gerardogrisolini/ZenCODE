@@ -25,7 +25,7 @@ public actor AgentCoreBackend {
     private let mcpRuntime: DirectMCPToolRuntime
     private var activeBackend: (any AgentRuntimeBackend)?
     private var sessions: [String: SessionSeed] = [:]
-    private var borrowedOrchestrationToolExecutor: AgentBorrowedToolExecutor?
+    private var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
     private var toolProviders: [AgentToolProvider] = []
     private let backendFactory: AgentRuntimeBackendFactory?
 
@@ -241,11 +241,11 @@ public actor AgentCoreBackend {
         }
     }
 
-    public func updateBorrowedOrchestrationToolExecutor(
+    public func updateBorrowedSubAgentToolExecutor(
         _ executor: AgentBorrowedToolExecutor?
     ) async {
-        borrowedOrchestrationToolExecutor = executor
-        await applyBorrowedOrchestrationToolExecutor(to: activeBackend)
+        borrowedSubAgentToolExecutor = executor
+        await applyBorrowedSubAgentToolExecutor(to: activeBackend)
     }
 
     public func updateToolProviders(
@@ -360,7 +360,7 @@ public actor AgentCoreBackend {
         if let backendFactory {
             let backend = try backendFactory(configuration, mcpRuntime)
             activeBackend = backend
-            await applyBorrowedOrchestrationToolExecutor(to: backend)
+            await applyBorrowedSubAgentToolExecutor(to: backend)
             await applyToolProviders(to: backend)
             for (sessionID, seed) in sessions {
                 await backend.createSession(
@@ -441,7 +441,7 @@ public actor AgentCoreBackend {
         }
 
         activeBackend = backend
-        await applyBorrowedOrchestrationToolExecutor(to: backend)
+        await applyBorrowedSubAgentToolExecutor(to: backend)
         await applyToolProviders(to: backend)
         for (sessionID, seed) in sessions {
             await backend.createSession(
@@ -458,12 +458,12 @@ public actor AgentCoreBackend {
         return backend
     }
 
-    private func applyBorrowedOrchestrationToolExecutor(
+    private func applyBorrowedSubAgentToolExecutor(
         to backend: (any AgentRuntimeBackend)?
     ) async {
         if let backend {
-            await backend.updateBorrowedOrchestrationToolExecutor(
-                borrowedOrchestrationToolExecutor
+            await backend.updateBorrowedSubAgentToolExecutor(
+                borrowedSubAgentToolExecutor
             )
         }
     }

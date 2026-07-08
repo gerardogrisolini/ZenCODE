@@ -117,7 +117,7 @@ public actor AgentCoreSessionRunner {
         attachments: [AgentRuntimeAttachment],
         authorizeTool: AgentToolAuthorizationHandler? = nil,
         onToolWillExecute: (@Sendable (DirectAgentToolCall) async -> Void)? = nil,
-        borrowedOrchestrationToolExecutor: AgentBorrowedToolExecutor? = nil,
+        borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
         toolProviders: [AgentToolProvider] = [],
         borrowedXcodeExecutor: XcodeToolExecutor? = nil,
         borrowedXcodeTools: [ToolDescriptor] = [],
@@ -138,8 +138,8 @@ public actor AgentCoreSessionRunner {
             tools: borrowedXcodeTools
         )
         let backend = try await ensureBackend(configuration: configuration)
-        await backend.updateBorrowedOrchestrationToolExecutor(
-            borrowedOrchestrationToolExecutor
+        await backend.updateBorrowedSubAgentToolExecutor(
+            borrowedSubAgentToolExecutor
         )
         await backend.updateToolProviders(toolProviders)
         try await ensureSession(configuration: configuration)
@@ -284,7 +284,7 @@ public actor AgentCoreSessionRunner {
         await backend?.saveSessionRuntimeCache(id: sessionID)
     }
 
-        public func restoreSessionRuntimeCache(id sessionID: String) async {
+    public func restoreSessionRuntimeCache(id sessionID: String) async {
         await backend?.restoreSessionRuntimeCache(id: sessionID)
     }
 
@@ -306,7 +306,7 @@ public actor AgentCoreSessionRunner {
         attachments: [AgentRuntimeAttachment] = [],
         authorizeTool: AgentToolAuthorizationHandler? = nil,
         onToolWillExecute: (@Sendable (DirectAgentToolCall) async -> Void)? = nil,
-        borrowedOrchestrationToolExecutor: AgentBorrowedToolExecutor? = nil,
+        borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
         toolProviders: [AgentToolProvider] = [],
         borrowedXcodeExecutor: XcodeToolExecutor? = nil,
         borrowedXcodeTools: [ToolDescriptor] = []
@@ -329,7 +329,7 @@ public actor AgentCoreSessionRunner {
                     attachments: attachments,
                     authorizeTool: authorizeTool,
                     onToolWillExecute: onToolWillExecute,
-                    borrowedOrchestrationToolExecutor: borrowedOrchestrationToolExecutor,
+                    borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
                     toolProviders: toolProviders,
                     borrowedXcodeExecutor: borrowedXcodeExecutor,
                     borrowedXcodeTools: borrowedXcodeTools

@@ -16,7 +16,7 @@ public typealias ToolRequestPayload = ToolCore.ToolRequestPayload
 public typealias ToolExecutionOutput = ToolCore.ToolExecutionOutput
 public typealias XcodeWorkspaceContext = ToolCore.XcodeWorkspaceContext
 public typealias XcodeToolRequestCompatibility = ToolCore.XcodeToolRequestCompatibility
-public typealias OrchestrationToolRequestCompatibility = ToolCore.OrchestrationToolRequestCompatibility
+public typealias SubAgentToolRequestCompatibility = ToolCore.SubAgentToolRequestCompatibility
 public typealias DeveloperToolEnvironment = ToolCore.DeveloperToolEnvironment
 
 public typealias MCPBrowserOAuthConfiguration = FeatureMCPBridgeKit.MCPBrowserOAuthConfiguration

@@ -201,7 +201,7 @@ public actor DirectSubAgentRuntime {
     }
 
     public static func canonicalSubAgentToolName(for rawName: String) -> String? {
-        guard let canonicalName = OrchestrationToolRequestCompatibility.canonicalToolName(for: rawName),
+        guard let canonicalName = SubAgentToolRequestCompatibility.canonicalToolName(for: rawName),
               canonicalName.hasPrefix("agent.") else {
             return nil
         }

@@ -423,6 +423,161 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func markdownFormatterRendersFencedCodeBlockWithSyntaxHighlighting() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        let rendered = formatter.consume("```swift\nlet x = 1\n```\n") + formatter.finish()
+
+        // Fence delimiter lines are dimmed and preserved verbatim.
+        #expect(rendered.contains("\u{1B}[90m```swift\u{1B}[0m"))
+        #expect(rendered.contains("\u{1B}[90m```\u{1B}[0m"))
+        // Body is routed through the code renderer: `let` is a keyword.
+        #expect(rendered.contains("\u{1B}[38;5;141mlet\u{1B}[0m"))
+        #expect(rendered.contains("x = "))
+    }
+
+    @Test
+    func markdownFormatterDoesNotParseMarkdownInsideCodeFence() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        let rendered = formatter.consume("```\n- not a list\n**not bold**\n```\n")
+            + formatter.finish()
+
+        // Content inside the fence keeps its literal markers instead of being
+        // converted to a bullet or bold run.
+        #expect(rendered.contains("- not a list"))
+        #expect(rendered.contains("**not bold**"))
+        #expect(!rendered.contains("•"))
+    }
+
+    @Test
+    func markdownFormatterWrapsLongPlainLinesToFixedWidth() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 20,
+            supportsHyperlinks: false
+        )
+        let line = Array(repeating: "word", count: 12).joined(separator: " ")
+
+        let rendered = formatter.consume(line + "\n") + formatter.finish()
+
+        let visibleRows = rendered
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { TerminalANSIText.visibleWidth(String($0)) }
+        // One column is reserved for the chat inset, so rows stay within 19.
+        #expect(visibleRows.allSatisfy { $0 <= 19 })
+        #expect(visibleRows.contains { $0 > 0 })
+        #expect(rendered.contains("word"))
+    }
+
+    @Test
+    func markdownFormatterDoesNotWrapTableBoxDrawing() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 12,
+            supportsHyperlinks: false
+        )
+
+        _ = formatter.consume("| Column A | Column B |\n")
+        let rendered = formatter.consume("| --- | --- |\n| value 1 | value 2 |\n")
+            + formatter.finish()
+
+        // Box-drawing rows are emitted intact even though they exceed the narrow
+        // render width; wrapping them would corrupt the table layout.
+        #expect(rendered.contains("┌"))
+        #expect(rendered.contains("│"))
+        let boxRows = rendered
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { $0.contains("│") || $0.contains("─") }
+        #expect(!boxRows.isEmpty)
+        // Every box-drawing row exceeds the render width, proving wrapIfNeeded
+        // left the table untouched instead of breaking it across lines.
+        #expect(boxRows.allSatisfy { TerminalANSIText.visibleWidth($0) > 12 })
+    }
+
+    @Test
+    func markdownFormatterRendersMultiLineBlockQuote() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        let rendered = formatter.consume("> first line\n> second line\n")
+            + formatter.finish()
+
+        // The two quoted lines are buffered and rendered as a single block.
+        #expect(rendered.contains("first line"))
+        #expect(rendered.contains("second line"))
+        // Literal blockquote markers are consumed by the renderer.
+        #expect(!rendered.contains("> first line"))
+    }
+
+    @Test
+    func dimmedANSISequenceMapsHeadingAccentToMutedSteel() {
+        let dimmed = TerminalChat.dimmedANSISequence(
+            "\u{1B}[1;38;5;75m",
+            gray: "\u{1B}[90m",
+            reset: "\u{1B}[0m"
+        )
+
+        // Bold is preserved and the bright heading accent is remapped to the
+        // muted steel-teal (109) used inside the dimmed thinking stream.
+        #expect(dimmed == "\u{1B}[1;38;5;109m")
+    }
+
+    @Test
+    func dimmedANSISequenceMapsInlineCodeAccentToMutedTan() {
+        let dimmed = TerminalChat.dimmedANSISequence(
+            "\u{1B}[38;5;180m",
+            gray: "\u{1B}[90m",
+            reset: "\u{1B}[0m"
+        )
+
+        #expect(dimmed == "\u{1B}[38;5;144m")
+    }
+
+    @Test
+    func dimmedANSISequenceCollapsesResetToGray() {
+        let dimmed = TerminalChat.dimmedANSISequence(
+            "\u{1B}[0m",
+            gray: "\u{1B}[90m",
+            reset: "\u{1B}[0m"
+        )
+
+        #expect(dimmed == "\u{1B}[0m\u{1B}[90m")
+    }
+
+    @Test
+    func dimmedANSISequenceFallsBackToGrayForUnmappedColor() {
+        let dimmed = TerminalChat.dimmedANSISequence(
+            "\u{1B}[38;5;200m",
+            gray: "\u{1B}[90m",
+            reset: "\u{1B}[0m"
+        )
+
+        // An accent without a muted mapping degrades to plain gray (90).
+        #expect(dimmed == "\u{1B}[90m")
+    }
+
+    @Test
+    func mutedThoughtAccentMapsKnownAccentFamilies() {
+        #expect(TerminalChat.mutedThoughtAccent(for: 75) == 109)
+        #expect(TerminalChat.mutedThoughtAccent(for: 180) == 144)
+        #expect(TerminalChat.mutedThoughtAccent(for: 108) == 108)
+        #expect(TerminalChat.mutedThoughtAccent(for: 200) == nil)
+    }
+
+    @Test
     func toolAndStatusWidthsUseTerminalCellWidth() {
         #expect(TerminalChat.displayWidth("🛠️ Tool") == TerminalANSIText.visibleWidth("🛠️ Tool"))
         #expect(TerminalChat.displayWidth("e\u{301}") == 1)

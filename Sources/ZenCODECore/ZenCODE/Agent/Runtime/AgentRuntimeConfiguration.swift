@@ -420,7 +420,7 @@ public protocol AgentRuntimeBackend: Actor {
         preserveThinking: Bool
     )
 
-    func updateBorrowedOrchestrationToolExecutor(
+    func updateBorrowedSubAgentToolExecutor(
         _ executor: AgentBorrowedToolExecutor?
     ) async
 
@@ -456,7 +456,7 @@ public protocol AgentRuntimeBackend: Actor {
 }
 
 extension AgentRuntimeBackend {
-    public func updateBorrowedOrchestrationToolExecutor(
+    public func updateBorrowedSubAgentToolExecutor(
         _ executor: AgentBorrowedToolExecutor?
     ) async {}
 

@@ -138,10 +138,10 @@ actor DS4CoderBackend: AgentRuntimeBackend {
         await toolExecutor.shutdown()
     }
 
-    func updateBorrowedOrchestrationToolExecutor(
+    func updateBorrowedSubAgentToolExecutor(
         _ executor: AgentBorrowedToolExecutor?
     ) async {
-        await toolExecutor.updateBorrowedOrchestrationToolExecutor(executor)
+        await toolExecutor.updateBorrowedSubAgentToolExecutor(executor)
     }
 
     func updateToolProviders(_ providers: [AgentToolProvider]) async {

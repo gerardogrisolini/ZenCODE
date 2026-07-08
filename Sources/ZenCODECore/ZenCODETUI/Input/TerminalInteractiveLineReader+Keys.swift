@@ -55,6 +55,8 @@ extension TerminalInteractiveLineReader {
 
         switch secondByte {
         case 0x0A, 0x0D:
+            // Legacy Option+Enter (ESC+CR) fallback for terminals without an
+            // extended keyboard protocol, where Shift+Enter is not detectable.
             return .newline
         case 0x5B:
             return readCSIKey()
@@ -138,10 +140,10 @@ extension TerminalInteractiveLineReader {
             return .unknown
         }
         let components = sequence.split(separator: ";").map(String.init)
-        if let key = optionReturnKey(components: components, keyCodeIndex: 0, modifierIndex: 1) {
+        if let key = shiftReturnKey(components: components, keyCodeIndex: 0, modifierIndex: 1) {
             return key
         }
-        if let key = optionReturnKey(components: components, keyCodeIndex: 2, modifierIndex: 1) {
+        if let key = shiftReturnKey(components: components, keyCodeIndex: 2, modifierIndex: 1) {
             return key
         }
         let numericPrefix = components.first
@@ -167,10 +169,10 @@ extension TerminalInteractiveLineReader {
             return .unknown
         }
         let components = sequence.split(separator: ";").map(String.init)
-        if let key = optionReturnKey(components: components, keyCodeIndex: 0, modifierIndex: 1) {
+        if let key = shiftReturnKey(components: components, keyCodeIndex: 0, modifierIndex: 1) {
             return key
         }
-        if let key = optionReturnKey(components: components, keyCodeIndex: 2, modifierIndex: 1) {
+        if let key = shiftReturnKey(components: components, keyCodeIndex: 2, modifierIndex: 1) {
             return key
         }
         return .unknown
@@ -199,7 +201,7 @@ extension TerminalInteractiveLineReader {
             .replacingOccurrences(of: "\r", with: "\n")
     }
 
-    func optionReturnKey(
+    func shiftReturnKey(
         components: [String],
         keyCodeIndex: Int,
         modifierIndex: Int
@@ -213,7 +215,7 @@ extension TerminalInteractiveLineReader {
             return .enter
         }
         let modifierBits = modifier - 1
-        return (modifierBits & 0b10) != 0 ? .newline : .enter
+        return (modifierBits & 0b01) != 0 ? .newline : .enter
     }
 
     static func isReturnKeyCode(_ keyCode: Int?) -> Bool {
