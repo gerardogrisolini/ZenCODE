@@ -19,7 +19,7 @@ struct LocalPwdTool: FeatureTool {
 
     static let name = "local.pwd"
     static let description = "Returns the current working directory used by local tools."
-    static let inputSchema = #"{"type":"object","properties":{}}"#
+    static let inputSchema = buildInputSchema([])
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         context.workingDirectory.path
@@ -34,7 +34,9 @@ struct LocalListDirectoryTool: FeatureTool {
 
     static let name = "local.ls"
     static let description = "Lists files and directories. Paths may be absolute or relative to the working directory."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"includeHidden":{"type":"boolean"}}}"#
+    static let inputSchema = buildInputSchema(
+        [.string("path"), .boolean("includeHidden")]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         try LocalToolsSupport.listDirectory(
@@ -54,7 +56,10 @@ struct LocalReadFileTool: FeatureTool {
 
     static let name = "local.readFile"
     static let description = "Reads a UTF-8 text file with line numbers. Use offset and limit for focused reads."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"},"offset":{"type":"number"},"limit":{"type":"number"}},"required":["path"]}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.pathAliases + CommonSchemaProperties.offsetLimit,
+        required: ["path"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         try LocalToolsSupport.readFile(
@@ -75,7 +80,10 @@ struct LocalReadFilesTool: FeatureTool {
 
     static let name = "local.readFiles"
     static let description = "Reads multiple UTF-8 text files in one call. Each file is returned with a header and line numbers. Use offset and limit for focused reads applied to every file."
-    static let inputSchema = #"{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"file_paths":{"type":"array","items":{"type":"string"}},"offset":{"type":"number"},"limit":{"type":"number"}},"required":["paths"]}"#
+    static let inputSchema = buildInputSchema(
+        [.array("paths"), .array("file_paths")] + CommonSchemaProperties.offsetLimit,
+        required: ["paths"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let rawPaths = (input.paths ?? input.file_paths ?? [])
@@ -111,7 +119,10 @@ struct LocalInspectFileTool: FeatureTool {
 
     static let name = "local.inspectFile"
     static let description = "Returns compact file metadata, suggested read ranges, and symbol-like outline entries without returning the full file contents."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"},"maxSymbols":{"type":"number"},"max_symbols":{"type":"number"}},"required":["path"]}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.pathAliases + CommonSchemaProperties.symbolLimit,
+        required: ["path"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         try LocalToolsSupport.inspectFile(
@@ -131,7 +142,10 @@ struct LocalWriteFileTool: FeatureTool {
 
     static let name = "local.writeFile"
     static let description = "Creates or overwrites a UTF-8 text file."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"},"content":{"type":"string"},"createDirectories":{"type":"boolean"}},"required":["file_path","content"]}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.pathAliases + [.string("content"), .boolean("createDirectories")],
+        required: ["file_path", "content"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
@@ -159,7 +173,10 @@ struct LocalReplaceTool: FeatureTool {
 
     static let name = "local.replace"
     static let description = "Replaces all occurrences of oldString with newString in a UTF-8 text file."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"},"oldString":{"type":"string"},"old_string":{"type":"string"},"newString":{"type":"string"},"new_string":{"type":"string"}},"required":["path","oldString","newString"]}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.pathAliases + CommonSchemaProperties.editStrings,
+        required: ["path", "oldString", "newString"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
@@ -191,7 +208,11 @@ struct LocalEditFileTool: FeatureTool {
 
     static let name = "local.editFile"
     static let description = "Applies a targeted string replacement in a file. By default exactly one occurrence must match; set replaceAll=true to update every occurrence."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"},"oldString":{"type":"string"},"old_string":{"type":"string"},"newString":{"type":"string"},"new_string":{"type":"string"},"replaceAll":{"type":"boolean"},"replace_all":{"type":"boolean"}},"required":["path","oldString","newString"]}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.pathAliases + CommonSchemaProperties.editStrings
+            + [.boolean("replaceAll"), .boolean("replace_all")],
+        required: ["path", "oldString", "newString"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
@@ -232,7 +253,12 @@ struct LocalMultiEditTool: FeatureTool {
 
     static let name = "local.multiEdit"
     static let description = "Applies multiple targeted edits to the same file in order."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"},"edits":{"type":"array","items":{"type":"object","properties":{"oldString":{"type":"string"},"old_string":{"type":"string"},"newString":{"type":"string"},"new_string":{"type":"string"},"replaceAll":{"type":"boolean"},"replace_all":{"type":"boolean"}}}}},"required":["path","edits"]}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.pathAliases
+            + [.arrayOfObjects("edits", properties: CommonSchemaProperties.editStrings
+                + [.boolean("replaceAll"), .boolean("replace_all")])],
+        required: ["path", "edits"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
@@ -275,7 +301,10 @@ struct LocalAppendTool: FeatureTool {
 
     static let name = "local.append"
     static let description = "Appends UTF-8 text to a file."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("path"), .string("content")],
+        required: ["path", "content"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
@@ -301,7 +330,10 @@ struct LocalMakeDirectoryTool: FeatureTool {
 
     static let name = "local.mkdir"
     static let description = "Creates a directory."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"createIntermediateDirectories":{"type":"boolean"}},"required":["path"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("path"), .boolean("createIntermediateDirectories")],
+        required: ["path"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, nil, context: context)
@@ -321,7 +353,10 @@ struct LocalDeleteTool: FeatureTool {
 
     static let name = "local.delete"
     static let description = "Deletes a file or directory. Directories require recursive=true."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"recursive":{"type":"boolean"}},"required":["path"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("path"), .boolean("recursive")],
+        required: ["path"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, nil, context: context)
@@ -346,7 +381,10 @@ struct LocalMoveTool: FeatureTool {
 
     static let name = "local.move"
     static let description = "Moves or renames a file or directory."
-    static let inputSchema = #"{"type":"object","properties":{"sourcePath":{"type":"string"},"destinationPath":{"type":"string"},"overwriteExisting":{"type":"boolean"}},"required":["sourcePath","destinationPath"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("sourcePath"), .string("destinationPath"), .boolean("overwriteExisting")],
+        required: ["sourcePath", "destinationPath"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         guard let sourcePath = input.sourcePath?.nilIfBlank,
@@ -374,7 +412,10 @@ struct LocalApplyPatchTool: FeatureTool {
 
     static let name = "local.applyPatch"
     static let description = "Applies a unified diff that may span multiple files. All hunks are validated in memory first and written atomically: if any hunk fails to match, no file is changed."
-    static let inputSchema = #"{"type":"object","properties":{"patch":{"type":"string"},"diff":{"type":"string"}},"required":["patch"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("patch"), .string("diff")],
+        required: ["patch"]
+    )
 
     private struct PlannedPatchChange {
         let url: URL

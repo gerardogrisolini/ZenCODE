@@ -22,7 +22,12 @@ struct SwiftBuildTool: FeatureTool {
 
     static let name = "swift.build"
     static let description = "Builds a SwiftPM package with `swift build` and returns a structured summary of errors and warnings instead of raw output."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"target":{"type":"string"},"product":{"type":"string"},"configuration":{"type":"string"},"timeoutSeconds":{"type":"number"},"timeout":{"type":"number"}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + CommonSchemaProperties.buildTarget
+            + CommonSchemaProperties.configuration
+            + CommonSchemaProperties.timeout
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         var args = ["build"]
@@ -66,7 +71,12 @@ struct SwiftTestTool: FeatureTool {
 
     static let name = "swift.test"
     static let description = "Runs SwiftPM tests with `swift test` and returns a structured summary of failing tests and build errors instead of raw output. Prefer this over local.exec for SwiftPM tests; pass filter for targeted tests and timeoutSeconds for long suites."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"filter":{"type":"string"},"target":{"type":"string"},"configuration":{"type":"string"},"timeoutSeconds":{"type":"number"},"timeout":{"type":"number"}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + CommonSchemaProperties.filter
+            + CommonSchemaProperties.configuration
+            + CommonSchemaProperties.timeout
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         var args = ["test"]
@@ -111,7 +121,13 @@ struct SwiftRunTool: FeatureTool {
 
     static let name = "swift.run"
     static let description = "Builds if needed and runs an executable product of a SwiftPM package with `swift run`. Pass executable and optional arguments. Returns build diagnostics plus the program output."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"executable":{"type":"string"},"product":{"type":"string"},"configuration":{"type":"string"},"arguments":{"type":"array","items":{"type":"string"}},"args":{"type":"array","items":{"type":"string"}},"timeoutSeconds":{"type":"number"},"timeout":{"type":"number"}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + [.string("executable"), .string("product")]
+            + CommonSchemaProperties.configuration
+            + [.array("arguments"), .array("args")]
+            + CommonSchemaProperties.timeout
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         var args = ["run"]
@@ -155,7 +171,11 @@ struct SwiftPackageTool: FeatureTool {
 
     static let name = "swift.package"
     static let description = "Runs `swift package` subcommands. action is one of: resolve, update, clean, reset, describe, dump-package. describe and dump-package report targets, products, and dependencies without reading Package.swift by hand."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"action":{"type":"string","enum":["resolve","update","clean","reset","describe","dump-package"]},"timeoutSeconds":{"type":"number"},"timeout":{"type":"number"}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + [.string("action", enumValues: ["resolve", "update", "clean", "reset", "describe", "dump-package"])]
+            + CommonSchemaProperties.timeout
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let action = (input.action?.nilIfBlank ?? "describe").lowercased()
@@ -197,7 +217,10 @@ struct SwiftOutlineTool: FeatureTool {
 
     static let name = "swift.outline"
     static let description = "Returns a compact outline of Swift declarations in a source file without returning the full file contents."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"},"maxSymbols":{"type":"number"},"max_symbols":{"type":"number"}},"required":["path"]}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.pathAliases + CommonSchemaProperties.symbolLimit,
+        required: ["path"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try SwiftToolsSupport.requiredPath(input.path, input.file_path, context: context)

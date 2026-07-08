@@ -15,17 +15,15 @@ extension MLXServerCoderBackend {
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> GenerationTurn {
         let stream = try await runtime.generateChatSession(request: request)
-                var splitter = MLXServerCoderTranscriptSplitter(
+        var splitter = MLXServerCoderTranscriptSplitter(
             startsInThinking: request.startsInThinking
         )
-        var rawText = ""
         var toolCalls: [ToolCall] = []
         var completionInfo: GenerateCompletionInfo?
 
         for try await event in stream {
             switch event {
             case .chunk(let chunk):
-                rawText += chunk
                 for part in splitter.consume(chunk) {
                     await emitTranscriptPart(part, onEvent: onEvent)
                 }
@@ -41,18 +39,9 @@ extension MLXServerCoderBackend {
         }
 
         return GenerationTurn(
-                        visibleText: MLXServerChatSessionTranscriptText.visibleAssistantContent(
-                from: rawText,
-                startsInThinking: request.startsInThinking
-            ),
-            historyVisibleText: MLXServerChatSessionTranscriptText.visibleAssistantContentForHistory(
-                from: rawText,
-                startsInThinking: request.startsInThinking
-            ),
-            reasoningText: MLXServerChatSessionTranscriptText.reasoningContent(
-                from: rawText,
-                startsInThinking: request.startsInThinking
-            ),
+            visibleText: splitter.visibleText,
+            historyVisibleText: splitter.historyVisibleText,
+            reasoningText: splitter.reasoningText,
             toolCalls: toolCalls,
             completionInfo: completionInfo
         )

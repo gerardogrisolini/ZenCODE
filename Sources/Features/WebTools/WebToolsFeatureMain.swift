@@ -23,7 +23,10 @@ struct WebSearchTool: FeatureTool {
 
     static let name = "web.search"
     static let description = "Searches the public web and returns matching results with titles, URLs, and snippets."
-    static let inputSchema = #"{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"number"},"domains":{"type":"array","items":{"type":"string"}}},"required":["query"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("query"), .number("limit"), .array("domains")],
+        required: ["query"]
+    )
 
     func run(_ input: Input, context _: FeatureContext) async throws -> String {
         guard let query = input.query?.nilIfBlank else {
@@ -81,7 +84,10 @@ struct WebFetchTool: FeatureTool {
 
     static let name = "web.fetch"
     static let description = "Opens an HTTP or HTTPS URL. On Apple platforms it renders the page in a silent in-process WebKit view (JavaScript executed) and returns extracted Markdown; on other platforms it falls back to a raw HTTP fetch preview."
-    static let inputSchema = #"{"type":"object","properties":{"url":{"type":"string"},"maxBytes":{"type":"number"},"timeoutSeconds":{"type":"number"}},"required":["url"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("url"), .number("maxBytes"), .number("timeoutSeconds")],
+        required: ["url"]
+    )
 
     func run(_ input: Input, context _: FeatureContext) async throws -> String {
         guard let rawURL = input.url?.nilIfBlank,

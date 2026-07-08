@@ -25,7 +25,7 @@ extension AnthropicSubscriptionGenerationClient {
             preferredWorkspaceRootURL: session.cwd
         )
         if configuration.verboseLogging {
-            await onEvent(.diagnostic(RemoteGenerationClient.toolExposureDiagnostic(from: toolDescriptors)))
+            await onEvent(.diagnostic(RemoteStreamTransport.toolExposureDiagnostic(from: toolDescriptors)))
         }
         let toolCatalog = RemoteToolWireCatalog(descriptors: toolDescriptors)
         let thinkingEnabled = Self.supportsThinking(modelID: modelID)
@@ -136,9 +136,9 @@ extension AnthropicSubscriptionGenerationClient {
 
         for try await line in bytes.lines {
             try Task.checkCancellation()
-            guard let payload = RemoteGenerationClient.ssePayload(from: line),
+            guard let payload = RemoteStreamTransport.ssePayload(from: line),
                   payload != "[DONE]",
-                  let object = RemoteGenerationClient.jsonObject(from: payload) else {
+                  let object = RemoteStreamTransport.jsonObject(from: payload) else {
                 continue
             }
 

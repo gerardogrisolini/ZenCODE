@@ -127,7 +127,7 @@ extension RemoteSessionSnapshotTests {
     ) throws -> [DirectAgentToolCall] {
         var accumulator = RemoteToolCallAccumulator()
         for object in objects {
-            for event in RemoteGenerationClient.parseResponsesStreamEvent(object) {
+            for event in ResponsesStreamParser.parse(object) {
                 switch event {
                 case let .responseToolCallItem(item, outputIndex):
                     accumulator.ingestResponseToolCallItem(item, outputIndex: outputIndex)

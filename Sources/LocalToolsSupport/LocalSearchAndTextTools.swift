@@ -24,7 +24,9 @@ struct SearchGlobTool: FeatureTool {
 
     static let name = "search.glob"
     static let description = "Finds files under a local path. Pass pattern for a glob such as **/*.swift; omit pattern to list files recursively."
-    static let inputSchema = #"{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"maxResults":{"type":"number"},"max_results":{"type":"number"}}}"#
+    static let inputSchema = buildInputSchema(
+        [.string("pattern"), .string("path")] + CommonSchemaProperties.limit
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         try LocalToolsSupport.glob(input: input, context: context)
@@ -44,7 +46,12 @@ struct SearchGrepTool: FeatureTool {
 
     static let name = "search.grep"
     static let description = "Searches text with grep from a local path. Use context for surrounding lines and filesOnly to list only matching file paths."
-    static let inputSchema = #"{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"glob":{"type":"string"},"maxResults":{"type":"number"},"max_results":{"type":"number"},"context":{"type":"number"},"filesOnly":{"type":"boolean"},"files_only":{"type":"boolean"}},"required":["pattern"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("pattern"), .string("path"), .string("glob")]
+            + CommonSchemaProperties.limit
+            + [.number("context"), .boolean("filesOnly"), .boolean("files_only")],
+        required: ["pattern"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         guard let pattern = input.pattern?.nilIfBlank else {
@@ -94,7 +101,12 @@ struct SearchLocateTool: FeatureTool {
 
     static let name = "search.locate"
     static let description = "Locates text matches compactly and returns file:line snippets plus local.readFile suggestions for focused follow-up reads."
-    static let inputSchema = #"{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"maxResults":{"type":"number"},"max_results":{"type":"number"},"context":{"type":"number"}},"required":["pattern"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("pattern"), .string("path")]
+            + CommonSchemaProperties.limit
+            + [.number("context")],
+        required: ["pattern"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         guard let pattern = input.pattern?.nilIfBlank else {
@@ -184,7 +196,10 @@ struct TextHeadTool: FeatureTool {
 
     static let name = "text.head"
     static let description = "Reads the first lines of a local text file."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"lines":{"type":"number"}},"required":["path"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("path"), .number("lines")],
+        required: ["path"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
@@ -210,7 +225,10 @@ struct TextTailTool: FeatureTool {
 
     static let name = "text.tail"
     static let description = "Reads the last lines of a local text file."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"lines":{"type":"number"}},"required":["path"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("path"), .number("lines")],
+        required: ["path"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
@@ -237,7 +255,10 @@ struct TextSortTool: FeatureTool {
 
     static let name = "text.sort"
     static let description = "Sorts the lines of a local text file and returns the sorted output."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"unique":{"type":"boolean"}},"required":["path"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("path"), .boolean("unique")],
+        required: ["path"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
@@ -272,7 +293,10 @@ struct TextWordCountTool: FeatureTool {
 
     static let name = "text.wc"
     static let description = "Counts lines, words, and characters in a local text file."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"}},"required":["path"]}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.pathAliases,
+        required: ["path"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let fileURL = try LocalToolsSupport.requiredPath(

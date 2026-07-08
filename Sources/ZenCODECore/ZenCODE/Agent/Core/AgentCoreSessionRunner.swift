@@ -16,10 +16,11 @@ public actor AgentCoreSessionRunner {
     private var activeRuntimeConfiguration: AgentCoreSessionConfiguration?
     private var sessions: [String: AgentCoreSessionConfiguration] = [:]
     private var lastKnownSessionSnapshots: [String: AgentRuntimeSessionSnapshot] = [:]
-    private var activePromptTasks: [UUID: Task<Void, Never>] = [:]
-    private var activePromptTaskIDsBySessionID: [String: Set<UUID>] = [:]
-    private var activePromptSessionIDsByTaskID: [UUID: String] = [:]
-    private var promptAuthorizationHandlers: [UUID: AgentToolAuthorizationHandler] = [:]
+    private var promptTaskRegistry = AgentCorePromptTaskRegistry()
+    private var promptAuthorizationHandlers: [UUID: AgentToolAuthorizationHandler] = [:];
+    /// Maps each prompt ID to the session it belongs to so `authorizeTool`
+    /// can route authorization requests to the correct handler.
+    private var promptAuthorizationSessionIDs: [UUID: String] = [:]
     private let defaultToolAuthorizationHandler: AgentToolAuthorizationHandler?
     let mcpRuntime: DirectMCPToolRuntime
     private let backendFactory: AgentRuntimeBackendFactory?
@@ -125,9 +126,11 @@ public actor AgentCoreSessionRunner {
         let promptID = UUID()
         if let authorizeTool {
             promptAuthorizationHandlers[promptID] = authorizeTool
+            promptAuthorizationSessionIDs[promptID] = configuration.sessionID
         }
         defer {
             promptAuthorizationHandlers.removeValue(forKey: promptID)
+            promptAuthorizationSessionIDs.removeValue(forKey: promptID)
         }
 
         await installBorrowedXcodeExecutor(
@@ -161,48 +164,55 @@ public actor AgentCoreSessionRunner {
                     await onEvent(event)
                 }
             )
-            let recovery = await recoveredSessionSnapshot(
+            await finalizeTurn(
+                outcome: .completed,
                 backend: backend,
                 configuration: configuration,
-                recorder: turnRecorder
+                recorder: turnRecorder,
+                onEvent: onEvent
             )
-            await restoreSessionIfNeeded(
-                recovery,
-                backend: backend,
-                baseConfiguration: configuration
-            )
-            await onEvent(.sessionSnapshot(recovery.snapshot))
-            await onEvent(.turnEnded(.completed))
             return response
         } catch is CancellationError {
-            let recovery = await recoveredSessionSnapshot(
+            await finalizeTurn(
+                outcome: .cancelled,
                 backend: backend,
                 configuration: configuration,
-                recorder: turnRecorder
+                recorder: turnRecorder,
+                onEvent: onEvent
             )
-            await restoreSessionIfNeeded(
-                recovery,
-                backend: backend,
-                baseConfiguration: configuration
-            )
-            await onEvent(.sessionSnapshot(recovery.snapshot))
-            await onEvent(.turnEnded(.cancelled))
             throw CancellationError()
         } catch {
-            let recovery = await recoveredSessionSnapshot(
+            await finalizeTurn(
+                outcome: .failed(message: error.localizedDescription),
                 backend: backend,
                 configuration: configuration,
-                recorder: turnRecorder
+                recorder: turnRecorder,
+                onEvent: onEvent
             )
-            await restoreSessionIfNeeded(
-                recovery,
-                backend: backend,
-                baseConfiguration: configuration
-            )
-            await onEvent(.sessionSnapshot(recovery.snapshot))
-            await onEvent(.turnEnded(.failed(message: error.localizedDescription)))
             throw error
         }
+    }
+
+    /// Shared turn-finalization: snapshot, restore, and turn-ended event.
+    private func finalizeTurn(
+        outcome: DirectAgentTurnOutcome,
+        backend: AgentCoreBackend,
+        configuration: AgentCoreSessionConfiguration,
+        recorder: AgentCorePromptTurnRecorder,
+        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async {
+        let recovery = await recoveredSessionSnapshot(
+            backend: backend,
+            configuration: configuration,
+            recorder: recorder
+        )
+        await restoreSessionIfNeeded(
+            recovery,
+            backend: backend,
+            baseConfiguration: configuration
+        )
+        await onEvent(.sessionSnapshot(recovery.snapshot))
+        await onEvent(.turnEnded(outcome))
     }
 
     public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
@@ -244,7 +254,7 @@ public actor AgentCoreSessionRunner {
         force: Bool = true,
         maxTokensOverride: Int? = nil
     ) async throws -> AgentRuntimeSessionCompactionResult? {
-        if activePromptTaskIDsBySessionID[sessionID]?.isEmpty == false {
+        if promptTaskRegistry.hasActiveTasks(for: sessionID) {
             throw AgentCoreSessionRunnerError.cannotCompactDuringActivePrompt(sessionID)
         }
 
@@ -327,34 +337,18 @@ public actor AgentCoreSessionRunner {
                     await outcomeTracker.record(event)
                     continuation.yield(event)
                 }
-                if await outcomeTracker.shouldEmitFallback() {
-                    continuation.yield(.turnEnded(.completed))
-                }
-                clearActivePromptTask(id: promptID)
-                continuation.finish()
+                await finishStream(continuation, outcomeTracker: outcomeTracker, promptID: promptID, error: nil)
             } catch is CancellationError {
-                if await outcomeTracker.shouldEmitFallback() {
-                    continuation.yield(.turnEnded(.cancelled))
-                }
-                clearActivePromptTask(id: promptID)
-                continuation.finish(throwing: CancellationError())
+                await finishStream(continuation, outcomeTracker: outcomeTracker, promptID: promptID, error: CancellationError())
             } catch {
                 ZenLogger.error(
                     .viewModelRuntime,
                     "agent core session runner stream failed: \(error.localizedDescription)"
                 )
-                if await outcomeTracker.shouldEmitFallback() {
-                    continuation.yield(.turnEnded(.failed(message: error.localizedDescription)))
-                }
-                clearActivePromptTask(id: promptID)
-                continuation.finish(throwing: error)
+                await finishStream(continuation, outcomeTracker: outcomeTracker, promptID: promptID, error: error)
             }
         }
-        registerActivePromptTask(
-            task,
-            id: promptID,
-            sessionID: configuration.sessionID
-        )
+        promptTaskRegistry.register(task, id: promptID, sessionID: configuration.sessionID)
         continuation.onTermination = { _ in
             task.cancel()
             Task {
@@ -364,47 +358,48 @@ public actor AgentCoreSessionRunner {
         return stream
     }
 
-    public func cancelActivePrompt() async {
-        for task in activePromptTasks.values {
-            task.cancel()
+    /// Shared stream-finalization: emits fallback turn-ended event if needed,
+    /// clears the task, and finishes the continuation.
+    private func finishStream(
+        _ continuation: AsyncThrowingStream<DirectAgentEvent, Error>.Continuation,
+        outcomeTracker: AgentCorePromptOutcomeTracker,
+        promptID: UUID,
+        error: Error?
+    ) async {
+        if error == nil, await outcomeTracker.shouldEmitFallback() {
+            continuation.yield(.turnEnded(.completed))
+        } else if error is CancellationError, await outcomeTracker.shouldEmitFallback() {
+            continuation.yield(.turnEnded(.cancelled))
+        } else if error != nil, await outcomeTracker.shouldEmitFallback() {
+            continuation.yield(.turnEnded(.failed(message: error!.localizedDescription)))
         }
-        activePromptTasks.removeAll()
-        activePromptTaskIDsBySessionID.removeAll()
-        activePromptSessionIDsByTaskID.removeAll()
+        clearActivePromptTask(id: promptID)
+        if let error {
+            continuation.finish(throwing: error)
+        } else {
+            continuation.finish()
+        }
+    }
+
+    public func cancelActivePrompt() async {
+        promptTaskRegistry.cancelAllTasks()
         promptAuthorizationHandlers.removeAll()
-        sessions.removeAll()
-        lastKnownSessionSnapshots.removeAll()
-        let backendToShutdown = backend
-        backend = nil
-        activeRuntimeConfiguration = nil
-        await backendToShutdown?.shutdown()
     }
 
     public func cancelPrompt(sessionID: String) async {
-        guard let promptIDs = activePromptTaskIDsBySessionID[sessionID] else {
-            return
-        }
-
-        for promptID in promptIDs {
-            activePromptTasks[promptID]?.cancel()
-        }
+        promptTaskRegistry.cancelAll(for: sessionID)
     }
 
     public func resetSession(id sessionID: String? = nil) async {
         if let sessionID {
-            cancelPromptTasks(for: sessionID)
+            promptTaskRegistry.cancelAll(for: sessionID)
             sessions.removeValue(forKey: sessionID)
             lastKnownSessionSnapshots.removeValue(forKey: sessionID)
             await backend?.clearSession(id: sessionID)
             return
         }
 
-        for task in activePromptTasks.values {
-            task.cancel()
-        }
-        activePromptTasks.removeAll()
-        activePromptTaskIDsBySessionID.removeAll()
-        activePromptSessionIDsByTaskID.removeAll()
+        promptTaskRegistry.cancelAllTasks()
         promptAuthorizationHandlers.removeAll()
 
         let sessionIDs = Array(sessions.keys)
@@ -416,7 +411,7 @@ public actor AgentCoreSessionRunner {
     }
 
     public func closeSession(id sessionID: String) async {
-        cancelPromptTasks(for: sessionID)
+        promptTaskRegistry.cancelAll(for: sessionID)
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
         await backend?.closeSession(id: sessionID)
@@ -433,12 +428,7 @@ public actor AgentCoreSessionRunner {
     /// or agent switching, where tearing down MCP connections would force the
     /// user to grant external-tool consents again.
     public func shutdownBackendKeepingExternalTools() async {
-        for task in activePromptTasks.values {
-            task.cancel()
-        }
-        activePromptTasks.removeAll()
-        activePromptTaskIDsBySessionID.removeAll()
-        activePromptSessionIDsByTaskID.removeAll()
+        promptTaskRegistry.cancelAllTasks()
         promptAuthorizationHandlers.removeAll()
         sessions.removeAll()
         lastKnownSessionSnapshots.removeAll()
@@ -453,31 +443,15 @@ public actor AgentCoreSessionRunner {
         id promptID: UUID,
         sessionID: String
     ) {
-        activePromptTasks[promptID] = task
-        activePromptSessionIDsByTaskID[promptID] = sessionID
-        activePromptTaskIDsBySessionID[sessionID, default: []].insert(promptID)
+        promptTaskRegistry.register(task, id: promptID, sessionID: sessionID)
     }
 
     private func cancelPromptTasks(for sessionID: String) {
-        guard let promptIDs = activePromptTaskIDsBySessionID.removeValue(forKey: sessionID) else {
-            return
-        }
-
-        for promptID in promptIDs {
-            activePromptTasks.removeValue(forKey: promptID)?.cancel()
-            activePromptSessionIDsByTaskID.removeValue(forKey: promptID)
-            promptAuthorizationHandlers.removeValue(forKey: promptID)
-        }
+        promptTaskRegistry.cancelAll(for: sessionID)
     }
 
     private func clearActivePromptTask(id promptID: UUID) {
-        activePromptTasks.removeValue(forKey: promptID)
-        if let sessionID = activePromptSessionIDsByTaskID.removeValue(forKey: promptID) {
-            activePromptTaskIDsBySessionID[sessionID]?.remove(promptID)
-            if activePromptTaskIDsBySessionID[sessionID]?.isEmpty == true {
-                activePromptTaskIDsBySessionID.removeValue(forKey: sessionID)
-            }
-        }
+        promptTaskRegistry.clear(id: promptID)
         promptAuthorizationHandlers.removeValue(forKey: promptID)
     }
 
@@ -632,7 +606,19 @@ public actor AgentCoreSessionRunner {
     }
 
     private func authorizeTool(_ request: AgentToolAuthorizationRequest) async -> Bool {
-        for handler in promptAuthorizationHandlers.values {
+        // Route authorization to the handler registered for the session that
+        // owns the tool call, falling back to the first available handler
+        // (for backwards compatibility) and finally the default handler.
+        let sessionID = request.sessionID
+
+        // Explicit session match first.
+        for (promptID, handler) in promptAuthorizationHandlers {
+            if promptAuthorizationSessionIDs[promptID] == sessionID {
+                return await handler(request)
+            }
+        }
+        // Fallback: first registered handler (legacy behaviour).
+        if let handler = promptAuthorizationHandlers.first?.value {
             return await handler(request)
         }
         guard let defaultToolAuthorizationHandler else {

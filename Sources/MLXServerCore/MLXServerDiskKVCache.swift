@@ -4,6 +4,11 @@
 //
 //  Created by Gerardo Grisolini on 25/05/26.
 //
+//  Orchestrates the disk-backed KV cache: the legacy store class and the
+//  actor coordinator both delegate to shared pure components for layout,
+//  metadata I/O, and eviction. This file keeps only policy, concurrency
+//  serialization, and safetensors loading.
+//
 
 import CryptoKit
 import Foundation
@@ -88,6 +93,8 @@ struct MLXServerDiskKVCachePersistenceTarget: Sendable {
     var temporaryURL: URL
 }
 
+// MARK: - Legacy store (orchestration)
+
 final class MLXServerDiskKVCacheStore: Sendable {
     static let metadataVersion = 4
 
@@ -120,8 +127,12 @@ final class MLXServerDiskKVCacheStore: Sendable {
         }
 
         let matchedPrefixEndIndex: Int?
-        let urls = entryURLs(for: key.entryKey, modelID: key.modelID)
-        guard let metadata = loadMetadata(from: urls.metadataURL),
+        let urls = MLXServerDiskKVCacheLayout.entryURLs(
+            for: key.entryKey,
+            modelID: key.modelID,
+            directory: configuration.directory
+        )
+        guard let metadata = MLXServerDiskKVCacheMetadataIO.loadMetadata(from: urls.metadataURL),
               metadata.matches(
                   key: key,
                   toolsSignature: toolsSignature,
@@ -176,8 +187,12 @@ final class MLXServerDiskKVCacheStore: Sendable {
         guard configuration.isEnabled else {
             return false
         }
-        let urls = entryURLs(for: key.entryKey, modelID: key.modelID)
-        guard let metadata = loadMetadata(from: urls.metadataURL),
+        let urls = MLXServerDiskKVCacheLayout.entryURLs(
+            for: key.entryKey,
+            modelID: key.modelID,
+            directory: configuration.directory
+        )
+        guard let metadata = MLXServerDiskKVCacheMetadataIO.loadMetadata(from: urls.metadataURL),
               metadata.entryKey == key.entryKey,
               fileManager.fileExists(atPath: urls.cacheURL.path) else {
             return true
@@ -216,198 +231,9 @@ final class MLXServerDiskKVCacheStore: Sendable {
     func enforceDiskLimit() async {
         await coordinator.enforceDiskLimit()
     }
-
-    // MARK: - Internals
-
-    func entryURLs(
-        for entryKey: String,
-        modelID: String
-    ) -> (cacheURL: URL, metadataURL: URL) {
-        let modelDirectory = configuration.directory
-            .appendingPathComponent(modelDirectoryName(modelID), isDirectory: true)
-        let baseURL = modelDirectory.appendingPathComponent(entryKey)
-        return (
-            cacheURL: baseURL.appendingPathExtension("safetensors"),
-            metadataURL: baseURL.appendingPathExtension("json")
-        )
-    }
-
-    private func modelDirectoryName(_ modelID: String) -> String {
-        var hasher = SHA256()
-        hasher.update(data: Data(modelID.utf8))
-        return String(SHA256.hexString(from: hasher.finalize()).prefix(32))
-    }
-
-    private func loadMetadata(
-        from url: URL
-    ) -> MLXServerPersistedChatSessionMetadata? {
-        guard let data = try? Data(contentsOf: url) else {
-            return nil
-        }
-        return try? JSONDecoder().decode(
-            MLXServerPersistedChatSessionMetadata.self,
-            from: data
-        )
-    }
-
-    private func saveMetadata(
-        _ metadata: MLXServerPersistedChatSessionMetadata,
-        to url: URL
-    ) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        try encoder.encode(metadata).write(to: url, options: .atomic)
-    }
-
-    private func removeEntry(
-        cacheURL: URL,
-        metadataURL: URL
-    ) {
-        try? fileManager.removeItem(at: cacheURL)
-        try? fileManager.removeItem(at: metadataURL)
-    }
-
-    private struct PersistedEntry {
-        var metadataURL: URL
-        var cacheURL: URL
-        var metadata: MLXServerPersistedChatSessionMetadata
-    }
-
-    /// Temporary persistence files older than this are considered leftovers
-    /// from a crashed or interrupted write and are removed while
-    /// enumerating. Recent ones may belong to an in-flight
-    /// `savePromptCache`, which runs outside the store lock.
-    static let orphanedTemporaryFileMaxAge: TimeInterval = 60 * 60
-
-    private func persistedEntriesFromDisk() -> [PersistedEntry] {
-        guard
-            fileManager.fileExists(atPath: configuration.directory.path),
-            let enumerator = fileManager.enumerator(
-                at: configuration.directory,
-                includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
-                options: [.skipsHiddenFiles]
-            )
-        else {
-            return []
-        }
-
-        var entries: [PersistedEntry] = []
-        var cacheFileURLs: [URL] = []
-        var referencedCachePaths = Set<String>()
-        while let url = enumerator.nextObject() as? URL {
-            if url.pathExtension == "safetensors" {
-                cacheFileURLs.append(url)
-                continue
-            }
-            guard url.pathExtension == "json",
-                  var metadata = loadMetadata(from: url) else {
-                continue
-            }
-
-            let cacheURL = url.deletingPathExtension().appendingPathExtension("safetensors")
-            guard metadata.version == Self.metadataVersion else {
-                removeEntry(cacheURL: cacheURL, metadataURL: url)
-                continue
-            }
-
-            guard fileManager.fileExists(atPath: cacheURL.path) else {
-                try? fileManager.removeItem(at: url)
-                continue
-            }
-
-            referencedCachePaths.insert(cacheURL.standardizedFileURL.path)
-            let currentByteCount = byteCount(of: cacheURL)
-            if metadata.byteCount != currentByteCount {
-                metadata.byteCount = currentByteCount
-                try? saveMetadata(metadata, to: url)
-            }
-            entries.append(
-                PersistedEntry(
-                    metadataURL: url,
-                    cacheURL: cacheURL,
-                    metadata: metadata
-                )
-            )
-        }
-
-        removeOrphanedCacheFiles(
-            cacheFileURLs,
-            referencedCachePaths: referencedCachePaths
-        )
-        return entries
-    }
-
-    /// Deletes cache payloads that no metadata references: `.safetensors`
-    /// files left behind by a crash between move and metadata write, and
-    /// stale `.tmp.safetensors` files from interrupted writes.
-    private func removeOrphanedCacheFiles(
-        _ cacheFileURLs: [URL],
-        referencedCachePaths: Set<String>
-    ) {
-        for url in cacheFileURLs {
-            let standardizedURL = url.standardizedFileURL
-            if standardizedURL.deletingPathExtension().pathExtension == "tmp" {
-                let modificationDate =
-                    (try? fileManager.attributesOfItem(atPath: standardizedURL.path))?[
-                        .modificationDate
-                    ] as? Date
-                let age = Date().timeIntervalSince(modificationDate ?? .distantPast)
-                if age > Self.orphanedTemporaryFileMaxAge {
-                    try? fileManager.removeItem(at: standardizedURL)
-                }
-                continue
-            }
-            if !referencedCachePaths.contains(standardizedURL.path) {
-                try? fileManager.removeItem(at: standardizedURL)
-            }
-        }
-    }
-
-    private func enforceDiskLimit(
-        preserving preservedCacheURL: URL?
-    ) {
-        guard let limitBytes = configuration.limitBytes, limitBytes > 0 else {
-            return
-        }
-
-        let entries = persistedEntriesFromDisk()
-        let totalByteCount = entries.reduce(Int64(0)) { partial, entry in
-            partial + max(entry.metadata.byteCount, 0)
-        }
-        guard totalByteCount > limitBytes else {
-            return
-        }
-
-        let targetByteCount = max(Int64(0), limitBytes * 4 / 5)
-        var runningByteCount = totalByteCount
-        let evictionCandidates = entries
-            .filter { entry in
-                guard let preservedCacheURL else {
-                    return true
-                }
-                return entry.cacheURL.standardizedFileURL != preservedCacheURL.standardizedFileURL
-            }
-            .sorted { lhs, rhs in
-                if lhs.metadata.lastAccessedAt != rhs.metadata.lastAccessedAt {
-                    return lhs.metadata.lastAccessedAt < rhs.metadata.lastAccessedAt
-                }
-                if lhs.metadata.updatedAt != rhs.metadata.updatedAt {
-                    return lhs.metadata.updatedAt < rhs.metadata.updatedAt
-                }
-                return lhs.metadata.entryKey < rhs.metadata.entryKey
-            }
-
-        for entry in evictionCandidates where runningByteCount > targetByteCount {
-            runningByteCount -= max(entry.metadata.byteCount, 0)
-            removeEntry(cacheURL: entry.cacheURL, metadataURL: entry.metadataURL)
-        }
-    }
-
-    private func byteCount(of url: URL) -> Int64 {
-        let attributes = try? fileManager.attributesOfItem(atPath: url.path)
-        return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
-    }
 }
+
+// MARK: - Actor coordinator (concurrency serialization)
 
 private actor MLXServerDiskKVCacheStoreCoordinator {
     private let configuration: MLXServerDiskKVCacheConfiguration
@@ -424,17 +250,22 @@ private actor MLXServerDiskKVCacheStoreCoordinator {
         guard configuration.isEnabled else {
             return nil
         }
-        let urls = entryURLs(for: key.entryKey, modelID: key.modelID)
-        // Unique per attempt: repeated saves of the same session must
-        // not share a temporary file. Orphaned files are swept by
-        // `removeOrphanedCacheFiles` after `orphanedTemporaryFileMaxAge`.
+        let urls = MLXServerDiskKVCacheLayout.entryURLs(
+            for: key.entryKey,
+            modelID: key.modelID,
+            directory: configuration.directory
+        )
         let temporaryURL = urls.cacheURL
             .deletingLastPathComponent()
             .appendingPathComponent(
                 "\(key.entryKey).\(UUID().uuidString).tmp.safetensors"
             )
 
-        try ensureDirectoryExists(urls.cacheURL.deletingLastPathComponent())
+        try MLXServerDiskKVCacheMetadataIO.ensureDirectoryExists(
+            urls.cacheURL.deletingLastPathComponent(),
+            fileManager: fileManager,
+            ensuredDirectoryPaths: &ensuredDirectoryPaths
+        )
 
         return MLXServerDiskKVCachePersistenceTarget(
             cacheURL: urls.cacheURL,
@@ -451,8 +282,6 @@ private actor MLXServerDiskKVCacheStoreCoordinator {
         contextTokenCount: Int? = nil,
         target: MLXServerDiskKVCachePersistenceTarget
     ) throws {
-        // Atomic replace eliminates the window where the destination cache
-        // file is missing (old remove + move could crash in between).
         if fileManager.fileExists(atPath: target.cacheURL.path) {
             _ = try fileManager.replaceItemAt(target.cacheURL, withItemAt: target.temporaryURL)
         } else {
@@ -460,7 +289,9 @@ private actor MLXServerDiskKVCacheStoreCoordinator {
         }
 
         let now = Date()
-        let existingMetadata = loadMetadata(from: target.metadataURL)
+        let existingMetadata = MLXServerDiskKVCacheMetadataIO.loadMetadata(
+            from: target.metadataURL
+        )
         let metadata = MLXServerPersistedChatSessionMetadata(
             version: MLXServerDiskKVCacheStore.metadataVersion,
             sessionKey: key.sessionKey,
@@ -472,16 +303,22 @@ private actor MLXServerDiskKVCacheStoreCoordinator {
             entryKey: key.entryKey,
             fingerprints: fingerprints,
             contextTokenCount: contextTokenCount,
-            byteCount: byteCount(of: target.cacheURL),
+            byteCount: MLXServerDiskKVCacheLayout.byteCount(
+                of: target.cacheURL,
+                fileManager: fileManager
+            ),
             createdAt: existingMetadata?.createdAt ?? now,
             updatedAt: now,
             lastAccessedAt: now
         )
         do {
-            try saveMetadata(metadata, to: target.metadataURL)
+            try MLXServerDiskKVCacheMetadataIO.saveMetadata(
+                metadata,
+                to: target.metadataURL,
+                fileManager: fileManager,
+                ensuredDirectoryPaths: &ensuredDirectoryPaths
+            )
         } catch {
-            // Avoid leaving a new cache file paired with stale/missing
-            // metadata (which would corrupt KV continuation). Roll back.
             try? fileManager.removeItem(at: target.cacheURL)
             try? fileManager.removeItem(at: target.metadataURL)
             throw error
@@ -497,200 +334,13 @@ private actor MLXServerDiskKVCacheStoreCoordinator {
         enforceDiskLimit(preserving: nil)
     }
 
-    private func entryURLs(
-        for entryKey: String,
-        modelID: String
-    ) -> (cacheURL: URL, metadataURL: URL) {
-        let modelDirectory = configuration.directory
-            .appendingPathComponent(modelDirectoryName(modelID), isDirectory: true)
-        let baseURL = modelDirectory.appendingPathComponent(entryKey)
-        return (
-            cacheURL: baseURL.appendingPathExtension("safetensors"),
-            metadataURL: baseURL.appendingPathExtension("json")
+    private func enforceDiskLimit(preserving preservedCacheURL: URL?) {
+        MLXServerDiskKVCacheEvictor.enforceDiskLimit(
+            preserving: preservedCacheURL,
+            configuration: configuration,
+            metadataVersion: MLXServerDiskKVCacheStore.metadataVersion,
+            fileManager: fileManager
         )
-    }
-
-    private func modelDirectoryName(_ modelID: String) -> String {
-        var hasher = SHA256()
-        hasher.update(data: Data(modelID.utf8))
-        return String(SHA256.hexString(from: hasher.finalize()).prefix(32))
-    }
-
-    private func loadMetadata(
-        from url: URL
-    ) -> MLXServerPersistedChatSessionMetadata? {
-        guard let data = try? Data(contentsOf: url) else {
-            return nil
-        }
-        return try? JSONDecoder().decode(
-            MLXServerPersistedChatSessionMetadata.self,
-            from: data
-        )
-    }
-
-    private func saveMetadata(
-        _ metadata: MLXServerPersistedChatSessionMetadata,
-        to url: URL
-    ) throws {
-        try ensureDirectoryExists(url.deletingLastPathComponent())
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        try encoder.encode(metadata).write(to: url, options: .atomic)
-    }
-
-    private func ensureDirectoryExists(_ url: URL) throws {
-        let directoryURL = url.standardizedFileURL
-        let path = directoryURL.path
-        guard !ensuredDirectoryPaths.contains(path) else {
-            return
-        }
-
-        try fileManager.createDirectory(
-            at: directoryURL,
-            withIntermediateDirectories: true
-        )
-
-        ensuredDirectoryPaths.insert(path)
-    }
-
-    private func removeEntry(
-        cacheURL: URL,
-        metadataURL: URL
-    ) {
-        try? fileManager.removeItem(at: cacheURL)
-        try? fileManager.removeItem(at: metadataURL)
-    }
-
-    private struct PersistedEntry {
-        var metadataURL: URL
-        var cacheURL: URL
-        var metadata: MLXServerPersistedChatSessionMetadata
-    }
-
-    private func persistedEntriesFromDisk() -> [PersistedEntry] {
-        guard
-            fileManager.fileExists(atPath: configuration.directory.path),
-            let enumerator = fileManager.enumerator(
-                at: configuration.directory,
-                includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
-                options: [.skipsHiddenFiles]
-            )
-        else {
-            return []
-        }
-
-        var entries: [PersistedEntry] = []
-        var cacheFileURLs: [URL] = []
-        var referencedCachePaths = Set<String>()
-        while let url = enumerator.nextObject() as? URL {
-            if url.pathExtension == "safetensors" {
-                cacheFileURLs.append(url)
-                continue
-            }
-            guard url.pathExtension == "json",
-                  var metadata = loadMetadata(from: url) else {
-                continue
-            }
-
-            let cacheURL = url.deletingPathExtension().appendingPathExtension("safetensors")
-            guard metadata.version == MLXServerDiskKVCacheStore.metadataVersion else {
-                removeEntry(cacheURL: cacheURL, metadataURL: url)
-                continue
-            }
-
-            guard fileManager.fileExists(atPath: cacheURL.path) else {
-                try? fileManager.removeItem(at: url)
-                continue
-            }
-
-            referencedCachePaths.insert(cacheURL.standardizedFileURL.path)
-            let currentByteCount = byteCount(of: cacheURL)
-            if metadata.byteCount != currentByteCount {
-                metadata.byteCount = currentByteCount
-                try? saveMetadata(metadata, to: url)
-            }
-            entries.append(
-                PersistedEntry(
-                    metadataURL: url,
-                    cacheURL: cacheURL,
-                    metadata: metadata
-                )
-            )
-        }
-
-        removeOrphanedCacheFiles(
-            cacheFileURLs,
-            referencedCachePaths: referencedCachePaths
-        )
-        return entries
-    }
-
-    private func removeOrphanedCacheFiles(
-        _ cacheFileURLs: [URL],
-        referencedCachePaths: Set<String>
-    ) {
-        for url in cacheFileURLs {
-            let standardizedURL = url.standardizedFileURL
-            if standardizedURL.deletingPathExtension().pathExtension == "tmp" {
-                let modificationDate =
-                    (try? fileManager.attributesOfItem(atPath: standardizedURL.path))?[
-                        .modificationDate
-                    ] as? Date
-                let age = Date().timeIntervalSince(modificationDate ?? .distantPast)
-                if age > MLXServerDiskKVCacheStore.orphanedTemporaryFileMaxAge {
-                    try? fileManager.removeItem(at: standardizedURL)
-                }
-                continue
-            }
-            if !referencedCachePaths.contains(standardizedURL.path) {
-                try? fileManager.removeItem(at: standardizedURL)
-            }
-        }
-    }
-
-    private func enforceDiskLimit(
-        preserving preservedCacheURL: URL?
-    ) {
-        guard let limitBytes = configuration.limitBytes, limitBytes > 0 else {
-            return
-        }
-
-        let entries = persistedEntriesFromDisk()
-        let totalByteCount = entries.reduce(Int64(0)) { partial, entry in
-            partial + max(entry.metadata.byteCount, 0)
-        }
-        guard totalByteCount > limitBytes else {
-            return
-        }
-
-        let targetByteCount = max(Int64(0), limitBytes * 4 / 5)
-        var runningByteCount = totalByteCount
-        let evictionCandidates = entries
-            .filter { entry in
-                guard let preservedCacheURL else {
-                    return true
-                }
-                return entry.cacheURL.standardizedFileURL != preservedCacheURL.standardizedFileURL
-            }
-            .sorted { lhs, rhs in
-                if lhs.metadata.lastAccessedAt != rhs.metadata.lastAccessedAt {
-                    return lhs.metadata.lastAccessedAt < rhs.metadata.lastAccessedAt
-                }
-                if lhs.metadata.updatedAt != rhs.metadata.updatedAt {
-                    return lhs.metadata.updatedAt < rhs.metadata.updatedAt
-                }
-                return lhs.metadata.entryKey < rhs.metadata.entryKey
-            }
-
-        for entry in evictionCandidates where runningByteCount > targetByteCount {
-            runningByteCount -= max(entry.metadata.byteCount, 0)
-            removeEntry(cacheURL: entry.cacheURL, metadataURL: entry.metadataURL)
-        }
-    }
-
-    private func byteCount(of url: URL) -> Int64 {
-        let attributes = try? fileManager.attributesOfItem(atPath: url.path)
-        return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
     }
 }
 

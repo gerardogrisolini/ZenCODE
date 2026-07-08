@@ -17,7 +17,7 @@ struct GitStatusTool: FeatureTool {
 
     static let name = "git.status"
     static let description = "Runs git status --short --branch in the working directory."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"workingDirectory":{"type":"string"},"cwd":{"type":"string"}}}"#
+    static let inputSchema = buildInputSchema(CommonSchemaProperties.workingDirectory)
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         try await GitToolsSupport.runGit(["status", "--short", "--branch"], input: input, context: context)
@@ -41,7 +41,12 @@ struct GitDiffTool: FeatureTool {
 
     static let name = "git.diff"
     static let description = "Runs git diff. Pass staged=true for --staged."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"staged":{"type":"boolean"},"cached":{"type":"boolean"},"file":{"type":"string"},"file_path":{"type":"string"},"baseRevision":{"type":"string"},"base_revision":{"type":"string"},"base":{"type":"string"}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + CommonSchemaProperties.staged
+            + [.string("file"), .string("file_path")]
+            + CommonSchemaProperties.baseRevision
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         var args = ["diff"]
@@ -74,7 +79,11 @@ struct GitShowTool: FeatureTool {
 
     static let name = "git.show"
     static let description = "Runs git show for a revision or object."
-    static let inputSchema = #"{"type":"object","properties":{"revision":{"type":"string"},"rev":{"type":"string"},"commit":{"type":"string"},"path":{"type":"string"},"file_path":{"type":"string"},"workingDirectory":{"type":"string"},"cwd":{"type":"string"}}}"#
+    static let inputSchema = buildInputSchema(
+        [.string("revision"), .string("rev"), .string("commit")]
+            + CommonSchemaProperties.pathAliases
+            + [.string("workingDirectory"), .string("cwd")]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         var args = ["show", firstNonBlank(input.revision, input.rev, input.commit) ?? "HEAD"]
@@ -97,7 +106,10 @@ struct GitLogTool: FeatureTool {
 
     static let name = "git.log"
     static let description = "Runs git log --oneline."
-    static let inputSchema = #"{"type":"object","properties":{"path":{"type":"string"},"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"limit":{"type":"number"},"n":{"type":"number"}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + [.number("limit"), .number("n")]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let limit = max(1, min(input.limit ?? input.n ?? 20, 200))
@@ -117,7 +129,10 @@ struct GitBranchTool: FeatureTool {
 
     static let name = "git.branch"
     static let description = "Lists local, remote, or all branches."
-    static let inputSchema = #"{"type":"object","properties":{"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"path":{"type":"string"},"all":{"type":"boolean"},"remotes":{"type":"boolean"},"contains":{"type":"string"}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + [.boolean("all"), .boolean("remotes"), .string("contains")]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         var args = ["branch"]
@@ -142,7 +157,7 @@ struct GitRemoteTool: FeatureTool {
 
     static let name = "git.remote"
     static let description = "Lists configured remotes and URLs."
-    static let inputSchema = #"{"type":"object","properties":{"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"path":{"type":"string"}}}"#
+    static let inputSchema = buildInputSchema(CommonSchemaProperties.workingDirectory)
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         try await GitToolsSupport.runGit(["remote", "-v"], input: input, context: context)
@@ -161,7 +176,11 @@ struct GitLsFilesTool: FeatureTool {
 
     static let name = "git.lsFiles"
     static let description = "Lists tracked files, optionally including untracked files that are not ignored."
-    static let inputSchema = #"{"type":"object","properties":{"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"path":{"type":"string"},"includeUntracked":{"type":"boolean"},"maxResults":{"type":"number"},"max_results":{"type":"number"}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + [.boolean("includeUntracked")]
+            + CommonSchemaProperties.limit
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         var args = ["ls-files"]
@@ -192,7 +211,14 @@ struct GitGrepTool: FeatureTool {
 
     static let name = "git.grep"
     static let description = "Searches tracked repository files with git grep. Use context for surrounding lines and filesOnly to list only matching file paths."
-    static let inputSchema = #"{"type":"object","properties":{"pattern":{"type":"string"},"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"path":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"maxResults":{"type":"number"},"max_results":{"type":"number"},"context":{"type":"number"},"filesOnly":{"type":"boolean"},"files_only":{"type":"boolean"}},"required":["pattern"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("pattern")]
+            + CommonSchemaProperties.workingDirectory
+            + [.array("paths")]
+            + CommonSchemaProperties.limit
+            + [.number("context"), .boolean("filesOnly"), .boolean("files_only")],
+        required: ["pattern"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         guard let pattern = input.pattern?.nilIfBlank else {
@@ -232,7 +258,12 @@ struct GitBlameTool: FeatureTool {
 
     static let name = "git.blame"
     static let description = "Shows git blame for a file, optionally scoped to a line range."
-    static let inputSchema = #"{"type":"object","properties":{"file":{"type":"string"},"path":{"type":"string"},"file_path":{"type":"string"},"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"startLine":{"type":"number"},"endLine":{"type":"number"}},"required":["file"]}"#
+    static let inputSchema = buildInputSchema(
+        [.string("file"), .string("path"), .string("file_path"),
+         .string("workingDirectory"), .string("cwd"),
+         .number("startLine"), .number("endLine")],
+        required: ["file"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         guard let file = firstNonBlank(input.file, input.path, input.file_path) else {
@@ -260,7 +291,10 @@ struct GitAddTool: FeatureTool {
 
     static let name = "git.add"
     static let description = "Stages files for commit. Pass paths or all=true."
-    static let inputSchema = #"{"type":"object","properties":{"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"path":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"all":{"type":"boolean"}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + [.array("paths"), .boolean("all")]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         var args = ["add"]
@@ -291,7 +325,10 @@ struct GitRestoreTool: FeatureTool {
 
     static let name = "git.restore"
     static let description = "Unstages files with staged=true, or discards worktree changes only when worktree=true and discardChanges=true."
-    static let inputSchema = #"{"type":"object","properties":{"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"path":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"staged":{"type":"boolean"},"worktree":{"type":"boolean"},"discardChanges":{"type":"boolean"}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + [.array("paths"), .boolean("staged"), .boolean("worktree"), .boolean("discardChanges")]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let staged = input.staged == true
@@ -326,7 +363,11 @@ struct GitCommitTool: FeatureTool {
 
     static let name = "git.commit"
     static let description = "Creates a git commit from staged changes. Pass message for the commit message."
-    static let inputSchema = #"{"type":"object","properties":{"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"path":{"type":"string"},"message":{"type":"string"},"all":{"type":"boolean"}},"required":["message"]}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + [.string("message"), .boolean("all")],
+        required: ["message"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         guard let message = input.message?.nilIfBlank else {
@@ -359,7 +400,13 @@ struct GitPushTool: FeatureTool {
 
     static let name = "git.push"
     static let description = "Pushes commits to a remote. Supports remote, branch/refspec, setUpstream, forceWithLease, tags, and dryRun."
-    static let inputSchema = #"{"type":"object","properties":{"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"path":{"type":"string"},"remote":{"type":"string"},"branch":{"type":"string"},"refspec":{"type":"string"},"setUpstream":{"type":"boolean"},"set_upstream":{"type":"boolean"},"forceWithLease":{"type":"boolean"},"force_with_lease":{"type":"boolean"},"tags":{"type":"boolean"},"dryRun":{"type":"boolean"},"dry_run":{"type":"boolean"}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + [.string("remote"), .string("branch"), .string("refspec"),
+               .boolean("setUpstream"), .boolean("set_upstream"),
+               .boolean("forceWithLease"), .boolean("force_with_lease"),
+               .boolean("tags"), .boolean("dryRun"), .boolean("dry_run")]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let setUpstream = input.setUpstream == true || input.set_upstream == true
@@ -407,7 +454,11 @@ struct GitFetchTool: FeatureTool {
 
     static let name = "git.fetch"
     static let description = "Fetches objects and refs from a remote without merging. Supports remote, branch/refspec, all, prune, and tags."
-    static let inputSchema = #"{"type":"object","properties":{"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"path":{"type":"string"},"remote":{"type":"string"},"branch":{"type":"string"},"refspec":{"type":"string"},"all":{"type":"boolean"},"prune":{"type":"boolean"},"tags":{"type":"boolean"}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + [.string("remote"), .string("branch"), .string("refspec"),
+               .boolean("all"), .boolean("prune"), .boolean("tags")]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         var args = ["fetch"]
@@ -447,7 +498,12 @@ struct GitPullTool: FeatureTool {
 
     static let name = "git.pull"
     static let description = "Fetches and integrates changes from a remote. Defaults to --ff-only for safety; set rebase=true to rebase or ffOnly=false to allow a merge commit."
-    static let inputSchema = #"{"type":"object","properties":{"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"path":{"type":"string"},"remote":{"type":"string"},"branch":{"type":"string"},"refspec":{"type":"string"},"rebase":{"type":"boolean"},"ffOnly":{"type":"boolean"},"ff_only":{"type":"boolean"},"allowUnrelatedHistories":{"type":"boolean"},"allow_unrelated_histories":{"type":"boolean"}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + [.string("remote"), .string("branch"), .string("refspec"),
+               .boolean("rebase"), .boolean("ffOnly"), .boolean("ff_only"),
+               .boolean("allowUnrelatedHistories"), .boolean("allow_unrelated_histories")]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         var args = ["pull"]
@@ -486,7 +542,11 @@ struct GitStashTool: FeatureTool {
 
     static let name = "git.stash"
     static let description = "Runs git stash list/show/push/apply/pop/drop with structured arguments."
-    static let inputSchema = #"{"type":"object","properties":{"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"path":{"type":"string"},"action":{"type":"string"},"message":{"type":"string"},"stash":{"type":"string"},"includeUntracked":{"type":"boolean"},"paths":{"type":"array","items":{"type":"string"}}}}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + [.string("action"), .string("message"), .string("stash"),
+               .boolean("includeUntracked"), .array("paths")]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let action = (input.action?.nilIfBlank ?? "list").lowercased()
@@ -506,7 +566,11 @@ struct GitSwitchTool: FeatureTool {
 
     static let name = "git.switch"
     static let description = "Switches branches, optionally creating the branch when create=true."
-    static let inputSchema = #"{"type":"object","properties":{"workingDirectory":{"type":"string"},"cwd":{"type":"string"},"path":{"type":"string"},"branch":{"type":"string"},"create":{"type":"boolean"}},"required":["branch"]}"#
+    static let inputSchema = buildInputSchema(
+        CommonSchemaProperties.workingDirectory
+            + [.string("branch"), .boolean("create")],
+        required: ["branch"]
+    )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         guard let branch = input.branch?.nilIfBlank else {

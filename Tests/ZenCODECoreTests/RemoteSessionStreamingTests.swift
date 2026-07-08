@@ -545,7 +545,7 @@ extension RemoteSessionSnapshotTests {
 
     @Test
     func parseChatCompletionsDoesNotDuplicateIdenticalReasoningFields() {
-        let events = RemoteGenerationClient.parseChatCompletionStreamEvent([
+        let events = ChatCompletionsStreamParser.parse([
             "choices": [
                 [
                     "delta": [

@@ -95,7 +95,7 @@ extension ChatGPTSubscriptionGenerationClient {
                 if configuration.verboseLogging {
                     await onEvent(
                         .diagnostic(
-                            RemoteGenerationClient.toolExposureDiagnostic(
+                            RemoteStreamTransport.toolExposureDiagnostic(
                                 from: toolCatalog.bindings.map(\.descriptor)
                             )
                         )

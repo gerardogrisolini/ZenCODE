@@ -725,7 +725,7 @@ extension RemoteSessionSnapshotTests {
 
     @Test
     func chatCompletionDeltaContentPartsAreParsedAsContent() {
-        let events = RemoteGenerationClient.parseChatCompletionStreamEvent([
+        let events = ChatCompletionsStreamParser.parse([
             "choices": [
                 [
                     "delta": [
@@ -756,7 +756,7 @@ extension RemoteSessionSnapshotTests {
 
     @Test
     func responsesContentPartDeltaIsParsedAsContent() {
-        let events = RemoteGenerationClient.parseResponsesStreamEvent([
+        let events = ResponsesStreamParser.parse([
             "type": "response.content_part.delta",
             "delta": [
                 "type": "output_text_delta",

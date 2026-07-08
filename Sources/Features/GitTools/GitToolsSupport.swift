@@ -6,9 +6,10 @@
 import Foundation
 import FeatureKit
 
-protocol GitWorkingDirectoryInput {
+protocol GitWorkingDirectoryInput: WorkingDirectoryInput {
     var workingDirectory: String? { get }
     var cwd: String? { get }
+    var path: String? { get }
 }
 
 enum GitToolsSupport {

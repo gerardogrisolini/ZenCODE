@@ -34,31 +34,37 @@ struct MLXServerCoderTranscriptSplitter {
         case thought(String)
     }
 
-        private static let openTags = ["<think>", "<|channel>thought"]
+    private static let openTags = ["<think>", "<|channel>thought"]
     private static let closeTags = ["</think>", "<channel|>"]
     private var isThinking: Bool
     private var pending = ""
 
+    // Accumulators built during streaming — avoids re-parsing rawText at end of turn.
+    private(set) var visibleText = ""
+    private(set) var historyVisibleText = ""
+    private(set) var reasoningText = ""
+    private var historyVisibleStarted = false
+
     init(startsInThinking: Bool) {
         self.isThinking = startsInThinking
+        self.historyVisibleStarted = !startsInThinking
     }
 
     mutating func consume(_ chunk: String) -> [Part] {
         pending += chunk
         var parts: [Part] = []
 
-                while !pending.isEmpty {
+        while !pending.isEmpty {
             if isThinking {
                 let closeRange = pending.earliestRange(ofAny: Self.closeTags)
                 let openRange = pending.earliestRange(ofAny: Self.openTags)
 
-                // Drop stray opening markers (e.g. gemma-4's
-                // `<|channel>thought`) that appear inside thinking output.
                 if let openRange,
                    closeRange == nil || openRange.lowerBound < closeRange!.lowerBound {
                     let thought = String(pending[..<openRange.lowerBound])
                     if !thought.isEmpty {
                         parts.append(.thought(thought))
+                        appendReasoning(thought)
                     }
                     pending.removeSubrange(pending.startIndex..<openRange.upperBound)
                     continue
@@ -68,9 +74,11 @@ struct MLXServerCoderTranscriptSplitter {
                     let thought = String(pending[..<closeRange.lowerBound])
                     if !thought.isEmpty {
                         parts.append(.thought(thought))
+                        appendReasoning(thought)
                     }
                     pending.removeSubrange(pending.startIndex..<closeRange.upperBound)
                     isThinking = false
+                    historyVisibleStarted = true
                     continue
                 }
 
@@ -81,12 +89,14 @@ struct MLXServerCoderTranscriptSplitter {
                     break
                 }
                 parts.append(.thought(safePrefix))
+                appendReasoning(safePrefix)
                 pending.removeFirst(safePrefix.count)
             } else {
                 if let openRange = pending.earliestRange(ofAny: Self.openTags) {
                     let content = String(pending[..<openRange.lowerBound])
                     if !content.isEmpty {
                         parts.append(.content(content))
+                        appendContent(content)
                     }
                     pending.removeSubrange(pending.startIndex..<openRange.upperBound)
                     isThinking = true
@@ -98,6 +108,7 @@ struct MLXServerCoderTranscriptSplitter {
                     break
                 }
                 parts.append(.content(safePrefix))
+                appendContent(safePrefix)
                 pending.removeFirst(safePrefix.count)
             }
         }
@@ -111,7 +122,27 @@ struct MLXServerCoderTranscriptSplitter {
         }
         let value = pending
         pending = ""
-        return [isThinking ? .thought(value) : .content(value)]
+        let part: Part = isThinking ? .thought(value) : .content(value)
+        switch part {
+        case .content(let text):
+            appendContent(text)
+        case .thought(let text):
+            appendReasoning(text)
+        }
+        return [part]
+    }
+
+    // MARK: - Accumulation
+
+    private mutating func appendContent(_ text: String) {
+        visibleText.append(text)
+        if historyVisibleStarted {
+            historyVisibleText.append(text)
+        }
+    }
+
+    private mutating func appendReasoning(_ text: String) {
+        reasoningText.append(text)
     }
 }
 

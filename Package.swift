@@ -217,6 +217,7 @@ targets += [
     .target(
         name: "FeatureMCPBridgeKit",
         dependencies: [
+            "FeatureKit",
             "ToolCore",
             .product(name: "Crypto", package: "swift-crypto")
         ]

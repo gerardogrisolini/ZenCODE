@@ -60,7 +60,7 @@ extension ChatGPTSubscriptionGenerationClient {
             var didParseContentFromResponsesEvent = false
             var didParseReasoningDeltaFromResponsesEvent = false
 
-            for event in RemoteGenerationClient.parseResponsesStreamEvent(object) {
+            for event in ResponsesStreamParser.parse(object) {
                 switch event {
                 case let .content(delta):
                     guard !delta.isEmpty else {
@@ -249,7 +249,7 @@ extension ChatGPTSubscriptionGenerationClient {
                 responseText = snapshot
                 return true
             }
-            let delta = RemoteGenerationClient.streamContentDelta(
+            let delta = RemoteStreamAccumulator.streamContentDelta(
                 fromSnapshot: snapshot,
                 accumulatedText: responseText
             )
