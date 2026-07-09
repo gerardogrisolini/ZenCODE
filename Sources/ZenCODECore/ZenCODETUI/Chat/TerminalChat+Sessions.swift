@@ -53,7 +53,6 @@ extension TerminalChat {
             statusBar.reset()
             refreshInitialStatusBarContextWindow()
             pendingAttachments.removeAll()
-            lastAssistantResponseText = nil
             lastRenderedSubAgentOverviewSignature = nil
             writeSystemMessage("Started a new session.\n")
         } catch {

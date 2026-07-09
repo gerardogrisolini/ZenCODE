@@ -159,7 +159,7 @@ extension TerminalChat {
                         await eventQueue.send(
                             .voicePromptProgress(
                                 TerminalVoicePromptProgress(
-                                    origin: .telegramVoice(chatID: chatID),
+                                    origin: .telegram(chatID: chatID),
                                     message: message
                                 )
                             )
@@ -168,7 +168,7 @@ extension TerminalChat {
                 await eventQueue.send(
                     .voicePromptCompleted(
                         TerminalVoicePromptResult(
-                            origin: .telegramVoice(chatID: chatID),
+                            origin: .telegram(chatID: chatID),
                             outcome: .success(transcript)
                         )
                     )
@@ -177,7 +177,7 @@ extension TerminalChat {
                 await eventQueue.send(
                     .voicePromptCompleted(
                         TerminalVoicePromptResult(
-                            origin: .telegramVoice(chatID: chatID),
+                            origin: .telegram(chatID: chatID),
                             outcome: .failure(error.localizedDescription)
                         )
                     )
@@ -299,47 +299,6 @@ extension TerminalChat {
             "*ZenCODE completed*\n\n\(String(text.prefix(3_600)))",
             origin: origin
         )
-    }
-
-    func sendTelegramVoiceCompletionIfLinked(
-        _ text: String,
-        origin: TerminalPromptOrigin
-    ) async {
-        guard origin.isTelegramVoice,
-              let chatID = origin.telegramChatID,
-              telegramLinkedChatID == chatID,
-              telegramControlState.isActive else {
-            return
-        }
-        guard AgentVoiceSynthesisService.isSupported else {
-            await sendTelegramCompletionIfLinked(text, origin: origin)
-            return
-        }
-
-        do {
-            let spokenText = AgentVoiceSpokenTextFormatter.prepare(text)
-            if spokenText.isShortened {
-                await sendTelegramSystemMessage(
-                    "Voice: speaking a shortened reply for faster playback.",
-                    to: chatID
-                )
-            }
-            let audio = try await AgentVoiceSynthesisService()
-                .synthesize(spokenText.text) { message in
-                    await self.sendTelegramSystemMessage("Voice: \(message)", to: chatID)
-                }
-            defer {
-                audio.cleanup()
-            }
-            telegramControlState = try await telegramControlService.sendAudio(audio, to: chatID)
-        } catch {
-            telegramControlState.lastError = error.localizedDescription
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            await sendTelegramSystemMessage(
-                "Voice reply failed: \(error.localizedDescription)",
-                to: chatID
-            )
-        }
     }
 
     func sendTelegramSystemMessageIfLinked(_ message: String) async {

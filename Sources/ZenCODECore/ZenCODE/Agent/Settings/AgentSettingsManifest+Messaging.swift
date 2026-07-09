@@ -51,35 +51,27 @@ public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled
         case language
-        case speaker
     }
 
     public static let defaultLanguage = "it"
-    public static let defaultSpeaker = "Alice"
 
     public let enabled: Bool
     public let language: String?
-    public let speaker: String?
 
     public init(
         enabled: Bool = false,
-        language: String? = Self.defaultLanguage,
-        speaker: String? = Self.defaultSpeaker
+        language: String? = Self.defaultLanguage
     ) {
         let normalizedLanguage = language?.nilIfBlank
-        let normalizedSpeaker = speaker?.nilIfBlank
         self.enabled = enabled
         self.language = enabled ? normalizedLanguage : nil
-        self.speaker = enabled ? normalizedSpeaker : nil
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
-            language: try container.decodeIfPresent(String.self, forKey: .language),
-            speaker: try container.decodeIfPresent(String.self, forKey: .speaker)
-                ?? Self.defaultSpeaker
+            language: try container.decodeIfPresent(String.self, forKey: .language)
         )
     }
 
@@ -88,9 +80,6 @@ public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
         try container.encode(enabled, forKey: .enabled)
         if let language {
             try container.encode(language, forKey: .language)
-        }
-        if let speaker {
-            try container.encode(speaker, forKey: .speaker)
         }
     }
 

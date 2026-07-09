@@ -20,24 +20,20 @@ enum TerminalChatCommandAvailability: Sendable, Equatable {
     case builderAgent
     case telegramEnabled
     case voiceEnabled
-    case voiceSynthesisEnabled
 }
 
 struct TerminalOptionalCommandAvailability: Sendable, Equatable {
     var telegramEnabled: Bool
     var voiceEnabled: Bool
-    var voiceSynthesisEnabled: Bool
 
     static func load() -> Self {
         from(manifest: AgentSettingsManifestStore.load())
     }
 
     static func from(manifest: AgentSettingsManifest?) -> Self {
-        let voiceEnabled = manifest?.voice?.isConfigured == true
-        return Self(
+        Self(
             telegramEnabled: manifest?.telegram?.isEnabled == true,
-            voiceEnabled: voiceEnabled,
-            voiceSynthesisEnabled: voiceEnabled && AgentVoiceSynthesisService.isSupported
+            voiceEnabled: manifest?.voice?.isConfigured == true
         )
     }
 }
@@ -74,17 +70,13 @@ extension TerminalChat {
         switch submittedLineRole(for: line) {
         case .empty, .prompt:
             return false
-        case let .slashCommand(token):
-            return token != "/speak"
+        case .slashCommand:
+            return true
         }
     }
 
     static func isVoiceCommand(_ line: String) -> Bool {
         commandToken(from: line) == "/voice"
-    }
-
-    static func isSpeakCommand(_ line: String) -> Bool {
-        commandToken(from: line) == "/speak"
     }
 
     func unavailableLocalSlashCommandMessage(for line: String) -> String? {
@@ -101,10 +93,6 @@ extension TerminalChat {
             return isVoiceCommandVisible()
                 ? nil
                 : Self.unknownCommandMessage(for: line)
-        case "/speak":
-            return isVoiceSynthesisConfigured()
-                ? nil
-                : Self.unknownCommandMessage(for: line)
         default:
             return nil
         }
@@ -117,7 +105,7 @@ extension TerminalChat {
         guard Self.isKnownSlashCommand(line) else {
             return Self.unknownCommandMessage(for: line)
         }
-        if Self.isVoiceCommand(line) || Self.isSpeakCommand(line) {
+        if Self.isVoiceCommand(line) {
             return "ZenCODE: voice commands are unavailable while a prompt is running.\n"
         }
         let command = Self.commandToken(from: line) ?? line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -129,16 +117,14 @@ extension TerminalChat {
         return Self.visibleCommandDescriptors(
             builderAgentEnabled: AgentProfileStore.isBuilderAgent(selectedAgent),
             telegramEnabled: availability.telegramEnabled,
-            voiceEnabled: availability.voiceEnabled,
-            voiceSynthesisEnabled: availability.voiceSynthesisEnabled
+            voiceEnabled: availability.voiceEnabled
         )
     }
 
     static func visibleCommandDescriptors(
         builderAgentEnabled: Bool,
         telegramEnabled: Bool,
-        voiceEnabled: Bool,
-        voiceSynthesisEnabled: Bool? = nil
+        voiceEnabled: Bool
     ) -> [TerminalChatCommandDescriptor] {
         allCommandDescriptors.filter { descriptor in
             switch descriptor.availability {
@@ -150,8 +136,6 @@ extension TerminalChat {
                 return telegramEnabled
             case .voiceEnabled:
                 return voiceEnabled
-            case .voiceSynthesisEnabled:
-                return voiceSynthesisEnabled ?? voiceEnabled
             }
         }
     }
@@ -174,10 +158,6 @@ extension TerminalChat {
 
     func isVoiceCommandVisible() -> Bool {
         isVoiceConfigured()
-    }
-
-    func isVoiceSynthesisConfigured() -> Bool {
-        optionalCommandAvailability.voiceSynthesisEnabled
     }
 
     static func commandToken(from line: String) -> String? {
@@ -283,12 +263,6 @@ extension TerminalChat {
             availability: .voiceEnabled
         ),
         TerminalChatCommandDescriptor(
-            command: "/speak",
-            summary: "play last response aloud",
-            help: "/speak synthesizes and plays the last assistant response.",
-            availability: .voiceSynthesisEnabled
-        ),
-                TerminalChatCommandDescriptor(
             command: "/exit",
             summary: "close session",
             help: "/exit closes the session."

@@ -44,7 +44,7 @@ extension ZenCODESetupRunner {
             """
 
             Voice uses the built-in macOS speech frameworks.
-            Speech-to-text uses SFSpeechRecognizer and text-to-speech uses AVSpeechSynthesizer.
+            Speech-to-text uses SFSpeechRecognizer.
             No external executable or API key is required.
 
             """
@@ -54,7 +54,6 @@ extension ZenCODESetupRunner {
             """
 
             Voice uses the built-in Apple speech frameworks.
-            Audio generation is available only on macOS and will not be enabled on this platform.
             No external executable or API key is required.
 
             """
@@ -67,21 +66,10 @@ extension ZenCODESetupRunner {
             defaultValue: existingSettings?.language?.nilIfBlank
                 ?? AgentVoiceSettingsManifest.defaultLanguage
         )
-        #if os(macOS)
-        let speaker: String? = try selectVoiceSetupOption(
-            title: "macOS synthesis voice",
-            options: voiceSpeakerOptions,
-            defaultValue: existingSettings?.speaker?.nilIfBlank
-                ?? AgentVoiceSettingsManifest.defaultSpeaker
-        )
-        #else
-        let speaker: String? = nil
-        #endif
 
         return AgentVoiceSettingsManifest(
             enabled: true,
-            language: language,
-            speaker: speaker
+            language: language
         )
     }
 
@@ -96,20 +84,6 @@ extension ZenCODESetupRunner {
         VoiceSetupOption(value: "ko", title: "Korean", aliases: ["korean"]),
         VoiceSetupOption(value: "zh", title: "Chinese", aliases: ["chinese"]),
         VoiceSetupOption(value: "ru", title: "Russian", aliases: ["russian"])
-    ]
-
-    private static let voiceSpeakerOptions: [VoiceSetupOption] = [
-        VoiceSetupOption(value: "Alice", title: "Alice", detail: "Italiano"),
-        VoiceSetupOption(value: "Samantha", title: "Samantha", detail: "English US"),
-        VoiceSetupOption(value: "Daniel", title: "Daniel", detail: "English UK"),
-        VoiceSetupOption(value: "Paulina", title: "Paulina", detail: "Spanish"),
-        VoiceSetupOption(value: "Thomas", title: "Thomas", detail: "French"),
-        VoiceSetupOption(value: "Anna", title: "Anna", detail: "German"),
-        VoiceSetupOption(value: "Joana", title: "Joana", detail: "Portuguese"),
-        VoiceSetupOption(value: "Kyoko", title: "Kyoko", detail: "Japanese"),
-        VoiceSetupOption(value: "Yuna", title: "Yuna", detail: "Korean"),
-        VoiceSetupOption(value: "Tingting", title: "Tingting", detail: "Chinese"),
-        VoiceSetupOption(value: "Milena", title: "Milena", detail: "Russian")
     ]
 
     static func selectVoiceSetupOption(

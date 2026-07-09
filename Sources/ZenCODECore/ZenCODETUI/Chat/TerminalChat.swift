@@ -97,7 +97,6 @@ public final class TerminalChat: @unchecked Sendable {
     public var telegramLinkedChatTitle: String?
     public let voiceRecordingService = TerminalVoiceRecordingService()
     public var activeVoiceRecordingSession: TerminalVoiceRecordingSession?
-    public var lastAssistantResponseText: String?
     var optionalCommandAvailability = TerminalOptionalCommandAvailability.load()
 
     public let statusBar: TerminalStatusBar

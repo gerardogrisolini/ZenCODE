@@ -151,7 +151,6 @@ extension TerminalChat {
             printModelIfNeeded(response.modelID)
             let responseText = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
             let completionText = responseText.isEmpty ? "Done." : responseText
-            lastAssistantResponseText = completionText
             if responseText.isEmpty {
                 writeChatOutput("Done.")
             }
@@ -159,11 +158,7 @@ extension TerminalChat {
             if let summary = success.fileChangeSummary {
                 writeFileChangeSummary(summary, includeDiff: false)
             }
-            if success.origin.isTelegramVoice {
-                await sendTelegramVoiceCompletionIfLinked(completionText, origin: success.origin)
-            } else {
-                await sendTelegramCompletionIfLinked(completionText, origin: success.origin)
-            }
+            await sendTelegramCompletionIfLinked(completionText, origin: success.origin)
         case let .failure(failure):
             finishThoughtOutputIfNeeded()
             finishAssistantContentFormatting()

@@ -234,22 +234,6 @@ public actor TerminalTelegramControlService {
         return state
     }
 
-    public func sendAudio(
-        _ audio: AgentVoiceSynthesisOutput,
-        to chatID: Int64
-    ) async throws -> TerminalTelegramControlState {
-        let settings = try telegramSettings()
-        let token = try telegramToken(from: settings)
-        guard FileManager.default.fileExists(atPath: audio.fileURL.path) else {
-            throw TerminalTelegramControlError.missingAudioFile(audio.fileURL.path)
-        }
-
-        try await TerminalTelegramAPIClient(token: token)
-            .sendAudio(audio, to: chatID)
-        state.lastError = nil
-        return state
-    }
-
     public func downloadVoiceAudio(
         _ voice: TerminalTelegramVoiceAttachment
     ) async throws -> AgentVoiceAudioInput {

@@ -139,9 +139,6 @@ extension TerminalChat {
         case let command where command == "/voice" || command.hasPrefix("/voice "):
             await handleVoiceCommand(command)
             return .continueChat
-                case let command where command == "/speak" || command.hasPrefix("/speak "):
-            await handleSpeakCommand(command)
-            return .continueChat
         default:
             if case .slashCommand = Self.submittedLineRole(for: prompt) {
                 writeFailureMessage(Self.unknownCommandMessage(for: prompt))

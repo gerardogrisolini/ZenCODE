@@ -52,55 +52,6 @@ struct TerminalTelegramAPIClient: Sendable {
         )
     }
 
-    func sendAudio(
-        _ audio: AgentVoiceSynthesisOutput,
-        to chatID: Int64
-    ) async throws {
-        guard let url = URL(string: "https://api.telegram.org/bot\(token)/sendAudio") else {
-            throw TerminalTelegramControlError.invalidToken
-        }
-        let audioData = try Data(contentsOf: audio.fileURL)
-        let boundary = "ZenCODE-\(UUID().uuidString)"
-        var body = Data()
-        body.appendTelegramMultipartField(
-            name: "chat_id",
-            value: String(chatID),
-            boundary: boundary
-        )
-        body.appendTelegramMultipartFile(
-            name: "audio",
-            filename: audio.filename,
-            contentType: audio.contentType,
-            data: audioData,
-            boundary: boundary
-        )
-        body.appendString("--\(boundary)--\n")
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 120
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.httpBody = body
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw TerminalTelegramControlError.unexpectedResponse
-        }
-
-        let decoded = try JSONDecoder().decode(
-            TerminalTelegramAPIResponse<TerminalTelegramMessage>.self,
-            from: data
-        )
-        guard (200..<300).contains(httpResponse.statusCode),
-              decoded.ok,
-              decoded.result != nil else {
-            throw TerminalTelegramControlError.httpError(
-                httpResponse.statusCode,
-                decoded.description ?? String(data: data, encoding: .utf8)
-            )
-        }
-    }
-
     func downloadFile(fileID: String) async throws -> TerminalTelegramDownloadedFile {
         let file: TerminalTelegramFile = try await request(
             method: "getFile",
@@ -158,43 +109,10 @@ struct TerminalTelegramAPIClient: Sendable {
     }
 }
 
-extension Data {
-    mutating func appendTelegramMultipartField(
-        name: String,
-        value: String,
-        boundary: String
-    ) {
-        appendString("--\(boundary)\n")
-        appendString("Content-Disposition: form-data; name=\"\(name)\"\n\n")
-        appendString("\(value)\n")
-    }
-
-    mutating func appendTelegramMultipartFile(
-        name: String,
-        filename: String,
-        contentType: String,
-        data: Data,
-        boundary: String
-    ) {
-        appendString("--\(boundary)\n")
-        appendString(
-                        "Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\n"
-        )
-        appendString("Content-Type: \(contentType)\n\n")
-        append(data)
-        appendString("\n")
-    }
-
-    mutating func appendString(_ string: String) {
-        append(Data(string.utf8))
-    }
-}
-
 public enum TerminalTelegramControlError: LocalizedError, Sendable, Equatable {
     case missingConfiguration
     case invalidToken
     case emptyMessage
-    case missingAudioFile(String)
     case unexpectedResponse
     case httpError(Int, String?)
 
@@ -206,8 +124,6 @@ public enum TerminalTelegramControlError: LocalizedError, Sendable, Equatable {
             return "Telegram bot token is invalid."
         case .emptyMessage:
             return "Cannot send an empty Telegram message."
-        case let .missingAudioFile(path):
-            return "Telegram audio file does not exist: \(path)"
         case .unexpectedResponse:
             return "Telegram returned an unexpected response."
         case let .httpError(statusCode, body):

@@ -68,22 +68,14 @@ struct TerminalChatGenerationRunError: Error, Sendable {
 enum TerminalPromptOrigin: Sendable, Equatable {
     case local
     case telegram(chatID: Int64)
-    case telegramVoice(chatID: Int64)
 
     var telegramChatID: Int64? {
         switch self {
         case .local:
             return nil
-        case let .telegram(chatID), let .telegramVoice(chatID):
+        case let .telegram(chatID):
             return chatID
         }
-    }
-
-    var isTelegramVoice: Bool {
-        if case .telegramVoice = self {
-            return true
-        }
-        return false
     }
 }
 

@@ -42,55 +42,6 @@ extension TerminalChat {
         }
     }
 
-    func handleSpeakCommand(_ command: String) async {
-        let argument = String(command.dropFirst("/speak".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard argument.isEmpty else {
-            writeSystemMessage("Usage: /speak\n")
-            return
-        }
-
-        guard stdinIsTerminal else {
-            writeFailureMessage("ZenCODE: /speak requires the interactive TUI.\n")
-            return
-        }
-
-        guard let text = lastAssistantResponseText?.nilIfBlank else {
-            writeFailureMessage("ZenCODE: no assistant response to speak.\n")
-            return
-        }
-
-        do {
-            interactiveReader.setPanelOverlay(
-                TerminalPanelModeOverride(
-                    modeText: "Speaking response",
-                    helpText: "Synthesizing audio"
-                ),
-                isProcessing: true
-            )
-            defer {
-                interactiveReader.setPanelOverlay(nil, isProcessing: false)
-            }
-
-            let spokenText = AgentVoiceSpokenTextFormatter.prepare(text)
-            let audio = try await AgentVoiceSynthesisService()
-                .synthesize(spokenText.text)
-            defer {
-                audio.cleanup()
-            }
-            interactiveReader.setPanelOverlay(
-                TerminalPanelModeOverride(
-                    modeText: "Speaking response",
-                    helpText: "Playing audio"
-                ),
-                isProcessing: true
-            )
-            try await playSynthesizedAudio(at: audio.fileURL)
-        } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-        }
-    }
-
     func stopVoiceRecordingAndTranscribe(
         eventQueue: TerminalChatEventQueue
     ) -> Task<Void, Never> {
@@ -186,37 +137,6 @@ extension TerminalChat {
                     )
                 )
             }
-        }
-    }
-
-    private func playSynthesizedAudio(at url: URL) async throws {
-        try await Task.detached(priority: .userInitiated) {
-            let afplayURL = URL(fileURLWithPath: "/usr/bin/afplay")
-            guard FileManager.default.isExecutableFile(atPath: afplayURL.path) else {
-                throw TerminalVoicePlaybackError.afplayUnavailable
-            }
-            let process = Process()
-            process.executableURL = afplayURL
-            process.arguments = [url.path]
-            try process.run()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else {
-                throw TerminalVoicePlaybackError.playbackFailed(process.terminationStatus)
-            }
-        }.value
-    }
-}
-
-private enum TerminalVoicePlaybackError: LocalizedError {
-    case afplayUnavailable
-    case playbackFailed(Int32)
-
-    var errorDescription: String? {
-        switch self {
-        case .afplayUnavailable:
-            return "Audio playback requires /usr/bin/afplay on macOS."
-        case let .playbackFailed(exitCode):
-            return "Audio playback failed with exit code \(exitCode)."
         }
     }
 }

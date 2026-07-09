@@ -63,7 +63,7 @@ This document summarizes the strengths of `ZenCODE`, my motivations for writing 
   folder.
 
 ### Extras
-- **Remote control via Telegram** and **local voice tools** (`/voice`, `/speak`),
+- **Remote control via Telegram** and **local voice tools** (`/voice`),
   optional and enabled in setup.
 - **Simple installation** via script.
 

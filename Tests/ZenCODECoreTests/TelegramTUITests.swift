@@ -159,30 +159,6 @@ struct TelegramTUITests {
 
         #expect(!disabledCommands.contains("/voice"))
         #expect(enabledCommands.contains("/voice"))
-        #expect(!disabledCommands.contains("/speak"))
-        #expect(enabledCommands.contains("/speak"))
-    }
-
-    @Test
-    func speakCommandRequiresVoiceSynthesisSupport() {
-        let commands = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: false,
-            telegramEnabled: false,
-            voiceEnabled: true,
-            voiceSynthesisEnabled: false
-        ).map(\.command)
-
-        #expect(commands.contains("/voice"))
-        #expect(!commands.contains("/speak"))
-    }
-
-    @Test
-    func voiceSynthesisSupportIsMacOSOnly() {
-        #if os(macOS)
-        #expect(AgentVoiceSynthesisService.isSupported)
-        #else
-        #expect(!AgentVoiceSynthesisService.isSupported)
-        #endif
     }
 
     @Test
@@ -191,17 +167,13 @@ struct TelegramTUITests {
             TerminalChat.unknownCommandMessage(for: "/voice")
                 == "ZenCODE: unknown command '/voice'.\n"
         )
-        #expect(
-            TerminalChat.unknownCommandMessage(for: "/speak")
-                == "ZenCODE: unknown command '/speak'.\n"
-        )
     }
 
     @Test
     func submittedLineRoleSeparatesPromptsFromSlashCommands() {
         #expect(TerminalChat.submittedLineRole(for: "ciao") == .prompt)
         #expect(TerminalChat.submittedLineRole(for: "   ") == .empty)
-        #expect(TerminalChat.submittedLineRole(for: "/speak") == .slashCommand(token: "/speak"))
+        #expect(TerminalChat.submittedLineRole(for: "/voice") == .slashCommand(token: "/voice"))
         #expect(TerminalChat.submittedLineRole(for: "/help extra") == .slashCommand(token: "/help"))
         #expect(TerminalChat.submittedLineRole(for: "/start 233B0EC4") == .slashCommand(token: "/start"))
     }
@@ -211,55 +183,17 @@ struct TelegramTUITests {
         #expect(!TerminalChat.shouldSuspendPanelInput(for: "ciao"))
         #expect(TerminalChat.shouldSuspendPanelInput(for: "/help"))
         #expect(TerminalChat.shouldSuspendPanelInput(for: "/unknown"))
-        #expect(!TerminalChat.shouldSuspendPanelInput(for: "/speak"))
         #expect(TerminalChat.isKnownSlashCommand("/think"))
         #expect(TerminalChat.isKnownSlashCommand("/session save"))
         #expect(!TerminalChat.isKnownSlashCommand("/start 233B0EC4"))
     }
 
     @Test
-    func spokenTextFormatterRemovesCodeBlocksAndShortensLongReplies() {
-        let prepared = AgentVoiceSpokenTextFormatter.prepare(
-            """
-            Ecco il punto principale.
-
-            ```swift
-            print("non leggere questo")
-            ```
-
-            Questa parte resta parlabile e contiene un link [utile](https://example.com).
-            """,
-            characterLimit: 160
-        )
-
-        #expect(!prepared.text.contains("print"))
-        #expect(!prepared.text.contains("example.com"))
-        #expect(prepared.text.contains("Ecco il punto principale."))
-        #expect(prepared.text.contains("utile"))
-    }
-
-    @Test
-    func spokenTextFormatterTruncatesAtSpeechBoundary() {
-        let longReply = Array(
-            repeating: "Questa frase e' pensata per essere abbastanza lunga.",
-            count: 40
-        ).joined(separator: " ")
-        let prepared = AgentVoiceSpokenTextFormatter.prepare(longReply, characterLimit: 220)
-
-        #expect(prepared.isShortened)
-        #expect(prepared.text.count <= 220)
-        #expect(prepared.text.last == "." || prepared.text.hasSuffix("..."))
-    }
-
-    @Test
-    func telegramVoiceOriginKeepsChatIDAndMarksVoiceReply() {
+    func telegramOriginKeepsChatID() {
         let textOrigin = TerminalPromptOrigin.telegram(chatID: 42)
-        let voiceOrigin = TerminalPromptOrigin.telegramVoice(chatID: 42)
 
         #expect(textOrigin.telegramChatID == 42)
-        #expect(voiceOrigin.telegramChatID == 42)
-        #expect(!textOrigin.isTelegramVoice)
-        #expect(voiceOrigin.isTelegramVoice)
+        #expect(TerminalPromptOrigin.local.telegramChatID == nil)
     }
 
     @Test
