@@ -105,6 +105,73 @@ struct TerminalInteractiveLineReaderTests {
     }
 
     @Test
+    func shiftReturnKeyDecodesKittyCSIUSequence() {
+        // kitty keyboard protocol: CSI 13;2u (Shift+Enter).
+        #expect(
+            TerminalInteractiveLineReader.shiftReturnKey(
+                components: ["13", "2"],
+                keyCodeIndex: 0,
+                modifierIndex: 1
+            ) == .newline
+        )
+        // CSI 13u (plain Enter reported in CSI-u form).
+        #expect(
+            TerminalInteractiveLineReader.shiftReturnKey(
+                components: ["13"],
+                keyCodeIndex: 0,
+                modifierIndex: 1
+            ) == .enter
+        )
+        // Alt+Enter (bits 0b10) also inserts a newline, consistent with the
+        // legacy ESC+CR (Option+Enter) fallback.
+        #expect(
+            TerminalInteractiveLineReader.shiftReturnKey(
+                components: ["13", "3"],
+                keyCodeIndex: 0,
+                modifierIndex: 1
+            ) == .newline
+        )
+    }
+
+    @Test
+    func shiftReturnKeyDecodesModifyOtherKeysSequence() {
+        // xterm modifyOtherKeys: CSI 27;2;13~ (Shift+Enter).
+        #expect(
+            TerminalInteractiveLineReader.shiftReturnKey(
+                components: ["27", "2", "13"],
+                keyCodeIndex: 2,
+                modifierIndex: 1
+            ) == .newline
+        )
+        // CSI 27;1;13~ (Enter without modifiers).
+        #expect(
+            TerminalInteractiveLineReader.shiftReturnKey(
+                components: ["27", "1", "13"],
+                keyCodeIndex: 2,
+                modifierIndex: 1
+            ) == .enter
+        )
+    }
+
+    @Test
+    func shiftReturnKeyIgnoresNonReturnKeyCodes() {
+        #expect(
+            TerminalInteractiveLineReader.shiftReturnKey(
+                components: ["97", "2"],
+                keyCodeIndex: 0,
+                modifierIndex: 1
+            ) == nil
+        )
+        #expect(
+            TerminalInteractiveLineReader.shiftReturnKey(
+                components: [],
+                keyCodeIndex: 0,
+                modifierIndex: 1
+            ) == nil
+        )
+    }
+
+    @Test
     func redrawSequenceRestoresCursorPosition() {
         let sequence = TerminalInteractiveLineReader.redrawSequence(
             prompt: "Feature id: ",

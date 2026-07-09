@@ -33,8 +33,6 @@ extension TerminalInteractiveLineReader {
             return .clearBeforeCursor
         case 0x14:
             return .toggleToolDetails
-        case 0x0A:
-            return .enter
         case 0x0D:
             return .enter
         case 0x09:
@@ -140,10 +138,10 @@ extension TerminalInteractiveLineReader {
             return .unknown
         }
         let components = sequence.split(separator: ";").map(String.init)
-        if let key = shiftReturnKey(components: components, keyCodeIndex: 0, modifierIndex: 1) {
+        if let key = Self.shiftReturnKey(components: components, keyCodeIndex: 0, modifierIndex: 1) {
             return key
         }
-        if let key = shiftReturnKey(components: components, keyCodeIndex: 2, modifierIndex: 1) {
+        if let key = Self.shiftReturnKey(components: components, keyCodeIndex: 2, modifierIndex: 1) {
             return key
         }
         let numericPrefix = components.first
@@ -169,10 +167,10 @@ extension TerminalInteractiveLineReader {
             return .unknown
         }
         let components = sequence.split(separator: ";").map(String.init)
-        if let key = shiftReturnKey(components: components, keyCodeIndex: 0, modifierIndex: 1) {
+        if let key = Self.shiftReturnKey(components: components, keyCodeIndex: 0, modifierIndex: 1) {
             return key
         }
-        if let key = shiftReturnKey(components: components, keyCodeIndex: 2, modifierIndex: 1) {
+        if let key = Self.shiftReturnKey(components: components, keyCodeIndex: 2, modifierIndex: 1) {
             return key
         }
         return .unknown
@@ -201,7 +199,7 @@ extension TerminalInteractiveLineReader {
             .replacingOccurrences(of: "\r", with: "\n")
     }
 
-    func shiftReturnKey(
+    static func shiftReturnKey(
         components: [String],
         keyCodeIndex: Int,
         modifierIndex: Int
@@ -215,7 +213,9 @@ extension TerminalInteractiveLineReader {
             return .enter
         }
         let modifierBits = modifier - 1
-        return (modifierBits & 0b01) != 0 ? .newline : .enter
+        // Shift (0b01) or Alt (0b10): both are newline shortcuts, matching
+        // the legacy ESC+CR (Option+Enter) fallback path.
+        return (modifierBits & 0b11) != 0 ? .newline : .enter
     }
 
     static func isReturnKeyCode(_ keyCode: Int?) -> Bool {

@@ -16,7 +16,7 @@ import os
 #endif
 
 public final class TerminalInteractiveLineReader: @unchecked Sendable {
-    enum Key {
+    enum Key: Equatable {
         case character(String)
         case paste(String)
         case enter

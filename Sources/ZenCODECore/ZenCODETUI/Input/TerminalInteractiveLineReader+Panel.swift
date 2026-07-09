@@ -163,7 +163,7 @@ extension TerminalInteractiveLineReader {
         onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
     ) {
         while !Task.isCancelled {
-            guard let key = readKey(pollTimeoutMilliseconds: 100) else {
+            guard let key = readKey(pollTimeoutMilliseconds: 1000) else {
                 continue
             }
             handlePanelKey(key, onEvent: onEvent)
@@ -398,7 +398,7 @@ extension TerminalInteractiveLineReader {
         if hasActiveCommandSuggestionsLocked() {
             return "↑/↓ select · Tab complete · Enter choose"
         }
-        return "Enter queue · Shift+Enter newline · Ctrl+T tools · Esc stop"
+        return "Enter queue · Option+Enter newline · Ctrl+T tools · Esc stop"
     }
 
     struct CommandSuggestionSelection: Sendable {

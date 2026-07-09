@@ -351,7 +351,7 @@ public final class TerminalRawInput: Sendable {
             guard let baseAddress = rawBuffer.baseAddress else {
                 return
             }
-                                                _ = write(controlFileDescriptor, baseAddress, rawBuffer.count)
+            _ = write(controlFileDescriptor, baseAddress, rawBuffer.count)
         }
     }
 
