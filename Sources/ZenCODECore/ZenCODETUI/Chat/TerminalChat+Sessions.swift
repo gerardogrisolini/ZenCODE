@@ -49,6 +49,7 @@ extension TerminalChat {
             activeSessionSystemPromptOverride = nil
             resetResponseLanguageLock()
             activeSavedSessionName = nil
+            activePlan = nil
             try await createCurrentSession()
             statusBar.reset()
             refreshInitialStatusBarContextWindow()
@@ -202,7 +203,8 @@ extension TerminalChat {
             },
             systemPrompt: snapshot.systemPrompt,
             history: snapshot.history,
-            transcriptHistory: activeSessionTranscript
+            transcriptHistory: activeSessionTranscript,
+            activePlan: activePlan
         )
 
         do {
@@ -277,6 +279,7 @@ extension TerminalChat {
         activeSessionHistory = savedSession.history
         activeSessionTranscript = Self.savedSessionDisplayHistory(savedSession)
         activeSessionSystemPromptOverride = savedSession.systemPrompt
+        activePlan = savedSession.activePlan
         resetResponseLanguageLock()
         activeSavedSessionName = savedSession.name
         manualModelIDOverride = savedSession.modelID ?? configuration.modelID

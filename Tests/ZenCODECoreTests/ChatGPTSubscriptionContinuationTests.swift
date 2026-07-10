@@ -7,6 +7,7 @@
 
 import Foundation
 import os
+import Synchronization
 @testable import ZenCODECore
 import Testing
 
@@ -463,6 +464,37 @@ extension RemoteSessionSnapshotTests {
     @Test
     func chatGPTSubscriptionWebSocketHasNoDefaultResponseIdleTimeout() {
         #expect(ChatGPTSubscriptionResponsesClient.webSocketIdleTimeoutNanoseconds == nil)
+    }
+
+    @Test
+    func chatGPTSubscriptionIdleWebSocketHeartbeatRepeatsUntilFailure() async {
+        struct PingFailure: Error {}
+
+        let pingCount = Mutex(0)
+        let failureCount = Mutex(0)
+
+        await ChatGPTSubscriptionWebSocketPool.runHeartbeat(
+            intervalNanoseconds: 1,
+            ping: {
+                let count = pingCount.withLock { count in
+                    count += 1
+                    return count
+                }
+                if count == 3 {
+                    throw PingFailure()
+                }
+            },
+            onFailure: { _ in
+                failureCount.withLock { $0 += 1 }
+            }
+        )
+
+        #expect(pingCount.withLock { $0 } == 3)
+        #expect(failureCount.withLock { $0 } == 1)
+        #expect(
+            ChatGPTSubscriptionWebSocketPool.defaultHeartbeatIntervalNanoseconds
+                == 30 * 1_000_000_000
+        )
     }
 
     @Test

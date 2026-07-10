@@ -41,6 +41,58 @@ struct MLXTerminalSessionStoreTests {
     }
 
     @Test
+    func savesAndLoadsApprovedSessionPlan() throws {
+        let supportDirectory = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: supportDirectory)
+        }
+        let plan = TerminalSessionPlan(
+            originalGoal: "Persist plan state",
+            consolidatedText: "Update the session snapshot and tests.",
+            createdAt: Date(timeIntervalSince1970: 30),
+            isApproved: true
+        )
+        let session = sampleSession(
+            name: "planned work",
+            workingDirectory: supportDirectory.appendingPathComponent("Project"),
+            activePlan: plan
+        )
+
+        let fileURL = try TerminalSessionStore.save(
+            session,
+            supportDirectoryURL: supportDirectory
+        )
+        let loaded = try TerminalSessionStore.load(from: fileURL)
+
+        #expect(loaded.activePlan == plan)
+    }
+
+    @Test
+    func decodesLegacySnapshotWithoutActivePlan() throws {
+        let legacyPropertyList: [String: Any] = [
+            "version": TerminalSavedSession.currentVersion,
+            "name": "legacy",
+            "sessionID": "terminal-legacy",
+            "workingDirectoryPath": "/tmp/legacy-project",
+            "createdAt": Date(timeIntervalSince1970: 10),
+            "savedAt": Date(timeIntervalSince1970: 20),
+            "selectedTools": [],
+            "selectedSkillIDs": [],
+            "history": [],
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: legacyPropertyList,
+            format: .binary,
+            options: 0
+        )
+
+        let decoded = try PropertyListDecoder().decode(TerminalSavedSession.self, from: data)
+
+        #expect(decoded.name == "legacy")
+        #expect(decoded.activePlan == nil)
+    }
+
+    @Test
     func listsOnlySessionsForRequestedProject() throws {
         let supportDirectory = temporaryDirectory()
         defer {
@@ -132,6 +184,12 @@ struct MLXTerminalSessionStoreTests {
             thinkingSelection: .enabled,
             preserveThinking: true
         )
+        let activePlan = TerminalSessionPlan(
+            originalGoal: "Save through the runner",
+            consolidatedText: "Persist all TUI session metadata.",
+            createdAt: Date(timeIntervalSince1970: 15),
+            isApproved: true
+        )
 
         let savedSession = try await runner.saveSession(
             id: snapshot.sessionID,
@@ -153,6 +211,7 @@ struct MLXTerminalSessionStoreTests {
             transcriptHistory: [
                 AgentRuntimeMessage(role: .user, content: "visible ciao")
             ],
+            activePlan: activePlan,
             supportDirectoryURL: supportDirectory
         )
         let listedSessions = try runner.savedSessions(
@@ -165,6 +224,7 @@ struct MLXTerminalSessionStoreTests {
         #expect(savedSession.history.map(\.content) == ["ciao", "ciao a te"])
         #expect(savedSession.displayHistory.map(\.content) == ["visible ciao"])
         #expect(savedSession.thinkingSelection == AgentThinkingSelection.enabled.rawValue)
+        #expect(savedSession.activePlan == activePlan)
         #expect(listedSessions.map(\.name) == ["snapshot save"])
     }
 
@@ -242,7 +302,8 @@ struct MLXTerminalSessionStoreTests {
     private func sampleSession(
         name: String,
         workingDirectory: URL,
-        transcriptHistory: [AgentRuntimeMessage]? = nil
+        transcriptHistory: [AgentRuntimeMessage]? = nil,
+        activePlan: TerminalSessionPlan? = nil
     ) -> TerminalSavedSession {
         TerminalSavedSession(
             name: name,
@@ -286,7 +347,8 @@ struct MLXTerminalSessionStoreTests {
                     toolCallID: "call_1"
                 )
             ],
-            transcriptHistory: transcriptHistory
+            transcriptHistory: transcriptHistory,
+            activePlan: activePlan
         )
     }
 

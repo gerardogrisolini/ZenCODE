@@ -61,6 +61,7 @@ extension TerminalChat {
         interactiveReader.setPanelCommandSuggestions(commandSuggestionsForCurrentAgent())
         await applyAgentProfile(agent)
         activeSessionSystemPromptOverride = nil
+        activePlan = nil
         resetResponseLanguageLock()
         manualModelIDOverride = configuration.hostedModels == nil
             ? nil

@@ -242,13 +242,13 @@ extension TerminalChat {
         TerminalChatCommandDescriptor(
             command: "/plan",
             summary: "plan work via sub-agents",
-            help: "/plan <goal> spawns Planner sub-agents (read-only) to produce an actionable implementation plan before work starts.",
+            help: "/plan <goal> creates a new unapproved plan. Use /plan approve to make it a /review criterion, or /plan clear to remove it.",
             requiresArgument: true
         ),
                 TerminalChatCommandDescriptor(
             command: "/review",
             summary: "review changes via sub-agents",
-            help: "/review [focus] spawns Reviewer sub-agents (read-only) to review only the tracked file changes made during the current session."
+            help: "/review [focus] reviews tracked session file changes and also verifies approved-plan coverage when a plan is active."
         ),
         TerminalChatCommandDescriptor(
             command: "/telegram",

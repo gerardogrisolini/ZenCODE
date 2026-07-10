@@ -47,6 +47,31 @@ extension TerminalChat {
         let argument = String(command.dropFirst("/plan".count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
+        switch argument.lowercased() {
+        case "approve":
+            writeSubmittedPrompt(command)
+            guard var plan = activePlan,
+                  !plan.consolidatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                writeFailureMessage(Self.planUnavailableForApprovalMessage)
+                return .continueChat
+            }
+            plan.isApproved = true
+            activePlan = plan
+            writeSystemMessage("Approved the active plan for /review coverage verification.\n")
+            return .continueChat
+        case "clear":
+            writeSubmittedPrompt(command)
+            guard activePlan != nil else {
+                writeSystemMessage("No active plan to clear.\n")
+                return .continueChat
+            }
+            activePlan = nil
+            writeSystemMessage("Cleared the active plan.\n")
+            return .continueChat
+        default:
+            break
+        }
+
         guard !argument.isEmpty else {
             writeFailureMessage(Self.planMissingGoalMessage)
             return .continueChat
@@ -75,13 +100,18 @@ extension TerminalChat {
             Self.planDelegationPrompt(
                 goal: argument,
                 planner: plannerProfile
-            )
+            ),
+            purpose: .plan(originalGoal: argument)
         )
     }
 
     static let planMissingGoalMessage =
         "ZenCODE: /plan requires a goal. "
         + "Use /plan <goal> to describe what should be planned.\n"
+
+    static let planUnavailableForApprovalMessage =
+        "ZenCODE: no completed plan is available to approve. "
+        + "Run /plan <goal> and wait for it to finish successfully.\n"
 
     /// Resolves the Planner profile used to configure delegated sub-agents.
     /// Prefers a user-configured "Planner" profile from agents.json and falls
@@ -157,8 +187,8 @@ extension TerminalChat {
             - Wait for the Planners to finish with agent.wait.
             - Read and consolidate their plans into one actionable plan, removing \
             duplicates and resolving conflicts.
-            - The final plan must support this workflow loop: /plan -> implementation work \
-            -> /review -> corrections until the work is complete.
+            - The final plan must support this workflow loop: /plan <goal> -> /plan approve \
+            -> implementation work -> /review -> corrections until the work is complete.
             - Do not edit any files yourself in this planning turn. Present the plan, the \
             expected validation, and where /review should be run after implementation.
             - The final planning summary must follow the session response language from \

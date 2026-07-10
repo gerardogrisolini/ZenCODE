@@ -46,6 +46,8 @@ struct PlanCommandTests {
 
         #expect(descriptor.requiresArgument)
         #expect(descriptor.help.contains("/plan <goal>"))
+        #expect(descriptor.help.contains("/plan approve"))
+        #expect(descriptor.help.contains("/plan clear"))
         #expect(!descriptor.help.contains("/plan [goal]"))
     }
 
@@ -70,7 +72,7 @@ struct PlanCommandTests {
         switch action {
         case .continueChat:
             break
-        case .runHiddenPrompt(_):
+        case .runHiddenPrompt(_, _):
             Issue.record("Bare /plan should not create a hidden delegation prompt")
         default:
             Issue.record("Bare /plan should only continue the chat after reporting the missing goal")
@@ -96,14 +98,105 @@ struct PlanCommandTests {
         let action = terminal.handlePlanCommand("/plan fix the planner command")
 
         switch action {
-        case let .runHiddenPrompt(prompt):
+        case let .runHiddenPrompt(prompt, purpose):
             #expect(prompt.contains("Planning goal requested by the user: fix the planner command"))
             #expect(prompt.contains("agent.create"))
+            #expect(purpose == .plan(originalGoal: "fix the planner command"))
         case .runPrompt(_):
             Issue.record("/plan <goal> should keep the generated delegation prompt hidden")
         default:
             Issue.record("/plan <goal> should start the planning delegation prompt")
         }
+    }
+
+    @Test
+    func successfulPlanOutputIsRecordedAndReplacementRequiresApprovalAgain() throws {
+        let terminal = try makeTerminal()
+        let firstDate = Date(timeIntervalSince1970: 100)
+        let secondDate = Date(timeIntervalSince1970: 200)
+
+        #expect(terminal.recordPlanIfNeeded(
+            responseText: "  First consolidated plan  ",
+            purpose: .plan(originalGoal: " first goal "),
+            createdAt: firstDate
+        ))
+        #expect(terminal.activePlan == TerminalSessionPlan(
+            originalGoal: "first goal",
+            consolidatedText: "First consolidated plan",
+            createdAt: firstDate,
+            isApproved: false
+        ))
+
+        _ = terminal.handlePlanCommand("/plan approve")
+        #expect(terminal.activePlan?.isApproved == true)
+
+        #expect(terminal.recordPlanIfNeeded(
+            responseText: "Second consolidated plan",
+            purpose: .plan(originalGoal: "second goal"),
+            createdAt: secondDate
+        ))
+        #expect(terminal.activePlan?.originalGoal == "second goal")
+        #expect(terminal.activePlan?.consolidatedText == "Second consolidated plan")
+        #expect(terminal.activePlan?.createdAt == secondDate)
+        #expect(terminal.activePlan?.isApproved == false)
+    }
+
+    @Test
+    func emptyOrNonPlanningOutputDoesNotReplaceActivePlan() throws {
+        let terminal = try makeTerminal()
+        let existing = TerminalSessionPlan(
+            originalGoal: "existing",
+            consolidatedText: "Keep this plan",
+            createdAt: Date(timeIntervalSince1970: 10),
+            isApproved: true
+        )
+        terminal.activePlan = existing
+
+        #expect(!terminal.recordPlanIfNeeded(
+            responseText: " \n ",
+            purpose: .plan(originalGoal: "failed goal")
+        ))
+        #expect(!terminal.recordPlanIfNeeded(
+            responseText: "ordinary response",
+            purpose: .normal
+        ))
+        #expect(terminal.activePlan == existing)
+    }
+
+    @Test
+    func approveRequiresACompletedPlanAndClearRemovesIt() throws {
+        let terminal = try makeTerminal()
+
+        #expect(isContinueChat(terminal.handlePlanCommand("/plan approve")))
+        #expect(terminal.activePlan == nil)
+
+        terminal.activePlan = TerminalSessionPlan(
+            originalGoal: "goal",
+            consolidatedText: "plan"
+        )
+        #expect(isContinueChat(terminal.handlePlanCommand("/plan approve")))
+        #expect(terminal.activePlan?.isApproved == true)
+
+        #expect(isContinueChat(terminal.handlePlanCommand("/plan clear")))
+        #expect(terminal.activePlan == nil)
+        #expect(isContinueChat(terminal.handlePlanCommand("/plan clear")))
+    }
+
+    @Test
+    func undoKeepsPlanWhileNewSessionClearsIt() async throws {
+        let terminal = try makeTerminal()
+        let plan = TerminalSessionPlan(
+            originalGoal: "goal",
+            consolidatedText: "plan",
+            isApproved: true
+        )
+        terminal.activePlan = plan
+
+        await terminal.handleUndoFileChangesCommand()
+        #expect(terminal.activePlan == plan)
+
+        await terminal.startNewSession()
+        #expect(terminal.activePlan == nil)
     }
 
     @Test
@@ -185,12 +278,34 @@ struct PlanCommandTests {
         #expect(prompt.contains("isolationMode \"report\""))
         #expect(prompt.contains("toolNames:"))
         #expect(prompt.contains("agent.wait"))
-        #expect(prompt.contains("/plan -> implementation work -> /review"))
+        #expect(prompt.contains("/plan <goal> -> /plan approve"))
+        #expect(prompt.contains("implementation work -> /review"))
         #expect(prompt.contains("Do not edit any files yourself in this planning turn"))
         #expect(!prompt.contains("infer the activity to plan"))
         #expect(!prompt.contains("local.writeFile"))
         #expect(!prompt.contains("local.exec"))
         #expect(!prompt.contains("git.add"))
         #expect(!prompt.contains("memory.write"))
+    }
+
+    private func makeTerminal() throws -> TerminalChat {
+        let configuration = try AgentConfiguration(
+            hostedModelID: "mlx-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: URL(
+                fileURLWithPath: "/tmp/ZenCODE-plan-command",
+                isDirectory: true
+            )
+        )
+        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false)
+        terminal.selectedToolKeys.insert("sub-agents")
+        return terminal
+    }
+
+    private func isContinueChat(_ action: TerminalSubmittedLineAction) -> Bool {
+        if case .continueChat = action {
+            return true
+        }
+        return false
     }
 }

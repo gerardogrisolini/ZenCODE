@@ -42,8 +42,10 @@ extension TerminalChat {
                 return
             case let .runPrompt(prompt):
                 await runPromptBlocking(promptAttempt(prompt: prompt))
-            case let .runHiddenPrompt(prompt):
-                await runPromptBlocking(promptAttempt(prompt: prompt, isUserVisible: false))
+            case let .runHiddenPrompt(prompt, purpose):
+                await runPromptBlocking(
+                    promptAttempt(prompt: prompt, isUserVisible: false, purpose: purpose)
+                )
             case let .prefillPrompt(prompt):
                 writeSystemMessage("Draft prompt:\n\(prompt)\n")
             }
@@ -163,12 +165,17 @@ extension TerminalChat {
                 }
                 startGeneration(attempt: attempt)
                 return true
-            case let .runHiddenPrompt(prompt):
+            case let .runHiddenPrompt(prompt, purpose):
                 if shouldSuspendPanel {
                     _ = startPanelInput()
                 }
                 startGeneration(
-                    attempt: promptAttempt(prompt: prompt, origin: origin, isUserVisible: false)
+                    attempt: promptAttempt(
+                        prompt: prompt,
+                        origin: origin,
+                        isUserVisible: false,
+                        purpose: purpose
+                    )
                 )
                 return true
             case let .prefillPrompt(prompt):

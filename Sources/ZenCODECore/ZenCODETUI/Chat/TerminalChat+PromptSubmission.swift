@@ -151,13 +151,15 @@ extension TerminalChat {
     func promptAttempt(
         prompt: String,
         origin: TerminalPromptOrigin = .local,
-        isUserVisible: Bool = true
+        isUserVisible: Bool = true,
+        purpose: TerminalPromptPurpose = .normal
     ) -> TerminalPromptAttempt {
         TerminalPromptAttempt(
             prompt: prompt,
             attachments: origin == .local && isUserVisible ? consumePendingAttachmentsForPrompt() : [],
             origin: origin,
-            locksResponseLanguage: isUserVisible
+            locksResponseLanguage: isUserVisible,
+            purpose: purpose
         )
     }
 

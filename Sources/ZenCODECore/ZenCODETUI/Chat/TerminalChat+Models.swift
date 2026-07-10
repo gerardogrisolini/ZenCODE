@@ -9,8 +9,33 @@ enum TerminalSubmittedLineAction {
     case continueChat
     case exitChat
     case runPrompt(String)
-    case runHiddenPrompt(String)
+    case runHiddenPrompt(String, purpose: TerminalPromptPurpose)
     case prefillPrompt(String)
+}
+
+public struct TerminalSessionPlan: Codable, Equatable, Sendable {
+    public let originalGoal: String
+    public let consolidatedText: String
+    public let createdAt: Date
+    public var isApproved: Bool
+
+    public init(
+        originalGoal: String,
+        consolidatedText: String,
+        createdAt: Date = Date(),
+        isApproved: Bool = false
+    ) {
+        self.originalGoal = originalGoal.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.consolidatedText = consolidatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.createdAt = createdAt
+        self.isApproved = isApproved
+    }
+}
+
+enum TerminalPromptPurpose: Sendable, Equatable {
+    case normal
+    case plan(originalGoal: String)
+    case review
 }
 
 struct TerminalPromptAttempt: Sendable {
@@ -18,6 +43,7 @@ struct TerminalPromptAttempt: Sendable {
     let attachments: [AgentRuntimeAttachment]
     let origin: TerminalPromptOrigin
     let locksResponseLanguage: Bool
+    let purpose: TerminalPromptPurpose
 }
 
 struct TerminalChatGenerationFailure: Sendable {

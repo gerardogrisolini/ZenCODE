@@ -119,6 +119,10 @@ extension TerminalChat {
             }
             await publishSubAgentOverviewIfChanged()
             await telegramProgressReporter?.flush()
+            recordPlanIfNeeded(
+                responseText: response.text,
+                purpose: attempt.purpose
+            )
             return TerminalChatGenerationSuccess(
                 response: response,
                 origin: attempt.origin,
@@ -140,6 +144,28 @@ extension TerminalChat {
                 fileChangeSummary: fileChangeSummary
             )
         }
+    }
+
+    @discardableResult
+    func recordPlanIfNeeded(
+        responseText: String,
+        purpose: TerminalPromptPurpose,
+        createdAt: Date = Date()
+    ) -> Bool {
+        guard case let .plan(originalGoal) = purpose else {
+            return false
+        }
+        let consolidatedText = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !consolidatedText.isEmpty else {
+            return false
+        }
+        activePlan = TerminalSessionPlan(
+            originalGoal: originalGoal,
+            consolidatedText: consolidatedText,
+            createdAt: createdAt,
+            isApproved: false
+        )
+        return true
     }
 
     func finishPromptResult(_ result: TerminalChatGenerationResult) async {

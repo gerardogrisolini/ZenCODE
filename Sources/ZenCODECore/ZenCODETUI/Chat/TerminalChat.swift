@@ -67,6 +67,7 @@ public final class TerminalChat: @unchecked Sendable {
     public var selectedSkillIDs = Set<String>()
     public var pendingAttachments: [AgentRuntimeAttachment] = []
     public var lastFileChangeSummary: TurnFileChangeSummary?
+    public var activePlan: TerminalSessionPlan?
     public var lastRenderedSubAgentOverviewSignature: String?
     public var availableSkillsCache: [PromptSkill]?
     public var toolOutputDetailLevel: ToolOutputDetailLevel = .compact

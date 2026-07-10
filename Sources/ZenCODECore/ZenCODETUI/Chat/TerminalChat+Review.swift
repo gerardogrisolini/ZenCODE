@@ -40,7 +40,10 @@ extension TerminalChat {
       return .continueChat
     }
 
-    guard let summary = lastFileChangeSummary else {
+    let approvedPlan = activePlan.flatMap {
+      $0.isApproved && !$0.consolidatedText.isEmpty ? $0 : nil
+    }
+    guard lastFileChangeSummary != nil || approvedPlan != nil else {
       writeSystemMessage("No tracked session file changes to review.\n")
       return .continueChat
     }
@@ -58,8 +61,10 @@ extension TerminalChat {
       Self.reviewDelegationPrompt(
         scope: argument,
         reviewer: reviewerProfile,
-        changeSummary: summary
-      )
+        changeSummary: lastFileChangeSummary,
+        approvedPlan: approvedPlan
+      ),
+      purpose: .review
     )
   }
 
@@ -103,12 +108,125 @@ extension TerminalChat {
   static func reviewDelegationPrompt(
     scope: String,
     reviewer: AgentProfile,
-    changeSummary: TurnFileChangeSummary
+    changeSummary: TurnFileChangeSummary?,
+    approvedPlan: TerminalSessionPlan? = nil
   ) -> String {
-        let toolList = reviewerSubAgentToolNames(for: reviewer)
+    let approvedPlan = approvedPlan.flatMap {
+      $0.isApproved && !$0.consolidatedText.isEmpty ? $0 : nil
+    }
+    if approvedPlan == nil, let changeSummary {
+      return legacyReviewDelegationPrompt(
+        scope: scope,
+        reviewer: reviewer,
+        changeSummary: changeSummary
+      )
+    }
+    guard let approvedPlan else {
+      return ""
+    }
+
+    let toolList = reviewerSubAgentToolNames(for: reviewer)
       .map { "\"\($0)\"" }
       .joined(separator: ", ")
 
+    let scopeSection: String
+    if scope.isEmpty {
+      scopeSection = """
+        Verify the approved plan against the current state of the files implicated by \
+        the plan. When tracked session changes are also provided, review those changes \
+        for code quality and correctness. Do not broaden scope to unrelated repository \
+        concerns.
+        """
+    } else {
+      scopeSection = """
+        Review focus requested by the user: \(scope)
+        Apply this focus only within the approved plan and any tracked session changes. \
+        Do not broaden the review to unrelated files, history, journal context, or other \
+        workspace concerns.
+        """
+    }
+
+    let changeSummaryBlock: String
+    let codeReviewDelegationRules: String
+    if let changeSummary {
+      changeSummaryBlock = """
+        Session change surface:
+        \(reviewChangeSummarySection(changeSummary))
+        """
+      codeReviewDelegationRules = """
+        - Create one or more separate code-quality/correctness Reviewers for the tracked \
+        change surface. Launch them in the same agent.create call as the plan-coverage \
+        Reviewer so they run in parallel. Partition independent files or concerns when \
+        useful; a single code Reviewer is sufficient for a small change.
+        - Code-quality Reviewers may inspect listed current files for context, but must \
+        base findings on the listed session changes only. Ask them to report correctness \
+        bugs, regressions, security/concurrency issues, missing tests, and convention \
+        violations with file:line references and severity.
+        """
+    } else {
+      changeSummaryBlock = """
+        No tracked file-change summary is available. Perform plan-coverage verification \
+        against the current files implicated by the approved plan.
+        """
+      codeReviewDelegationRules = """
+        - This is coverage-only mode. Do not assign a generic code-quality review, report \
+        unrelated findings, or characterize current code as a new change or regression \
+        without a tracked change summary.
+        """
+    }
+
+    return """
+      You are the director of this review. Stay on your current agent profile: do \
+      not switch profiles. Delegate the actual review to Reviewer sub-agents via the \
+      sub-agent tools, then read their reviews and produce a correction plan.
+
+      \(scopeSection)
+
+      \(changeSummaryBlock)
+
+      Approved plan under verification:
+      Original goal: \(approvedPlan.originalGoal)
+
+      \(approvedPlan.consolidatedText)
+
+      Delegation rules:
+      - Create the sub-agents with agent.create using role "Reviewer" and \
+      isolationMode "report" (read-only; they must not edit files).
+      - Restrict each Reviewer to this read-only toolset by passing \
+      toolNames: [\(toolList)].
+      - Create at least one dedicated Reviewer for plan coverage.
+      - The plan-coverage Reviewer must verify the current state of the files implicated \
+      by the plan, not merely the latest diff. It may inspect files needed to verify \
+      plan items, but must not perform a generic review of the whole repository.
+      - Require the plan-coverage Reviewer to classify every plan item as exactly one of: \
+      done, partial, missing, or deviated. Use deviated when the implementation differs \
+      from the plan, and explain whether the deviation is acceptable.
+      \(codeReviewDelegationRules)
+
+      After delegating:
+      - Wait for the Reviewers to finish with agent.wait.
+      - Read and consolidate their reviews into a single prioritized summary grouped \
+      by severity, removing duplicates.
+      - Include a distinct plan-coverage report that classifies every plan item as done, \
+      partial, missing, or deviated, with concrete file:line references whenever available.
+      - If the findings warrant changes, compile a concrete correction plan: the \
+      files or areas to change, the intended fix for each, and the suggested order. \
+      Do not edit any files yourself in this turn; present the plan and let the user \
+      decide whether to proceed.
+      - The final review summary and correction plan must follow the session response \
+      language from the system prompt. Do not answer in English just because this \
+      internal review prompt is written in English.
+      """
+  }
+
+  private static func legacyReviewDelegationPrompt(
+    scope: String,
+    reviewer: AgentProfile,
+    changeSummary: TurnFileChangeSummary
+  ) -> String {
+    let toolList = reviewerSubAgentToolNames(for: reviewer)
+      .map { "\"\($0)\"" }
+      .joined(separator: ", ")
     let scopeSection: String
     if scope.isEmpty {
       scopeSection = """
@@ -125,8 +243,6 @@ extension TerminalChat {
         """
     }
 
-    let changeSummarySection = reviewChangeSummarySection(changeSummary)
-
     return """
       You are the director of this review. Stay on your current agent profile: do \
       not switch profiles. Delegate the actual review to Reviewer sub-agents via the \
@@ -135,7 +251,7 @@ extension TerminalChat {
       \(scopeSection)
 
       Session change surface:
-      \(changeSummarySection)
+      \(reviewChangeSummarySection(changeSummary))
 
       Delegation rules:
       - Create the sub-agents with agent.create using role "Reviewer" and \

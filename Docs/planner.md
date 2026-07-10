@@ -25,9 +25,11 @@ The built-in `/plan` read-only tool set includes local read/list tools, text uti
 
 ```text
 /plan <goal>
+/plan approve
+/plan clear
 ```
 
-`ZenCODE` requires an explicit planning goal. If you run `/plan` without an argument, it reports the missing goal and does not create Planner sub-agents.
+`ZenCODE` requires an explicit planning goal. If you run `/plan` without an argument, it reports the missing goal and does not create Planner sub-agents. A successfully consolidated plan is recorded in the current session as unapproved; a failed, cancelled, or empty planning turn does not replace the previous plan.
 
 Pass the activity to plan as the command argument:
 
@@ -55,6 +57,7 @@ When `/plan` runs:
 4. Planners run in parallel when the planning surface can be partitioned by module, concern, risk, or validation area.
 5. The director waits for the Planners, consolidates overlapping recommendations, and returns one actionable plan.
 6. The director does not edit files as part of the planning turn.
+7. The consolidated plan becomes the active, unapproved session plan. A later successful `/plan <goal>` replaces it and requires approval again.
 
 ## Planner Profile
 
@@ -70,18 +73,25 @@ Setup can create a built-in `Planner` profile in `~/.zencode/agents.json`. The d
    /plan <goal>
    ```
 
-2. Use the consolidated plan to implement the work with the normal `Default`, `Xcode`, or other implementation profile.
-3. Validate with the planned build, test, lint, or diagnostic commands.
-4. Run a read-only review of the tracked session changes:
+2. Explicitly approve the completed plan so it becomes a review criterion:
+
+   ```text
+   /plan approve
+   ```
+
+   Use `/plan clear` when the active plan is no longer relevant. The active plan, including its approval state, is preserved by save/load; a new session or agent switch clears it.
+3. Use the consolidated plan to implement the work with the normal `Default`, `Xcode`, or other implementation profile.
+4. Validate with the planned build, test, lint, or diagnostic commands.
+5. Run a read-only review of the tracked session changes and approved-plan coverage:
 
    ```text
    /review
    ```
 
-5. Apply any corrections from the review, validate again, and repeat `/review` if needed.
+6. Apply any corrections from the review, validate again, and repeat `/review` if needed. `/review` and `/undo` keep the approved plan active for this loop.
 
 This creates the intended loop:
 
 ```text
-/plan -> implementation work -> /review -> corrections -> validation
+/plan <goal> -> /plan approve -> implementation -> /review -> corrections -> /review
 ```

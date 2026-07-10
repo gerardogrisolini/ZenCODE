@@ -12,36 +12,43 @@ import Synchronization
 public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private struct Entry {
         let task: URLSessionWebSocketTask
-        var lastUsedAt: Date
         var isBusy: Bool
+        var heartbeatTask: Task<Void, Never>?
     }
 
     private struct State {
         var entries: [String: Entry] = [:]
     }
 
-    private let idleTTL: TimeInterval = 5 * 60
+    static let defaultHeartbeatIntervalNanoseconds: UInt64 = 30 * 1_000_000_000
+
+    private let heartbeatIntervalNanoseconds: UInt64
     private let state = Mutex(State())
 
-    public init() {}
+    public convenience init() {
+        self.init(heartbeatIntervalNanoseconds: Self.defaultHeartbeatIntervalNanoseconds)
+    }
 
-    /// Closes idle entries whose `idleTTL` has elapsed. Without this sweep,
-    /// web sockets for short-lived sessions that are never re-acquired would
-    /// stay open indefinitely, leaking `URLSessionWebSocketTask` instances.
-    private func reapExpiredIdleEntries(now: Date = Date()) {
-        let expiredTasks = state.withLock { state -> [URLSessionWebSocketTask] in
-            var expired: [URLSessionWebSocketTask] = []
+    init(heartbeatIntervalNanoseconds: UInt64) {
+        self.heartbeatIntervalNanoseconds = max(heartbeatIntervalNanoseconds, 1)
+    }
+
+    /// Removes sockets that the transport has already closed. Valid idle
+    /// sockets intentionally have no TTL: a parent session may wait on a
+    /// long-running tool or sub-agent before sending its continuation.
+    private func reapInvalidIdleEntries() {
+        let staleEntries = state.withLock { state -> [Entry] in
+            var staleEntries: [Entry] = []
             for (sessionID, entry) in state.entries
-            where !entry.isBusy
-                && (now.timeIntervalSince(entry.lastUsedAt) >= idleTTL
-                    || !Self.isReusable(entry.task)) {
-                expired.append(entry.task)
+            where !entry.isBusy && !Self.isReusable(entry.task) {
+                staleEntries.append(entry)
                 state.entries.removeValue(forKey: sessionID)
             }
-            return expired
+            return staleEntries
         }
-        for task in expiredTasks {
-            Self.close(task)
+        for entry in staleEntries {
+            entry.heartbeatTask?.cancel()
+            Self.close(entry.task)
         }
     }
 
@@ -50,20 +57,18 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         request: URLRequest,
         urlSession: URLSession
     ) -> ChatGPTSubscriptionResponsesClient.WebSocketLease {
-        let now = Date()
-        reapExpiredIdleEntries(now: now)
+        reapInvalidIdleEntries()
         let result = state.withLock { state -> (
             lease: ChatGPTSubscriptionResponsesClient.WebSocketLease,
-            taskToClose: URLSessionWebSocketTask?
+            entryToClose: Entry?
         ) in
-            if let existing = state.entries[sessionID],
+            if var existing = state.entries[sessionID],
                !existing.isBusy,
-               Self.isReusable(existing.task),
-               now.timeIntervalSince(existing.lastUsedAt) < idleTTL {
-                var updated = existing
-                updated.lastUsedAt = now
-                updated.isBusy = true
-                state.entries[sessionID] = updated
+               Self.isReusable(existing.task) {
+                existing.heartbeatTask?.cancel()
+                existing.heartbeatTask = nil
+                existing.isBusy = true
+                state.entries[sessionID] = existing
                 return (
                     ChatGPTSubscriptionResponsesClient.WebSocketLease(
                         sessionID: sessionID,
@@ -80,8 +85,8 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
             task.resume()
             state.entries[sessionID] = Entry(
                 task: task,
-                lastUsedAt: now,
-                isBusy: true
+                isBusy: true,
+                heartbeatTask: nil
             )
             return (
                 ChatGPTSubscriptionResponsesClient.WebSocketLease(
@@ -90,12 +95,13 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                     isCached: true,
                     isReused: false
                 ),
-                existing?.task
+                existing
             )
         }
-        if let task = result.taskToClose {
+        if let entry = result.entryToClose {
+            entry.heartbeatTask?.cancel()
             DispatchQueue.global().async {
-                Self.close(task)
+                Self.close(entry.task)
             }
         }
         return result.lease
@@ -111,8 +117,12 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                var entry = state.entries[lease.sessionID],
                entry.task === lease.task,
                Self.isReusable(entry.task) {
-                entry.lastUsedAt = Date()
+                entry.heartbeatTask?.cancel()
                 entry.isBusy = false
+                entry.heartbeatTask = makeHeartbeatTask(
+                    sessionID: lease.sessionID,
+                    webSocketTask: lease.task
+                )
                 state.entries[lease.sessionID] = entry
                 return false
             }
@@ -120,6 +130,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
             if lease.isCached,
                let entry = state.entries[lease.sessionID],
                entry.task === lease.task {
+                entry.heartbeatTask?.cancel()
                 state.entries.removeValue(forKey: lease.sessionID)
             }
             return true
@@ -127,27 +138,105 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         if shouldClose {
             Self.close(lease.task)
         }
-        reapExpiredIdleEntries()
+        reapInvalidIdleEntries()
     }
 
     public func closeSession(sessionID: String) {
         let entry = state.withLock { state in
-            return state.entries.removeValue(forKey: sessionID)
+            state.entries.removeValue(forKey: sessionID)
         }
         if let entry {
+            entry.heartbeatTask?.cancel()
             Self.close(entry.task)
         }
     }
 
     public func closeAll() {
-        let openTasks = state.withLock { state in
-            let openTasks = state.entries.values.map(\.task)
+        let entries = state.withLock { state in
+            let entries = Array(state.entries.values)
             state.entries.removeAll()
-            return openTasks
+            return entries
         }
 
-        for task in openTasks {
-            Self.close(task)
+        for entry in entries {
+            entry.heartbeatTask?.cancel()
+            Self.close(entry.task)
+        }
+    }
+
+    private func makeHeartbeatTask(
+        sessionID: String,
+        webSocketTask: URLSessionWebSocketTask
+    ) -> Task<Void, Never> {
+        let interval = heartbeatIntervalNanoseconds
+        return Task { [weak self] in
+            await Self.runHeartbeat(
+                intervalNanoseconds: interval,
+                ping: {
+                    try await Self.sendPing(to: webSocketTask)
+                },
+                onFailure: { [weak self] _ in
+                    self?.discardIdleEntry(
+                        sessionID: sessionID,
+                        webSocketTask: webSocketTask
+                    )
+                }
+            )
+        }
+    }
+
+    static func runHeartbeat(
+        intervalNanoseconds: UInt64,
+        ping: @escaping @Sendable () async throws -> Void,
+        onFailure: @escaping @Sendable (Error) -> Void
+    ) async {
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(
+                    nanoseconds: max(intervalNanoseconds, 1)
+                )
+                try Task.checkCancellation()
+                try await ping()
+            } catch is CancellationError {
+                return
+            } catch {
+                onFailure(error)
+                return
+            }
+        }
+    }
+
+    private static func sendPing(
+        to task: URLSessionWebSocketTask
+    ) async throws {
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            task.sendPing { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
+    private func discardIdleEntry(
+        sessionID: String,
+        webSocketTask: URLSessionWebSocketTask
+    ) {
+        let entry = state.withLock { state -> Entry? in
+            guard let entry = state.entries[sessionID],
+                  entry.task === webSocketTask,
+                  !entry.isBusy else {
+                return nil
+            }
+            state.entries.removeValue(forKey: sessionID)
+            return entry
+        }
+        if let entry {
+            entry.heartbeatTask?.cancel()
+            Self.close(entry.task)
         }
     }
 

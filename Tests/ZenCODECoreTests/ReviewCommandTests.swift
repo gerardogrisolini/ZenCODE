@@ -90,5 +90,149 @@ struct ReviewCommandTests {
         #expect(!prompt.contains("project journal"))
         #expect(!prompt.contains("project memory"))
         #expect(!prompt.contains("memory tools"))
+        #expect(!prompt.contains("Approved plan under verification"))
+        #expect(!prompt.contains("done, partial, missing, or deviated"))
+    }
+
+    @Test
+    func reviewPromptIncludesApprovedPlanCoverageInstructions() {
+        let reviewer = AgentProfile(
+            id: AgentProfileStore.reviewerAgentID.uuidString,
+            name: AgentProfileStore.reviewerAgentName,
+            tools: []
+        )
+        let plan = TerminalSessionPlan(
+            originalGoal: "Add plan-aware review",
+            consolidatedText: "1. Persist the plan.\n2. Verify current files.",
+            createdAt: Date(timeIntervalSince1970: 100),
+            isApproved: true
+        )
+
+        let prompt = TerminalChat.reviewDelegationPrompt(
+            scope: "",
+            reviewer: reviewer,
+            changeSummary: nil,
+            approvedPlan: plan
+        )
+
+        #expect(prompt.contains("Approved plan under verification:"))
+        #expect(prompt.contains("Original goal: Add plan-aware review"))
+        #expect(prompt.contains("1. Persist the plan.\n2. Verify current files."))
+        #expect(prompt.contains("at least one dedicated Reviewer for plan coverage"))
+        #expect(prompt.contains("current state of the files implicated by the plan"))
+        #expect(prompt.contains("not merely the latest diff"))
+        #expect(prompt.contains("done, partial, missing, or deviated"))
+        #expect(prompt.contains("file:line references whenever available"))
+        #expect(prompt.contains("No tracked file-change summary is available"))
+        #expect(prompt.contains("This is coverage-only mode"))
+        #expect(!prompt.contains("Session change surface:"))
+    }
+
+    @Test
+    func reviewPromptIgnoresUnapprovedPlanAndPreservesLegacyPrompt() {
+        let reviewer = AgentProfile(
+            id: AgentProfileStore.reviewerAgentID.uuidString,
+            name: AgentProfileStore.reviewerAgentName,
+            tools: []
+        )
+        let summary = TurnFileChangeSummary(entries: [])
+        let unapprovedPlan = TerminalSessionPlan(
+            originalGoal: "goal",
+            consolidatedText: "plan",
+            isApproved: false
+        )
+
+        let withoutPlan = TerminalChat.reviewDelegationPrompt(
+            scope: "",
+            reviewer: reviewer,
+            changeSummary: summary
+        )
+        let withUnapprovedPlan = TerminalChat.reviewDelegationPrompt(
+            scope: "",
+            reviewer: reviewer,
+            changeSummary: summary,
+            approvedPlan: unapprovedPlan
+        )
+
+        #expect(withUnapprovedPlan == withoutPlan)
+        #expect(!withUnapprovedPlan.contains("Approved plan under verification"))
+    }
+
+    @Test
+    func approvedPlanWithChangesDelegatesCoverageAndCodeReviewInParallel() {
+        let reviewer = AgentProfile(
+            id: AgentProfileStore.reviewerAgentID.uuidString,
+            name: AgentProfileStore.reviewerAgentName,
+            tools: []
+        )
+        let prompt = TerminalChat.reviewDelegationPrompt(
+            scope: "",
+            reviewer: reviewer,
+            changeSummary: TurnFileChangeSummary(entries: []),
+            approvedPlan: TerminalSessionPlan(
+                originalGoal: "goal",
+                consolidatedText: "plan",
+                isApproved: true
+            )
+        )
+
+        #expect(prompt.contains("separate code-quality/correctness Reviewers"))
+        #expect(prompt.contains("same agent.create call"))
+        #expect(prompt.contains("so they run in parallel"))
+        #expect(prompt.contains("dedicated Reviewer for plan coverage"))
+    }
+
+    @Test
+    func reviewRunsCoverageOnlyForApprovedPlanAndKeepsItActive() throws {
+        let terminal = try makeTerminal()
+        let plan = TerminalSessionPlan(
+            originalGoal: "goal",
+            consolidatedText: "plan",
+            isApproved: true
+        )
+        terminal.activePlan = plan
+
+        for _ in 0..<2 {
+            let action = terminal.handleReviewCommand("/review")
+            guard case let .runHiddenPrompt(prompt, purpose) = action else {
+                Issue.record("An approved plan should allow coverage-only review")
+                return
+            }
+            #expect(prompt.contains("Approved plan under verification"))
+            #expect(purpose == .review)
+            #expect(terminal.activePlan == plan)
+        }
+    }
+
+    @Test
+    func reviewWithoutChangesIgnoresUnapprovedPlan() throws {
+        let terminal = try makeTerminal()
+        terminal.activePlan = TerminalSessionPlan(
+            originalGoal: "goal",
+            consolidatedText: "plan",
+            isApproved: false
+        )
+
+        let action = terminal.handleReviewCommand("/review")
+
+        if case .continueChat = action {
+            #expect(terminal.activePlan?.isApproved == false)
+        } else {
+            Issue.record("An unapproved plan must not enable coverage-only review")
+        }
+    }
+
+    private func makeTerminal() throws -> TerminalChat {
+        let configuration = try AgentConfiguration(
+            hostedModelID: "mlx-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: URL(
+                fileURLWithPath: "/tmp/ZenCODE-review-command",
+                isDirectory: true
+            )
+        )
+        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false)
+        terminal.selectedToolKeys.insert("sub-agents")
+        return terminal
     }
 }

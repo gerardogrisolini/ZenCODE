@@ -68,6 +68,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
     public let systemPrompt: String?
     public let history: [AgentRuntimeMessage]
     public let transcriptHistory: [AgentRuntimeMessage]?
+    public let activePlan: TerminalSessionPlan?
 
     public init(
         version: Int = Self.currentVersion,
@@ -86,7 +87,8 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         contextWindow: TerminalSavedSessionContextWindow? = nil,
         systemPrompt: String?,
         history: [AgentRuntimeMessage],
-        transcriptHistory: [AgentRuntimeMessage]? = nil
+        transcriptHistory: [AgentRuntimeMessage]? = nil,
+        activePlan: TerminalSessionPlan? = nil
     ) {
         self.version = version
         self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -107,6 +109,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         self.systemPrompt = systemPrompt?.nilIfBlank
         self.history = history
         self.transcriptHistory = transcriptHistory
+        self.activePlan = activePlan
     }
 
     public var displayHistory: [AgentRuntimeMessage] {
