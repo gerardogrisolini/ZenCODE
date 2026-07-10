@@ -35,7 +35,7 @@ enum ChatGPTSubscriptionGenerationError: LocalizedError {
             return message
         case let .continuationUnavailable(detail):
             let message = """
-            ChatGPT Subscription cannot continue this saved session because its previous response id is no longer available. ZenCODE did not replay the full conversation. Compact the session and retry, or start a new compacted session.
+            ChatGPT Subscription cannot continue this session because its previous response id is no longer available and the conversation could not be replayed automatically. Compact the session and retry, or start a new compacted session.
             """
             let trimmedDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmedDetail.isEmpty ? message : "\(message) Backend detail: \(trimmedDetail)"

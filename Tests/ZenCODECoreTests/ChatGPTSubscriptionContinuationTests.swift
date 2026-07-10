@@ -113,7 +113,7 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionContinuationUnavailableErrorAsksForCompaction() throws {
+    func chatGPTSubscriptionContinuationUnavailableErrorIsDetectedForReplayFallback() throws {
         let errors = [
             ChatGPTSubscriptionGenerationError.responseFailed(
                 "Previous response id resp_saved could not be found."
@@ -136,15 +136,14 @@ extension RemoteSessionSnapshotTests {
             #expect(!detail.isEmpty)
             #expect(
                 error.localizedDescription.contains(
-                    "ZenCODE did not replay the full conversation"
-                )
-            )
-            #expect(
-                error.localizedDescription.contains(
-                    "Compact the session and retry"
+                    "could not be replayed automatically"
                 )
             )
         }
+
+        let diagnostic = ChatGPTSubscriptionGenerationClient
+            .continuationReplayFallbackDiagnostic()
+        #expect(diagnostic.contains("full conversation replay"))
     }
 
     @Test

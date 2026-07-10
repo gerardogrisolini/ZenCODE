@@ -163,8 +163,20 @@ extension ChatGPTSubscriptionGenerationClient {
                     }
                 } catch {
                     if hasContinuationReplay,
-                       let continuationError = Self.continuationUnavailableError(from: error) {
-                        throw continuationError
+                       Self.continuationUnavailableError(from: error) != nil {
+                        // The server no longer has the previous response state
+                        // (for example the WebSocket died and store=false state
+                        // expired). Fall back to a full conversation replay:
+                        // requestPayload.input always carries the whole session.
+                        resetContinuationAndTransport(
+                            session: &session,
+                            sessionIdentity: sessionIdentity
+                        )
+                        sessions[sessionID] = session
+                        await onEvent(
+                            .diagnostic(Self.continuationReplayFallbackDiagnostic())
+                        )
+                        continue
                     }
                     guard Self.isContextLimitError(error), !didRetryAfterContextLimit else {
                         throw error
@@ -288,6 +300,12 @@ extension ChatGPTSubscriptionGenerationClient {
 
         sessions[sessionID] = session
         throw ChatGPTSubscriptionGenerationError.tooManyToolRounds(configuration.maxToolRounds)
+    }
+
+    static func continuationReplayFallbackDiagnostic() -> String {
+        "ChatGPT Subscription lost the previous response id (the WebSocket "
+            + "continuation is no longer available); retrying this turn with a "
+            + "full conversation replay."
     }
 
     static func continuationUnavailableError(
