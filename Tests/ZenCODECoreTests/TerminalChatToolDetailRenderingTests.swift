@@ -344,7 +344,7 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func detailLevelAddsCallParameters() {
+    func expandedLevelAddsCallParameters() {
         let toolCall = DirectAgentToolCall(
             id: "call_1",
             name: "local.readFile",
@@ -354,19 +354,45 @@ extension TerminalChatRenderingTests {
             argumentsJSON: #"{"path":"/tmp/project/Sources/App.swift"}"#
         )
 
-        let mediumLines = TerminalChat.detailedToolCallStartedLines(
-            for: toolCall,
-            level: .medium
-        )
-        let detailLines = TerminalChat.detailedToolCallStartedLines(
-            for: toolCall,
-            level: .detail
+        let expandedLines = TerminalChat.detailedToolCallStartedLines(
+            for: toolCall
         )
 
-        #expect(!mediumLines.contains("parameters:"))
-        #expect(detailLines.contains("parameters:"))
-        #expect(detailLines.contains { $0.contains("\"path\"") })
-        #expect(detailLines.contains { $0.contains("/tmp/project/Sources/App.swift") })
+        #expect(expandedLines.contains("parameters:"))
+        #expect(expandedLines.contains { $0.contains("\"path\"") })
+        #expect(expandedLines.contains { $0.contains("/tmp/project/Sources/App.swift") })
+    }
+
+    @Test
+    func expandedCodeAreaLinesUseBackgroundFrameAndLanguageHighlighting() {
+        let rendered = TerminalChat.renderDetailedToolLine(
+            "  let value = 1",
+            codeLanguage: "swift"
+        )
+
+        #expect(rendered.hasPrefix("\u{1B}[48;5;236m"))
+        #expect(rendered.hasSuffix("\u{1B}[K"))
+        // Swift keyword highlighting stays active inside the framed area.
+        #expect(rendered.contains("\u{1B}[38;5;141mlet"))
+        // Every renderer reset re-anchors the background so token colors do
+        // not punch holes in the frame.
+        #expect(!rendered.contains("\u{1B}[0m "))
+        #expect(ansiStripped(rendered).hasPrefix("  let value = 1"))
+    }
+
+    @Test
+    func codeLanguageHintUsesTargetFileExtension() {
+        let toolCall = DirectAgentToolCall(
+            id: "call_1",
+            name: "local.writeFile",
+            argumentsObject: [
+                "file_path": "/tmp/project/Sources/App.swift",
+                "content": "let value = 1"
+            ],
+            argumentsJSON: "{}"
+        )
+
+        #expect(TerminalChat.codeLanguageHint(for: toolCall) == "swift")
     }
 
     @Test
@@ -389,8 +415,7 @@ extension TerminalChatRenderingTests {
         )
 
         let lines = TerminalChat.detailedToolCallStartedLines(
-            for: toolCall,
-            level: .detail
+            for: toolCall
         )
 
         #expect(lines.contains("parameters:"))

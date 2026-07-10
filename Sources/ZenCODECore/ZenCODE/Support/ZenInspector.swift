@@ -64,8 +64,6 @@ public enum ZenInspector {
                     ),
                     agentsFileURL: AgentsContextService(fileManager: fileManager)
                         .globalAgentsFileURL(),
-                    memoryFileURL: MemoryService(fileManager: fileManager)
-                        .globalMemoryFileURL(),
                     agentsManifestURL: AgentProfileStore.agentsManifestURL(
                         fileManager: fileManager
                     ),

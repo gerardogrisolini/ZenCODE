@@ -94,6 +94,8 @@ extension ChatGPTSubscriptionGenerationClient {
             return "- Thinking effort: xhigh."
         case .max:
             return "- Thinking effort: max."
+        case .ultra:
+            return "- Thinking effort: ultra."
         }
     }
 

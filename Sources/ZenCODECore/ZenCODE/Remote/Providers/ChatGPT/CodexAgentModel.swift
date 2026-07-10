@@ -62,6 +62,7 @@ public nonisolated enum CodexAgentModel {
         public let title: String
         public let subtitle: String
         public let contextWindowTokenLimit: Int?
+        public let thinkingSupport: ModelThinkingSupport
 
         public var id: String { modelID }
         public var llmID: String {
@@ -70,43 +71,80 @@ public nonisolated enum CodexAgentModel {
     }
 
     public static let llmID = "chatgpt"
-    public static let defaultModelID = "gpt-5.5"
+    public static let defaultModelID = "gpt-5.6-terra"
     public static var defaultLLMID: String {
         selectionID(forModelID: defaultModelID)
     }
     public static let modelID = defaultModelID
-    public static let contextWindowTokenLimit = 258_000
     public static let displayTitle = "ChatGPT Subscription"
     public static let displaySubtitle = "ChatGPT Plus/Pro"
+    private static let standardThinkingSupport = ModelThinkingSupport.effort(
+        levels: [.low, .medium, .high, .xhigh]
+    )
+    private static let maxThinkingSupport = ModelThinkingSupport.effort(
+        levels: [.low, .medium, .high, .xhigh, .max]
+    )
+    private static let solThinkingSupport = ModelThinkingSupport.effort(
+        levels: [.low, .medium, .high, .xhigh, .max, .ultra],
+        defaultSelection: .low
+    )
+    private static let terraThinkingSupport = ModelThinkingSupport.effort(
+        levels: [.low, .medium, .high, .xhigh, .max, .ultra]
+    )
     public static let availableModels: [ModelOption] = [
+        ModelOption(
+            modelID: "gpt-5.6-sol",
+            title: "GPT-5.6 Sol",
+            subtitle: "Latest frontier agentic coding model",
+            contextWindowTokenLimit: effectiveContextWindowTokenLimit(372_000),
+            thinkingSupport: solThinkingSupport
+        ),
+        ModelOption(
+            modelID: "gpt-5.6-terra",
+            title: "GPT-5.6 Terra",
+            subtitle: "Balanced agentic coding model for everyday work",
+            contextWindowTokenLimit: effectiveContextWindowTokenLimit(372_000),
+            thinkingSupport: terraThinkingSupport
+        ),
+        ModelOption(
+            modelID: "gpt-5.6-luna",
+            title: "GPT-5.6 Luna",
+            subtitle: "Fast and affordable agentic coding model",
+            contextWindowTokenLimit: effectiveContextWindowTokenLimit(372_000),
+            thinkingSupport: maxThinkingSupport
+        ),
         ModelOption(
             modelID: "gpt-5.5",
             title: "GPT-5.5",
-            subtitle: "Frontier model",
-            contextWindowTokenLimit: contextWindowTokenLimit
+            subtitle: "Frontier model for complex coding, research, and real-world work",
+            contextWindowTokenLimit: effectiveContextWindowTokenLimit(272_000),
+            thinkingSupport: standardThinkingSupport
         ),
         ModelOption(
             modelID: "gpt-5.4",
             title: "GPT-5.4",
-            subtitle: "Everyday coding",
-            contextWindowTokenLimit: contextWindowTokenLimit
+            subtitle: "Strong model for everyday coding",
+            contextWindowTokenLimit: effectiveContextWindowTokenLimit(272_000),
+            thinkingSupport: standardThinkingSupport
         ),
         ModelOption(
             modelID: "gpt-5.4-mini",
             title: "GPT-5.4 Mini",
-            subtitle: "Fast small model",
-            contextWindowTokenLimit: contextWindowTokenLimit
+            subtitle: "Small, fast, and cost-efficient model for simpler coding tasks",
+            contextWindowTokenLimit: effectiveContextWindowTokenLimit(272_000),
+            thinkingSupport: standardThinkingSupport
         ),
         ModelOption(
             modelID: "gpt-5.3-codex-spark",
             title: "GPT-5.3 Codex Spark",
             subtitle: "Ultra-fast coding",
-            contextWindowTokenLimit: 128_000
+            contextWindowTokenLimit: 128_000,
+            thinkingSupport: standardThinkingSupport
         )
     ]
-    public static let thinkingSupport = ModelThinkingSupport.effort(
-        levels: [.low, .medium, .high, .xhigh]
-    )
+    public static var thinkingSupport: ModelThinkingSupport {
+        option(forModelID: defaultModelID).thinkingSupport
+    }
 
     public static func isCodexLLMID(_ value: String?) -> Bool {
         guard let normalizedValue = value?
@@ -164,7 +202,8 @@ public nonisolated enum CodexAgentModel {
             modelID: normalizedModelID,
             title: normalizedModelID,
             subtitle: displaySubtitle,
-            contextWindowTokenLimit: nil
+            contextWindowTokenLimit: nil,
+            thinkingSupport: standardThinkingSupport
         )
     }
 
@@ -174,6 +213,10 @@ public nonisolated enum CodexAgentModel {
 
     public static func contextWindowTokenLimit(forLLMID value: String?) -> Int? {
         option(forLLMID: value).contextWindowTokenLimit
+    }
+
+    private static func effectiveContextWindowTokenLimit(_ contextWindow: Int) -> Int {
+        contextWindow * 95 / 100
     }
 
     private static func normalizedModelID(_ value: String) -> String {

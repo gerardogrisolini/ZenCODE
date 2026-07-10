@@ -90,21 +90,7 @@ extension ZenCODESetupRunner {
     }
 
     private static func featureMenuDetail(_ status: SwiftFeatureStatus) -> String {
-        var parts = [status.enabled ? "enabled" : "disabled"]
-        if !status.available {
-            parts.append("unavailable")
-        }
-        if !status.tools.isEmpty {
-            parts.append("tools: \(status.tools.sorted().joined(separator: ", "))")
-        } else if status.discoversToolsAtRuntime {
-            parts.append("tools discovered at runtime")
-        } else {
-            parts.append("no tools")
-        }
-        if let description = status.description?.nilIfBlank {
-            parts.append(description)
-        }
-        return parts.joined(separator: " · ")
+        TerminalToolSelectionCatalog.featureDetail(status)
     }
 
     private static func featureDisplayName(_ status: SwiftFeatureStatus) -> String {

@@ -256,7 +256,7 @@ extension TerminalChat {
 
     public func recordSavedSessionIndex(_ savedSession: TerminalSavedSession) {
         do {
-            try MemoryService().recordSavedSessionIndexEntry(
+            try SavedSessionsStore().recordSavedSession(
                 projectPath: savedSession.workingDirectoryPath,
                 sessionName: savedSession.name,
                 sessionID: savedSession.sessionID,
@@ -265,7 +265,7 @@ extension TerminalChat {
         } catch {
             ZenLogger.warning(
                 .memory,
-                "failed to update global saved-session memory index for \(savedSession.name): \(error.localizedDescription)"
+                "failed to update saved-session index for \(savedSession.name): \(error.localizedDescription)"
             )
         }
     }

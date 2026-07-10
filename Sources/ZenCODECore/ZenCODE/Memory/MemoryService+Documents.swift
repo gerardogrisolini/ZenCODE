@@ -7,20 +7,17 @@ import Foundation
 
 extension MemoryService {
     func memoryDocuments(workspaceRootURL: URL?) -> [MemoryDocument] {
-        var documents = [
-            MemoryDocument(scope: .global, fileURL: globalMemoryFileURL())
-        ]
-        if let workspaceRootURL {
-            documents.append(
-                MemoryDocument(
-                    scope: .project,
-                    fileURL: workspaceRootURL
-                        .standardizedFileURL
-                        .appendingPathComponent(Self.filename)
-                )
-            )
+        guard let workspaceRootURL else {
+            return []
         }
-        return documents
+        return [
+            MemoryDocument(
+                scope: .project,
+                fileURL: workspaceRootURL
+                    .standardizedFileURL
+                    .appendingPathComponent(Self.filename)
+            )
+        ]
     }
 
     func memoryDocument(
@@ -28,8 +25,6 @@ extension MemoryService {
         workspaceRootURL: URL?
     ) throws -> MemoryDocument {
         switch scope {
-        case .global:
-            return MemoryDocument(scope: .global, fileURL: globalMemoryFileURL())
         case .project:
             guard let workspaceRootURL else {
                 throw MemoryServiceError.scopeUnavailable("project")
@@ -178,8 +173,6 @@ extension MemoryService {
     ) -> String {
         let template: String
         switch scope {
-        case .global:
-            template = defaultGlobalMemoryContent
         case .project:
             template = defaultProjectMemoryContent
         }
@@ -212,49 +205,6 @@ extension MemoryService {
         MemoryEntry.normalizedContent(content)
     }
 
-    func archiveActiveSavedSessionIndexEntries(forProjectPath projectPath: String) throws {
-        let entries = readEntries(
-            scope: .global,
-            workspaceRootURL: nil,
-            includeArchived: false,
-            limit: .max
-        )
-        for entry in entries
-            where Self.savedSessionIndexProjectPath(in: entry) == projectPath {
-            _ = try setArchived(
-                true,
-                id: entry.id,
-                scope: .global,
-                workspaceRootURL: nil
-            )
-        }
-    }
-
-    static func savedSessionIndexProjectPath(in entry: MemoryEntry) -> String? {
-        let lines = entry.content
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        guard lines.contains(where: {
-            $0.localizedCaseInsensitiveCompare("Kind: saved-session") == .orderedSame
-        }) else {
-            return nil
-        }
-        guard let projectLine = lines.first(where: {
-            $0.lowercased().hasPrefix("project:")
-        }) else {
-            return nil
-        }
-        let path = projectLine
-            .dropFirst("Project:".count)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty else {
-            return nil
-        }
-        return URL(fileURLWithPath: path)
-            .standardizedFileURL
-            .path
-    }
-
     public static func timestampString(_ date: Date, timeZone: TimeZone) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -266,16 +216,8 @@ extension MemoryService {
     func searchScore(entry: MemoryEntry, terms: [String]) -> Int {
         let content = entry.content.lowercased()
         var score = 0
-        for term in terms {
-            if content.contains(term) {
-                score += 10
-            }
-            if entry.scope.rawValue.contains(term) {
-                score += 3
-            }
-        }
-        if entry.scope == .project {
-            score += 2
+        for term in terms where content.contains(term) {
+            score += 10
         }
         return score
     }
@@ -288,14 +230,6 @@ extension MemoryService {
             return nil
         }
         return URL(fileURLWithPath: path).standardizedFileURL
-    }
-
-    func globalMemoryDirectoryURLResolved() -> URL {
-        if let globalMemoryDirectoryURL {
-            return globalMemoryDirectoryURL.standardizedFileURL
-        }
-
-        return AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
     }
 
 }

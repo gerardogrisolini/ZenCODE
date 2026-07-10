@@ -12,16 +12,11 @@ import Testing
 @Suite
 struct MLXMemoryServiceTests {
     @Test
-    func memoryTemplatesDescribeGlobalAndProjectResponsibilities() {
-        #expect(MemoryService.defaultGlobalMemoryContent.contains("Lightweight global project index"))
-        #expect(MemoryService.defaultGlobalMemoryContent.contains("saved-session pointers keyed by project"))
-        #expect(MemoryService.defaultGlobalMemoryContent.contains("latest saved session name/id for each project"))
-        #expect(MemoryService.defaultGlobalMemoryContent.contains("user preferences or operating rules"))
+    func memoryTemplatesDescribeProjectResponsibilities() {
         #expect(MemoryService.defaultProjectMemoryContent.contains("Durable project journal"))
         #expect(MemoryService.defaultProjectMemoryContent.contains("Timestamp: YYYY-MM-DD HH:mm TimeZone"))
         #expect(MemoryService.toolUsagePromptSection().contains("project memory as the codebase journal"))
-        #expect(MemoryService.toolUsagePromptSection().contains("global memory only as a lightweight project/session index"))
-        #expect(MemoryService.toolUsagePromptSection().contains("one active saved-session pointer per project"))
+        #expect(!MemoryService.toolUsagePromptSection().localizedCaseInsensitiveContains("global memory"))
         #expect(MemoryService.toolUsagePromptSection().contains("At the end of a substantial project turn"))
 
         let projectDefault = ProjectContextFileService.defaultContent(
@@ -36,7 +31,6 @@ struct MLXMemoryServiceTests {
     func templateGuidanceBulletsAreNotParsedAsMemoryEntries() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-memory-tests-\(UUID().uuidString)", isDirectory: true)
-        let globalDirectoryURL = rootURL.appendingPathComponent("global", isDirectory: true)
         let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
@@ -46,8 +40,7 @@ struct MLXMemoryServiceTests {
             at: workspaceURL,
             withIntermediateDirectories: true
         )
-        let service = MemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
-        try service.ensureGlobalMemoryFileExists()
+        let service = MemoryService()
         try MemoryService.defaultProjectMemoryContent
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .appending("\n")
@@ -59,13 +52,6 @@ struct MLXMemoryServiceTests {
 
         #expect(
             service.readEntries(
-                scope: .global,
-                workspaceRootURL: workspaceURL,
-                limit: 10
-            ).isEmpty
-        )
-        #expect(
-            service.readEntries(
                 scope: .project,
                 workspaceRootURL: workspaceURL,
                 limit: 10
@@ -74,10 +60,9 @@ struct MLXMemoryServiceTests {
     }
 
     @Test
-    func globalAndProjectWritesUseDifferentMemoryTemplates() throws {
+    func projectWritesUseProjectMemoryTemplate() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-memory-tests-\(UUID().uuidString)", isDirectory: true)
-        let globalDirectoryURL = rootURL.appendingPathComponent("global", isDirectory: true)
         let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
@@ -87,36 +72,21 @@ struct MLXMemoryServiceTests {
             at: workspaceURL,
             withIntermediateDirectories: true
         )
-        let service = MemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
+        let service = MemoryService()
 
-        try service.writeEntry(
-            content: "Last project: \(workspaceURL.path)",
-            scope: .global,
-            workspaceRootURL: workspaceURL
-        )
         try service.writeEntry(
             content: "Summary: use direct ZenCODE runtime inside mlx-server.",
             scope: .project,
             workspaceRootURL: workspaceURL
         )
 
-        let globalContent = try String(contentsOf: service.globalMemoryFileURL(), encoding: .utf8)
         let projectContent = try String(
             contentsOf: workspaceURL.appendingPathComponent(MemoryService.filename),
             encoding: .utf8
         )
 
-        #expect(globalContent.contains("Lightweight global project index"))
-        #expect(globalContent.contains("Last project: \(workspaceURL.path)"))
         #expect(projectContent.contains("Durable project journal"))
         #expect(projectContent.contains("Summary: use direct ZenCODE runtime inside mlx-server."))
-        #expect(
-            service.readEntries(
-                scope: .global,
-                workspaceRootURL: workspaceURL,
-                limit: 10
-            ).count == 1
-        )
         #expect(
             service.readEntries(
                 scope: .project,
@@ -130,7 +100,6 @@ struct MLXMemoryServiceTests {
     func projectJournalWritesPreserveMultilineEntries() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-memory-tests-\(UUID().uuidString)", isDirectory: true)
-        let globalDirectoryURL = rootURL.appendingPathComponent("global", isDirectory: true)
         let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
@@ -140,11 +109,11 @@ struct MLXMemoryServiceTests {
             at: workspaceURL,
             withIntermediateDirectories: true
         )
-        let service = MemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
+        let service = MemoryService()
         let journalContent = """
         Timestamp: 2026-06-03 11:45 Europe/Rome
         Summary: completed the memory journal framing.
-        State: project journal is the resume source; global memory is only an index.
+        State: project journal is the resume source.
         Next: validate the real resume flow from a fresh session.
         """
 
@@ -171,7 +140,7 @@ struct MLXMemoryServiceTests {
             )
         )
         #expect(projectContent.contains("\n  Summary: completed the memory journal framing."))
-        #expect(projectContent.contains("\n  State: project journal is the resume source; global memory is only an index."))
+        #expect(projectContent.contains("\n  State: project journal is the resume source."))
         #expect(projectContent.contains("\n  Next: validate the real resume flow from a fresh session."))
         #expect(readEntry.content == journalContent)
     }
@@ -180,7 +149,6 @@ struct MLXMemoryServiceTests {
     func memoryWriteAddsProjectTimestampWhenMissing() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-memory-tests-\(UUID().uuidString)", isDirectory: true)
-        let globalDirectoryURL = rootURL.appendingPathComponent("global", isDirectory: true)
         let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
         let timeZone = TimeZone(identifier: "Europe/Rome")!
         let date = DateComponents(
@@ -200,7 +168,7 @@ struct MLXMemoryServiceTests {
             at: workspaceURL,
             withIntermediateDirectories: true
         )
-        let service = MemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
+        let service = MemoryService()
         _ = try MemoryTool.execute(
             ToolRequest(
                 name: "memory.write",
@@ -232,77 +200,51 @@ struct MLXMemoryServiceTests {
     }
 
     @Test
-    func globalSavedSessionIndexKeepsLatestSessionPerProject() throws {
+    func savedSessionsIndexKeepsLatestSessionPerProject() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-memory-tests-\(UUID().uuidString)", isDirectory: true)
-        let globalDirectoryURL = rootURL.appendingPathComponent("global", isDirectory: true)
+        let storeDirectoryURL = rootURL.appendingPathComponent("store", isDirectory: true)
         let firstProjectURL = rootURL.appendingPathComponent("first", isDirectory: true)
         let secondProjectURL = rootURL.appendingPathComponent("second", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
         }
 
-        try FileManager.default.createDirectory(
-            at: firstProjectURL,
-            withIntermediateDirectories: true
-        )
-        try FileManager.default.createDirectory(
-            at: secondProjectURL,
-            withIntermediateDirectories: true
-        )
-
-        let service = MemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
-        try service.recordSavedSessionIndexEntry(
+        let store = SavedSessionsStore(directoryURL: storeDirectoryURL)
+        try store.recordSavedSession(
             projectPath: firstProjectURL.path,
             sessionName: "first checkpoint",
             sessionID: "first-session-old",
-            savedAt: Date(timeIntervalSince1970: 100),
-            timeZone: TimeZone(identifier: "Europe/Rome")!
+            savedAt: Date(timeIntervalSince1970: 100)
         )
-        try service.recordSavedSessionIndexEntry(
+        try store.recordSavedSession(
             projectPath: secondProjectURL.path,
             sessionName: "second checkpoint",
             sessionID: "second-session",
-            savedAt: Date(timeIntervalSince1970: 200),
-            timeZone: TimeZone(identifier: "Europe/Rome")!
+            savedAt: Date(timeIntervalSince1970: 200)
         )
-        try service.recordSavedSessionIndexEntry(
+        try store.recordSavedSession(
             projectPath: firstProjectURL.path,
             sessionName: "first latest",
             sessionID: "first-session-new",
-            savedAt: Date(timeIntervalSince1970: 300),
-            timeZone: TimeZone(identifier: "Europe/Rome")!
+            savedAt: Date(timeIntervalSince1970: 300)
         )
 
-        let activeEntries = service.readEntries(
-            scope: .global,
-            workspaceRootURL: nil,
-            includeArchived: false,
-            limit: 10
-        )
-        let archivedEntries = service.readEntries(
-            scope: .global,
-            workspaceRootURL: nil,
-            includeArchived: true,
-            limit: 10
-        )
-        .filter(\.isArchived)
+        let sessions = store.sessions()
 
-        #expect(activeEntries.count == 2)
-        #expect(activeEntries.contains { $0.content.contains("Project: \(firstProjectURL.path)") })
-        #expect(activeEntries.contains { $0.content.contains("Session: first latest") })
-        #expect(activeEntries.contains { $0.content.contains("Project: \(secondProjectURL.path)") })
-        #expect(activeEntries.contains { $0.content.contains("Session: second checkpoint") })
-        #expect(!activeEntries.contains { $0.content.contains("first-session-old") })
-        #expect(archivedEntries.count == 1)
-        #expect(archivedEntries.first?.content.contains("first-session-old") == true)
+        #expect(store.sessionsFileURL().lastPathComponent == "sessions.json")
+        #expect(FileManager.default.fileExists(atPath: store.sessionsFileURL().path))
+        #expect(sessions.count == 2)
+        #expect(sessions.first?.sessionID == "first-session-new")
+        #expect(sessions.first?.sessionName == "first latest")
+        #expect(sessions.contains { $0.sessionID == "second-session" })
+        #expect(!sessions.contains { $0.sessionID == "first-session-old" })
     }
 
     @Test
-    func memorySearchPrioritizesProjectEntriesWhenScopeIsAll() throws {
+    func memorySearchReturnsProjectEntries() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-memory-tests-\(UUID().uuidString)", isDirectory: true)
-        let globalDirectoryURL = rootURL.appendingPathComponent("global", isDirectory: true)
         let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
@@ -312,12 +254,7 @@ struct MLXMemoryServiceTests {
             at: workspaceURL,
             withIntermediateDirectories: true
         )
-        let service = MemoryService(globalMemoryDirectoryURL: globalDirectoryURL)
-        try service.writeEntry(
-            content: "Last project: architecture-lab.",
-            scope: .global,
-            workspaceRootURL: workspaceURL
-        )
+        let service = MemoryService()
         try service.writeEntry(
             content: "Summary: architecture runtime decision.",
             scope: .project,

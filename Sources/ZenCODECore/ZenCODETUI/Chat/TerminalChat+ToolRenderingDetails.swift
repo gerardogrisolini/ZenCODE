@@ -7,10 +7,9 @@ import Foundation
 
 extension TerminalChat {
     static func detailedToolCallStartedLines(
-        for toolCall: DirectAgentToolCall,
-        level: ToolOutputDetailLevel = .medium
+        for toolCall: DirectAgentToolCall
     ) -> [String] {
-        var lines = detailedToolBaseLines(for: toolCall, level: level)
+        var lines = detailedToolBaseLines(for: toolCall)
         if isFileMutationTool(toolCall.name) {
             lines.append("change: pending")
         }
@@ -20,19 +19,18 @@ extension TerminalChat {
 
     static func detailedToolCallCompletedLines(
         for toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult,
-        level: ToolOutputDetailLevel = .medium
+        result: DirectAgentToolResult
     ) -> [String] {
-        var lines = detailedToolBaseLines(for: toolCall, level: level)
+        var lines = detailedToolBaseLines(for: toolCall)
 
         if result.isFailure {
             lines.append("error:")
-            lines.append(contentsOf: indentedSnippet(result.output, level: level))
+            lines.append(contentsOf: indentedSnippet(result.output))
             lines.append("status: ⚠️")
             return lines
         }
 
-        let changeLines = appliedChangeDetailLines(for: toolCall, level: level)
+        let changeLines = appliedChangeDetailLines(for: toolCall)
         if !changeLines.isEmpty {
             lines.append(contentsOf: changeLines)
         } else if let summary = compactSummaryLine(result.summary) {
@@ -43,8 +41,7 @@ extension TerminalChat {
     }
 
     static func detailedToolBaseLines(
-        for toolCall: DirectAgentToolCall,
-        level: ToolOutputDetailLevel = .medium
+        for toolCall: DirectAgentToolCall
     ) -> [String] {
         let title = ZenCODEACPBridge.toolTitle(for: toolCall)
         let kind = ZenCODEACPBridge.toolKind(for: toolCall.name)
@@ -54,17 +51,27 @@ extension TerminalChat {
             "kind: \(kind)"
         ]
         lines.append(contentsOf: toolLocationLines(for: toolCall))
-        if level == .detail {
-            lines.append(contentsOf: parameterLines(for: toolCall, level: level))
+        if !shouldHideParameterLines(for: toolCall.name) {
+            lines.append(contentsOf: parameterLines(for: toolCall))
         }
         return lines
     }
 
+    /// Edit tools already render their old/new strings in the change detail
+    /// lines, so repeating the raw parameters would only crowd out the diff.
+    static func shouldHideParameterLines(for toolName: String) -> Bool {
+        switch normalizedMutationToolName(toolName) {
+        case "local.editFile", "local.multiEdit":
+            return true
+        default:
+            return false
+        }
+    }
+
     /// Renders the full call parameters as pretty-printed JSON for the
-    /// `detail` level, keeping the formatting and applying the wider limits.
+    /// `expanded` level, keeping the formatting and the wide limits.
     static func parameterLines(
-        for toolCall: DirectAgentToolCall,
-        level: ToolOutputDetailLevel
+        for toolCall: DirectAgentToolCall
     ) -> [String] {
         guard !toolCall.argumentsObject.isEmpty else {
             return []
@@ -76,9 +83,9 @@ extension TerminalChat {
         var lines = ["parameters:"]
         let formatted = formattedParameterSnippet(for: toolCall.argumentsObject)
         if formatted.preservesIndentation {
-            lines.append(contentsOf: indentedSnippetPreservingIndentation(formatted.text, level: level))
+            lines.append(contentsOf: indentedSnippetPreservingIndentation(formatted.text))
         } else {
-            lines.append(contentsOf: indentedSnippet(formatted.text, level: level))
+            lines.append(contentsOf: indentedSnippet(formatted.text))
         }
         return lines
     }
@@ -134,8 +141,7 @@ extension TerminalChat {
     }
 
     static func appliedChangeDetailLines(
-        for toolCall: DirectAgentToolCall,
-        level: ToolOutputDetailLevel = .medium
+        for toolCall: DirectAgentToolCall
     ) -> [String] {
         let arguments = toolCall.argumentsObject
         switch normalizedMutationToolName(toolCall.name) {
@@ -143,14 +149,14 @@ extension TerminalChat {
             var lines = ["change: write \(targetPath(arguments) ?? "file")"]
             if let content = stringArgument(arguments, keys: ["content", "text"]) {
                 lines.append("content:")
-                lines.append(contentsOf: indentedSnippet(content, level: level))
+                lines.append(contentsOf: indentedSnippet(content))
             }
             return lines
         case "local.append":
             var lines = ["change: append \(targetPath(arguments) ?? "file")"]
             if let content = stringArgument(arguments, keys: ["content", "text"]) {
                 lines.append("appended:")
-                lines.append(contentsOf: indentedSnippet(content, level: level))
+                lines.append(contentsOf: indentedSnippet(content))
             }
             return lines
         case "local.replace", "local.editFile", "XcodeUpdate":
@@ -160,21 +166,21 @@ extension TerminalChat {
             }
             if let oldString = stringArgument(arguments, keys: ["oldString", "old_string"]) {
                 lines.append("old:")
-                lines.append(contentsOf: indentedSnippet(oldString, level: level))
+                lines.append(contentsOf: indentedSnippet(oldString))
             }
             if let newString = stringArgument(arguments, keys: ["newString", "new_string"]) {
                 lines.append("new:")
-                lines.append(contentsOf: indentedSnippet(newString, level: level))
+                lines.append(contentsOf: indentedSnippet(newString))
             }
             return lines
         case "local.multiEdit":
-            return multiEditChangeDetailLines(arguments, level: level)
+            return multiEditChangeDetailLines(arguments)
         case "local.applyPatch":
             let target = ZenCODEACPBridge.patchDisplayTarget(from: arguments) ?? "file"
             var lines = ["change: patch \(target)"]
             if let patch = stringArgument(arguments, keys: ["patch", "diff"]) {
                 lines.append("patch:")
-                lines.append(contentsOf: indentedSnippet(patch, level: level))
+                lines.append(contentsOf: indentedSnippet(patch))
             }
             return lines
         case "local.delete", "XcodeRM":
@@ -205,8 +211,7 @@ extension TerminalChat {
     }
 
     static func multiEditChangeDetailLines(
-        _ arguments: [String: Any],
-        level: ToolOutputDetailLevel = .medium
+        _ arguments: [String: Any]
     ) -> [String] {
         let edits = arrayObjectArgument(arguments, keys: ["edits"])
         var lines = [
@@ -216,11 +221,11 @@ extension TerminalChat {
             lines.append("edit \(index + 1):")
             if let oldString = stringArgument(edit, keys: ["oldString", "old_string"]) {
                 lines.append("  old:")
-                lines.append(contentsOf: indentedSnippet(oldString, indentation: "    ", level: level))
+                lines.append(contentsOf: indentedSnippet(oldString, indentation: "    "))
             }
             if let newString = stringArgument(edit, keys: ["newString", "new_string"]) {
                 lines.append("  new:")
-                lines.append(contentsOf: indentedSnippet(newString, indentation: "    ", level: level))
+                lines.append(contentsOf: indentedSnippet(newString, indentation: "    "))
             }
         }
         if edits.count > 3 {
@@ -336,11 +341,10 @@ extension TerminalChat {
 
     static func indentedSnippet(
         _ text: String,
-        indentation: String = "  ",
-        level: ToolOutputDetailLevel = .medium
+        indentation: String = "  "
     ) -> [String] {
-        let characterLimit = snippetCharacterLimit(for: level)
-        let lineLimit = snippetLineLimit(for: level)
+        let characterLimit = expandedSnippetCharacterLimit
+        let lineLimit = expandedSnippetLineLimit
         var snippet = text.trimmingCharacters(in: .newlines)
         if snippet.count > characterLimit {
             snippet = String(snippet.prefix(characterLimit))
@@ -375,11 +379,10 @@ extension TerminalChat {
 
     static func indentedSnippetPreservingIndentation(
         _ text: String,
-        indentation: String = "  ",
-        level: ToolOutputDetailLevel = .medium
+        indentation: String = "  "
     ) -> [String] {
-        let characterLimit = snippetCharacterLimit(for: level)
-        let lineLimit = snippetLineLimit(for: level)
+        let characterLimit = expandedSnippetCharacterLimit
+        let lineLimit = expandedSnippetLineLimit
         var snippet = text.trimmingCharacters(in: .newlines)
         if snippet.count > characterLimit {
             snippet = String(snippet.prefix(characterLimit))
@@ -395,6 +398,22 @@ extension TerminalChat {
             output.append("\(indentation)... truncated")
         }
         return output
+    }
+
+    /// Deduces the syntax-highlighting language for the tool's code snippets
+    /// from the extension of the file the call targets, so written/edited
+    /// code is rendered with proper highlighting in the expanded view.
+    static func codeLanguageHint(for toolCall: DirectAgentToolCall) -> String? {
+        let arguments = toolCall.argumentsObject
+        let path = targetPath(arguments)
+            ?? ZenCODEACPBridge.patchDisplayTarget(from: arguments)
+        guard let path else {
+            return nil
+        }
+        let fileExtension = (path as NSString).pathExtension
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return fileExtension.isEmpty ? nil : fileExtension
     }
 
     static func leadingSpaceCount(_ line: String) -> Int {

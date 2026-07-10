@@ -538,10 +538,8 @@ public enum AgentSettingsStore {
         for model: AgentSettingsModelManifest,
         provider: AgentRemoteProvider
     ) -> Int? {
-        let configuredLimit = model.configuredContextWindowLimit
-        guard provider.isChatGPTSubscriptionProvider,
-              configuredLimit == CodexAgentModel.contextWindowTokenLimit else {
-            return configuredLimit
+        guard provider.isChatGPTSubscriptionProvider else {
+            return model.configuredContextWindowLimit
         }
         return CodexAgentModel.contextWindowTokenLimit(forLLMID: model.id)
     }

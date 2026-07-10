@@ -16,6 +16,7 @@ public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identi
     case high
     case xhigh
     case max
+    case ultra
 
     public var id: String { rawValue }
 
@@ -41,6 +42,8 @@ public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identi
             "XHigh"
         case .max:
             "Max"
+        case .ultra:
+            "Ultra"
         }
     }
 
@@ -62,6 +65,8 @@ public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identi
             "XHigh thinking"
         case .max:
             "Max thinking"
+        case .ultra:
+            "Ultra thinking"
         }
     }
 
@@ -77,7 +82,7 @@ public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identi
                 "enabled": true,
                 "exclude": false
             ]
-        case .minimal, .low, .medium, .high, .xhigh, .max:
+        case .minimal, .low, .medium, .high, .xhigh, .max, .ultra:
             [
                 "effort": rawValue,
                 "exclude": false
@@ -110,6 +115,8 @@ public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identi
                 return .xhigh
             case "max":
                 return .max
+            case "ultra":
+                return .ultra
             default:
                 break
             }
@@ -158,22 +165,25 @@ public nonisolated struct ModelThinkingSupport: Codable, Hashable, Sendable {
 
     public static func effort(
         levels: [ThinkingSelection] = [.minimal, .low, .medium, .high, .xhigh],
-        supportsPreserveThinking: Bool = false
+        supportsPreserveThinking: Bool = false,
+        defaultSelection: ThinkingSelection? = nil
     ) -> ModelThinkingSupport {
         let normalizedLevels = effortLevels(from: levels)
         let resolvedLevels = normalizedLevels.isEmpty
             ? [.minimal, .low, .medium, .high, .xhigh, .max]
             : normalizedLevels
-        let defaultSelection = resolvedLevels.contains(.medium)
+        let resolvedDefaultSelection = defaultSelection.flatMap {
+            resolvedLevels.contains($0) ? $0 : nil
+        } ?? (resolvedLevels.contains(.medium)
             ? ThinkingSelection.medium
-            : (resolvedLevels.first ?? .medium)
+            : (resolvedLevels.first ?? .medium))
 
         return ModelThinkingSupport(
             supportsThinking: true,
             supportsReasoningEffort: true,
             supportsPreserveThinking: supportsPreserveThinking,
             availableSelections: [.off] + resolvedLevels,
-            defaultSelection: defaultSelection
+            defaultSelection: resolvedDefaultSelection
         )
     }
 

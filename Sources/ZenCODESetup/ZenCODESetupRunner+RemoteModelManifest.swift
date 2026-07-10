@@ -45,7 +45,7 @@ extension ZenCODESetupRunner {
             chatEndpoint: chatEndpoint,
             configuredContextWindowLimit: option.contextWindowTokenLimit,
             generationParameterOverrides: nil,
-            thinkingSupport: CodexAgentModel.thinkingSupport
+            thinkingSupport: option.thinkingSupport
         )
     }
 

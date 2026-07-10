@@ -27,7 +27,7 @@ struct MLXAppStorageDirectoryTests {
         #expect(AppStorageDirectory.defaultSupportDirectoryURL() == supportDirectory)
         #expect(ZenFileService.supportDirectoryURL() == supportDirectory)
         #expect(AgentsContextService().globalAgentsFileURL() == supportDirectory.appendingPathComponent("AGENTS.md"))
-        #expect(MemoryService().globalMemoryFileURL() == supportDirectory.appendingPathComponent("MEMORY.md"))
+        #expect(SavedSessionsStore().sessionsFileURL() == supportDirectory.appendingPathComponent("sessions.json"))
         #expect(AgentSettingsManifestStore.settingsURL() == supportDirectory.appendingPathComponent("settings.json"))
         #expect(AgentProfileStore.agentsManifestURL() == supportDirectory.appendingPathComponent("agents.json"))
         #expect(PromptSkillCatalog.appCatalogSearchRoots() == [

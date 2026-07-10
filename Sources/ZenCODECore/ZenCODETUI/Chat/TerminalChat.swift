@@ -18,17 +18,15 @@ import Foundation
 public enum ToolOutputDetailLevel: CaseIterable, Sendable {
     /// Single inline status line per tool call.
     case compact
-    /// Title, kind, location, and change/summary/error snippets.
-    case medium
-    /// Same as `medium` plus the full call parameters, with wider limits.
-    case detail
+    /// Title, kind, location, full call parameters, and change/summary/error
+    /// snippets with syntax-highlighted code areas.
+    case expanded
 
-    /// Returns the next level when cycling through detail levels.
+    /// Returns the other level when toggling between detail levels.
     public var next: ToolOutputDetailLevel {
         switch self {
-        case .compact: return .medium
-        case .medium: return .detail
-        case .detail: return .compact
+        case .compact: return .expanded
+        case .expanded: return .compact
         }
     }
 
@@ -36,8 +34,7 @@ public enum ToolOutputDetailLevel: CaseIterable, Sendable {
     public var label: String {
         switch self {
         case .compact: return "compact"
-        case .medium: return "medium"
-        case .detail: return "detail"
+        case .expanded: return "expanded"
         }
     }
 }

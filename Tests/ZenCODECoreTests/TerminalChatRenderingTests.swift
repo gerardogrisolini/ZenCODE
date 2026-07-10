@@ -233,8 +233,7 @@ struct TerminalChatRenderingTests {
 
         let lines = TerminalChat.detailedToolCallCompletedLines(
             for: toolCall,
-            result: result,
-            level: .medium
+            result: result
         )
 
         #expect(lines.contains("change: patch Sources/App.swift"))

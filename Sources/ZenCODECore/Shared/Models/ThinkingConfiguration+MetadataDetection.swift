@@ -20,7 +20,7 @@ extension ModelThinkingSupport {
         from selections: [ThinkingSelection]
     ) -> [ThinkingSelection] {
         let requestedLevels = Set(selections)
-        return [.minimal, .low, .medium, .high, .xhigh, .max].filter {
+        return [.minimal, .low, .medium, .high, .xhigh, .max, .ultra].filter {
             requestedLevels.contains($0)
         }
     }
@@ -422,7 +422,7 @@ extension ModelThinkingSupport {
             _ selection: ThinkingSelection
         ) -> Bool {
             switch selection {
-            case .minimal, .low, .medium, .high, .xhigh, .max:
+            case .minimal, .low, .medium, .high, .xhigh, .max, .ultra:
                 return true
             case .off, .enabled:
                 return false

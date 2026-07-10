@@ -42,4 +42,31 @@ struct ThinkingConfigurationTests {
         #expect(selectionXHigh.chatTemplateReasoningEffort == "max")
         #expect(selectionMax.chatTemplateReasoningEffort == "max")
     }
+
+    @Test
+    func ultraThinkingSelectionRemainsDistinctOnTheWire() {
+        let selection = ThinkingSelection.openRouterReasoningSelection(
+            from: .object(["effort": .string("ultra")])
+        )
+
+        #expect(selection == .ultra)
+        #expect(selection?.openRouterReasoningPayload["effort"] as? String == "ultra")
+        #expect(AgentThinkingSelection.ultra.openRouterReasoningPayload["effort"] as? String == "ultra")
+    }
+
+    @Test
+    func codexGPT56ModelsExposeTheirOwnThinkingLevelsAndDefaults() throws {
+        let sol = try #require(CodexAgentModel.availableModels.first { $0.modelID == "gpt-5.6-sol" })
+        let terra = try #require(CodexAgentModel.availableModels.first { $0.modelID == "gpt-5.6-terra" })
+        let luna = try #require(CodexAgentModel.availableModels.first { $0.modelID == "gpt-5.6-luna" })
+
+        #expect(CodexAgentModel.defaultModelID == "gpt-5.6-sol")
+        #expect(sol.contextWindowTokenLimit == 353_400)
+        #expect(sol.thinkingSupport.availableSelections == [.off, .low, .medium, .high, .xhigh, .max, .ultra])
+        #expect(sol.thinkingSupport.defaultSelection == .low)
+        #expect(terra.thinkingSupport.availableSelections == [.off, .low, .medium, .high, .xhigh, .max, .ultra])
+        #expect(terra.thinkingSupport.defaultSelection == .medium)
+        #expect(luna.thinkingSupport.availableSelections == [.off, .low, .medium, .high, .xhigh, .max])
+        #expect(luna.thinkingSupport.defaultSelection == .medium)
+    }
 }

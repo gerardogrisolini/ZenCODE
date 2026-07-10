@@ -8,7 +8,6 @@
 import Foundation
 
 public nonisolated enum MemoryScope: String, Codable, CaseIterable, Hashable, Sendable {
-    case global
     case project
 }
 

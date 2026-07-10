@@ -37,16 +37,13 @@ extension TerminalChat {
     }
 
     func writeDetailedToolCallStarted(_ toolCall: DirectAgentToolCall) {
-        let lines = Self.detailedToolCallStartedLines(
-            for: toolCall,
-            level: toolOutputDetailLevel
-        )
+        let lines = Self.detailedToolCallStartedLines(for: toolCall)
         activeDetailedToolCallID = toolCall.id
         activeDetailedToolRenderedRowCount = Self.renderedTerminalRowCount(
             for: lines,
             contentInsetWidth: chatLineInsetPrefix.count
         )
-        writeToolBlock(lines)
+        writeToolBlock(lines, codeLanguage: Self.codeLanguageHint(for: toolCall))
     }
 
     func writeDetailedToolCallCompleted(
@@ -55,8 +52,7 @@ extension TerminalChat {
     ) {
         let lines = Self.detailedToolCallCompletedLines(
             for: toolCall,
-            result: result,
-            level: toolOutputDetailLevel
+            result: result
         )
         let shouldRewriteActiveBlock = activeDetailedToolCallID == toolCall.id
             && AgentOutput.standardErrorIsTerminal
@@ -67,7 +63,7 @@ extension TerminalChat {
         if shouldRewriteActiveBlock {
             AgentOutput.standardError.writeString("\u{1B}[\(max(1, rewriteRowCount))A\r\u{1B}[J")
         }
-        writeToolBlock(lines)
+        writeToolBlock(lines, codeLanguage: Self.codeLanguageHint(for: toolCall))
         writeChatError("\n")
     }
 
@@ -271,19 +267,22 @@ extension TerminalChat {
         TerminalANSIText.visibleWidth(text)
     }
 
-    func writeToolBlock(_ lines: [String]) {
+    func writeToolBlock(_ lines: [String], codeLanguage: String? = nil) {
         let reset = "\u{1B}[0m"
         let lineInset = chatLineInsetPrefix
         let text = lines
-            .map { "\(lineInset)\(Self.renderDetailedToolLine($0))\(reset)" }
+            .map { "\(lineInset)\(Self.renderDetailedToolLine($0, codeLanguage: codeLanguage))\(reset)" }
             .joined(separator: "\n")
         writeRawChatError("\(text)\n")
         isAtStartOfChatLine = true
     }
 
-        static func renderDetailedToolLine(_ line: String) -> String {
+    static func renderDetailedToolLine(
+        _ line: String,
+        codeLanguage: String? = nil
+    ) -> String {
         if line.hasPrefix("  ") || line.hasPrefix("    ") {
-            return TerminalCodeBlockRenderer.renderLine(line, language: nil)
+            return renderCodeAreaLine(line, language: codeLanguage)
         }
         // Split labeled metadata rows ("label: value") so the label keeps a
         // muted orange while the value drops to gray, keeping the block within
@@ -296,6 +295,24 @@ extension TerminalChat {
             return "\(toolLabelColor)\(label)\(toolValueColor)\(value)"
         }
         return "\(toolTitleColor)\(line)"
+    }
+
+    /// Renders a code snippet row of the expanded tool block: the line is
+    /// syntax-highlighted for the target file's language and painted over a
+    /// dark background that extends to the right edge of the terminal, so the
+    /// whole code area reads as one framed block. Highlight resets emitted by
+    /// the code renderer are re-anchored to the background color so token
+    /// colors never punch holes in the frame.
+    static func renderCodeAreaLine(
+        _ line: String,
+        language: String?
+    ) -> String {
+        let reset = "\u{1B}[0m"
+        let clearToEnd = "\u{1B}[K"
+        let highlighted = TerminalCodeBlockRenderer
+            .renderLine(line, language: language)
+            .replacingOccurrences(of: reset, with: "\(reset)\(codeAreaBackgroundColor)")
+        return "\(codeAreaBackgroundColor)\(highlighted)\(clearToEnd)"
     }
 
     /// Returns whether the text before the first colon looks like a metadata
@@ -315,16 +332,9 @@ extension TerminalChat {
     static let toolTitleColor = "\u{1B}[38;5;208m"
     static let toolLabelColor = "\u{1B}[38;5;173m"
     static let toolValueColor = "\u{1B}[38;5;215m"
-    static let detailedSnippetLineLimit = 20
-    static let detailedSnippetCharacterLimit = 2_000
-    static let fullSnippetLineLimit = 100
-    static let fullSnippetCharacterLimit = 10_000
-
-    static func snippetLineLimit(for level: ToolOutputDetailLevel) -> Int {
-        level == .detail ? fullSnippetLineLimit : detailedSnippetLineLimit
-    }
-
-    static func snippetCharacterLimit(for level: ToolOutputDetailLevel) -> Int {
-        level == .detail ? fullSnippetCharacterLimit : detailedSnippetCharacterLimit
-    }
+    // Dark gray background framing the code areas of expanded tool blocks,
+    // matching the background used for submitted prompts.
+    static let codeAreaBackgroundColor = "\u{1B}[48;5;236m"
+    static let expandedSnippetLineLimit = 100
+    static let expandedSnippetCharacterLimit = 10_000
 }

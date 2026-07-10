@@ -31,12 +31,11 @@ public enum MemoryTool {
         ToolDescriptor(
             name: "memory.read",
             title: "Memory Read",
-            description: "Reads durable entries from global and project MEMORY.md files. Project memory is the codebase journal; global memory is only a lightweight per-project saved-session index for sessions without a clear workspace.",
+            description: "Reads durable entries from the project MEMORY.md journal for the current workspace.",
             inputSchema: """
             {
               "type": "object",
               "properties": {
-                "scope": { "type": "string", "enum": ["global", "project", "all"] },
                 "includeArchived": { "type": "boolean" },
                 "limit": { "type": "number" }
               }
@@ -46,13 +45,12 @@ public enum MemoryTool {
         ToolDescriptor(
             name: "memory.search",
             title: "Memory Search",
-            description: "Searches durable entries from global and project MEMORY.md files. Search project memory for codebase history and resume points; use global memory only to find the relevant project/session pointer when no workspace is clear.",
+            description: "Searches durable entries in the project MEMORY.md journal for codebase history and resume points.",
             inputSchema: """
             {
               "type": "object",
               "properties": {
                 "query": { "type": "string" },
-                "scope": { "type": "string", "enum": ["global", "project", "all"] },
                 "includeArchived": { "type": "boolean" },
                 "limit": { "type": "number" }
               },
@@ -63,17 +61,12 @@ public enum MemoryTool {
         ToolDescriptor(
             name: "memory.write",
             title: "Memory Write",
-            description: "Appends one durable entry to the right MEMORY.md scope. Use project for concise end-of-turn journal entries with Timestamp, Summary, State, and Next. If a project entry omits Timestamp, the tool adds the current local timestamp. Global saved-session pointers are maintained programmatically per project when sessions are saved.",
+            description: "Appends one durable entry to the project MEMORY.md journal. Use concise end-of-turn entries with Timestamp, Summary, State, and Next. If the entry omits Timestamp, the tool adds the current local timestamp.",
             inputSchema: """
             {
               "type": "object",
               "properties": {
-                "content": { "type": "string" },
-                "scope": {
-                  "type": "string",
-                  "enum": ["global", "project"],
-                  "description": "Use project for the codebase journal when the current workspace is clear. Global is only for lightweight project/session routing and saved-session pointers are maintained programmatically."
-                }
+                "content": { "type": "string" }
               },
               "required": ["content"]
             }
@@ -87,8 +80,7 @@ public enum MemoryTool {
             {
               "type": "object",
               "properties": {
-                "id": { "type": "string" },
-                "scope": { "type": "string", "enum": ["global", "project", "all"] }
+                "id": { "type": "string" }
               },
               "required": ["id"]
             }
@@ -140,33 +132,24 @@ public enum MemoryTool {
         context: MemoryToolContext,
         memoryService: MemoryService
     ) throws -> ToolExecutionOutput {
-        let scope = parsedScope(from: arguments)
         let includeArchived = parsedIncludeArchived(from: arguments)
         let limit = parsedLimit(from: arguments)
 
-        func readEntries(for scope: MemoryScope?) -> [MemoryEntry] {
-            if let workspaceContext = context.workspaceContext {
-                return memoryService.readEntries(
-                    scope: scope,
-                    for: workspaceContext,
-                    includeArchived: includeArchived,
-                    limit: limit
-                )
-            }
-
-            return memoryService.readEntries(
-                scope: scope,
+        let resolvedEntries: [MemoryEntry]
+        if let workspaceContext = context.workspaceContext {
+            resolvedEntries = memoryService.readEntries(
+                scope: .project,
+                for: workspaceContext,
+                includeArchived: includeArchived,
+                limit: limit
+            )
+        } else {
+            resolvedEntries = memoryService.readEntries(
+                scope: .project,
                 workingDirectory: context.workingDirectory,
                 includeArchived: includeArchived,
                 limit: limit
             )
-        }
-
-        let resolvedEntries: [MemoryEntry]
-        if let scope {
-            resolvedEntries = readEntries(for: scope)
-        } else {
-            resolvedEntries = readEntries(for: .global) + readEntries(for: .project)
         }
 
         return ToolExecutionOutput(
@@ -189,31 +172,27 @@ public enum MemoryTool {
             throw MemoryServiceError.missingField("query")
         }
 
-        let scope = parsedScope(from: arguments)
         let includeArchived = parsedIncludeArchived(from: arguments)
         let limit = parsedLimit(from: arguments)
 
-        func searchEntries(for scope: MemoryScope?) -> [MemoryEntry] {
-            if let workspaceContext = context.workspaceContext {
-                return memoryService.searchEntries(
-                    query: query,
-                    scope: scope,
-                    for: workspaceContext,
-                    includeArchived: includeArchived,
-                    limit: limit
-                )
-            }
-
-            return memoryService.searchEntries(
+        let entries: [MemoryEntry]
+        if let workspaceContext = context.workspaceContext {
+            entries = memoryService.searchEntries(
                 query: query,
-                scope: scope,
+                scope: .project,
+                for: workspaceContext,
+                includeArchived: includeArchived,
+                limit: limit
+            )
+        } else {
+            entries = memoryService.searchEntries(
+                query: query,
+                scope: .project,
                 workingDirectory: context.workingDirectory,
                 includeArchived: includeArchived,
                 limit: limit
             )
         }
-
-        let entries = searchEntries(for: scope)
 
         return ToolExecutionOutput(
             text: """
@@ -237,11 +216,9 @@ public enum MemoryTool {
             throw MemoryServiceError.missingField("content")
         }
 
-        let scope = parsedWriteScope(from: arguments)
-            ?? defaultWriteScope(context: context)
+        let scope = MemoryScope.project
         let contentToWrite = contentWithTimestampIfNeeded(
             content,
-            scope: scope,
             context: context
         )
         let entry: MemoryEntry
@@ -286,13 +263,13 @@ public enum MemoryTool {
         if let workspaceContext = context.workspaceContext {
             entry = try memoryService.archiveEntry(
                 id: entryID,
-                scope: parsedScope(from: arguments),
+                scope: .project,
                 for: workspaceContext
             )
         } else {
             entry = try memoryService.archiveEntry(
                 id: entryID,
-                scope: parsedScope(from: arguments),
+                scope: .project,
                 workingDirectory: context.workingDirectory
             )
         }
@@ -318,11 +295,9 @@ public enum MemoryTool {
 
     private static func contentWithTimestampIfNeeded(
         _ content: String,
-        scope: MemoryScope,
         context: MemoryToolContext
     ) -> String {
-        guard scope == .project,
-              !contentContainsTimestamp(content) else {
+        guard !contentContainsTimestamp(content) else {
             return content
         }
 
@@ -342,41 +317,6 @@ public enum MemoryTool {
             }
     }
 
-    private static func parsedScope(from arguments: [String: JSONValue]) -> MemoryScope? {
-        guard let rawValue = arguments["scope"]?.stringValue?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased(),
-              rawValue != "all" else {
-            return nil
-        }
-        switch rawValue {
-        case "workspace", "task":
-            return .project
-        case "pattern", "preference":
-            return .global
-        default:
-            break
-        }
-        return MemoryScope(rawValue: rawValue)
-    }
-
-    private static func parsedWriteScope(from arguments: [String: JSONValue]) -> MemoryScope? {
-        guard let rawValue = arguments["scope"]?.stringValue?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased() else {
-            return nil
-        }
-        switch rawValue {
-        case "workspace", "task":
-            return .project
-        case "pattern", "preference":
-            return .global
-        default:
-            break
-        }
-        return MemoryScope(rawValue: rawValue)
-    }
-
     private static func parsedIncludeArchived(from arguments: [String: JSONValue]) -> Bool {
         arguments["includeArchived"]?.boolValue
             ?? arguments["include_archived"]?.boolValue
@@ -387,41 +327,20 @@ public enum MemoryTool {
         min(max(Int(arguments["limit"]?.numberValue ?? 8), 1), 50)
     }
 
-    private static func defaultWriteScope(
-        context: MemoryToolContext
-    ) -> MemoryScope {
-        if context.workspaceContext != nil || context.workingDirectory != nil {
-            return .project
-        }
-        return .global
-    }
-
     private static func renderEntries(_ entries: [MemoryEntry]) -> String {
         guard !entries.isEmpty else {
             return "No memory entries matched."
         }
 
-        return [MemoryScope.global, .project]
-            .compactMap { scope -> String? in
-                let scopedEntries = entries.filter { $0.scope == scope }
-                guard !scopedEntries.isEmpty else {
-                    return nil
-                }
+        let renderedEntries = entries.enumerated().map { index, entry in
+            "\(index + 1). \(renderEntry(entry))"
+        }
+        .joined(separator: "\n\n")
 
-                let title = scope == .global
-                    ? "Global MEMORY.md"
-                    : "Project MEMORY.md"
-                let renderedEntries = scopedEntries.enumerated().map { index, entry in
-                    "\(index + 1). \(renderEntry(entry))"
-                }
-                .joined(separator: "\n\n")
-
-                return """
-                \(title):
-                \(renderedEntries)
-                """
-            }
-            .joined(separator: "\n\n")
+        return """
+        Project MEMORY.md:
+        \(renderedEntries)
+        """
     }
 
     private static func renderEntry(_ entry: MemoryEntry) -> String {

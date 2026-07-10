@@ -10,7 +10,6 @@ import Foundation
 public struct ZenFileResult: Sendable {
     public let supportDirectoryURL: URL
     public let agentsFileURL: URL
-    public let memoryFileURL: URL
     public let agentsManifestURL: URL
     public let settingsFileURL: URL
     public let createdFilenames: [String]
@@ -19,7 +18,6 @@ public struct ZenFileResult: Sendable {
     public init(
         supportDirectoryURL: URL,
         agentsFileURL: URL,
-        memoryFileURL: URL,
         agentsManifestURL: URL,
         settingsFileURL: URL,
         createdFilenames: [String],
@@ -27,7 +25,6 @@ public struct ZenFileResult: Sendable {
     ) {
         self.supportDirectoryURL = supportDirectoryURL
         self.agentsFileURL = agentsFileURL
-        self.memoryFileURL = memoryFileURL
         self.agentsManifestURL = agentsManifestURL
         self.settingsFileURL = settingsFileURL
         self.createdFilenames = createdFilenames
@@ -38,7 +35,6 @@ public struct ZenFileResult: Sendable {
 public enum ZenFileService {
     public static let requiredFilenames: [String] = [
         AgentsContextService.filename,
-        MemoryService.filename,
         AgentProfileStore.manifestFilename,
         AgentSettingsManifestStore.settingsFilename
     ]
@@ -69,17 +65,6 @@ public enum ZenFileService {
             preservedFilenames: &preservedFilenames
         )
 
-        let memoryService = MemoryService(fileManager: fileManager)
-        let memoryFileURL = memoryService.globalMemoryFileURL()
-        let hadMemoryFile = fileManager.fileExists(atPath: memoryFileURL.path)
-        let ensuredMemoryFileURL = try memoryService.ensureGlobalMemoryFileExists()
-        record(
-            filename: MemoryService.filename,
-            existedBefore: hadMemoryFile,
-            createdFilenames: &createdFilenames,
-            preservedFilenames: &preservedFilenames
-        )
-
         let agentsManifestURL = AgentProfileStore.agentsManifestURL(fileManager: fileManager)
         let hadAgentsManifest = fileManager.fileExists(atPath: agentsManifestURL.path)
         let ensuredAgentsManifestURL = try AgentProfileStore.ensureDefaultManifestExists(
@@ -100,7 +85,6 @@ public enum ZenFileService {
         return ZenFileResult(
             supportDirectoryURL: supportDirectoryURL,
             agentsFileURL: ensuredAgentsFileURL,
-            memoryFileURL: ensuredMemoryFileURL,
             agentsManifestURL: ensuredAgentsManifestURL,
             settingsFileURL: settingsFileURL,
             createdFilenames: createdFilenames,
@@ -140,7 +124,6 @@ public enum ZenFileService {
         return ZenFileResult(
             supportDirectoryURL: baseResult.supportDirectoryURL,
             agentsFileURL: baseResult.agentsFileURL,
-            memoryFileURL: baseResult.memoryFileURL,
             agentsManifestURL: baseResult.agentsManifestURL,
             settingsFileURL: baseResult.settingsFileURL,
             createdFilenames: createdFilenames,

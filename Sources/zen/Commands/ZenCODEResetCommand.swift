@@ -12,7 +12,7 @@ enum ZenCODEResetConfigurationCommand {
     static func run(fileManager: FileManager = .default) throws {
         let fileURLs = uniqueURLs([
             AgentsContextService(fileManager: fileManager).globalAgentsFileURL(),
-            MemoryService(fileManager: fileManager).globalMemoryFileURL(),
+            SavedSessionsStore(fileManager: fileManager).sessionsFileURL(),
             AgentProfileStore.agentsManifestURL(fileManager: fileManager),
             AgentSettingsManifestStore.settingsURL(fileManager: fileManager),
             AgentPermissionsManifestStore.permissionsURL(fileManager: fileManager)
