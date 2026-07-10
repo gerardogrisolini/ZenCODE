@@ -82,6 +82,17 @@ struct TerminalSwiftMarkdownRendererTests {
     }
 
     @Test
+    func inlineHTMLCommentIsHiddenWithoutDroppingFollowingStrongText() {
+        var renderer = TerminalSwiftMarkdownRenderer()
+        let document = Document(parsing: "<!-- -->**Planning improved messaging**")
+
+        let rendered = renderer.visit(document)
+
+        #expect(!rendered.contains("<!-- -->"))
+        #expect(rendered.contains("\u{1B}[1mPlanning improved messaging\u{1B}[0m"))
+    }
+
+    @Test
     func htmlBlockIsRenderedInsteadOfDropped() {
         var renderer = TerminalSwiftMarkdownRenderer()
         let document = Document(parsing: """
@@ -95,6 +106,14 @@ struct TerminalSwiftMarkdownRendererTests {
         #expect(rendered.contains("<div>"))
         #expect(rendered.contains("raw"))
         #expect(rendered.contains("</div>"))
+    }
+
+    @Test
+    func htmlCommentBlockIsHidden() {
+        var renderer = TerminalSwiftMarkdownRenderer()
+        let document = Document(parsing: "<!-- internal note -->")
+
+        #expect(renderer.visit(document).isEmpty)
     }
 
     @Test

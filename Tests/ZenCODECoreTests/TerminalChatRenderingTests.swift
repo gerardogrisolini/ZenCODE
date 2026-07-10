@@ -185,6 +185,43 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func thinkingFormatterHidesGPTReasoningSummaryComments() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false,
+            removesUnbalancedStrongMarkers: true
+        )
+
+        let rendered = formatter.consume("""
+        Improving activePlan whitespace handling
+
+        <!--
+        """) + formatter.consume("""
+         -->**Planning improved plan approval messaging**
+
+        <!-- -->**Adding plan recording status flag**
+        """) + formatter.finish()
+
+        #expect(!rendered.contains("<!-- -->"))
+        #expect(rendered.contains("\u{1B}[1mPlanning improved plan approval messaging\u{1B}[0m"))
+        #expect(rendered.contains("\u{1B}[1mAdding plan recording status flag\u{1B}[0m"))
+    }
+
+    @Test
+    func markdownFormatterHidesStandaloneHTMLComment() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        let rendered = formatter.consume("<!-- internal note -->\n") + formatter.finish()
+
+        #expect(!rendered.contains("<!-- internal note -->"))
+    }
+
+    @Test
     func applyPatchCompactRenderingShowsPatchFileOnSeparateLine() {
         let patch = """
         *** Begin Patch

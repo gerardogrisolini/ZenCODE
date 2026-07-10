@@ -135,6 +135,7 @@ Inside chat mode, type a prompt and press return. Commands start with `/`:
 - `/undo`: revert the most recent tracked file changes created by the agent.
 - `/plan <goal>`: delegate planning for an explicit goal to one or more read-only `Planner` sub-agents. A successful result becomes the unapproved active session plan. Use `/plan approve` to make it a `/review` criterion or `/plan clear` to remove it. With no goal, the command reports the missing goal and does not create sub-agents.
   This command requires the `sub-agents` tool group; enable it with `/tools` or switch to a profile that includes it.
+- `/plan status`: show the active plan in a table with the status of every structured point. It does not create sub-agents. Approved-plan points are synchronized from successful `todo.write` progress updates during implementation, and the completed table is shown automatically when every point reaches `completed`.
 - `/review [focus]`: delegate code review to one or more read-only `Reviewer` sub-agents. The command reviews tracked session changes and, when present, verifies the active approved plan against current implicated files. An approved plan also enables coverage-only review when no tracked change summary is available.
   This command requires the `sub-agents` tool group; enable it with `/tools` or switch to a profile that includes it.
 - Delegated sub-agent status is shown automatically in the chat flow while `/plan`, `/review`, or `agent.*` tool calls create and update sub-agents.
@@ -179,7 +180,7 @@ Use `/plan` from a normal implementation session when you want a planning pass b
 
 `/plan` requires the goal as an argument; run `/plan <goal>` rather than a bare `/plan`.
 
-`/plan` keeps the current agent profile as the planning director and creates `Planner` sub-agents through sub-agent tools. The delegated planners run with `isolationMode "report"` and a read-only planning tool allowlist, so they can inspect but must not modify the workspace. After the planners finish, the director consolidates their output into one actionable plan for the loop `/plan <goal> -> /plan approve -> implementation -> /review`.
+`/plan` keeps the current agent profile as the planning director and creates `Planner` sub-agents through sub-agent tools. The delegated planners run with `isolationMode "report"` and a read-only planning tool allowlist, so they can inspect but must not modify the workspace. After the planners finish, the director consolidates their output into one actionable plan and records its ordered points with stable IDs. Use `/plan status` to inspect `pending`, `in_progress`, `completed`, or `blocked` progress during the loop `/plan <goal> -> /plan approve -> implementation -> /review`.
 
 See the [Planner agent guide](planner.md) for details.
 

@@ -25,6 +25,7 @@ The built-in `/plan` read-only tool set includes local read/list tools, text uti
 
 ```text
 /plan <goal>
+/plan status
 /plan approve
 /plan clear
 ```
@@ -57,7 +58,7 @@ When `/plan` runs:
 4. Planners run in parallel when the planning surface can be partitioned by module, concern, risk, or validation area.
 5. The director waits for the Planners, consolidates overlapping recommendations, and returns one actionable plan.
 6. The director does not edit files as part of the planning turn.
-7. The consolidated plan becomes the active, unapproved session plan. A later successful `/plan <goal>` replaces it and requires approval again.
+7. The director records the ordered actionable points with stable IDs and `pending` status; the consolidated plan becomes the active, unapproved session plan. A later successful `/plan <goal>` replaces it and requires approval again.
 
 ## Planner Profile
 
@@ -79,7 +80,11 @@ Setup can create a built-in `Planner` profile in `~/.zencode/agents.json`. The d
    /plan approve
    ```
 
-   Use `/plan clear` when the active plan is no longer relevant. The active plan, including its approval state, is preserved by save/load; a new session or agent switch clears it.
+   Use `/plan status` at any time to show the active plan as a table with one status per point. This command is local and does not require the `sub-agents` tool group.
+
+   During implementation, ZenCODE makes the session todo progress tool available for the approved plan and asks the model to update each stable plan ID to `in_progress`, `completed`, or `blocked`. Successful updates are copied into the persisted plan state. When every point becomes `completed`, the TUI prints the completed status table automatically. Status is not inferred from free-form response text or from the presence of a diff.
+
+   Use `/plan clear` when the active plan is no longer relevant. The active plan, including its approval and point status, is preserved by save/load; a new session or agent switch clears it. Plans saved before structured status support remain loadable and are shown as legacy plans without tracked points.
 3. Use the consolidated plan to implement the work with the normal `Default`, `Xcode`, or other implementation profile.
 4. Validate with the planned build, test, lint, or diagnostic commands.
 5. Run a read-only review of the tracked session changes and approved-plan coverage:

@@ -34,10 +34,14 @@ extension TerminalChat {
     }
 
     public func currentSessionConfiguration(
-        allowedToolNames: Set<String>
+        allowedToolNames: Set<String>,
+        includesActivePlanProgress: Bool = true
     ) -> AgentCoreSessionConfiguration {
-        let systemPrompt = activeSessionSystemPromptOverride
+        let baseSystemPrompt = activeSessionSystemPromptOverride
             ?? currentSystemPrompt(allowedToolNames: allowedToolNames)
+        let systemPrompt = includesActivePlanProgress
+            ? systemPromptWithActivePlanProgress(baseSystemPrompt)
+            : baseSystemPrompt
         return AgentCoreSessionConfiguration(
             sessionID: sessionID,
             modelID: currentEffectiveModelID(),
@@ -67,6 +71,38 @@ extension TerminalChat {
                 skills: selectedPromptSkills()
             ),
             responseLanguageSection: responseLanguageSystemPromptSection()
+        )
+    }
+
+    func systemPromptWithActivePlanProgress(_ baseSystemPrompt: String?) -> String? {
+        guard let plan = activePlan,
+              plan.isApproved,
+              !plan.isCompleted,
+              !plan.points.isEmpty else {
+            return baseSystemPrompt
+        }
+        let pointList = plan.points.map { point in
+            "- \(point.id) [\(point.status.rawValue)]: \(point.text)"
+        }.joined(separator: "\n")
+        let progressSection = """
+
+            Active approved plan progress:
+            Goal: \(plan.originalGoal)
+            \(pointList)
+
+            Keep this plan status synchronized while implementing it. Before starting a \
+            pending point, call todo.write with mode "upsert", its exact ID and content, and \
+            status "in_progress". After verifying that point, update it to "completed"; use \
+            "blocked" only when work cannot proceed. Never mark a point completed before its \
+            relevant validation succeeds. Do not replace the list or change the plan IDs.
+            """
+        guard let baseSystemPrompt = baseSystemPrompt?.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ), !baseSystemPrompt.isEmpty else {
+            return progressSection.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return baseSystemPrompt + "\n\n" + progressSection.trimmingCharacters(
+            in: .whitespacesAndNewlines
         )
     }
 

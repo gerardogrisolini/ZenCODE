@@ -400,6 +400,7 @@ public struct TerminalMarkdownStreamFormatter {
         if trimmed.hasPrefix("#")
             || trimmed.hasPrefix(">")
             || trimmed.hasPrefix("```")
+            || trimmed.hasPrefix("<!--")
             || trimmed.hasPrefix("---")
             || trimmed.hasPrefix("***")
             || trimmed.hasPrefix("___")

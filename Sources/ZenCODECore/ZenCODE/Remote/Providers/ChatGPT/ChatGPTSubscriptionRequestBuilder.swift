@@ -174,7 +174,7 @@ public enum ChatGPTSubscriptionRequestBuilder {
            normalizedReasoningEffort != "none" {
             body["reasoning"] = [
                 "effort": normalizedReasoningEffort,
-                "summary": "auto"
+                "summary": "detailed"
             ]
         }
 

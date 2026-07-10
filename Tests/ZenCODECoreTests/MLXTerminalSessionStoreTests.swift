@@ -50,7 +50,19 @@ struct MLXTerminalSessionStoreTests {
             originalGoal: "Persist plan state",
             consolidatedText: "Update the session snapshot and tests.",
             createdAt: Date(timeIntervalSince1970: 30),
-            isApproved: true
+            isApproved: true,
+            points: [
+                TerminalSessionPlanPoint(
+                    id: "plan-1",
+                    text: "Update snapshot",
+                    status: .completed
+                ),
+                TerminalSessionPlanPoint(
+                    id: "plan-2",
+                    text: "Run tests",
+                    status: .inProgress
+                ),
+            ]
         )
         let session = sampleSession(
             name: "planned work",
@@ -65,6 +77,38 @@ struct MLXTerminalSessionStoreTests {
         let loaded = try TerminalSessionStore.load(from: fileURL)
 
         #expect(loaded.activePlan == plan)
+    }
+
+    @Test
+    func decodesLegacyPlanWithoutStructuredPoints() throws {
+        let legacyPropertyList: [String: Any] = [
+            "version": TerminalSavedSession.currentVersion,
+            "name": "legacy plan",
+            "sessionID": "terminal-legacy-plan",
+            "workingDirectoryPath": "/tmp/legacy-project",
+            "createdAt": Date(timeIntervalSince1970: 10),
+            "savedAt": Date(timeIntervalSince1970: 20),
+            "selectedTools": [],
+            "selectedSkillIDs": [],
+            "history": [],
+            "activePlan": [
+                "originalGoal": "Legacy goal",
+                "consolidatedText": "Legacy consolidated plan",
+                "createdAt": Date(timeIntervalSince1970: 15),
+                "isApproved": true,
+            ],
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: legacyPropertyList,
+            format: .binary,
+            options: 0
+        )
+
+        let decoded = try PropertyListDecoder().decode(TerminalSavedSession.self, from: data)
+
+        #expect(decoded.activePlan?.originalGoal == "Legacy goal")
+        #expect(decoded.activePlan?.points == [])
+        #expect(decoded.activePlan?.isApproved == true)
     }
 
     @Test

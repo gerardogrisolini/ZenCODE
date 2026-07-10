@@ -283,6 +283,27 @@ extension TerminalChat {
         )
     }
 
+    /// Renders a complete, non-streaming Markdown block through the same
+    /// terminal formatter used for assistant responses. A dedicated formatter
+    /// keeps command output from sharing buffered streaming state.
+    func writeMarkdownMessage(_ markdown: String) {
+        guard !markdown.isEmpty else {
+            return
+        }
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: AgentOutput.standardOutputIsTerminal
+        )
+        let rendered = formatter.consume(markdown) + formatter.finish()
+        guard !rendered.isEmpty else {
+            return
+        }
+        writeChatOutput(rendered, preservesSpacing: true)
+        if trailingChatNewlineCount == 0 {
+            writeChatOutput("\n")
+        }
+        flushChatOutput()
+    }
+
     func writeFileChangeSummaryMessage(_ text: String) {
         writeChatError(
             Self.fileChangeSummaryColorApplied(

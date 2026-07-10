@@ -220,11 +220,32 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     }
 
     mutating func visitInlineHTML(_ inlineHTML: InlineHTML) -> String {
-        "\(Self.code)\(inlineHTML.rawHTML)\(Self.reset)"
+        guard !Self.isHTMLComment(inlineHTML.rawHTML) else {
+            return ""
+        }
+        return "\(Self.code)\(inlineHTML.rawHTML)\(Self.reset)"
     }
 
     mutating func visitHTMLBlock(_ htmlBlock: HTMLBlock) -> String {
-        "\(Self.dim)\(htmlBlock.rawHTML)\(Self.reset)"
+        if let trailingMarkdown = Self.contentAfterLeadingHTMLComment(htmlBlock.rawHTML) {
+            guard !trailingMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return ""
+            }
+            return visit(Document(parsing: trailingMarkdown))
+        }
+        return "\(Self.dim)\(htmlBlock.rawHTML)\(Self.reset)"
+    }
+
+    private static func isHTMLComment(_ rawHTML: String) -> Bool {
+        rawHTML.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<!--")
+    }
+
+    private static func contentAfterLeadingHTMLComment(_ rawHTML: String) -> String? {
+        guard isHTMLComment(rawHTML),
+              let commentEnd = rawHTML.range(of: "-->") else {
+            return nil
+        }
+        return String(rawHTML[commentEnd.upperBound...])
     }
 
     mutating func visitTable(_ table: Table) -> String {

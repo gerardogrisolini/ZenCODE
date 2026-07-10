@@ -15,6 +15,7 @@ extension TerminalChat {
     func generateResponse(
         attempt: TerminalPromptAttempt
     ) async throws -> TerminalChatGenerationSuccess {
+        let planPointCollector = TerminalPlanPointCollector()
         if attempt.locksResponseLanguage {
             lockResponseLanguageIfNeeded(from: attempt.prompt)
         }
@@ -35,8 +36,31 @@ extension TerminalChat {
             )
         }
         do {
+            var sessionConfiguration = await currentSessionConfiguration()
+            if case .plan = attempt.purpose {
+                var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
+                allowedToolNames.insert("todo.write")
+                sessionConfiguration = currentSessionConfiguration(
+                    allowedToolNames: allowedToolNames,
+                    includesActivePlanProgress: false
+                )
+            } else if case .normal = attempt.purpose,
+                      let activePlan,
+                      activePlan.isApproved,
+                      !activePlan.isCompleted {
+                var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
+                allowedToolNames.insert("todo.write")
+                sessionConfiguration = currentSessionConfiguration(
+                    allowedToolNames: allowedToolNames
+                )
+            } else if case .review = attempt.purpose {
+                sessionConfiguration = currentSessionConfiguration(
+                    allowedToolNames: sessionConfiguration.allowedToolNames ?? [],
+                    includesActivePlanProgress: false
+                )
+            }
             let response = try await sessionRunner.sendPrompt(
-                configuration: await currentSessionConfiguration(),
+                configuration: sessionConfiguration,
                 prompt: attempt.prompt,
                 attachments: attempt.attachments,
                 authorizeTool: telegramToolAuthorizationHandler(for: attempt.origin),
@@ -93,6 +117,25 @@ extension TerminalChat {
                         self.finishThoughtOutputIfNeeded()
                         self.finishAssistantContentFormatting()
                         self.writeToolCallCompleted(toolCall, result: result)
+                        if !result.isFailure,
+                           let update = Self.planPointUpdates(from: toolCall) {
+                            switch attempt.purpose {
+                            case .plan:
+                                await planPointCollector.apply(
+                                    update.points,
+                                    mode: update.mode
+                                )
+                            case .normal:
+                                if self.synchronizeActivePlanStatus(
+                                    from: toolCall,
+                                    result: result
+                                ), let plan = self.activePlan {
+                                    await planPointCollector.recordAutomaticCompletion(plan)
+                                }
+                            case .review:
+                                break
+                            }
+                        }
                         if Self.isFileMutationTool(toolCall.name) {
                             self.refreshStatusBarGitStatusSummaryForFileMutation()
                         }
@@ -121,12 +164,14 @@ extension TerminalChat {
             await telegramProgressReporter?.flush()
             recordPlanIfNeeded(
                 responseText: response.text,
-                purpose: attempt.purpose
+                purpose: attempt.purpose,
+                points: await planPointCollector.snapshot()
             )
             return TerminalChatGenerationSuccess(
                 response: response,
                 origin: attempt.origin,
-                fileChangeSummary: fileChangeSummary
+                fileChangeSummary: fileChangeSummary,
+                automaticallyCompletedPlan: await planPointCollector.automaticallyCompletedPlan()
             )
         } catch {
             activeSessionTranscript.append(contentsOf: await transcriptTurn.messages())
@@ -150,7 +195,8 @@ extension TerminalChat {
     func recordPlanIfNeeded(
         responseText: String,
         purpose: TerminalPromptPurpose,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        points: [TerminalSessionPlanPoint] = []
     ) -> Bool {
         guard case let .plan(originalGoal) = purpose else {
             return false
@@ -163,7 +209,8 @@ extension TerminalChat {
             originalGoal: originalGoal,
             consolidatedText: consolidatedText,
             createdAt: createdAt,
-            isApproved: false
+            isApproved: false,
+            points: points
         )
         return true
     }
@@ -183,6 +230,9 @@ extension TerminalChat {
             writeChatOutput("\n")
             if let summary = success.fileChangeSummary {
                 writeFileChangeSummary(summary, includeDiff: false)
+            }
+            if let plan = success.automaticallyCompletedPlan {
+                writeMarkdownMessage(Self.planStatusTable(for: plan))
             }
             await sendTelegramCompletionIfLinked(completionText, origin: success.origin)
         case let .failure(failure):

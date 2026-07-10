@@ -105,7 +105,7 @@ ZENCODE_BUILD_DS4=1 ZENCODE_DS4_ROOT=/path/to/ds4 swift build -c release --produ
 /open        Open a referenced file, URL, or attachment
 /changes     Review the latest tracked file changes
 /undo        Revert the latest tracked agent changes
-/plan        Create, approve, or clear a delegated session plan
+/plan        Create, approve, inspect, or clear a delegated session plan
 /review      Review tracked changes and approved-plan coverage
 /feature     List, enable, disable, create, and manage Swift features with the Builder agent
 /telegram    Turn Telegram remote control on/off when paired in setup

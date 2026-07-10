@@ -48,6 +48,14 @@ extension TerminalChat {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         switch argument.lowercased() {
+        case "status":
+            writeSubmittedPrompt(command)
+            guard let activePlan else {
+                writeSystemMessage("No active plan.\n")
+                return .continueChat
+            }
+            writeMarkdownMessage(Self.planStatusTable(for: activePlan))
+            return .continueChat
         case "approve":
             writeSubmittedPrompt(command)
             guard var plan = activePlan,
@@ -112,6 +120,119 @@ extension TerminalChat {
     static let planUnavailableForApprovalMessage =
         "ZenCODE: no completed plan is available to approve. "
         + "Run /plan <goal> and wait for it to finish successfully.\n"
+
+    static func planStatusTable(for plan: TerminalSessionPlan) -> String {
+        let overallStatus: String
+        if plan.isCompleted {
+            overallStatus = "completed"
+        } else if plan.points.contains(where: { $0.status == .blocked }) {
+            overallStatus = "blocked"
+        } else if plan.points.contains(where: { $0.status == .inProgress }) {
+            overallStatus = "in_progress"
+        } else if plan.isApproved {
+            overallStatus = "pending"
+        } else {
+            overallStatus = "awaiting_approval"
+        }
+
+        var lines = [
+            "## Plan status",
+            "",
+            "**Goal:** \(plan.originalGoal)",
+            "",
+            "**Overall status:** `\(overallStatus)`",
+            "",
+            "| # | Plan item | Status |",
+            "|---:|---|---|",
+        ]
+        if plan.points.isEmpty {
+            lines.append("| 1 | Legacy plan without structured items | `not_tracked` |")
+        } else {
+            lines.append(contentsOf: plan.points.enumerated().map { index, point in
+                "| \(index + 1) | \(escapedPlanTableCell(point.text)) | `\(point.status.rawValue)` |"
+            })
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    static func planPointUpdates(
+        from toolCall: DirectAgentToolCall
+    ) -> (points: [TerminalSessionPlanPoint], mode: DirectTodoTaskRuntime.TodoWriteMode)? {
+        let request = DirectTodoTaskRuntime.normalizedToolRequest(for: toolCall)
+        guard request.name == "todo.write",
+              let todos = try? DirectTodoTaskRuntime.requestedTodos(from: request.arguments) else {
+            return nil
+        }
+        let points = todos.compactMap { todo -> TerminalSessionPlanPoint? in
+            let id = todo.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = todo.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard id.hasPrefix("plan-"), !text.isEmpty else {
+                return nil
+            }
+            let status: TerminalSessionPlanPointStatus
+            switch todo.status {
+            case .pending:
+                status = .pending
+            case .inProgress:
+                status = .inProgress
+            case .completed:
+                status = .completed
+            case .blocked:
+                status = .blocked
+            }
+            return TerminalSessionPlanPoint(id: id, text: text, status: status)
+        }
+        guard !points.isEmpty else {
+            return nil
+        }
+        return (
+            points,
+            DirectTodoTaskRuntime.TodoWriteMode(
+                rawValue: DirectTodoTaskRuntime.firstString(["mode"], in: request.arguments)
+            )
+        )
+    }
+
+    @discardableResult
+    func synchronizeActivePlanStatus(
+        from toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult
+    ) -> Bool {
+        guard !result.isFailure,
+              var plan = activePlan,
+              plan.isApproved,
+              !plan.points.isEmpty,
+              let update = Self.planPointUpdates(from: toolCall) else {
+            return false
+        }
+        let wasCompleted = plan.isCompleted
+        let updatesByID = Dictionary(
+            update.points.map { ($0.id, $0.status) },
+            uniquingKeysWith: { _, latest in latest }
+        )
+        var didChange = false
+        for index in plan.points.indices {
+            guard let status = updatesByID[plan.points[index].id],
+                  plan.points[index].status != status else {
+                continue
+            }
+            plan.points[index].status = status
+            didChange = true
+        }
+        guard didChange else {
+            return false
+        }
+        activePlan = plan
+        return !wasCompleted && plan.isCompleted
+    }
+
+    private static func escapedPlanTableCell(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "|", with: "\\|")
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+    }
 
     /// Resolves the Planner profile used to configure delegated sub-agents.
     /// Prefers a user-configured "Planner" profile from agents.json and falls
@@ -187,6 +308,12 @@ extension TerminalChat {
             - Wait for the Planners to finish with agent.wait.
             - Read and consolidate their plans into one actionable plan, removing \
             duplicates and resolving conflicts.
+            - Before the final response, call todo.write once with mode "upsert" and one \
+            item for every actionable implementation point in the consolidated plan. Use \
+            a fresh short token shared by this plan and stable IDs "plan-<token>-1", \
+            "plan-<token>-2", and so on. Preserve execution order, keep each content field \
+            concise, and set every status to "pending". Do not include risks, \
+            background notes, open questions, or validation summaries as separate items.
             - The final plan must support this workflow loop: /plan <goal> -> /plan approve \
             -> implementation work -> /review -> corrections until the work is complete.
             - Do not edit any files yourself in this planning turn. Present the plan, the \
@@ -195,5 +322,46 @@ extension TerminalChat {
             the system prompt. Do not answer in English just because this internal planning \
             prompt is written in English.
             """
+    }
+}
+
+actor TerminalPlanPointCollector {
+    private var points: [TerminalSessionPlanPoint] = []
+    private var completedPlan: TerminalSessionPlan?
+
+    func apply(
+        _ updates: [TerminalSessionPlanPoint],
+        mode: DirectTodoTaskRuntime.TodoWriteMode
+    ) {
+        switch mode {
+        case .replace:
+            points = updates
+        case .append:
+            points.append(contentsOf: updates)
+        case .upsert:
+            var pointsByID = Dictionary(
+                points.map { ($0.id, $0) },
+                uniquingKeysWith: { current, _ in current }
+            )
+            for point in updates {
+                pointsByID[point.id] = point
+            }
+            points = DirectTodoTaskRuntime.orderedValues(
+                from: pointsByID,
+                preserving: points.map(\.id) + updates.map(\.id)
+            )
+        }
+    }
+
+    func snapshot() -> [TerminalSessionPlanPoint] {
+        points
+    }
+
+    func recordAutomaticCompletion(_ plan: TerminalSessionPlan) {
+        completedPlan = plan
+    }
+
+    func automaticallyCompletedPlan() -> TerminalSessionPlan? {
+        completedPlan
     }
 }

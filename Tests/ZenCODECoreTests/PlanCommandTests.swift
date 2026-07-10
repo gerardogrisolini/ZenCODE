@@ -46,9 +46,62 @@ struct PlanCommandTests {
 
         #expect(descriptor.requiresArgument)
         #expect(descriptor.help.contains("/plan <goal>"))
+        #expect(descriptor.help.contains("/plan status"))
         #expect(descriptor.help.contains("/plan approve"))
         #expect(descriptor.help.contains("/plan clear"))
         #expect(!descriptor.help.contains("/plan [goal]"))
+    }
+
+    @Test
+    func planStatusRendersStructuredItemsWithoutDelegation() throws {
+        let terminal = try makeTerminal()
+        terminal.selectedToolKeys.remove("sub-agents")
+        let plan = TerminalSessionPlan(
+            originalGoal: "Track implementation",
+            consolidatedText: "Implement and validate.",
+            isApproved: true,
+            points: [
+                TerminalSessionPlanPoint(
+                    id: "plan-1",
+                    text: "Implement | command",
+                    status: .completed
+                ),
+                TerminalSessionPlanPoint(
+                    id: "plan-2",
+                    text: "Run tests",
+                    status: .inProgress
+                ),
+            ]
+        )
+        terminal.activePlan = plan
+
+        #expect(isContinueChat(terminal.handlePlanCommand("/plan STATUS")))
+        #expect(terminal.activePlan == plan)
+
+        let table = TerminalChat.planStatusTable(for: plan)
+        #expect(table.contains("| # | Plan item | Status |"))
+        #expect(table.contains("| 1 | Implement \\| command | `completed` |"))
+        #expect(table.contains("| 2 | Run tests | `in_progress` |"))
+        #expect(table.contains("**Overall status:** `in_progress`"))
+
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 100,
+            supportsHyperlinks: false
+        )
+        let rendered = formatter.consume(table) + formatter.finish()
+        #expect(!rendered.contains("|---:"))
+        #expect(rendered.contains("Plan item"))
+        #expect(rendered.contains("in_progress"))
+    }
+
+    @Test
+    func planStatusWithoutActivePlanDoesNotRequireSubAgents() throws {
+        let terminal = try makeTerminal()
+        terminal.selectedToolKeys.remove("sub-agents")
+
+        #expect(isContinueChat(terminal.handlePlanCommand("/plan status")))
+        #expect(terminal.activePlan == nil)
     }
 
     @Test
@@ -118,13 +171,19 @@ struct PlanCommandTests {
         #expect(terminal.recordPlanIfNeeded(
             responseText: "  First consolidated plan  ",
             purpose: .plan(originalGoal: " first goal "),
-            createdAt: firstDate
+            createdAt: firstDate,
+            points: [
+                TerminalSessionPlanPoint(id: "plan-1", text: "First item")
+            ]
         ))
         #expect(terminal.activePlan == TerminalSessionPlan(
             originalGoal: "first goal",
             consolidatedText: "First consolidated plan",
             createdAt: firstDate,
-            isApproved: false
+            isApproved: false,
+            points: [
+                TerminalSessionPlanPoint(id: "plan-1", text: "First item")
+            ]
         ))
 
         _ = terminal.handlePlanCommand("/plan approve")
@@ -139,6 +198,87 @@ struct PlanCommandTests {
         #expect(terminal.activePlan?.consolidatedText == "Second consolidated plan")
         #expect(terminal.activePlan?.createdAt == secondDate)
         #expect(terminal.activePlan?.isApproved == false)
+    }
+
+    @Test
+    func successfulTodoWritesSynchronizeApprovedPlanAndDetectCompletion() throws {
+        let terminal = try makeTerminal()
+        terminal.activePlan = TerminalSessionPlan(
+            originalGoal: "Implement status tracking",
+            consolidatedText: "Two steps",
+            isApproved: true,
+            points: [
+                TerminalSessionPlanPoint(id: "plan-1", text: "Implement command"),
+                TerminalSessionPlanPoint(id: "plan-2", text: "Run tests"),
+            ]
+        )
+        let result = DirectAgentToolResult(
+            output: "updated",
+            summary: "updated"
+        )
+
+        #expect(!terminal.synchronizeActivePlanStatus(
+            from: todoWriteCall(items: [
+                ("plan-1", "Implement command", "in_progress")
+            ]),
+            result: result
+        ))
+        #expect(terminal.activePlan?.points.map(\.status) == [.inProgress, .pending])
+
+        #expect(terminal.synchronizeActivePlanStatus(
+            from: todoWriteCall(items: [
+                ("plan-1", "Implement command", "completed"),
+                ("plan-2", "Run tests", "completed"),
+            ]),
+            result: result
+        ))
+        #expect(terminal.activePlan?.isCompleted == true)
+        #expect(TerminalChat.planStatusTable(for: try #require(terminal.activePlan))
+            .contains("**Overall status:** `completed`"))
+    }
+
+    @Test
+    func failedOrUnrelatedTodoWritesDoNotChangePlanStatus() throws {
+        let terminal = try makeTerminal()
+        let plan = TerminalSessionPlan(
+            originalGoal: "Keep status stable",
+            consolidatedText: "One step",
+            isApproved: true,
+            points: [TerminalSessionPlanPoint(id: "plan-1", text: "Step")]
+        )
+        terminal.activePlan = plan
+
+        #expect(!terminal.synchronizeActivePlanStatus(
+            from: todoWriteCall(items: [("plan-1", "Step", "completed")]),
+            result: DirectAgentToolResult(
+                output: "Tool error: failed",
+                summary: "failed",
+                status: .failed
+            )
+        ))
+        #expect(!terminal.synchronizeActivePlanStatus(
+            from: todoWriteCall(items: [("other", "Unrelated", "completed")]),
+            result: DirectAgentToolResult(output: "updated", summary: "updated")
+        ))
+        #expect(terminal.activePlan == plan)
+    }
+
+    @Test
+    func approvedPlanAddsProgressInstructionsToSystemPrompt() throws {
+        let terminal = try makeTerminal()
+        terminal.activePlan = TerminalSessionPlan(
+            originalGoal: "Track plan",
+            consolidatedText: "One step",
+            isApproved: true,
+            points: [TerminalSessionPlanPoint(id: "plan-1", text: "Implement")]
+        )
+
+        let prompt = try #require(terminal.systemPromptWithActivePlanProgress("Base prompt"))
+
+        #expect(prompt.contains("Active approved plan progress:"))
+        #expect(prompt.contains("plan-1 [pending]: Implement"))
+        #expect(prompt.contains("todo.write"))
+        #expect(prompt.contains("update it to \"completed\""))
     }
 
     @Test
@@ -278,6 +418,8 @@ struct PlanCommandTests {
         #expect(prompt.contains("isolationMode \"report\""))
         #expect(prompt.contains("toolNames:"))
         #expect(prompt.contains("agent.wait"))
+        #expect(prompt.contains("call todo.write once with mode \"upsert\""))
+        #expect(prompt.contains("stable IDs \"plan-<token>-1\""))
         #expect(prompt.contains("/plan <goal> -> /plan approve"))
         #expect(prompt.contains("implementation work -> /review"))
         #expect(prompt.contains("Do not edit any files yourself in this planning turn"))
@@ -307,5 +449,25 @@ struct PlanCommandTests {
             return true
         }
         return false
+    }
+
+    private func todoWriteCall(
+        items: [(id: String, content: String, status: String)]
+    ) -> DirectAgentToolCall {
+        DirectAgentToolCall(
+            id: "todo-write",
+            name: "todo.write",
+            argumentsObject: [
+                "mode": "upsert",
+                "todos": items.map { item in
+                    [
+                        "id": item.id,
+                        "content": item.content,
+                        "status": item.status,
+                    ]
+                },
+            ],
+            argumentsJSON: "{}"
+        )
     }
 }
