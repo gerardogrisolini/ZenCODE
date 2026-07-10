@@ -19,7 +19,11 @@ extension TerminalChat {
     func prepareForToolOutput() {
         flushChatOutput()
         if AgentOutput.standardErrorIsTerminal {
-            writeChatError("\n")
+            // A single newline only terminates an assistant response that was
+            // streamed without a trailing newline. Emit two so there is always
+            // one blank row before the tool; chat spacing normalization retains
+            // the same result when the preceding output already ended in one.
+            writeChatError("\n\n")
         }
     }
 

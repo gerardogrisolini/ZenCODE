@@ -60,7 +60,7 @@ struct ThinkingConfigurationTests {
         let terra = try #require(CodexAgentModel.availableModels.first { $0.modelID == "gpt-5.6-terra" })
         let luna = try #require(CodexAgentModel.availableModels.first { $0.modelID == "gpt-5.6-luna" })
 
-        #expect(CodexAgentModel.defaultModelID == "gpt-5.6-sol")
+        #expect(CodexAgentModel.defaultModelID == "gpt-5.6-terra")
         #expect(sol.contextWindowTokenLimit == 353_400)
         #expect(sol.thinkingSupport.availableSelections == [.off, .low, .medium, .high, .xhigh, .max, .ultra])
         #expect(sol.thinkingSupport.defaultSelection == .low)

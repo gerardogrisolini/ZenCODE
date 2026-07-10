@@ -70,6 +70,23 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func toolOutputSpacingLeavesABlankRowAfterUnterminatedAssistantContent() {
+        var trailingNewlineCount = 0
+        TerminalChat.updateTrailingNewlineCount(
+            afterPreserving: "Risposta del modello.",
+            trailingNewlineCount: &trailingNewlineCount
+        )
+
+        let separator = TerminalChat.chatSpacingNormalized(
+            "\n\n",
+            trailingNewlineCount: &trailingNewlineCount
+        )
+
+        #expect("Risposta del modello.\(separator)🛠️ tool" == "Risposta del modello.\n\n🛠️ tool")
+        #expect(trailingNewlineCount == 2)
+    }
+
+    @Test
     func boldSectionBreakSeparatesGluedSectionTitleAcrossDeltas() {
         var state = TerminalChatBoldBreakState()
 
@@ -654,9 +671,9 @@ struct TerminalChatRenderingTests {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { ansiStripped(String($0)) }
 
-        #expect(visibleLines.first == "👥 Sub-Agents")
-        #expect(!rendered.hasPrefix("\n"))
-        #expect(!rendered.hasSuffix("\n"))
+        #expect(visibleLines[1] == "👥 Sub-Agents")
+        #expect(rendered.hasPrefix("\n"))
+        #expect(rendered.hasSuffix("\n"))
         #expect(!rendered.contains("┌"))
         #expect(!rendered.contains("│"))
         #expect(!rendered.contains("└"))

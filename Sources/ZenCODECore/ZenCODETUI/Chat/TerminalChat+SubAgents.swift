@@ -358,7 +358,7 @@ extension TerminalChat {
                 output.append("\(linePrefix)\(prefix)\(wrappedLine)")
             }
         }
-        return output.joined(separator: "\n")
+        return "\n\(output.joined(separator: "\n"))\n"
     }
 
     private static func subAgentOverviewSignature(
