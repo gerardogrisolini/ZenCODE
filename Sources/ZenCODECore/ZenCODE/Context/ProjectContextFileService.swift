@@ -227,10 +227,6 @@ public struct ProjectContextFileService {
             ? rootURL.lastPathComponent
             : normalizedProjectName
         let inventory = projectInventory(at: rootURL, fileManager: fileManager)
-        let verificationGuidance = projectVerificationGuidance(
-            projectName: displayName,
-            inventory: inventory
-        )
 
         return """
         # AGENTS.md
@@ -238,41 +234,49 @@ public struct ProjectContextFileService {
         ## Project
 
         - Name: \(displayName)
-        - Root: \(rootURL.path)
-        \(projectKindLine(from: inventory))
+        \(projectSummaryLines(from: inventory))
 
-        ## Source Layout
+        ## Repository Map
 
-        \(sourceLayoutLines(from: inventory))
+        \(repositoryMapLines(from: inventory))
 
-        ## Modules
+        ## Navigation
 
-        \(moduleLines(from: inventory))
+        \(navigationGuidance(from: inventory))
 
-        ## Project Guidance
+        ## Build and Test
 
-        - Keep only durable project-specific facts, conventions, commands, caveats, and constraints here.
-        - Record architecture boundaries, important setup details, module ownership, and confirmed build or test workflows.
-        - Do not duplicate global operating rules, user preferences, generic coding workflow instructions, or temporary task status.
-        \(verificationGuidance)
-
-        ## Context Strategy
-
-        - Use this file to quickly re-enter the project after reopening the folder.
-        - Prefer facts confirmed by files, project metadata, Git history, build output, tests, or explicit user instructions.
-        - Keep cross-project behavior in the global AGENTS.md file.
+        \(projectVerificationGuidance(inventory: inventory))
         """
+    }
+
+    private struct SwiftPackageTarget: Hashable {
+        enum Kind: String, Hashable {
+            case regular = "target"
+            case executable = "executableTarget"
+            case test = "testTarget"
+        }
+
+        let name: String
+        let kind: Kind
     }
 
     private struct ProjectInventory {
         var topLevelDirectories: [String] = []
         var sourceDirectories: [String] = []
+        var sourceAreaDirectories: [String] = []
         var testDirectories: [String] = []
+        var testAreaDirectories: [String] = []
         var moduleDirectories: [String] = []
         var packageManifests: [String] = []
+        var swiftToolsVersion: String?
+        var swiftPackageTargets: [SwiftPackageTarget] = []
+        var swiftManifestUsesEnvironment = false
         var xcodeProjects: [String] = []
         var xcodeWorkspaces: [String] = []
         var sharedSchemes: [String] = []
+        var documentationPaths: [String] = []
+        var automationDirectories: [String] = []
     }
 
     private static func projectInventory(
@@ -285,7 +289,7 @@ public struct ProjectContextFileService {
         inventory.topLevelDirectories = rootEntries
             .filter { isDirectory($0, fileManager: fileManager) }
             .map(\.lastPathComponent)
-            .filter { !ignoredDirectoryNames.contains($0) }
+            .filter { !ignoredDirectoryNames.contains($0.lowercased()) }
             .sorted()
 
         inventory.xcodeProjects = rootEntries
@@ -320,6 +324,21 @@ public struct ProjectContextFileService {
             )
         }
 
+        let packageManifestURLs = inventory.packageManifests.map {
+            rootURL.appendingPathComponent($0)
+        }
+        let preferredManifestURL = packageManifestURLs.first {
+            $0.lastPathComponent == "Package.swift"
+                && $0.deletingLastPathComponent().standardizedFileURL == rootURL
+        } ?? packageManifestURLs.first
+        inventory.swiftToolsVersion = preferredManifestURL.flatMap(swiftToolsVersion)
+        inventory.swiftPackageTargets = Array(
+            Set(packageManifestURLs.flatMap(swiftPackageTargets))
+        ).sorted(by: swiftPackageTargetSort)
+        inventory.swiftManifestUsesEnvironment = packageManifestURLs.contains(
+            where: swiftManifestUsesEnvironment
+        )
+
         inventory.sourceDirectories = sourceDirectoryCandidates(
             rootURL: rootURL,
             topLevelDirectories: inventory.topLevelDirectories,
@@ -332,12 +351,29 @@ public struct ProjectContextFileService {
             moduleDirectories: inventory.moduleDirectories,
             fileManager: fileManager
         )
+        inventory.sourceAreaDirectories = childDirectoryPaths(
+            under: inventory.sourceDirectories,
+            rootURL: rootURL,
+            fileManager: fileManager
+        )
+        inventory.testAreaDirectories = childDirectoryPaths(
+            under: inventory.testDirectories,
+            rootURL: rootURL,
+            fileManager: fileManager
+        )
         inventory.sharedSchemes = sharedSchemeNames(
             rootURL: rootURL,
             xcodeProjects: inventory.xcodeProjects,
             xcodeWorkspaces: inventory.xcodeWorkspaces,
             fileManager: fileManager
         )
+        inventory.documentationPaths = documentationPaths(
+            rootEntries: rootEntries,
+            fileManager: fileManager
+        )
+        inventory.automationDirectories = inventory.topLevelDirectories
+            .filter { automationDirectoryNames.contains($0.lowercased()) }
+            .sorted()
 
         return inventory
     }
@@ -347,9 +383,27 @@ public struct ProjectContextFileService {
         ".git",
         ".swiftpm",
         "build",
-        "DerivedData",
+        "deriveddata",
         "node_modules",
-        "Pods"
+        "pods"
+    ]
+
+    private static let automationDirectoryNames: Set<String> = [
+        "automation",
+        "script",
+        "scripts"
+    ]
+
+    private static let documentationDirectoryNames: Set<String> = [
+        "doc",
+        "docs",
+        "documentation"
+    ]
+
+    private static let documentationFileNames: Set<String> = [
+        "architecture.md",
+        "contributing.md",
+        "readme.md"
     ]
 
     private static func directoryEntries(
@@ -370,6 +424,103 @@ public struct ProjectContextFileService {
         var isDirectory: ObjCBool = false
         return fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
             && isDirectory.boolValue
+    }
+
+    private static func swiftToolsVersion(at manifestURL: URL) -> String? {
+        guard let content = try? String(contentsOf: manifestURL, encoding: .utf8) else {
+            return nil
+        }
+        return firstRegularExpressionCapture(
+            pattern: "swift-tools-version\\s*:\\s*([0-9]+(?:\\.[0-9]+)*)",
+            in: content,
+            captureGroup: 1
+        )
+    }
+
+    private static func swiftManifestUsesEnvironment(at manifestURL: URL) -> Bool {
+        guard let content = try? String(contentsOf: manifestURL, encoding: .utf8) else {
+            return false
+        }
+        return content.contains("Context.environment")
+    }
+
+    private static func swiftPackageTargets(at manifestURL: URL) -> [SwiftPackageTarget] {
+        guard let content = try? String(contentsOf: manifestURL, encoding: .utf8),
+              let expression = try? NSRegularExpression(
+                pattern: "\\.(target|executableTarget|testTarget)\\s*\\(\\s*name\\s*:\\s*\"([^\"]+)\""
+              ) else {
+            return []
+        }
+
+        let range = NSRange(content.startIndex..<content.endIndex, in: content)
+        let targets = expression.matches(in: content, range: range).compactMap { match -> SwiftPackageTarget? in
+            guard let kindRange = Range(match.range(at: 1), in: content),
+                  let nameRange = Range(match.range(at: 2), in: content),
+                  let kind = SwiftPackageTarget.Kind(rawValue: String(content[kindRange])) else {
+                return nil
+            }
+            return SwiftPackageTarget(name: String(content[nameRange]), kind: kind)
+        }
+
+        return Array(Set(targets)).sorted(by: swiftPackageTargetSort)
+    }
+
+    private static func swiftPackageTargetSort(
+        _ lhs: SwiftPackageTarget,
+        _ rhs: SwiftPackageTarget
+    ) -> Bool {
+        if lhs.kind.rawValue != rhs.kind.rawValue {
+            return lhs.kind.rawValue < rhs.kind.rawValue
+        }
+        return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+    }
+
+    private static func firstRegularExpressionCapture(
+        pattern: String,
+        in content: String,
+        captureGroup: Int
+    ) -> String? {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+        let range = NSRange(content.startIndex..<content.endIndex, in: content)
+        guard let match = expression.firstMatch(in: content, range: range),
+              let captureRange = Range(match.range(at: captureGroup), in: content) else {
+            return nil
+        }
+        return String(content[captureRange])
+    }
+
+    private static func childDirectoryPaths(
+        under parentPaths: [String],
+        rootURL: URL,
+        fileManager: FileManager
+    ) -> [String] {
+        let paths = parentPaths.flatMap { parentPath in
+            directoryEntries(
+                at: rootURL.appendingPathComponent(parentPath),
+                fileManager: fileManager
+            )
+            .filter { isDirectory($0, fileManager: fileManager) }
+            .filter { !ignoredDirectoryNames.contains($0.lastPathComponent.lowercased()) }
+            .map { "\(parentPath)/\($0.lastPathComponent)" }
+        }
+        return Array(Set(paths)).sorted()
+    }
+
+    private static func documentationPaths(
+        rootEntries: [URL],
+        fileManager: FileManager
+    ) -> [String] {
+        rootEntries.compactMap { entry in
+            let name = entry.lastPathComponent
+            let normalizedName = name.lowercased()
+            if isDirectory(entry, fileManager: fileManager) {
+                return documentationDirectoryNames.contains(normalizedName) ? name : nil
+            }
+            return documentationFileNames.contains(normalizedName) ? name : nil
+        }
+        .sorted()
     }
 
     private static func sourceDirectoryCandidates(
@@ -439,7 +590,7 @@ public struct ProjectContextFileService {
         return Array(Set(schemes)).sorted()
     }
 
-    private static func projectKindLine(from inventory: ProjectInventory) -> String {
+    private static func projectSummaryLines(from inventory: ProjectInventory) -> String {
         var parts: [String] = []
         if !inventory.xcodeProjects.isEmpty || !inventory.xcodeWorkspaces.isEmpty {
             parts.append("Xcode")
@@ -451,59 +602,112 @@ public struct ProjectContextFileService {
             parts.append("modular")
         }
 
-        return "- Detected: \(parts.isEmpty ? "local source project" : parts.joined(separator: ", "))"
-    }
-
-    private static func sourceLayoutLines(from inventory: ProjectInventory) -> String {
-        var lines: [String] = []
-        lines.append(limitedListLine("Top-level folders", values: inventory.topLevelDirectories))
-        lines.append(limitedListLine("Source folders", values: inventory.sourceDirectories))
-        lines.append(limitedListLine("Test folders", values: inventory.testDirectories))
-        lines.append(limitedListLine("Xcode projects", values: inventory.xcodeProjects))
-        lines.append(limitedListLine("Xcode workspaces", values: inventory.xcodeWorkspaces))
-        lines.append(limitedListLine("Shared schemes", values: inventory.sharedSchemes))
-        if !inventory.packageManifests.isEmpty {
-            lines.append("- SwiftPM target roots are under `Sources/<target>` and `Tests/<target>`; build diagnostics and target-relative reasoning may omit those container folders.")
+        var lines = ["- Type: \(parts.isEmpty ? "local source project" : parts.joined(separator: ", "))"]
+        if let swiftToolsVersion = inventory.swiftToolsVersion {
+            lines.append("- Swift tools version: \(swiftToolsVersion)")
         }
         return lines.joined(separator: "\n")
     }
 
-    private static func moduleLines(from inventory: ProjectInventory) -> String {
+    private static func repositoryMapLines(from inventory: ProjectInventory) -> String {
         var lines: [String] = []
-        lines.append(limitedListLine("Module folders", values: inventory.moduleDirectories))
-        lines.append(limitedListLine("Package manifests", values: inventory.packageManifests))
+        appendLimitedListLine("Build manifests", values: inventory.packageManifests, to: &lines)
+        appendLimitedListLine("Source roots", values: inventory.sourceDirectories, to: &lines)
+        appendLimitedListLine("Source areas", values: inventory.sourceAreaDirectories, limit: 20, to: &lines)
+        appendLimitedListLine("Test roots", values: inventory.testDirectories, to: &lines)
+        appendLimitedListLine("Test areas", values: inventory.testAreaDirectories, limit: 20, to: &lines)
+
+        let regularTargets = inventory.swiftPackageTargets
+            .filter { $0.kind == .regular }
+            .map(\.name)
+        let executableTargets = inventory.swiftPackageTargets
+            .filter { $0.kind == .executable }
+            .map(\.name)
+        let testTargets = inventory.swiftPackageTargets
+            .filter { $0.kind == .test }
+            .map(\.name)
+        appendLimitedListLine("Declared SwiftPM library/support targets", values: regularTargets, limit: 20, to: &lines)
+        appendLimitedListLine("Declared SwiftPM executable targets", values: executableTargets, limit: 20, to: &lines)
+        appendLimitedListLine("Declared SwiftPM test targets", values: testTargets, limit: 20, to: &lines)
+
+        appendLimitedListLine("Xcode projects", values: inventory.xcodeProjects, to: &lines)
+        appendLimitedListLine("Xcode workspaces", values: inventory.xcodeWorkspaces, to: &lines)
+        appendLimitedListLine("Shared schemes", values: inventory.sharedSchemes, to: &lines)
+        appendLimitedListLine("Project documentation", values: inventory.documentationPaths, to: &lines)
+        appendLimitedListLine("Automation", values: inventory.automationDirectories, to: &lines)
+
+        if lines.isEmpty {
+            lines.append("- No conventional source, test, manifest, documentation, or automation paths were detected.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func navigationGuidance(from inventory: ProjectInventory) -> String {
+        var lines: [String] = []
+        if !inventory.packageManifests.isEmpty {
+            lines.append("- Open `Package.swift` first for target dependencies, platform requirements, conditional compilation, and custom target paths.")
+        }
+        if !inventory.swiftPackageTargets.isEmpty {
+            lines.append("- Use the declared target names above for focused builds; conditional declarations may not be active in every manifest configuration.")
+        }
+        if inventory.swiftManifestUsesEnvironment {
+            lines.append("- `Package.swift` reads environment variables; keep the same environment for build and test, and inspect its flags before changing the package graph.")
+        }
+        if !inventory.sourceAreaDirectories.isEmpty && !inventory.testAreaDirectories.isEmpty {
+            lines.append("- Start in the narrowest matching source area and its corresponding test area instead of scanning all of `Sources` or `Tests`.")
+        }
         if !inventory.moduleDirectories.isEmpty {
             lines.append("- Inspect the module-local `Package.swift`, `Sources`, and `Tests` before changing shared contracts.")
+        }
+        if !inventory.documentationPaths.isEmpty {
+            lines.append("- Use the project documentation paths above for architecture and setup questions; read only the document relevant to the task.")
+        }
+        if !inventory.automationDirectories.isEmpty {
+            lines.append("- Inspect automation scripts before running them; install/deploy scripts are not routine validation commands.")
+        }
+        if !inventory.xcodeWorkspaces.isEmpty {
+            lines.append("- Prefer the detected workspace over opening a project directly when resolving Xcode files and schemes.")
+        }
+        if lines.isEmpty {
+            lines.append("- Inspect the nearest manifest and sibling tests before editing; avoid broad repository reads.")
         }
         return lines.joined(separator: "\n")
     }
 
     private static func projectVerificationGuidance(
-        projectName: String,
         inventory: ProjectInventory
     ) -> String {
+        var lines: [String] = []
         if !inventory.sharedSchemes.isEmpty {
-            return "- Use the shared schemes listed above for \(projectName) build and test verification."
+            lines.append("- Xcode: build and test the narrowest relevant shared scheme listed above with the available Xcode tooling.")
         }
         if !inventory.packageManifests.isEmpty {
-            return "- Use the package manifests listed above to choose the right SwiftPM build and test command."
+            lines.append("- Fast SwiftPM compile check: `swift build --target <TargetName>`.")
+            lines.append("- Focused SwiftPM test: `swift test --filter <SuiteOrTestName>`.")
+            lines.append("- Full SwiftPM verification when justified: `swift build` followed by `swift test`.")
         }
-        return "- Add confirmed project-specific build and test commands here when they are discovered."
+        if lines.isEmpty {
+            lines.append("- No build command was inferred; derive validation from the detected manifest or shared scheme before editing.")
+        }
+        return lines.joined(separator: "\n")
     }
 
-    private static func limitedListLine(
+    private static func appendLimitedListLine(
         _ title: String,
         values: [String],
-        emptyValue: String = "none detected",
-        limit: Int = 12
-    ) -> String {
+        limit: Int = 12,
+        to lines: inout [String]
+    ) {
         guard !values.isEmpty else {
-            return "- \(title): \(emptyValue)."
+            return
         }
 
-        let visibleValues = values.prefix(limit).joined(separator: ", ")
+        let visibleValues = values
+            .prefix(limit)
+            .map { "`\($0)`" }
+            .joined(separator: ", ")
         let suffix = values.count > limit ? ", +\(values.count - limit) more" : ""
-        return "- \(title): \(visibleValues)\(suffix)."
+        lines.append("- \(title): \(visibleValues)\(suffix).")
     }
 
     public static func digest(_ value: String) -> String {

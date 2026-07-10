@@ -48,11 +48,100 @@ struct MLXAgentsContextServiceTests {
             rootPath: rootURL.path
         )
 
-        #expect(content.contains("Keep only durable project-specific facts"))
-        #expect(content.contains("Use this file to quickly re-enter the project after reopening the folder."))
-        #expect(content.contains("SwiftPM target roots are under `Sources/<target>` and `Tests/<target>`"))
-        #expect(content.contains("Use the package manifests listed above"))
-        #expect(!content.contains("Use the shared schemes listed above"))
+        #expect(content.contains("- Type: Swift Package"))
+        #expect(content.contains("- Build manifests: `Package.swift`."))
+        #expect(content.contains("- Fast SwiftPM compile check: `swift build --target <TargetName>`."))
+        #expect(content.contains("- Focused SwiftPM test: `swift test --filter <SuiteOrTestName>`."))
+        #expect(!content.contains("Keep only durable project-specific facts"))
+        #expect(!content.contains("Context Strategy"))
+        #expect(!content.contains("none detected"))
+        #expect(!content.contains(rootURL.path))
+    }
+
+    @Test
+    func projectAgentsTemplateMapsSwiftPackageForFocusedNavigation() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mlx-agents-tests-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        for path in [
+            "Sources/App",
+            "Sources/Core",
+            "Tests/CoreTests",
+            "Docs",
+            "Scripts",
+            "modules/Analytics/Sources/Analytics",
+            "modules/Analytics/Tests/AnalyticsTests",
+            ".build/Noise"
+        ] {
+            try FileManager.default.createDirectory(
+                at: rootURL.appendingPathComponent(path, isDirectory: true),
+                withIntermediateDirectories: true
+            )
+        }
+        try Data().write(to: rootURL.appendingPathComponent("README.md"))
+        let manifest = """
+        // swift-tools-version: 6.2
+        import PackageDescription
+
+        let optionalFeature = Context.environment["DEMO_FEATURE"] == "1"
+        let package = Package(
+            name: "Demo",
+            targets: [
+                .target(
+                    name: "Core"
+                ),
+                .executableTarget(
+                    name: "demo"
+                ),
+                .testTarget(
+                    name: "CoreTests"
+                )
+            ]
+        )
+        """
+        try manifest.write(
+            to: rootURL.appendingPathComponent("Package.swift"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let moduleManifest = """
+        // swift-tools-version: 6.1
+        import PackageDescription
+
+        let package = Package(
+            name: "Analytics",
+            targets: [
+                .target(name: "Analytics"),
+                .testTarget(name: "AnalyticsTests")
+            ]
+        )
+        """
+        try moduleManifest.write(
+            to: rootURL.appendingPathComponent("modules/Analytics/Package.swift"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let content = ProjectContextFileService.defaultContent(
+            kind: .agents,
+            projectName: "Demo",
+            rootPath: rootURL.path
+        )
+
+        #expect(content.contains("- Swift tools version: 6.2"))
+        #expect(content.contains("- Build manifests: `Package.swift`, `modules/Analytics/Package.swift`."))
+        #expect(content.contains("- Source areas: `Sources/App`, `Sources/Core`, `modules/Analytics/Sources/Analytics`."))
+        #expect(content.contains("- Test areas: `Tests/CoreTests`, `modules/Analytics/Tests/AnalyticsTests`."))
+        #expect(content.contains("- Declared SwiftPM library/support targets: `Analytics`, `Core`."))
+        #expect(content.contains("- Declared SwiftPM executable targets: `demo`."))
+        #expect(content.contains("- Declared SwiftPM test targets: `AnalyticsTests`, `CoreTests`."))
+        #expect(content.contains("- Project documentation: `Docs`, `README.md`."))
+        #expect(content.contains("- Automation: `Scripts`."))
+        #expect(content.contains("`Package.swift` reads environment variables"))
+        #expect(!content.contains(".build"))
     }
 
     @Test
@@ -77,8 +166,8 @@ struct MLXAgentsContextServiceTests {
             rootPath: rootURL.path
         )
 
-        #expect(content.contains("- Shared schemes: App."))
-        #expect(content.contains("Use the shared schemes listed above for XcodeApp build and test verification."))
+        #expect(content.contains("- Shared schemes: `App`."))
+        #expect(content.contains("Xcode: build and test the narrowest relevant shared scheme"))
     }
 
     @Test
