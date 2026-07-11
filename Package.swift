@@ -48,6 +48,54 @@ let ds4ShimCSettings: [CSetting] = ds4RootPath.map {
     [.unsafeFlags(["-I", $0])]
 } ?? []
 
+/// Bundled feature products intentionally use the same name for their SwiftPM
+/// target, product, built executable, and installed filename. Keep the
+/// package-only build details together so those names and source paths are not
+/// repeated across products, `zen` dependencies, and target declarations.
+struct BundledFeatureTargetDefinition {
+    let executableName: String
+    let sourceRelativePath: String
+    let dependencies: [Target.Dependency]
+}
+
+let bundledFeatureTargetDefinitions: [BundledFeatureTargetDefinition] = [
+    BundledFeatureTargetDefinition(
+        executableName: "search-tools-feature",
+        sourceRelativePath: "Sources/Features/SearchTools",
+        dependencies: ["FeatureKit", "LocalToolsSupport"]
+    ),
+    BundledFeatureTargetDefinition(
+        executableName: "web-tools-feature",
+        sourceRelativePath: "Sources/Features/WebTools",
+        dependencies: ["FeatureKit"]
+    ),
+    BundledFeatureTargetDefinition(
+        executableName: "git-tools-feature",
+        sourceRelativePath: "Sources/Features/GitTools",
+        dependencies: ["FeatureKit"]
+    ),
+    BundledFeatureTargetDefinition(
+        executableName: "swift-tools-feature",
+        sourceRelativePath: "Sources/Features/SwiftTools",
+        dependencies: ["FeatureKit"]
+    ),
+    BundledFeatureTargetDefinition(
+        executableName: "xcode-tools-feature",
+        sourceRelativePath: "Sources/Features/XcodeTools",
+        dependencies: ["FeatureKit", "ToolCore", "FeatureMCPBridgeKit"]
+    ),
+    BundledFeatureTargetDefinition(
+        executableName: "figma-tools-feature",
+        sourceRelativePath: "Sources/Features/FigmaTools",
+        dependencies: ["FeatureKit", "ToolCore", "FeatureMCPBridgeKit"]
+    ),
+    BundledFeatureTargetDefinition(
+        executableName: "jira-tools-feature",
+        sourceRelativePath: "Sources/Features/JiraTools",
+        dependencies: ["FeatureKit", "ToolCore"]
+    )
+]
+
 var products: [Product] = []
 
 if localMLXEnabled {
@@ -91,49 +139,23 @@ products += [
     .executable(
         name: "zen",
         targets: ["zen"]
-    ),
-    .executable(
-        name: "search-tools-feature",
-        targets: ["search-tools-feature"]
-    ),
-    .executable(
-        name: "web-tools-feature",
-        targets: ["web-tools-feature"]
-    ),
-    .executable(
-        name: "git-tools-feature",
-        targets: ["git-tools-feature"]
-    ),
-    .executable(
-        name: "swift-tools-feature",
-        targets: ["swift-tools-feature"]
-    ),
-    .executable(
-        name: "xcode-tools-feature",
-        targets: ["xcode-tools-feature"]
-    ),
-    .executable(
-        name: "figma-tools-feature",
-        targets: ["figma-tools-feature"]
-    ),
-    .executable(
-        name: "jira-tools-feature",
-        targets: ["jira-tools-feature"]
     )
 ]
 
+products += bundledFeatureTargetDefinitions.map {
+    .executable(name: $0.executableName, targets: [$0.executableName])
+}
+
 var zenCODEDependencies: [Target.Dependency] = [
     "ZenCODECore",
+    "LocalRuntimeSupport",
     "ZenCODESetup",
-    "ZenPackageMetadata",
-    "search-tools-feature",
-    "web-tools-feature",
-    "git-tools-feature",
-    "swift-tools-feature",
-    "xcode-tools-feature",
-    "figma-tools-feature",
-    "jira-tools-feature"
+    "ZenPackageMetadata"
 ]
+
+for feature in bundledFeatureTargetDefinitions {
+    zenCODEDependencies.append(.target(name: feature.executableName))
+}
 
 var zenCODESwiftSettings: [SwiftSetting] = [
     .define("SWIFTPM_NON_SANDBOX_TUI")
@@ -180,7 +202,10 @@ if localDS4Enabled {
     targets.append(
         .testTarget(
             name: "ZenCODEDS4Tests",
-            dependencies: ["zen"],
+            dependencies: [
+                "zen",
+                "ZenCODECore"
+            ],
             swiftSettings: [.define("ZENCODE_LOCAL_DS4")]
         )
     )
@@ -208,7 +233,7 @@ targets += [
     ),
     .target(
         name: "FeatureKit",
-        dependencies: []
+        dependencies: ["ToolCore"]
     ),
     .target(
         name: "ToolCore",
@@ -227,6 +252,10 @@ targets += [
         dependencies: ["FeatureKit"]
     ),
     .target(
+        name: "LocalRuntimeSupport",
+        dependencies: ["ZenCODECore"]
+    ),
+    .target(
         name: "ZenCODESetup",
         dependencies: ["ZenCODECore"],
         swiftSettings: [
@@ -243,7 +272,18 @@ targets += [
         name: "ZenCODECoreTests",
         dependencies: [
             "ZenCODECore",
-            "FeatureMCPBridgeKit"
+            "FeatureMCPBridgeKit",
+            "FeatureKit",
+            "LocalToolsSupport",
+            "ZenPackageMetadata",
+            .product(name: "Markdown", package: "swift-markdown")
+        ]
+    ),
+    .testTarget(
+        name: "ZenCODELocalRuntimeTests",
+        dependencies: [
+            "LocalRuntimeSupport",
+            "ZenCODECore"
         ]
     ),
     .testTarget(
@@ -253,56 +293,37 @@ targets += [
             "ZenCODESetup"
         ]
     ),
-    .executableTarget(
-        name: "search-tools-feature",
+    .testTarget(
+        name: "ToolCoreTests",
+        dependencies: ["ToolCore"]
+    ),
+    .testTarget(
+        name: "FeatureKitTests",
+        dependencies: ["FeatureKit"]
+    ),
+    .testTarget(
+        name: "FeatureMCPBridgeKitTests",
         dependencies: [
-            "FeatureKit",
-            "LocalToolsSupport"
-        ],
-        path: "Sources/Features/SearchTools"
-    ),
-    .executableTarget(
-        name: "web-tools-feature",
-        dependencies: ["FeatureKit"],
-        path: "Sources/Features/WebTools"
-    ),
-    .executableTarget(
-        name: "git-tools-feature",
-        dependencies: ["FeatureKit"],
-        path: "Sources/Features/GitTools"
-    ),
-    .executableTarget(
-        name: "swift-tools-feature",
-        dependencies: ["FeatureKit"],
-        path: "Sources/Features/SwiftTools"
-    ),
-    .executableTarget(
-        name: "xcode-tools-feature",
-        dependencies: [
-            "FeatureKit",
-            "ToolCore",
-            "FeatureMCPBridgeKit"
-        ],
-        path: "Sources/Features/XcodeTools"
-    ),
-    .executableTarget(
-        name: "figma-tools-feature",
-        dependencies: [
-            "FeatureKit",
-            "ToolCore",
-            "FeatureMCPBridgeKit"
-        ],
-        path: "Sources/Features/FigmaTools"
-    ),
-    .executableTarget(
-        name: "jira-tools-feature",
-        dependencies: [
-            "FeatureKit",
+            "FeatureMCPBridgeKit",
             "ToolCore"
-        ],
-        path: "Sources/Features/JiraTools"
+        ]
+    ),
+    .testTarget(
+        name: "LocalToolsSupportTests",
+        dependencies: [
+            "LocalToolsSupport",
+            "FeatureKit"
+        ]
     )
 ]
+
+targets += bundledFeatureTargetDefinitions.map {
+    .executableTarget(
+        name: $0.executableName,
+        dependencies: $0.dependencies,
+        path: $0.sourceRelativePath
+    )
+}
 
 if localMLXEnabled {
     targets += [
@@ -329,11 +350,18 @@ if localMLXEnabled {
         ),
         .testTarget(
             name: "MLXServerCoreTests",
-            dependencies: ["MLXServerCore"]
+            dependencies: [
+                "MLXServerCore",
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm")
+            ]
         ),
         .testTarget(
             name: "MLXServerSetupTests",
-            dependencies: ["MLXServerSetup"]
+            dependencies: [
+                "MLXServerSetup",
+                "MLXServerCore",
+                .product(name: "HuggingFace", package: "swift-huggingface")
+            ]
         )
     ]
 }

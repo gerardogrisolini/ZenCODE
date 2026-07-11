@@ -407,8 +407,8 @@ extension TerminalChat {
     }
 
     func telegramToolStartedMessage(_ toolCall: DirectAgentToolCall) -> String {
-        let kind = ZenCODEACPBridge.toolKind(for: toolCall.name)
-        guard let target = ZenCODEACPBridge.displayToolTarget(for: toolCall)?.nilIfBlank else {
+        let kind = ToolCallPresentation.toolKind(for: toolCall.name)
+        guard let target = ToolCallPresentation.displayToolTarget(for: toolCall)?.nilIfBlank else {
             return "🔧 \(kind)"
         }
         let fileName = URL(fileURLWithPath: target).lastPathComponent.nilIfBlank ?? target

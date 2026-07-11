@@ -367,6 +367,7 @@ if [ -z "$PACKAGE_DIR" ]; then
     bootstrap_checkout
 fi
 SCRIPT_DIR="${PACKAGE_DIR}/Scripts"
+source "${SCRIPT_DIR}/feature-catalog.sh"
 
 cd "$PACKAGE_DIR"
 
@@ -382,14 +383,7 @@ fi
 
 # Build ----------------------------------------------------------------------
 
-FEATURE_PRODUCTS=(
-    "search-tools-feature"
-    "web-tools-feature"
-    "git-tools-feature"
-    "jira-tools-feature"
-    "xcode-tools-feature"
-    "figma-tools-feature"
-)
+zencode_select_feature_products linux
 
 echo "Building ZenCODE (${BUILD_CONFIG})..."
 build_env=(
@@ -454,10 +448,8 @@ $SUDO chmod +x "${INSTALL_DIR}/zen"
 
 if [ "$WITH_DS4" = "1" ]; then
     $SUDO mkdir -p "${INSTALL_DIR}/Scripts"
-    for helper in setup-ds4.sh build-ds4-runtime.sh; do
-        $SUDO cp "${SCRIPT_DIR}/${helper}" "${INSTALL_DIR}/Scripts/${helper}"
-        $SUDO chmod +x "${INSTALL_DIR}/Scripts/${helper}"
-    done
+    $SUDO cp "${SCRIPT_DIR}/setup-ds4.sh" "${INSTALL_DIR}/Scripts/setup-ds4.sh"
+    $SUDO chmod +x "${INSTALL_DIR}/Scripts/setup-ds4.sh"
 fi
 
 for product in "${FEATURE_PRODUCTS[@]}"; do

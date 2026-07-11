@@ -13,7 +13,7 @@ Options:
   --library FILE       DS4 runtime library path. Default: <ds4-root>/libds4.dylib on macOS,
                        <ds4-root>/libds4.so elsewhere.
   --support-dir DIR    ZenCODE support directory. Default: $ZENCODE_SUPPORT_DIRECTORY or ~/.zencode.
-  --skip-build         Do not build libds4.dylib; only validate and write settings.
+  --skip-build         Do not build the DS4 runtime; only validate and write settings.
   -h, --help           Show this help.
 EOF
 }

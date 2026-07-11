@@ -421,6 +421,7 @@ if [ -z "$PACKAGE_DIR" ]; then
     bootstrap_checkout
 fi
 SCRIPT_DIR="${PACKAGE_DIR}/Scripts"
+source "${SCRIPT_DIR}/feature-catalog.sh"
 
 backup_existing_config_files
 trap restore_config_files EXIT
@@ -439,15 +440,7 @@ if [ "$WITH_DS4" = "1" ]; then
     validate_ds4_root "$DS4_ROOT"
 fi
 
-FEATURE_PRODUCTS=(
-    "search-tools-feature"
-    "web-tools-feature"
-    "git-tools-feature"
-    "swift-tools-feature"
-    "xcode-tools-feature"
-    "figma-tools-feature"
-    "jira-tools-feature"
-)
+zencode_select_feature_products macos
 
 echo ""
 echo "Build configuration:"

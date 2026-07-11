@@ -26,13 +26,7 @@ extension SwiftFeatureRuntime {
             }
         }
 
-        return ToolDescriptor.canonicalized(resolvedTools).map {
-            DirectToolDescriptor(
-                name: $0.name,
-                description: $0.description,
-                inputSchema: $0.inputSchema
-            )
-        }
+        return ToolDescriptor.canonicalized(resolvedTools).map(DirectToolDescriptor.init)
     }
 
     public func featureToolIsAllowed(

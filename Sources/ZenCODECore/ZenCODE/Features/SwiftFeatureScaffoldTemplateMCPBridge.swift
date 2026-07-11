@@ -25,11 +25,6 @@ extension SwiftFeatureRuntime {
         import FeatureKit
         import FeatureMCPBridgeKit
         import ToolCore
-        #if canImport(Darwin)
-        import Darwin
-        #elseif canImport(Glibc)
-        import Glibc
-        #endif
 
         private let bridgeServiceName = \#(escapedServiceName)
         private let bridgeToolNamePrefix = \#(escapedToolPrefix)
@@ -41,38 +36,49 @@ extension SwiftFeatureRuntime {
         @main
         enum MCPBridgeFeatureMain {
             static func main() async {
-                let command = ParsedFeatureCommand(arguments: Array(CommandLine.arguments.dropFirst()))
+                let command = FeatureProcessProtocol.parse(
+                    arguments: Array(CommandLine.arguments.dropFirst())
+                )
 
                 do {
                     switch command {
                     case .listTools:
                         let tools = try await listTools()
-                        try emitJSON(ListToolsResponse(tools: tools))
-                    case let .invoke(toolName):
+                        try FeatureProcessProtocol.emitJSON(
+                            FeatureListToolsResponse(tools: tools)
+                        )
+                    case let .invoke(toolName, _):
                         let inputData = FileHandle.standardInput.readDataToEndOfFile()
                         let output = try await invoke(
                             toolName: toolName,
                             inputData: inputData
                         )
-                        try emitJSON(
-                            InvocationResponse(
+                        try FeatureProcessProtocol.emitJSON(
+                            FeatureInvocationResponse<String>(
                                 ok: true,
-                                output: .string(output),
+                                output: output,
                                 error: nil
                             )
                         )
                     case .usage:
-                        throw MCPBridgeFeatureError.usage
+                        try FeatureProcessProtocol.emitJSON(
+                            FeatureInvocationResponse<String>(
+                                ok: false,
+                                output: nil,
+                                error: MCPBridgeFeatureError.usage.errorDescription ?? ""
+                            )
+                        )
+                        FeatureProcessProtocol.terminate(code: 1)
                     }
                 } catch {
-                    try? emitJSON(
-                        InvocationResponse(
+                    try? FeatureProcessProtocol.emitJSON(
+                        FeatureInvocationResponse<String>(
                             ok: false,
                             output: nil,
                             error: error.localizedDescription
                         )
                     )
-                    terminate(code: 1)
+                    FeatureProcessProtocol.terminate(code: 1)
                 }
             }
 
@@ -86,12 +92,10 @@ extension SwiftFeatureRuntime {
                     await executor.disconnect()
                     return ToolDescriptor.canonicalized(tools).map { tool in
                         FeatureToolDescriptor(
-                            name: tool.name,
+                            toolDescriptor: tool,
                             description: tool.description.hasPrefix("\(bridgeServiceName):")
                                 ? tool.description
-                                : "\(bridgeServiceName): \(tool.description)",
-                            inputSchema: tool.inputSchema,
-                            outputSchema: tool.outputSchema
+                                : "\(bridgeServiceName): \(tool.description)"
                         )
                     }
                 } catch {
@@ -160,57 +164,6 @@ extension SwiftFeatureRuntime {
                 return arguments
             }
 
-            static func emitJSON<T: Encodable>(_ value: T) throws {
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-                let data = try encoder.encode(value)
-                FileHandle.standardOutput.write(data)
-                FileHandle.standardOutput.write(Data("\n".utf8))
-            }
-
-            static func terminate(code: Int32) -> Never {
-                #if canImport(Darwin) || canImport(Glibc)
-                exit(code)
-                #else
-                fatalError("MCP bridge feature terminated with code \(code).")
-                #endif
-            }
-        }
-
-        private struct ListToolsResponse: Encodable {
-            let tools: [FeatureToolDescriptor]
-        }
-
-        private struct InvocationResponse: Encodable {
-            let ok: Bool
-            let output: JSONValue?
-            let error: String?
-        }
-
-        private enum ParsedFeatureCommand {
-            case listTools
-            case invoke(String)
-            case usage
-
-            init(arguments: [String]) {
-                guard let first = arguments.first else {
-                    self = .usage
-                    return
-                }
-
-                switch first {
-                case "--list-tools":
-                    self = .listTools
-                case "--invoke":
-                    guard arguments.count >= 2 else {
-                        self = .usage
-                        return
-                    }
-                    self = .invoke(arguments[1])
-                default:
-                    self = .usage
-                }
-            }
         }
 
         private enum MCPBridgeFeatureError: LocalizedError {

@@ -12,44 +12,6 @@ import ZenPackageMetadata
 #if ZENCODE_LOCAL_MLX
 import MLXServerCore
 
-private struct MLXAgentRuntimeBackendFactory: @unchecked Sendable {
-    let modelCatalog: MLXServerModelCatalog
-    let initialModelID: String
-    let runtime: MLXServerRuntime
-    let kvCacheSettings: MLXServerKVCacheSettings
-
-    func makeBackend(
-        configuration: AgentRuntimeConfiguration,
-        mcpRuntime: DirectMCPToolRuntime,
-        chatGPTConnectionScopeID: String? = nil
-    ) throws -> any AgentRuntimeBackend {
-        guard let model = try? modelCatalog.resolve(
-            id: configuration.modelID ?? initialModelID
-        ) else {
-            return try AgentCoreBackend.makeRemoteBackend(
-                configuration: configuration,
-                mcpRuntime: mcpRuntime,
-                chatGPTConnectionScopeID: chatGPTConnectionScopeID
-            )
-        }
-
-        return MLXServerCoderBackend(
-            configuration: configuration,
-            runtime: runtime,
-            model: model,
-            kvCacheSettings: kvCacheSettings,
-            mcpRuntime: mcpRuntime,
-            subAgentContextualBackendFactory: { context in
-                try makeBackend(
-                    configuration: configuration.applyingSubAgentBackendContext(context),
-                    mcpRuntime: mcpRuntime,
-                    chatGPTConnectionScopeID: UUID().uuidString
-                )
-            }
-        )
-    }
-}
-
 enum ZenCODEMLXCommand {
     static let option = "--mlx"
 
@@ -90,7 +52,9 @@ enum ZenCODEMLXCommand {
     @MainActor
     private static func runAgent(arguments: [String]) async throws {
         let options = try ZenCODEMLXOptions(arguments: arguments)
-        try ensureProjectAgentsFileExists(workingDirectory: options.workingDirectory)
+        try AgentRuntimeLauncher.ensureProjectAgentsFileExists(
+            workingDirectory: options.workingDirectory
+        )
         try MLXMetalLibraryBootstrap.prepareIfNeeded()
 
         let settings = try MLXServerSettingsStore.loadRequired()
@@ -103,18 +67,13 @@ enum ZenCODEMLXCommand {
             modelLoadLogger: nil,
             modelUnloadLogger: nil
         )
-        let backendBuilder = MLXAgentRuntimeBackendFactory(
+        let backendBuilder = MLXLocalAgentRuntimeAdapter(
             modelCatalog: modelCatalog,
             initialModelID: initialModel.id,
             runtime: runtime,
             kvCacheSettings: settings.kvCache
         )
-        let backendFactory: AgentRuntimeBackendFactory = { configuration, mcpRuntime in
-            try backendBuilder.makeBackend(
-                configuration: configuration,
-                mcpRuntime: mcpRuntime
-            )
-        }
+        let backendFactory = backendBuilder.factory
         let permissionAuthorizer = LocalExecPermissionAuthorizer()
         let sessionRunner = AgentCoreSessionRunner(
             defaultToolAuthorizationHandler: { request in
@@ -146,84 +105,19 @@ enum ZenCODEMLXCommand {
             if !options.verboseLogging {
                 AgentOutput.silenceInheritedProcessError()
             }
-            await runACP(configuration: configuration, backendFactory: backendFactory)
+            await AgentRuntimeLauncher.runACP(
+                configuration: configuration,
+                backendFactory: backendFactory
+            )
             return
         }
 
         let stdinIsTerminal = TerminalRawInput.supportsInteractiveInput()
-        let terminal = TerminalChat(
+        try await AgentRuntimeLauncher.runTerminalChat(
             configuration: configuration,
             stdinIsTerminal: stdinIsTerminal,
             sessionRunner: sessionRunner
         )
-
-        do {
-            try await terminal.run()
-            await sessionRunner.shutdown()
-        } catch {
-            await sessionRunner.shutdown()
-            throw error
-        }
-    }
-
-    private static func runACP(
-        configuration: AgentConfiguration,
-        backendFactory: @escaping AgentRuntimeBackendFactory
-    ) async {
-        let writer = ACPWriter()
-        let bridge = ZenCODEACPBridge(
-            configuration: configuration,
-            writer: writer,
-            backendFactory: backendFactory
-        )
-        let reader = StdioLineReader()
-        let lines = AsyncStream<String> { continuation in
-            let task = Task.detached {
-                while let line = reader.readLine() {
-                    continuation.yield(line)
-                }
-                continuation.finish()
-            }
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
-        }
-
-        await withTaskGroup(of: Void.self) { group in
-            for await line in lines {
-                let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmedLine.isEmpty else {
-                    continue
-                }
-                group.addTask {
-                    await bridge.handleLine(trimmedLine)
-                }
-            }
-        }
-
-        await bridge.shutdown()
-    }
-
-    private static func ensureProjectAgentsFileExists(workingDirectory: URL) throws {
-        let standardizedWorkingDirectory = workingDirectory.standardizedFileURL
-        let agentsFileURL = standardizedWorkingDirectory
-            .appendingPathComponent(AgentsContextService.filename)
-        guard !FileManager.default.fileExists(atPath: agentsFileURL.path) else {
-            return
-        }
-
-        do {
-            _ = try ProjectContextFileService().createDefaultDocument(
-                kind: .agents,
-                at: standardizedWorkingDirectory,
-                projectName: standardizedWorkingDirectory.lastPathComponent
-            )
-        } catch {
-            throw ZenCODEMLXError.unableToCreateProjectAgents(
-                agentsFileURL,
-                error
-            )
-        }
     }
 
     private static func modelManifests(
@@ -383,7 +277,6 @@ private enum ZenCODEMLXError: LocalizedError {
     case unsupportedArguments([String])
     case missingRequiredArgument(String)
     case invalidArgument(String, String)
-    case unableToCreateProjectAgents(URL, Error)
 
     var errorDescription: String? {
         switch self {
@@ -393,8 +286,6 @@ private enum ZenCODEMLXError: LocalizedError {
             return "Missing required value for \(argument)."
         case .invalidArgument(let argument, let value):
             return "Invalid value for \(argument): \(value)."
-        case let .unableToCreateProjectAgents(url, error):
-            return "Unable to create project AGENTS.md at \(url.path): \(error.localizedDescription)"
         }
     }
 }

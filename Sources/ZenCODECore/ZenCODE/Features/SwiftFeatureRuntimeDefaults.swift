@@ -98,13 +98,7 @@ extension SwiftFeatureRuntime {
             .filter { includeDisabled || $0.enabled }
             .flatMap(\.tools)
         return DirectToolExecutor.canonicalized(
-            ToolDescriptor.canonicalized(tools).map {
-                DirectToolDescriptor(
-                    name: $0.name,
-                    description: $0.description,
-                    inputSchema: $0.inputSchema
-                )
-            }
+            ToolDescriptor.canonicalized(tools).map(DirectToolDescriptor.init)
         )
     }
 
@@ -145,75 +139,7 @@ extension SwiftFeatureRuntime {
     }
 
     static func bundledFeatureDefinitions() -> [BundledFeatureDefinition] {
-        [
-            BundledFeatureDefinition(
-                id: "search-tools",
-                executableName: "search-tools-feature",
-                description: "Find files by glob and search file contents with grep.",
-                sourceRelativePath: "Sources/Features/SearchTools",
-                tools: bundledSearchToolDescriptors()
-            ),
-            BundledFeatureDefinition(
-                id: "web-tools",
-                executableName: "web-tools-feature",
-                description: "Search the web and fetch URLs as text.",
-                sourceRelativePath: "Sources/Features/WebTools",
-                tools: bundledWebToolDescriptors(),
-                invocationTimeoutSeconds: 180
-            ),
-            BundledFeatureDefinition(
-                id: "git-tools",
-                executableName: "git-tools-feature",
-                description: "Run Git operations: status, diff, commit, branch, log, and more.",
-                sourceRelativePath: "Sources/Features/GitTools",
-                tools: bundledGitToolDescriptors()
-            ),
-            BundledFeatureDefinition(
-                id: "swift-tools",
-                executableName: "swift-tools-feature",
-                description: "Build, test, run, and inspect SwiftPM packages.",
-                sourceRelativePath: "Sources/Features/SwiftTools",
-                tools: bundledSwiftToolDescriptors(),
-                invocationTimeoutSeconds: 3_660
-            ),
-            BundledFeatureDefinition(
-                id: "jira-tools",
-                executableName: "jira-tools-feature",
-                description: "Query and manage Jira issues and projects.",
-                sourceRelativePath: "Sources/Features/JiraTools",
-                tools: bundledJiraToolDescriptors(),
-                invocationTimeoutSeconds: 660
-            ),
-            BundledFeatureDefinition(
-                id: "xcode-tools",
-                executableName: "xcode-tools-feature",
-                description: "Build, test, preview, and inspect Xcode projects.",
-                sourceRelativePath: "Sources/Features/XcodeTools",
-                tools: [],
-                toolNamePrefixes: ["xcode.", "Xcode"],
-                toolNameAliases: [
-                    "BuildProject",
-                    "DocumentationSearch",
-                    "ExecuteSnippet",
-                    "GetBuildLog",
-                    "GetTestList",
-                    "RenderPreview",
-                    "RunAllTests",
-                    "RunSomeTests"
-                ],
-                discoversToolsAtRuntime: true,
-                invocationTimeoutSeconds: 3_660
-            ),
-            BundledFeatureDefinition(
-                id: "figma-tools",
-                executableName: "figma-tools-feature",
-                description: "Inspect Figma files, frames, and design data.",
-                sourceRelativePath: "Sources/Features/FigmaTools",
-                tools: [],
-                toolNamePrefixes: ["figma."],
-                discoversToolsAtRuntime: true
-            )
-        ]
+        SwiftBundledFeatureCatalog.definitions()
     }
 
     static func bundledFeatureDefinition(id: String) -> BundledFeatureDefinition? {
@@ -365,65 +291,6 @@ extension SwiftFeatureRuntime {
             generated: generated,
             issue: issue
         )
-    }
-
-    private static func bundledSearchToolDescriptors() -> [ToolDescriptor] {
-        DirectToolCatalog.localSearchDescriptors.map(\.toolDescriptor) + [
-            ToolDescriptor(
-                name: "search.grep",
-                description: "Searches text with grep from a local path. Use context for surrounding lines and filesOnly to list only matching file paths.",
-                inputSchema: #"{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"glob":{"type":"string"},"maxResults":{"type":"number"},"max_results":{"type":"number"},"context":{"type":"number"},"filesOnly":{"type":"boolean"},"files_only":{"type":"boolean"}},"required":["pattern"]}"#
-            )
-        ]
-    }
-
-    private static func bundledWebToolDescriptors() -> [ToolDescriptor] {
-        [
-            ToolDescriptor(
-                name: "web.search",
-                description: "Searches the public web and returns matching results with titles, URLs, and snippets.",
-                inputSchema: #"{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"number"},"domains":{"type":"array","items":{"type":"string"}}},"required":["query"]}"#
-            ),
-            ToolDescriptor(
-                name: "web.fetch",
-                description: "Fetches an HTTP or HTTPS URL and returns response metadata plus a UTF-8 text preview.",
-                inputSchema: #"{"type":"object","properties":{"url":{"type":"string"},"maxBytes":{"type":"number"},"timeoutSeconds":{"type":"number"}},"required":["url"]}"#
-            )
-        ]
-    }
-
-    private static func bundledGitToolDescriptors() -> [ToolDescriptor] {
-        #if canImport(Darwin) || canImport(Glibc)
-        DirectToolCatalog.macOSProcessDescriptors
-            .filter { $0.name.hasPrefix("git.") }
-            .map(\.toolDescriptor)
-        #else
-        []
-        #endif
-    }
-
-    private static func bundledSwiftToolDescriptors() -> [ToolDescriptor] {
-        DirectToolCatalog.swiftDescriptors.map(\.toolDescriptor)
-    }
-
-    private static func bundledJiraToolDescriptors() -> [ToolDescriptor] {
-        [
-            ToolDescriptor(
-                name: "jira.search",
-                description: "Searches Jira issues by issue key, issue URL, or text and returns selectable issue summaries.",
-                inputSchema: #"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#
-            ),
-            ToolDescriptor(
-                name: "jira.read",
-                description: "Loads a Jira issue and returns task context for the model without creating a local task.",
-                inputSchema: #"{"type":"object","properties":{"issueKey":{"type":"string"},"issue_key":{"type":"string"},"key":{"type":"string"},"url":{"type":"string"},"query":{"type":"string"},"includeRaw":{"type":"boolean"},"include_raw":{"type":"boolean"}}}"#
-            ),
-            ToolDescriptor(
-                name: "jira.signOut",
-                description: "Clears the persisted Jira API token used by the Jira tools.",
-                inputSchema: #"{"type":"object","properties":{}}"#
-            )
-        ]
     }
 
     private static func availableBundledExecutableURL(
@@ -596,22 +463,10 @@ extension SwiftFeatureRuntime {
     }
 
     static func sourcePackageRootURL(fileManager: FileManager) -> URL? {
-        var directoryURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .standardizedFileURL
-        for _ in 0..<8 {
-            if fileManager.fileExists(
-                atPath: directoryURL.appendingPathComponent("Package.swift").path
-            ) {
-                return directoryURL
-            }
-            let parentURL = directoryURL.deletingLastPathComponent()
-            guard parentURL.path != directoryURL.path else {
-                return nil
-            }
-            directoryURL = parentURL
-        }
-        return nil
+        PackageRootResolver.packageRoot(
+            forSourceFilePath: #filePath,
+            fileManager: fileManager
+        )
     }
 
     private static func swiftPMBuildProductDirectories(

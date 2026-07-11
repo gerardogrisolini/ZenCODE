@@ -115,11 +115,18 @@ ZENCODE_BUILD_DS4=1 ZENCODE_DS4_ROOT=/path/to/ds4 swift build -c release --produ
 
 ## Layout
 
+- `Sources/ToolCore`: dependency-light tool wire, descriptor, environment, and compatibility types.
+- `Sources/FeatureKit`: feature contracts, schemas, process protocol, and runner support.
+- `Sources/FeatureMCPBridgeKit`: MCP feature integration and transports.
+- `Sources/LocalToolsSupport`: reusable local file, search, text, and patch tooling.
+- `Sources/ZenPackageMetadata`: internal bundled-feature distribution metadata and catalog parity support.
 - `Sources/ZenCODECore`: reusable agent runtime, TUI, tools, skills, ACP, config, memory, sessions, and feature management.
+- `Sources/LocalRuntimeSupport`: internal support for selecting local agent-runtime backends.
 - `Sources/ZenCODESetup`: interactive setup for standalone `zen`.
-- `Sources/zen`: `zen` executable, `--mlx` runtime entrypoint, reset commands, and Metal bootstrap.
-- `Sources/MLXServerCore`: reusable local MLX runtime, model catalog, loading, generation gate, and disk KV cache.
-- `Sources/MLXServerSetup`: local MLX runtime and model setup used by `zen --mlx`.
+- `Sources/zen`: the `zen` composition root and command-line dispatch, with optional MLX and DS4 adapters.
+- `Sources/MLXServerCore`: conditional local MLX runtime, model catalog, loading, generation gate, and disk KV cache.
+- `Sources/MLXServerSetup`: conditional local MLX settings and model configuration workflows, including Hugging Face model discovery and setup.
+- `Sources/DS4RuntimeShim`: conditional C shim used only when DS4 support is enabled.
 - `Sources/Features`: bundled Dynamic Swift Feature executables.
 - `Tests`: SwiftPM test targets.
 - `Docs`: detailed guides and feature documentation.
@@ -142,6 +149,7 @@ zen --mlx --acp --cwd /path/to/project
 
 ## More Docs
 
+- [Architecture and layout contract](Docs/architecture.md)
 - [Why ZenCODE](Docs/why-zen.md)
 - [ZenCODE guide](Docs/zen.md)
 - [Local MLX runtime guide](Docs/mlx-runtime.md)

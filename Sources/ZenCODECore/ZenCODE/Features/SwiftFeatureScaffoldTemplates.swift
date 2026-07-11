@@ -63,13 +63,13 @@ extension SwiftFeatureRuntime {
     }
 
     static func defaultMLXServerPackagePath(fileManager: FileManager) -> String {
-        let sourceURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .standardizedFileURL
+        let sourceURL = PackageRootResolver.packageRoot(
+            forSourceFilePath: #filePath,
+            fileManager: fileManager
+        ) ?? PackageRootResolver.sourceDirectory(
+            forSourceFilePath: #filePath,
+            ancestorCount: 4
+        )
         if fileManager.fileExists(
             atPath: sourceURL.appendingPathComponent("Package.swift").path
         ) {

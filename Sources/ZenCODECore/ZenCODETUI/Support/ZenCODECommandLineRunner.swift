@@ -36,7 +36,9 @@ public enum ZenCODECommandLineRunner {
                 return
             }
 
-            try ensureProjectAgentsFileExists(workingDirectory: configuration.workingDirectory)
+            try AgentRuntimeLauncher.ensureProjectAgentsFileExists(
+                workingDirectory: configuration.workingDirectory
+            )
 
             let interactiveInputAvailable = TerminalRawInput.supportsInteractiveInput()
             let resolvedRunMode = configuration.resolvedRunMode(
@@ -48,11 +50,10 @@ public enum ZenCODECommandLineRunner {
                 AgentOutput.silenceInheritedProcessOutput(
                     keepStandardError: configuration.verboseLogging
                 )
-                let terminal = TerminalChat(
+                try await AgentRuntimeLauncher.runTerminalChat(
                     configuration: configuration,
                     stdinIsTerminal: interactiveInputAvailable
                 )
-                try await terminal.run()
                 return
             case .acp:
                 if !configuration.verboseLogging {
@@ -61,37 +62,7 @@ public enum ZenCODECommandLineRunner {
                 break
             }
 
-            let writer = ACPWriter()
-            let bridge = ZenCODEACPBridge(
-                configuration: configuration,
-                writer: writer
-            )
-            let reader = StdioLineReader()
-            let lines = AsyncStream<String> { continuation in
-                let task = Task.detached {
-                    while let line = reader.readLine() {
-                        continuation.yield(line)
-                    }
-                    continuation.finish()
-                }
-                continuation.onTermination = { _ in
-                    task.cancel()
-                }
-            }
-
-            await withTaskGroup(of: Void.self) { group in
-                for await line in lines {
-                    let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmedLine.isEmpty else {
-                        continue
-                    }
-                    group.addTask {
-                        await bridge.handleLine(trimmedLine)
-                    }
-                }
-            }
-
-            await bridge.shutdown()
+            await AgentRuntimeLauncher.runACP(configuration: configuration)
         } catch {
             AgentOutput.standardError.writeString("ZenCODE: \(error.localizedDescription)\n")
             Foundation.exit(1)
@@ -142,76 +113,5 @@ public enum ZenCODECommandLineRunner {
             || argument == "--max-tool-rounds"
             || argument == "--max-output-tokens"
             || argument == "--verbose"
-    }
-
-    private static func ensureProjectAgentsFileExists(workingDirectory: URL) throws {
-        let standardizedWorkingDirectory = workingDirectory.standardizedFileURL
-        let agentsFileURL = standardizedWorkingDirectory
-            .appendingPathComponent(AgentsContextService.filename)
-        guard !FileManager.default.fileExists(atPath: agentsFileURL.path) else {
-            return
-        }
-
-        do {
-            _ = try ProjectContextFileService().createDefaultDocument(
-                kind: .agents,
-                at: standardizedWorkingDirectory,
-                projectName: standardizedWorkingDirectory.lastPathComponent
-            )
-        } catch {
-            throw ZenCODECommandLineRunnerError.unableToCreateProjectAgents(
-                agentsFileURL,
-                error
-            )
-        }
-    }
-}
-
-private enum ZenCODECommandLineRunnerError: LocalizedError {
-    case unableToCreateProjectAgents(URL, Error)
-
-    var errorDescription: String? {
-        switch self {
-        case let .unableToCreateProjectAgents(url, error):
-            return "Unable to create project AGENTS.md at \(url.path): \(error.localizedDescription)"
-        }
-    }
-}
-
-public enum ZenCODECommandLineArgumentSanitizer {
-    public static func sanitized(_ arguments: [String]) -> [String] {
-        guard let executable = arguments.first else {
-            return []
-        }
-
-        var result = [executable]
-        var index = 1
-        while index < arguments.count {
-            let argument = arguments[index]
-            if isCocoaLaunchArgument(argument) {
-                index += 1
-                if index < arguments.count, !arguments[index].hasPrefix("-") {
-                    index += 1
-                }
-                continue
-            }
-
-            result.append(argument)
-            index += 1
-        }
-
-        return result
-    }
-
-    public static func containsCocoaLaunchArguments(_ arguments: [String]) -> Bool {
-        arguments.dropFirst().contains(where: isCocoaLaunchArgument(_:))
-    }
-
-    private static func isCocoaLaunchArgument(_ argument: String) -> Bool {
-        argument == "-NSDocumentRevisionsDebugMode"
-            || argument == "-ApplePersistenceIgnoreState"
-            || argument == "-NSQuitAlwaysKeepsWindows"
-            || argument.hasPrefix("-NS")
-            || argument.hasPrefix("-Apple")
     }
 }

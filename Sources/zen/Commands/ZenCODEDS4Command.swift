@@ -7,38 +7,6 @@ import Foundation
 import ZenCODECore
 import ZenPackageMetadata
 
-private struct DS4AgentRuntimeBackendFactory: @unchecked Sendable {
-    let runtimeOptions: DS4RuntimeOptions
-
-    func makeBackend(
-        configuration: AgentRuntimeConfiguration,
-        mcpRuntime: DirectMCPToolRuntime,
-        chatGPTConnectionScopeID: String? = nil
-    ) throws -> any AgentRuntimeBackend {
-        if let modelID = configuration.modelID?.nilIfBlank,
-           modelID.caseInsensitiveCompare(runtimeOptions.modelID) != .orderedSame {
-            return try AgentCoreBackend.makeRemoteBackend(
-                configuration: configuration,
-                mcpRuntime: mcpRuntime,
-                chatGPTConnectionScopeID: chatGPTConnectionScopeID
-            )
-        }
-
-        return DS4CoderBackend(
-            configuration: configuration,
-            options: runtimeOptions,
-            mcpRuntime: mcpRuntime,
-            subAgentContextualBackendFactory: { context in
-                try makeBackend(
-                    configuration: configuration.applyingSubAgentBackendContext(context),
-                    mcpRuntime: mcpRuntime,
-                    chatGPTConnectionScopeID: UUID().uuidString
-                )
-            }
-        )
-    }
-}
-
 enum ZenCODEDS4Command {
     static let option = "--ds4"
 
@@ -136,20 +104,15 @@ enum ZenCODEDS4Command {
     @MainActor
     private static func runAgent(arguments: [String]) async throws {
         let options = try ZenCODEDS4Options(arguments: arguments)
-        try ensureProjectAgentsFileExists(workingDirectory: options.workingDirectory)
+        try AgentRuntimeLauncher.ensureProjectAgentsFileExists(
+            workingDirectory: options.workingDirectory
+        )
 
         let availableAgents = (try? AgentProfileStore.loadRequired())
             ?? AgentProfileStore.defaultProfiles()
         let runtimeOptions = options.runtimeOptions
-        let backendBuilder = DS4AgentRuntimeBackendFactory(
-            runtimeOptions: runtimeOptions
-        )
-        let backendFactory: AgentRuntimeBackendFactory = { configuration, mcpRuntime in
-            try backendBuilder.makeBackend(
-                configuration: configuration,
-                mcpRuntime: mcpRuntime
-            )
-        }
+        let backendBuilder = DS4LocalAgentRuntimeAdapter(runtimeOptions: runtimeOptions)
+        let backendFactory = backendBuilder.factory
         let permissionAuthorizer = LocalExecPermissionAuthorizer()
         let sessionRunner = AgentCoreSessionRunner(
             defaultToolAuthorizationHandler: { request in
@@ -178,83 +141,19 @@ enum ZenCODEDS4Command {
             if !options.verboseLogging {
                 AgentOutput.silenceInheritedProcessError()
             }
-            await runACP(configuration: configuration, backendFactory: backendFactory)
+            await AgentRuntimeLauncher.runACP(
+                configuration: configuration,
+                backendFactory: backendFactory
+            )
             return
         }
 
         let stdinIsTerminal = TerminalRawInput.supportsInteractiveInput()
-        let terminal = TerminalChat(
+        try await AgentRuntimeLauncher.runTerminalChat(
             configuration: configuration,
             stdinIsTerminal: stdinIsTerminal,
             sessionRunner: sessionRunner
         )
-        do {
-            try await terminal.run()
-            await sessionRunner.shutdown()
-        } catch {
-            await sessionRunner.shutdown()
-            throw error
-        }
-    }
-
-    private static func runACP(
-        configuration: AgentConfiguration,
-        backendFactory: @escaping AgentRuntimeBackendFactory
-    ) async {
-        let writer = ACPWriter()
-        let bridge = ZenCODEACPBridge(
-            configuration: configuration,
-            writer: writer,
-            backendFactory: backendFactory
-        )
-        let reader = StdioLineReader()
-        let lines = AsyncStream<String> { continuation in
-            let task = Task.detached {
-                while let line = reader.readLine() {
-                    continuation.yield(line)
-                }
-                continuation.finish()
-            }
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
-        }
-
-        await withTaskGroup(of: Void.self) { group in
-            for await line in lines {
-                let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmedLine.isEmpty else {
-                    continue
-                }
-                group.addTask {
-                    await bridge.handleLine(trimmedLine)
-                }
-            }
-        }
-
-        await bridge.shutdown()
-    }
-
-    private static func ensureProjectAgentsFileExists(workingDirectory: URL) throws {
-        let standardizedWorkingDirectory = workingDirectory.standardizedFileURL
-        let agentsFileURL = standardizedWorkingDirectory
-            .appendingPathComponent(AgentsContextService.filename)
-        guard !FileManager.default.fileExists(atPath: agentsFileURL.path) else {
-            return
-        }
-
-        do {
-            _ = try ProjectContextFileService().createDefaultDocument(
-                kind: .agents,
-                at: standardizedWorkingDirectory,
-                projectName: standardizedWorkingDirectory.lastPathComponent
-            )
-        } catch {
-            throw ZenCODEDS4Error.unableToCreateProjectAgents(
-                agentsFileURL,
-                error
-            )
-        }
     }
 
     private static func modelManifest(
@@ -664,7 +563,6 @@ private enum ZenCODEDS4Error: LocalizedError {
     case missingDS4Root
     case missingModelSelection
     case missingPath(String, URL)
-    case unableToCreateProjectAgents(URL, Error)
 
     var errorDescription: String? {
         switch self {
@@ -680,8 +578,6 @@ private enum ZenCODEDS4Error: LocalizedError {
             return "No DS4 model selected. Run zen --setup, choose Local inference, then DS4 models."
         case .missingPath(let description, let url):
             return "\(description) not found at \(url.path). If libds4.dylib is missing, run Scripts/build-ds4-runtime.sh /path/to/ds4."
-        case let .unableToCreateProjectAgents(url, error):
-            return "Unable to create project AGENTS.md at \(url.path): \(error.localizedDescription)"
         }
     }
 }

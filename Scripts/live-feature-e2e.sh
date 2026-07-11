@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-tmp_root="${TMPDIR:-/tmp}/live-feature-e2e-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/live-feature-e2e.XXXXXX")"
 workspace="$tmp_root/workspace"
 support_dir="$tmp_root/zencode"
 log_file="$tmp_root/zencode.log"
@@ -111,7 +111,13 @@ fi
 feature_dir="$support_dir/features/$feature_id"
 package_file="$feature_dir/Package.swift"
 manifest_file="$feature_dir/feature.json"
-executable_file="$feature_dir/.build/release/$feature_id"
+executable_file=""
+while IFS= read -r candidate; do
+    if [[ -x "$candidate" ]]; then
+        executable_file="$candidate"
+        break
+    fi
+done < <(find "$feature_dir/.build" -type f -name "$feature_id" 2>/dev/null)
 
 if [[ ! -f "$package_file" ]]; then
     printf 'Expected generated Package.swift not found: %s\n' "$package_file" >&2
@@ -125,7 +131,7 @@ if [[ "$(head -n 1 "$package_file")" != "// swift-tools-version: 6.3" ]]; then
     exit 1
 fi
 
-if [[ ! -f "$manifest_file" ]] || ! grep -q "\"enabled\" : true\\|\"enabled\":true" "$manifest_file"; then
+if [[ ! -f "$manifest_file" ]] || ! grep -Eq '"enabled"[[:space:]]*:[[:space:]]*true' "$manifest_file"; then
     printf 'Generated feature manifest is missing or not enabled: %s\n' "$manifest_file" >&2
     cat "$manifest_file" >&2 || true
     exit 1
@@ -149,7 +155,7 @@ if [[ "$verification_json" != *"\"ok\":true"* ]] || [[ "$verification_json" != *
     exit 1
 fi
 
-if ! grep -q "LIVE_FEATURE_E2E_OK ${tool_name}=${branch_name}" "$log_file"; then
+if ! grep -Fq "LIVE_FEATURE_E2E_OK ${tool_name}=${branch_name}" "$log_file"; then
     printf 'Model final answer did not contain the expected success sentinel.\n' >&2
     cat "$log_file" >&2
     exit 1
