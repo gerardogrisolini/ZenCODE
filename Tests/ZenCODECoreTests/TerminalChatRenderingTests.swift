@@ -353,6 +353,24 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func statusBarRendersSubscriptionPrefillAndGenerationTokenCounts() {
+        let metrics = ChatGPTSubscriptionGenerationClient
+            .chatGPTSubscriptionVisibleMetrics(
+                DirectAgentGenerationMetrics(
+                    promptTokenCount: 120,
+                    cachedPromptTokenCount: 800,
+                    promptTokensPerSecond: 60,
+                    completionTokenCount: 32,
+                    completionTokensPerSecond: 8
+                )
+            )
+
+        #expect(
+            TerminalStatusBar.generationTokenCountsFragment(metrics) == "P:120 G:32"
+        )
+    }
+
+    @Test
     func statusBarGenerationTokenCountsFragmentIsCompactAndOptional() {
         let metrics = DirectAgentGenerationMetrics(
             promptTokenCount: 15_000,

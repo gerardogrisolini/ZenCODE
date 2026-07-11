@@ -48,9 +48,9 @@ extension ChatGPTSubscriptionGenerationClient {
         _ metrics: DirectAgentGenerationMetrics
     ) -> DirectAgentGenerationMetrics {
         DirectAgentGenerationMetrics(
-            promptTokenCount: nil,
-            cachedPromptTokenCount: nil,
-            promptTokensPerSecond: nil,
+            promptTokenCount: metrics.promptTokenCount,
+            cachedPromptTokenCount: metrics.cachedPromptTokenCount,
+            promptTokensPerSecond: metrics.promptTokensPerSecond,
             completionTokenCount: metrics.completionTokenCount,
             completionTokensPerSecond: metrics.completionTokensPerSecond,
             responseDurationSeconds: metrics.responseDurationSeconds,

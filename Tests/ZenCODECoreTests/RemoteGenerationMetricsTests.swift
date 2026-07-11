@@ -334,7 +334,7 @@ struct RemoteGenerationMetricsTests {
     }
 
     @Test
-    func anthropicSubscriptionVisibleMetricsClearsPromptMetrics() {
+    func anthropicSubscriptionVisibleMetricsPreservesPromptMetricsAndClearsPreviousValues() {
         let visibleMetrics = AnthropicSubscriptionGenerationClient
             .anthropicSubscriptionVisibleMetrics(
                 DirectAgentGenerationMetrics(
@@ -348,9 +348,9 @@ struct RemoteGenerationMetricsTests {
                 )
             )
 
-        #expect(visibleMetrics.promptTokenCount == nil)
-        #expect(visibleMetrics.cachedPromptTokenCount == nil)
-        #expect(visibleMetrics.promptTokensPerSecond == nil)
+        #expect(visibleMetrics.promptTokenCount == 120)
+        #expect(visibleMetrics.cachedPromptTokenCount == 800)
+        #expect(visibleMetrics.promptTokensPerSecond == 60)
         #expect(visibleMetrics.completionTokenCount == 32)
         #expect(visibleMetrics.completionTokensPerSecond == 8)
         #expect(visibleMetrics.responseDurationSeconds == 4)
@@ -359,7 +359,7 @@ struct RemoteGenerationMetricsTests {
     }
 
     @Test
-    func chatGPTSubscriptionVisibleMetricsClearsPromptMetrics() {
+    func chatGPTSubscriptionVisibleMetricsPreservesPromptMetricsAndClearsPreviousValues() {
         let visibleMetrics = ChatGPTSubscriptionGenerationClient
             .chatGPTSubscriptionVisibleMetrics(
                 DirectAgentGenerationMetrics(
@@ -373,9 +373,9 @@ struct RemoteGenerationMetricsTests {
                 )
             )
 
-        #expect(visibleMetrics.promptTokenCount == nil)
-        #expect(visibleMetrics.cachedPromptTokenCount == nil)
-        #expect(visibleMetrics.promptTokensPerSecond == nil)
+        #expect(visibleMetrics.promptTokenCount == 120)
+        #expect(visibleMetrics.cachedPromptTokenCount == 800)
+        #expect(visibleMetrics.promptTokensPerSecond == 60)
         #expect(visibleMetrics.completionTokenCount == 32)
         #expect(visibleMetrics.completionTokensPerSecond == 8)
         #expect(visibleMetrics.responseDurationSeconds == 4)
