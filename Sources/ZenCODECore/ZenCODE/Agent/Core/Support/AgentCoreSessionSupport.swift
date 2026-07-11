@@ -88,6 +88,10 @@ actor AgentCorePromptTurnRecorder {
         }
     }
 
+    func initialSessionSnapshot() -> AgentRuntimeSessionSnapshot {
+        initialSnapshot
+    }
+
     func snapshot() -> AgentRuntimeSessionSnapshot {
         var snapshotHistory = history
         if let assistantMessage = pendingAssistantMessage() {
@@ -160,6 +164,17 @@ extension AgentRuntimeSessionSnapshot {
             thinkingSelection: configuration.thinkingSelection,
             preserveThinking: configuration.preserveThinking
         )
+    }
+
+    func hasSameRuntimeState(as other: AgentRuntimeSessionSnapshot) -> Bool {
+        sessionID == other.sessionID
+            && workingDirectoryPath == other.workingDirectoryPath
+            && systemPrompt == other.systemPrompt
+            && cacheKey == other.cacheKey
+            && history == other.history
+            && allowedToolNames == other.allowedToolNames
+            && thinkingSelection == other.thinkingSelection
+            && preserveThinking == other.preserveThinking
     }
 
     func isLikelyNewerThan(_ other: AgentRuntimeSessionSnapshot) -> Bool {

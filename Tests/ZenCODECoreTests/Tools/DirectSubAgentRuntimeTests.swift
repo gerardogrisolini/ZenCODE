@@ -89,6 +89,49 @@ struct DirectSubAgentRuntimeTests {
         #expect(createdSessions.allSatisfy { $0.cacheKey == nil })
         #expect(createdSessions.allSatisfy { $0.historyCount == 0 })
     }
+
+    @Test
+    func overviewSnapshotsShowOnlyMostRecentCreateBatchWithoutPruningRegistry() async throws {
+        let backend = CapturingSubAgentRuntimeBackend()
+        let executor = DirectToolExecutor(
+            subAgentContextualBackendFactory: { _ in backend }
+        )
+        let runtime = await executor.subAgentRuntime
+        let workingDirectory = URL(
+            fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests",
+            isDirectory: true
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "agents": .array([
+                    .object(["name": .string("first-a")]),
+                    .object(["name": .string("first-b")])
+                ])
+            ],
+            workingDirectory: workingDirectory,
+            parentAllowedToolNames: nil
+        )
+
+        let firstOverview = await executor.subAgentSnapshots()
+        #expect(Set(firstOverview.map(\.name)) == ["first-a", "first-b"])
+
+        _ = try await runtime.createAgents(
+            arguments: ["name": .string("second")],
+            workingDirectory: workingDirectory,
+            parentAllowedToolNames: nil
+        )
+
+        let currentOverview = await executor.subAgentSnapshots()
+        let allSnapshots = await runtime.snapshots()
+        let listedAgents = await runtime.listAgents(arguments: [:])
+
+        #expect(currentOverview.map(\.name) == ["second"])
+        #expect(Set(allSnapshots.map(\.name)) == ["first-a", "first-b", "second"])
+        #expect(listedAgents.contains("first-a"))
+        #expect(listedAgents.contains("first-b"))
+        #expect(listedAgents.contains("second"))
+    }
 }
 
 private final class SubAgentFactoryRecorder: @unchecked Sendable {

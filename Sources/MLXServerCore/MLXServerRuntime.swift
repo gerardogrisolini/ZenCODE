@@ -19,6 +19,8 @@ public actor MLXServerRuntime {
     /// each session is owned by MLXLMCommon's `ChatSession`; the runtime
     /// only tracks which transcript each session represents.
     var chatSessions: [MLXServerChatSessionCacheKey: ChatSessionState] = [:]
+    var chatSessionTransactions: [UUID: ChatSessionTransactionState] = [:]
+    let chatSessionTransactionGate = MLXServerKeyedGenerationGate<MLXServerChatSessionCacheKey>()
     var chatSessionAccessGeneration: UInt64 = 0
     let maxChatSessionCount: Int
 
@@ -62,10 +64,26 @@ public actor MLXServerRuntime {
         var lastAccessGeneration: UInt64
     }
 
+    struct ChatSessionTurnCheckpoint: @unchecked Sendable {
+        var kvCheckpoint: MLXServerChatSessionKVCheckpoint
+        var fingerprints: [MLXServerChatTranscriptFingerprint]
+        var toolsSignature: String
+        var contextSignature: String
+        var contextTokenCount: Int?
+    }
+
+    struct ChatSessionTransactionState: @unchecked Sendable {
+        var cacheKey: MLXServerChatSessionCacheKey
+        var sessionTransfer: ChatSessionTransfer?
+        var checkpoint: ChatSessionTurnCheckpoint?
+        var lease: MLXServerKeyedGenerationLease<MLXServerChatSessionCacheKey>
+    }
+
     struct ResolvedChatSession {
         var cacheKey: MLXServerChatSessionCacheKey
         var sessionTransfer: ChatSessionTransfer
         var cachedPrefixMessageCount: Int
         var cachedPromptTokenCount: Int?
+        var turnCheckpoint: ChatSessionTurnCheckpoint?
     }
 }

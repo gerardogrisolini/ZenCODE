@@ -132,3 +132,92 @@ struct MLXServerGenerationLeaseSet: Sendable {
         }
     }
 }
+
+// MARK: - Keyed generation gate
+
+/// Serializes work independently for each key while removing idle key state,
+/// avoiding one retained actor per session identifier.
+package actor MLXServerKeyedGenerationGate<Key: Hashable & Sendable> {
+    private var activeLeaseIDs: [Key: UUID] = [:]
+    private var waiters: [Key: [Waiter]] = [:]
+
+    package init() {}
+
+    package func acquire(
+        key: Key
+    ) async throws -> MLXServerKeyedGenerationLease<Key> {
+        let leaseID = UUID()
+        if activeLeaseIDs[key] == nil {
+            activeLeaseIDs[key] = leaseID
+            return MLXServerKeyedGenerationLease(
+                id: leaseID,
+                key: key,
+                gate: self
+            )
+        }
+
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiters[key, default: []].append(
+                    Waiter(id: leaseID, continuation: continuation)
+                )
+            }
+        } onCancel: {
+            Task {
+                await self.cancelWaiter(id: leaseID, key: key)
+            }
+        }
+    }
+
+    fileprivate func release(id: UUID, key: Key) {
+        guard activeLeaseIDs[key] == id else {
+            return
+        }
+        guard var queued = waiters[key], !queued.isEmpty else {
+            activeLeaseIDs[key] = nil
+            waiters[key] = nil
+            return
+        }
+
+        let next = queued.removeFirst()
+        waiters[key] = queued.isEmpty ? nil : queued
+        activeLeaseIDs[key] = next.id
+        next.continuation.resume(
+            returning: MLXServerKeyedGenerationLease(
+                id: next.id,
+                key: key,
+                gate: self
+            )
+        )
+    }
+
+    private func cancelWaiter(id: UUID, key: Key) {
+        guard var queued = waiters[key],
+              let index = queued.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        let waiter = queued.remove(at: index)
+        waiters[key] = queued.isEmpty ? nil : queued
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+
+    private struct Waiter {
+        var id: UUID
+        var continuation: CheckedContinuation<
+            MLXServerKeyedGenerationLease<Key>,
+            any Error
+        >
+    }
+}
+
+package struct MLXServerKeyedGenerationLease<
+    Key: Hashable & Sendable
+>: Sendable {
+    fileprivate let id: UUID
+    fileprivate let key: Key
+    fileprivate let gate: MLXServerKeyedGenerationGate<Key>
+
+    package func release() async {
+        await gate.release(id: id, key: key)
+    }
+}

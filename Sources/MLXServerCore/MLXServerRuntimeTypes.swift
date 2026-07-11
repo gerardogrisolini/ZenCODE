@@ -336,6 +336,17 @@ public struct MLXServerChatCacheEvent: Sendable, Equatable {
     }
 }
 
+/// Opaque handle for a multi-round chat turn transaction. A backend keeps the
+/// handle while tool rounds run, then commits it on success or rolls it back
+/// when the enclosing user turn is cancelled.
+package struct MLXServerChatSessionTransaction: Sendable, Hashable {
+    let id: UUID
+
+    init(id: UUID = UUID()) {
+        self.id = id
+    }
+}
+
 public protocol MLXServerRuntimeGenerating: Sendable {
     func generateChatSession(
         request: MLXServerGenerationRequest

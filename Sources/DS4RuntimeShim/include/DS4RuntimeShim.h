@@ -102,6 +102,18 @@ void zencode_ds4_session_append_message(
 );
 void zencode_ds4_session_append_eos(zencode_ds4_session *session);
 
+/*
+ * Restores a previously recorded transcript length and synchronizes the live
+ * inference cache to that prefix. Used to roll back an interrupted turn while
+ * retaining the preceding KV checkpoint.
+ */
+int zencode_ds4_session_rollback(
+    zencode_ds4_session *session,
+    int transcript_len,
+    char *error,
+    size_t error_len
+);
+
 int zencode_ds4_session_generate(
     zencode_ds4_session *session,
     const char *prompt,

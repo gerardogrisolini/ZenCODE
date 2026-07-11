@@ -138,7 +138,7 @@ Inside chat mode, type a prompt and press return. Commands start with `/`:
 - `/plan status`: show the active plan in a table with the status of every structured point. It does not create sub-agents. Approved-plan points are synchronized from successful `todo.write` progress updates during implementation, and the completed table is shown automatically when every point reaches `completed`.
 - `/review [focus]`: delegate code review to one or more read-only `Reviewer` sub-agents. The command reviews tracked session changes and, when present, verifies the active approved plan against current implicated files. An approved plan also enables coverage-only review when no tracked change summary is available.
   This command requires the `sub-agents` tool group; enable it with `/tools` or switch to a profile that includes it.
-- Delegated sub-agent status is shown automatically in the chat flow while `/plan`, `/review`, or `agent.*` tool calls create and update sub-agents.
+- Delegated sub-agent status is shown automatically in the chat flow while `/plan`, `/review`, or `agent.*` tool calls create and update sub-agents. The overview shows only the most recently created `agent.create` batch; earlier agents remain available to targeted `agent.*` commands and `agent.list`.
 - `/telegram`: show Telegram status for the current TUI session.
 - `/telegram on`: turn Telegram on for the current TUI session. This also sends a confirmation message to the linked Telegram chat, so the iOS client is woken up and you do not need to message the bot first to start receiving notifications.
 - `/telegram off`: turn Telegram off for the current TUI session.

@@ -95,7 +95,7 @@ public actor DirectToolExecutor {
     }
 
     public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
-        await subAgentRuntime.snapshots()
+        await subAgentRuntime.overviewSnapshots()
     }
 
     public func descriptors(

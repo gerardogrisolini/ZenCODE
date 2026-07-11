@@ -64,6 +64,7 @@ public actor DirectSubAgentRuntime {
         public let name: String
         public let role: String
         public let isolationMode: IsolationMode
+        let overviewBatchID: UUID
         public let backend: any AgentRuntimeBackend
         public let createdAt: Date
         public var updatedAt: Date
@@ -180,6 +181,7 @@ public actor DirectSubAgentRuntime {
     public let backendFactory: DirectSubAgentContextualBackendFactory
     public let profileResolver: DirectSubAgentProfileResolver
     public var agents: [String: AgentRecord] = [:]
+    var latestOverviewBatchID: UUID?
 
     public init(
         backendFactory: @escaping DirectSubAgentBackendFactory,

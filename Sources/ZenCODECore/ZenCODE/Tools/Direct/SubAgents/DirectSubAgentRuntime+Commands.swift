@@ -14,6 +14,8 @@ extension DirectSubAgentRuntime {
         parentAllowedToolNames: Set<String>?
     ) async throws -> String {
         let payloads = try Self.requestedAgentPayloads(from: arguments)
+        let overviewBatchID = UUID()
+        latestOverviewBatchID = overviewBatchID
         var createdIDs: [String] = []
 
         for (offset, payload) in payloads.enumerated() {
@@ -50,6 +52,7 @@ extension DirectSubAgentRuntime {
                 name: payload.name.nilIfBlank ?? "sub-agent-\(offset + 1)",
                 role: payload.role.nilIfBlank ?? "worker",
                 isolationMode: payload.isolationMode,
+                overviewBatchID: overviewBatchID,
                 backend: backend,
                 createdAt: now,
                 updatedAt: now,

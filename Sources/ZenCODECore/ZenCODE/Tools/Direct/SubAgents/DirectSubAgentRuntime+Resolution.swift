@@ -103,6 +103,19 @@ extension DirectSubAgentRuntime {
         agents.values.sorted(by: Self.agentSortOrder).map(snapshot(from:))
     }
 
+    /// Returns only the most recently created `agent.create` batch for the
+    /// transient TUI overview. The full registry remains available through
+    /// `snapshots()`, `agent.list`, and the targeted agent commands.
+    public func overviewSnapshots() -> [AgentSnapshot] {
+        guard let latestOverviewBatchID else {
+            return []
+        }
+        return agents.values
+            .filter { $0.overviewBatchID == latestOverviewBatchID }
+            .sorted(by: Self.agentSortOrder)
+            .map(snapshot(from:))
+    }
+
     public func snapshots(for ids: [String]) -> [AgentSnapshot] {
         ids.compactMap { id in
             agents[id].map(snapshot(from:))

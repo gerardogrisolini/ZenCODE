@@ -43,6 +43,15 @@ extension MLXServerRuntime {
                    stored: state.fingerprints,
                    request: requestFingerprints
                ) {
+                let turnCheckpoint = state.sessionTransfer.session.makeKVCheckpoint().map {
+                    ChatSessionTurnCheckpoint(
+                        kvCheckpoint: $0,
+                        fingerprints: state.fingerprints,
+                        toolsSignature: state.toolsSignature,
+                        contextSignature: state.contextSignature,
+                        contextTokenCount: state.contextTokenCount
+                    )
+                }
                 // Check the session out of the registry for the duration of
                 // the turn; it is re-inserted with updated fingerprints when
                 // the turn finishes.
@@ -60,7 +69,8 @@ extension MLXServerRuntime {
                     cacheKey: cacheKey,
                     sessionTransfer: state.sessionTransfer,
                     cachedPrefixMessageCount: suffixStartIndex,
-                    cachedPromptTokenCount: state.contextTokenCount
+                    cachedPromptTokenCount: state.contextTokenCount,
+                    turnCheckpoint: turnCheckpoint
                 )
             }
             // Same session key but incompatible signatures or a diverged
@@ -85,7 +95,8 @@ extension MLXServerRuntime {
             cacheKey: cacheKey,
             sessionTransfer: ChatSessionTransfer(session: session),
             cachedPrefixMessageCount: 0,
-            cachedPromptTokenCount: nil
+            cachedPromptTokenCount: nil,
+            turnCheckpoint: nil
         )
     }
 
@@ -98,6 +109,100 @@ extension MLXServerRuntime {
             runtimeKind: request.runtimeKind,
             cacheLayoutSignature: MLXServerChatSessionCacheSignature.cacheLayout(request.parameters)
         )
+    }
+
+    /// Acquires exclusive ownership of one live chat-session cache for the
+    /// whole user turn, including time spent executing tools between model
+    /// generations.
+    package func beginChatSessionTransaction(
+        request: MLXServerGenerationRequest
+    ) async throws -> MLXServerChatSessionTransaction {
+        let cacheKey = Self.chatSessionCacheKey(for: request)
+        let lease = try await chatSessionTransactionGate.acquire(key: cacheKey)
+        do {
+            try Task.checkCancellation()
+        } catch {
+            await lease.release()
+            throw error
+        }
+
+        let token = MLXServerChatSessionTransaction()
+        chatSessionTransactions[token.id] = ChatSessionTransactionState(
+            cacheKey: cacheKey,
+            sessionTransfer: nil,
+            checkpoint: nil,
+            lease: lease
+        )
+        return token
+    }
+
+    /// Captures the committed KV state after the caller has acquired the turn
+    /// transaction and refreshed its application-level session snapshot.
+    package func captureChatSessionTransactionCheckpoint(
+        _ transaction: MLXServerChatSessionTransaction,
+        request: MLXServerGenerationRequest
+    ) {
+        guard var transactionState = chatSessionTransactions[transaction.id],
+              transactionState.cacheKey == Self.chatSessionCacheKey(for: request),
+              let state = chatSessions[transactionState.cacheKey],
+              state.toolsSignature == MLXServerChatSessionRequestSignature.tools(request.tools),
+              state.contextSignature == MLXServerChatSessionRequestSignature.additionalContext(
+                  request.additionalContext
+              ),
+              MLXServerChatSessionTranscript.storedPrefixEndIndex(
+                  stored: state.fingerprints,
+                  request: request.messages.map(\.transcriptFingerprint)
+              ) != nil,
+              let kvCheckpoint = state.sessionTransfer.session.makeKVCheckpoint() else {
+            return
+        }
+
+        transactionState.sessionTransfer = state.sessionTransfer
+        transactionState.checkpoint = ChatSessionTurnCheckpoint(
+            kvCheckpoint: kvCheckpoint,
+            fingerprints: state.fingerprints,
+            toolsSignature: state.toolsSignature,
+            contextSignature: state.contextSignature,
+            contextTokenCount: state.contextTokenCount
+        )
+        chatSessionTransactions[transaction.id] = transactionState
+    }
+
+    package func commitChatSessionTransaction(
+        _ transaction: MLXServerChatSessionTransaction
+    ) async {
+        guard let state = chatSessionTransactions.removeValue(forKey: transaction.id) else {
+            return
+        }
+        await state.lease.release()
+    }
+
+    package func rollbackChatSessionTransaction(
+        _ transaction: MLXServerChatSessionTransaction
+    ) async {
+        guard let state = chatSessionTransactions.removeValue(forKey: transaction.id) else {
+            return
+        }
+        if let sessionTransfer = state.sessionTransfer,
+           let checkpoint = state.checkpoint {
+            restoreChatSessionTurn(
+                cacheKey: state.cacheKey,
+                sessionTransfer: sessionTransfer,
+                checkpoint: checkpoint
+            )
+        }
+        await state.lease.release()
+    }
+
+    func invalidateChatSessionTransactions(
+        where shouldInvalidate: (MLXServerChatSessionCacheKey) -> Bool
+    ) {
+        for (id, var state) in chatSessionTransactions
+        where shouldInvalidate(state.cacheKey) {
+            state.sessionTransfer = nil
+            state.checkpoint = nil
+            chatSessionTransactions[id] = state
+        }
     }
 
     /// Runs the explicit disk lookup off the actor executor so heavy
@@ -150,6 +255,32 @@ extension MLXServerRuntime {
             lastAccessGeneration: chatSessionAccessGeneration
         )
         chatSessions[cacheKey] = state
+        evictChatSessionsBeyondLimit()
+    }
+
+    /// Restores the committed session state checked out before an interrupted
+    /// turn. The generated prompt/output suffix is removed from the live KV
+    /// cache while the prior transcript fingerprints remain authoritative.
+    func restoreChatSessionTurn(
+        cacheKey: MLXServerChatSessionCacheKey,
+        sessionTransfer: ChatSessionTransfer,
+        checkpoint: ChatSessionTurnCheckpoint?
+    ) {
+        guard let checkpoint,
+              sessionTransfer.session.restoreKVCheckpoint(checkpoint.kvCheckpoint) else {
+            discardChatSession(for: cacheKey)
+            return
+        }
+
+        chatSessionAccessGeneration += 1
+        chatSessions[cacheKey] = ChatSessionState(
+            sessionTransfer: sessionTransfer,
+            fingerprints: checkpoint.fingerprints,
+            toolsSignature: checkpoint.toolsSignature,
+            contextSignature: checkpoint.contextSignature,
+            contextTokenCount: checkpoint.contextTokenCount,
+            lastAccessGeneration: chatSessionAccessGeneration
+        )
         evictChatSessionsBeyondLimit()
     }
 

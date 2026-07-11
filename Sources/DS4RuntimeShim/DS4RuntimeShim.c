@@ -389,6 +389,43 @@ void zencode_ds4_session_append_eos(zencode_ds4_session *session) {
     session->owner->sym.tokens_push(&session->transcript, eos);
 }
 
+int zencode_ds4_session_rollback(
+    zencode_ds4_session *session,
+    int transcript_len,
+    char *error,
+    size_t error_len
+) {
+    if (!session || !session->owner || !session->session) {
+        set_error(error, error_len, "DS4 session is not available");
+        return 1;
+    }
+    if (transcript_len < 0 || transcript_len > session->transcript.len) {
+        set_error(error, error_len, "Invalid DS4 transcript rollback checkpoint");
+        return 1;
+    }
+
+    session->transcript.len = transcript_len;
+    char ds4_error[256] = {0};
+    int sync_rc = session->owner->sym.session_sync(
+        session->session,
+        &session->transcript,
+        ds4_error,
+        sizeof(ds4_error)
+    );
+    if (sync_rc != 0) {
+        if (session->owner->sym.session_invalidate) {
+            session->owner->sym.session_invalidate(session->session);
+        }
+        set_error(
+            error,
+            error_len,
+            ds4_error[0] ? ds4_error : "DS4 checkpoint rollback failed"
+        );
+        return 1;
+    }
+    return 0;
+}
+
 static uint64_t default_seed(void) {
     return ((uint64_t)time(NULL) ^ ((uint64_t)getpid() << 32) ^ (uint64_t)clock());
 }
@@ -565,7 +602,17 @@ int zencode_ds4_session_generate(
     if (finish_reason == 0 && generated >= max_tokens && max_tokens > 0) {
         finish_reason = 1;
     }
-    sym->tokens_push(&session->transcript, eos);
+    int rollback_rc = 0;
+    if (finish_reason == 4) {
+        rollback_rc = zencode_ds4_session_rollback(
+            session,
+            rollback_len,
+            error,
+            error_len
+        );
+    } else {
+        sym->tokens_push(&session->transcript, eos);
+    }
     double generation_end = monotonic_seconds();
 
     if (stats) {
@@ -579,7 +626,7 @@ int zencode_ds4_session_generate(
         stats->prompt_tokens_per_second = prompt_seconds > 0.0 ? (double)suffix / prompt_seconds : 0.0;
         stats->generation_tokens_per_second = generation_seconds > 0.0 ? (double)generated / generation_seconds : 0.0;
     }
-    return 0;
+    return rollback_rc == 0 ? 0 : 1;
 }
 
 int zencode_ds4_session_transcript_len(zencode_ds4_session *session) {
