@@ -33,7 +33,7 @@ extension TerminalChat {
         let changeLines = appliedChangeDetailLines(for: toolCall)
         if !changeLines.isEmpty {
             lines.append(contentsOf: changeLines)
-        } else if let summary = compactSummaryLine(result.summary) {
+        } else if let summary = expandedToolSummary(for: toolCall, result: result) {
             lines.append("summary: \(summary)")
         }
         lines.append("status: ✅")
@@ -337,6 +337,42 @@ extension TerminalChat {
             return summary
         }
         return "\(summary.prefix(157))..."
+    }
+
+    static func expandedToolSummary(
+        for toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult
+    ) -> String? {
+        if let lineCount = numberedFileReadLineCount(
+            toolName: toolCall.name,
+            output: result.output
+        ) {
+            let noun = lineCount == 1 ? "line" : "lines"
+            return "read \(lineCount) \(noun)"
+        }
+        return compactSummaryLine(result.summary)
+    }
+
+    static func numberedFileReadLineCount(
+        toolName: String,
+        output: String
+    ) -> Int? {
+        switch toolName {
+        case "local.readFile", "local.readFiles", "text.head", "text.tail":
+            break
+        default:
+            return nil
+        }
+
+        return output
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .count(where: { line in
+                guard line.contains("\t") else {
+                    return false
+                }
+                let lineNumber = line.prefix { $0 != "\t" }
+                return !lineNumber.isEmpty && lineNumber.allSatisfy(\.isWholeNumber)
+            })
     }
 
     static func indentedSnippet(

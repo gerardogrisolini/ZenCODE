@@ -233,8 +233,8 @@ extension TerminalChatRenderingTests {
             argumentsJSON: #"{"path":"/tmp/project/Sources/App.swift"}"#
         )
         let result = DirectAgentToolResult(
-            output: "let value = 1\nlet second = 2",
-            summary: "read 2 lines"
+            output: "1\tlet value = 1\n2\tlet second = 2",
+            summary: "1\tlet value = 1"
         )
 
         let lines = TerminalChat.detailedToolCallCompletedLines(
@@ -248,6 +248,60 @@ extension TerminalChatRenderingTests {
         #expect(lines.contains("summary: read 2 lines"))
         #expect(!lines.contains("rawOutput.output:"))
         #expect(!lines.contains("let value = 1"))
+    }
+
+    @Test
+    func detailedReadFilesCompletionCountsPayloadLinesAcrossFiles() {
+        let toolCall = DirectAgentToolCall(
+            id: "call_1",
+            name: "local.readFiles",
+            argumentsObject: [
+                "paths": ["/tmp/project/First.swift", "/tmp/project/Second.swift"]
+            ],
+            argumentsJSON: #"{"paths":["/tmp/project/First.swift","/tmp/project/Second.swift"]}"#
+        )
+        let result = DirectAgentToolResult(
+            output: """
+            ===== /tmp/project/First.swift =====
+            1\tlet first = 1
+            2\tlet second = 2
+
+            ===== /tmp/project/Second.swift =====
+            1\tlet third = 3
+
+            ===== /tmp/project/Missing.swift =====
+            <error: file not found>
+            """,
+            summary: "===== /tmp/project/First.swift ====="
+        )
+
+        let lines = TerminalChat.detailedToolCallCompletedLines(
+            for: toolCall,
+            result: result
+        )
+
+        #expect(lines.contains("summary: read 3 lines"))
+    }
+
+    @Test
+    func detailedHeadCompletionUsesSingularLineCount() {
+        let toolCall = DirectAgentToolCall(
+            id: "call_1",
+            name: "text.head",
+            argumentsObject: ["path": "/tmp/project/README.md", "lines": 1],
+            argumentsJSON: #"{"path":"/tmp/project/README.md","lines":1}"#
+        )
+        let result = DirectAgentToolResult(
+            output: "File: /tmp/project/README.md\n1\t# Project",
+            summary: "File: /tmp/project/README.md"
+        )
+
+        let lines = TerminalChat.detailedToolCallCompletedLines(
+            for: toolCall,
+            result: result
+        )
+
+        #expect(lines.contains("summary: read 1 line"))
     }
 
     @Test
