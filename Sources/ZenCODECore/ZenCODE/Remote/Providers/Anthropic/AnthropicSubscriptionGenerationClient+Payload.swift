@@ -302,7 +302,10 @@ extension AnthropicSubscriptionGenerationClient {
             return nil
         }
         let header = String(dataURL[dataURL.index(dataURL.startIndex, offsetBy: "data:".count)..<commaIndex])
-        let data = String(dataURL[dataURL.index(after: commaIndex)...])
+        let encodedData = String(dataURL[dataURL.index(after: commaIndex)...])
+        guard let data = encodedData.removingPercentEncoding else {
+            return nil
+        }
         let mediaType = header.components(separatedBy: ";").first?.nilIfBlank ?? "image/png"
         return [
             "type": "image",

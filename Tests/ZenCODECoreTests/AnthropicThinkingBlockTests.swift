@@ -463,6 +463,46 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
+    func manualThinkingBudgetLeavesRoomForOutputTokens() {
+        #expect(
+            AnthropicSubscriptionGenerationClient.adjustedThinkingBudget(
+                2_048,
+                maxTokens: 8_192
+            ) == 2_048
+        )
+        #expect(
+            AnthropicSubscriptionGenerationClient.adjustedThinkingBudget(
+                8_192,
+                maxTokens: 8_192
+            ) == 7_168
+        )
+        #expect(
+            AnthropicSubscriptionGenerationClient.adjustedThinkingBudget(
+                16_384,
+                maxTokens: 8_192
+            ) == 7_168
+        )
+    }
+
+    @Test
+    func anthropicImageBlockDecodesPercentEncodedBase64Data() throws {
+        let block = try #require(
+            AnthropicSubscriptionGenerationClient.anthropicImageBlock(
+                fromDataURL: "data:image/png;base64,aGVsbG8%2B%2F%3D"
+            )
+        )
+        let source = try #require(block["source"] as? [String: Any])
+
+        #expect(source["media_type"] as? String == "image/png")
+        #expect(source["data"] as? String == "aGVsbG8+/=")
+        #expect(
+            AnthropicSubscriptionGenerationClient.anthropicImageBlock(
+                fromDataURL: "data:image/png;base64,invalid%ZZ"
+            ) == nil
+        )
+    }
+
+    @Test
     func thinkingReplayRejectionStripsSavedThinkingBlocks() {
         let messages: [[String: Any]] = [
             ["role": "user", "content": "Hello"],
