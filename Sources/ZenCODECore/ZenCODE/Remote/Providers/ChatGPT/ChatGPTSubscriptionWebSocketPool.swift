@@ -209,9 +209,27 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private static func sendPing(
         to task: URLSessionWebSocketTask
     ) async throws {
+        try await awaitPing { completion in
+            task.sendPing(pongReceiveHandler: completion)
+        }
+    }
+
+    static func awaitPing(
+        _ send: (@escaping @Sendable (Error?) -> Void) -> Void
+    ) async throws {
+        let resumed = Atomic(false)
+
         try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<Void, Error>) in
-            task.sendPing { error in
+            send { error in
+                guard resumed.compareExchange(
+                    expected: false,
+                    desired: true,
+                    ordering: .relaxed
+                ).exchanged else {
+                    return
+                }
+
                 if let error {
                     continuation.resume(throwing: error)
                 } else {

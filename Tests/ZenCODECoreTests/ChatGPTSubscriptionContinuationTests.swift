@@ -520,6 +520,16 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionPingIgnoresDuplicateCallback() async throws {
+        struct LatePingFailure: Error {}
+
+        try await ChatGPTSubscriptionWebSocketPool.awaitPing { completion in
+            completion(nil)
+            completion(LatePingFailure())
+        }
+    }
+
+    @Test
     func chatGPTSubscriptionTreatsDisconnectedSocketAsRetryableTransportError() {
         let posixError = POSIXError(.ENOTCONN)
         let nsPosixError = NSError(
