@@ -137,7 +137,9 @@ extension RemoteGenerationClient {
             objectKeys: ["prompt_tokens_details", "input_tokens_details"],
             valueKeys: ["processed_tokens", "processedTokens"]
         )
-        let anthropicProcessedPromptTokens = hasAnthropicCacheUsage ? inputTokens : nil
+        let anthropicProcessedPromptTokens = hasAnthropicCacheUsage
+            ? inputTokens.map { $0 + (anthropicCacheCreationInputTokens ?? 0) }
+            : nil
         let inferredProcessedPromptTokens: Int?
         if let promptTokens, let cachedPromptTokens {
             inferredProcessedPromptTokens = max(promptTokens - cachedPromptTokens, 0)
@@ -370,11 +372,11 @@ extension RemoteGenerationClient {
             return nil
         }
 
-        let promptTokenCount = stats.compactMap {
-            $0.usage?.processedPromptTokens ?? $0.usage?.promptTokens
-        }.max()
-        let cachedPromptTokenCount = stats.compactMap(\.usage?.cachedPromptTokens).max()
-        let contextTokenCount = stats.compactMap(\.usage?.contextTokens).max()
+        let latestUsage = stats.last?.usage
+        let promptTokenCount = latestUsage?.processedPromptTokens
+            ?? latestUsage?.promptTokens
+        let cachedPromptTokenCount = latestUsage?.cachedPromptTokens
+        let contextTokenCount = latestUsage?.contextTokens
         let completionTokenCount = summed(
             stats.compactMap(\.usage?.completionTokens)
         )
@@ -410,6 +412,7 @@ extension RemoteGenerationClient {
             completionTokensPerSecond: completionTokensPerSecond,
             responseDurationSeconds: responseDurationSeconds,
             contextTokenCount: contextTokenCount,
+            clearsPromptMetrics: true
         )
     }
 

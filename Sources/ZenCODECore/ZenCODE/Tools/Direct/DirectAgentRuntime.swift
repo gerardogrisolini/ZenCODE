@@ -79,9 +79,14 @@ public struct DirectAgentToolResult: Sendable {
 }
 
 public struct DirectAgentGenerationMetrics: Sendable {
+    /// Prompt tokens evaluated during prefill. Excludes tokens known to have
+    /// been reused from the prompt cache.
     public let promptTokenCount: Int?
+    /// Prompt tokens reused from cache. `nil` when the backend does not report
+    /// cache usage; an explicit cache miss is represented by zero.
     public let cachedPromptTokenCount: Int?
     public let promptTokensPerSecond: Double?
+    /// Tokens generated across the model round or aggregated agent turn.
     public let completionTokenCount: Int?
     public let completionTokensPerSecond: Double?
     public let responseDurationSeconds: Double?

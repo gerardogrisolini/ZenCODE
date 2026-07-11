@@ -71,16 +71,17 @@ struct RemoteGenerationMetricsTests {
     }
 
     @Test
-    func generationMetricsUsesLatestPromptAndAggregatesCompletionAcrossRounds() {
+    func generationMetricsUsesLatestPromptAndContextAndAggregatesCompletionAcrossRounds() {
         let startedAt = Date(timeIntervalSince1970: 100)
         let stats = [
             RemoteGenerationStats(
                 usage: RemoteGenerationUsage(
-                    promptTokens: 1_000,
+                    promptTokens: 6_000,
                     completionTokens: 50,
-                    totalTokens: 1_050,
-                    processedPromptTokens: 200,
-                    cachedPromptTokens: 800,
+                    totalTokens: 6_050,
+                    contextTokens: 6_050,
+                    processedPromptTokens: 6_000,
+                    cachedPromptTokens: 0,
                     promptTokensPerSecond: nil,
                     completionTokensPerSecond: nil
                 ),
@@ -91,11 +92,12 @@ struct RemoteGenerationMetricsTests {
             ),
             RemoteGenerationStats(
                 usage: RemoteGenerationUsage(
-                    promptTokens: 1_200,
+                    promptTokens: 4_300,
                     completionTokens: 25,
-                    totalTokens: 1_225,
-                    processedPromptTokens: 300,
-                    cachedPromptTokens: 900,
+                    totalTokens: 4_325,
+                    contextTokens: 4_325,
+                    processedPromptTokens: 200,
+                    cachedPromptTokens: 4_100,
                     promptTokensPerSecond: nil,
                     completionTokensPerSecond: nil
                 ),
@@ -108,9 +110,99 @@ struct RemoteGenerationMetricsTests {
 
         let metrics = RemoteGenerationClient.generationMetrics(stats)
 
-        #expect(metrics?.promptTokenCount == 300)
-        #expect(metrics?.cachedPromptTokenCount == 900)
+        #expect(metrics?.promptTokenCount == 200)
+        #expect(metrics?.cachedPromptTokenCount == 4_100)
         #expect(metrics?.completionTokenCount == 75)
+        #expect(metrics?.contextTokenCount == 4_325)
+        #expect(metrics?.clearsPromptMetrics == true)
+    }
+
+    @Test
+    func generationMetricsDoesNotReusePromptCountsWhenLatestRoundHasNoUsage() throws {
+        let startedAt = Date(timeIntervalSince1970: 100)
+        let metrics = try #require(
+            RemoteGenerationClient.generationMetrics([
+                RemoteGenerationStats(
+                    usage: RemoteGenerationUsage(
+                        promptTokens: 1_000,
+                        completionTokens: 10,
+                        totalTokens: 1_010,
+                        contextTokens: 1_010,
+                        processedPromptTokens: 200,
+                        cachedPromptTokens: 800,
+                        promptTokensPerSecond: nil,
+                        completionTokensPerSecond: nil
+                    ),
+                    requestStartedAt: startedAt,
+                    firstDeltaAt: nil,
+                    finishedAt: startedAt,
+                    generatedCharacterCount: 0
+                ),
+                RemoteGenerationStats(
+                    usage: nil,
+                    requestStartedAt: startedAt,
+                    firstDeltaAt: nil,
+                    finishedAt: startedAt,
+                    generatedCharacterCount: 0
+                )
+            ])
+        )
+        let mergedMetrics = TerminalStatusBar(isEnabled: false).mergedMetrics(
+            current: DirectAgentGenerationMetrics(
+                promptTokenCount: 300,
+                cachedPromptTokenCount: 700,
+                promptTokensPerSecond: 100,
+                completionTokenCount: 5,
+                completionTokensPerSecond: 10,
+                contextTokenCount: 1_005
+            ),
+            update: metrics
+        )
+
+        #expect(metrics.promptTokenCount == nil)
+        #expect(metrics.cachedPromptTokenCount == nil)
+        #expect(metrics.contextTokenCount == nil)
+        #expect(metrics.completionTokenCount == 10)
+        #expect(metrics.clearsPromptMetrics)
+        #expect(mergedMetrics.promptTokenCount == nil)
+        #expect(mergedMetrics.cachedPromptTokenCount == nil)
+        #expect(mergedMetrics.promptTokensPerSecond == nil)
+    }
+
+    @Test
+    func responsesUsageSeparatesCachedAndFreshPromptTokens() throws {
+        let usage = try #require(
+            RemoteGenerationClient.parsedUsage(
+                from: [
+                    "input_tokens": 25_000,
+                    "input_tokens_details": ["cached_tokens": 20_000],
+                    "output_tokens": 3_000,
+                    "total_tokens": 28_000
+                ]
+            )
+        )
+        let metrics = try #require(
+            RemoteGenerationClient.generationMetrics([
+                RemoteGenerationStats(
+                    usage: usage,
+                    requestStartedAt: Date(timeIntervalSince1970: 100),
+                    firstDeltaAt: nil,
+                    finishedAt: Date(timeIntervalSince1970: 101),
+                    generatedCharacterCount: 0
+                )
+            ])
+        )
+
+        #expect(usage.promptTokens == 25_000)
+        #expect(usage.processedPromptTokens == 5_000)
+        #expect(usage.cachedPromptTokens == 20_000)
+        #expect(metrics.promptTokenCount == 5_000)
+        #expect(metrics.cachedPromptTokenCount == 20_000)
+        #expect(metrics.completionTokenCount == 3_000)
+        #expect(
+            TerminalStatusBar.generationTokenCountsFragment(metrics)
+                == "C:20k P:5.0k G:3.0k"
+        )
     }
 
     @Test
@@ -297,7 +389,7 @@ struct RemoteGenerationMetricsTests {
     }
 
     @Test
-    func anthropicSubscriptionUsageIncludesCachedInputTokens() throws {
+    func anthropicSubscriptionUsageSeparatesCachedAndFreshInputTokens() throws {
         let usage = try #require(
             AnthropicSubscriptionRequestBuilder.usage(
                 from: [
@@ -310,7 +402,7 @@ struct RemoteGenerationMetricsTests {
         )
 
         #expect(usage.promptTokens == 960)
-        #expect(usage.processedPromptTokens == 120)
+        #expect(usage.processedPromptTokens == 160)
         #expect(usage.cachedPromptTokens == 800)
         #expect(usage.completionTokens == 2)
         #expect(usage.totalTokens == 962)
@@ -326,11 +418,37 @@ struct RemoteGenerationMetricsTests {
         )
 
         #expect(updatedUsage.promptTokens == 960)
-        #expect(updatedUsage.processedPromptTokens == 120)
+        #expect(updatedUsage.processedPromptTokens == 160)
         #expect(updatedUsage.cachedPromptTokens == 800)
         #expect(updatedUsage.completionTokens == 32)
         #expect(updatedUsage.totalTokens == 992)
         #expect(updatedUsage.contextTokens == 992)
+
+        let creationOnlyUsage = try #require(
+            AnthropicSubscriptionRequestBuilder.usage(
+                from: [
+                    "input_tokens": 120,
+                    "cache_creation_input_tokens": 40,
+                    "output_tokens": 2
+                ]
+            )
+        )
+        #expect(creationOnlyUsage.promptTokens == 160)
+        #expect(creationOnlyUsage.processedPromptTokens == 160)
+        #expect(creationOnlyUsage.cachedPromptTokens == nil)
+
+        let readOnlyUsage = try #require(
+            AnthropicSubscriptionRequestBuilder.usage(
+                from: [
+                    "input_tokens": 120,
+                    "cache_read_input_tokens": 800,
+                    "output_tokens": 2
+                ]
+            )
+        )
+        #expect(readOnlyUsage.promptTokens == 920)
+        #expect(readOnlyUsage.processedPromptTokens == 120)
+        #expect(readOnlyUsage.cachedPromptTokens == 800)
     }
 
     @Test
@@ -338,7 +456,7 @@ struct RemoteGenerationMetricsTests {
         let visibleMetrics = AnthropicSubscriptionGenerationClient
             .anthropicSubscriptionVisibleMetrics(
                 DirectAgentGenerationMetrics(
-                    promptTokenCount: 120,
+                    promptTokenCount: 160,
                     cachedPromptTokenCount: 800,
                     promptTokensPerSecond: 60,
                     completionTokenCount: 32,
@@ -348,7 +466,7 @@ struct RemoteGenerationMetricsTests {
                 )
             )
 
-        #expect(visibleMetrics.promptTokenCount == 120)
+        #expect(visibleMetrics.promptTokenCount == 160)
         #expect(visibleMetrics.cachedPromptTokenCount == 800)
         #expect(visibleMetrics.promptTokensPerSecond == 60)
         #expect(visibleMetrics.completionTokenCount == 32)
