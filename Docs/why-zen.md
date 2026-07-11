@@ -48,9 +48,9 @@ This document summarizes the strengths of `ZenCODE`, my motivations for writing 
 ### Agentic workflow
 - **Agent profiles** (`Default`, `Builder`, `Minimal`, `Xcode`, `Planner`, `Reviewer`) with
   dedicated tools, skills, model, and instructions, switchable within a session.
-- **Sub-agents, `/plan`, and `/review`**: read-only planning delegated to
-  `Planner` sub-agents before implementation, then read-only review delegated to
-  `Reviewer` sub-agents in `isolationMode report`, runnable in parallel with
+- **Sub-agents, `/plan`, and `/review`**: each plan is authored by one
+  read-only `Planner` and used directly before implementation, while review is delegated to
+  read-only `Reviewer` sub-agents in `isolationMode report`, runnable in parallel with
   scoped read-only allowlists.
 - **Dynamic Swift Features**: the Builder generates reusable Swift packages as
   durable tools, run out-of-process over a JSON stdin/stdout protocol.

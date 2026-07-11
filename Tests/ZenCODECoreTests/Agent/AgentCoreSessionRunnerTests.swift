@@ -52,6 +52,35 @@ struct AgentCoreSessionRunnerTests {
     }
 
     @Test
+    func replaceSessionHistoryUpdatesSnapshotAndRuntimeBackend() async throws {
+        let backend = CapturingAgentRuntimeBackend()
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in backend }
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: "system",
+            cacheKey: "cache",
+            history: [AgentRuntimeMessage(role: .user, content: "old")],
+            allowedToolNames: ["agent.create"]
+        )
+        let replacement = [
+            AgentRuntimeMessage(role: .user, content: "plan request"),
+            AgentRuntimeMessage(role: .assistant, content: "Planner-authored plan"),
+        ]
+
+        try await runner.createSession(configuration: configuration)
+        _ = try await runner.preloadModel(configuration: configuration, onEvent: { _ in })
+        #expect(await runner.replaceSessionHistory(id: sessionID, history: replacement))
+
+        #expect(await runner.snapshotSession(id: sessionID)?.history == replacement)
+        #expect(await backend.lastCreatedHistory() == replacement)
+    }
+
+    @Test
     func failedPromptPublishesRecoveredSessionSnapshot() async throws {
         let backend = CapturingAgentRuntimeBackend(
             promptEvents: [.content("partial answer")],

@@ -52,6 +52,8 @@ struct DirectSubAgentRuntimeTests {
         #expect(await backend.createdThinkingSelection() == .high)
 
         let snapshot = try #require(await runtime.snapshots().first)
+        #expect(snapshot.profileID == planner.id)
+        #expect(snapshot.profileName == planner.name)
         #expect(snapshot.modelID == "planner-model")
         #expect(output.contains("model=planner-model"))
     }

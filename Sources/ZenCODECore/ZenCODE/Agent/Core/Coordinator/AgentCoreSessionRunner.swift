@@ -249,6 +249,40 @@ public actor AgentCoreSessionRunner {
         )
     }
 
+    @discardableResult
+    public func replaceSessionHistory(
+        id sessionID: String,
+        history: [AgentRuntimeMessage]
+    ) async -> Bool {
+        guard let baseConfiguration = sessions[sessionID] else {
+            return false
+        }
+        let currentSnapshot = await backend?.snapshotSession(id: sessionID)
+            ?? lastKnownSessionSnapshots[sessionID]
+            ?? AgentRuntimeSessionSnapshot(configuration: baseConfiguration)
+        let replacement = currentSnapshot.replacingHistory(history)
+        let replacementConfiguration = baseConfiguration.replacingRuntimeState(
+            with: replacement
+        )
+
+        sessions[sessionID] = replacementConfiguration
+        lastKnownSessionSnapshots[sessionID] = replacement
+        if let backend {
+            await backend.clearSession(id: sessionID)
+            await backend.createSession(
+                id: replacement.sessionID,
+                cwd: replacement.workingDirectoryPath,
+                systemPrompt: replacement.systemPrompt,
+                history: replacement.history,
+                cacheKey: replacement.cacheKey,
+                allowedToolNames: replacement.allowedToolNames,
+                thinkingSelection: replacement.thinkingSelection,
+                preserveThinking: replacement.preserveThinking
+            )
+        }
+        return true
+    }
+
     public func compactSession(
         id sessionID: String,
         force: Bool = true,

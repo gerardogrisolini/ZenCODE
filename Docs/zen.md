@@ -133,7 +133,7 @@ Inside chat mode, type a prompt and press return. Commands start with `/`:
 - `/changes`: show the latest tracked file change summary.
 - `/changes diff`: include patches in the change summary.
 - `/undo`: revert the most recent tracked file changes created by the agent.
-- `/plan <goal>`: delegate planning for an explicit goal to one or more read-only `Planner` sub-agents. A successful result becomes the unapproved active session plan. Use `/plan approve` to approve it, start implementation immediately in the current profile, and make it a `/review` criterion; use `/plan clear` to remove it. With no goal, the command reports the missing goal and does not create sub-agents.
+- `/plan <goal>`: delegate the complete planning goal to one read-only `Planner` plan author. Its output is displayed and recorded directly as the unapproved active session plan; the current profile may coordinate and register status points but cannot rewrite the plan. Use `/plan approve` to approve it, start implementation immediately in the current profile, and make it a `/review` criterion; use `/plan clear` to remove it. With no goal, the command reports the missing goal and does not create a Planner.
   This command requires the `sub-agents` tool group; enable it with `/tools` or switch to a profile that includes it.
 - `/plan status`: show the active plan in a table with the status of every structured point. It does not create sub-agents. Approved-plan points are synchronized from successful `todo.write` progress updates during implementation, and the completed table is shown automatically when every point reaches `completed`.
 - `/review [focus]`: delegate code review to one or more read-only `Reviewer` sub-agents. The command reviews tracked session changes and, when present, verifies the active approved plan against current implicated files. An approved plan also enables coverage-only review when no tracked change summary is available.
@@ -169,7 +169,7 @@ Use `/tools` to inspect and select the tool groups for the current session. ACP 
 
 ## Planner Agent And Planning
 
-The `Planner` profile is a built-in read-only planning profile. It is intended for delegated planning before implementation: planners inspect only the context needed to make a plan concrete, then report likely files or areas to change, implementation phases, risks, open questions, and validation steps.
+The `Planner` profile is a built-in read-only planning profile. It is intended to author delegated plans before implementation: the Planner inspects only the context needed to make a plan concrete, then writes the ordered implementation points, likely files or areas to change, risks, open questions, and validation steps.
 
 Use `/plan` from a normal implementation session when you want a planning pass before editing:
 
@@ -180,7 +180,7 @@ Use `/plan` from a normal implementation session when you want a planning pass b
 
 `/plan` requires the goal as an argument; run `/plan <goal>` rather than a bare `/plan`.
 
-`/plan` keeps the current agent profile as the planning director and creates `Planner` sub-agents through sub-agent tools. The delegated planners run with `isolationMode "report"` and a read-only planning tool allowlist, so they can inspect but must not modify the workspace. After the planners finish, the director consolidates their output into one actionable plan and records its ordered points with stable IDs. `/plan approve` immediately starts that implementation without requiring another user prompt. Use `/plan status` to inspect `pending`, `in_progress`, `completed`, or `blocked` progress during the loop `/plan <goal> -> /plan approve` (automatic implementation) `-> /review`.
+`/plan` keeps the current agent profile only as a coordinator and creates exactly one `plan-author` sub-agent with role and profile `Planner`. The Planner runs with `isolationMode "report"` and a read-only planning tool allowlist, so it can inspect but cannot modify the workspace. It receives the complete goal and writes the final actionable plan itself. The coordinator may copy the Planner's numbered points into stable todo IDs for status tracking, but it is forbidden from drafting, consolidating, or rewriting the plan. The TUI displays and records the Planner's `latestOutput` directly; if no completed Planner output exists, the turn fails instead of falling back to a plan from `Default`. `/plan approve` immediately starts implementation without requiring another user prompt. Use `/plan status` to inspect `pending`, `in_progress`, `completed`, or `blocked` progress during the loop `/plan <goal> -> /plan approve` (automatic implementation) `-> /review`.
 
 See the [Planner agent guide](planner.md) for details.
 

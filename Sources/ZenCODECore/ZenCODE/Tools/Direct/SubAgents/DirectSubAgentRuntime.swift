@@ -63,6 +63,8 @@ public actor DirectSubAgentRuntime {
         public let sessionID: String
         public let name: String
         public let role: String
+        public let profileID: String?
+        public let profileName: String?
         public let isolationMode: IsolationMode
         let overviewBatchID: UUID
         public let backend: any AgentRuntimeBackend
@@ -91,6 +93,8 @@ public actor DirectSubAgentRuntime {
         public let id: String
         public let name: String
         public let role: String
+        public let profileID: String?
+        public let profileName: String?
         public let isolationMode: IsolationMode
         public let status: Status
         public let pending: Bool
@@ -109,6 +113,8 @@ public actor DirectSubAgentRuntime {
             id: String,
             name: String,
             role: String,
+            profileID: String? = nil,
+            profileName: String? = nil,
             isolationMode: IsolationMode,
             status: Status,
             pending: Bool,
@@ -126,6 +132,8 @@ public actor DirectSubAgentRuntime {
             self.id = id
             self.name = name
             self.role = role
+            self.profileID = profileID?.nilIfBlank
+            self.profileName = profileName?.nilIfBlank
             self.isolationMode = isolationMode
             self.status = status
             self.pending = pending

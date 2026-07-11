@@ -127,6 +127,8 @@ extension DirectSubAgentRuntime {
             id: agent.id,
             name: agent.name,
             role: agent.role,
+            profileID: agent.profileID,
+            profileName: agent.profileName,
             isolationMode: agent.isolationMode,
             status: agent.status,
             pending: agent.status.isPending || !agent.pendingPrompts.isEmpty,

@@ -126,6 +126,8 @@ extension TerminalChat {
         "ZenCODE: no completed plan is available to approve. "
         + "Run /plan <goal> and wait for it to finish successfully.\n"
 
+    static let planAuthorAgentName = "plan-author"
+
     static func planImplementationPrompt(for plan: TerminalSessionPlan) -> String {
         """
         Implement the active approved plan now. Work through its points in order, keep their \
@@ -299,50 +301,129 @@ extension TerminalChat {
             """
 
         return """
-            You are the director of this planning pass. Stay on your current agent profile: \
-            do not switch profiles. Delegate the actual planning to Planner sub-agents via \
-            sub-agent tools, then read their plans and produce one consolidated \
-            implementation plan.
+            You are only the coordinator for this planning pass. Stay on your current agent \
+            profile, but do not author, draft, consolidate, rewrite, or improve the plan \
+            yourself. The Planner agent is the sole author of the final plan.
 
             \(goalSection)
 
-            Delegation rules:
-            - Create at least one sub-agent with agent.create using role "Planner" and \
-            isolationMode "report" (read-only; it must not edit files or run mutating \
-            commands).
-            - Restrict each Planner to this read-only planning toolset by passing \
+            Planner authoring rules:
+            - Create exactly one sub-agent with agent.create. Use name \
+            "\(planAuthorAgentName)", role "Planner", profile "\(planner.id)", and isolationMode \
+            "report" (read-only; it must not edit files or run mutating commands).
+            - Restrict the Planner to this read-only planning toolset by passing \
             toolNames: [\(toolList)].
-            - When the activity can be partitioned into independent planning areas (for \
-            example files/modules to inspect, requirements, tests, risks, migration steps, \
-            or docs), spawn multiple Planners in parallel in a single agent.create call. \
-            If the activity is small or cannot be partitioned cleanly, a single Planner is \
-            fine.
-            - Give each Planner a focused prompt describing its assigned planning subset. \
-            Ask Planners to inspect only what is needed to make the plan concrete.
-            - Ask Planners to report: likely files/areas to touch, implementation phases, \
-            dependencies, risks, edge cases, test/validation strategy, open questions, and \
-            a recommended order of work.
+            - Give that Planner the complete requested goal and every relevant constraint \
+            from the conversation. Explicitly tell it that it, not the current coordinator, \
+            must inspect the workspace as needed and write the complete final plan.
+            - Require the Planner's final response to include an ordered, numbered \
+            "Implementation plan" whose items are directly actionable, plus likely \
+            files/areas to touch, dependencies, risks, edge cases, open questions, and the \
+            test/validation strategy.
+            - Require the Planner to support this workflow loop: /plan <goal> -> /plan \
+            approve (which automatically starts implementation) -> /review -> corrections \
+            until the work is complete. It must not tell the user to send another \
+            implementation prompt after approval.
+            - Require the Planner's final response to follow the session response language \
+            from the system prompt. It must not answer in English merely because this \
+            internal coordination prompt is written in English.
+            - Do not create supporting Planners or split authorship across multiple agents. \
+            The single Planner must own the complete plan from investigation through final \
+            wording.
 
             After delegating:
-            - Wait for the Planners to finish with agent.wait.
-            - Read and consolidate their plans into one actionable plan, removing \
-            duplicates and resolving conflicts.
+            - Wait for the Planner to finish with agent.wait.
+            - If its output is failed, empty, or missing required planning detail, ask that \
+            same Planner to correct it with agent.message and wait again. Never fill gaps or \
+            produce a replacement plan yourself.
             - Before the final response, call todo.write once with mode "upsert" and one \
-            item for every actionable implementation point in the consolidated plan. Use \
-            a fresh short token shared by this plan and stable IDs "plan-<token>-1", \
-            "plan-<token>-2", and so on. Preserve execution order, keep each content field \
-            concise, and set every status to "pending". Do not include risks, \
-            background notes, open questions, or validation summaries as separate items.
-            - The final plan must support this workflow loop: /plan <goal> -> /plan approve \
-            (which automatically starts implementation) -> /review -> corrections until the \
-            work is complete. Do not tell the user to send another implementation prompt \
-            after approval.
-            - Do not edit any files yourself in this planning turn. Present the plan, the \
-            expected validation, and where /review should be run after implementation.
-            - The final planning summary must follow the session response language from \
-            the system prompt. Do not answer in English just because this internal planning \
-            prompt is written in English.
+            item for every numbered implementation point authored by the Planner. Copy each \
+            point's wording and order without reinterpretation. Use a fresh short token \
+            shared by this plan and stable IDs "plan-<token>-1", "plan-<token>-2", and so \
+            on. Keep every status "pending". Do not include risks, background notes, open \
+            questions, or validation summaries as separate items.
+            - Your final response must be exactly the Planner's latest output, verbatim. Do \
+            not add an introduction or conclusion, summarize it, change its wording, reorder \
+            it, or wrap it in a quotation or code block.
+            - Do not edit any files yourself in this planning turn.
             """
+    }
+
+    static func plannerAuthoredPlanResponse(
+        parentResponse: DirectAgentResponse,
+        snapshots: [DirectSubAgentRuntime.AgentSnapshot],
+        excludingAgentIDs: Set<String> = []
+    ) -> DirectAgentResponse? {
+        let completedAuthors = snapshots.filter { snapshot in
+            !excludingAgentIDs.contains(snapshot.id)
+                && snapshot.name.caseInsensitiveCompare(planAuthorAgentName) == .orderedSame
+                && snapshot.role.caseInsensitiveCompare(
+                    AgentProfileStore.plannerAgentName
+                ) == .orderedSame
+                && isPlannerSnapshotProfile(snapshot)
+                && snapshot.isolationMode == .report
+                && snapshot.status == .idle
+                && !snapshot.pending
+                && snapshot.latestOutput?.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                ).isEmpty == false
+        }
+        guard completedAuthors.count == 1,
+              let author = completedAuthors.first,
+              let text = author.latestOutput,
+              text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return nil
+        }
+        return DirectAgentResponse(
+            text: text,
+            stopReason: parentResponse.stopReason,
+            modelID: author.modelID?.nilIfBlank ?? parentResponse.modelID
+        )
+    }
+
+    static func isPlannerSnapshotProfile(
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
+    ) -> Bool {
+        snapshot.profileID?.caseInsensitiveCompare(
+            AgentProfileStore.plannerAgentID.uuidString
+        ) == .orderedSame
+            || snapshot.profileName?.caseInsensitiveCompare(
+                AgentProfileStore.plannerAgentName
+            ) == .orderedSame
+    }
+
+    static func historyByReplacingPlanCoordinatorOutput(
+        _ history: [AgentRuntimeMessage],
+        with plannerOutput: String
+    ) -> [AgentRuntimeMessage] {
+        guard let turnStart = history.lastIndex(where: { $0.role == .user }) else {
+            return history + [AgentRuntimeMessage(role: .assistant, content: plannerOutput)]
+        }
+
+        var correctedHistory = Array(history[...turnStart])
+        correctedHistory.append(contentsOf: history[history.index(after: turnStart)...].filter {
+            !($0.role == .assistant && $0.toolCalls.isEmpty)
+        })
+        correctedHistory.append(
+            AgentRuntimeMessage(role: .assistant, content: plannerOutput)
+        )
+        return correctedHistory
+    }
+}
+
+enum TerminalPlanGenerationError: LocalizedError {
+    case plannerOutputUnavailable
+    case sessionHistoryUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .plannerOutputUnavailable:
+            return "The Planner agent did not produce a completed plan. The current agent "
+                + "was not allowed to substitute its own plan; run /plan <goal> again."
+        case .sessionHistoryUnavailable:
+            return "The Planner produced a plan, but ZenCODE could not replace the current "
+                + "agent's response in the session history. The plan was not recorded."
+        }
     }
 }
 

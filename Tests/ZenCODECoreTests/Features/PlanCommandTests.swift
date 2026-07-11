@@ -415,7 +415,7 @@ struct PlanCommandTests {
     }
 
     @Test
-    func planDelegationPromptCreatesPlannerSubAgentsForPlanImplementationReviewLoop() {
+    func planDelegationPromptMakesOnePlannerTheSolePlanAuthor() {
         let planner = AgentProfile(
             id: AgentProfileStore.plannerAgentID.uuidString,
             name: AgentProfileStore.plannerAgentName,
@@ -429,21 +429,173 @@ struct PlanCommandTests {
 
         #expect(prompt.contains("Planning goal requested by the user: add a Planner command"))
         #expect(prompt.contains("agent.create"))
+        #expect(prompt.contains("Create exactly one sub-agent"))
+        #expect(prompt.contains("name \"plan-author\""))
         #expect(prompt.contains("role \"Planner\""))
+        #expect(prompt.contains("profile \"\(planner.id)\""))
         #expect(prompt.contains("isolationMode \"report\""))
         #expect(prompt.contains("toolNames:"))
         #expect(prompt.contains("agent.wait"))
+        #expect(prompt.contains("same Planner to correct it with agent.message"))
         #expect(prompt.contains("call todo.write once with mode \"upsert\""))
         #expect(prompt.contains("stable IDs \"plan-<token>-1\""))
         #expect(prompt.contains("/plan <goal> -> /plan approve"))
         #expect(prompt.contains("automatically starts implementation"))
-        #expect(prompt.contains("Do not tell the user to send another implementation prompt"))
+        #expect(prompt.contains("must not tell the user to send another implementation prompt"))
+        #expect(prompt.contains("Planner agent is the sole author of the final plan"))
+        #expect(prompt.contains("exactly the Planner's latest output, verbatim"))
+        #expect(prompt.contains("do not author, draft, consolidate, rewrite, or improve"))
         #expect(prompt.contains("Do not edit any files yourself in this planning turn"))
         #expect(!prompt.contains("infer the activity to plan"))
+        #expect(!prompt.contains("spawn multiple Planners"))
+        #expect(!prompt.contains("Read and consolidate their plans"))
         #expect(!prompt.contains("local.writeFile"))
         #expect(!prompt.contains("local.exec"))
         #expect(!prompt.contains("git.add"))
         #expect(!prompt.contains("memory.write"))
+    }
+
+    @Test
+    func plannerAuthoredResponseIgnoresTheCurrentAgentsDraft() throws {
+        let parentResponse = DirectAgentResponse(
+            text: "Default rewrote the plan",
+            stopReason: "end_turn",
+            modelID: "default-model"
+        )
+        let response = try #require(TerminalChat.plannerAuthoredPlanResponse(
+            parentResponse: parentResponse,
+            snapshots: [
+                subAgentSnapshot(
+                    name: "supporting-agent",
+                    role: "Planner",
+                    modelID: "other-model",
+                    latestOutput: "Supporting notes",
+                    updatedAt: Date(timeIntervalSince1970: 200)
+                ),
+                subAgentSnapshot(
+                    name: TerminalChat.planAuthorAgentName,
+                    role: "Planner",
+                    modelID: "planner-model",
+                    latestOutput: "Planner-authored final plan",
+                    updatedAt: Date(timeIntervalSince1970: 100)
+                ),
+            ]
+        ))
+
+        #expect(response.text == "Planner-authored final plan")
+        #expect(response.stopReason == parentResponse.stopReason)
+        #expect(response.modelID == "planner-model")
+        #expect(response.text != parentResponse.text)
+    }
+
+    @Test
+    func plannerAuthoredResponseRejectsAnIncompletePlanner() {
+        let parentResponse = DirectAgentResponse(
+            text: "Default fallback plan",
+            stopReason: "end_turn",
+            modelID: "default-model"
+        )
+        let response = TerminalChat.plannerAuthoredPlanResponse(
+            parentResponse: parentResponse,
+            snapshots: [
+                subAgentSnapshot(
+                    name: TerminalChat.planAuthorAgentName,
+                    role: "Planner",
+                    status: .running,
+                    pending: true,
+                    latestOutput: "Draft"
+                ),
+                subAgentSnapshot(
+                    name: "default-agent",
+                    role: "Default",
+                    latestOutput: "Default fallback plan"
+                ),
+            ]
+        )
+
+        #expect(response == nil)
+    }
+
+    @Test
+    func plannerAuthoredResponseRejectsAPlannerRoleUsingTheDefaultProfile() {
+        let response = TerminalChat.plannerAuthoredPlanResponse(
+            parentResponse: DirectAgentResponse(
+                text: "Default fallback plan",
+                stopReason: "end_turn",
+                modelID: "default-model"
+            ),
+            snapshots: [
+                subAgentSnapshot(
+                    name: TerminalChat.planAuthorAgentName,
+                    role: "Planner",
+                    profileName: "Default",
+                    latestOutput: "Impersonated plan"
+                )
+            ]
+        )
+
+        #expect(response == nil)
+    }
+
+    @Test
+    func plannerAuthoredResponseRejectsAPreexistingPlanAuthor() {
+        let staleAuthor = subAgentSnapshot(
+            name: TerminalChat.planAuthorAgentName,
+            role: "Planner",
+            latestOutput: "Plan for the previous goal"
+        )
+        let response = TerminalChat.plannerAuthoredPlanResponse(
+            parentResponse: DirectAgentResponse(
+                text: "Default fallback plan",
+                stopReason: "end_turn",
+                modelID: "default-model"
+            ),
+            snapshots: [staleAuthor],
+            excludingAgentIDs: [staleAuthor.id]
+        )
+
+        #expect(response == nil)
+    }
+
+    @Test
+    func plannerOutputReplacesCoordinatorTextInOperationalHistory() {
+        let toolCall = AgentRuntimeToolCall(
+            id: "create-planner",
+            name: "agent.create",
+            argumentsJSON: "{}"
+        )
+        let history = [
+            AgentRuntimeMessage(role: .user, content: "Earlier question"),
+            AgentRuntimeMessage(role: .assistant, content: "Earlier answer"),
+            AgentRuntimeMessage(role: .user, content: "Hidden planning prompt"),
+            AgentRuntimeMessage(role: .assistant, content: "I will coordinate the plan."),
+            AgentRuntimeMessage(role: .assistant, content: "", toolCalls: [toolCall]),
+            AgentRuntimeMessage(
+                role: .tool,
+                content: "Planner completed",
+                toolCallID: "create-planner",
+                toolName: "agent.create"
+            ),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "Default-authored replacement plan",
+                providerResponseID: "default-response"
+            ),
+        ]
+
+        let corrected = TerminalChat.historyByReplacingPlanCoordinatorOutput(
+            history,
+            with: "Planner-authored final plan"
+        )
+
+        #expect(corrected.prefix(3) == history.prefix(3))
+        #expect(corrected.contains { $0.toolCalls == [toolCall] })
+        #expect(corrected.contains { $0.role == .tool })
+        #expect(!corrected.contains { $0.content.contains("coordinate") })
+        #expect(!corrected.contains { $0.content.contains("Default-authored") })
+        #expect(corrected.last?.role == .assistant)
+        #expect(corrected.last?.content == "Planner-authored final plan")
+        #expect(corrected.last?.providerResponseID == nil)
     }
 
     private func makeTerminal() throws -> TerminalChat {
@@ -484,6 +636,32 @@ struct PlanCommandTests {
                 },
             ],
             argumentsJSON: "{}"
+        )
+    }
+
+    private func subAgentSnapshot(
+        name: String,
+        role: String,
+        status: DirectSubAgentRuntime.Status = .idle,
+        pending: Bool = false,
+        modelID: String? = nil,
+        profileName: String? = AgentProfileStore.plannerAgentName,
+        latestOutput: String?,
+        updatedAt: Date = Date(timeIntervalSince1970: 100)
+    ) -> DirectSubAgentRuntime.AgentSnapshot {
+        DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent-\(name)",
+            name: name,
+            role: role,
+            profileName: profileName,
+            isolationMode: .report,
+            status: status,
+            pending: pending,
+            modelID: modelID,
+            latestOutput: latestOutput,
+            latestError: nil,
+            createdAt: Date(timeIntervalSince1970: 50),
+            updatedAt: updatedAt
         )
     }
 }

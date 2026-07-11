@@ -178,6 +178,22 @@ public struct AgentRuntimeSessionSnapshot: Sendable {
 }
 
 extension AgentRuntimeSessionSnapshot {
+    public func replacingHistory(
+        _ history: [AgentRuntimeMessage]
+    ) -> AgentRuntimeSessionSnapshot {
+        AgentRuntimeSessionSnapshot(
+            sessionID: sessionID,
+            modelID: modelID,
+            workingDirectoryPath: workingDirectoryPath,
+            systemPrompt: systemPrompt,
+            cacheKey: cacheKey,
+            history: history,
+            allowedToolNames: allowedToolNames,
+            thinkingSelection: thinkingSelection,
+            preserveThinking: preserveThinking
+        )
+    }
+
     /// Builds the message list used as compaction input: the optional system
     /// prompt followed by the recorded history. Shared by every local
     /// compaction flow so the system-prompt handling stays consistent.

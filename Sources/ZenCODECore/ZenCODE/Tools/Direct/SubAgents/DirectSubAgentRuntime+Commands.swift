@@ -51,6 +51,8 @@ extension DirectSubAgentRuntime {
                 sessionID: sessionID,
                 name: payload.name.nilIfBlank ?? "sub-agent-\(offset + 1)",
                 role: payload.role.nilIfBlank ?? "worker",
+                profileID: profile?.id,
+                profileName: profile?.name,
                 isolationMode: payload.isolationMode,
                 overviewBatchID: overviewBatchID,
                 backend: backend,

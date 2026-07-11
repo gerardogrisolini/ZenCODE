@@ -6,7 +6,7 @@ Use it through the `/plan` TUI command when you want an independent planning pas
 
 ## What Planner Does
 
-Planner sub-agents inspect only the context needed to make an implementation plan concrete. They should identify:
+The Planner plan author inspects only the context needed to make an implementation plan concrete. It should identify:
 
 - the goal and assumptions;
 - likely files, modules, or documentation areas to inspect or change;
@@ -17,9 +17,9 @@ Planner sub-agents inspect only the context needed to make an implementation pla
 
 ## Read-Only Safety
 
-`/plan` delegates with `isolationMode "report"` and restricts Planner sub-agents to a read-only planning tool allowlist. Planners may inspect files, search the workspace, read project memory, query non-mutating Git state, and use web tools when available, but they must not edit files, run shell commands, or perform mutating Git, memory, todo, or task operations.
+`/plan` delegates to one plan-author `Planner` with `isolationMode "report"` and restricts it to a read-only planning tool allowlist. The Planner may inspect files, search the workspace, read project memory, query non-mutating Git state, and use web tools when available, but it must not edit files, run shell commands, or perform mutating Git, memory, todo, or task operations.
 
-The built-in `/plan` read-only tool set includes local read/list tools, text utilities, search tools, non-mutating Git tools, read-only memory/task tools, and web search/fetch. The actual tools passed to a Planner are also filtered by the current parent session's enabled tools.
+The built-in `/plan` read-only tool set includes local read/list tools, text utilities, search tools, non-mutating Git tools, read-only memory/task tools, and web search/fetch. The actual tools passed to the Planner are also filtered by the current parent session's enabled tools.
 
 ## Running A Plan
 
@@ -30,7 +30,7 @@ The built-in `/plan` read-only tool set includes local read/list tools, text uti
 /plan clear
 ```
 
-`ZenCODE` requires an explicit planning goal. If you run `/plan` without an argument, it reports the missing goal and does not create Planner sub-agents. A successfully consolidated plan is recorded in the current session as unapproved; a failed, cancelled, or empty planning turn does not replace the previous plan.
+`ZenCODE` requires an explicit planning goal. If you run `/plan` without an argument, it reports the missing goal and does not create a Planner. A successfully authored plan is recorded in the current session as unapproved; a failed, cancelled, or empty planning turn does not replace the previous plan.
 
 Pass the activity to plan as the command argument:
 
@@ -40,7 +40,7 @@ Pass the activity to plan as the command argument:
 /plan update docs and tests for the new Planner agent
 ```
 
-The command requires the `sub-agents` tool group because it creates sub-agents. If it is unavailable, enable it with:
+The command requires the `sub-agents` tool group because it creates the delegated Planner. If it is unavailable, enable it with:
 
 ```text
 /tools sub-agents
@@ -52,13 +52,13 @@ or switch to a profile that includes sub-agent delegation, such as `Default`.
 
 When `/plan` runs:
 
-1. The current agent remains the planning director and does not switch profiles.
-2. The director creates one or more sub-agents with role `Planner`.
-3. Each Planner receives a focused planning prompt and the read-only planning tool list.
-4. Planners run in parallel when the planning surface can be partitioned by module, concern, risk, or validation area.
-5. The director waits for the Planners, consolidates overlapping recommendations, and returns one actionable plan.
-6. The director does not edit files as part of the planning turn.
-7. The director records the ordered actionable points with stable IDs and `pending` status; the consolidated plan becomes the active, unapproved session plan. A later successful `/plan <goal>` replaces it and requires approval again.
+1. The current agent remains active only as the planning coordinator; it is explicitly forbidden from drafting, consolidating, or rewriting the plan.
+2. The coordinator creates exactly one read-only sub-agent named `plan-author`, with role and profile `Planner`.
+3. The Planner receives the complete goal, relevant conversation constraints, and the read-only planning tool list.
+4. The Planner inspects the necessary context and writes the complete final plan, including ordered actionable points, likely files or areas, risks, open questions, and validation.
+5. If the result is incomplete, the coordinator asks the same Planner to revise it instead of filling gaps itself.
+6. The coordinator copies the Planner's numbered points into `todo.write` only for status tracking. The TUI then takes the Planner's `latestOutput` directly, displays it, and records it as the active plan; any alternative plan text produced by the current agent is ignored.
+7. The Planner-authored plan becomes the active, unapproved session plan. A later successful `/plan <goal>` replaces it and requires approval again. If no completed Planner output is available, the planning turn fails rather than falling back to a plan written by `Default` or another current profile.
 
 ## Planner Profile
 
@@ -86,7 +86,7 @@ Setup can create a built-in `Planner` profile in `~/.zencode/agents.json`. The d
    During implementation, ZenCODE makes the session todo progress tool available for the approved plan and asks the model to update each stable plan ID to `in_progress`, `completed`, or `blocked`. Successful updates are copied into the persisted plan state. When every point becomes `completed`, the TUI prints the completed status table automatically. Status is not inferred from free-form response text or from the presence of a diff.
 
    Use `/plan clear` when the active plan is no longer relevant. The active plan, including its approval and point status, is preserved by save/load; a new session or agent switch clears it. Plans saved before structured status support remain loadable and are shown as legacy plans without tracked points.
-3. ZenCODE implements the consolidated plan immediately with the current `Default`, `Xcode`, or other implementation profile; no additional prompt is required.
+3. ZenCODE implements the Planner-authored plan immediately with the current `Default`, `Xcode`, or other implementation profile; no additional prompt is required.
 4. Validate with the planned build, test, lint, or diagnostic commands.
 5. Run a read-only review of the tracked session changes and approved-plan coverage:
 

@@ -16,6 +16,14 @@ extension TerminalChat {
         attempt: TerminalPromptAttempt
     ) async throws -> TerminalChatGenerationSuccess {
         let planPointCollector = TerminalPlanPointCollector()
+        let preexistingSubAgentIDs: Set<String>
+        if case .plan = attempt.purpose {
+            preexistingSubAgentIDs = Set(
+                await sessionRunner.subAgentSnapshots().map(\.id)
+            )
+        } else {
+            preexistingSubAgentIDs = []
+        }
         if attempt.locksResponseLanguage {
             lockResponseLanguageIfNeeded(from: attempt.prompt)
         }
@@ -59,7 +67,7 @@ extension TerminalChat {
                     includesActivePlanProgress: false
                 )
             }
-            let response = try await sessionRunner.sendPrompt(
+            var response = try await sessionRunner.sendPrompt(
                 configuration: sessionConfiguration,
                 prompt: attempt.prompt,
                 attachments: attempt.attachments,
@@ -96,6 +104,9 @@ extension TerminalChat {
                     case let .subscriptionUsage(status):
                         self.writeSubscriptionUsageStatus(status)
                     case let .content(delta):
+                        if case .plan = attempt.purpose {
+                            break
+                        }
                         await transcriptTurn.appendAssistantContent(delta)
                         self.finishThoughtOutputIfNeeded()
                         self.writeAssistantContent(delta)
@@ -150,6 +161,27 @@ extension TerminalChat {
                     }
                 }
             )
+            if case .plan = attempt.purpose {
+                guard let plannerResponse = Self.plannerAuthoredPlanResponse(
+                    parentResponse: response,
+                    snapshots: await sessionRunner.subAgentSnapshots(),
+                    excludingAgentIDs: preexistingSubAgentIDs
+                ) else {
+                    throw TerminalPlanGenerationError.plannerOutputUnavailable
+                }
+                response = plannerResponse
+                activeSessionHistory = Self.historyByReplacingPlanCoordinatorOutput(
+                    activeSessionHistory,
+                    with: response.text
+                )
+                guard await sessionRunner.replaceSessionHistory(
+                    id: sessionID,
+                    history: activeSessionHistory
+                ) else {
+                    throw TerminalPlanGenerationError.sessionHistoryUnavailable
+                }
+                await transcriptTurn.appendAssistantContent(response.text)
+            }
             activeSessionTranscript.append(
                 contentsOf: await transcriptTurn.messages(finalResponseText: response.text)
             )
@@ -162,6 +194,10 @@ extension TerminalChat {
             }
             await publishSubAgentOverviewIfChanged()
             await telegramProgressReporter?.flush()
+            if case .plan = attempt.purpose {
+                finishThoughtOutputIfNeeded()
+                writeAssistantContent(response.text)
+            }
             recordPlanIfNeeded(
                 responseText: response.text,
                 purpose: attempt.purpose,
