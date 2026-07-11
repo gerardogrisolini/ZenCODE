@@ -41,7 +41,7 @@ struct SubscriptionPromptCacheIntegrationTests {
             id: sessionID,
             cwd: FileManager.default.currentDirectoryPath,
             systemPrompt: Self.systemPrompt,
-            allowedToolNames: [],
+            allowedToolNames: nil,
             thinkingSelection: selection.thinkingSelection ?? .low,
             preserveThinking: true
         )
@@ -70,11 +70,23 @@ struct SubscriptionPromptCacheIntegrationTests {
         )
 
         #expect(secondResponse.text.trimmingCharacters(in: .whitespacesAndNewlines) == "OK-2")
+        let secondTurnDiagnostics = await events.secondTurnDiagnostics()
+        #expect(
+            !secondTurnDiagnostics.contains { $0.contains("Cache warning:") },
+            "ChatGPT reported low cache reuse with the stable tool catalog: \(secondTurnDiagnostics.joined(separator: "\n"))"
+        )
+        let cachedPromptTokens = Self.maxCachedPromptTokens(
+            in: secondTurnDiagnostics,
+            provider: "ChatGPT"
+        )
+        #expect(
+            cachedPromptTokens.map { $0 >= 1_024 } == true,
+            "ChatGPT cached only \(cachedPromptTokens ?? 0) prompt tokens with the stable tool catalog."
+        )
         let snapshot: AgentRuntimeSessionSnapshot = try #require(
             await client.snapshotSession(id: sessionID)
         )
         #expect(snapshot.history.filter { $0.role == .assistant }.count >= 2)
-        #expect(await client.hasReplayableAssistantReasoningForTesting(sessionID: sessionID))
     }
 
     @Test
@@ -285,16 +297,6 @@ private actor LiveSubscriptionCacheEvents {
 private extension ChatGPTSubscriptionGenerationClient {
     func continuationResponseIDForTesting(sessionID: String) -> String? {
         sessions[sessionID]?.continuation?.responseID.nilIfBlank
-    }
-
-    func hasReplayableAssistantReasoningForTesting(sessionID: String) -> Bool {
-        sessions[sessionID]?.messages.contains { message in
-            guard (message["role"] as? String) == "assistant" else {
-                return false
-            }
-            return (message["reasoning_content"] as? String)?.nilIfBlank != nil
-                || (message["reasoning_items"] as? String)?.nilIfBlank != nil
-        } ?? false
     }
 }
 

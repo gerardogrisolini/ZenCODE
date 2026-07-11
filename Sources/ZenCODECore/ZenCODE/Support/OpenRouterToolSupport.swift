@@ -272,7 +272,7 @@ public nonisolated struct RemoteToolWireCatalog {
 
     public init(descriptors: [DirectToolDescriptor]) {
         var usedWireNames: Set<String> = []
-        let bindings = descriptors.map { descriptor in
+        let bindings = descriptors.sorted(by: Self.canonicalDescriptorOrder).map { descriptor in
             Binding(
                 descriptor: descriptor,
                 wireName: Self.uniqueWireName(
@@ -309,6 +309,19 @@ public nonisolated struct RemoteToolWireCatalog {
 
         self.bindings = bindings
         self.nameLookup = lookup
+    }
+
+    private static func canonicalDescriptorOrder(
+        _ lhs: DirectToolDescriptor,
+        _ rhs: DirectToolDescriptor
+    ) -> Bool {
+        if lhs.name != rhs.name {
+            return lhs.name < rhs.name
+        }
+        if lhs.description != rhs.description {
+            return lhs.description < rhs.description
+        }
+        return lhs.inputSchema < rhs.inputSchema
     }
 
     public var responsesToolPayloads: [[String: Any]] {

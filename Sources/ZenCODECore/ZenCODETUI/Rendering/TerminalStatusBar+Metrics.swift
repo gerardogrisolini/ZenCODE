@@ -131,6 +131,7 @@ extension TerminalStatusBar {
         _ metrics: DirectAgentGenerationMetrics
     ) -> String? {
         let fragments = [
+            metrics.cachedPromptTokenCount.map { "C:\(tokenCountText($0))" },
             metrics.promptTokenCount.map { "P:\(tokenCountText($0))" },
             metrics.completionTokenCount.map { "G:\(tokenCountText($0))" }
         ].compactMap(\.self)

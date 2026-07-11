@@ -7,10 +7,38 @@
 
 import Foundation
 import os
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 @testable import ZenCODECore
 import Testing
 
 extension RemoteSessionSnapshotTests {
+    @Test
+    func remoteToolCatalogRenderingIsByteStable() throws {
+        let descriptors = [
+            DirectToolDescriptor(
+                name: "tool.beta",
+                description: "Beta tool.",
+                inputSchema: #"{"required":["path"],"properties":{"path":{"description":"Path","type":"string"}},"type":"object"}"#
+            ),
+            DirectToolDescriptor(
+                name: "tool.alpha",
+                description: "Alpha tool.",
+                inputSchema: #"{"type":"object","properties":{"count":{"minimum":1,"type":"integer"},"query":{"type":"string"}},"required":["query"]}"#
+            )
+        ]
+        let first = RemoteToolWireCatalog(descriptors: descriptors)
+        let second = RemoteToolWireCatalog(descriptors: Array(descriptors.reversed()))
+        let firstData = try JSONValue.acpValue(from: first.responsesToolPayloads).jsonData()
+        let secondData = try JSONValue.acpValue(from: second.responsesToolPayloads).jsonData()
+
+        #expect(firstData == secondData)
+        #if canImport(CryptoKit)
+        #expect(SHA256.hash(data: firstData) == SHA256.hash(data: secondData))
+        #endif
+    }
+
     @Test
     func remoteInitialMessagesRoundTripToolTranscript() {
         let history = remoteHistory()

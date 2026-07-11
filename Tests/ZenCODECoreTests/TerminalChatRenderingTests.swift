@@ -366,7 +366,7 @@ struct TerminalChatRenderingTests {
             )
 
         #expect(
-            TerminalStatusBar.generationTokenCountsFragment(metrics) == "P:120 G:32"
+            TerminalStatusBar.generationTokenCountsFragment(metrics) == "C:800 P:120 G:32"
         )
     }
 
@@ -387,6 +387,21 @@ struct TerminalChatRenderingTests {
 
         #expect(TerminalStatusBar.generationTokenCountsFragment(metrics) == "P:15k G:20k")
         #expect(TerminalStatusBar.generationTokenCountsFragment(unavailableMetrics) == nil)
+    }
+
+    @Test
+    func statusBarGenerationTokenCountsShowsReportedCacheMiss() {
+        let metrics = DirectAgentGenerationMetrics(
+            promptTokenCount: 15_000,
+            cachedPromptTokenCount: 0,
+            promptTokensPerSecond: nil,
+            completionTokenCount: 2_000,
+            completionTokensPerSecond: nil
+        )
+
+        #expect(
+            TerminalStatusBar.generationTokenCountsFragment(metrics) == "C:0 P:15k G:2.0k"
+        )
     }
 
     @Test

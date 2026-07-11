@@ -30,7 +30,7 @@ struct OpenRouterPromptCacheIntegrationTests {
                     ?? AgentGenerationParameterOverrides(),
                 maxToolRounds: 1,
                 maxOutputTokens: Self.maxOutputTokens,
-                verboseLogging: false,
+                verboseLogging: true,
                 toolAuthorizationHandler: nil
             ),
             provider: provider,
@@ -72,6 +72,12 @@ struct OpenRouterPromptCacheIntegrationTests {
         #expect(
             !secondTurnDiagnostics.contains { $0.contains("Cache warning:") },
             "OpenRouter reported low prompt-cache reuse on the second turn: \(secondTurnDiagnostics.joined(separator: "\n"))"
+        )
+        #expect(
+            secondTurnDiagnostics.contains {
+                $0.hasPrefix("\(provider.displayTitle) cache:")
+            },
+            "OpenRouter did not emit verbose cache usage: \(secondTurnDiagnostics.joined(separator: "\n"))"
         )
 
         let metrics = await events.metrics()

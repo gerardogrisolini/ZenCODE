@@ -320,6 +320,13 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             ) {
                 await onEvent(.diagnostic(cacheWarning))
             }
+            if configuration.verboseLogging,
+               let cacheDiagnostic = Self.cacheUsageDiagnostic(
+                   provider: provider.displayTitle,
+                   usage: streamResult.stats.usage
+               ) {
+                await onEvent(.diagnostic(cacheDiagnostic))
+            }
             appendAssistantMessage(
                 streamResult: streamResult,
                 to: &session.messages

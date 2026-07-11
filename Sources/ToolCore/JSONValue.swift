@@ -116,7 +116,9 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
         outputFormatting: JSONEncoder.OutputFormatting = [.withoutEscapingSlashes]
     ) throws -> Data {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = outputFormatting
+        var canonicalFormatting = outputFormatting
+        canonicalFormatting.insert(.sortedKeys)
+        encoder.outputFormatting = canonicalFormatting
         return try encoder.encode(self)
     }
 
