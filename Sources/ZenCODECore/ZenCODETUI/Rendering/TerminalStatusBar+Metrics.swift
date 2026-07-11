@@ -77,7 +77,7 @@ extension TerminalStatusBar {
             clearsPromptMetrics: update.clearsPromptMetrics
         )
     }
-    
+
     static func tokenWindowText(
         usedTokens: Int?,
         metricUsedTokens: Int?,
@@ -127,6 +127,19 @@ extension TerminalStatusBar {
         return "\(value)"
     }
     
+    static func generationTokenCountsFragment(
+        _ metrics: DirectAgentGenerationMetrics
+    ) -> String? {
+        let fragments = [
+            metrics.promptTokenCount.map { "P:\(tokenCountText($0))" },
+            metrics.completionTokenCount.map { "G:\(tokenCountText($0))" }
+        ].compactMap(\.self)
+        guard !fragments.isEmpty else {
+            return nil
+        }
+        return fragments.joined(separator: " ")
+    }
+
     static func subscriptionUsageFragment(
         _ status: DirectAgentSubscriptionUsageStatus
     ) -> String? {

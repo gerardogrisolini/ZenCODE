@@ -170,6 +170,15 @@ public final class TerminalStatusBar: Sendable {
         }
     }
     
+    func beginRequest() {
+        state.withLock { state in
+            guard state.isStarted else {
+                return
+            }
+            renderLocked(state: &state)
+        }
+    }
+
     public func reset() {
         state.withLock { state in
             state.latestMetrics = nil

@@ -242,7 +242,7 @@ extension TerminalChat {
         TerminalChatCommandDescriptor(
             command: "/plan",
             summary: "plan work via sub-agents",
-            help: "/plan <goal> creates a new unapproved plan. Use /plan status to show item progress, /plan approve to make it a /review criterion, or /plan clear to remove it.",
+            help: "/plan <goal> creates a new unapproved plan. Use /plan status to show item progress, /plan approve to approve it and start implementation immediately, or /plan clear to remove it.",
             requiresArgument: true
         ),
                 TerminalChatCommandDescriptor(

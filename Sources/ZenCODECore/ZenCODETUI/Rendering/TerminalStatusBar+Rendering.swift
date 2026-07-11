@@ -318,6 +318,10 @@ extension TerminalStatusBar {
         if let duration = state.latestMetrics?.responseDurationSeconds {
             fragments.append("time \(Self.durationText(duration))")
         }
+        if let latestMetrics = state.latestMetrics,
+           let tokenCountsText = Self.generationTokenCountsFragment(latestMetrics) {
+            fragments.append(tokenCountsText)
+        }
         if let prefillRate = state.latestMetrics?.promptTokensPerSecond {
             fragments.append("pre \(Self.rateText(prefillRate)) tok/s")
         }

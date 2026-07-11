@@ -409,7 +409,7 @@ extension RemoteGenerationClient {
             completionTokenCount: completionTokenCount,
             completionTokensPerSecond: completionTokensPerSecond,
             responseDurationSeconds: responseDurationSeconds,
-            contextTokenCount: contextTokenCount
+            contextTokenCount: contextTokenCount,
         )
     }
 

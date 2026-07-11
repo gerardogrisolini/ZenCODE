@@ -312,7 +312,10 @@ actor DS4CoderBackend: AgentRuntimeBackend {
             )
 
             await emitCacheDiagnostics(result.stats, onEvent: onEvent)
-            await emitMetrics(result.stats, onEvent: onEvent)
+            await emitMetrics(
+                result.stats,
+                onEvent: onEvent
+            )
 
             if let parseError = parsed.parseError {
                 let toolError = """

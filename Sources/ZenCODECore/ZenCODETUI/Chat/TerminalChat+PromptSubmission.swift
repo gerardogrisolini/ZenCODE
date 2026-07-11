@@ -167,6 +167,7 @@ extension TerminalChat {
         do {
             didReceiveMetricsForCurrentPrompt = false
             didRefreshGitStatusDuringCurrentPrompt = false
+            statusBar.beginRequest()
             statusBar.setProcessing(true)
             defer {
                 statusBar.setProcessing(false)

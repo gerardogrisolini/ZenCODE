@@ -353,6 +353,43 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func statusBarGenerationTokenCountsFragmentIsCompactAndOptional() {
+        let metrics = DirectAgentGenerationMetrics(
+            promptTokenCount: 15_000,
+            promptTokensPerSecond: nil,
+            completionTokenCount: 20_000,
+            completionTokensPerSecond: nil
+        )
+        let unavailableMetrics = DirectAgentGenerationMetrics(
+            promptTokenCount: nil,
+            promptTokensPerSecond: nil,
+            completionTokenCount: nil,
+            completionTokensPerSecond: nil
+        )
+
+        #expect(TerminalStatusBar.generationTokenCountsFragment(metrics) == "P:15k G:20k")
+        #expect(TerminalStatusBar.generationTokenCountsFragment(unavailableMetrics) == nil)
+    }
+
+    @Test
+    func statusBarTextPlacesGenerationTokenCountsAfterTime() {
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        var state = TerminalStatusBar.State()
+        state.latestMetrics = DirectAgentGenerationMetrics(
+            promptTokenCount: 15_000,
+            promptTokensPerSecond: nil,
+            completionTokenCount: 20_000,
+            completionTokensPerSecond: nil,
+            responseDurationSeconds: 12
+        )
+
+        #expect(
+            statusBar.statusTextLocked(state: &state)
+                .contains("time 12.0s · P:15k G:20k")
+        )
+    }
+
+    @Test
     func gitNumstatSummaryCountsFilesAdditionsAndDeletions() {
         let output = """
         10	2	Sources/App.swift

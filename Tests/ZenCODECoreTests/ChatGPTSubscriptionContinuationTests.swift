@@ -461,6 +461,29 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionWebSocketUsesCodexHandshakeHeaders() {
+        let client = ChatGPTSubscriptionResponsesClient(
+            credentials: chatGPTSubscriptionTestCredentials()
+        )
+
+        let request = client.webSocketRequest(sessionID: "session-chatgpt")
+
+        #expect(
+            request.value(forHTTPHeaderField: "session-id")
+                == "session-chatgpt"
+        )
+        #expect(request.value(forHTTPHeaderField: "session_id") == nil)
+        #expect(
+            request.value(forHTTPHeaderField: "OpenAI-Beta")
+                == "responses_websockets=2026-02-06"
+        )
+        #expect(
+            request.value(forHTTPHeaderField: "x-client-request-id")
+                == "session-chatgpt"
+        )
+    }
+
+    @Test
     func chatGPTSubscriptionWebSocketHasNoDefaultResponseIdleTimeout() {
         #expect(ChatGPTSubscriptionResponsesClient.webSocketIdleTimeoutNanoseconds == nil)
     }

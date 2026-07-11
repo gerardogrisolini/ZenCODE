@@ -71,6 +71,49 @@ struct RemoteGenerationMetricsTests {
     }
 
     @Test
+    func generationMetricsUsesLatestPromptAndAggregatesCompletionAcrossRounds() {
+        let startedAt = Date(timeIntervalSince1970: 100)
+        let stats = [
+            RemoteGenerationStats(
+                usage: RemoteGenerationUsage(
+                    promptTokens: 1_000,
+                    completionTokens: 50,
+                    totalTokens: 1_050,
+                    processedPromptTokens: 200,
+                    cachedPromptTokens: 800,
+                    promptTokensPerSecond: nil,
+                    completionTokensPerSecond: nil
+                ),
+                requestStartedAt: startedAt,
+                firstDeltaAt: nil,
+                finishedAt: startedAt,
+                generatedCharacterCount: 0
+            ),
+            RemoteGenerationStats(
+                usage: RemoteGenerationUsage(
+                    promptTokens: 1_200,
+                    completionTokens: 25,
+                    totalTokens: 1_225,
+                    processedPromptTokens: 300,
+                    cachedPromptTokens: 900,
+                    promptTokensPerSecond: nil,
+                    completionTokensPerSecond: nil
+                ),
+                requestStartedAt: startedAt,
+                firstDeltaAt: nil,
+                finishedAt: startedAt,
+                generatedCharacterCount: 0
+            )
+        ]
+
+        let metrics = RemoteGenerationClient.generationMetrics(stats)
+
+        #expect(metrics?.promptTokenCount == 300)
+        #expect(metrics?.cachedPromptTokenCount == 900)
+        #expect(metrics?.completionTokenCount == 75)
+    }
+
+    @Test
     func anthropicSubscriptionContextEstimateIncludesSystemAndTools() throws {
         let messages = [
             [

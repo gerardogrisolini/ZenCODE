@@ -65,8 +65,13 @@ extension TerminalChat {
             }
             plan.isApproved = true
             activePlan = plan
-            writeSystemMessage("Approved the active plan for /review coverage verification.\n")
-            return .continueChat
+            writeSystemMessage(
+                "Approved the active plan. Starting implementation now; /review will use it for coverage verification.\n"
+            )
+            return .runHiddenPrompt(
+                Self.planImplementationPrompt(for: plan),
+                purpose: .normal
+            )
         case "clear":
             writeSubmittedPrompt(command)
             guard activePlan != nil else {
@@ -120,6 +125,20 @@ extension TerminalChat {
     static let planUnavailableForApprovalMessage =
         "ZenCODE: no completed plan is available to approve. "
         + "Run /plan <goal> and wait for it to finish successfully.\n"
+
+    static func planImplementationPrompt(for plan: TerminalSessionPlan) -> String {
+        """
+        Implement the active approved plan now. Work through its points in order, keep their \
+        todo statuses synchronized, validate the changes, and stop when implementation is \
+        complete or a real blocker is reached. Do not create another plan and do not wait for \
+        an additional user prompt before starting.
+
+        Goal: \(plan.originalGoal)
+
+        Approved plan:
+        \(plan.consolidatedText)
+        """
+    }
 
     static func planStatusTable(for plan: TerminalSessionPlan) -> String {
         let overallStatus: String
@@ -315,7 +334,9 @@ extension TerminalChat {
             concise, and set every status to "pending". Do not include risks, \
             background notes, open questions, or validation summaries as separate items.
             - The final plan must support this workflow loop: /plan <goal> -> /plan approve \
-            -> implementation work -> /review -> corrections until the work is complete.
+            (which automatically starts implementation) -> /review -> corrections until the \
+            work is complete. Do not tell the user to send another implementation prompt \
+            after approval.
             - Do not edit any files yourself in this planning turn. Present the plan, the \
             expected validation, and where /review should be run after implementation.
             - The final planning summary must follow the session response language from \

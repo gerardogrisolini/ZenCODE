@@ -71,7 +71,7 @@ Setup can create a built-in `Reviewer` profile in `~/.zencode/agents.json`. The 
 ## Recommended Workflow
 
 1. If the work is non-trivial, run `/plan <goal>`, wait for the consolidated plan, then run `/plan approve`.
-2. Implement or update files with the normal `Default`, `Xcode`, or other implementation profile.
+2. Approval starts implementation immediately with the current `Default`, `Xcode`, or other implementation profile; no follow-up prompt is needed.
 3. Inspect the local change summary:
 
    ```text

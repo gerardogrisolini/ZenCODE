@@ -86,6 +86,7 @@ extension TerminalChat {
             isGenerating = true
             didReceiveMetricsForCurrentPrompt = false
             didRefreshGitStatusDuringCurrentPrompt = false
+            statusBar.beginRequest()
             statusBar.setProcessing(true)
             interactiveReader.setPanelProcessing(true)
             generationTask = Task {

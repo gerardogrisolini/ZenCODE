@@ -70,7 +70,10 @@ extension MLXServerCoderBackend {
             accumulatedVisibleText += turn.visibleText
 
             if let completionInfo = turn.completionInfo {
-                await emitMetrics(completionInfo, onEvent: onEvent)
+                await emitMetrics(
+                    completionInfo,
+                    onEvent: onEvent
+                )
             }
 
             guard !turn.toolCalls.isEmpty else {

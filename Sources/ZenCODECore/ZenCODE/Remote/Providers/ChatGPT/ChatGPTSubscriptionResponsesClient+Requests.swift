@@ -53,7 +53,7 @@ extension ChatGPTSubscriptionResponsesClient {
             Self.webSocketBetaHeader,
             forHTTPHeaderField: "OpenAI-Beta"
         )
-        request.setValue(sessionID, forHTTPHeaderField: "session_id")
+        request.setValue(sessionID, forHTTPHeaderField: "session-id")
         request.setValue(sessionID, forHTTPHeaderField: "x-client-request-id")
         return request
     }

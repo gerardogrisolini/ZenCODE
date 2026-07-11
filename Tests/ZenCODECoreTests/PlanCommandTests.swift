@@ -48,6 +48,7 @@ struct PlanCommandTests {
         #expect(descriptor.help.contains("/plan <goal>"))
         #expect(descriptor.help.contains("/plan status"))
         #expect(descriptor.help.contains("/plan approve"))
+        #expect(descriptor.help.contains("start implementation immediately"))
         #expect(descriptor.help.contains("/plan clear"))
         #expect(!descriptor.help.contains("/plan [goal]"))
     }
@@ -186,8 +187,15 @@ struct PlanCommandTests {
             ]
         ))
 
-        _ = terminal.handlePlanCommand("/plan approve")
+        let approvalAction = terminal.handlePlanCommand("/plan approve")
         #expect(terminal.activePlan?.isApproved == true)
+        guard case let .runHiddenPrompt(prompt, purpose) = approvalAction else {
+            Issue.record("/plan approve should start implementation immediately")
+            return
+        }
+        #expect(purpose == .normal)
+        #expect(prompt.contains("Implement the active approved plan now"))
+        #expect(prompt.contains("First consolidated plan"))
 
         #expect(terminal.recordPlanIfNeeded(
             responseText: "Second consolidated plan",
@@ -314,8 +322,15 @@ struct PlanCommandTests {
             originalGoal: "goal",
             consolidatedText: "plan"
         )
-        #expect(isContinueChat(terminal.handlePlanCommand("/plan approve")))
+        let approvalAction = terminal.handlePlanCommand("/plan approve")
         #expect(terminal.activePlan?.isApproved == true)
+        guard case let .runHiddenPrompt(prompt, purpose) = approvalAction else {
+            Issue.record("/plan approve should start implementation immediately")
+            return
+        }
+        #expect(purpose == .normal)
+        #expect(prompt.contains("Goal: goal"))
+        #expect(prompt.contains("Approved plan:\nplan"))
 
         #expect(isContinueChat(terminal.handlePlanCommand("/plan clear")))
         #expect(terminal.activePlan == nil)
@@ -421,7 +436,8 @@ struct PlanCommandTests {
         #expect(prompt.contains("call todo.write once with mode \"upsert\""))
         #expect(prompt.contains("stable IDs \"plan-<token>-1\""))
         #expect(prompt.contains("/plan <goal> -> /plan approve"))
-        #expect(prompt.contains("implementation work -> /review"))
+        #expect(prompt.contains("automatically starts implementation"))
+        #expect(prompt.contains("Do not tell the user to send another implementation prompt"))
         #expect(prompt.contains("Do not edit any files yourself in this planning turn"))
         #expect(!prompt.contains("infer the activity to plan"))
         #expect(!prompt.contains("local.writeFile"))

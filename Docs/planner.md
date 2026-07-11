@@ -74,7 +74,8 @@ Setup can create a built-in `Planner` profile in `~/.zencode/agents.json`. The d
    /plan <goal>
    ```
 
-2. Explicitly approve the completed plan so it becomes a review criterion:
+2. Explicitly approve the completed plan. Approval immediately starts implementation in the
+   current agent profile and also makes the plan a review criterion:
 
    ```text
    /plan approve
@@ -85,7 +86,7 @@ Setup can create a built-in `Planner` profile in `~/.zencode/agents.json`. The d
    During implementation, ZenCODE makes the session todo progress tool available for the approved plan and asks the model to update each stable plan ID to `in_progress`, `completed`, or `blocked`. Successful updates are copied into the persisted plan state. When every point becomes `completed`, the TUI prints the completed status table automatically. Status is not inferred from free-form response text or from the presence of a diff.
 
    Use `/plan clear` when the active plan is no longer relevant. The active plan, including its approval and point status, is preserved by save/load; a new session or agent switch clears it. Plans saved before structured status support remain loadable and are shown as legacy plans without tracked points.
-3. Use the consolidated plan to implement the work with the normal `Default`, `Xcode`, or other implementation profile.
+3. ZenCODE implements the consolidated plan immediately with the current `Default`, `Xcode`, or other implementation profile; no additional prompt is required.
 4. Validate with the planned build, test, lint, or diagnostic commands.
 5. Run a read-only review of the tracked session changes and approved-plan coverage:
 
