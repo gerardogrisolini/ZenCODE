@@ -43,7 +43,6 @@ extension MLXServerRuntime {
         }
         containers.removeAll(keepingCapacity: true)
         loadingTasks.removeAll(keepingCapacity: true)
-        invalidateChatSessionTransactions(where: { _ in true })
         chatSessions.removeAll(keepingCapacity: true)
         logUnloadedModels(unloadedModelIDs)
         await generationLeases.releaseAll()
@@ -108,7 +107,6 @@ extension MLXServerRuntime {
     func unloadOtherModelsBeforeLoading(_ key: LoadedModelKey) {
         let unloadedModelIDs = Set(containers.keys.filter { $0 != key }.map(\.modelID)).sorted()
         containers = containers.filter { $0.key == key }
-        invalidateChatSessionTransactions(where: { $0.modelID != key.modelID })
         chatSessions = chatSessions.filter { $0.key.modelID == key.modelID }
         for (loadingKey, loadingTask) in loadingTasks where loadingKey != key {
             loadingTask.task.cancel()

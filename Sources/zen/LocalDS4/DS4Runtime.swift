@@ -226,23 +226,6 @@ final class DS4Session: @unchecked Sendable {
         zencode_ds4_session_append_eos(pointer)
     }
 
-    func rollback(toTranscriptLength transcriptLength: Int) throws {
-        guard let pointer else {
-            throw DS4RuntimeError.sessionFailed("session already closed")
-        }
-        let message = DS4Engine.withErrorBuffer { errorBuffer, errorLength in
-            zencode_ds4_session_rollback(
-                pointer,
-                Int32(transcriptLength),
-                errorBuffer,
-                errorLength
-            )
-        }
-        guard message.returnCode == 0 else {
-            throw DS4RuntimeError.generationFailed(message.error)
-        }
-    }
-
     func generate(
         prompt: String?,
         maxTokens: Int,
@@ -293,11 +276,11 @@ final class DS4Session: @unchecked Sendable {
             }
         }
         collector.finish()
-        if stats.finish_reason == 4 {
-            throw CancellationError()
-        }
         guard message.returnCode == 0 else {
             throw DS4RuntimeError.generationFailed(message.error)
+        }
+        if stats.finish_reason == 4 {
+            throw CancellationError()
         }
         return DS4GenerationResult(
             rawText: String(decoding: collector.data, as: UTF8.self),

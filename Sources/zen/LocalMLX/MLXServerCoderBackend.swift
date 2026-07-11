@@ -32,7 +32,6 @@ actor MLXServerCoderBackend: AgentRuntimeBackend {
     let model: MLXServerModelDescriptor
     let kvCacheSettings: MLXServerKVCacheSettings
     let toolExecutor: DirectToolExecutor
-    let promptGates = MLXServerKeyedGenerationGate<String>()
 
     var sessions: [String: SessionState] = [:]
     var didEmitLoadedModel = false

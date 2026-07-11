@@ -113,7 +113,6 @@ extension MLXServerRuntime {
         )
         let sessionTransfer = resolved.sessionTransfer
         let cachedPromptTokenCount = resolved.cachedPromptTokenCount
-        let turnCheckpoint = resolved.turnCheckpoint
         let throwingStream: AsyncStream<Generation>
         do {
             throwingStream = try await sessionTransfer.session.streamDetails(
@@ -122,11 +121,7 @@ extension MLXServerRuntime {
                 cachedPrefixMessageCount: resolved.cachedPrefixMessageCount
             )
         } catch {
-            restoreChatSessionTurn(
-                cacheKey: cacheKey,
-                sessionTransfer: sessionTransfer,
-                checkpoint: turnCheckpoint
-            )
+            discardChatSession(for: cacheKey)
             await generationLease.release()
             throw error
         }
@@ -147,14 +142,11 @@ extension MLXServerRuntime {
                 }
 
                 if wasCancelled || Task.isCancelled {
-                    // Generation mutates the checked-out cache in place. Roll
-                    // it back to the last completed turn so the next prompt
-                    // can use normal suffix continuation.
-                    self.restoreChatSessionTurn(
-                        cacheKey: cacheKey,
-                        sessionTransfer: sessionTransfer,
-                        checkpoint: turnCheckpoint
-                    )
+                    // A cancelled turn leaves a truncated assistant turn in
+                    // the KV cache; storing it would make later requests
+                    // continue on top of tokens that do not match the
+                    // client transcript. Drop the session instead.
+                    self.discardChatSession(for: cacheKey)
                     await generationLease.release()
                     continuation.finish(throwing: CancellationError())
                     return

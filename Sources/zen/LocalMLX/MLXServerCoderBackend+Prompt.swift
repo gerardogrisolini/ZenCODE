@@ -16,29 +16,6 @@ extension MLXServerCoderBackend {
         attachments: [AgentRuntimeAttachment],
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
-        let lease = try await promptGates.acquire(key: sessionID)
-        do {
-            try Task.checkCancellation()
-            let response = try await sendPromptExclusively(
-                sessionID: sessionID,
-                prompt: prompt,
-                attachments: attachments,
-                onEvent: onEvent
-            )
-            await lease.release()
-            return response
-        } catch {
-            await lease.release()
-            throw error
-        }
-    }
-
-    private func sendPromptExclusively(
-        sessionID: String,
-        prompt: String,
-        attachments: [AgentRuntimeAttachment],
-        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
-    ) async throws -> DirectAgentResponse {
         if sessions[sessionID] == nil {
             createSession(
                 id: sessionID,
@@ -51,130 +28,84 @@ extension MLXServerCoderBackend {
                 preserveThinking: false
             )
         }
-        guard let initialSession = sessions[sessionID] else {
+        guard var session = sessions[sessionID] else {
             throw MLXServerCoderBackendError.missingSession
         }
 
         _ = try await preloadModel(onEvent: onEvent)
-        var transactionSession = initialSession
-        transactionSession.messages.append(
+        session.messages.append(
             Self.serverMessage(
                 role: .user,
                 content: prompt,
                 attachments: attachments
             )
         )
-        let transaction = try await runtime.beginChatSessionTransaction(
-            request: generationRequest(
-                for: transactionSession,
-                sessionID: sessionID,
-                tools: nil
-            )
+
+                // Tool specs depend only on the session's allowed tool names and
+        // working directory, neither of which changes within a single
+        // sendPrompt call. Compute them once (this includes the async MCP
+        // round-trip) and reuse them across every tool round.
+        let toolSpecs = await toolSpecs(
+            allowedToolNames: session.allowedToolNames,
+            preferredWorkspaceRootURL: session.cwd
         )
 
-        do {
-            // The transaction acquisition may have waited for another prompt
-            // using the same runtime cache. Refresh application state only
-            // after exclusive ownership has been granted.
-            guard var session = sessions[sessionID] else {
-                throw MLXServerCoderBackendError.missingSession
+        var accumulatedVisibleText = ""
+        for _ in 0..<configuration.maxToolRounds {
+            if let result = compactSessionIfNeeded(&session) {
+                await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
             }
-            let toolSpecs = await toolSpecs(
-                allowedToolNames: session.allowedToolNames,
-                preferredWorkspaceRootURL: session.cwd
+            let request = generationRequest(
+                for: session,
+                sessionID: sessionID,
+                tools: toolSpecs
             )
-            try Task.checkCancellation()
-            await runtime.captureChatSessionTransactionCheckpoint(
-                transaction,
-                request: generationRequest(
-                    for: session,
-                    sessionID: sessionID,
-                    tools: toolSpecs
-                )
+            await onEvent(.modelRuntime(request.runtimeKind.rawValue))
+            let turn = try await runGenerationTurn(
+                request: request,
+                onEvent: onEvent
             )
+            let directToolCalls = turn.toolCalls.map(Self.directToolCall(from:))
+            appendAssistantTurn(turn, directToolCalls: directToolCalls, to: &session)
+            accumulatedVisibleText += turn.visibleText
 
-            session.messages.append(
-                Self.serverMessage(
-                    role: .user,
-                    content: prompt,
-                    attachments: attachments
-                )
-            )
-
-            var accumulatedVisibleText = ""
-            for _ in 0..<configuration.maxToolRounds {
-                if let result = compactSessionIfNeeded(&session) {
-                    await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
-                }
-                let request = generationRequest(
-                    for: session,
-                    sessionID: sessionID,
-                    tools: toolSpecs
-                )
-                await onEvent(.modelRuntime(request.runtimeKind.rawValue))
-                let turn = try await runGenerationTurn(
-                    request: request,
+            if let completionInfo = turn.completionInfo {
+                await emitMetrics(
+                    completionInfo,
                     onEvent: onEvent
                 )
-                let directToolCalls = turn.toolCalls.map(Self.directToolCall(from:))
-                appendAssistantTurn(turn, directToolCalls: directToolCalls, to: &session)
-                accumulatedVisibleText += turn.visibleText
-
-                if let completionInfo = turn.completionInfo {
-                    await emitMetrics(
-                        completionInfo,
-                        onEvent: onEvent
-                    )
-                }
-                try Task.checkCancellation()
-
-                guard !turn.toolCalls.isEmpty else {
-                    sessions[sessionID] = session
-                    await runtime.commitChatSessionTransaction(transaction)
-                    return DirectAgentResponse(
-                        text: accumulatedVisibleText,
-                        stopReason: "end_turn",
-                        modelID: model.id
-                    )
-                }
-
-                for directToolCall in directToolCalls {
-                    await onEvent(.toolCallStarted(directToolCall))
-                    let result = await toolExecutor.execute(
-                        sessionID: sessionID,
-                        toolCall: directToolCall,
-                        workingDirectory: session.cwd,
-                        allowedToolNames: session.allowedToolNames
-                    )
-                    try Task.checkCancellation()
-                    await onEvent(.toolCallCompleted(directToolCall, result))
-                    session.messages.append(
-                        .tool(
-                            result.output,
-                            toolCallID: directToolCall.id,
-                            toolName: directToolCall.name
-                        )
-                    )
-                }
             }
 
-            try Task.checkCancellation()
-            sessions[sessionID] = session
-            await runtime.commitChatSessionTransaction(transaction)
-            throw MLXServerCoderBackendError.tooManyToolRounds(
-                configuration.maxToolRounds
-            )
-        } catch is CancellationError {
-            await runtime.rollbackChatSessionTransaction(transaction)
-            throw CancellationError()
-        } catch {
-            if Task.isCancelled {
-                await runtime.rollbackChatSessionTransaction(transaction)
-                throw CancellationError()
+            guard !turn.toolCalls.isEmpty else {
+                sessions[sessionID] = session
+                return DirectAgentResponse(
+                    text: accumulatedVisibleText,
+                    stopReason: "end_turn",
+                    modelID: model.id
+                )
             }
-            await runtime.commitChatSessionTransaction(transaction)
-            throw error
+
+            for directToolCall in directToolCalls {
+                await onEvent(.toolCallStarted(directToolCall))
+                let result = await toolExecutor.execute(
+                    sessionID: sessionID,
+                    toolCall: directToolCall,
+                    workingDirectory: session.cwd,
+                    allowedToolNames: session.allowedToolNames
+                )
+                await onEvent(.toolCallCompleted(directToolCall, result))
+                session.messages.append(
+                    .tool(
+                        result.output,
+                        toolCallID: directToolCall.id,
+                        toolName: directToolCall.name
+                    )
+                )
+            }
         }
+
+        sessions[sessionID] = session
+        throw MLXServerCoderBackendError.tooManyToolRounds(configuration.maxToolRounds)
     }
 }
 #endif

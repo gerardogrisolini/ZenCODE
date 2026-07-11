@@ -201,20 +201,11 @@ public actor AgentCoreSessionRunner {
         recorder: AgentCorePromptTurnRecorder,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async {
-        let recovery: AgentCoreSessionSnapshotRecovery
-        if outcome.status == .cancelled {
-            recovery = await cancelledSessionSnapshotRecovery(
-                backend: backend,
-                configuration: configuration,
-                recorder: recorder
-            )
-        } else {
-            recovery = await recoveredSessionSnapshot(
-                backend: backend,
-                configuration: configuration,
-                recorder: recorder
-            )
-        }
+        let recovery = await recoveredSessionSnapshot(
+            backend: backend,
+            configuration: configuration,
+            recorder: recorder
+        )
         await restoreSessionIfNeeded(
             recovery,
             backend: backend,
@@ -515,22 +506,6 @@ public actor AgentCoreSessionRunner {
         activeRuntimeConfiguration = nil
         await backend?.shutdown()
         backend = nil
-    }
-
-    private func cancelledSessionSnapshotRecovery(
-        backend: AgentCoreBackend,
-        configuration: AgentCoreSessionConfiguration,
-        recorder: AgentCorePromptTurnRecorder
-    ) async -> AgentCoreSessionSnapshotRecovery {
-        let initialSnapshot = await recorder.initialSessionSnapshot()
-        let backendAlreadyRolledBack = await backend
-            .snapshotSession(id: configuration.sessionID)?
-            .hasSameRuntimeState(as: initialSnapshot) == true
-        cacheSessionSnapshot(initialSnapshot, baseConfiguration: configuration)
-        return AgentCoreSessionSnapshotRecovery(
-            snapshot: initialSnapshot,
-            shouldRestoreBackend: !backendAlreadyRolledBack
-        )
     }
 
     private func recoveredSessionSnapshot(

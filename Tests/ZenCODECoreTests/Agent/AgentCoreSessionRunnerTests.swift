@@ -150,17 +150,13 @@ struct AgentCoreSessionRunnerTests {
             backendFactory: { _, _ in backend }
         )
         let sessionID = "session-\(UUID().uuidString)"
-        let checkpointHistory = [
-            AgentRuntimeMessage(role: .user, content: "completed request"),
-            AgentRuntimeMessage(role: .assistant, content: "completed response"),
-        ]
         let configuration = AgentCoreSessionConfiguration(
             sessionID: sessionID,
             modelID: "test-model",
             workingDirectory: FileManager.default.temporaryDirectory,
             systemPrompt: nil,
-            cacheKey: "stable-checkpoint",
-            history: checkpointHistory,
+            cacheKey: nil,
+            history: [],
             allowedToolNames: []
         )
         let snapshotCollector = SnapshotCollector()
@@ -188,57 +184,10 @@ struct AgentCoreSessionRunnerTests {
         #expect(snapshots.count == 1)
         #expect(outcomes == [.cancelled])
         let history = try #require(snapshots.first?.history)
-        #expect(history == checkpointHistory)
-        #expect(!history.contains { $0.content == "please stop" })
-        #expect(!history.contains { $0.content == "partial answer" })
-        #expect(await runner.snapshotSession(id: sessionID)?.history == checkpointHistory)
-        #expect(await backend.sessionCreationCount() == 1)
-    }
-
-    @Test
-    func cancelledPromptRollsBackBackendThatEagerlyPersistedUserMessage() async throws {
-        let backend = BlockingAgentRuntimeBackend(persistsPromptBeforeBlocking: true)
-        let runner = AgentCoreSessionRunner(
-            backendFactory: { _, _ in backend }
-        )
-        let sessionID = "session-\(UUID().uuidString)"
-        let checkpointHistory = [
-            AgentRuntimeMessage(role: .user, content: "completed request"),
-            AgentRuntimeMessage(role: .assistant, content: "completed response"),
-        ]
-        let configuration = AgentCoreSessionConfiguration(
-            sessionID: sessionID,
-            modelID: "test-model",
-            workingDirectory: FileManager.default.temporaryDirectory,
-            systemPrompt: nil,
-            cacheKey: "stable-checkpoint",
-            history: checkpointHistory,
-            allowedToolNames: []
-        )
-        let snapshotCollector = SnapshotCollector()
-
-        let stream = await runner.streamPrompt(
-            "discard this prompt",
-            configuration: configuration
-        )
-        let consumer = Task {
-            do {
-                for try await event in stream {
-                    await snapshotCollector.record(event)
-                }
-            } catch is CancellationError {
-            } catch {
-            }
-        }
-
-        await backend.waitUntilPromptStarted()
-        await runner.cancelPrompt(sessionID: sessionID)
-        await consumer.value
-
-        #expect(await snapshotCollector.snapshots().first?.history == checkpointHistory)
-        #expect(await runner.snapshotSession(id: sessionID)?.history == checkpointHistory)
-        // Initial creation plus the required rollback of the eager mutation.
-        #expect(await backend.sessionCreationCount() == 2)
+        #expect(history.count == 1)
+        #expect(history[safe: 0]?.role == .user)
+        #expect(history[safe: 0]?.content == "please stop")
+        #expect(await runner.snapshotSession(id: sessionID)?.history == history)
     }
 
     @Test
@@ -474,13 +423,7 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
 private actor BlockingAgentRuntimeBackend: AgentRuntimeBackend {
     private var sessions: [String: AgentRuntimeSessionSnapshot] = [:]
     private var didStartPrompt = false
-    private var sessionCreationCountValue = 0
     private var startContinuations: [CheckedContinuation<Void, Never>] = []
-    private let persistsPromptBeforeBlocking: Bool
-
-    init(persistsPromptBeforeBlocking: Bool = false) {
-        self.persistsPromptBeforeBlocking = persistsPromptBeforeBlocking
-    }
 
     func createSession(
         id: String,
@@ -492,7 +435,6 @@ private actor BlockingAgentRuntimeBackend: AgentRuntimeBackend {
         thinkingSelection: AgentThinkingSelection?,
         preserveThinking: Bool
     ) {
-        sessionCreationCountValue += 1
         sessions[id] = AgentRuntimeSessionSnapshot(
             sessionID: id,
             workingDirectoryPath: cwd,
@@ -555,32 +497,16 @@ private actor BlockingAgentRuntimeBackend: AgentRuntimeBackend {
     }
 
     func sendPrompt(
-        sessionID: String,
-        prompt: String,
+        sessionID _: String,
+        prompt _: String,
         attachments _: [AgentRuntimeAttachment],
-        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
-        if persistsPromptBeforeBlocking, let snapshot = sessions[sessionID] {
-            sessions[sessionID] = AgentRuntimeSessionSnapshot(
-                sessionID: snapshot.sessionID,
-                modelID: snapshot.modelID,
-                workingDirectoryPath: snapshot.workingDirectoryPath,
-                systemPrompt: snapshot.systemPrompt,
-                cacheKey: snapshot.cacheKey,
-                history: snapshot.history + [
-                    AgentRuntimeMessage(role: .user, content: prompt),
-                ],
-                allowedToolNames: snapshot.allowedToolNames,
-                thinkingSelection: snapshot.thinkingSelection,
-                preserveThinking: snapshot.preserveThinking
-            )
-        }
         didStartPrompt = true
         for continuation in startContinuations {
             continuation.resume()
         }
         startContinuations.removeAll()
-        await onEvent(.content("partial answer"))
 
         try await Task.sleep(for: .seconds(30))
         return DirectAgentResponse(text: "", stopReason: "end_turn", modelID: "test-model")
@@ -588,10 +514,6 @@ private actor BlockingAgentRuntimeBackend: AgentRuntimeBackend {
 
     func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? {
         sessions[id]
-    }
-
-    func sessionCreationCount() -> Int {
-        sessionCreationCountValue
     }
 
     func waitUntilPromptStarted() async {

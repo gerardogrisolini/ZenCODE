@@ -230,8 +230,6 @@ actor DS4CoderBackend: AgentRuntimeBackend {
         }
 
         let ds4Session = try await ensureDS4Session(for: &session)
-        let checkpointHistory = session.history
-        let checkpointTranscriptLength = await sharedEngine.transcriptLength(ds4Session)
         await onEvent(.modelRuntime("ds4/\(options.backend.rawValue)"))
 
         let maxTokens = configuration.maxOutputTokens
@@ -267,24 +265,6 @@ actor DS4CoderBackend: AgentRuntimeBackend {
                     startsInThinking: generationStartsInThinking,
                     onEvent: onEvent
                 )
-            } catch is CancellationError {
-                session.history = checkpointHistory
-                do {
-                    try await sharedEngine.rollback(
-                        ds4Session,
-                        toTranscriptLength: checkpointTranscriptLength
-                    )
-                } catch {
-                    // Correctness still comes from the restored Swift history;
-                    // dropping only the native session makes the next prompt
-                    // rebuild if the in-place checkpoint rollback failed.
-                    session.ds4Session = nil
-                    ZenLogger.warning(
-                        .viewModelRuntime,
-                        "failed to restore DS4 checkpoint after cancellation: \(error.localizedDescription)"
-                    )
-                }
-                throw CancellationError()
             } catch {
                 // The C transcript may have rolled back or diverged from the
                 // Swift history; drop it so the next prompt rebuilds the
@@ -624,24 +604,9 @@ actor DS4SharedEngine {
         }
     }
 
-    func transcriptLength(_ session: DS4Session) async -> Int {
-        await Self.run(on: engineQueue) {
-            session.transcriptLength
-        }
-    }
-
     func reset(_ session: DS4Session) async {
         await Self.run(on: engineQueue) {
             session.reset()
-        }
-    }
-
-    func rollback(
-        _ session: DS4Session,
-        toTranscriptLength transcriptLength: Int
-    ) async throws {
-        try await Self.runThrowing(on: engineQueue) {
-            try session.rollback(toTranscriptLength: transcriptLength)
         }
     }
 
