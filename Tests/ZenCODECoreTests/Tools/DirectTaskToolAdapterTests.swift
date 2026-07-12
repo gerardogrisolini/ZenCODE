@@ -59,6 +59,30 @@ struct DirectTaskToolAdapterTests {
     }
 
     @Test
+    func taskCreateAcceptsTitlesLongerThanTheFormerLimit() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
+        let longTitle = String(repeating: "x", count: 1_024)
+
+        _ = try await adapter.execute(
+            sessionID: "session",
+            toolCall: call(
+                name: "task.create",
+                arguments: [
+                    "graphID": "graph",
+                    "id": "long-title",
+                    "title": longTitle,
+                ]
+            )
+        )
+
+        #expect(try await orchestrator.task(
+            sessionID: "session",
+            taskID: "long-title"
+        ).task.title == longTitle)
+    }
+
+    @Test
     func delegatedScopeCanReadOwnTaskAndAppendProgressOnly() async throws {
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(

@@ -741,6 +741,38 @@ struct PlanCommandTests {
     }
 
     @Test
+    func approvalAcceptsPlanTaskTitlesLongerThanTheFormerLimit() async throws {
+        let terminal = try makeTerminal()
+        let longTitle = String(repeating: "x", count: 1_024)
+        let plan = TerminalSessionPlan(
+            id: "plan-long-title",
+            originalGoal: "Keep the full plan item",
+            consolidatedText: "Implement the long plan item.",
+            points: [
+                TerminalSessionPlanPoint(
+                    id: "plan-long-title-1",
+                    text: longTitle
+                )
+            ]
+        )
+        terminal.activePlan = plan
+
+        let approval = await terminal.handlePlanCommand("/plan approve")
+
+        guard case .runHiddenPrompt = approval else {
+            Issue.record("Approval should accept a plan task title longer than 512 characters")
+            return
+        }
+        let graph = try #require(try await terminal.sessionRunner.taskGraphSnapshot(
+            sessionID: terminal.sessionID,
+            graphID: plan.id
+        ))
+        #expect(terminal.activePlan?.isApproved == true)
+        #expect(graph.state == .active)
+        #expect(graph.tasks.map(\.title) == [longTitle])
+    }
+
+    @Test
     func invalidReplacementLeavesPreviousPlanAndGraphUntouched() async throws {
         let terminal = try makeTerminal()
         _ = try await terminal.recordPlanAndTaskGraphIfNeeded(

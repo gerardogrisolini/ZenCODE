@@ -100,7 +100,6 @@ extension SessionTaskOrchestrator {
             guard !title.isEmpty else {
                 throw SessionTaskOrchestratorError.emptyTitle(id)
             }
-            try validateLength(title, field: "title", limit: limits.maximumTitleLength)
             if let details = definition.details?.nilIfBlank {
                 try validateLength(details, field: "details", limit: limits.maximumDetailsLength)
             }
@@ -170,7 +169,6 @@ extension SessionTaskOrchestrator {
             guard !task.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw SessionTaskOrchestratorError.emptyTitle(task.id)
             }
-            try validateLength(task.title, field: "title", limit: limits.maximumTitleLength)
             if let details = task.details {
                 try validateLength(details, field: "details", limit: limits.maximumDetailsLength)
             }

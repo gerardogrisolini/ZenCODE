@@ -92,7 +92,6 @@ public actor SessionTaskOrchestrator {
     public struct Limits: Equatable, Sendable {
         public var maximumTasksPerGraph: Int
         public var maximumIDLength: Int
-        public var maximumTitleLength: Int
         public var maximumDetailsLength: Int
         public var maximumAcceptanceCriterionLength: Int
         public var maximumAttemptOutputLength: Int
@@ -102,7 +101,6 @@ public actor SessionTaskOrchestrator {
         public init(
             maximumTasksPerGraph: Int = 256,
             maximumIDLength: Int = 128,
-            maximumTitleLength: Int = 512,
             maximumDetailsLength: Int = 16_384,
             maximumAcceptanceCriterionLength: Int = 2_048,
             maximumAttemptOutputLength: Int = 64 * 1_024,
@@ -111,7 +109,6 @@ public actor SessionTaskOrchestrator {
         ) {
             self.maximumTasksPerGraph = maximumTasksPerGraph
             self.maximumIDLength = maximumIDLength
-            self.maximumTitleLength = maximumTitleLength
             self.maximumDetailsLength = maximumDetailsLength
             self.maximumAcceptanceCriterionLength = maximumAcceptanceCriterionLength
             self.maximumAttemptOutputLength = maximumAttemptOutputLength
