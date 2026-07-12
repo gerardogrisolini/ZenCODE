@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public nonisolated enum XcodeToolRequestCompatibility {
     private static let toolsRequiringTabIdentifier: Set<String> = [

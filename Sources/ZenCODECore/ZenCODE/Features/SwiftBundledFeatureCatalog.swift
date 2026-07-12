@@ -59,22 +59,16 @@ enum SwiftBundledFeatureCatalog {
                 invocationTimeoutSeconds: 660
             ),
             SwiftFeatureRuntime.BundledFeatureDefinition(
-                id: xcode.id,
+                id: XcodeToolIntegration.featureID,
                 executableName: xcode.productName,
                 description: "Build, test, preview, and inspect Xcode projects.",
                 sourceRelativePath: xcode.sourceRelativePath,
                 tools: [],
-                toolNamePrefixes: ["xcode.", "Xcode"],
-                toolNameAliases: [
-                    "BuildProject",
-                    "DocumentationSearch",
-                    "ExecuteSnippet",
-                    "GetBuildLog",
-                    "GetTestList",
-                    "RenderPreview",
-                    "RunAllTests",
-                    "RunSomeTests"
+                toolNamePrefixes: [
+                    XcodeToolIntegration.toolPrefix,
+                    XcodeToolIntegration.legacyToolPrefix
                 ],
+                toolNameAliases: XcodeToolIntegration.toolNameAliases,
                 discoversToolsAtRuntime: true,
                 invocationTimeoutSeconds: 3_660
             ),

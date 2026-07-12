@@ -9,9 +9,8 @@
 import AppKit
 import Darwin
 import Foundation
-import ToolCore
 
-extension MCPServerConfiguration {
+extension XcodeMCPServerConfiguration {
     public static func platformDetectedXcodePID() -> String? {
         let apps = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dt.Xcode")
         guard !apps.isEmpty else {

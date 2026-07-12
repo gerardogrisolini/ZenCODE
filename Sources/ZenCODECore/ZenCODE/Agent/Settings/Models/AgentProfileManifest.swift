@@ -493,16 +493,10 @@ public enum AgentProfileStore {
 
     fileprivate static func normalizedExternalToolReference(_ value: String) -> String? {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let xcodeReference = XcodeToolIntegration.canonicalAllowedToolName(trimmedValue) {
+            return xcodeReference
+        }
         let normalizedValue = toolReferenceKey(trimmedValue)
-        if normalizedValue == "xcode" {
-            return "xcode."
-        }
-        if trimmedValue == "xcode." {
-            return "xcode."
-        }
-        if DirectMCPToolRuntime.isXcodeToolName(trimmedValue) {
-            return DirectMCPToolRuntime.canonicalXcodeToolName(for: trimmedValue) ?? trimmedValue
-        }
         if normalizedValue == "figma" {
             return "figma."
         }

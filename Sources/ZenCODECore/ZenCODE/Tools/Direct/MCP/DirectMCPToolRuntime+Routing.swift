@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import XcodeToolsFeature
 
 extension DirectMCPToolRuntime {
     func serverAndToolName(for toolName: String) -> (Server, String)? {
@@ -23,7 +24,7 @@ extension DirectMCPToolRuntime {
                 return rawToolName
             }
             if serverIsXcodeLike(server),
-               let canonicalToolName = Self.canonicalXcodeToolName(for: toolName),
+               let canonicalToolName = XcodeToolIntegration.canonicalToolName(for: toolName),
                server.descriptors.contains(where: { $0.name == "\(server.toolPrefix)\(canonicalToolName)" }) {
                 return canonicalToolName
             }
@@ -31,7 +32,7 @@ extension DirectMCPToolRuntime {
         }
 
         guard serverIsXcodeLike(server),
-              let canonicalToolName = Self.canonicalXcodeToolName(for: toolName),
+              let canonicalToolName = XcodeToolIntegration.canonicalToolName(for: toolName),
               server.descriptors.contains(where: { $0.name == "\(server.toolPrefix)\(canonicalToolName)" }) else {
             return nil
         }
@@ -42,36 +43,20 @@ extension DirectMCPToolRuntime {
         guard serverIsXcodeLike(server) else {
             return request
         }
-        return XcodeToolRequestCompatibility.normalize(request) ?? request
+        return XcodeToolIntegration.normalizedRequest(request) ?? request
     }
 
     func serverIsXcodeLike(_ server: Server) -> Bool {
         switch server.family {
         case .xcode:
             return true
-        case let .external(id):
-            return id == "xcode"
-        case .figma:
+        case .external, .figma:
             return false
         }
     }
 
     public static func canonicalXcodeToolName(for toolName: String) -> String? {
-        let request = ToolRequest(name: toolName, arguments: [:])
-        if let normalized = XcodeToolRequestCompatibility.normalize(request) {
-            return normalized.name
-        }
-
-        if toolName.hasPrefix("xcode.") {
-            let unprefixedName = String(toolName.dropFirst("xcode.".count))
-            if let normalized = XcodeToolRequestCompatibility.normalize(
-                ToolRequest(name: unprefixedName, arguments: [:])
-            ) {
-                return normalized.name
-            }
-        }
-
-        return nil
+        XcodeToolIntegration.canonicalToolName(for: toolName)
     }
 
     static func jsonValueArguments(from object: [String: Any]) -> [String: JSONValue] {

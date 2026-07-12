@@ -2,7 +2,7 @@
 //  RemoteMCPFeatureRunner.swift
 //  ZenCODE
 //
-//  Shared CLI runner for MCP tool features (Figma, Xcode, etc.). Each
+//  Shared CLI runner for MCP tool features. Each
 //  feature supplies a lightweight configuration; this runner handles
 //  argument parsing, JSON envelope, and error rendering so that
 //  individual feature mains stay thin.

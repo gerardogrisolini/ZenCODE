@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import XcodeToolsFeature
 
 extension DirectMCPToolRuntime {
     func discoverFamilyIfNeeded(
@@ -85,12 +86,12 @@ extension DirectMCPToolRuntime {
 
         return Server(
             family: .xcode,
-            toolPrefix: "xcode.",
+            toolPrefix: XcodeToolIntegration.toolPrefix,
             backend: .xcode(discovery.executor),
             descriptors: tools.map { tool in
                 DirectToolDescriptor(
-                    name: "xcode.\(tool.name)",
-                    description: "Xcode: \(tool.description)",
+                    name: XcodeToolIntegration.publicToolName(for: tool.name),
+                    description: XcodeToolIntegration.publicDescription(tool.description),
                     inputSchema: tool.inputSchema
                 )
             },
@@ -140,8 +141,8 @@ extension DirectMCPToolRuntime {
     }
 
     public static func defaultXcodeDiscovery() async -> XcodeDiscovery? {
-        guard MCPServerConfiguration.isXcodeRunning(),
-              let configuration = MCPServerConfiguration.xcodeFromEnvironment() else {
+        guard XcodeToolIntegration.isRunning(),
+              let configuration = XcodeToolIntegration.defaultConfiguration() else {
             return nil
         }
 
@@ -189,23 +190,10 @@ extension DirectMCPToolRuntime {
         in contexts: [XcodeWorkspaceContext],
         preferredWorkspaceRootURL: URL?
     ) -> XcodeWorkspaceContext? {
-        guard let preferredWorkspaceRootURL else {
-            return contexts.first ?? XcodeWorkspaceContext(
-                workspacePath: nil,
-                defaultTabIdentifier: nil
-            )
-        }
-
-        let preferredRootPath = preferredWorkspaceRootURL
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-            .path
-        return contexts.first { context in
-            XcodeWorkspaceContext.workspaceRootPath(
-                context.normalizedWorkspaceRootPath,
-                matchesPreferredRootPath: preferredRootPath
-            )
-        }
+        XcodeToolIntegration.matchedWorkspaceContext(
+            in: contexts,
+            preferredWorkspaceRootURL: preferredWorkspaceRootURL
+        )
     }
 
     func serverMatchesPreferredWorkspace(
@@ -215,17 +203,9 @@ extension DirectMCPToolRuntime {
         guard server.family == .xcode else {
             return true
         }
-        guard let preferredWorkspaceRootURL,
-              let workspaceRootPath = server.workspaceRootPath else {
-            return true
-        }
-        let preferredRootPath = preferredWorkspaceRootURL
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-            .path
-        return XcodeWorkspaceContext.workspaceRootPath(
-            workspaceRootPath,
-            matchesPreferredRootPath: preferredRootPath
+        return XcodeToolIntegration.workspaceMatches(
+            workspaceRootPath: server.workspaceRootPath,
+            preferredWorkspaceRootURL: preferredWorkspaceRootURL
         )
     }
 

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import XcodeToolsFeature
 
 public actor DirectToolExecutor {
     public static let defaultModelOutputLimit = 12_000
@@ -227,27 +228,7 @@ public actor DirectToolExecutor {
     }
 
     private static func mcpErrorIsPermissionDenied(_ error: MCPClientError) -> Bool {
-        switch error {
-        case .xcodePermissionRequired:
-            return true
-        case let .serverExited(_, message),
-             let .serverError(_, message):
-            return errorMessageLooksPermissionDenied(message)
-        default:
-            return false
-        }
-    }
-
-    private static func errorMessageLooksPermissionDenied(_ message: String) -> Bool {
-        let lowered = message.lowercased()
-        return lowered.contains("permission denied")
-            || lowered.contains("consent denied")
-            || lowered.contains("not authorized")
-            || lowered.contains("not authorised")
-            || lowered.contains("not allowed")
-            || lowered.contains("not permitted")
-            || lowered.contains("rejected")
-            || lowered.contains("declined")
+        XcodeToolIntegration.isPermissionDenied(error)
     }
 
     public static func filtered(
@@ -255,7 +236,7 @@ public actor DirectToolExecutor {
         allowedToolNames: Set<String>?
     ) -> [DirectToolDescriptor] {
         guard let allowedToolNames else {
-            return descriptors.filter { !DirectMCPToolRuntime.isXcodeToolName($0.name) }
+            return descriptors.filter { !XcodeToolIntegration.isToolName($0.name) }
         }
 
         guard !allowedToolNames.isEmpty else {
@@ -272,7 +253,7 @@ public actor DirectToolExecutor {
         allowedToolNames: Set<String>?
     ) -> Bool {
         guard let allowedToolNames else {
-            return !DirectMCPToolRuntime.isXcodeToolName(toolName)
+            return !XcodeToolIntegration.isToolName(toolName)
         }
 
         guard !allowedToolNames.isEmpty else {
@@ -299,17 +280,17 @@ public actor DirectToolExecutor {
             return true
         }
 
-        if DirectMCPToolRuntime.isXcodeToolName(toolName) {
-            if allowedToolNames.contains("xcode.") {
+        if XcodeToolIntegration.isToolName(toolName) {
+            if allowedToolNames.contains(XcodeToolIntegration.toolPrefix) {
                 return true
             }
-            if let canonicalXcodeToolName = DirectMCPToolRuntime.canonicalXcodeToolName(for: toolName),
+            if let canonicalXcodeToolName = XcodeToolIntegration.canonicalToolName(for: toolName),
                allowedToolNames.contains(canonicalXcodeToolName) {
                 return true
             }
         }
 
-        for prefix in ["xcode.", "figma."] where toolName.hasPrefix(prefix) {
+        for prefix in [XcodeToolIntegration.toolPrefix, "figma."] where toolName.hasPrefix(prefix) {
             let unprefixedName = String(toolName.dropFirst(prefix.count))
             if allowedToolNames.contains(unprefixedName) {
                 return true
@@ -324,9 +305,9 @@ public actor DirectToolExecutor {
         mcpDescriptors: [DirectToolDescriptor]
     ) -> Set<String> {
         var featureIDs = Set<String>()
-        if allowedToolNames?.contains(where: DirectMCPToolRuntime.isXcodeToolName) == true
-            || mcpDescriptors.contains(where: { DirectMCPToolRuntime.isXcodeToolName($0.name) }) {
-            featureIDs.insert("xcode-tools")
+        if allowedToolNames?.contains(where: XcodeToolIntegration.isToolName) == true
+            || mcpDescriptors.contains(where: { XcodeToolIntegration.isToolName($0.name) }) {
+            featureIDs.insert(XcodeToolIntegration.featureID)
         }
         return featureIDs
     }

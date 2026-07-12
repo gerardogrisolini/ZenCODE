@@ -117,7 +117,9 @@ ZENCODE_BUILD_DS4=1 ZENCODE_DS4_ROOT=/path/to/ds4 swift build -c release --produ
 
 - `Sources/ToolCore`: dependency-light tool wire, descriptor, environment, and compatibility types.
 - `Sources/FeatureKit`: feature contracts, schemas, process protocol, and runner support.
-- `Sources/FeatureMCPBridgeKit`: MCP feature integration and transports.
+- `Sources/FeatureMCPBridgeKit`: generic MCP feature integration, transports, and injectable local-transport policies.
+- `Sources/Features/XcodeTools/Feature`: `XcodeToolsFeature`, the feature-owned Xcode MCP implementation library.
+- `Sources/Features/XcodeTools/Executable`: the thin `xcode-tools-feature` executable entry point.
 - `Sources/LocalToolsSupport`: reusable local file, search, text, and patch tooling.
 - `Sources/ZenPackageMetadata`: internal bundled-feature distribution metadata and catalog parity support.
 - `Sources/ZenCODECore`: reusable agent runtime, TUI, tools, skills, ACP, config, memory, sessions, and feature management.

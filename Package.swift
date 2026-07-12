@@ -56,6 +56,21 @@ struct BundledFeatureTargetDefinition {
     let executableName: String
     let sourceRelativePath: String
     let dependencies: [Target.Dependency]
+    /// The executable may live below the copied feature root when a bundled
+    /// feature also contains a reusable library target.
+    let executableTargetRelativePath: String?
+
+    init(
+        executableName: String,
+        sourceRelativePath: String,
+        dependencies: [Target.Dependency],
+        executableTargetRelativePath: String? = nil
+    ) {
+        self.executableName = executableName
+        self.sourceRelativePath = sourceRelativePath
+        self.dependencies = dependencies
+        self.executableTargetRelativePath = executableTargetRelativePath
+    }
 }
 
 let bundledFeatureTargetDefinitions: [BundledFeatureTargetDefinition] = [
@@ -82,7 +97,8 @@ let bundledFeatureTargetDefinitions: [BundledFeatureTargetDefinition] = [
     BundledFeatureTargetDefinition(
         executableName: "xcode-tools-feature",
         sourceRelativePath: "Sources/Features/XcodeTools",
-        dependencies: ["FeatureKit", "ToolCore", "FeatureMCPBridgeKit"]
+        dependencies: ["XcodeToolsFeature"],
+        executableTargetRelativePath: "Sources/Features/XcodeTools/Executable"
     ),
     BundledFeatureTargetDefinition(
         executableName: "figma-tools-feature",
@@ -131,6 +147,10 @@ products += [
     .library(
         name: "FeatureMCPBridgeKit",
         targets: ["FeatureMCPBridgeKit"]
+    ),
+    .library(
+        name: "XcodeToolsFeature",
+        targets: ["XcodeToolsFeature"]
     ),
     .library(
         name: "LocalToolsSupport",
@@ -224,6 +244,7 @@ targets += [
             "FeatureKit",
             "ToolCore",
             "FeatureMCPBridgeKit",
+            "XcodeToolsFeature",
             "LocalToolsSupport",
             "ZenPackageMetadata"
         ],
@@ -246,6 +267,15 @@ targets += [
             "ToolCore",
             .product(name: "Crypto", package: "swift-crypto")
         ]
+    ),
+    .target(
+        name: "XcodeToolsFeature",
+        dependencies: [
+            "FeatureKit",
+            "ToolCore",
+            "FeatureMCPBridgeKit"
+        ],
+        path: "Sources/Features/XcodeTools/Feature"
     ),
     .target(
         name: "LocalToolsSupport",
@@ -273,6 +303,7 @@ targets += [
         dependencies: [
             "ZenCODECore",
             "FeatureMCPBridgeKit",
+            "XcodeToolsFeature",
             "FeatureKit",
             "LocalToolsSupport",
             "ZenPackageMetadata",
@@ -309,6 +340,15 @@ targets += [
         ]
     ),
     .testTarget(
+        name: "XcodeToolsFeatureTests",
+        dependencies: [
+            "XcodeToolsFeature",
+            "FeatureKit",
+            "FeatureMCPBridgeKit",
+            "ToolCore"
+        ]
+    ),
+    .testTarget(
         name: "LocalToolsSupportTests",
         dependencies: [
             "LocalToolsSupport",
@@ -321,7 +361,7 @@ targets += bundledFeatureTargetDefinitions.map {
     .executableTarget(
         name: $0.executableName,
         dependencies: $0.dependencies,
-        path: $0.sourceRelativePath
+        path: $0.executableTargetRelativePath ?? $0.sourceRelativePath
     )
 }
 

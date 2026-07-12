@@ -12,8 +12,15 @@ public actor RemoteMCPToolExecutor {
     private let client: MCPClient
     private let toolNamePrefix: String
 
-    public init(configuration: MCPServerConfiguration, toolNamePrefix: String) {
-        self.client = MCPClient(configuration: configuration)
+    public init(
+        configuration: MCPServerConfiguration,
+        toolNamePrefix: String,
+        localTransportPolicy: LocalMCPTransportPolicy = .standard
+    ) {
+        self.client = MCPClient(
+            configuration: configuration,
+            localTransportPolicy: localTransportPolicy
+        )
         self.toolNamePrefix = toolNamePrefix
     }
 

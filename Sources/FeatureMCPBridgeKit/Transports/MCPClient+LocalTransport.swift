@@ -34,9 +34,6 @@ extension MCPClient {
         process.arguments = configuration.arguments
 
         let environment = Self.resolvedEnvironment(for: configuration)
-        let mcpEnvironment = environment.filter { key, _ in
-            key.hasPrefix("MCP_XCODE")
-        }
         process.environment = environment
 
         log(buildMarker)
@@ -44,7 +41,6 @@ extension MCPClient {
         if !configuration.environment.isEmpty {
             log("Bridge environment overrides: \(configuration.environment)")
         }
-        log("Resolved bridge environment: \(mcpEnvironment)")
 
         let standardInput = Pipe()
         let standardOutput = Pipe()
@@ -62,7 +58,7 @@ extension MCPClient {
 
         self.process = process
         inputHandle = standardInput.fileHandleForWriting
-        startMCPBridgeLogMonitor(for: process)
+        startDiagnosticMonitor(for: process)
 
         signal(SIGPIPE, SIG_IGN)
         prepareStdoutTracingFiles()
@@ -83,7 +79,7 @@ extension MCPClient {
             clientInfo: MCPClientInfo(name: "Feature MCP client", version: "1.0")
         )
 
-        if configuration.usesMCPBridgeExecutable {
+        if localTransportPolicy.handshake == .optimisticInitialized {
             let initializeRequestID = nextRequestID
             nextRequestID += 1
 
@@ -101,7 +97,7 @@ extension MCPClient {
             )
             let initializedPayload = try JSONEncoder().encode(initializedNotification)
 
-            log("Sending initialize request (mcpbridge optimistic handshake)")
+            log("Sending initialize request (optimistic local transport handshake)")
             log(
                 "Request \(initializeRequestID) -> initialize: " +
                 (String(data: initializePayload, encoding: .utf8) ?? "<non-utf8>")
@@ -113,7 +109,7 @@ extension MCPClient {
 
                     do {
                         try write(initializePayload)
-                        log("Sending initialized notification early for mcpbridge")
+                        log("Sending initialized notification early")
                         try write(initializedPayload)
                     } catch {
                         pendingResponses.removeValue(forKey: initializeRequestID)
@@ -153,7 +149,7 @@ extension MCPClient {
         readLoopTask = nil
         errorLoopTask?.cancel()
         errorLoopTask = nil
-        stopMCPBridgeLogMonitor()
+        stopDiagnosticMonitor()
 
         inputHandle?.closeFile()
         inputHandle = nil
@@ -174,52 +170,47 @@ extension MCPClient {
         lastReassembledBufferSize = -1
     }
 
-    func startMCPBridgeLogMonitor(for bridgeProcess: Process) {
-        guard configuration.usesMCPBridgeExecutable,
-              mcpBridgeLogMonitorProcess == nil else {
+    func startDiagnosticMonitor(for bridgeProcess: Process) {
+        guard diagnosticMonitorProcess == nil,
+              let monitorConfiguration = localTransportPolicy.diagnosticMonitor(
+                  Int32(bridgeProcess.processIdentifier)
+              ) else {
             return
         }
 
-        // Xcode's mcpbridge reports consent denial only through Unified Logging
-        // in the failure path we observed, so watch the child PID without adding
-        // discovery timers.
         let monitorProcess = Process()
-        monitorProcess.executableURL = URL(fileURLWithPath: "/usr/bin/log")
-        monitorProcess.arguments = [
-            "stream",
-            "--style", "compact",
-            "--predicate", "processID == \(bridgeProcess.processIdentifier)",
-            "--info",
-            "--debug"
-        ]
+        monitorProcess.executableURL = URL(fileURLWithPath: monitorConfiguration.executablePath)
+        monitorProcess.arguments = monitorConfiguration.arguments
 
         let outputPipe = Pipe()
         monitorProcess.standardOutput = outputPipe
-        monitorProcess.standardError = outputPipe
+        if monitorConfiguration.combinesStandardError {
+            monitorProcess.standardError = outputPipe
+        }
 
         do {
             try monitorProcess.run()
         } catch {
-            log("Unable to start mcpbridge log monitor: \(error.localizedDescription)")
+            log("Unable to start local MCP diagnostic monitor: \(error.localizedDescription)")
             return
         }
 
-        mcpBridgeLogMonitorProcess = monitorProcess
+        diagnosticMonitorProcess = monitorProcess
         let outputHandle = outputPipe.fileHandleForReading
-        mcpBridgeLogMonitorTask = Task.detached { [self] in
-            await Self.logMonitorLoop(from: outputHandle, client: self)
+        diagnosticMonitorTask = Task.detached { [self] in
+            await Self.diagnosticMonitorLoop(from: outputHandle, client: self)
         }
     }
 
-    func stopMCPBridgeLogMonitor() {
-        mcpBridgeLogMonitorTask?.cancel()
-        mcpBridgeLogMonitorTask = nil
+    func stopDiagnosticMonitor() {
+        diagnosticMonitorTask?.cancel()
+        diagnosticMonitorTask = nil
 
-        if let monitorProcess = mcpBridgeLogMonitorProcess,
+        if let monitorProcess = diagnosticMonitorProcess,
            monitorProcess.isRunning {
             monitorProcess.terminate()
         }
-        mcpBridgeLogMonitorProcess = nil
+        diagnosticMonitorProcess = nil
     }
 
     nonisolated static func resolvedExecutableURL(for configuration: MCPServerConfiguration) -> URL {

@@ -243,10 +243,10 @@ public enum TerminalToolSelectionCatalog {
         items: [TerminalToolSelectionItem]
     ) -> Set<String> {
         let normalizedToken = normalizedLookupKey(rawToken)
-        if normalizedToken == "xcode" || DirectMCPToolRuntime.isXcodeToolName(rawToken) {
+        if XcodeToolIntegration.isFeatureReference(rawToken) {
             return featurePackageSelectionKeys(
                 matchingAllowedToolNames: { name in
-                    name == "Xcode" || name.hasPrefix("xcode.")
+                    XcodeToolIntegration.isFeatureReference(name)
                 },
                 items: items
             )
@@ -385,9 +385,9 @@ public enum TerminalToolSelectionCatalog {
                 tools: descriptors.filter { $0.name.hasPrefix("swift.") }.map(\.name)
             ),
             bundledFeatureSelectionStatus(
-                id: "xcode-tools",
-                tools: descriptors.filter { $0.name.hasPrefix("xcode.") }.map(\.name),
-                toolNamePrefixes: ["xcode."]
+                id: XcodeToolIntegration.featureID,
+                tools: descriptors.filter { XcodeToolIntegration.isToolName($0.name) }.map(\.name),
+                toolNamePrefixes: [XcodeToolIntegration.toolPrefix]
             ),
             bundledFeatureSelectionStatus(
                 id: "figma-tools",
@@ -492,7 +492,7 @@ public enum TerminalToolSelectionCatalog {
     ) -> Set<String> {
         Set(
             statuses.flatMap(\.toolNamePrefixes).filter {
-                $0 == "xcode." || $0 == "figma."
+                $0 == XcodeToolIntegration.toolPrefix || $0 == "figma."
             }
         )
     }

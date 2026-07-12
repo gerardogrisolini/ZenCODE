@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import XcodeToolsFeature
 
 public actor DirectMCPToolRuntime {
     public struct XcodeDiscovery: Sendable {
@@ -130,14 +131,9 @@ public actor DirectMCPToolRuntime {
     ) async -> [DirectToolDescriptor] {
         let descriptors = ToolDescriptor.canonicalized(tools)
             .map { tool in
-                let name = tool.name.hasPrefix("xcode.")
-                    ? tool.name
-                    : "xcode.\(tool.name)"
                 return DirectToolDescriptor(
-                    name: name,
-                    description: tool.description.hasPrefix("Xcode:")
-                        ? tool.description
-                        : "Xcode: \(tool.description)",
+                    name: XcodeToolIntegration.publicToolName(for: tool.name),
+                    description: XcodeToolIntegration.publicDescription(tool.description),
                     inputSchema: tool.inputSchema
                 )
             }
@@ -167,7 +163,7 @@ public actor DirectMCPToolRuntime {
         servers.append(
             Server(
                 family: .xcode,
-                toolPrefix: "xcode.",
+                toolPrefix: XcodeToolIntegration.toolPrefix,
                 backend: .xcode(executor),
                 descriptors: descriptors,
                 workspaceRootPath: matchedWorkspaceContext?.normalizedWorkspaceRootPath,
@@ -183,9 +179,15 @@ public actor DirectMCPToolRuntime {
         configuration: MCPServerConfiguration
     ) async throws -> [DirectToolDescriptor] {
         let externalServerID = Self.externalServerID(for: name)
-        let family = ServerFamily.external(externalServerID)
-        let shouldReuseExistingServer = externalServerID.contains("xcode")
-            || configuration.usesMCPBridgeExecutable
+        let isXcodeCandidate = XcodeToolIntegration.isServerCandidate(
+            name: name,
+            configuration: configuration
+        )
+        let usesXcodeBridgePolicy = XcodeToolIntegration.isBridgeConfiguration(configuration)
+        let family: ServerFamily = isXcodeCandidate
+            ? .xcode
+            : .external(externalServerID)
+        let shouldReuseExistingServer = isXcodeCandidate
         if shouldReuseExistingServer,
            let existingServer = servers.first(where: {
                $0.family == family
@@ -201,10 +203,15 @@ public actor DirectMCPToolRuntime {
             await server.disconnectIfOwned()
         }
 
-        let toolPrefix = Self.externalToolPrefix(for: name)
+        let toolPrefix = isXcodeCandidate
+            ? XcodeToolIntegration.toolPrefix
+            : Self.externalToolPrefix(for: name)
         let executor = RemoteMCPToolExecutor(
             configuration: configuration,
-            toolNamePrefix: toolPrefix
+            toolNamePrefix: toolPrefix,
+            localTransportPolicy: usesXcodeBridgePolicy
+                ? XcodeToolIntegration.localTransportPolicy()
+                : .standard
         )
         do {
             let tools = ToolDescriptor.canonicalized(try await executor.loadTools())
@@ -215,8 +222,12 @@ public actor DirectMCPToolRuntime {
 
             let descriptors = tools.map { tool in
                 DirectToolDescriptor(
-                    name: tool.name,
-                    description: "\(name): \(tool.description)",
+                    name: isXcodeCandidate
+                        ? XcodeToolIntegration.publicToolName(for: tool.name)
+                        : tool.name,
+                    description: isXcodeCandidate
+                        ? XcodeToolIntegration.publicDescription(tool.description)
+                        : "\(name): \(tool.description)",
                     inputSchema: tool.inputSchema
                 )
             }
@@ -387,21 +398,7 @@ public actor DirectMCPToolRuntime {
     }
 
     public static func isXcodeToolName(_ toolName: String) -> Bool {
-        if toolName.hasPrefix("xcode.") || toolName.hasPrefix("Xcode") {
-            return true
-        }
-        return unprefixedXcodeToolNames.contains(toolName)
+        XcodeToolIntegration.isToolName(toolName)
     }
-
-    static let unprefixedXcodeToolNames: Set<String> = [
-        "BuildProject",
-        "DocumentationSearch",
-        "ExecuteSnippet",
-        "GetBuildLog",
-        "GetTestList",
-        "RenderPreview",
-        "RunAllTests",
-        "RunSomeTests"
-    ]
 
 }

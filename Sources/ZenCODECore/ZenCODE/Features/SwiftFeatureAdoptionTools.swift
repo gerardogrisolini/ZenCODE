@@ -96,7 +96,8 @@ extension SwiftFeatureRuntime {
         try Self.adoptedPackageManifestContents(
             productName: id,
             targetName: targetName,
-            zenPackagePath: zenPackageRootURL.path
+            zenPackagePath: zenPackageRootURL.path,
+            adoptedFrom: definition.id
         ).write(to: packageURL, atomically: true, encoding: .utf8)
 
         let state = SwiftFeatureStateStore.load(fileManager: fileManager)
@@ -316,9 +317,51 @@ extension SwiftFeatureRuntime {
     static func adoptedPackageManifestContents(
         productName: String,
         targetName: String,
-        zenPackagePath: String
+        zenPackagePath: String,
+        adoptedFrom: String
     ) -> String {
-        """
+        if adoptedFrom == "xcode-tools" {
+            return """
+            // swift-tools-version: \(generatedSwiftToolsVersion)
+
+            import PackageDescription
+
+            let package = Package(
+                name: "\(productName)",
+                platforms: [
+                    .macOS(.v26)
+                ],
+                products: [
+                    .executable(
+                        name: "\(productName)",
+                        targets: ["\(targetName)"]
+                    )
+                ],
+                dependencies: [
+                    .package(path: \(swiftStringLiteral(zenPackagePath)))
+                ],
+                targets: [
+                    .target(
+                        name: "AdoptedXcodeToolsFeature",
+                        dependencies: [
+                            .product(name: "FeatureKit", package: "ZenCODE"),
+                            .product(name: "ToolCore", package: "ZenCODE"),
+                            .product(name: "FeatureMCPBridgeKit", package: "ZenCODE")
+                        ],
+                        path: "Sources/\(targetName)/Feature"
+                    ),
+                    .executableTarget(
+                        name: "\(targetName)",
+                        dependencies: ["AdoptedXcodeToolsFeature"],
+                        path: "Sources/\(targetName)/Executable",
+                        swiftSettings: [.define("XCODE_TOOLS_FEATURE_ADOPTED")]
+                    )
+                ]
+            )
+            """
+        }
+
+        return """
         // swift-tools-version: \(generatedSwiftToolsVersion)
 
         import PackageDescription

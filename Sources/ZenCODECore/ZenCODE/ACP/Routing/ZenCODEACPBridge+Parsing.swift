@@ -12,6 +12,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import XcodeToolsFeature
 
 extension ZenCODEACPBridge {
     public struct ACPMCPServerDefinition: Sendable {
@@ -366,11 +367,9 @@ extension ZenCODEACPBridge {
                 name: name,
                 type: type,
                 configuration: configuration,
-                isXcodeCandidate: isXcodeMCPServerCandidate(
+                isXcodeCandidate: XcodeToolIntegration.isServerCandidate(
                     name: name,
-                    command: command,
-                    arguments: arguments,
-                    environment: environment
+                    configuration: configuration
                 )
             )
         case "http":
@@ -393,7 +392,10 @@ extension ZenCODEACPBridge {
                 name: name,
                 type: type,
                 configuration: configuration,
-                isXcodeCandidate: name.localizedCaseInsensitiveContains("xcode")
+                isXcodeCandidate: XcodeToolIntegration.isServerCandidate(
+                    name: name,
+                    configuration: configuration
+                )
             )
         default:
             return nil
@@ -462,26 +464,6 @@ extension ZenCODEACPBridge {
             }
         }
         return [:]
-    }
-
-    private static func isXcodeMCPServerCandidate(
-        name: String,
-        command: String,
-        arguments: [String],
-        environment: [String: String]
-    ) -> Bool {
-        if name.localizedCaseInsensitiveContains("xcode") {
-            return true
-        }
-        let commandName = URL(fileURLWithPath: command).lastPathComponent.lowercased()
-        if commandName == "mcpbridge" {
-            return true
-        }
-        if commandName == "xcrun",
-           arguments.contains(where: { $0.lowercased() == "mcpbridge" }) {
-            return true
-        }
-        return environment.keys.contains { $0.hasPrefix("MCP_XCODE") }
     }
 
     private static let allowedToolParameterKeys = [

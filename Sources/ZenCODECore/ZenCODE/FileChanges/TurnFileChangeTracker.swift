@@ -300,8 +300,8 @@ public actor TurnFileChangeTracker {
 
     private static func normalizedTrackedToolName(_ name: String) -> String {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        for prefix in ["xcode."] where trimmedName.hasPrefix(prefix) {
-            return String(trimmedName.dropFirst(prefix.count))
+        if XcodeToolIntegration.isToolName(trimmedName) {
+            return XcodeToolIntegration.rawToolName(fromPublicName: trimmedName)
         }
         return trimmedName
     }

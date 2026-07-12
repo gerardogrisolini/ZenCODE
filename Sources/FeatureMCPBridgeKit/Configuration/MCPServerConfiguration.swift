@@ -91,67 +91,6 @@ public nonisolated struct MCPServerConfiguration: Hashable, Sendable {
         endpointURL != nil
     }
 
-    public var usesMCPBridgeExecutable: Bool {
-        guard !usesHTTPTransport else {
-            return false
-        }
-
-        let executableName = URL(fileURLWithPath: executablePath).lastPathComponent.lowercased()
-        if executableName == "xcrun" {
-            return arguments.first?.lowercased() == "mcpbridge"
-        }
-
-        return executableName == "mcpbridge"
-    }
-
-    public static func xcodeFromEnvironment(
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> MCPServerConfiguration? {
-        let explicitExecutablePath = environment["XCODE_MCP_EXECUTABLE"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let executablePath: String
-        if let explicitExecutablePath, !explicitExecutablePath.isEmpty {
-            executablePath = explicitExecutablePath
-        } else if let runningXcodeBridgePath = detectedXcodeBridgeExecutablePath() {
-            executablePath = runningXcodeBridgePath
-        } else {
-            return nil
-        }
-
-        let explicitArguments = environment["XCODE_MCP_ARGUMENTS"]?
-            .split(separator: "\n")
-            .map(String.init)
-
-        let arguments: [String]
-        if let explicitArguments {
-            arguments = explicitArguments
-        } else {
-            arguments = []
-        }
-
-        var processEnvironment: [String: String] = [:]
-        if let explicitXcodePID = environment["MCP_XCODE_PID"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !explicitXcodePID.isEmpty {
-            processEnvironment["MCP_XCODE_PID"] = explicitXcodePID
-        } else if let detectedXcodePID = Self.detectedXcodePID() {
-            processEnvironment["MCP_XCODE_PID"] = detectedXcodePID
-        }
-
-        if let sessionID = environment["MCP_XCODE_SESSION_ID"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !sessionID.isEmpty {
-            processEnvironment["MCP_XCODE_SESSION_ID"] = sessionID
-        }
-
-        return MCPServerConfiguration(
-            executablePath: executablePath,
-            arguments: arguments,
-            environment: processEnvironment,
-            preferredProtocolVersion: "2024-11-05"
-        )
-    }
-
     public static func remoteHTTPFromEnvironment(
         urlKey: String,
         headersKey: String,
@@ -283,22 +222,6 @@ public nonisolated struct MCPServerConfiguration: Hashable, Sendable {
         #endif
     }
 
-    public static func isXcodeRunning(
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> Bool {
-        if let explicitXcodePID = environment["MCP_XCODE_PID"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           Self.isUsableXcodeProcessID(explicitXcodePID) {
-            return true
-        }
-
-        if let detectedXcodePID = Self.detectedXcodePID() {
-            return Self.isUsableXcodeProcessID(detectedXcodePID)
-        }
-
-        return false
-    }
-
     #if canImport(Network)
     private static func isReachableTCPServer(
         host: NWEndpoint.Host,
@@ -357,51 +280,6 @@ public nonisolated struct MCPServerConfiguration: Hashable, Sendable {
     }
     #endif
 
-    public func xcodeFromEnvironment(
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> [String: String] {
-        var resolvedEnvironment = self.environment
-
-        if let explicitXcodePID = environment["MCP_XCODE_PID"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !explicitXcodePID.isEmpty {
-            resolvedEnvironment["MCP_XCODE_PID"] = explicitXcodePID
-        }
-
-        if let sessionID = environment["MCP_XCODE_SESSION_ID"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !sessionID.isEmpty {
-            resolvedEnvironment["MCP_XCODE_SESSION_ID"] = sessionID
-        }
-
-        return resolvedEnvironment
-    }
-
-    private static func detectedXcodePID() -> String? {
-        #if os(macOS)
-        platformDetectedXcodePID()
-        #else
-        nil
-        #endif
-    }
-
-    private static func detectedXcodeBridgeExecutablePath() -> String? {
-        #if os(macOS)
-        platformDetectedXcodeBridgeExecutablePath()
-        #else
-        nil
-        #endif
-    }
-
-    private static func isUsableXcodeProcessID(_ pidString: String) -> Bool {
-        #if os(macOS)
-        platformIsUsableXcodeProcessID(pidString)
-        #else
-        _ = pidString
-        return false
-        #endif
-    }
-
     private static func parseHTTPHeaders(from rawValue: String?) -> [String: String] {
         guard let rawValue = rawValue?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -430,13 +308,13 @@ public nonisolated struct MCPServerConfiguration: Hashable, Sendable {
     }
 }
 
-public nonisolated enum MCPClientError: LocalizedError {
+public nonisolated enum MCPClientError: LocalizedError, Sendable {
     case missingContentLength
     case invalidContentLength
     case invalidResponse
     case connectionClosed
     case unsupportedPlatform
-    case xcodePermissionRequired
+    case authorizationRequired(service: String, message: String)
     case browserAuthenticationFailed(String)
     case serverExited(status: Int32, message: String)
     case serverError(code: Int, message: String)
@@ -454,8 +332,8 @@ public nonisolated enum MCPClientError: LocalizedError {
             return "The MCP connection closed unexpectedly."
         case .unsupportedPlatform:
             return "MCP desktop tooling is unavailable on this platform."
-        case .xcodePermissionRequired:
-            return "Xcode must authorize MCP for this session before the client can connect. Open Xcode and approve the MCP connection, then retry."
+        case let .authorizationRequired(_, message):
+            return message
         case let .browserAuthenticationFailed(message):
             return message
         case let .serverExited(status, message):

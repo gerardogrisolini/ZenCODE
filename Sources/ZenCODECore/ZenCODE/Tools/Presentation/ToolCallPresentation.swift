@@ -51,11 +51,8 @@ public enum ToolCallPresentation {
         case "agent.create", "agent.message", "agent.close":
             return "execute"
         default:
-            if toolName.hasPrefix("xcode.") {
-                return xcodeToolKind(for: String(toolName.dropFirst("xcode.".count)))
-            }
-            if DirectMCPToolRuntime.isXcodeToolName(toolName) {
-                return xcodeToolKind(for: toolName)
+            if XcodeToolIntegration.isToolName(toolName) {
+                return XcodeToolIntegration.presentationKind(for: toolName)
             }
             switch toolName {
             case "web.search", "memory.search":
@@ -81,20 +78,7 @@ public enum ToolCallPresentation {
     }
 
     public static func xcodeToolKind(for rawName: String) -> String {
-        switch rawName {
-        case "XcodeUpdate", "XcodeWrite", "XcodeMakeDir":
-            return "edit"
-        case "XcodeRM":
-            return "delete"
-        case "XcodeMV":
-            return "move"
-        case "BuildProject", "RunAllTests", "RunSomeTests", "ExecuteSnippet", "RenderPreview":
-            return "execute"
-        case "XcodeGrep", "XcodeGlob", "DocumentationSearch":
-            return "search"
-        default:
-            return "read"
-        }
+        XcodeToolIntegration.presentationKind(for: rawName)
     }
 
     public static func toolIcon(for toolName: String) -> String {
@@ -127,7 +111,7 @@ public enum ToolCallPresentation {
             if toolName.hasPrefix("search.") {
                 return "🔎"
             }
-            if toolName.hasPrefix("xcode.") || DirectMCPToolRuntime.isXcodeToolName(toolName) {
+            if XcodeToolIntegration.isToolName(toolName) {
                 return "🛠️"
             }
             if toolName.hasPrefix("figma.") {

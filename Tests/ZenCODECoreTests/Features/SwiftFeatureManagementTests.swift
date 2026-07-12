@@ -552,6 +552,51 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
+    func featureEditCreatesMultiTargetLocalCopyForBundledXcodeFeature() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-adopt-xcode-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let runtime = SwiftFeatureRuntime(featureSearchRoots: [rootURL])
+        let output = try await runtime.executeManagementTool(
+            toolCall: featureManagementCall(
+                name: "feature.edit",
+                arguments: ["id": "xcode-tools"]
+            )
+        )
+        let report = try JSONDecoder().decode(
+            SwiftFeatureEditReport.self,
+            from: Data(output.utf8)
+        )
+        let packagePath = try #require(report.packagePath)
+        let package = try String(contentsOfFile: packagePath, encoding: .utf8)
+
+        #expect(report.ok)
+        #expect(report.adopted)
+        #expect(report.adoptedFrom == "xcode-tools")
+        #expect(report.sourcePaths.contains { $0.hasSuffix("/Feature/XcodeToolsFeatureRunner.swift") })
+        #expect(report.sourcePaths.contains { $0.hasSuffix("/Executable/XcodeToolsFeatureMain.swift") })
+        #expect(package.contains("name: \"AdoptedXcodeToolsFeature\""))
+        #expect(package.contains("Sources/XcodeTools/Feature"))
+        #expect(package.contains("Sources/XcodeTools/Executable"))
+
+        let buildOutput = try await runtime.executeManagementTool(
+            toolCall: featureManagementCall(
+                name: "feature.build",
+                arguments: ["id": "xcode-tools"]
+            )
+        )
+        let build = try JSONDecoder().decode(
+            SwiftFeatureBuildReport.self,
+            from: Data(buildOutput.utf8)
+        )
+        #expect(build.ok)
+        #expect(FileManager.default.isExecutableFile(atPath: build.executablePath))
+    }
+
+    @Test
     func featureEditCreatesLocalCopyForBundledFeatureAndDeleteRestoresBundledRecord() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-feature-edit-adopt-\(UUID().uuidString)", isDirectory: true)

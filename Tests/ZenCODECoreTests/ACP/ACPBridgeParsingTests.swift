@@ -7,6 +7,7 @@
 
 import Foundation
 @testable import FeatureMCPBridgeKit
+@testable import XcodeToolsFeature
 @testable import ZenCODECore
 import Testing
 
@@ -89,7 +90,7 @@ extension ACPCompatibilityTests {
         #expect(definition.configuration.executablePath == "/usr/bin/xcrun")
         #expect(definition.configuration.arguments == ["mcpbridge"])
         #expect(definition.configuration.environment["MCP_XCODE_SESSION_ID"] == "session-1")
-        #expect(definition.configuration.usesMCPBridgeExecutable)
+        #expect(XcodeMCPServerConfiguration.isBridgeConfiguration(definition.configuration))
     }
 
     @Test
@@ -112,7 +113,7 @@ extension ACPCompatibilityTests {
         #expect(definition.isXcodeCandidate)
         #expect(definition.configuration.executablePath == "xcrun")
         #expect(definition.configuration.arguments == ["mcpbridge"])
-        #expect(definition.configuration.usesMCPBridgeExecutable)
+        #expect(XcodeMCPServerConfiguration.isBridgeConfiguration(definition.configuration))
     }
 
     @Test

@@ -33,32 +33,6 @@ public nonisolated func assignPathString(
     normalized[destinationKey] = .string(normalizedToolPathString(value))
 }
 
-public nonisolated func assignXcodeSnippetString(
-    _ sourceKeys: [String],
-    from arguments: [String: JSONValue],
-    to destinationKey: String,
-    in normalized: inout [String: JSONValue]
-) {
-    guard let value = firstStringValue(sourceKeys, in: arguments) else {
-        return
-    }
-
-    normalized[destinationKey] = .string(normalizedXcodeSnippetString(value))
-}
-
-public nonisolated func assignNormalizedTextEditOperations(
-    _ sourceKeys: [String],
-    from arguments: [String: JSONValue],
-    to destinationKey: String,
-    in normalized: inout [String: JSONValue]
-) {
-    guard let value = firstJSONValue(sourceKeys, in: arguments) else {
-        return
-    }
-
-    normalized[destinationKey] = normalizedTextEditOperations(value)
-}
-
 public nonisolated func assignStringArray(
     _ sourceKeys: [String],
     from arguments: [String: JSONValue],
@@ -109,20 +83,6 @@ public nonisolated func assignJSON(
     }
 
     normalized[destinationKey] = value
-}
-
-nonisolated func assignNormalizedXcodeTestSpecifiers(
-    _ sourceKeys: [String],
-    from arguments: [String: JSONValue],
-    to destinationKey: String,
-    in normalized: inout [String: JSONValue]
-) {
-    guard let value = firstJSONValue(sourceKeys, in: arguments),
-          let normalizedValue = normalizedXcodeTestSpecifiers(value) else {
-        return
-    }
-
-    normalized[destinationKey] = normalizedValue
 }
 
 nonisolated func firstStringValue(

@@ -12,17 +12,23 @@ import FeatureKit
 import FeatureMCPBridgeKit
 import ToolCore
 
-@main
-enum XcodeToolsFeature {
-    static func main() async {
-        await RemoteMCPFeatureRunner.run(configuration: XcodeFeatureConfiguration())
+public enum XcodeToolsFeatureRunner {
+    public static func run(
+        arguments: [String] = Array(CommandLine.arguments.dropFirst()),
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) async {
+        await RemoteMCPFeatureRunner.run(
+            configuration: XcodeFeatureConfiguration(),
+            arguments: arguments,
+            environment: environment
+        )
     }
 }
 
 private struct XcodeFeatureConfiguration: MCPFeatureConfiguration {
     let featureName = "Xcode"
-    let toolNamePrefix = "xcode."
-    let descriptionPrefix = "Xcode: "
+    let toolNamePrefix = XcodeToolIntegration.toolPrefix
+    let descriptionPrefix = XcodeToolIntegration.descriptionPrefix
     let usageText = """
     Usage:
       xcode-tools-feature --list-tools
@@ -30,17 +36,17 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration {
     """
 
     func isAvailable(environment: [String: String]) -> Bool {
-        MCPServerConfiguration.isXcodeRunning(environment: environment)
-            && MCPServerConfiguration.xcodeFromEnvironment(environment: environment) != nil
+        XcodeToolIntegration.isAvailable(environment: environment)
     }
 
     func makeExecutor(environment: [String: String]) async throws -> RemoteMCPToolExecutor {
-        guard let config = MCPServerConfiguration.xcodeFromEnvironment(environment: environment) else {
+        guard let config = XcodeToolIntegration.defaultConfiguration(environment: environment) else {
             throw MCPFeatureError.unavailable(featureName)
         }
         return RemoteMCPToolExecutor(
             configuration: config,
-            toolNamePrefix: toolNamePrefix
+            toolNamePrefix: toolNamePrefix,
+            localTransportPolicy: XcodeToolIntegration.localTransportPolicy()
         )
     }
 
@@ -51,13 +57,13 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration {
         environment: [String: String]
     ) async throws -> String {
         guard isAvailable(environment: environment),
-              let config = MCPServerConfiguration.xcodeFromEnvironment(environment: environment) else {
+              let config = XcodeMCPServerConfiguration.configuration(fromEnvironment: environment) else {
             throw MCPFeatureError.unavailable(featureName)
         }
 
         let arguments = try RemoteMCPFeatureRunner.decodeArguments(from: inputData)
         let request = ToolRequest(name: toolName, arguments: arguments)
-        guard let normalizedRequest = XcodeToolRequestCompatibility.normalize(request) else {
+        guard let normalizedRequest = XcodeToolIntegration.normalizedRequest(request) else {
             throw MCPFeatureError.unavailable(featureName)
         }
 
@@ -89,15 +95,7 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration {
 
     private func isXcodeConsentDenied(_ error: Error) -> Bool {
         if let clientError = error as? MCPClientError {
-            switch clientError {
-            case .xcodePermissionRequired:
-                return true
-            case let .serverExited(_, message),
-                 let .serverError(_, message):
-                return messageLooksLikeConsentDenied(message)
-            default:
-                return false
-            }
+            return XcodeToolIntegration.isPermissionDenied(clientError)
         }
         return messageLooksLikeConsentDenied(error.localizedDescription)
     }

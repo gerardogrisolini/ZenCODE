@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 nonisolated func normalizedXcodeSnippetString(
     _ rawValue: String

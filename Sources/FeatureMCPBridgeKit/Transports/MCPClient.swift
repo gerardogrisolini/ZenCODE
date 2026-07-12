@@ -16,8 +16,8 @@ public actor MCPClient {
     public var inputHandle: FileHandle?
     public var readLoopTask: Task<Void, Never>?
     public var errorLoopTask: Task<Void, Never>?
-    var mcpBridgeLogMonitorProcess: Process?
-    var mcpBridgeLogMonitorTask: Task<Void, Never>?
+    var diagnosticMonitorProcess: Process?
+    var diagnosticMonitorTask: Task<Void, Never>?
     public var buffer = Data()
     public var stderrBuffer = Data()
     public var terminalBridgeError: MCPClientError?
@@ -30,9 +30,14 @@ public actor MCPClient {
     public var stdoutReassembledBufferURLs: [URL] = []
     public var lastReassembledBufferSize: Int = -1
     var pendingRequestMethods: [Int: String] = [:]
+    public let localTransportPolicy: LocalMCPTransportPolicy
 
-    public init(configuration: MCPServerConfiguration) {
+    public init(
+        configuration: MCPServerConfiguration,
+        localTransportPolicy: LocalMCPTransportPolicy = .standard
+    ) {
         self.configuration = configuration
+        self.localTransportPolicy = localTransportPolicy
         self.httpTransport = configuration.endpointURL.map {
             MCPHTTPTransportClient(
                 endpointURL: $0,
@@ -45,7 +50,13 @@ public actor MCPClient {
 }
 #else
 public actor MCPClient {
-    public init(configuration: MCPServerConfiguration) {}
+    public init(
+        configuration: MCPServerConfiguration,
+        localTransportPolicy: LocalMCPTransportPolicy = .standard
+    ) {
+        _ = configuration
+        _ = localTransportPolicy
+    }
 
     public func connect() async throws {
         throw MCPClientError.unsupportedPlatform

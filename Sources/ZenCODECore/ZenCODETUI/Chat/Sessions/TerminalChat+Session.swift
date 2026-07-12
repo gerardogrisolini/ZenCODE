@@ -12,6 +12,7 @@ import Darwin
 import Glibc
 #endif
 import Foundation
+import XcodeToolsFeature
 
 extension TerminalChat {
     public func createCurrentSession(
@@ -215,7 +216,9 @@ extension TerminalChat {
             items: baseItems
         )
         let requestedMCPDiscoveryToolNames = Set(
-            dynamicToolPrefixes.filter { $0 == "xcode." || $0 == "figma." }
+            dynamicToolPrefixes.filter {
+                $0 == XcodeToolIntegration.toolPrefix || $0 == "figma."
+            }
         )
         let mcpDiscoveryToolNames = ExternalToolAvailability.discoverableToolPrefixes(
             requestedMCPDiscoveryToolNames

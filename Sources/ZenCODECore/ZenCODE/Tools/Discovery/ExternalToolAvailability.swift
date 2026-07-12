@@ -5,8 +5,9 @@
 //  Created by Gerardo Grisolini on 09/06/26.
 //
 
-import Foundation
 import FeatureMCPBridgeKit
+import Foundation
+import XcodeToolsFeature
 
 public enum ExternalToolAvailability {
     public static func resolvedAllowedToolNames(
@@ -35,7 +36,7 @@ public enum ExternalToolAvailability {
 
     public static func discoverableToolPrefixes(
         _ toolPrefixes: Set<String>,
-        xcodeIsRunning: Bool = MCPServerConfiguration.isXcodeRunning()
+        xcodeIsRunning: Bool = XcodeToolIntegration.isRunning()
     ) -> Set<String> {
         resolvedAllowedToolNames(
             toolPrefixes,
@@ -48,6 +49,6 @@ public enum ExternalToolAvailability {
     private static func unavailableToolPrefixes(
         xcodeIsRunning: Bool
     ) -> Set<String> {
-        xcodeIsRunning ? [] : ["xcode.", "Xcode"]
+        XcodeToolIntegration.unavailableToolPrefixes(isRunning: xcodeIsRunning)
     }
 }

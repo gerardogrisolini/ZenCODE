@@ -71,7 +71,7 @@ extension MCPClient {
         }
     }
 
-    nonisolated static func logMonitorLoop(from handle: FileHandle, client: MCPClient) async {
+    nonisolated static func diagnosticMonitorLoop(from handle: FileHandle, client: MCPClient) async {
         let fileDescriptor = handle.fileDescriptor
         var rawBuffer = [UInt8](repeating: 0, count: 4096)
         var lineBuffer = Data()
@@ -86,7 +86,7 @@ extension MCPClient {
                     guard let line = String(data: lineData, encoding: .utf8) else {
                         continue
                     }
-                    await client.handleMCPBridgeDiagnosticLine(line)
+                    await client.handleDiagnosticLine(line)
                 }
                 continue
             }
@@ -121,12 +121,13 @@ extension MCPClient {
             return
         }
 
-        // mcpbridge closes its streams without any diagnostics when the user
-        // denies the Xcode consent; mirror exitError so the closure surfaces
-        // as the permission error instead of a generic connection failure.
-        if configuration.usesMCPBridgeExecutable, currentStderrMessage().isEmpty {
-            let error = MCPClientError.xcodePermissionRequired
-            terminateLocalBridgeAfterPermissionDenied(error)
+        let stderrMessage = currentStderrMessage()
+        if let error = classifiedPolicyError(
+            kind: .stdoutClosed,
+            message: stderrMessage,
+            hasStderrOutput: !stderrMessage.isEmpty
+        ) {
+            applyClassifiedPolicyError(error)
             resumeAllPending(with: error)
             return
         }
@@ -147,14 +148,16 @@ extension MCPClient {
         }
 
         let stderrMessage = currentStderrMessage()
-        guard let detectedError = permissionErrorIfPresent(in: stderrMessage) else {
+        guard let detectedError = classifiedPolicyError(
+            kind: .stderr,
+            message: stderrMessage,
+            hasStderrOutput: !stderrMessage.isEmpty
+        ) else {
             return
         }
 
-        terminalBridgeError = detectedError
-        importantLog("Detected Xcode MCP permission error from stderr: \(stderrMessage)")
-        log("Detected terminal MCP bridge permission error from stderr")
-        terminateLocalBridgeAfterPermissionDenied(detectedError)
+        importantLog("Detected local MCP transport policy error from stderr: \(stderrMessage)")
+        applyClassifiedPolicyError(detectedError)
         resumeAllPending(with: detectedError)
     }
 
@@ -170,7 +173,7 @@ extension MCPClient {
             process = nil
             inputHandle = nil
         }
-        stopMCPBridgeLogMonitor()
+        stopDiagnosticMonitor()
         importantLog("MCP bridge terminated with error: \(detectedError.localizedDescription)")
         log("process terminated with error: \(detectedError.localizedDescription)")
         resumeAllPending(with: detectedError)
@@ -179,9 +182,11 @@ extension MCPClient {
     public func append(_ chunk: Data) {
         buffer.append(chunk)
 
-        if mcpBridgeStdoutLooksLikePermissionDenied(buffer) {
-            let error = MCPClientError.xcodePermissionRequired
-            terminateLocalBridgeAfterPermissionDenied(error)
+        if let error = classifiedPolicyError(
+            kind: .stdout,
+            message: String(data: buffer, encoding: .utf8) ?? ""
+        ) {
+            applyClassifiedPolicyError(error)
             resumeAllPending(with: error)
             buffer.removeAll(keepingCapacity: false)
             return
@@ -211,10 +216,11 @@ extension MCPClient {
     public func handleMessage(_ body: Data) {
         log("message <- \(String(data: body, encoding: .utf8) ?? "<non-utf8>")")
         guard let message = try? JSONDecoder().decode(MCPIncomingMessage.self, from: body) else {
-            if hasPendingMCPBridgeListToolsRequest()
-                || mcpBridgeStdoutLooksLikePermissionDenied(body) {
-                let error = MCPClientError.xcodePermissionRequired
-                terminateLocalBridgeAfterPermissionDenied(error)
+            if let error = classifiedPolicyError(
+                kind: .invalidMessage,
+                message: String(data: body, encoding: .utf8) ?? ""
+            ) {
+                applyClassifiedPolicyError(error)
                 resumeAllPending(with: error)
             }
             log("Failed to decode incoming MCP message")
@@ -222,14 +228,14 @@ extension MCPClient {
         }
 
         guard let id = message.id else {
-            if handleUnroutedMCPBridgeMessage(message) {
+            if handleUnroutedPolicyMessage(message) {
                 return
             }
             return
         }
 
         guard case let .int(requestID) = id else {
-            if handleUnroutedMCPBridgeMessage(message) {
+            if handleUnroutedPolicyMessage(message) {
                 return
             }
             resumeAllPending(with: MCPClientError.unsupportedMessageID)
@@ -238,7 +244,7 @@ extension MCPClient {
 
         let method = pendingRequestMethods.removeValue(forKey: requestID)
         guard let continuation = pendingResponses.removeValue(forKey: requestID) else {
-            if handleUnroutedMCPBridgeMessage(message) {
+            if handleUnroutedPolicyMessage(message) {
                 return
             }
             return
@@ -246,19 +252,32 @@ extension MCPClient {
 
         if let error = message.error {
             log("Request \(requestID) failed with server error \(error.code): \(error.message)")
-            let mappedError = serverError(error, requestMethod: method)
-            if case .xcodePermissionRequired = mappedError {
-                terminateLocalBridgeAfterPermissionDenied(mappedError)
+            if let policyError = classifiedPolicyError(
+                kind: .serverError,
+                message: error.message,
+                requestMethod: method,
+                errorCode: error.code
+            ) {
+                applyClassifiedPolicyError(policyError)
+                continuation.resume(throwing: policyError)
+            } else {
+                continuation.resume(
+                    throwing: MCPClientError.serverError(
+                        code: error.code,
+                        message: error.message
+                    )
+                )
             }
-            continuation.resume(throwing: mappedError)
             return
         }
 
         guard let result = message.result else {
             log("Request \(requestID) failed: missing result")
-            if configuration.usesMCPBridgeExecutable, method == "tools/list" {
-                let error = MCPClientError.xcodePermissionRequired
-                terminateLocalBridgeAfterPermissionDenied(error)
+            if let error = classifiedPolicyError(
+                kind: .missingResult,
+                requestMethod: method
+            ) {
+                applyClassifiedPolicyError(error)
                 continuation.resume(throwing: error)
             } else {
                 continuation.resume(throwing: MCPClientError.invalidResponse)
@@ -290,17 +309,17 @@ extension MCPClient {
 
     public func exitError(for process: Process) -> MCPClientError {
         let stderrMessage = currentStderrMessage()
-        if let detectedPermissionError = permissionErrorIfPresent(in: stderrMessage) {
-            return detectedPermissionError
-        }
-
-        if configuration.usesMCPBridgeExecutable,
-           stderrMessage.isEmpty {
-            return .xcodePermissionRequired
+        if let policyError = classifiedPolicyError(
+            kind: .processExited,
+            message: stderrMessage,
+            hasStderrOutput: !stderrMessage.isEmpty,
+            terminationStatus: process.terminationStatus
+        ) {
+            return policyError
         }
 
         let message = stderrMessage.isEmpty
-            ? "Open Xcode, approve the MCP bridge if prompted, then retry."
+            ? "The local MCP server exited without diagnostics."
             : stderrMessage
 
         log("Bridge exited with status \(process.terminationStatus). stderr: \(message)")
@@ -312,148 +331,100 @@ extension MCPClient {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
-    public func permissionErrorIfPresent(in stderrMessage: String) -> MCPClientError? {
-        guard configuration.usesMCPBridgeExecutable else {
-            return nil
-        }
-
-        let lowered = stderrMessage.lowercased()
-        guard lowered.contains("permission")
-            || lowered.contains("authorize")
-            || lowered.contains("authorization")
-            || lowered.contains("authorisation")
-            || lowered.contains("consent")
-            || lowered.contains("denied")
-            || lowered.contains("not allowed")
-            || lowered.contains("not permitted")
-            || lowered.contains("rejected")
-            || lowered.contains("declined")
-            || lowered.contains("cancelled")
-            || lowered.contains("canceled")
-        else {
-            return nil
-        }
-
-        return .xcodePermissionRequired
-    }
-
-    func serverError(
+    public func serverError(
         _ error: MCPErrorResponse,
         requestMethod: String?
     ) -> MCPClientError {
-        guard configuration.usesMCPBridgeExecutable else {
-            return .serverError(code: error.code, message: error.message)
-        }
-
-        if requestMethod == "tools/list" {
-            return .xcodePermissionRequired
-        }
-
-        if mcpBridgeRequestCanFailForPermission(requestMethod),
-           mcpBridgeErrorLooksLikePermissionDenial(error) {
-            return .xcodePermissionRequired
-        }
-
-        return .serverError(code: error.code, message: error.message)
+        classifiedPolicyError(
+            kind: .serverError,
+            message: error.message,
+            requestMethod: requestMethod,
+            errorCode: error.code
+        ) ?? .serverError(code: error.code, message: error.message)
     }
 
-    private func mcpBridgeRequestCanFailForPermission(_ requestMethod: String?) -> Bool {
-        switch requestMethod {
-        case "initialize", "tools/call":
-            return true
-        default:
-            return false
-        }
+    func classifiedPolicyError(
+        kind: LocalMCPTransportEvent.Kind,
+        message: String = "",
+        requestMethod: String? = nil,
+        errorCode: Int? = nil,
+        hasStderrOutput: Bool = false,
+        terminationStatus: Int32? = nil
+    ) -> MCPClientError? {
+        localTransportPolicy.errorClassifier(
+            LocalMCPTransportEvent(
+                kind: kind,
+                message: message,
+                requestMethod: requestMethod,
+                errorCode: errorCode,
+                pendingRequestMethods: pendingRequestMethods.values.sorted(),
+                hasStderrOutput: hasStderrOutput,
+                terminationStatus: terminationStatus
+            )
+        )
     }
 
-    private func mcpBridgeErrorLooksLikePermissionDenial(_ error: MCPErrorResponse) -> Bool {
-        if permissionErrorIfPresent(in: error.message) != nil {
-            return true
-        }
-
-        let lowered = error.message.lowercased()
-        return error.code == 1
-            || lowered.contains("bridgeerror code=1")
-            || lowered.contains("bridgeerror error 1")
-            || lowered.contains("bridgeerror code 1")
-            || lowered.contains("bridgeerror 1")
-    }
-
-    private func handleUnroutedMCPBridgeMessage(_ message: MCPIncomingMessage) -> Bool {
-        guard hasPendingMCPBridgeListToolsRequest() else {
-            return false
-        }
-
+    private func handleUnroutedPolicyMessage(_ message: MCPIncomingMessage) -> Bool {
+        let text: String
+        let errorCode: Int?
         if let error = message.error {
-            log("Unrouted mcpbridge error \(error.code): \(error.message)")
+            text = error.message
+            errorCode = error.code
         } else {
-            log("Unrouted mcpbridge response while tools/list is pending")
+            text = "Unrouted MCP response"
+            errorCode = nil
         }
-        let mappedError = MCPClientError.xcodePermissionRequired
-        terminateLocalBridgeAfterPermissionDenied(mappedError)
-        resumeAllPending(with: mappedError)
+
+        guard let policyError = classifiedPolicyError(
+            kind: .unroutedMessage,
+            message: text,
+            errorCode: errorCode
+        ) else {
+            return false
+        }
+
+        applyClassifiedPolicyError(policyError)
+        resumeAllPending(with: policyError)
         return true
     }
 
-    private func hasPendingMCPBridgeListToolsRequest() -> Bool {
-        configuration.usesMCPBridgeExecutable
-            && pendingRequestMethods.values.contains("tools/list")
-    }
-
-    func handleMCPBridgeDiagnosticLine(_ line: String) {
-        guard hasPendingMCPBridgeListToolsRequest() else {
+    func handleDiagnosticLine(_ line: String) {
+        guard let policyError = classifiedPolicyError(
+            kind: .diagnostic,
+            message: line
+        ) else {
             return
         }
 
-        let lowered = line.lowercased()
-        guard lowered.contains("listtools request failed")
-            || lowered.contains("bridgeerror code=1")
-            || (lowered.contains("bridgeerror") && lowered.contains("code=1"))
-        else {
-            return
-        }
-
-        log("Detected Xcode MCP permission denial from system log: \(line)")
-        let error = MCPClientError.xcodePermissionRequired
-        terminateLocalBridgeAfterPermissionDenied(error)
-        resumeAllPending(with: error)
+        log("Detected local MCP transport policy error from diagnostic output: \(line)")
+        applyClassifiedPolicyError(policyError)
+        resumeAllPending(with: policyError)
     }
 
     func recordPendingRequestMethodForTesting(id: Int, method: String) {
         pendingRequestMethods[id] = method
     }
 
-    func mcpBridgeStdoutLooksLikePermissionDenied(_ data: Data) -> Bool {
-        guard configuration.usesMCPBridgeExecutable,
-              let text = String(data: data, encoding: .utf8) else {
-            return false
-        }
-
-        let lowered = text.lowercased()
-        return lowered.contains("bridgeerror code=1")
-            || lowered.contains("bridgeerror code 1")
-            || lowered.contains("bridgeerror 1")
-            || (lowered.contains("ideintelligencemessaging")
-                && lowered.contains("bridgeerror")
-                && lowered.contains("code=1"))
-    }
-
-    func terminateLocalBridgeAfterPermissionDenied(_ error: MCPClientError) {
-        guard configuration.usesMCPBridgeExecutable else {
+    func applyClassifiedPolicyError(_ error: MCPClientError) {
+        terminalBridgeError = error
+        guard localTransportPolicy.terminateProcessOnClassifiedError else {
             return
         }
+        terminateLocalProcessAfterPolicyError(error)
+    }
 
+    func terminateLocalProcessAfterPolicyError(_ error: MCPClientError) {
         terminalBridgeError = error
         inputHandle?.closeFile()
         inputHandle = nil
-        stopMCPBridgeLogMonitor()
+        stopDiagnosticMonitor()
 
         guard let process else {
             return
         }
 
         if process.isRunning {
-            importantLog("Terminating Xcode MCP bridge after permission denial.")
+            importantLog("Terminating local MCP process after a classified transport error.")
 #if canImport(Darwin)
             kill(process.processIdentifier, SIGKILL)
 #else

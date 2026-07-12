@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public nonisolated struct XcodeWorkspaceContext: Hashable, Sendable {
     public let workspacePath: String?

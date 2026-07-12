@@ -172,7 +172,7 @@ extension ZenCODEACPBridge {
             return allowedToolNames
         }
 
-        let requestedXcodePrefixes: Set<String> = ["xcode."]
+        let requestedXcodePrefixes: Set<String> = [XcodeToolIntegration.toolPrefix]
         _ = await sessionRunner.mcpToolDescriptors(
             allowedToolNames: requestedXcodePrefixes,
             preferredWorkspaceRootURL: workingDirectory

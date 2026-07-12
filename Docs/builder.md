@@ -139,6 +139,13 @@ Swift sources.
 For a bundled feature, `/feature edit` first creates a local editable copy in the
 generated feature root, then prepares the same edit prompt.
 
+`xcode-tools` is a bundled multi-target feature: its local copy preserves the
+feature implementation library under `Sources/XcodeTools/Feature` and the thin
+executable entry point under `Sources/XcodeTools/Executable`. Edit the
+feature-owned implementation rather than shared `ToolCore` or
+`FeatureMCPBridgeKit` code; `/feature validate` validates the copied package, and
+`/feature build xcode-tools` builds its executable and library dependency.
+
 Local copies keep the same feature id as the bundled package. While the local
 copy exists, it shadows the bundled package with that id. Removing the local copy
 with `/feature delete <id|name|#>` restores the bundled package.

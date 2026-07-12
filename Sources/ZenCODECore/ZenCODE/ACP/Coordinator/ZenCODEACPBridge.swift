@@ -13,6 +13,7 @@ import Glibc
 import Dispatch
 import FeatureMCPBridgeKit
 import Foundation
+import XcodeToolsFeature
 
 public actor ZenCODEACPBridge {
     public struct SessionState {
@@ -43,7 +44,7 @@ public actor ZenCODEACPBridge {
         backendFactory: AgentRuntimeBackendFactory? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
         xcodeIsRunning: @escaping @Sendable () -> Bool = {
-            MCPServerConfiguration.isXcodeRunning()
+            XcodeToolIntegration.isRunning()
         }
     ) {
         self.configuration = configuration

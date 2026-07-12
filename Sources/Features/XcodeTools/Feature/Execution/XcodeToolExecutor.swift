@@ -6,13 +6,17 @@
 //
 
 import Foundation
+import FeatureMCPBridgeKit
 import ToolCore
 
 public actor XcodeToolExecutor {
     private let client: MCPClient
 
     public init(configuration: MCPServerConfiguration) {
-        self.client = MCPClient(configuration: configuration)
+        self.client = MCPClient(
+            configuration: configuration,
+            localTransportPolicy: XcodeMCPTransportPolicy.make()
+        )
     }
 
     public func loadTools() async throws -> [ToolDescriptor] {

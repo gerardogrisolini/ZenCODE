@@ -7,6 +7,7 @@
 
 import FeatureMCPBridgeKit
 import ToolCore
+import XcodeToolsFeature
 
 public typealias JSONValue = ToolCore.JSONValue
 public typealias ToolDescriptor = ToolCore.ToolDescriptor
@@ -14,8 +15,8 @@ public typealias ToolProviderSection = ToolCore.ToolProviderSection
 public typealias ToolRequest = ToolCore.ToolRequest
 public typealias ToolRequestPayload = ToolCore.ToolRequestPayload
 public typealias ToolExecutionOutput = ToolCore.ToolExecutionOutput
-public typealias XcodeWorkspaceContext = ToolCore.XcodeWorkspaceContext
-public typealias XcodeToolRequestCompatibility = ToolCore.XcodeToolRequestCompatibility
+public typealias XcodeWorkspaceContext = XcodeToolsFeature.XcodeWorkspaceContext
+public typealias XcodeToolRequestCompatibility = XcodeToolsFeature.XcodeToolRequestCompatibility
 public typealias SubAgentToolRequestCompatibility = ToolCore.SubAgentToolRequestCompatibility
 public typealias DeveloperToolEnvironment = ToolCore.DeveloperToolEnvironment
 
@@ -33,4 +34,5 @@ public typealias MCPServerConfiguration = FeatureMCPBridgeKit.MCPServerConfigura
 public typealias MCPToolResultRenderer = FeatureMCPBridgeKit.MCPToolResultRenderer
 public typealias MCPTransportCodec = FeatureMCPBridgeKit.MCPTransportCodec
 public typealias RemoteMCPToolExecutor = FeatureMCPBridgeKit.RemoteMCPToolExecutor
-public typealias XcodeToolExecutor = FeatureMCPBridgeKit.XcodeToolExecutor
+public typealias XcodeToolExecutor = XcodeToolsFeature.XcodeToolExecutor
+public typealias XcodeToolIntegration = XcodeToolsFeature.XcodeToolIntegration
