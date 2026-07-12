@@ -10,6 +10,12 @@ import FoundationNetworking
 
 #if os(macOS)
 extension ChatGPTSubscriptionResponsesClient {
+    /// Exact server error emitted when a Responses WebSocket reaches its
+    /// 60-minute connection limit. This is intentionally not a substring
+    /// match: unrelated application failures must not become retryable.
+    static let webSocketConnectionLimitErrorMessage =
+        "Responses websocket connection limit reached (60 minutes). Create a new websocket connection to continue."
+
     func request(
         for body: [String: Any],
         sessionID: String
@@ -164,6 +170,10 @@ extension ChatGPTSubscriptionResponsesClient {
     }
 
     static func isRetryableTransportError(_ error: Error) -> Bool {
+        if isWebSocketConnectionLimitError(error) {
+            return true
+        }
+
         if let urlError = error as? URLError,
            isRetryableURLCode(urlError.code) {
             return true
@@ -188,6 +198,20 @@ extension ChatGPTSubscriptionResponsesClient {
             .localizedCaseInsensitiveContains("socket is not connected")
     }
 
+    static func isWebSocketConnectionLimitError(_ error: Error) -> Bool {
+        guard let error = error as? ChatGPTSubscriptionGenerationError,
+              case let .responseFailed(message) = error else {
+            return false
+        }
+        return isWebSocketConnectionLimitMessage(message)
+    }
+
+    static func isWebSocketConnectionLimitMessage(_ message: String) -> Bool {
+        message
+            .localizedCaseInsensitiveCompare(webSocketConnectionLimitErrorMessage)
+            == .orderedSame
+    }
+
     static func isRetryable(error: Error) -> Bool {
         isRetryableTransportError(error)
     }
@@ -203,6 +227,17 @@ extension ChatGPTSubscriptionResponsesClient {
             return false
         }
         return isRetryableTransportError(error)
+    }
+
+    static func shouldRetryWebSocketFailure(
+        _ error: Error,
+        receivedReplayUnsafeEvent: Bool,
+        attempt: Int
+    ) -> Bool {
+        guard !receivedReplayUnsafeEvent else {
+            return false
+        }
+        return shouldRetryTransportError(error, attempt: attempt)
     }
 
     static func isCancellationError(_ error: Error) -> Bool {

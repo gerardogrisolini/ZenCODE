@@ -19,6 +19,9 @@ public struct ChatGPTSubscriptionResponsesClient {
         let task: URLSessionWebSocketTask
         let isCached: Bool
         let isReused: Bool
+        /// Fences a late release from changing the ownership of a later lease
+        /// that happens to reuse the same task.
+        let leaseID: UInt64
     }
 
     private struct WebSocketIdleTimeoutError: LocalizedError {
@@ -95,11 +98,11 @@ public struct ChatGPTSubscriptionResponsesClient {
                     onEvent: onEvent
                 )
             } catch let failure as WebSocketStreamFailure {
-                guard !failure.receivedReplayUnsafeEvent,
-                      Self.shouldRetryTransportError(
-                          failure.underlying,
-                          attempt: attempt
-                      ) else {
+                guard Self.shouldRetryWebSocketFailure(
+                    failure.underlying,
+                    receivedReplayUnsafeEvent: failure.receivedReplayUnsafeEvent,
+                    attempt: attempt
+                ) else {
                     throw failure.underlying
                 }
                 try await Self.sleepForRetry(attempt: attempt)

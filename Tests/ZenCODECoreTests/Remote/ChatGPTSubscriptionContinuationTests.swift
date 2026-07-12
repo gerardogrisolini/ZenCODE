@@ -489,14 +489,239 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionWebSocketPoolUsesDocumentedLifetimeDefaults() {
+        #expect(
+            ChatGPTSubscriptionWebSocketPool.defaultHeartbeatIntervalNanoseconds
+                == 30 * 1_000_000_000
+        )
+        #expect(
+            ChatGPTSubscriptionWebSocketPool.serverMaximumConnectionAge
+                == .seconds(60 * 60)
+        )
+        #expect(
+            ChatGPTSubscriptionWebSocketPool.defaultMaximumConnectionAge
+                == .seconds(55 * 60)
+        )
+        #expect(
+            ChatGPTSubscriptionWebSocketPool.defaultMaximumConnectionAge
+                < ChatGPTSubscriptionWebSocketPool.serverMaximumConnectionAge
+        )
+    }
+
+    @Test
+    func chatGPTSubscriptionWebSocketPoolExpiresAtExactLifetimeBoundary() {
+        let openedAt = ContinuousClock.now
+        let maximumConnectionAge: Duration = .seconds(10)
+
+        #expect(
+            !ChatGPTSubscriptionWebSocketPool.hasReachedMaximumConnectionAge(
+                openedAt: openedAt,
+                now: openedAt.advanced(by: .seconds(9)),
+                maximumConnectionAge: maximumConnectionAge
+            )
+        )
+        #expect(
+            ChatGPTSubscriptionWebSocketPool.hasReachedMaximumConnectionAge(
+                openedAt: openedAt,
+                now: openedAt.advanced(by: maximumConnectionAge),
+                maximumConnectionAge: maximumConnectionAge
+            )
+        )
+        #expect(
+            ChatGPTSubscriptionWebSocketPool.hasReachedMaximumConnectionAge(
+                openedAt: openedAt,
+                now: openedAt.advanced(by: .seconds(11)),
+                maximumConnectionAge: maximumConnectionAge
+            )
+        )
+    }
+
+    @Test
+    func chatGPTSubscriptionWebSocketPoolReopensExpiredIdleSocketWithCurrentRequest() {
+        let harness = ChatGPTSubscriptionWebSocketPoolHarness(
+            maximumConnectionAge: .seconds(10)
+        )
+        let oldRequest = harness.request(authorization: "Bearer stale")
+        let firstLease = harness.pool.acquire(
+            sessionID: "session-age-boundary",
+            request: oldRequest,
+            urlSession: harness.urlSession
+        )
+        harness.pool.release(firstLease, keepAlive: true)
+
+        harness.advance(by: .seconds(9))
+        let underBoundaryLease = harness.pool.acquire(
+            sessionID: "session-age-boundary",
+            request: harness.request(authorization: "Bearer ignored"),
+            urlSession: harness.urlSession
+        )
+        #expect(underBoundaryLease.isReused)
+        #expect(underBoundaryLease.task === firstLease.task)
+        harness.pool.release(underBoundaryLease, keepAlive: true)
+
+        harness.advance(by: .seconds(1))
+        let currentRequest = harness.request(authorization: "Bearer current")
+        let renewedLease = harness.pool.acquire(
+            sessionID: "session-age-boundary",
+            request: currentRequest,
+            urlSession: harness.urlSession
+        )
+
+        #expect(!renewedLease.isReused)
+        #expect(renewedLease.task !== firstLease.task)
+        #expect(harness.closeCount(for: firstLease.task) == 1)
+        #expect(harness.createdRequests().count == 2)
+        #expect(
+            harness.createdRequests().last?.value(
+                forHTTPHeaderField: "Authorization"
+            ) == "Bearer current"
+        )
+
+        harness.pool.release(renewedLease, keepAlive: false)
+        #expect(harness.closeCount(for: renewedLease.task) == 1)
+    }
+
+    @Test
+    func chatGPTSubscriptionWebSocketPoolClosesExpiredBusySocketOnReleaseAfterClockJump() {
+        let harness = ChatGPTSubscriptionWebSocketPoolHarness(
+            maximumConnectionAge: .seconds(10)
+        )
+        let firstLease = harness.pool.acquire(
+            sessionID: "session-release-expiry",
+            request: harness.request(),
+            urlSession: harness.urlSession
+        )
+
+        // A machine suspension or delayed scheduler callback is represented by
+        // one large monotonic-clock advance; release must still retire it.
+        harness.advance(by: .seconds(60 * 60))
+        harness.pool.release(firstLease, keepAlive: true)
+
+        #expect(harness.closeCount(for: firstLease.task) == 1)
+        let renewedLease = harness.pool.acquire(
+            sessionID: "session-release-expiry",
+            request: harness.request(),
+            urlSession: harness.urlSession
+        )
+        #expect(!renewedLease.isReused)
+        #expect(renewedLease.task !== firstLease.task)
+
+        harness.pool.release(renewedLease, keepAlive: false)
+    }
+
+    @Test
+    func chatGPTSubscriptionWebSocketPoolKeepsSessionLifetimesIndependent() {
+        let harness = ChatGPTSubscriptionWebSocketPoolHarness(
+            maximumConnectionAge: .seconds(10)
+        )
+        let firstSessionLease = harness.pool.acquire(
+            sessionID: "session-old",
+            request: harness.request(),
+            urlSession: harness.urlSession
+        )
+        harness.pool.release(firstSessionLease, keepAlive: true)
+
+        harness.advance(by: .seconds(5))
+        let secondSessionLease = harness.pool.acquire(
+            sessionID: "session-young",
+            request: harness.request(),
+            urlSession: harness.urlSession
+        )
+        harness.pool.release(secondSessionLease, keepAlive: true)
+
+        harness.advance(by: .seconds(5))
+        let renewedFirstSessionLease = harness.pool.acquire(
+            sessionID: "session-old",
+            request: harness.request(),
+            urlSession: harness.urlSession
+        )
+        let reusedSecondSessionLease = harness.pool.acquire(
+            sessionID: "session-young",
+            request: harness.request(),
+            urlSession: harness.urlSession
+        )
+
+        #expect(!renewedFirstSessionLease.isReused)
+        #expect(renewedFirstSessionLease.task !== firstSessionLease.task)
+        #expect(reusedSecondSessionLease.isReused)
+        #expect(reusedSecondSessionLease.task === secondSessionLease.task)
+
+        harness.pool.release(renewedFirstSessionLease, keepAlive: false)
+        harness.pool.release(reusedSecondSessionLease, keepAlive: false)
+    }
+
+    @Test
+    func chatGPTSubscriptionWebSocketPoolNeverInterruptsExpiredActiveResponse() {
+        let harness = ChatGPTSubscriptionWebSocketPoolHarness(
+            maximumConnectionAge: .seconds(10)
+        )
+        let activeLease = harness.pool.acquire(
+            sessionID: "session-active-expiry",
+            request: harness.request(),
+            urlSession: harness.urlSession
+        )
+        harness.advance(by: .seconds(10))
+
+        let concurrentLease = harness.pool.acquire(
+            sessionID: "session-active-expiry",
+            request: harness.request(),
+            urlSession: harness.urlSession
+        )
+
+        #expect(!concurrentLease.isCached)
+        #expect(!concurrentLease.isReused)
+        #expect(concurrentLease.task !== activeLease.task)
+        #expect(harness.closeCount(for: activeLease.task) == 0)
+
+        harness.pool.release(activeLease, keepAlive: true)
+        harness.pool.release(concurrentLease, keepAlive: true)
+        #expect(harness.closeCount(for: activeLease.task) == 1)
+        #expect(harness.closeCount(for: concurrentLease.task) == 1)
+    }
+
+    @Test
+    func chatGPTSubscriptionWebSocketPoolIgnoresLateReleaseAfterReuse() {
+        let harness = ChatGPTSubscriptionWebSocketPoolHarness(
+            maximumConnectionAge: .seconds(10)
+        )
+        let firstLease = harness.pool.acquire(
+            sessionID: "session-late-release",
+            request: harness.request(),
+            urlSession: harness.urlSession
+        )
+        harness.pool.release(firstLease, keepAlive: true)
+
+        let activeReusedLease = harness.pool.acquire(
+            sessionID: "session-late-release",
+            request: harness.request(),
+            urlSession: harness.urlSession
+        )
+        harness.pool.release(firstLease, keepAlive: true)
+        let concurrentLease = harness.pool.acquire(
+            sessionID: "session-late-release",
+            request: harness.request(),
+            urlSession: harness.urlSession
+        )
+
+        #expect(activeReusedLease.isReused)
+        #expect(!concurrentLease.isCached)
+        #expect(concurrentLease.task !== activeReusedLease.task)
+
+        harness.pool.release(activeReusedLease, keepAlive: false)
+        harness.pool.release(concurrentLease, keepAlive: false)
+    }
+
+    @Test
     func chatGPTSubscriptionIdleWebSocketHeartbeatRepeatsUntilFailure() async {
         struct PingFailure: Error {}
 
         let pingCount = Mutex(0)
         let failureCount = Mutex(0)
+        let expirationCount = Mutex(0)
 
         await ChatGPTSubscriptionWebSocketPool.runHeartbeat(
             intervalNanoseconds: 1,
+            sleep: { _ in },
             ping: {
                 let count = pingCount.withLock { count in
                     count += 1
@@ -506,6 +731,9 @@ extension RemoteSessionSnapshotTests {
                     throw PingFailure()
                 }
             },
+            onExpiration: {
+                expirationCount.withLock { $0 += 1 }
+            },
             onFailure: { _ in
                 failureCount.withLock { $0 += 1 }
             }
@@ -513,10 +741,52 @@ extension RemoteSessionSnapshotTests {
 
         #expect(pingCount.withLock { $0 } == 3)
         #expect(failureCount.withLock { $0 } == 1)
+        #expect(expirationCount.withLock { $0 } == 0)
         #expect(
             ChatGPTSubscriptionWebSocketPool.defaultHeartbeatIntervalNanoseconds
                 == 30 * 1_000_000_000
         )
+    }
+
+    @Test
+    func chatGPTSubscriptionHeartbeatPingsBeforeRetiringAtLifetime() async {
+        let clock = Mutex(ContinuousClock.now)
+        let openedAt = clock.withLock { $0 }
+        let pingCount = Mutex(0)
+        let expirationCount = Mutex(0)
+        let failureCount = Mutex(0)
+        let maximumConnectionAge: Duration = .seconds(10)
+
+        await ChatGPTSubscriptionWebSocketPool.runHeartbeat(
+            intervalNanoseconds: 1,
+            sleep: { _ in
+                clock.withLock {
+                    $0 = $0.advanced(by: .seconds(5))
+                }
+            },
+            shouldRetire: {
+                let now = clock.withLock { $0 }
+                return ChatGPTSubscriptionWebSocketPool
+                    .hasReachedMaximumConnectionAge(
+                        openedAt: openedAt,
+                        now: now,
+                        maximumConnectionAge: maximumConnectionAge
+                    )
+            },
+            ping: {
+                pingCount.withLock { $0 += 1 }
+            },
+            onExpiration: {
+                expirationCount.withLock { $0 += 1 }
+            },
+            onFailure: { _ in
+                failureCount.withLock { $0 += 1 }
+            }
+        )
+
+        #expect(pingCount.withLock { $0 } == 1)
+        #expect(expirationCount.withLock { $0 } == 1)
+        #expect(failureCount.withLock { $0 } == 0)
     }
 
     @Test
@@ -526,6 +796,49 @@ extension RemoteSessionSnapshotTests {
         try await ChatGPTSubscriptionWebSocketPool.awaitPing { completion in
             completion(nil)
             completion(LatePingFailure())
+        }
+    }
+
+    @Test
+    func chatGPTSubscriptionPingCancellationStopsWaitingForCallback() async {
+        let (started, startContinuation) = AsyncStream<Void>.makeStream()
+        let task = Task {
+            try await ChatGPTSubscriptionWebSocketPool.awaitPing { _ in
+                startContinuation.yield()
+                startContinuation.finish()
+            }
+        }
+        defer {
+            task.cancel()
+            startContinuation.finish()
+        }
+
+        let didStart = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                var iterator = started.makeAsyncIterator()
+                return await iterator.next() != nil
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                return false
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
+        guard didStart else {
+            Issue.record("The ping continuation did not start.")
+            return
+        }
+
+        task.cancel()
+        do {
+            try await task.value
+            Issue.record("A cancelled ping unexpectedly completed.")
+        } catch is CancellationError {
+            // Expected: cancellation resumes a ping whose callback never arrives.
+        } catch {
+            Issue.record("Expected CancellationError, got \(error).")
         }
     }
 
@@ -590,6 +903,89 @@ extension RemoteSessionSnapshotTests {
         #expect(
             !ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
                 URLError(.cancelled),
+                attempt: 0
+            )
+        )
+    }
+
+    @Test
+    func chatGPTSubscriptionRetriesOnlyCanonicalWebSocketConnectionLimit() {
+        let canonicalMessage = ChatGPTSubscriptionResponsesClient
+            .webSocketConnectionLimitErrorMessage
+        let canonicalError = ChatGPTSubscriptionGenerationError.responseFailed(
+            canonicalMessage
+        )
+        let caseVariant = ChatGPTSubscriptionGenerationError.responseFailed(
+            canonicalMessage.uppercased()
+        )
+        let prefixedError = ChatGPTSubscriptionGenerationError.responseFailed(
+            "Backend detail: \(canonicalMessage)"
+        )
+        let whitespacePaddedError = ChatGPTSubscriptionGenerationError.responseFailed(
+            " \(canonicalMessage)"
+        )
+        let unrelatedApplicationError = ChatGPTSubscriptionGenerationError.responseFailed(
+            "The response could not be completed."
+        )
+        let genericErrorWithCanonicalText = NSError(
+            domain: "UnitTest",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: canonicalMessage]
+        )
+
+        #expect(
+            ChatGPTSubscriptionResponsesClient
+                .isWebSocketConnectionLimitMessage(canonicalMessage)
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient
+                .isWebSocketConnectionLimitError(canonicalError)
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient
+                .isRetryableTransportError(caseVariant)
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient
+                .isRetryableTransportError(prefixedError)
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient
+                .isRetryableTransportError(whitespacePaddedError)
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient
+                .isRetryableTransportError(unrelatedApplicationError)
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient
+                .isRetryableTransportError(genericErrorWithCanonicalText)
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
+                canonicalError,
+                receivedReplayUnsafeEvent: false,
+                attempt: ChatGPTSubscriptionResponsesClient.maxRetries - 1
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
+                canonicalError,
+                receivedReplayUnsafeEvent: false,
+                attempt: ChatGPTSubscriptionResponsesClient.maxRetries
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
+                canonicalError,
+                receivedReplayUnsafeEvent: true,
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
+                CancellationError(),
+                receivedReplayUnsafeEvent: false,
                 attempt: 0
             )
         )
@@ -1086,5 +1482,72 @@ extension RemoteSessionSnapshotTests {
         #expect(sanitized.first?["encrypted_content"] as? String == "blob")
         #expect(sanitized.first?["id"] == nil)
     }
+}
+
+private final class ChatGPTSubscriptionWebSocketPoolHarness: @unchecked Sendable {
+    let urlSession: URLSession
+    let pool: ChatGPTSubscriptionWebSocketPool
+
+    private let state: ChatGPTSubscriptionWebSocketPoolHarnessState
+
+    init(maximumConnectionAge: Duration) {
+        let urlSession = URLSession(configuration: .ephemeral)
+        let state = ChatGPTSubscriptionWebSocketPoolHarnessState()
+
+        self.urlSession = urlSession
+        self.state = state
+        self.pool = ChatGPTSubscriptionWebSocketPool(
+            heartbeatIntervalNanoseconds: UInt64.max,
+            maximumConnectionAge: maximumConnectionAge,
+            monotonicClock: {
+                state.clock.withLock { $0 }
+            },
+            webSocketTaskFactory: { urlSession, request in
+                state.requests.withLock { $0.append(request) }
+                return urlSession.webSocketTask(with: request)
+            },
+            resumeWebSocketTask: { _ in },
+            closeWebSocketTask: { task in
+                state.closeCounts.withLock {
+                    $0[ObjectIdentifier(task), default: 0] += 1
+                }
+            }
+        )
+    }
+
+    deinit {
+        pool.closeAll()
+        urlSession.invalidateAndCancel()
+    }
+
+    func request(authorization: String? = nil) -> URLRequest {
+        var request = URLRequest(
+            url: URL(string: "wss://example.invalid/responses")!
+        )
+        if let authorization {
+            request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        }
+        return request
+    }
+
+    func advance(by duration: Duration) {
+        state.clock.withLock {
+            $0 = $0.advanced(by: duration)
+        }
+    }
+
+    func createdRequests() -> [URLRequest] {
+        state.requests.withLock { $0 }
+    }
+
+    func closeCount(for task: URLSessionWebSocketTask) -> Int {
+        state.closeCounts.withLock { $0[ObjectIdentifier(task), default: 0] }
+    }
+}
+
+private final class ChatGPTSubscriptionWebSocketPoolHarnessState: @unchecked Sendable {
+    let clock = Mutex(ContinuousClock.now)
+    let requests = Mutex<[URLRequest]>([])
+    let closeCounts = Mutex<[ObjectIdentifier: Int]>([:])
 }
 #endif
