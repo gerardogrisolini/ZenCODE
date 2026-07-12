@@ -154,12 +154,9 @@ extension TerminalChat {
         if failed > 0 { summary.append("\(failed) failed") }
 
         var lines = [
-            "## Task graph",
-            "",
+            "⚡️ Task graph:",
             "**Graph:** `\(graph.id)` · **state:** `\(graph.state.rawValue)` · **revision:** \(graph.revision)",
-            "",
             summary.joined(separator: " · "),
-            "",
         ]
         if tasks.isEmpty {
             lines.append("No tasks.")
@@ -194,7 +191,7 @@ extension TerminalChat {
             let metadata = suffix.isEmpty ? "" : " — " + suffix.joined(separator: " · ")
             lines.append("\(marker) `\(view.task.id)`  \(escapedTaskMarkdown(view.task.title))\(metadata)")
         }
-        return lines.joined(separator: "\n") + "\n"
+        return lines.joined(separator: "\n   ") + "\n\n"
     }
 
     static func taskDetailMarkdown(_ view: TaskRecordView) -> String {
