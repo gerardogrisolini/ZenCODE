@@ -80,6 +80,7 @@ public actor DirectSubAgentRuntime {
         public var status: Status
         public var pendingPrompts: [String]
         public var latestOutput: String?
+        public var accumulatedOutput: String?
         public var latestError: String?
         public var modelID: String? = nil
         public var modelRuntime: String? = nil
@@ -116,6 +117,7 @@ public actor DirectSubAgentRuntime {
         public let latestContentPreview: String?
         public let latestEventAt: Date?
         public let latestOutput: String?
+        public let accumulatedOutput: String?
         public let latestError: String?
         public let createdAt: Date
         public let updatedAt: Date
@@ -140,6 +142,7 @@ public actor DirectSubAgentRuntime {
             latestContentPreview: String? = nil,
             latestEventAt: Date? = nil,
             latestOutput: String?,
+            accumulatedOutput: String? = nil,
             latestError: String?,
             createdAt: Date,
             updatedAt: Date
@@ -163,6 +166,7 @@ public actor DirectSubAgentRuntime {
             self.latestContentPreview = latestContentPreview
             self.latestEventAt = latestEventAt
             self.latestOutput = latestOutput
+            self.accumulatedOutput = accumulatedOutput
             self.latestError = latestError
             self.createdAt = createdAt
             self.updatedAt = updatedAt

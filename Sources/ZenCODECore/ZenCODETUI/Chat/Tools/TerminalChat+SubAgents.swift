@@ -17,7 +17,7 @@ extension TerminalChat {
         static func summary(_ text: String) -> SubAgentOverviewLine {
             SubAgentOverviewLine(
                 text: text,
-                indentation: 2,
+                indentation: 3,
                 maxWrappedLines: 3,
                 dimPrefix: true
             )
@@ -29,7 +29,7 @@ extension TerminalChat {
         ) -> SubAgentOverviewLine {
             SubAgentOverviewLine(
                 text: text,
-                indentation: 2,
+                indentation: 3,
                 maxWrappedLines: maxWrappedLines,
                 dimPrefix: false
             )
@@ -41,7 +41,7 @@ extension TerminalChat {
         ) -> SubAgentOverviewLine {
             SubAgentOverviewLine(
                 text: text,
-                indentation: 4,
+                indentation: 6,
                 maxWrappedLines: maxWrappedLines,
                 dimPrefix: false
             )
@@ -365,7 +365,7 @@ extension TerminalChat {
                 output.append("\(linePrefix)\(prefix)\(wrappedLine)")
             }
         }
-        return "\n\(output.joined(separator: "\n"))\n"
+        return "\n\(output.joined(separator: "\n"))"
     }
 
     private static func subAgentOverviewSignature(

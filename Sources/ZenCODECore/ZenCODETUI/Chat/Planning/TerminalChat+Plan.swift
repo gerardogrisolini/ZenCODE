@@ -604,16 +604,26 @@ extension TerminalChat {
                 ) == .orderedSame
                 && isPlannerSnapshotProfile(snapshot)
                 && snapshot.isolationMode == .report
-                && snapshot.status == .idle
+                && (snapshot.status == .idle || snapshot.status == .closed)
                 && !snapshot.pending
                 && snapshot.latestOutput?.trimmingCharacters(
                     in: .whitespacesAndNewlines
                 ).isEmpty == false
         }
         guard completedAuthors.count == 1,
-              let author = completedAuthors.first,
-              let text = author.latestOutput,
-              text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+              let author = completedAuthors.first else {
+            return nil
+        }
+        // Prefer accumulated output so that multi-turn planner corrections
+        // (e.g. when the coordinator asked the planner to complete a truncated
+        // plan) are captured in full. Fall back to latestOutput for backwards
+        // compatibility.
+        let text = author.accumulatedOutput?.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).isEmpty == false
+            ? author.accumulatedOutput!
+            : author.latestOutput ?? ""
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
         return DirectAgentResponse(

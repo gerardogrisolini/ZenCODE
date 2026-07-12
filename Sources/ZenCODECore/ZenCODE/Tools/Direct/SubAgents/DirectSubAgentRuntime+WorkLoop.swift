@@ -239,7 +239,15 @@ extension DirectSubAgentRuntime {
               agent.status != .closed else {
             return
         }
-        agent.latestOutput = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedOutput = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        agent.latestOutput = trimmedOutput
+        if let existing = agent.accumulatedOutput?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !existing.isEmpty,
+           !trimmedOutput.isEmpty {
+            agent.accumulatedOutput = existing + "\n\n" + trimmedOutput
+        } else if !trimmedOutput.isEmpty {
+            agent.accumulatedOutput = trimmedOutput
+        }
         agent.latestError = nil
         agent.modelID = response.modelID.nilIfBlank ?? agent.modelID
         agent.currentActivity = nil

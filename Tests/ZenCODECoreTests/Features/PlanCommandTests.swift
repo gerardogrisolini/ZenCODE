@@ -619,6 +619,56 @@ struct PlanCommandTests {
     }
 
     @Test
+    func plannerAuthoredResponseAcceptsAClosedPlanner() throws {
+        let response = try #require(TerminalChat.plannerAuthoredPlanResponse(
+            parentResponse: DirectAgentResponse(
+                text: "Default fallback plan",
+                stopReason: "end_turn",
+                modelID: "default-model"
+            ),
+            snapshots: [
+                subAgentSnapshot(
+                    name: TerminalChat.planAuthorAgentName,
+                    role: "Planner",
+                    status: .closed,
+                    modelID: "planner-model",
+                    latestOutput: "Planner plan after closure"
+                )
+            ]
+        ))
+        #expect(response.text == "Planner plan after closure")
+        #expect(response.modelID == "planner-model")
+    }
+
+    @Test
+    func plannerAuthoredResponsePrefersAccumulatedOutputOverLatestOutput() throws {
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent-plan-author",
+            name: TerminalChat.planAuthorAgentName,
+            role: "Planner",
+            profileName: AgentProfileStore.plannerAgentName,
+            isolationMode: .report,
+            status: .idle,
+            pending: false,
+            modelID: "planner-model",
+            latestOutput: "Final fragment only",
+            accumulatedOutput: "First part of the plan\n\nFinal fragment only",
+            latestError: nil,
+            createdAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let response = try #require(TerminalChat.plannerAuthoredPlanResponse(
+            parentResponse: DirectAgentResponse(
+                text: "Default fallback plan",
+                stopReason: "end_turn",
+                modelID: "default-model"
+            ),
+            snapshots: [snapshot]
+        ))
+        #expect(response.text == "First part of the plan\n\nFinal fragment only")
+    }
+
+    @Test
     func plannerAuthoredResponseRejectsAPreexistingPlanAuthor() {
         let staleAuthor = subAgentSnapshot(
             name: TerminalChat.planAuthorAgentName,

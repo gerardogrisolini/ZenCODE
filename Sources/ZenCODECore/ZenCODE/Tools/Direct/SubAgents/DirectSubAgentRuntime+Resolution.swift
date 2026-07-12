@@ -144,6 +144,7 @@ extension DirectSubAgentRuntime {
             latestContentPreview: agent.latestContentPreview,
             latestEventAt: agent.latestEventAt,
             latestOutput: agent.latestOutput,
+            accumulatedOutput: agent.accumulatedOutput,
             latestError: agent.latestError,
             createdAt: agent.createdAt,
             updatedAt: agent.updatedAt
