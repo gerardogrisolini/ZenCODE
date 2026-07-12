@@ -28,6 +28,12 @@ public nonisolated enum SubAgentToolRequestCompatibility {
         "task_status": "task.get",
         "task.update": "task.update",
         "task_update": "task.update",
+        "task.retry": "task.retry",
+        "task_retry": "task.retry",
+        "retry_task": "task.retry",
+        "task.cancel": "task.cancel",
+        "task_cancel": "task.cancel",
+        "cancel_task": "task.cancel",
         "agent.create": "agent.create",
         "agent.spawn": "agent.create",
         "agent_spawn": "agent.create",
@@ -99,6 +105,10 @@ public nonisolated enum SubAgentToolRequestCompatibility {
             return "task.get"
         case (.task, .update):
             return "task.update"
+        case (.task, .retry):
+            return "task.retry"
+        case (.task, .cancel):
+            return "task.cancel"
         case (.agent, .create):
             return "agent.create"
         case (.agent, .list):
@@ -129,6 +139,8 @@ public nonisolated enum SubAgentToolRequestCompatibility {
         case list
         case get
         case update
+        case retry
+        case cancel
         case message
         case wait
         case close
@@ -200,6 +212,10 @@ public nonisolated enum SubAgentToolRequestCompatibility {
                     return .get
                 case "update", "write", "set":
                     return .update
+                case "retry", "rerun", "restart":
+                    return .retry
+                case "cancel", "stop", "close":
+                    return .cancel
                 default:
                     continue
                 }
@@ -230,7 +246,7 @@ public nonisolated enum SubAgentToolRequestCompatibility {
         _ arguments: [String: JSONValue],
         for toolName: String
     ) -> [String: JSONValue] {
-        var normalized: [String: JSONValue] = [:]
+        var normalized: [String: JSONValue] = arguments
 
         switch toolName {
         case "todo.write":
@@ -266,6 +282,10 @@ public nonisolated enum SubAgentToolRequestCompatibility {
             assignStringArray(["dependsOn", "depends_on"], from: arguments, to: "dependsOn", in: &normalized)
             assignString(["assigneeAgentID", "assignee_agent_id", "agentID", "agent_id"], from: arguments, to: "assigneeAgentID", in: &normalized)
             assignString(["output"], from: arguments, to: "output", in: &normalized)
+        case "task.retry", "task.cancel":
+            assignString(["id", "taskID", "task_id"], from: arguments, to: "id", in: &normalized)
+            assignString(["graphID", "graph_id"], from: arguments, to: "graphID", in: &normalized)
+            assignString(["reason", "message"], from: arguments, to: "reason", in: &normalized)
         case "agent.create":
             assignStructuredJSON(["agents", "items"], from: arguments, to: "agents", in: &normalized)
             assignString(["name"], from: arguments, to: "name", in: &normalized)

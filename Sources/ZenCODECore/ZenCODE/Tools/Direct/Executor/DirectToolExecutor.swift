@@ -34,7 +34,8 @@ public actor DirectToolExecutor {
     public let subAgentRuntime: DirectSubAgentRuntime
     public let mcpRuntime: DirectMCPToolRuntime
     public let swiftFeatureRuntime: SwiftFeatureRuntime
-    public let sessionToolRuntime = DirectTodoTaskRuntime()
+    public let todoRuntime = DirectTodoRuntime()
+    public let taskToolAdapter = DirectTaskToolAdapter()
     public let preferredWorkspaceRootURL: URL?
     public var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
     public var toolProviderRegistry = AgentToolProviderRegistry()
@@ -81,6 +82,13 @@ public actor DirectToolExecutor {
         )
     }
 
+    public func installTaskOrchestrator(
+        _ orchestrator: SessionTaskOrchestrator
+    ) async {
+        await taskToolAdapter.installTaskOrchestrator(orchestrator)
+        await subAgentRuntime.installTaskOrchestrator(orchestrator)
+    }
+
     public func updateBorrowedSubAgentToolExecutor(
         _ executor: AgentBorrowedToolExecutor?
     ) {
@@ -93,6 +101,14 @@ public actor DirectToolExecutor {
 
     public func shutdown() async {
         await subAgentRuntime.shutdown()
+    }
+
+    public func closeSubAgent(id: String) async -> Bool {
+        await subAgentRuntime.closeAgent(id: id)
+    }
+
+    public func interruptSubAgents(rootSessionID: String) async -> Int {
+        await subAgentRuntime.interruptAgents(rootSessionID: rootSessionID)
     }
 
     public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {

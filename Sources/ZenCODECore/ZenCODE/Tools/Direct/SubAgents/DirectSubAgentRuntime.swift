@@ -26,6 +26,8 @@ public enum DirectSubAgentBackendFactoryError: LocalizedError {
 }
 
 public actor DirectSubAgentRuntime {
+    public static let maximumAgentsPerCreate = 8
+
     public static func unavailableContextualBackendFactory(
         _ context: BackendContext
     ) throws -> any AgentRuntimeBackend {
@@ -61,6 +63,10 @@ public actor DirectSubAgentRuntime {
     public struct AgentRecord {
         public let id: String
         public let sessionID: String
+        public let rootSessionID: String
+        public let taskID: String?
+        public let taskAttemptID: String?
+        public let taskAttemptOrdinal: Int?
         public let name: String
         public let role: String
         public let profileID: String?
@@ -91,6 +97,10 @@ public actor DirectSubAgentRuntime {
 
     public struct AgentSnapshot: Sendable {
         public let id: String
+        public let rootSessionID: String
+        public let taskID: String?
+        public let taskAttemptID: String?
+        public let taskAttemptOrdinal: Int?
         public let name: String
         public let role: String
         public let profileID: String?
@@ -111,6 +121,10 @@ public actor DirectSubAgentRuntime {
 
         public init(
             id: String,
+            rootSessionID: String = "default",
+            taskID: String? = nil,
+            taskAttemptID: String? = nil,
+            taskAttemptOrdinal: Int? = nil,
             name: String,
             role: String,
             profileID: String? = nil,
@@ -130,6 +144,10 @@ public actor DirectSubAgentRuntime {
             updatedAt: Date
         ) {
             self.id = id
+            self.rootSessionID = rootSessionID
+            self.taskID = taskID?.nilIfBlank
+            self.taskAttemptID = taskAttemptID?.nilIfBlank
+            self.taskAttemptOrdinal = taskAttemptOrdinal
             self.name = name
             self.role = role
             self.profileID = profileID?.nilIfBlank
@@ -154,6 +172,7 @@ public actor DirectSubAgentRuntime {
         public let name: String
         public let role: String
         public let profileReference: String?
+        public let taskID: String?
         public let prompt: String?
         public let isolationMode: IsolationMode
         public let allowedToolNames: Set<String>?
@@ -188,6 +207,7 @@ public actor DirectSubAgentRuntime {
 
     public let backendFactory: DirectSubAgentContextualBackendFactory
     public let profileResolver: DirectSubAgentProfileResolver
+    public var taskOrchestrator: SessionTaskOrchestrator?
     public var agents: [String: AgentRecord] = [:]
     var latestOverviewBatchID: UUID?
 
@@ -207,10 +227,32 @@ public actor DirectSubAgentRuntime {
         self.profileResolver = profileResolver
     }
 
+    public func installTaskOrchestrator(
+        _ orchestrator: SessionTaskOrchestrator
+    ) {
+        taskOrchestrator = orchestrator
+    }
+
     public func shutdown() async {
         let records = Array(agents.values)
         agents.removeAll()
 
+        if let taskOrchestrator {
+            for record in records {
+                if let taskID = record.taskID,
+                   let attemptID = record.taskAttemptID {
+                    _ = try? await taskOrchestrator.interruptAttempt(
+                        sessionID: record.rootSessionID,
+                        taskID: taskID,
+                        attemptID: attemptID,
+                        reason: "delegated backend shutdown interrupted execution"
+                    )
+                }
+                await taskOrchestrator.unregisterExecutionScope(
+                    executionSessionID: record.sessionID
+                )
+            }
+        }
         for record in records {
             record.runTask?.cancel()
         }
@@ -235,6 +277,7 @@ public actor DirectSubAgentRuntime {
     }
 
     public func execute(
+        rootSessionID: String? = nil,
         toolCall: DirectAgentToolCall,
         workingDirectory: URL,
         allowedToolNames: Set<String>?
@@ -246,7 +289,8 @@ public actor DirectSubAgentRuntime {
             return try await createAgents(
                 arguments: request.arguments,
                 workingDirectory: workingDirectory,
-                parentAllowedToolNames: allowedToolNames
+                parentAllowedToolNames: allowedToolNames,
+                rootSessionID: rootSessionID?.nilIfBlank ?? "default"
             )
         case "agent.list":
             return listAgents(arguments: request.arguments)

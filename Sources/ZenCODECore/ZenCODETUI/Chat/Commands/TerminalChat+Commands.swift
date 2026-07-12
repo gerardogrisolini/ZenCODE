@@ -240,6 +240,11 @@ extension TerminalChat {
             help: "/undo reverts the most recent tracked file changes."
         ),
         TerminalChatCommandDescriptor(
+            command: "/tasks",
+            summary: "inspect and control session tasks",
+            help: "/tasks shows the current task graph. Use /tasks show <id>, /tasks retry <id>, /tasks cancel <id>, or /tasks clear."
+        ),
+        TerminalChatCommandDescriptor(
             command: "/plan",
             summary: "plan work via sub-agents",
             help: "/plan <goal> creates a new unapproved plan. Use /plan status to show item progress, /plan approve to approve it and start implementation immediately, or /plan clear to remove it.",

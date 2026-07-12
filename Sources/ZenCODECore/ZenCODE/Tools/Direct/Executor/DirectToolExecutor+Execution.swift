@@ -75,16 +75,32 @@ extension DirectToolExecutor {
         }
         if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
             return try await subAgentRuntime.execute(
+                rootSessionID: sessionID,
                 toolCall: toolCall,
                 workingDirectory: workingDirectory,
                 allowedToolNames: allowedToolNames
             )
         }
-        if DirectTodoTaskRuntime.isTodoOrTaskToolName(toolCall.name) {
-            return try await sessionToolRuntime.execute(
+        if DirectTodoRuntime.isTodoToolName(toolCall.name) {
+            return try await todoRuntime.execute(
                 sessionID: sessionID,
                 toolCall: toolCall
             )
+        }
+        if DirectTaskToolAdapter.isTaskToolName(toolCall.name) {
+            let output = try await taskToolAdapter.execute(
+                sessionID: sessionID,
+                toolCall: toolCall
+            )
+            let request = DirectTodoRuntime.normalizedToolRequest(for: toolCall)
+            if request.name == "task.cancel",
+               let taskID = DirectTodoRuntime.firstString(["id"], in: request.arguments) {
+                _ = await subAgentRuntime.closeAgentAssigned(
+                    to: taskID,
+                    rootSessionID: sessionID?.nilIfBlank ?? "default"
+                )
+            }
+            return output
         }
         if MemoryTool.isMemoryToolName(toolCall.name) {
             let request = ToolRequest(

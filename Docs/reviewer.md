@@ -18,7 +18,7 @@ Findings should include severity and concrete `file:line` references whenever po
 
 ## Read-Only Safety
 
-`/review` delegates with `isolationMode "report"` and restricts Reviewer sub-agents to a read-only tool allowlist. Reviewers may inspect files and search the codebase for context, but they must stay within the tracked session changes and any approved plan. Plan-coverage reviewers may inspect the current files implicated by the plan, but must not expand into a generic repository review or run mutating commands.
+`/review` delegates with `isolationMode "report"` and restricts Reviewer sub-agents to a read-only tool allowlist. Reviewers may inspect files and search the codebase for context, but they must stay within the tracked session changes, current task graph, and any approved plan. Coverage reviewers may inspect the current files implicated by tasks or plan points, but must not expand into a generic repository review or run mutating commands.
 
 The built-in `/review` read-only tool set includes local read/list tools, text utilities, and search tools. It intentionally excludes git and memory tools so an unscoped review cannot expand beyond the current session changes.
 
@@ -30,9 +30,9 @@ From an interactive TUI session, use:
 /review
 ```
 
-With no argument, `ZenCODE` reviews the latest tracked file changes from the current session. If an active plan was explicitly approved with `/plan approve`, it also verifies every plan item against the current state of the implicated files. Coverage is classified as `done`, `partial`, `missing`, or `deviated`, with concrete file and line references when available.
+With no argument, `ZenCODE` reviews the latest tracked file changes from the current session. If a task graph or a plan explicitly approved with `/plan approve` exists, it also verifies every task/plan claim against the current state of the implicated files and actual validation output. Each task is classified as `implemented`, `validated`, `unverified`, `failed`, `deviated`, `cancelled`, or `blocked`, with concrete file and line references when available. A stored `completed` status, attempt output, or evidence record is a lead to verify, not proof; `awaiting_validation` is never reported as validated.
 
-An approved plan enables coverage-only review even when there is no tracked file-change summary. With neither tracked changes nor an approved plan, `/review` keeps the existing behavior and exits with `No tracked session file changes to review.` An unapproved plan is not used as a review criterion.
+A task graph or approved plan enables coverage-only review even when there is no tracked file-change summary. With none of those inputs, `/review` exits with `No tracked session file changes to review.` An unapproved plan without a graph is not used as a review criterion.
 
 To focus the session-change review on a specific area, pass a focus:
 
@@ -58,8 +58,8 @@ When `/review` runs:
 2. The director creates one or more sub-agents with role `Reviewer`.
 3. Each Reviewer receives a focused review prompt and the read-only tool list.
 4. Reviewers run in parallel when the review surface can be partitioned by file, module, or concern.
-5. When an approved plan exists, at least one dedicated coverage Reviewer checks the current files implicated by the plan and classifies every item as `done`, `partial`, `missing`, or `deviated`.
-6. The director waits for the reviewers, consolidates duplicate findings, and summarizes issues by severity plus plan coverage.
+5. When a task graph or approved plan exists, at least one dedicated coverage Reviewer checks current implicated files, treats graph statuses/evidence as claims, and classifies every task as `implemented`, `validated`, `unverified`, `failed`, `deviated`, `cancelled`, or `blocked`.
+6. The director waits for the reviewers, consolidates duplicate findings, and summarizes issues by severity plus task/plan coverage and any discrepancies between recorded attempts and real files.
 7. If changes are warranted, the director proposes a concrete correction plan instead of editing files in the review turn.
 
 ## Reviewer Profile

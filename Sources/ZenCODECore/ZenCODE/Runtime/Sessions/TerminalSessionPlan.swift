@@ -8,27 +8,63 @@ import Foundation
 public enum TerminalSessionPlanPointStatus: String, Codable, Equatable, Sendable {
     case pending
     case inProgress = "in_progress"
+    case awaitingValidation = "awaiting_validation"
     case completed
     case blocked
+    case failed
+    case cancelled
 }
 
 public struct TerminalSessionPlanPoint: Codable, Equatable, Sendable {
     public let id: String
     public let text: String
     public var status: TerminalSessionPlanPointStatus
+    public var dependsOn: [String]
+    public let hasExplicitDependencies: Bool
 
     public init(
         id: String,
         text: String,
-        status: TerminalSessionPlanPointStatus = .pending
+        status: TerminalSessionPlanPointStatus = .pending,
+        dependsOn: [String] = [],
+        hasExplicitDependencies: Bool = false
     ) {
         self.id = id.trimmingCharacters(in: .whitespacesAndNewlines)
         self.text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         self.status = status
+        self.dependsOn = dependsOn.compactMap(\.nilIfBlank)
+        self.hasExplicitDependencies = hasExplicitDependencies
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case text
+        case status
+        case dependsOn
+        case hasExplicitDependencies
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        text = try container.decode(String.self, forKey: .text)
+        status = try container.decodeIfPresent(
+            TerminalSessionPlanPointStatus.self,
+            forKey: .status
+        ) ?? .pending
+        dependsOn = try container.decodeIfPresent(
+            [String].self,
+            forKey: .dependsOn
+        ) ?? []
+        hasExplicitDependencies = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .hasExplicitDependencies
+        ) ?? container.contains(.dependsOn)
     }
 }
 
 public struct TerminalSessionPlan: Codable, Equatable, Sendable {
+    public let id: String
     public let originalGoal: String
     public let consolidatedText: String
     public let createdAt: Date
@@ -36,12 +72,14 @@ public struct TerminalSessionPlan: Codable, Equatable, Sendable {
     public var points: [TerminalSessionPlanPoint]
 
     public init(
+        id: String? = nil,
         originalGoal: String,
         consolidatedText: String,
         createdAt: Date = Date(),
         isApproved: Bool = false,
         points: [TerminalSessionPlanPoint] = []
     ) {
+        self.id = id?.nilIfBlank ?? "plan-\(UUID().uuidString.lowercased())"
         self.originalGoal = originalGoal.trimmingCharacters(in: .whitespacesAndNewlines)
         self.consolidatedText = consolidatedText.trimmingCharacters(in: .whitespacesAndNewlines)
         self.createdAt = createdAt
@@ -54,6 +92,7 @@ public struct TerminalSessionPlan: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case id
         case originalGoal
         case consolidatedText
         case createdAt
@@ -63,6 +102,8 @@ public struct TerminalSessionPlan: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id)?.nilIfBlank
+            ?? "plan-\(UUID().uuidString.lowercased())"
         originalGoal = try container.decode(String.self, forKey: .originalGoal)
         consolidatedText = try container.decode(String.self, forKey: .consolidatedText)
         createdAt = try container.decode(Date.self, forKey: .createdAt)

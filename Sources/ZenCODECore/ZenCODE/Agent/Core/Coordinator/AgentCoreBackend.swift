@@ -27,6 +27,7 @@ public actor AgentCoreBackend {
     // AgentCoreSessionRunner owns application/session persistence snapshots.
     // AgentCoreBackend owns only transient seed state used to hydrate its active runtime backend.
     private var sessions: [String: SessionSeed] = [:]
+    private var taskOrchestrator: SessionTaskOrchestrator?
     private var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
     private var toolProviders: [AgentToolProvider] = []
     private let backendFactory: AgentRuntimeBackendFactory?
@@ -175,6 +176,13 @@ public actor AgentCoreBackend {
         }
     }
 
+    public func installTaskOrchestrator(
+        _ orchestrator: SessionTaskOrchestrator
+    ) async {
+        taskOrchestrator = orchestrator
+        await applyTaskOrchestrator(to: activeBackend)
+    }
+
     public func updateBorrowedSubAgentToolExecutor(
         _ executor: AgentBorrowedToolExecutor?
     ) async {
@@ -216,6 +224,16 @@ public actor AgentCoreBackend {
             return await backend.activeToolDescriptors()
         }
         return []
+    }
+
+    public func closeSubAgent(id: String) async -> Bool {
+        guard let activeBackend else { return false }
+        return await activeBackend.closeSubAgent(id: id)
+    }
+
+    public func interruptSubAgents(rootSessionID: String) async -> Int {
+        guard let activeBackend else { return 0 }
+        return await activeBackend.interruptSubAgents(rootSessionID: rootSessionID)
     }
 
     public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
@@ -294,6 +312,7 @@ public actor AgentCoreBackend {
         if let backendFactory {
             let backend = try backendFactory(configuration, mcpRuntime)
             activeBackend = backend
+            await applyTaskOrchestrator(to: backend)
             await applyBorrowedSubAgentToolExecutor(to: backend)
             await applyToolProviders(to: backend)
             for (sessionID, seed) in sessions {
@@ -324,6 +343,7 @@ public actor AgentCoreBackend {
         }
 
         activeBackend = backend
+        await applyTaskOrchestrator(to: backend)
         await applyBorrowedSubAgentToolExecutor(to: backend)
         await applyToolProviders(to: backend)
         for (sessionID, seed) in sessions {
@@ -339,6 +359,14 @@ public actor AgentCoreBackend {
             )
         }
         return backend
+    }
+
+    private func applyTaskOrchestrator(
+        to backend: (any AgentRuntimeBackend)?
+    ) async {
+        if let backend, let taskOrchestrator {
+            await backend.installTaskOrchestrator(taskOrchestrator)
+        }
     }
 
     private func applyBorrowedSubAgentToolExecutor(

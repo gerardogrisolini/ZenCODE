@@ -95,6 +95,7 @@ extension DirectSubAgentRuntime {
             .first { agent in
                 agent.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) == foldedIdentifier
                     || agent.id.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) == foldedIdentifier
+                    || agent.taskID?.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) == foldedIdentifier
             }?
             .id
     }
@@ -125,6 +126,10 @@ extension DirectSubAgentRuntime {
     public func snapshot(from agent: AgentRecord) -> AgentSnapshot {
         AgentSnapshot(
             id: agent.id,
+            rootSessionID: agent.rootSessionID,
+            taskID: agent.taskID,
+            taskAttemptID: agent.taskAttemptID,
+            taskAttemptOrdinal: agent.taskAttemptOrdinal,
             name: agent.name,
             role: agent.role,
             profileID: agent.profileID,

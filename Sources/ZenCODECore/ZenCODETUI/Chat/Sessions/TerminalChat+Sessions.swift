@@ -179,6 +179,7 @@ extension TerminalChat {
             name: name,
             workingDirectory: configuration.workingDirectory
         )
+        let taskGraph = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID)
         let now = Date()
         let savedSession = TerminalSavedSession(
             name: name,
@@ -204,7 +205,8 @@ extension TerminalChat {
             systemPrompt: snapshot.systemPrompt,
             history: snapshot.history,
             transcriptHistory: activeSessionTranscript,
-            activePlan: activePlan
+            activePlan: activePlan,
+            taskGraph: taskGraph
         )
 
         do {
@@ -313,6 +315,13 @@ extension TerminalChat {
         try await sessionRunner.restoreSession(
             configuration: await currentSessionConfiguration(discoverExternalTools: true)
         )
+        if let taskGraph = savedSession.taskGraph {
+            _ = try await sessionRunner.restoreTaskGraph(
+                taskGraph,
+                sessionID: savedSession.sessionID
+            )
+        }
+        startTaskGraphObserver()
         if let contextWindow = savedSession.contextWindow?.runtimeStatus {
             _ = statusBar.update(contextWindow: contextWindow)
         }

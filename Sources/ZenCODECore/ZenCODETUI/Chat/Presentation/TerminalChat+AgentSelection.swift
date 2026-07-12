@@ -70,6 +70,7 @@ extension TerminalChat {
         await ensureWorkspaceAccessIfNeeded()
 
         await sessionRunner.shutdownBackendKeepingExternalTools()
+        try? await sessionRunner.clearTaskGraphs(sessionID: sessionID)
         printedModelID = nil
         didPrintActiveTools = false
         statusBar.reset()

@@ -436,6 +436,14 @@ public protocol AgentRuntimeBackend: Actor {
         preserveThinking: Bool
     )
 
+    func installTaskOrchestrator(
+        _ orchestrator: SessionTaskOrchestrator
+    ) async
+
+    func closeSubAgent(id: String) async -> Bool
+
+    func interruptSubAgents(rootSessionID: String) async -> Int
+
     func updateBorrowedSubAgentToolExecutor(
         _ executor: AgentBorrowedToolExecutor?
     ) async
@@ -472,6 +480,18 @@ public protocol AgentRuntimeBackend: Actor {
 }
 
 extension AgentRuntimeBackend {
+    public func installTaskOrchestrator(
+        _ orchestrator: SessionTaskOrchestrator
+    ) async {}
+
+    public func closeSubAgent(id: String) async -> Bool {
+        false
+    }
+
+    public func interruptSubAgents(rootSessionID: String) async -> Int {
+        0
+    }
+
     public func updateBorrowedSubAgentToolExecutor(
         _ executor: AgentBorrowedToolExecutor?
     ) async {}

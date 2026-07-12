@@ -11,7 +11,9 @@ extension DirectSubAgentRuntime {
     public static func systemPrompt(
         name: String,
         role: String,
-        isolationMode: IsolationMode
+        isolationMode: IsolationMode,
+        taskID: String? = nil,
+        taskAttemptID: String? = nil
     ) -> String {
         var lines = [
             "You are ZenCODE delegated sub-agent \(name).",
@@ -20,6 +22,14 @@ extension DirectSubAgentRuntime {
             "You are running inside ZenCODE and receive the complete direct toolset available to this process, including local, shell, git, MCP, and sub-agent tools when exposed.",
             "Work only on the delegated scope. Be concise, concrete, and report blockers clearly."
         ]
+        if let taskID {
+            lines.append("Assigned task: \(taskID)")
+            if let taskAttemptID {
+                lines.append("Execution attempt: \(taskAttemptID)")
+            }
+            lines.append("You may use task.get/task.list to read only this task and its dependencies, and task.update only to append progress output to this active attempt.")
+            lines.append("You must not change dependencies, reassign work, create nested sub-agents, mutate another task, or validate your own implementation. Final task state is recorded automatically from your outcome.")
+        }
         switch isolationMode {
         case .report:
             lines.append("Isolation mode: report. Investigate, inspect, build, test, review, and summarize, but do not make file edits or other mutating changes.")
@@ -40,6 +50,12 @@ extension DirectSubAgentRuntime {
         var lines = ["Sub-agents:"]
         for snapshot in snapshots {
             var summary = "- \(snapshot.id) name=\(snapshot.name) role=\(snapshot.role) status=\(snapshot.status.rawValue) pending=\(snapshot.pending) isolation=\(snapshot.isolationMode.rawValue)"
+            if let taskID = snapshot.taskID?.nilIfBlank {
+                summary += " task=\(taskID)"
+            }
+            if let ordinal = snapshot.taskAttemptOrdinal {
+                summary += " attempt=\(ordinal)"
+            }
             if let modelID = snapshot.modelID?.nilIfBlank {
                 summary += " model=\(modelID)"
             }

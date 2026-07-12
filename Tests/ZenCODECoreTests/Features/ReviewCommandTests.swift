@@ -121,7 +121,9 @@ struct ReviewCommandTests {
         #expect(prompt.contains("at least one dedicated Reviewer for plan coverage"))
         #expect(prompt.contains("current state of the files implicated by the plan"))
         #expect(prompt.contains("not merely the latest diff"))
-        #expect(prompt.contains("done, partial, missing, or deviated"))
+        #expect(prompt.contains("implemented, validated, unverified, failed, deviated, cancelled, or blocked"))
+        #expect(prompt.contains("A task marked completed is an assertion to verify"))
+        #expect(prompt.contains("awaiting_validation is not completed"))
         #expect(prompt.contains("file:line references whenever available"))
         #expect(prompt.contains("No tracked file-change summary is available"))
         #expect(prompt.contains("This is coverage-only mode"))
@@ -183,7 +185,7 @@ struct ReviewCommandTests {
     }
 
     @Test
-    func reviewRunsCoverageOnlyForApprovedPlanAndKeepsItActive() throws {
+    func reviewRunsCoverageOnlyForApprovedPlanAndKeepsItActive() async throws {
         let terminal = try makeTerminal()
         let plan = TerminalSessionPlan(
             originalGoal: "goal",
@@ -193,7 +195,7 @@ struct ReviewCommandTests {
         terminal.activePlan = plan
 
         for _ in 0..<2 {
-            let action = terminal.handleReviewCommand("/review")
+            let action = await terminal.handleReviewCommand("/review")
             guard case let .runHiddenPrompt(prompt, purpose) = action else {
                 Issue.record("An approved plan should allow coverage-only review")
                 return
@@ -205,7 +207,7 @@ struct ReviewCommandTests {
     }
 
     @Test
-    func reviewWithoutChangesIgnoresUnapprovedPlan() throws {
+    func reviewWithoutChangesIgnoresUnapprovedPlan() async throws {
         let terminal = try makeTerminal()
         terminal.activePlan = TerminalSessionPlan(
             originalGoal: "goal",
@@ -213,13 +215,96 @@ struct ReviewCommandTests {
             isApproved: false
         )
 
-        let action = terminal.handleReviewCommand("/review")
+        let action = await terminal.handleReviewCommand("/review")
 
         if case .continueChat = action {
             #expect(terminal.activePlan?.isApproved == false)
         } else {
             Issue.record("An unapproved plan must not enable coverage-only review")
         }
+    }
+
+    @Test
+    func manualTaskGraphEnablesCoverageOnlyReview() async throws {
+        let terminal = try makeTerminal()
+        _ = try await terminal.sessionRunner.taskOrchestrator.createGraph(
+            sessionID: terminal.sessionID,
+            id: "manual-review",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "task-a", title: "Verify manual work")]
+        )
+
+        let action = await terminal.handleReviewCommand("/review")
+        guard case let .runHiddenPrompt(prompt, purpose) = action else {
+            Issue.record("A manual task graph should enable coverage-only review")
+            return
+        }
+        #expect(purpose == .review)
+        #expect(prompt.contains("No approved plan is attached"))
+        #expect(prompt.contains("task=task-a status=pending"))
+        #expect(prompt.contains("task-graph coverage"))
+    }
+
+    @Test
+    func reviewPromptTreatsTaskStatusAndEvidenceAsClaims() {
+        let now = Date(timeIntervalSince1970: 100)
+        let plan = TerminalSessionPlan(
+            id: "plan-review",
+            originalGoal: "Verify implementation",
+            consolidatedText: "Implement and validate.",
+            isApproved: true,
+            points: [TerminalSessionPlanPoint(id: "plan-review-1", text: "Implement")]
+        )
+        let graph = TaskGraphSnapshot(
+            id: "plan-review",
+            source: .plan(planID: "plan-review"),
+            state: .completed,
+            tasks: [
+                TaskRecord(
+                    id: "plan-review-1",
+                    title: "Implement",
+                    order: 1,
+                    status: .completed,
+                    attempts: [
+                        TaskAttempt(
+                            id: "attempt-1",
+                            ordinal: 1,
+                            agentID: "agent-1",
+                            executor: .subAgent,
+                            status: .completed,
+                            startedAt: now,
+                            finishedAt: now,
+                            output: "claimed implementation"
+                        )
+                    ],
+                    result: TaskResult(
+                        output: "claimed implementation",
+                        evidence: [TaskEvidence(kind: "test", summary: "claimed green test")]
+                    ),
+                    createdAt: now,
+                    updatedAt: now
+                )
+            ],
+            createdAt: now,
+            updatedAt: now
+        )
+
+        let prompt = TerminalChat.reviewDelegationPrompt(
+            scope: "",
+            reviewer: AgentProfileStore.defaultProfiles().first {
+                TerminalChat.isReviewerProfile($0)
+            } ?? AgentProfileStore.defaultProfiles()[0],
+            changeSummary: nil,
+            approvedPlan: plan,
+            taskGraph: graph
+        )
+
+        #expect(prompt.contains("task=plan-review-1 status=completed"))
+        #expect(prompt.contains("attempt #1"))
+        #expect(prompt.contains("claimed green test"))
+        #expect(prompt.contains("completed is an assertion to verify"))
+        #expect(prompt.contains("implemented, validated, unverified"))
     }
 
     private func makeTerminal() throws -> TerminalChat {

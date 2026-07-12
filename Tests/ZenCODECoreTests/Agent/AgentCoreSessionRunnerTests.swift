@@ -314,6 +314,60 @@ struct AgentCoreSessionRunnerTests {
         #expect(await runner.snapshotSession(id: sessionID)?.history == compaction.snapshot.history)
         #expect(await backend.lastCreatedHistory() == compaction.snapshot.history)
     }
+    @Test
+    func backendRebuildPreservesTasksButSessionResetDiscardsThem() async throws {
+        let backend = CapturingAgentRuntimeBackend()
+        let taskOrchestrator = SessionTaskOrchestrator()
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in backend },
+            taskOrchestrator: taskOrchestrator,
+            taskGraphStore: nil
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        let workingDirectory = FileManager.default.temporaryDirectory
+        let firstConfiguration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "model-a",
+            workingDirectory: workingDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["task.list"]
+        )
+        let secondConfiguration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "model-b",
+            workingDirectory: workingDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["task.list"]
+        )
+
+        try await runner.createSession(configuration: firstConfiguration)
+        _ = try await taskOrchestrator.createGraph(
+            sessionID: sessionID,
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "task-a", title: "A")]
+        )
+        try await runner.createSession(configuration: secondConfiguration)
+        _ = try await runner.preloadModel(
+            configuration: secondConfiguration,
+            onEvent: { _ in }
+        )
+        #expect(try await runner.taskGraphSnapshot(sessionID: sessionID)?.tasks.map(\.id) == ["task-a"])
+
+        await runner.rebuildSession(id: sessionID)
+        #expect(try await runner.taskGraphSnapshot(sessionID: sessionID)?.tasks.map(\.id) == ["task-a"])
+        #expect(await backend.interruptedRootSessionIDs().isEmpty)
+
+        await runner.resetSession(id: sessionID)
+        #expect(try await runner.taskGraphSnapshot(sessionID: sessionID) == nil)
+        let interruptedRoots = await backend.interruptedRootSessionIDs()
+        #expect(interruptedRoots == [sessionID])
+    }
 }
 
 private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
@@ -321,6 +375,7 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
     private var updatedAllowedToolNames: Set<String>?
     private var sessions: [String: AgentRuntimeSessionSnapshot] = [:]
     private var createdHistories: [[AgentRuntimeMessage]] = []
+    private var interruptedRoots: [String] = []
     private let promptEvents: [DirectAgentEvent]
     private let sendPromptError: Error?
 
@@ -417,6 +472,11 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
         []
     }
 
+    func interruptSubAgents(rootSessionID: String) async -> Int {
+        interruptedRoots.append(rootSessionID)
+        return 0
+    }
+
     func sendPrompt(
         sessionID _: String,
         prompt _: String,
@@ -446,6 +506,10 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
 
     func lastCreatedHistory() -> [AgentRuntimeMessage]? {
         createdHistories.last
+    }
+
+    func interruptedRootSessionIDs() -> [String] {
+        interruptedRoots
     }
 }
 

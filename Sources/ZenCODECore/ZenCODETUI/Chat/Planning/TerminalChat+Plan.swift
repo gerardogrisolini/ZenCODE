@@ -43,7 +43,7 @@ extension TerminalChat {
         "web.fetch",
     ]
 
-    func handlePlanCommand(_ command: String) -> TerminalSubmittedLineAction {
+    func handlePlanCommand(_ command: String) async -> TerminalSubmittedLineAction {
         let argument = String(command.dropFirst("/plan".count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -54,7 +54,15 @@ extension TerminalChat {
                 writeSystemMessage("No active plan.\n")
                 return .continueChat
             }
-            writeMarkdownMessage(Self.planStatusTable(for: activePlan))
+            let graph = try? await sessionRunner.taskGraphSnapshot(
+                sessionID: sessionID,
+                graphID: activePlan.id
+            )
+            let projectedPlan = graph.map {
+                Self.plan(activePlan, applying: $0)
+            } ?? activePlan
+            self.activePlan = projectedPlan
+            writeMarkdownMessage(Self.planStatusTable(for: projectedPlan, graph: graph))
             return .continueChat
         case "approve":
             writeSubmittedPrompt(command)
@@ -63,10 +71,39 @@ extension TerminalChat {
                 writeFailureMessage(Self.planUnavailableForApprovalMessage)
                 return .continueChat
             }
+            do {
+                if try await sessionRunner.taskGraphSnapshot(
+                    sessionID: sessionID,
+                    graphID: plan.id
+                ) == nil,
+                   !plan.points.isEmpty {
+                    _ = try await sessionRunner.taskOrchestrator.createGraph(
+                        sessionID: sessionID,
+                        id: plan.id,
+                        source: .plan(planID: plan.id),
+                        state: .draft,
+                        tasks: Self.taskDefinitions(for: plan.points),
+                        makeCurrent: true,
+                        archivePreviousCurrent: true
+                    )
+                }
+                if try await sessionRunner.taskGraphSnapshot(
+                    sessionID: sessionID,
+                    graphID: plan.id
+                ) != nil {
+                    _ = try await sessionRunner.activateTaskGraph(
+                        id: plan.id,
+                        sessionID: sessionID
+                    )
+                }
+            } catch {
+                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+                return .continueChat
+            }
             plan.isApproved = true
             activePlan = plan
             writeSystemMessage(
-                "Approved the active plan. Starting implementation now; /review will use it for coverage verification.\n"
+                "Approved the active plan and activated its task graph. Starting implementation now; /review will verify task claims against real files.\n"
             )
             return .runHiddenPrompt(
                 Self.planImplementationPrompt(for: plan),
@@ -74,12 +111,26 @@ extension TerminalChat {
             )
         case "clear":
             writeSubmittedPrompt(command)
-            guard activePlan != nil else {
+            guard let plan = activePlan else {
                 writeSystemMessage("No active plan to clear.\n")
                 return .continueChat
             }
+            do {
+                if try await sessionRunner.taskGraphSnapshot(
+                    sessionID: sessionID,
+                    graphID: plan.id
+                ) != nil {
+                    _ = try await sessionRunner.archiveTaskGraph(
+                        id: plan.id,
+                        sessionID: sessionID
+                    )
+                }
+            } catch {
+                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+                return .continueChat
+            }
             activePlan = nil
-            writeSystemMessage("Cleared the active plan.\n")
+            writeSystemMessage("Cleared the active plan and archived its task graph.\n")
             return .continueChat
         default:
             break
@@ -129,11 +180,31 @@ extension TerminalChat {
     static let planAuthorAgentName = "plan-author"
 
     static func planImplementationPrompt(for plan: TerminalSessionPlan) -> String {
-        """
-        Implement the active approved plan now. Work through its points in order, keep their \
-        todo statuses synchronized, validate the changes, and stop when implementation is \
-        complete or a real blocker is reached. Do not create another plan and do not wait for \
-        an additional user prompt before starting.
+        guard !plan.points.isEmpty else {
+            return """
+            Implement the active approved legacy plan now. Work through its written steps in \
+            order, validate the changes, and stop when implementation is complete or a real \
+            blocker is reached. This saved plan has no structured task graph, so do not invent \
+            task IDs or replace the plan.
+
+            Goal: \(plan.originalGoal)
+
+            Approved plan:
+            \(plan.consolidatedText)
+            """
+        }
+        return """
+        Implement the active approved plan now, using the session task graph as the control \
+        plane. Start by calling task.list with runnableOnly=true. Execute small tasks directly, \
+        delegate independent read-only/report tasks in one agent.create batch using each taskID, \
+        and run at most one isolationMode=implementation sub-agent at a time because all \
+        implementation agents share the working directory. Before direct work, transition that \
+        task to in_progress with task.update; after implementation record output and either \
+        complete report work or move implementation work to awaiting_validation. Validate \
+        implementation tasks independently before marking them completed. Repeat until the \
+        graph is completed or a real blocker is recorded. Respect dependencies, never claim a \
+        task twice, use task.retry only explicitly, and do not recreate or replace the approved \
+        plan.
 
         Goal: \(plan.originalGoal)
 
@@ -143,13 +214,45 @@ extension TerminalChat {
     }
 
     static func planStatusTable(for plan: TerminalSessionPlan) -> String {
+        planStatusTable(for: plan, graph: nil)
+    }
+
+    static func planStatusTable(
+        for plan: TerminalSessionPlan,
+        graph: TaskGraphSnapshot?
+    ) -> String {
         let overallStatus: String
-        if plan.isCompleted {
+        if let graph {
+            switch graph.state {
+            case .draft:
+                overallStatus = "awaiting_approval"
+            case .completed, .cancelled, .archived:
+                overallStatus = graph.state.rawValue
+            case .active:
+                if graph.tasks.contains(where: { $0.status == .failed }) {
+                    overallStatus = "failed"
+                } else if graph.tasks.contains(where: { $0.status == .blocked }) {
+                    overallStatus = "blocked"
+                } else if graph.tasks.contains(where: { $0.status == .inProgress }) {
+                    overallStatus = "in_progress"
+                } else if graph.tasks.contains(where: { $0.status == .awaitingValidation }) {
+                    overallStatus = "awaiting_validation"
+                } else if graph.tasks.contains(where: { $0.status == .cancelled }) {
+                    overallStatus = "cancelled"
+                } else {
+                    overallStatus = "active"
+                }
+            }
+        } else if plan.isCompleted {
             overallStatus = "completed"
+        } else if plan.points.contains(where: { $0.status == .failed }) {
+            overallStatus = "failed"
         } else if plan.points.contains(where: { $0.status == .blocked }) {
             overallStatus = "blocked"
         } else if plan.points.contains(where: { $0.status == .inProgress }) {
             overallStatus = "in_progress"
+        } else if plan.points.contains(where: { $0.status == .awaitingValidation }) {
+            overallStatus = "awaiting_validation"
         } else if plan.isApproved {
             overallStatus = "pending"
         } else {
@@ -174,6 +277,53 @@ extension TerminalChat {
             })
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    static func plan(
+        _ plan: TerminalSessionPlan,
+        applying graph: TaskGraphSnapshot
+    ) -> TerminalSessionPlan {
+        var projected = plan
+        let tasksByID = Dictionary(uniqueKeysWithValues: graph.tasks.map { ($0.id, $0) })
+        for index in projected.points.indices {
+            guard let task = tasksByID[projected.points[index].id] else { continue }
+            projected.points[index].status = planPointStatus(for: task.status)
+            projected.points[index].dependsOn = task.dependsOn
+        }
+        return projected
+    }
+
+    static func planPointStatus(for status: TaskStatus) -> TerminalSessionPlanPointStatus {
+        switch status {
+        case .pending: .pending
+        case .inProgress: .inProgress
+        case .awaitingValidation: .awaitingValidation
+        case .completed: .completed
+        case .blocked: .blocked
+        case .failed: .failed
+        case .cancelled: .cancelled
+        }
+    }
+
+    static func taskDefinitions(
+        for points: [TerminalSessionPlanPoint]
+    ) -> [TaskDefinition] {
+        points.enumerated().map { index, point in
+            let dependencies: [String]
+            if point.hasExplicitDependencies {
+                dependencies = point.dependsOn
+            } else if index > 0 {
+                dependencies = [points[index - 1].id]
+            } else {
+                dependencies = []
+            }
+            return TaskDefinition(
+                id: point.id,
+                title: point.text,
+                order: index + 1,
+                dependsOn: dependencies
+            )
+        }
     }
 
     static func planPointUpdates(
@@ -201,7 +351,13 @@ extension TerminalChat {
             case .blocked:
                 status = .blocked
             }
-            return TerminalSessionPlanPoint(id: id, text: text, status: status)
+            return TerminalSessionPlanPoint(
+                id: id,
+                text: text,
+                status: status,
+                dependsOn: todo.dependsOn ?? [],
+                hasExplicitDependencies: todo.dependsOn != nil
+            )
         }
         guard !points.isEmpty else {
             return nil
@@ -245,6 +401,89 @@ extension TerminalChat {
         }
         activePlan = plan
         return !wasCompleted && plan.isCompleted
+    }
+
+    func synchronizeTaskGraphFromLegacyTodo(
+        toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult
+    ) async {
+        guard !result.isFailure,
+              let plan = activePlan,
+              plan.isApproved,
+              let update = Self.planPointUpdates(from: toolCall) else {
+            return
+        }
+
+        for point in update.points {
+            guard var view = try? await sessionRunner.taskOrchestrator.task(
+                sessionID: sessionID,
+                taskID: point.id,
+                graphID: plan.id
+            ) else { continue }
+            switch point.status {
+            case .pending:
+                if view.task.status == .failed || view.task.status == .blocked {
+                    view = (try? await sessionRunner.taskOrchestrator.retryTask(
+                        sessionID: sessionID,
+                        taskID: point.id,
+                        graphID: plan.id
+                    )) ?? view
+                }
+            case .inProgress:
+                if view.task.status == .pending {
+                    view = (try? await sessionRunner.taskOrchestrator.updateTask(
+                        sessionID: sessionID,
+                        taskID: point.id,
+                        graphID: plan.id,
+                        update: TaskUpdate(status: .inProgress)
+                    )) ?? view
+                }
+            case .completed:
+                if view.task.status == .pending {
+                    view = (try? await sessionRunner.taskOrchestrator.updateTask(
+                        sessionID: sessionID,
+                        taskID: point.id,
+                        graphID: plan.id,
+                        update: TaskUpdate(status: .inProgress)
+                    )) ?? view
+                }
+                if view.task.status == .inProgress {
+                    _ = try? await sessionRunner.taskOrchestrator.updateTask(
+                        sessionID: sessionID,
+                        taskID: point.id,
+                        graphID: plan.id,
+                        update: TaskUpdate(status: .completed)
+                    )
+                } else if view.task.status == .awaitingValidation {
+                    _ = try? await sessionRunner.taskOrchestrator.validateTaskResult(
+                        sessionID: sessionID,
+                        taskID: point.id,
+                        succeeded: true,
+                        evidence: [
+                            TaskEvidence(
+                                kind: "legacy_todo_bridge",
+                                summary: "Legacy plan progress reported completion."
+                            )
+                        ]
+                    )
+                }
+            case .blocked:
+                if view.task.status == .pending || view.task.status == .inProgress
+                    || view.task.status == .awaitingValidation {
+                    _ = try? await sessionRunner.taskOrchestrator.updateTask(
+                        sessionID: sessionID,
+                        taskID: point.id,
+                        graphID: plan.id,
+                        update: TaskUpdate(
+                            status: .blocked,
+                            statusReason: "legacy plan progress reported a blocker"
+                        )
+                    )
+                }
+            case .awaitingValidation, .failed, .cancelled:
+                break
+            }
+        }
     }
 
     private static func escapedPlanTableCell(_ text: String) -> String {
@@ -340,8 +579,11 @@ extension TerminalChat {
             item for every numbered implementation point authored by the Planner. Copy each \
             point's wording and order without reinterpretation. Use a fresh short token \
             shared by this plan and stable IDs "plan-<token>-1", "plan-<token>-2", and so \
-            on. Keep every status "pending". Do not include risks, background notes, open \
-            questions, or validation summaries as separate items.
+            on. Keep every status "pending". Include dependsOn for every item: use the stable \
+            IDs of prerequisite points, or an explicit empty array for independent points. \
+            If the Planner did not specify dependencies, use a safe sequential chain. Do not \
+            include risks, background notes, open questions, or validation summaries as \
+            separate items.
             - Your final response must be exactly the Planner's latest output, verbatim. Do \
             not add an introduction or conclusion, summarize it, change its wording, reorder \
             it, or wrap it in a quotation or code block.
@@ -414,6 +656,7 @@ extension TerminalChat {
 enum TerminalPlanGenerationError: LocalizedError {
     case plannerOutputUnavailable
     case sessionHistoryUnavailable
+    case structuredTasksUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -423,6 +666,9 @@ enum TerminalPlanGenerationError: LocalizedError {
         case .sessionHistoryUnavailable:
             return "The Planner produced a plan, but ZenCODE could not replace the current "
                 + "agent's response in the session history. The plan was not recorded."
+        case .structuredTasksUnavailable:
+            return "The Planner produced text but did not register a valid structured task list; "
+                + "the previous plan and task graph were left unchanged."
         }
     }
 }

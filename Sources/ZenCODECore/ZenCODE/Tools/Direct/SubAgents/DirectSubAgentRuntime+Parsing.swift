@@ -90,6 +90,7 @@ extension DirectSubAgentRuntime {
                 ["agent", "agentName", "agent_name", "agentID", "agent_id", "profile", "profileName", "profile_name"],
                 in: object
             )?.nilIfBlank,
+            taskID: firstString(["taskID", "task_id"], in: object)?.nilIfBlank,
             prompt: firstString(["prompt", "message", "initialPrompt", "initial_prompt"], in: object)?.nilIfBlank,
             isolationMode: IsolationMode(
                 rawValue: firstString(["isolationMode", "isolation_mode", "mode"], in: object)

@@ -31,6 +31,8 @@ records with the manifest and installer catalogs. On Linux,
 `swift-tools-feature` is omitted from installation, not from the SwiftPM
 product set.
 
+The task control plane follows the same compatibility rule: `SessionTaskOrchestrator` is the sole mutable owner, task checkpoint schema 1 is written atomically per project/session, and saved-session v3 embeds the current graph while continuing to decode v2 snapshots without one. Backend replacement may rebuild transient model state but must not discard the graph; only a logical session reset deletes its checkpoint.
+
 ## Target Layout
 
 The established public products remain stable while internal targets and source
@@ -47,6 +49,7 @@ layout are made explicit.
 | `Sources/ZenPackageMetadata` | Internal bundled-feature distribution metadata used for catalog parity; it is not a public product. |
 | `Sources/Features/<Feature>` | A standalone executable feature root. Keep its entry point thin and place implementation in feature-owned support or library targets; Xcode Tools is the library-plus-executable exception described above. |
 | `Sources/ZenCODECore/ZenCODE` | Runtime domains: `Agent`, `Remote`, `Tools`, `Features`, `Context`, `Memory`, `FileChanges`, `Runtime`, and `Support`; `ZenCODETUI` and ACP remain source areas within this target. |
+| `Sources/ZenCODECore/ZenCODE/Runtime/Sessions` | Neutral session state and persistence, including the authoritative task DAG, attempt fencing, execution scopes, and atomic task-graph checkpoints. `AgentCoreSessionRunner` owns one orchestrator and injects it into every backend; direct task tools are stateless adapters and TUI/ACP code only projects or restores snapshots. |
 | `Sources/ZenCODECore/ZenCODE/ACP` | ACP protocol adaptation only: JSON-RPC routing, parsing, lifecycle, and event encoding. |
 | `Sources/ZenCODECore/ZenCODETUI` | Terminal-only state, input, rendering, and presentation. Shared runtime types must not be introduced here. |
 | `Sources/LocalRuntimeSupport` | Internal local-runtime backend-selection support; it depends on `ZenCODECore` and is not a public product. |

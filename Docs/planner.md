@@ -57,8 +57,8 @@ When `/plan` runs:
 3. The Planner receives the complete goal, relevant conversation constraints, and the read-only planning tool list.
 4. The Planner inspects the necessary context and writes the complete final plan, including ordered actionable points, likely files or areas, risks, open questions, and validation.
 5. If the result is incomplete, the coordinator asks the same Planner to revise it instead of filling gaps itself.
-6. The coordinator copies the Planner's numbered points into `todo.write` only for status tracking. The TUI then takes the Planner's `latestOutput` directly, displays it, and records it as the active plan; any alternative plan text produced by the current agent is ignored.
-7. The Planner-authored plan becomes the active, unapproved session plan. A later successful `/plan <goal>` replaces it and requires approval again. If no completed Planner output is available, the planning turn fails rather than falling back to a plan written by `Default` or another current profile.
+6. The coordinator copies the Planner's numbered points and explicit dependencies into one `todo.write` bootstrap call. The TUI validates those points as a DAG, creates a persistent draft task graph, then takes the Planner's `latestOutput` directly, displays it, and records it as the active plan; any alternative plan text produced by the current agent is ignored. `todo.*` is not used for implementation progress after this bootstrap.
+7. The Planner-authored plan and valid draft graph become the active, unapproved session plan. A later successful `/plan <goal>` archives the previous graph, replaces the plan, and requires approval again. If no completed Planner output or valid structured graph is available, the planning turn fails rather than falling back to a plan written by `Default` or another current profile.
 
 ## Planner Profile
 
@@ -83,9 +83,9 @@ Setup can create a built-in `Planner` profile in `~/.zencode/agents.json`. The d
 
    Use `/plan status` at any time to show the active plan as a table with one status per point. This command is local and does not require the `sub-agents` tool group.
 
-   During implementation, ZenCODE makes the session todo progress tool available for the approved plan and asks the model to update each stable plan ID to `in_progress`, `completed`, or `blocked`. Successful updates are copied into the persisted plan state. When every point becomes `completed`, the TUI prints the completed status table automatically. Status is not inferred from free-form response text or from the presence of a diff.
+   During implementation, the approved graph is the control plane. The model calls `task.list` for runnable work, uses `task.update` for direct coordinator attempts, and passes `taskID` to `agent.create` for atomic delegated claims. Dependencies gate execution; direct and delegated attempts retain output/error history. Successful report work can complete immediately, while delegated implementation stops at `awaiting_validation` until independently validated. `/plan status` projects these graph states into the plan table, and the TUI emits a compact graph overview as attempts change. Status is not inferred from free-form response text or from the presence of a diff.
 
-   Use `/plan clear` when the active plan is no longer relevant. The active plan, including its approval and point status, is preserved by save/load; a new session or agent switch clears it. Plans saved before structured status support remain loadable and are shown as legacy plans without tracked points.
+   Use `/plan clear` when the active plan is no longer relevant. It archives the graph rather than erasing its history. The active plan and current task graph are preserved by v3 save/load snapshots and by automatic per-session graph checkpoints; a new logical session or agent switch interrupts workers and discards the graph. Older v2/legacy plans remain loadable without a graph.
 3. ZenCODE implements the Planner-authored plan immediately with the current `Default`, `Xcode`, or other implementation profile; no additional prompt is required.
 4. Validate with the planned build, test, lint, or diagnostic commands.
 5. Run a read-only review of the tracked session changes and approved-plan coverage:

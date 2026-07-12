@@ -54,6 +54,7 @@ public extension AgentCoreSessionRunner {
         }
 
         let name = Self.normalizedSavedSessionName(rawName)
+        let taskGraph = try? await taskGraphSnapshot(sessionID: sessionID)
         let workingDirectory = URL(fileURLWithPath: snapshot.workingDirectoryPath)
         let existingSession = try? TerminalSessionStore.load(
             name: name,
@@ -77,7 +78,8 @@ public extension AgentCoreSessionRunner {
             systemPrompt: snapshot.systemPrompt,
             history: snapshot.history,
             transcriptHistory: transcriptHistory,
-            activePlan: activePlan
+            activePlan: activePlan,
+            taskGraph: taskGraph
         )
 
         _ = try TerminalSessionStore.save(

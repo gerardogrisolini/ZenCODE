@@ -147,5 +147,18 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
                 ?? DirectSubAgentRuntime.unavailableContextualBackendFactory
         )
     }
+    public func installTaskOrchestrator(
+        _ orchestrator: SessionTaskOrchestrator
+    ) async {
+        await toolExecutor.installTaskOrchestrator(orchestrator)
+    }
+
+    public func closeSubAgent(id: String) async -> Bool {
+        await toolExecutor.closeSubAgent(id: id)
+    }
+
+    public func interruptSubAgents(rootSessionID: String) async -> Int {
+        await toolExecutor.interruptSubAgents(rootSessionID: rootSessionID)
+    }
 }
 #endif

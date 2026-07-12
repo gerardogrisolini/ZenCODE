@@ -5,7 +5,7 @@
 
 import Foundation
 
-extension DirectTodoTaskRuntime {
+extension DirectTodoRuntime {
     public static func normalizedToolRequest(
         for toolCall: DirectAgentToolCall
     ) -> ToolRequest {
@@ -24,9 +24,13 @@ extension DirectTodoTaskRuntime {
         if let content = firstString(["content", "title"], in: arguments)?.nilIfBlank {
             return [
                 Todo(
-                    id: firstString(["id"], in: arguments)?.nilIfBlank ?? "todo_\(UUID().uuidString.lowercased())",
+                    id: firstString(["id"], in: arguments)?.nilIfBlank
+                        ?? "todo_\(UUID().uuidString.lowercased())",
                     content: content,
-                    status: TodoStatus(rawValue: firstString(["status"], in: arguments))
+                    status: TodoStatus(rawValue: firstString(["status"], in: arguments)),
+                    dependsOn: hasAnyValue(["dependsOn", "depends_on"], in: arguments)
+                        ? (firstStringList(["dependsOn", "depends_on"], in: arguments) ?? [])
+                        : nil
                 )
             ]
         }
@@ -42,56 +46,13 @@ extension DirectTodoTaskRuntime {
             throw DirectTodoTaskRuntimeError.missingArgument("content")
         }
         return Todo(
-            id: firstString(["id"], in: object)?.nilIfBlank ?? "todo_\(UUID().uuidString.lowercased())",
+            id: firstString(["id"], in: object)?.nilIfBlank
+                ?? "todo_\(UUID().uuidString.lowercased())",
             content: content,
-            status: TodoStatus(rawValue: firstString(["status"], in: object))
-        )
-    }
-
-    public static func requestedTaskPayloads(
-        from arguments: [String: JSONValue],
-        requireTitle: Bool
-    ) throws -> [TaskPayload] {
-        if let taskArray = firstArray(["tasks", "items"], in: arguments) {
-            return try taskArray.map {
-                try decodeTaskPayload(from: $0, requireTitle: requireTitle)
-            }
-        }
-        return [
-            try decodeTaskPayload(
-                from: .object(arguments),
-                requireTitle: requireTitle
-            )
-        ]
-    }
-
-    public static func decodeTaskPayload(
-        from value: JSONValue,
-        requireTitle: Bool
-    ) throws -> TaskPayload {
-        guard case let .object(object) = value else {
-            throw DirectTodoTaskRuntimeError.invalidArgument("task")
-        }
-        let title = firstString(["title", "name"], in: object)?.nilIfBlank
-        if requireTitle, title == nil {
-            throw DirectTodoTaskRuntimeError.missingArgument("title")
-        }
-        return TaskPayload(
-            id: firstString(["id"], in: object)?.nilIfBlank,
-            title: title,
-            details: firstString(["details", "description"], in: object)?.nilIfBlank,
-            status: hasAnyValue(["status"], in: object)
-                ? TaskStatus(rawValue: firstString(["status"], in: object))
-                : nil,
-            priority: hasAnyValue(["priority"], in: object)
-                ? TaskPriority(rawValue: firstString(["priority"], in: object))
-                : nil,
-            dependsOn: firstStringList(["dependsOn", "depends_on"], in: object),
-            assigneeAgentID: firstString(
-                ["assigneeAgentID", "assignee_agent_id", "agentID", "agent_id"],
-                in: object
-            )?.nilIfBlank,
-            output: firstString(["output"], in: object)?.nilIfBlank
+            status: TodoStatus(rawValue: firstString(["status"], in: object)),
+            dependsOn: hasAnyValue(["dependsOn", "depends_on"], in: object)
+                ? (firstStringList(["dependsOn", "depends_on"], in: object) ?? [])
+                : nil
         )
     }
 
@@ -110,16 +71,11 @@ extension DirectTodoTaskRuntime {
         in arguments: [String: JSONValue]
     ) -> [JSONValue]? {
         for key in keys {
-            guard let value = arguments[key] else {
-                continue
-            }
+            guard let value = arguments[key] else { continue }
             switch value {
-            case let .array(values):
-                return values
-            case let .object(object):
-                return [.object(object)]
-            default:
-                continue
+            case let .array(values): return values
+            case let .object(object): return [.object(object)]
+            default: continue
             }
         }
         return nil
@@ -130,21 +86,14 @@ extension DirectTodoTaskRuntime {
         in arguments: [String: JSONValue]
     ) -> String? {
         for key in keys {
-            guard let value = arguments[key] else {
-                continue
-            }
+            guard let value = arguments[key] else { continue }
             switch value {
-            case let .string(string):
-                return string
+            case let .string(string): return string
             case let .number(number):
-                if floor(number) == number {
-                    return String(Int(number))
-                }
+                if floor(number) == number { return String(Int(number)) }
                 return String(number)
-            case let .bool(bool):
-                return bool ? "true" : "false"
-            default:
-                continue
+            case let .bool(bool): return bool ? "true" : "false"
+            default: continue
             }
         }
         return nil
@@ -155,25 +104,54 @@ extension DirectTodoTaskRuntime {
         in arguments: [String: JSONValue]
     ) -> [String]? {
         for key in keys {
-            guard let value = arguments[key] else {
-                continue
-            }
+            guard let value = arguments[key] else { continue }
             switch value {
             case let .array(values):
                 return values.compactMap { value in
                     switch value {
-                    case let .string(string):
-                        return string
-                    case let .number(number):
-                        return String(number)
-                    default:
-                        return nil
+                    case let .string(string): return string
+                    case let .number(number): return String(number)
+                    default: return nil
                     }
                 }
+            case let .string(string): return [string]
+            default: continue
+            }
+        }
+        return nil
+    }
+
+    public static func firstBool(
+        _ keys: [String],
+        in arguments: [String: JSONValue]
+    ) -> Bool? {
+        for key in keys {
+            guard let value = arguments[key] else { continue }
+            switch value {
+            case let .bool(bool): return bool
             case let .string(string):
-                return [string]
-            default:
-                continue
+                switch string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+                case "true", "1", "yes": return true
+                case "false", "0", "no": return false
+                default: continue
+                }
+            case let .number(number): return number != 0
+            default: continue
+            }
+        }
+        return nil
+    }
+
+    public static func firstInt(
+        _ keys: [String],
+        in arguments: [String: JSONValue]
+    ) -> Int? {
+        for key in keys {
+            guard let value = arguments[key] else { continue }
+            switch value {
+            case let .number(number): return Int(number)
+            case let .string(string): return Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
+            default: continue
             }
         }
         return nil

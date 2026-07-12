@@ -80,6 +80,77 @@ struct MLXTerminalSessionStoreTests {
     }
 
     @Test
+    func savesAndLoadsTaskGraphSnapshot() throws {
+        let supportDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+        let now = Date(timeIntervalSince1970: 40)
+        let graph = TaskGraphSnapshot(
+            id: "plan-test",
+            source: .plan(planID: "plan-test"),
+            state: .active,
+            revision: 3,
+            tasks: [
+                TaskRecord(
+                    id: "plan-test-1",
+                    title: "Persist graph",
+                    order: 1,
+                    createdAt: now,
+                    updatedAt: now
+                )
+            ],
+            createdAt: now,
+            updatedAt: now
+        )
+        let session = sampleSession(
+            name: "task graph",
+            workingDirectory: supportDirectory.appendingPathComponent("Project"),
+            taskGraph: graph
+        )
+
+        let fileURL = try TerminalSessionStore.save(
+            session,
+            supportDirectoryURL: supportDirectory
+        )
+        let loaded = try TerminalSessionStore.load(from: fileURL)
+
+        #expect(loaded.version == 3)
+        #expect(loaded.taskGraph == graph)
+    }
+
+    @Test
+    func loadsVersionTwoSnapshotWithoutTaskGraph() throws {
+        let supportDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+        let fileURL = supportDirectory.appendingPathComponent("legacy.mlxsession")
+        try FileManager.default.createDirectory(
+            at: supportDirectory,
+            withIntermediateDirectories: true
+        )
+        let propertyList: [String: Any] = [
+            "version": 2,
+            "name": "v2",
+            "sessionID": "terminal-v2",
+            "workingDirectoryPath": "/tmp/v2-project",
+            "createdAt": Date(timeIntervalSince1970: 10),
+            "savedAt": Date(timeIntervalSince1970: 20),
+            "selectedTools": [],
+            "selectedSkillIDs": [],
+            "history": [],
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: propertyList,
+            format: .binary,
+            options: 0
+        )
+        try data.write(to: fileURL)
+
+        let loaded = try TerminalSessionStore.load(from: fileURL)
+
+        #expect(loaded.version == 2)
+        #expect(loaded.taskGraph == nil)
+    }
+
+    @Test
     func decodesLegacyPlanWithoutStructuredPoints() throws {
         let legacyPropertyList: [String: Any] = [
             "version": TerminalSavedSession.currentVersion,
@@ -347,7 +418,8 @@ struct MLXTerminalSessionStoreTests {
         name: String,
         workingDirectory: URL,
         transcriptHistory: [AgentRuntimeMessage]? = nil,
-        activePlan: TerminalSessionPlan? = nil
+        activePlan: TerminalSessionPlan? = nil,
+        taskGraph: TaskGraphSnapshot? = nil
     ) -> TerminalSavedSession {
         TerminalSavedSession(
             name: name,
@@ -392,7 +464,8 @@ struct MLXTerminalSessionStoreTests {
                 )
             ],
             transcriptHistory: transcriptHistory,
-            activePlan: activePlan
+            activePlan: activePlan,
+            taskGraph: taskGraph
         )
     }
 

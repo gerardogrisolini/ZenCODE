@@ -63,5 +63,18 @@ actor MLXServerCoderBackend: AgentRuntimeBackend {
             }
         )
     }
+    func installTaskOrchestrator(
+        _ orchestrator: SessionTaskOrchestrator
+    ) async {
+        await toolExecutor.installTaskOrchestrator(orchestrator)
+    }
+
+    func closeSubAgent(id: String) async -> Bool {
+        await toolExecutor.closeSubAgent(id: id)
+    }
+
+    func interruptSubAgents(rootSessionID: String) async -> Int {
+        await toolExecutor.interruptSubAgents(rootSessionID: rootSessionID)
+    }
 }
 #endif

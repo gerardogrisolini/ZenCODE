@@ -57,7 +57,9 @@ extension TerminalChat {
                       activePlan.isApproved,
                       !activePlan.isCompleted {
                 var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
-                allowedToolNames.insert("todo.write")
+                allowedToolNames.formUnion([
+                    "task.list", "task.get", "task.update", "task.retry", "task.cancel"
+                ])
                 sessionConfiguration = currentSessionConfiguration(
                     allowedToolNames: allowedToolNames
                 )
@@ -143,8 +145,26 @@ extension TerminalChat {
                                 ), let plan = self.activePlan {
                                     await planPointCollector.recordAutomaticCompletion(plan)
                                 }
+                                await self.synchronizeTaskGraphFromLegacyTodo(
+                                    toolCall: toolCall,
+                                    result: result
+                                )
                             case .review:
                                 break
+                            }
+                        }
+                        if !result.isFailure,
+                           DirectTaskToolAdapter.isTaskToolName(toolCall.name),
+                           let currentPlan = self.activePlan,
+                           let graph = try? await self.sessionRunner.taskGraphSnapshot(
+                               sessionID: self.sessionID,
+                               graphID: currentPlan.id
+                           ) {
+                            let wasCompleted = currentPlan.isCompleted
+                            let projected = Self.plan(currentPlan, applying: graph)
+                            self.activePlan = projected
+                            if !wasCompleted && projected.isCompleted {
+                                await planPointCollector.recordAutomaticCompletion(projected)
                             }
                         }
                         if Self.isFileMutationTool(toolCall.name) {
@@ -198,7 +218,7 @@ extension TerminalChat {
                 finishThoughtOutputIfNeeded()
                 writeAssistantContent(response.text)
             }
-            recordPlanIfNeeded(
+            try await recordPlanAndTaskGraphIfNeeded(
                 responseText: response.text,
                 purpose: attempt.purpose,
                 points: await planPointCollector.snapshot()
@@ -225,6 +245,76 @@ extension TerminalChat {
                 fileChangeSummary: fileChangeSummary
             )
         }
+    }
+
+    @discardableResult
+    func recordPlanAndTaskGraphIfNeeded(
+        responseText: String,
+        purpose: TerminalPromptPurpose,
+        createdAt: Date = Date(),
+        points: [TerminalSessionPlanPoint]
+    ) async throws -> Bool {
+        guard case let .plan(originalGoal) = purpose else {
+            return false
+        }
+        let consolidatedText = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !consolidatedText.isEmpty else {
+            return false
+        }
+        guard !points.isEmpty else {
+            throw TerminalPlanGenerationError.structuredTasksUnavailable
+        }
+
+        let planID = Self.planID(from: points)
+        let candidate = TerminalSessionPlan(
+            id: planID,
+            originalGoal: originalGoal,
+            consolidatedText: consolidatedText,
+            createdAt: createdAt,
+            isApproved: false,
+            points: points
+        )
+        let definitions = points.enumerated().map { index, point in
+            let dependencies: [String]
+            if point.hasExplicitDependencies {
+                dependencies = point.dependsOn
+            } else if index > 0 {
+                dependencies = [points[index - 1].id]
+            } else {
+                dependencies = []
+            }
+            return TaskDefinition(
+                id: point.id,
+                title: point.text,
+                order: index + 1,
+                priority: .normal,
+                dependsOn: dependencies
+            )
+        }
+
+        _ = try await sessionRunner.taskOrchestrator.createGraph(
+            sessionID: sessionID,
+            id: candidate.id,
+            source: .plan(planID: candidate.id),
+            state: .draft,
+            tasks: definitions,
+            makeCurrent: true,
+            archivePreviousCurrent: true
+        )
+        activePlan = candidate
+        return true
+    }
+
+    static func planID(from points: [TerminalSessionPlanPoint]) -> String {
+        guard let firstID = points.first?.id.nilIfBlank else {
+            return "plan-\(UUID().uuidString.lowercased())"
+        }
+        let components = firstID.split(separator: "-", omittingEmptySubsequences: false)
+        if components.count > 1,
+           components.last.flatMap({ Int($0) }) != nil {
+            return components.dropLast().joined(separator: "-")
+        }
+        return "plan-\(UUID().uuidString.lowercased())"
     }
 
     @discardableResult

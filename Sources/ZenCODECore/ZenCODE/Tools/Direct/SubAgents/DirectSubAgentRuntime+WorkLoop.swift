@@ -9,6 +9,7 @@ import Foundation
 
 extension DirectSubAgentRuntime {
     public func queuePrompt(_ prompt: String, for agentID: String) throws {
+        try validateImplementationPromptTargets([agentID])
         guard var agent = agents[agentID] else {
             throw DirectSubAgentRuntimeError.agentNotFound(agentID)
         }
@@ -24,6 +25,43 @@ extension DirectSubAgentRuntime {
         agent.updatedAt = .now
         agents[agentID] = agent
         startAgentIfNeeded(agentID: agentID)
+    }
+
+    func validateImplementationPayloads(
+        _ payloads: [RequestedAgentPayload]
+    ) throws {
+        let promptedImplementations = payloads.filter {
+            $0.isolationMode == .implementation && $0.prompt != nil
+        }
+        guard promptedImplementations.count <= 1 else {
+            throw DirectSubAgentRuntimeError.unsafeImplementationParallelism
+        }
+        if !promptedImplementations.isEmpty,
+           agents.values.contains(where: {
+               $0.isolationMode == .implementation && $0.status.isPending
+           }) {
+            throw DirectSubAgentRuntimeError.unsafeImplementationParallelism
+        }
+    }
+
+    func validateImplementationPromptTargets(_ agentIDs: [String]) throws {
+        let targetIDs = Set(agentIDs)
+        let implementationTargetIDs = targetIDs.filter {
+            agents[$0]?.isolationMode == .implementation
+        }
+        guard implementationTargetIDs.count <= 1 else {
+            throw DirectSubAgentRuntimeError.unsafeImplementationParallelism
+        }
+        guard !implementationTargetIDs.isEmpty else { return }
+
+        let anotherWriterIsActive = agents.values.contains { agent in
+            agent.isolationMode == .implementation
+                && agent.status.isPending
+                && !targetIDs.contains(agent.id)
+        }
+        guard !anotherWriterIsActive else {
+            throw DirectSubAgentRuntimeError.unsafeImplementationParallelism
+        }
     }
 
     public func startAgentIfNeeded(agentID: String) {
@@ -44,6 +82,7 @@ extension DirectSubAgentRuntime {
                 return
             }
 
+            await recordTaskAttemptStarted(agentID: agentID)
             do {
                 let response = try await work.backend.sendPrompt(
                     sessionID: work.sessionID,
@@ -53,12 +92,12 @@ extension DirectSubAgentRuntime {
                         await self.recordEvent(event, agentID: agentID)
                     }
                 )
-                recordCompletion(response, agentID: agentID)
+                await recordCompletion(response, agentID: agentID)
             } catch is CancellationError {
-                recordCancellation(agentID: agentID)
+                await recordCancellation(agentID: agentID)
                 return
             } catch {
-                recordFailure(error, agentID: agentID)
+                await recordFailure(error, agentID: agentID)
                 return
             }
         }
@@ -178,10 +217,24 @@ extension DirectSubAgentRuntime {
         return String(normalized.prefix(limit - 1)) + "…"
     }
 
+    public func recordTaskAttemptStarted(agentID: String) async {
+        guard let agent = agents[agentID],
+              let taskID = agent.taskID,
+              let attemptID = agent.taskAttemptID,
+              let taskOrchestrator else {
+            return
+        }
+        _ = try? await taskOrchestrator.markAttemptRunning(
+            sessionID: agent.rootSessionID,
+            taskID: taskID,
+            attemptID: attemptID
+        )
+    }
+
     public func recordCompletion(
         _ response: DirectAgentResponse,
         agentID: String
-    ) {
+    ) async {
         guard var agent = agents[agentID],
               agent.status != .closed else {
             return
@@ -195,12 +248,23 @@ extension DirectSubAgentRuntime {
         agent.status = agent.pendingPrompts.isEmpty ? .idle : .queued
         agent.updatedAt = .now
         agents[agentID] = agent
+        if let taskID = agent.taskID,
+           let attemptID = agent.taskAttemptID,
+           let taskOrchestrator {
+            _ = try? await taskOrchestrator.completeAttempt(
+                sessionID: agent.rootSessionID,
+                taskID: taskID,
+                attemptID: attemptID,
+                output: agent.latestOutput,
+                requiresValidation: agent.isolationMode == .implementation
+            )
+        }
     }
 
     public func recordFailure(
         _ error: Error,
         agentID: String
-    ) {
+    ) async {
         guard var agent = agents[agentID] else {
             return
         }
@@ -214,9 +278,20 @@ extension DirectSubAgentRuntime {
         }
         agent.updatedAt = .now
         agents[agentID] = agent
+        if let taskID = agent.taskID,
+           let attemptID = agent.taskAttemptID,
+           let taskOrchestrator {
+            _ = try? await taskOrchestrator.failAttempt(
+                sessionID: agent.rootSessionID,
+                taskID: taskID,
+                attemptID: attemptID,
+                error: error.localizedDescription,
+                output: agent.latestOutput
+            )
+        }
     }
 
-    public func recordCancellation(agentID: String) {
+    public func recordCancellation(agentID: String) async {
         guard var agent = agents[agentID] else {
             return
         }
@@ -230,5 +305,15 @@ extension DirectSubAgentRuntime {
         }
         agent.updatedAt = .now
         agents[agentID] = agent
+        if let taskID = agent.taskID,
+           let attemptID = agent.taskAttemptID,
+           let taskOrchestrator {
+            _ = try? await taskOrchestrator.cancelAttempt(
+                sessionID: agent.rootSessionID,
+                taskID: taskID,
+                attemptID: attemptID,
+                reason: "Delegated sub-agent cancelled."
+            )
+        }
     }
 }

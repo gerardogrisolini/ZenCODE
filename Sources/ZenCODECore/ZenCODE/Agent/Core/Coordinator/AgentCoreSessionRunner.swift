@@ -23,21 +23,30 @@ public actor AgentCoreSessionRunner {
     private var promptAuthorizationSessionIDs: [UUID: String] = [:]
     private let defaultToolAuthorizationHandler: AgentToolAuthorizationHandler?
     let mcpRuntime: DirectMCPToolRuntime
+    public let taskOrchestrator: SessionTaskOrchestrator
     private let backendFactory: AgentRuntimeBackendFactory?
 
     public init(
         defaultToolAuthorizationHandler: AgentToolAuthorizationHandler? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
-        backendFactory: AgentRuntimeBackendFactory? = nil
+        backendFactory: AgentRuntimeBackendFactory? = nil,
+        taskOrchestrator: SessionTaskOrchestrator? = nil,
+        taskGraphStore: SessionTaskGraphStore? = SessionTaskGraphStore()
     ) {
         self.defaultToolAuthorizationHandler = defaultToolAuthorizationHandler
         self.mcpRuntime = mcpRuntime
         self.backendFactory = backendFactory
+        self.taskOrchestrator = taskOrchestrator
+            ?? SessionTaskOrchestrator(store: taskGraphStore)
     }
 
     public func createSession(
         configuration: AgentCoreSessionConfiguration
     ) async throws {
+        try await taskOrchestrator.registerSession(
+            id: configuration.sessionID,
+            workingDirectory: URL(fileURLWithPath: configuration.workingDirectoryPath)
+        )
         let backend = try await ensureBackend(configuration: configuration)
         await backend.createSession(
             id: configuration.sessionID,
@@ -213,6 +222,16 @@ public actor AgentCoreSessionRunner {
         )
         await onEvent(.sessionSnapshot(recovery.snapshot))
         await onEvent(.turnEnded(outcome))
+    }
+
+    public func closeSubAgent(id: String) async -> Bool {
+        guard let backend else { return false }
+        return await backend.closeSubAgent(id: id)
+    }
+
+    public func interruptSubAgents(rootSessionID: String) async -> Int {
+        guard let backend else { return 0 }
+        return await backend.interruptSubAgents(rootSessionID: rootSessionID)
     }
 
     public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
@@ -424,28 +443,46 @@ public actor AgentCoreSessionRunner {
         promptTaskRegistry.cancelAll(for: sessionID)
     }
 
+    /// Rebuilds transient model/session state while preserving the authoritative
+    /// task graph for the same session identity.
+    public func rebuildSession(id sessionID: String) async {
+        promptTaskRegistry.cancelAll(for: sessionID)
+        sessions.removeValue(forKey: sessionID)
+        lastKnownSessionSnapshots.removeValue(forKey: sessionID)
+        await backend?.clearSession(id: sessionID)
+    }
+
+    /// Discards a logical session, including its persisted task graph.
     public func resetSession(id sessionID: String? = nil) async {
         if let sessionID {
-            promptTaskRegistry.cancelAll(for: sessionID)
-            sessions.removeValue(forKey: sessionID)
-            lastKnownSessionSnapshots.removeValue(forKey: sessionID)
-            await backend?.clearSession(id: sessionID)
+            _ = await interruptSubAgents(rootSessionID: sessionID)
+            await rebuildSession(id: sessionID)
+            try? await taskOrchestrator.discardSession(id: sessionID)
             return
         }
 
         promptTaskRegistry.cancelAllTasks()
         promptAuthorizationHandlers.removeAll()
 
-        let sessionIDs = Array(sessions.keys)
+        let taskSessionIDs = await taskOrchestrator.registeredSessionIDs()
+        let sessionIDs = Array(
+            Set(sessions.keys)
+                .union(lastKnownSessionSnapshots.keys)
+                .union(taskSessionIDs)
+        )
         sessions.removeAll()
         lastKnownSessionSnapshots.removeAll()
         for sessionID in sessionIDs {
+            _ = await interruptSubAgents(rootSessionID: sessionID)
             await backend?.clearSession(id: sessionID)
+            try? await taskOrchestrator.discardSession(id: sessionID)
         }
     }
 
     public func closeSession(id sessionID: String) async {
         promptTaskRegistry.cancelAll(for: sessionID)
+        _ = await interruptSubAgents(rootSessionID: sessionID)
+        try? await taskOrchestrator.flush(sessionID: sessionID)
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
         await backend?.closeSession(id: sessionID)
@@ -464,6 +501,7 @@ public actor AgentCoreSessionRunner {
     public func shutdownBackendKeepingExternalTools() async {
         promptTaskRegistry.cancelAllTasks()
         promptAuthorizationHandlers.removeAll()
+        try? await taskOrchestrator.flush()
         sessions.removeAll()
         lastKnownSessionSnapshots.removeAll()
         activeRuntimeConfiguration = nil
@@ -525,6 +563,7 @@ public actor AgentCoreSessionRunner {
             mcpRuntime: mcpRuntime,
             backendFactory: backendFactory
         )
+        await backend.installTaskOrchestrator(taskOrchestrator)
         self.backend = backend
         activeRuntimeConfiguration = configuration
         ZenLogger.debug(

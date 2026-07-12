@@ -69,6 +69,8 @@ public final class TerminalChat: @unchecked Sendable {
     public var lastFileChangeSummary: TurnFileChangeSummary?
     public var activePlan: TerminalSessionPlan?
     public var lastRenderedSubAgentOverviewSignature: String?
+    public var lastRenderedTaskGraphOverviewSignature: String?
+    public var taskGraphObserverTask: Task<Void, Never>?
     public var availableSkillsCache: [PromptSkill]?
     public var toolOutputDetailLevel: ToolOutputDetailLevel = .compact
     public var activeCompactToolCallID: String?
@@ -119,6 +121,10 @@ public final class TerminalChat: @unchecked Sendable {
         )
         self.selectedAgent = configuration.selectedAgent
         self.manualModelIDOverride = configuration.modelID
+    }
+
+    deinit {
+        taskGraphObserverTask?.cancel()
     }
 
     public static func supportsInteractiveStatusBar() -> Bool {

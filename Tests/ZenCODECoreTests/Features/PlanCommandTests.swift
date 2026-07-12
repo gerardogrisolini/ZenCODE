@@ -54,7 +54,7 @@ struct PlanCommandTests {
     }
 
     @Test
-    func planStatusRendersStructuredItemsWithoutDelegation() throws {
+    func planStatusRendersStructuredItemsWithoutDelegation() async throws {
         let terminal = try makeTerminal()
         terminal.selectedToolKeys.remove("sub-agents")
         let plan = TerminalSessionPlan(
@@ -76,7 +76,7 @@ struct PlanCommandTests {
         )
         terminal.activePlan = plan
 
-        #expect(isContinueChat(terminal.handlePlanCommand("/plan STATUS")))
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan STATUS")))
         #expect(terminal.activePlan == plan)
 
         let table = TerminalChat.planStatusTable(for: plan)
@@ -94,6 +94,42 @@ struct PlanCommandTests {
         #expect(!rendered.contains("|---:"))
         #expect(rendered.contains("Plan item"))
         #expect(rendered.contains("in_progress"))
+    }
+
+    @Test
+    func planStatusDerivesFailureFromAnActiveGraph() {
+        let now = Date(timeIntervalSince1970: 10)
+        let plan = TerminalSessionPlan(
+            id: "plan-failure",
+            originalGoal: "Track failure",
+            consolidatedText: "Implement.",
+            isApproved: true,
+            points: [
+                TerminalSessionPlanPoint(id: "plan-failure-1", text: "Implement")
+            ]
+        )
+        let graph = TaskGraphSnapshot(
+            id: plan.id,
+            source: .plan(planID: plan.id),
+            state: .active,
+            tasks: [
+                TaskRecord(
+                    id: "plan-failure-1",
+                    title: "Implement",
+                    order: 1,
+                    status: .failed,
+                    createdAt: now,
+                    updatedAt: now
+                )
+            ],
+            createdAt: now,
+            updatedAt: now
+        )
+        let projected = TerminalChat.plan(plan, applying: graph)
+        let table = TerminalChat.planStatusTable(for: projected, graph: graph)
+
+        #expect(table.contains("**Overall status:** `failed`"))
+        #expect(table.contains("| 1 | Implement | `failed` |"))
     }
 
     @Test
@@ -140,16 +176,16 @@ struct PlanCommandTests {
     }
 
     @Test
-    func planStatusWithoutActivePlanDoesNotRequireSubAgents() throws {
+    func planStatusWithoutActivePlanDoesNotRequireSubAgents() async throws {
         let terminal = try makeTerminal()
         terminal.selectedToolKeys.remove("sub-agents")
 
-        #expect(isContinueChat(terminal.handlePlanCommand("/plan status")))
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan status")))
         #expect(terminal.activePlan == nil)
     }
 
     @Test
-    func barePlanCommandStopsBeforeDelegatingToPlanner() throws {
+    func barePlanCommandStopsBeforeDelegatingToPlanner() async throws {
         let configuration = try AgentConfiguration(
             hostedModelID: "mlx-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
@@ -164,7 +200,7 @@ struct PlanCommandTests {
         )
         terminal.selectedToolKeys.insert("sub-agents")
 
-        let action = terminal.handlePlanCommand("/plan")
+        let action = await terminal.handlePlanCommand("/plan")
 
         switch action {
         case .continueChat:
@@ -177,7 +213,7 @@ struct PlanCommandTests {
     }
 
     @Test
-    func planCommandWithGoalRunsHiddenDelegationPrompt() throws {
+    func planCommandWithGoalRunsHiddenDelegationPrompt() async throws {
         let configuration = try AgentConfiguration(
             hostedModelID: "mlx-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
@@ -192,7 +228,7 @@ struct PlanCommandTests {
         )
         terminal.selectedToolKeys.insert("sub-agents")
 
-        let action = terminal.handlePlanCommand("/plan fix the planner command")
+        let action = await terminal.handlePlanCommand("/plan fix the planner command")
 
         switch action {
         case let .runHiddenPrompt(prompt, purpose):
@@ -207,7 +243,7 @@ struct PlanCommandTests {
     }
 
     @Test
-    func successfulPlanOutputIsRecordedAndReplacementRequiresApprovalAgain() throws {
+    func successfulPlanOutputIsRecordedAndReplacementRequiresApprovalAgain() async throws {
         let terminal = try makeTerminal()
         let firstDate = Date(timeIntervalSince1970: 100)
         let secondDate = Date(timeIntervalSince1970: 200)
@@ -221,6 +257,7 @@ struct PlanCommandTests {
             ]
         ))
         #expect(terminal.activePlan == TerminalSessionPlan(
+            id: terminal.activePlan?.id,
             originalGoal: "first goal",
             consolidatedText: "First consolidated plan",
             createdAt: firstDate,
@@ -230,7 +267,7 @@ struct PlanCommandTests {
             ]
         ))
 
-        let approvalAction = terminal.handlePlanCommand("/plan approve")
+        let approvalAction = await terminal.handlePlanCommand("/plan approve")
         #expect(terminal.activePlan?.isApproved == true)
         guard case let .runHiddenPrompt(prompt, purpose) = approvalAction else {
             Issue.record("/plan approve should start implementation immediately")
@@ -328,8 +365,9 @@ struct PlanCommandTests {
 
         #expect(prompt.contains("Active approved plan progress:"))
         #expect(prompt.contains("plan-1 [pending]: Implement"))
-        #expect(prompt.contains("todo.write"))
-        #expect(prompt.contains("update it to \"completed\""))
+        #expect(prompt.contains("task.list"))
+        #expect(prompt.contains("task.update"))
+        #expect(!prompt.contains("todo.write"))
     }
 
     @Test
@@ -355,17 +393,17 @@ struct PlanCommandTests {
     }
 
     @Test
-    func approveRequiresACompletedPlanAndClearRemovesIt() throws {
+    func approveRequiresACompletedPlanAndClearRemovesIt() async throws {
         let terminal = try makeTerminal()
 
-        #expect(isContinueChat(terminal.handlePlanCommand("/plan approve")))
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan approve")))
         #expect(terminal.activePlan == nil)
 
         terminal.activePlan = TerminalSessionPlan(
             originalGoal: "goal",
             consolidatedText: "plan"
         )
-        let approvalAction = terminal.handlePlanCommand("/plan approve")
+        let approvalAction = await terminal.handlePlanCommand("/plan approve")
         #expect(terminal.activePlan?.isApproved == true)
         guard case let .runHiddenPrompt(prompt, purpose) = approvalAction else {
             Issue.record("/plan approve should start implementation immediately")
@@ -375,9 +413,9 @@ struct PlanCommandTests {
         #expect(prompt.contains("Goal: goal"))
         #expect(prompt.contains("Approved plan:\nplan"))
 
-        #expect(isContinueChat(terminal.handlePlanCommand("/plan clear")))
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan clear")))
         #expect(terminal.activePlan == nil)
-        #expect(isContinueChat(terminal.handlePlanCommand("/plan clear")))
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan clear")))
     }
 
     @Test
@@ -639,6 +677,98 @@ struct PlanCommandTests {
         #expect(corrected.last?.role == .assistant)
         #expect(corrected.last?.content == "Planner-authored final plan")
         #expect(corrected.last?.providerResponseID == nil)
+    }
+
+    @Test
+    func validPlanCreatesDraftGraphAndApprovalActivatesProjectedStatus() async throws {
+        let terminal = try makeTerminal()
+        let points = [
+            TerminalSessionPlanPoint(
+                id: "plan-graph-1",
+                text: "Implement model",
+                dependsOn: [],
+                hasExplicitDependencies: true
+            ),
+            TerminalSessionPlanPoint(
+                id: "plan-graph-2",
+                text: "Run validation",
+                dependsOn: ["plan-graph-1"],
+                hasExplicitDependencies: true
+            ),
+        ]
+
+        #expect(try await terminal.recordPlanAndTaskGraphIfNeeded(
+            responseText: "1. Implement model\n2. Run validation",
+            purpose: .plan(originalGoal: "Ship graph"),
+            points: points
+        ))
+        let draft = try #require(try await terminal.sessionRunner.taskGraphSnapshot(
+            sessionID: terminal.sessionID,
+            graphID: "plan-graph"
+        ))
+        #expect(draft.state == .draft)
+        #expect(draft.source == .plan(planID: "plan-graph"))
+        #expect(draft.tasks.map(\.dependsOn) == [[], ["plan-graph-1"]])
+        #expect(terminal.activePlan?.id == "plan-graph")
+
+        let approval = await terminal.handlePlanCommand("/plan approve")
+        guard case .runHiddenPrompt = approval else {
+            Issue.record("Approval should activate the draft and start implementation")
+            return
+        }
+        #expect(try await terminal.sessionRunner.taskGraphSnapshot(
+            sessionID: terminal.sessionID,
+            graphID: "plan-graph"
+        )?.state == .active)
+
+        let receipt = try #require(try await terminal.sessionRunner.taskOrchestrator.claimTasks(
+            sessionID: terminal.sessionID,
+            claims: [TaskClaim(taskID: "plan-graph-1", agentID: "worker")]
+        ).first)
+        _ = try await terminal.sessionRunner.taskOrchestrator.completeAttempt(
+            sessionID: terminal.sessionID,
+            taskID: "plan-graph-1",
+            attemptID: receipt.attemptID,
+            output: "done",
+            requiresValidation: false
+        )
+        _ = await terminal.handlePlanCommand("/plan status")
+        #expect(terminal.activePlan?.points.map(\.status) == [.completed, .pending])
+        #expect(try await terminal.sessionRunner.taskOrchestrator.task(
+            sessionID: terminal.sessionID,
+            taskID: "plan-graph-2"
+        ).isRunnable)
+    }
+
+    @Test
+    func invalidReplacementLeavesPreviousPlanAndGraphUntouched() async throws {
+        let terminal = try makeTerminal()
+        _ = try await terminal.recordPlanAndTaskGraphIfNeeded(
+            responseText: "1. Existing",
+            purpose: .plan(originalGoal: "Existing"),
+            points: [TerminalSessionPlanPoint(id: "plan-old-1", text: "Existing")]
+        )
+        let existingPlan = try #require(terminal.activePlan)
+
+        await #expect(throws: SessionTaskOrchestratorError.self) {
+            _ = try await terminal.recordPlanAndTaskGraphIfNeeded(
+                responseText: "1. Invalid",
+                purpose: .plan(originalGoal: "Invalid"),
+                points: [
+                    TerminalSessionPlanPoint(
+                        id: "plan-new-1",
+                        text: "Invalid",
+                        dependsOn: ["missing"],
+                        hasExplicitDependencies: true
+                    )
+                ]
+            )
+        }
+
+        #expect(terminal.activePlan == existingPlan)
+        #expect(try await terminal.sessionRunner.taskGraphSnapshot(
+            sessionID: terminal.sessionID
+        )?.id == "plan-old")
     }
 
     private func makeTerminal() throws -> TerminalChat {

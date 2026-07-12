@@ -12,6 +12,8 @@ public enum DirectSubAgentRuntimeError: LocalizedError {
     case missingArgument(String)
     case agentNotFound(String)
     case agentClosed(String)
+    case agentLimitExceeded(Int)
+    case unsafeImplementationParallelism
 
     public var errorDescription: String? {
         switch self {
@@ -23,6 +25,10 @@ public enum DirectSubAgentRuntimeError: LocalizedError {
             return "No delegated sub-agent matched '\(identifier)'."
         case let .agentClosed(name):
             return "Delegated sub-agent '\(name)' is closed."
+        case let .agentLimitExceeded(limit):
+            return "A single agent.create request supports at most \(limit) delegated sub-agents."
+        case .unsafeImplementationParallelism:
+            return "Only one implementation sub-agent may run at a time because delegated agents share the working directory."
         }
     }
 }

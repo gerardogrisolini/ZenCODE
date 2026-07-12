@@ -101,6 +101,13 @@ extension TerminalChat {
             if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 lines.append(.regular("\(dimText("role:")) \(snapshot.role)"))
             }
+            if let taskID = snapshot.taskID?.nilIfBlank {
+                var taskText = "\(dimText("task:")) \(inlineText(taskID))"
+                if let attempt = snapshot.taskAttemptOrdinal {
+                    taskText += " · \(dimText("attempt:")) \(attempt)"
+                }
+                lines.append(.regular(taskText, maxWrappedLines: 2))
+            }
             if let model = renderSubAgentModel(snapshot) {
                 lines.append(.regular(model))
             }
