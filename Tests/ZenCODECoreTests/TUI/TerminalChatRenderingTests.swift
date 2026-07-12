@@ -532,6 +532,39 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func markdownFormatterReservesChatInsetForTables() {
+        let renderWidth = 60
+        let longItem = Array(repeating: "long plan item", count: 24).joined(separator: " ")
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: renderWidth,
+            supportsHyperlinks: false
+        )
+
+        let rendered = formatter.consume("""
+        | # | Plan item | Status |
+        | ---: | --- | --- |
+        | 1 | \(longItem) | `in_progress` |
+
+        """) + formatter.finish()
+        var isAtLineStart = true
+        let insetRendered = TerminalChat.chatLineInsetApplied(
+            to: rendered,
+            prefix: " ",
+            isAtLineStart: &isAtLineStart
+        )
+        let boxRows = insetRendered
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { $0.contains("│") || $0.contains("─") }
+
+        #expect(!boxRows.isEmpty)
+        #expect(boxRows.allSatisfy {
+            TerminalANSIText.visibleWidth($0) <= renderWidth
+        })
+    }
+
+    @Test
     func markdownFormatterFlushesLongListsDuringStreaming() {
         var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
         let list = (1...81)

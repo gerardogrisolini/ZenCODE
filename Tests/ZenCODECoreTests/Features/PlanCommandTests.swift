@@ -97,6 +97,49 @@ struct PlanCommandTests {
     }
 
     @Test
+    func planStatusKeepsStatusesReadableWhenItemsAreLong() {
+        let longItem = Array(
+            repeating: "Implement the detailed compatibility and validation requirement",
+            count: 16
+        ).joined(separator: " ")
+        let plan = TerminalSessionPlan(
+            originalGoal: "Track a long implementation",
+            consolidatedText: "Implement and validate.",
+            isApproved: true,
+            points: [
+                TerminalSessionPlanPoint(
+                    id: "plan-1",
+                    text: longItem,
+                    status: .completed
+                ),
+                TerminalSessionPlanPoint(
+                    id: "plan-2",
+                    text: longItem,
+                    status: .inProgress
+                ),
+            ]
+        )
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 90,
+            supportsHyperlinks: false
+        )
+
+        let rendered = TerminalANSIText.stripANSI(
+            formatter.consume(TerminalChat.planStatusTable(for: plan)) + formatter.finish()
+        )
+        let tableRows = rendered
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { $0.contains("│") }
+
+        #expect(tableRows.contains { $0.contains("completed") })
+        #expect(tableRows.contains { $0.contains("in_progress") })
+        #expect(tableRows.contains { $0.contains("…") })
+        #expect(tableRows.allSatisfy { TerminalANSIText.visibleWidth($0) <= 90 })
+    }
+
+    @Test
     func planStatusWithoutActivePlanDoesNotRequireSubAgents() throws {
         let terminal = try makeTerminal()
         terminal.selectedToolKeys.remove("sub-agents")

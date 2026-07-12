@@ -369,9 +369,13 @@ public struct TerminalMarkdownStreamFormatter {
     }
     
     private func makeRenderer() -> TerminalSwiftMarkdownRenderer {
-        TerminalSwiftMarkdownRenderer(
+        // Chat output receives a leading inset after Markdown is rendered. Give
+        // tables the same one-column reservation already used by wrapIfNeeded,
+        // otherwise their right edge can extend beyond the terminal viewport.
+        let rendererWidth = renderWidth > 0 ? max(1, renderWidth - 1) : 0
+        return TerminalSwiftMarkdownRenderer(
             supportsHyperlinks: supportsHyperlinks,
-            renderWidth: renderWidth
+            renderWidth: rendererWidth
         )
     }
     
