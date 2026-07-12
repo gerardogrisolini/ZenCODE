@@ -61,6 +61,23 @@ extension ZenCODESetupRunner {
 
     }
 
+    static func completeModelMetadataIfNeeded(
+        providerName: String,
+        models: [AgentSettingsModelManifest]
+    ) throws -> [AgentSettingsModelManifest] {
+        let hasIncompleteModels = models.contains { model in
+            model.configuredContextWindowLimit == nil
+                && (model.thinkingOptions?.isEmpty ?? true)
+        }
+        guard hasIncompleteModels else {
+            return models
+        }
+        return try reconfigureExistingModelMetadata(
+            providerName: providerName,
+            models: models
+        )
+    }
+
     static func reconfigureExistingModelMetadata(
         providerName: String,
         models: [AgentSettingsModelManifest]
@@ -203,7 +220,7 @@ extension ZenCODESetupRunner {
         }
 
         let selectedModels = try selectRemoteModels(from: catalogModels)
-        return selectedModels.map {
+        let manifests = selectedModels.map {
             remoteModelManifest(
                 from: $0,
                 providerID: providerID,
@@ -212,6 +229,10 @@ extension ZenCODESetupRunner {
                 chatEndpoint: chatEndpoint
             )
         }
+        return try completeModelMetadataIfNeeded(
+            providerName: providerName,
+            models: manifests
+        )
     }
 
     static func normalizedRemoteModelID(_ modelID: String) -> String {
@@ -355,7 +376,7 @@ extension ZenCODESetupRunner {
                 }
 
                 let selectedModels = try selectRemoteModels(from: catalogModels)
-                return selectedModels.map {
+                let manifests = selectedModels.map {
                     remoteModelManifest(
                         from: $0,
                         providerID: providerID,
@@ -364,6 +385,10 @@ extension ZenCODESetupRunner {
                         chatEndpoint: chatEndpoint
                     )
                 }
+                return try completeModelMetadataIfNeeded(
+                    providerName: providerName,
+                    models: manifests
+                )
             } catch {
                 AgentOutput.standardError.writeString(
                     "Unable to load /models: \(error.localizedDescription)\n"

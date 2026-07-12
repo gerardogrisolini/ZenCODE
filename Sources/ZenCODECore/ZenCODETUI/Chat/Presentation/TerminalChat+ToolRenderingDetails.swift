@@ -360,6 +360,8 @@ extension TerminalChat {
         switch toolName {
         case "local.readFile", "local.readFiles", "text.head", "text.tail":
             break
+        case let x where x.lowercased().contains("read"):
+            break
         default:
             return nil
         }
@@ -371,6 +373,7 @@ extension TerminalChat {
                     return false
                 }
                 let lineNumber = line.prefix { $0 != "\t" }
+                    .trimmingCharacters(in: .whitespaces)
                 return !lineNumber.isEmpty && lineNumber.allSatisfy(\.isWholeNumber)
             })
     }
