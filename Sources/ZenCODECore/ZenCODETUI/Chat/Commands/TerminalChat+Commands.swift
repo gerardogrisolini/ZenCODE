@@ -79,6 +79,23 @@ extension TerminalChat {
         commandToken(from: line) == "/voice"
     }
 
+    static func isAvailableDuringGeneration(for line: String) -> Bool {
+        guard let command = commandToken(from: line) else {
+            return false
+        }
+        switch command {
+        case "/help", "/changes", "/open", "/tasks":
+            return true
+        case "/plan":
+            let argument = String(line.dropFirst("/plan".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            return argument == "status"
+        default:
+            return false
+        }
+    }
+
     func unavailableLocalSlashCommandMessage(for line: String) -> String? {
         guard let command = Self.commandToken(from: line) else {
             return nil

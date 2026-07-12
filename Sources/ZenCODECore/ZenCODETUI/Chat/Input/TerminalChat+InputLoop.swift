@@ -224,10 +224,14 @@ extension TerminalChat {
                         case .empty, .prompt:
                             queuedPrompts.append(TerminalQueuedPrompt(text: line, origin: .local))
                             interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                            continue
                         case .slashCommand:
+                            if Self.isAvailableDuringGeneration(for: line) {
+                                break
+                            }
                             writeFailureMessage(generatingSlashCommandMessage(for: line))
+                            continue
                         }
-                        continue
                     }
 
                     guard await handleSubmittedPanelLine(line) else {
