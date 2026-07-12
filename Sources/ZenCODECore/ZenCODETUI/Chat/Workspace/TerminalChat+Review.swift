@@ -175,9 +175,12 @@ extension TerminalChat {
         """
       codeReviewDelegationRules = """
         - Create one or more separate code-quality/correctness Reviewers for the tracked \
-        change surface. Launch them in the same agent.create call as the coverage Reviewer so \
-        they run in parallel. Partition independent files or concerns when useful; a single \
-        code Reviewer is sufficient for a small change.
+        change surface. If a task graph is active, first add one independent review task per \
+        Reviewer to that graph, including a single Reviewer, then call task.list with \
+        runnableOnly=true and pass each taskID to agent.create. Without an active graph, do \
+        this before using more than one Reviewer. Partition independent files or concerns when \
+        useful; a single taskless code Reviewer is sufficient only for a small self-contained \
+        change.
         - Code-quality Reviewers may inspect listed current files for context, but must \
         base findings on the listed session changes only. Ask them to report correctness \
         bugs, regressions, security/concurrency issues, missing tests, and convention \
@@ -228,6 +231,11 @@ extension TerminalChat {
       isolationMode "report" (read-only; they must not edit files).
       - Restrict each Reviewer to this read-only toolset by passing \
       toolNames: [\(toolList)].
+      - If a task graph is active, append one independent review task per Reviewer to that \
+      graph, including a single Reviewer; call task.list with runnableOnly=true and pass each \
+      runnable taskID to agent.create. Without an active graph, define that workflow before \
+      using multiple Reviewers. If a taskless Reviewer is already active, wait for it to finish \
+      and close it before activating a graph; it cannot be retroactively bound to a task.
       - Create at least one dedicated Reviewer for plan coverage or task-graph coverage.
       - The coverage Reviewer must verify the current state of the files implicated by the plan \
       or task graph, not merely the latest diff. It may inspect files needed to verify tasks and \
@@ -356,10 +364,13 @@ extension TerminalChat {
       - Restrict each Reviewer to this read-only toolset by passing \
       toolNames: [\(toolList)].
       - When the review surface can be partitioned into independent areas (for \
-      example distinct files, modules, or concerns), spawn multiple Reviewers in \
-      parallel, one per area, in a single agent.create call so they run \
-      concurrently. If the change is small or cannot be partitioned cleanly, a \
-      single Reviewer is fine.
+      example distinct files, modules, or concerns), first call task.create once \
+      with one independent review task per area, then call task.list with \
+      runnableOnly=true and spawn multiple Reviewers with the corresponding taskID \
+      values in a single agent.create call. If a task graph is already active, add a \
+      task and use taskID even for a single Reviewer. If a taskless Reviewer is already \
+      active, wait for it to finish and close it before activating a graph. If the change \
+      is small or cannot be partitioned cleanly, a single self-contained Reviewer is fine.
       - Give each Reviewer a focused prompt describing its assigned subset of the \
       session change surface above. Reviewers may inspect the listed current files \
       for context, but must base findings on the listed session changes only.

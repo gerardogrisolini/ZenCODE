@@ -247,6 +247,15 @@ extension DirectSubAgentRuntime {
         agent.latestContentPreview = nil
         agent.status = agent.pendingPrompts.isEmpty ? .idle : .queued
         agent.updatedAt = .now
+        let releasedReservation = agent.pendingPrompts.isEmpty
+            ? takeTasklessDelegationReservation(from: &agent)
+            : nil
+        if releasedReservation != nil {
+            // Keep the agent pending until the cross-actor lease release has
+            // completed, so graph activation cannot race an apparently idle
+            // taskless agent.
+            agent.status = .running
+        }
         agents[agentID] = agent
         if let taskID = agent.taskID,
            let attemptID = agent.taskAttemptID,
@@ -259,6 +268,7 @@ extension DirectSubAgentRuntime {
                 requiresValidation: agent.isolationMode == .implementation
             )
         }
+        await releaseTasklessDelegationReservation(releasedReservation)
     }
 
     public func recordFailure(
@@ -277,6 +287,7 @@ extension DirectSubAgentRuntime {
             agent.currentToolName = nil
         }
         agent.updatedAt = .now
+        let releasedReservation = takeTasklessDelegationReservation(from: &agent)
         agents[agentID] = agent
         if let taskID = agent.taskID,
            let attemptID = agent.taskAttemptID,
@@ -289,6 +300,7 @@ extension DirectSubAgentRuntime {
                 output: agent.latestOutput
             )
         }
+        await releaseTasklessDelegationReservation(releasedReservation)
     }
 
     public func recordCancellation(agentID: String) async {
@@ -304,6 +316,7 @@ extension DirectSubAgentRuntime {
             agent.currentToolName = nil
         }
         agent.updatedAt = .now
+        let releasedReservation = takeTasklessDelegationReservation(from: &agent)
         agents[agentID] = agent
         if let taskID = agent.taskID,
            let attemptID = agent.taskAttemptID,
@@ -315,5 +328,6 @@ extension DirectSubAgentRuntime {
                 reason: "Delegated sub-agent cancelled."
             )
         }
+        await releaseTasklessDelegationReservation(releasedReservation)
     }
 }

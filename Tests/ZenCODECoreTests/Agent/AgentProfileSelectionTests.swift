@@ -60,7 +60,8 @@ extension AgentConfigurationTests {
 
         #expect(defaultProfile.tools.contains(webKey))
         #expect(defaultProfile.instructions?.contains("General coding agent") == true)
-        #expect(defaultProfile.instructions?.contains("proactively delegate focused subtasks") == true)
+        #expect(defaultProfile.instructions?.contains("coordinated workflow") == true)
+        #expect(defaultProfile.instructions?.contains("session task-workflow policy") == true)
         #expect(builderProfile.tools.contains(webKey))
         #expect(!builderProfile.tools.contains("sub-agents"))
         #expect(builderProfile.instructions?.contains("Builder agent") == true)

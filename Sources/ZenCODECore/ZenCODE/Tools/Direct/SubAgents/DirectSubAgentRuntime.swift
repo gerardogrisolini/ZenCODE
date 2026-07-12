@@ -67,6 +67,7 @@ public actor DirectSubAgentRuntime {
         public let taskID: String?
         public let taskAttemptID: String?
         public let taskAttemptOrdinal: Int?
+        var tasklessDelegationReservationID: UUID?
         public let name: String
         public let role: String
         public let profileID: String?
@@ -233,6 +234,30 @@ public actor DirectSubAgentRuntime {
         taskOrchestrator = orchestrator
     }
 
+    func takeTasklessDelegationReservation(
+        from agent: inout AgentRecord
+    ) -> (rootSessionID: String, reservationID: UUID)? {
+        guard agent.taskID == nil,
+              let reservationID = agent.tasklessDelegationReservationID else {
+            return nil
+        }
+        agent.tasklessDelegationReservationID = nil
+        return (agent.rootSessionID, reservationID)
+    }
+
+    func releaseTasklessDelegationReservation(
+        _ reservation: (rootSessionID: String, reservationID: UUID)?
+    ) async {
+        guard let reservation,
+              let taskOrchestrator else {
+            return
+        }
+        try? await taskOrchestrator.releaseTasklessDelegationReservation(
+            sessionID: reservation.rootSessionID,
+            reservationID: reservation.reservationID
+        )
+    }
+
     public func shutdown() async {
         let records = Array(agents.values)
         agents.removeAll()
@@ -258,6 +283,13 @@ public actor DirectSubAgentRuntime {
         }
         for record in records {
             await record.backend.shutdown()
+        }
+        for record in records {
+            await releaseTasklessDelegationReservation(
+                record.tasklessDelegationReservationID.map {
+                    (rootSessionID: record.rootSessionID, reservationID: $0)
+                }
+            )
         }
     }
 
@@ -297,7 +329,10 @@ public actor DirectSubAgentRuntime {
         case "agent.get":
             return getAgents(arguments: request.arguments)
         case "agent.message":
-            return try messageAgents(arguments: request.arguments)
+            return try await messageAgents(
+                arguments: request.arguments,
+                parentAllowedToolNames: allowedToolNames
+            )
         case "agent.wait":
             return await waitForAgents(arguments: request.arguments)
         case "agent.close":

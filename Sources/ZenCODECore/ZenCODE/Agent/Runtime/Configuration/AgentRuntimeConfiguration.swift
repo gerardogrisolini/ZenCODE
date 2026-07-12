@@ -378,6 +378,7 @@ public enum AgentStandaloneSystemPrompt {
     public static func prompt(
         cwd: String,
         memoryToolEnabled: Bool = false,
+        allowedToolNames: Set<String>? = nil,
         fileManager: FileManager = .default,
         globalAgentsDirectoryURL: URL? = nil,
         selectedAgentSection: String? = nil,
@@ -399,6 +400,7 @@ public enum AgentStandaloneSystemPrompt {
             agentsSection: agentsSection,
             memorySection: memoryToolEnabled ? MemoryService.toolUsagePromptSection() : nil,
             memoryToolEnabled: memoryToolEnabled,
+            allowedToolNames: allowedToolNames,
             selectedSkillSection: selectedSkillSection,
             responseLanguageSection: responseLanguageSection
         )

@@ -27,8 +27,6 @@ extension DirectSubAgentRuntime {
                 "A task-bound delegated sub-agent cannot create nested sub-agents."
             )
         }
-        try validateImplementationPayloads(payloads)
-
         let overviewBatchID = UUID()
         let previousOverviewBatchID = latestOverviewBatchID
 
@@ -40,34 +38,45 @@ extension DirectSubAgentRuntime {
                 profile: profileResolver(payload)
             )
         }
-        let claims = prepared.compactMap { item -> TaskClaim? in
-            guard let taskID = item.payload.taskID else { return nil }
-            return TaskClaim(taskID: taskID, agentID: item.id, executor: .subAgent)
-        }
-
-        let claimReceipts: [TaskClaimReceipt]
-        if claims.isEmpty {
-            claimReceipts = []
-        } else {
-            guard let taskOrchestrator else {
-                throw SessionTaskOrchestratorError.permissionDenied(
-                    "Task assignment is unavailable because no session task orchestrator is installed."
-                )
-            }
-            claimReceipts = try await taskOrchestrator.claimTasks(
-                sessionID: rootSessionID,
-                claims: claims
-            )
-        }
-        let receiptsByAgentID = Dictionary(
-            uniqueKeysWithValues: claimReceipts.compactMap { receipt in
-                receipt.agentID.map { ($0, receipt) }
-            }
+        let reservationIDs = try await reserveTasklessDelegationReservations(
+            count: prepared.filter { $0.payload.taskID == nil }.count,
+            parentAllowedToolNames: parentAllowedToolNames,
+            rootSessionID: rootSessionID
+        )
+        let tasklessAgentIDs = prepared
+            .filter { $0.payload.taskID == nil }
+            .map(\.id)
+        let reservationIDsByAgentID = Dictionary(
+            uniqueKeysWithValues: zip(tasklessAgentIDs, reservationIDs)
         )
 
         var createdIDs: [String] = []
         var createdBackends: [(String, any AgentRuntimeBackend)] = []
+        var claimReceipts: [TaskClaimReceipt] = []
         do {
+            try validateImplementationPayloads(payloads)
+            let claims = prepared.compactMap { item -> TaskClaim? in
+                guard let taskID = item.payload.taskID else { return nil }
+                return TaskClaim(taskID: taskID, agentID: item.id, executor: .subAgent)
+            }
+            if claims.isEmpty {
+                claimReceipts = []
+            } else {
+                guard let taskOrchestrator else {
+                    throw SessionTaskOrchestratorError.permissionDenied(
+                        "Task assignment is unavailable because no session task orchestrator is installed."
+                    )
+                }
+                claimReceipts = try await taskOrchestrator.claimTasks(
+                    sessionID: rootSessionID,
+                    claims: claims
+                )
+            }
+            let receiptsByAgentID = Dictionary(
+                uniqueKeysWithValues: claimReceipts.compactMap { receipt in
+                    receipt.agentID.map { ($0, receipt) }
+                }
+            )
             for item in prepared {
                 let payload = item.payload
                 let id = item.id
@@ -110,7 +119,8 @@ extension DirectSubAgentRuntime {
                         role: payload.role,
                         isolationMode: payload.isolationMode,
                         taskID: payload.taskID,
-                        taskAttemptID: receipt?.attemptID
+                        taskAttemptID: receipt?.attemptID,
+                        allowedToolNames: childAllowedToolNames
                     ),
                     history: [],
                     cacheKey: nil,
@@ -127,6 +137,7 @@ extension DirectSubAgentRuntime {
                     taskID: payload.taskID,
                     taskAttemptID: receipt?.attemptID,
                     taskAttemptOrdinal: receipt?.ordinal,
+                    tasklessDelegationReservationID: reservationIDsByAgentID[id],
                     name: payload.name.nilIfBlank ?? "sub-agent-\(item.offset + 1)",
                     role: payload.role.nilIfBlank ?? "worker",
                     profileID: item.profile?.id,
@@ -163,6 +174,12 @@ extension DirectSubAgentRuntime {
                 await backend.shutdown()
             }
             if let taskOrchestrator {
+                for reservationID in reservationIDs {
+                    try? await taskOrchestrator.releaseTasklessDelegationReservation(
+                        sessionID: rootSessionID,
+                        reservationID: reservationID
+                    )
+                }
                 for receipt in claimReceipts {
                     _ = try? await taskOrchestrator.interruptAttempt(
                         sessionID: rootSessionID,
@@ -182,6 +199,38 @@ extension DirectSubAgentRuntime {
             + Self.renderSnapshots(snapshots)
     }
 
+    func reserveTasklessDelegationReservations(
+        count tasklessCount: Int,
+        retainingReservationIDs: Set<UUID> = [],
+        parentAllowedToolNames: Set<String>?,
+        rootSessionID: String
+    ) async throws -> [UUID] {
+        guard tasklessCount > 0 || !retainingReservationIDs.isEmpty,
+              let taskOrchestrator else {
+            return []
+        }
+
+        do {
+            return try await taskOrchestrator.reserveTasklessDelegations(
+                sessionID: rootSessionID,
+                count: tasklessCount,
+                retainingReservationIDs: retainingReservationIDs,
+                requiresExclusiveAccess: SystemPromptBuilder.taskWorkflowToolsAreAvailable(
+                    parentAllowedToolNames
+                )
+            )
+        } catch let error as SessionTaskOrchestratorError {
+            switch error {
+            case let .tasklessDelegationRequiresTaskID(graphID):
+                throw DirectSubAgentRuntimeError.taskIDRequiredForActiveTaskGraph(graphID)
+            case .tasklessDelegationConflict:
+                throw DirectSubAgentRuntimeError.taskGraphRequiredForCoordinatedDelegation
+            default:
+                throw error
+            }
+        }
+    }
+
     public func listAgents(arguments: [String: JSONValue]) -> String {
         var snapshots = snapshots()
         if let status = Self.firstString(["status"], in: arguments)
@@ -196,19 +245,103 @@ extension DirectSubAgentRuntime {
         return Self.renderSnapshots(targets, includeLatestOutput: true)
     }
 
-    public func messageAgents(arguments: [String: JSONValue]) throws -> String {
+    public func messageAgents(
+        arguments: [String: JSONValue],
+        parentAllowedToolNames: Set<String>? = nil
+    ) async throws -> String {
         guard let message = Self.firstString(["message", "prompt", "input"], in: arguments)?.nilIfBlank else {
             throw DirectSubAgentRuntimeError.missingArgument("message")
         }
 
         let targetIDs = try resolveMessageTargetIDs(arguments: arguments)
+        try validateOpenMessageTargets(targetIDs)
         try validateImplementationPromptTargets(targetIDs)
-        for id in targetIDs {
-            try queuePrompt(message, for: id)
+        let tasklessAgents = targetIDs.compactMap { agents[$0] }
+            .filter { $0.taskID == nil }
+        let tasklessAgentsBySession = Dictionary(
+            grouping: tasklessAgents,
+            by: \.rootSessionID
+        )
+        var reservationIDsByAgentID: [String: UUID] = [:]
+        do {
+            for (rootSessionID, sessionAgents) in tasklessAgentsBySession {
+                let retainedReservationIDs = Set(sessionAgents.compactMap(
+                    \.tasklessDelegationReservationID
+                ))
+                let agentsNeedingReservation = sessionAgents.filter {
+                    $0.tasklessDelegationReservationID == nil
+                }
+                let reservationIDs = try await reserveTasklessDelegationReservations(
+                    count: agentsNeedingReservation.count,
+                    retainingReservationIDs: retainedReservationIDs,
+                    parentAllowedToolNames: parentAllowedToolNames,
+                    rootSessionID: rootSessionID
+                )
+                reservationIDsByAgentID.merge(
+                    Dictionary(uniqueKeysWithValues: zip(
+                        agentsNeedingReservation.map(\.id),
+                        reservationIDs
+                    )),
+                    uniquingKeysWith: { _, latest in latest }
+                )
+            }
+        } catch {
+            for (agentID, reservationID) in reservationIDsByAgentID {
+                if let rootSessionID = agents[agentID]?.rootSessionID,
+                   let taskOrchestrator {
+                    try? await taskOrchestrator.releaseTasklessDelegationReservation(
+                        sessionID: rootSessionID,
+                        reservationID: reservationID
+                    )
+                }
+            }
+            throw error
+        }
+
+        do {
+            try validateOpenMessageTargets(targetIDs)
+            try validateImplementationPromptTargets(targetIDs)
+            for (agentID, reservationID) in reservationIDsByAgentID {
+                guard var agent = agents[agentID] else {
+                    throw DirectSubAgentRuntimeError.agentNotFound(agentID)
+                }
+                agent.tasklessDelegationReservationID = reservationID
+                agents[agentID] = agent
+            }
+            for id in targetIDs {
+                try queuePrompt(message, for: id)
+            }
+        } catch {
+            for (agentID, reservationID) in reservationIDsByAgentID {
+                if var agent = agents[agentID],
+                   agent.tasklessDelegationReservationID == reservationID {
+                    agent.tasklessDelegationReservationID = nil
+                    agents[agentID] = agent
+                }
+                if let rootSessionID = agents[agentID]?.rootSessionID,
+                   let taskOrchestrator {
+                    try? await taskOrchestrator.releaseTasklessDelegationReservation(
+                        sessionID: rootSessionID,
+                        reservationID: reservationID
+                    )
+                }
+            }
+            throw error
         }
 
         return "Queued message for \(targetIDs.count) delegated sub-agent\(targetIDs.count == 1 ? "" : "s").\n"
             + Self.renderSnapshots(snapshots(for: targetIDs))
+    }
+
+    func validateOpenMessageTargets(_ targetIDs: [String]) throws {
+        for agentID in targetIDs {
+            guard let agent = agents[agentID] else {
+                throw DirectSubAgentRuntimeError.agentNotFound(agentID)
+            }
+            guard agent.status != .closed else {
+                throw DirectSubAgentRuntimeError.agentClosed(agent.name)
+            }
+        }
     }
 
     public func waitForAgents(arguments: [String: JSONValue]) async -> String {
@@ -280,6 +413,7 @@ extension DirectSubAgentRuntime {
             agent.status = .closed
             agent.latestError = "Delegated execution interrupted with its root session."
             agent.updatedAt = .now
+            let releasedReservation = takeTasklessDelegationReservation(from: &agent)
             agents[id] = agent
 
             if let taskID = agent.taskID,
@@ -297,6 +431,7 @@ extension DirectSubAgentRuntime {
             }
             runTask?.cancel()
             await agent.backend.shutdown()
+            await releaseTasklessDelegationReservation(releasedReservation)
         }
         return targetIDs.count
     }
@@ -313,6 +448,7 @@ extension DirectSubAgentRuntime {
         agent.status = .closed
         agent.latestError = nil
         agent.updatedAt = .now
+        let releasedReservation = takeTasklessDelegationReservation(from: &agent)
         agents[id] = agent
 
         if let taskID = agent.taskID,
@@ -330,6 +466,7 @@ extension DirectSubAgentRuntime {
         }
         task?.cancel()
         await agent.backend.shutdown()
+        await releaseTasklessDelegationReservation(releasedReservation)
 
         return "Closed delegated sub-agent.\n"
             + Self.renderSnapshots([snapshot(from: agent)], includeLatestOutput: true)

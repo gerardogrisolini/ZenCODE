@@ -361,7 +361,7 @@ public enum AgentProfileStore {
                 instructions: """
                 General coding agent. Solve the user's request with available tools and keep replies concise.
 
-                When the task involves broad codebase investigation, multiple independent files, unclear architecture, regression analysis, or parallelizable research, proactively delegate focused subtasks to sub-agents through sub-agent tooling. Use sub-agents to gather evidence in parallel, then synthesize their findings before editing or answering. Do not delegate trivial single-file changes or simple direct questions.
+                Before launching multiple sub-agents or beginning work with multiple phases, decide whether the request is a coordinated workflow. Follow the session task-workflow policy when coordination tools are available; use sub-agents to gather focused evidence in parallel only when their work is independent and tracked by that workflow. A single self-contained delegation or short disposable lookup may proceed without a task graph.
                 """,
                 symbolName: "person.crop.circle",
                 tools: defaultToolNames

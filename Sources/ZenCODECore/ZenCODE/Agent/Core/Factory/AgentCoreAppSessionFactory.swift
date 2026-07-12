@@ -138,8 +138,12 @@ public enum AgentCoreAppSessionFactory {
             .compactMap { $0?.nilIfBlank }
             let sections = contextSections + [
                 providedSystemPrompt,
+                SystemPromptBuilder.taskOrchestrationSection(
+                    allowedToolNames: allowedToolNames
+                ),
                 SystemPromptBuilder.responseLanguageSection()
             ]
+            .compactMap { $0?.nilIfBlank }
             return sections
                 .joined(separator: "\n\n")
         }
@@ -147,6 +151,7 @@ public enum AgentCoreAppSessionFactory {
         let basePrompt = AgentStandaloneSystemPrompt.prompt(
             cwd: cwd,
             memoryToolEnabled: memoryToolEnabled,
+            allowedToolNames: allowedToolNames,
             selectedAgentSection: selectedAgentSection,
             selectedSkillSection: selectedSkillSection
         )

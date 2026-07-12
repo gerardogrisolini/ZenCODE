@@ -14,7 +14,8 @@ extension RemoteGenerationClient {
     ) -> String {
         AgentStandaloneSystemPrompt.prompt(
             cwd: cwd,
-            memoryToolEnabled: memoryToolEnabled(allowedToolNames)
+            memoryToolEnabled: memoryToolEnabled(allowedToolNames),
+            allowedToolNames: allowedToolNames
         )
     }
 
@@ -24,24 +25,51 @@ extension RemoteGenerationClient {
         history: [AgentRuntimeMessage],
         allowedToolNames: Set<String>?
     ) -> [[String: Any]] {
-        let seededMessages = history.compactMap(remoteMessage(from:))
+        var seededMessages = history.compactMap(remoteMessage(from:))
         if let firstRole = seededMessages.first?["role"] as? String,
            firstRole.trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() == "system" {
+            seededMessages[0] = appendingTaskWorkflowPolicy(
+                to: seededMessages[0],
+                allowedToolNames: allowedToolNames
+            )
             return seededMessages
         }
 
-        let prompt = systemPrompt?.nilIfBlank
-            ?? Self.systemPrompt(
-                cwd: cwd,
-                allowedToolNames: allowedToolNames
-            )
+        let prompt = SystemPromptBuilder.appendingTaskOrchestrationSection(
+            to: systemPrompt?.nilIfBlank
+                ?? Self.systemPrompt(
+                    cwd: cwd,
+                    allowedToolNames: allowedToolNames
+                ),
+            allowedToolNames: allowedToolNames
+        ) ?? Self.systemPrompt(
+            cwd: cwd,
+            allowedToolNames: allowedToolNames
+        )
         return [
             [
                 "role": "system",
                 "content": prompt
             ]
         ] + seededMessages
+    }
+
+    private static func appendingTaskWorkflowPolicy(
+        to message: [String: Any],
+        allowedToolNames: Set<String>?
+    ) -> [String: Any] {
+        guard let existingContent = contentString(from: message["content"]),
+              let updatedContent = SystemPromptBuilder.appendingTaskOrchestrationSection(
+                to: existingContent,
+                allowedToolNames: allowedToolNames
+              ),
+              updatedContent != existingContent else {
+            return message
+        }
+        var updatedMessage = message
+        updatedMessage["content"] = updatedContent
+        return updatedMessage
     }
 
     public static func replacingSystemPrompt(

@@ -355,6 +355,12 @@ extension SessionTaskOrchestrator {
         return lhs.id < rhs.id
     }
 
+    func requireNoTasklessDelegations(sessionID: String) throws {
+        guard tasklessDelegationReservations[sessionID]?.isEmpty ?? true else {
+            throw SessionTaskOrchestratorError.activeGraphBlockedByTasklessDelegation
+        }
+    }
+
     func touchTask(_ task: inout TaskRecord, at date: Date) {
         task.revision += 1
         task.updatedAt = date

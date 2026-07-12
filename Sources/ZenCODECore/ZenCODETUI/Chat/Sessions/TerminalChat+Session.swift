@@ -39,8 +39,11 @@ extension TerminalChat {
         allowedToolNames: Set<String>,
         includesActivePlanProgress: Bool = true
     ) -> AgentCoreSessionConfiguration {
-        let baseSystemPrompt = activeSessionSystemPromptOverride
-            ?? currentSystemPrompt(allowedToolNames: allowedToolNames)
+        let baseSystemPrompt = SystemPromptBuilder.appendingTaskOrchestrationSection(
+            to: activeSessionSystemPromptOverride?.nilIfBlank
+                ?? currentSystemPrompt(allowedToolNames: allowedToolNames),
+            allowedToolNames: allowedToolNames
+        )
         let systemPrompt = includesActivePlanProgress
             ? systemPromptWithActivePlanProgress(baseSystemPrompt)
             : baseSystemPrompt
@@ -68,6 +71,7 @@ extension TerminalChat {
         return AgentStandaloneSystemPrompt.prompt(
             cwd: configuration.workingDirectory.path,
             memoryToolEnabled: memoryToolEnabled,
+            allowedToolNames: allowedToolNames,
             selectedAgentSection: selectedAgent?.promptSection(memoryToolEnabled: memoryToolEnabled),
                         selectedSkillSection: SystemPromptBuilder.selectedSkillSection(
                 skills: selectedPromptSkills()

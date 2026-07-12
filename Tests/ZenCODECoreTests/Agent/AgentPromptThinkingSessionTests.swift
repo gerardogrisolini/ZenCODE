@@ -93,6 +93,66 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    func taskWorkflowPolicyIsConditionalOnTheRequiredTaskTools() throws {
+        let taskTools: Set<String> = [
+            "task.create",
+            "task.list",
+            "task.update",
+            "agent.create",
+        ]
+        let policy = try #require(
+            SystemPromptBuilder.taskOrchestrationSection(allowedToolNames: taskTools)
+        )
+
+        #expect(policy.contains("Task workflow policy:"))
+        #expect(policy.contains("Before launching multiple delegated agents"))
+        #expect(policy.contains("task.create"))
+        #expect(policy.contains("task.list with runnableOnly=true"))
+        #expect(policy.contains("taskID to agent.create"))
+        #expect(policy.contains("every delegated agent must use taskID"))
+        #expect(policy.contains("single self-contained delegation"))
+        #expect(SystemPromptBuilder.taskWorkflowToolsAreAvailable(taskTools))
+        #expect(SystemPromptBuilder.taskOrchestrationSection(
+            allowedToolNames: ["task.create", "task.list"]
+        ) == nil)
+        let namespaceTools: Set<String> = ["task.", "agent."]
+        #expect(SystemPromptBuilder.taskWorkflowToolsAreAvailable(namespaceTools))
+        #expect(SystemPromptBuilder.taskOrchestrationSection(
+            allowedToolNames: namespaceTools
+        )?.contains("taskID to agent.create") == true)
+
+        let standalonePrompt = SystemPromptBuilder.standalonePrompt(
+            cwd: "/tmp/project",
+            agentsSection: nil,
+            memorySection: nil,
+            memoryToolEnabled: false,
+            allowedToolNames: taskTools
+        )
+        #expect(standalonePrompt.contains("Task workflow policy:"))
+
+        let providedPrompt = AgentCoreAppSessionFactory.resolvedSystemPrompt(
+            providedSystemPrompt: "Client instructions.",
+            cwd: "/tmp/project",
+            selectedAgent: nil,
+            allowedToolNames: taskTools
+        )
+        #expect(providedPrompt.contains("Task workflow policy:"))
+
+        let restoredPrompt = try #require(
+            SystemPromptBuilder.appendingTaskOrchestrationSection(
+                to: "Saved instructions.",
+                allowedToolNames: taskTools
+            )
+        )
+        #expect(restoredPrompt.contains("Saved instructions."))
+        #expect(restoredPrompt.contains("Task workflow policy:"))
+        #expect(SystemPromptBuilder.appendingTaskOrchestrationSection(
+            to: restoredPrompt,
+            allowedToolNames: taskTools
+        ) == restoredPrompt)
+    }
+
+    @Test
     func providedSystemPromptKeepsResponseLanguageInstructionLast() throws {
         let prompt = AgentCoreAppSessionFactory.resolvedSystemPrompt(
             providedSystemPrompt: "Client instructions written in English.",

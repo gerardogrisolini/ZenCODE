@@ -175,6 +175,422 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func singleTasklessDelegationRemainsAllowedOutsideAWorkflow() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: ["name": .string("focused-lookup")],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+
+        #expect(await runtime.snapshots().map(\.name) == ["focused-lookup"])
+    }
+
+    @Test
+    func tasklessSubAgentPromptReceivesWorkflowPolicyWhenItCanCoordinate() {
+        let taskTools: Set<String> = [
+            "task.create",
+            "task.list",
+            "task.update",
+            "agent.create",
+        ]
+        let tasklessPrompt = DirectSubAgentRuntime.systemPrompt(
+            name: "coordinator",
+            role: "Coordinator",
+            isolationMode: .report,
+            allowedToolNames: taskTools
+        )
+        let taskBoundPrompt = DirectSubAgentRuntime.systemPrompt(
+            name: "worker",
+            role: "Worker",
+            isolationMode: .report,
+            taskID: "task-1",
+            allowedToolNames: taskTools
+        )
+
+        #expect(tasklessPrompt.contains("Task workflow policy:"))
+        #expect(taskBoundPrompt.contains("must not change dependencies"))
+        #expect(!taskBoundPrompt.contains("Task workflow policy:"))
+    }
+
+    @Test
+    func idleTasklessDelegationBlocksAnotherWorkflowAndGraphActivationUntilClosed() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: ["name": .string("focused-lookup")],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+
+        do {
+            _ = try await runtime.createAgents(
+                arguments: ["name": .string("second-lookup")],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+                parentAllowedToolNames: nil,
+                rootSessionID: "root"
+            )
+            Issue.record("A second idle taskless delegation should require a task graph")
+        } catch let error as DirectSubAgentRuntimeError {
+            guard case .taskGraphRequiredForCoordinatedDelegation = error else {
+                Issue.record("Unexpected error: \(error.localizedDescription)")
+                return
+            }
+        }
+
+        await #expect(throws: SessionTaskOrchestratorError.self) {
+            _ = try await orchestrator.createGraph(
+                sessionID: "root",
+                id: "graph",
+                source: .manual,
+                state: .active,
+                tasks: [TaskDefinition(id: "tracked", title: "Tracked")]
+            )
+        }
+
+        let agentID = try #require(await runtime.snapshots().first?.id)
+        _ = try await runtime.closeAgent(arguments: ["id": .string(agentID)])
+        let graph = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "tracked", title: "Tracked")]
+        )
+        #expect(graph.state == .active)
+    }
+
+    @Test
+    func tasklessAgentCannotBeResumedAfterAGraphBecomesActive() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("lookup"),
+                "prompt": .string("Inspect the current concern")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        let agentID = try #require(await runtime.snapshots().first?.id)
+
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "tracked", title: "Tracked")]
+        )
+
+        do {
+            _ = try await runtime.messageAgents(
+                arguments: [
+                    "id": .string(agentID),
+                    "message": .string("Continue the lookup")
+                ],
+                parentAllowedToolNames: nil
+            )
+            Issue.record("An active graph should reject resuming a taskless agent")
+        } catch let error as DirectSubAgentRuntimeError {
+            guard case let .taskIDRequiredForActiveTaskGraph(graphID) = error else {
+                Issue.record("Unexpected error: \(error.localizedDescription)")
+                return
+            }
+            #expect(graphID == "graph")
+        }
+    }
+
+    @Test
+    func tasklessIdleAgentsCannotBeStartedTogetherThroughAgentMessage() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "agents": .array([
+                    .object(["name": .string("first")]),
+                    .object(["name": .string("second")]),
+                ])
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: ["agent.create"],
+            rootSessionID: "root"
+        )
+        let agentIDs = await runtime.snapshots().map(\.id)
+
+        do {
+            _ = try await runtime.messageAgents(
+                arguments: [
+                    "ids": .array(agentIDs.map { .string($0) }),
+                    "message": .string("Start the lookup")
+                ],
+                parentAllowedToolNames: nil
+            )
+            Issue.record("Starting multiple taskless idle agents should require a task graph")
+        } catch let error as DirectSubAgentRuntimeError {
+            guard case .taskGraphRequiredForCoordinatedDelegation = error else {
+                Issue.record("Unexpected error: \(error.localizedDescription)")
+                return
+            }
+        }
+    }
+
+    @Test
+    func parallelTasklessDelegationRequiresTaskGraphBeforeCreatingAgents() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        do {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "agents": .array([
+                        .object(["name": .string("first")]),
+                        .object(["name": .string("second")]),
+                    ])
+                ],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+                parentAllowedToolNames: nil,
+                rootSessionID: "root"
+            )
+            Issue.record("Parallel taskless delegation should require a task graph")
+        } catch let error as DirectSubAgentRuntimeError {
+            guard case .taskGraphRequiredForCoordinatedDelegation = error else {
+                Issue.record("Unexpected error: \(error.localizedDescription)")
+                return
+            }
+        }
+
+        #expect(await runtime.snapshots().isEmpty)
+        #expect(try await orchestrator.graphSnapshot(sessionID: "root") == nil)
+    }
+
+    @Test
+    func activeTaskGraphRequiresTaskIDBeforeAnyClaimIsCreated() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [
+                TaskDefinition(id: "tracked", title: "Tracked work"),
+                TaskDefinition(id: "other", title: "Other work"),
+            ]
+        )
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        do {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "agents": .array([
+                        .object(["name": .string("tracked"), "taskID": .string("tracked")]),
+                        .object(["name": .string("untracked")]),
+                    ])
+                ],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+                parentAllowedToolNames: nil,
+                rootSessionID: "root"
+            )
+            Issue.record("An active graph should require taskID for every delegated agent")
+        } catch let error as DirectSubAgentRuntimeError {
+            guard case let .taskIDRequiredForActiveTaskGraph(graphID) = error else {
+                Issue.record("Unexpected error: \(error.localizedDescription)")
+                return
+            }
+            #expect(graphID == "graph")
+        }
+
+        #expect(await runtime.snapshots().isEmpty)
+        #expect(try await orchestrator.task(
+            sessionID: "root", taskID: "tracked"
+        ).task.attempts.isEmpty)
+        #expect(try await orchestrator.task(
+            sessionID: "root", taskID: "other"
+        ).task.attempts.isEmpty)
+    }
+
+    @Test
+    func draftTaskGraphDoesNotRequireTaskIDForAStandalonePlannerDelegation() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "plan-draft",
+            source: .plan(planID: "plan-draft"),
+            state: .draft,
+            tasks: [TaskDefinition(id: "plan-draft-1", title: "Draft task")]
+        )
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: ["name": .string("plan-author")],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+
+        #expect(await runtime.snapshots().map(\.name) == ["plan-author"])
+    }
+
+    @Test
+    func secondConcurrentTasklessDelegationRequiresTaskGraph() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in
+                CapturingSubAgentRuntimeBackend(blocksPrompts: true)
+            }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("first"),
+                "prompt": .string("Investigate the first concern")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+
+        do {
+            _ = try await runtime.createAgents(
+                arguments: ["name": .string("second")],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+                parentAllowedToolNames: nil,
+                rootSessionID: "root"
+            )
+            Issue.record("A concurrent taskless delegation should require a task graph")
+        } catch let error as DirectSubAgentRuntimeError {
+            guard case .taskGraphRequiredForCoordinatedDelegation = error else {
+                Issue.record("Unexpected error: \(error.localizedDescription)")
+                return
+            }
+        }
+
+        #expect(await runtime.snapshots().map(\.name) == ["first"])
+        await runtime.shutdown()
+    }
+
+    @Test
+    func taskBoundParallelDelegationClaimsIndependentTasks() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [
+                TaskDefinition(id: "first", title: "First"),
+                TaskDefinition(id: "second", title: "Second"),
+            ]
+        )
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "agents": .array([
+                    .object(["name": .string("first"), "taskID": .string("first")]),
+                    .object(["name": .string("second"), "task_id": .string("second")]),
+                ])
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+
+        #expect(await runtime.snapshots().count == 2)
+        #expect(try await orchestrator.task(
+            sessionID: "root", taskID: "first"
+        ).task.status == .inProgress)
+        #expect(try await orchestrator.task(
+            sessionID: "root", taskID: "second"
+        ).task.status == .inProgress)
+    }
+
+    @Test
+    func parallelDelegationRemainsAvailableWhenTaskWorkflowToolsAreUnavailable() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "agents": .array([
+                    .object(["name": .string("first")]),
+                    .object(["name": .string("second")]),
+                ])
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: ["agent.create"],
+            rootSessionID: "root"
+        )
+
+        #expect(await runtime.snapshots().count == 2)
+    }
+
+    @Test
+    func taskNamespacePrefixEnforcesTheCoordinatedDelegationGuard() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        do {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "agents": .array([
+                        .object(["name": .string("first")]),
+                        .object(["name": .string("second")]),
+                    ])
+                ],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+                parentAllowedToolNames: ["agent.", "task."],
+                rootSessionID: "root"
+            )
+            Issue.record("The task namespace prefix should require a task graph")
+        } catch let error as DirectSubAgentRuntimeError {
+            guard case .taskGraphRequiredForCoordinatedDelegation = error else {
+                Issue.record("Unexpected error: \(error.localizedDescription)")
+                return
+            }
+        }
+    }
+
+    @Test
     func implementationCompletionAwaitsValidation() async throws {
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(

@@ -161,7 +161,7 @@ struct ReviewCommandTests {
     }
 
     @Test
-    func approvedPlanWithChangesDelegatesCoverageAndCodeReviewInParallel() {
+    func approvedPlanWithChangesDefinesIndependentReviewTasksBeforeParallelDelegation() {
         let reviewer = AgentProfile(
             id: AgentProfileStore.reviewerAgentID.uuidString,
             name: AgentProfileStore.reviewerAgentName,
@@ -179,8 +179,9 @@ struct ReviewCommandTests {
         )
 
         #expect(prompt.contains("separate code-quality/correctness Reviewers"))
-        #expect(prompt.contains("same agent.create call"))
-        #expect(prompt.contains("so they run in parallel"))
+        #expect(prompt.contains("first add one independent review task per Reviewer"))
+        #expect(prompt.contains("task.list with runnableOnly=true"))
+        #expect(prompt.contains("pass each taskID to agent.create"))
         #expect(prompt.contains("dedicated Reviewer for plan coverage"))
     }
 

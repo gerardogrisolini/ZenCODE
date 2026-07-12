@@ -55,6 +55,40 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func remoteInitialMessagesAugmentRestoredSystemHistoryWithTaskWorkflowPolicy() {
+        let taskTools: Set<String> = [
+            "task.create",
+            "task.list",
+            "task.update",
+            "agent.create",
+        ]
+        let messages = RemoteGenerationClient.initialMessages(
+            cwd: "/tmp/project",
+            systemPrompt: "Current resolved prompt.",
+            history: [
+                AgentRuntimeMessage(role: .system, content: "ACP client instructions."),
+                AgentRuntimeMessage(role: .user, content: "Inspect the project.")
+            ],
+            allowedToolNames: taskTools
+        )
+
+        #expect(messages.count == 2)
+        let systemContent = messages.first?["content"] as? String
+        #expect(systemContent?.contains("ACP client instructions.") == true)
+        #expect(systemContent?.contains("Task workflow policy:") == true)
+
+        let restoredMessages = RemoteGenerationClient.initialMessages(
+            cwd: "/tmp/project",
+            systemPrompt: "Saved remote system prompt.",
+            history: [],
+            allowedToolNames: taskTools
+        )
+        let restoredSystemContent = restoredMessages.first?["content"] as? String
+        #expect(restoredSystemContent?.contains("Saved remote system prompt.") == true)
+        #expect(restoredSystemContent?.contains("Task workflow policy:") == true)
+    }
+
+    @Test
     func remoteInitialMessagesRoundTripProviderReplayMetadata() {
         let reasoningItemsJSON = #"[{"type":"reasoning","id":"rs_1","encrypted_content":"state","summary":[]}]"#
         let thinkingBlocksJSON = #"[{"type":"thinking","thinking":"step","signature":"sig"}]"#

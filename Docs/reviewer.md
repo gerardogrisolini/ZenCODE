@@ -55,9 +55,9 @@ or switch to a profile that includes sub-agents.
 When `/review` runs:
 
 1. The current agent remains the review director and does not switch profiles.
-2. The director creates one or more sub-agents with role `Reviewer`.
-3. Each Reviewer receives a focused review prompt and the read-only tool list.
-4. Reviewers run in parallel when the review surface can be partitioned by file, module, or concern.
+2. If a task graph is active, the director first adds one independent review task per `Reviewer` to that graph, including a single focused Reviewer, then selects runnable review work with `task.list`. Without an active graph, a single focused, self-contained review can create one `Reviewer` directly; a partitioned review first defines one independent review task per Reviewer with `task.create`.
+3. Each Reviewer receives a focused review prompt, the read-only tool list, and the corresponding `taskID` for graph work. A taskless Reviewer cannot be retroactively attached to a graph: wait for it to finish and close it before activating a graph.
+4. Independent review tasks run in parallel when the review surface can be partitioned by file, module, or concern.
 5. When a task graph or approved plan exists, at least one dedicated coverage Reviewer checks current implicated files, treats graph statuses/evidence as claims, and classifies every task as `implemented`, `validated`, `unverified`, `failed`, `deviated`, `cancelled`, or `blocked`.
 6. The director waits for the reviewers, consolidates duplicate findings, and summarizes issues by severity plus task/plan coverage and any discrepancies between recorded attempts and real files.
 7. If changes are warranted, the director proposes a concrete correction plan instead of editing files in the review turn.

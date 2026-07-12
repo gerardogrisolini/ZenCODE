@@ -73,6 +73,7 @@ public enum SystemPromptBuilder {
         agentsSection: String?,
         memorySection: String?,
         memoryToolEnabled: Bool,
+        allowedToolNames: Set<String>? = nil,
         selectedSkillSection: String? = nil,
         responseLanguageSection: String? = nil
     ) -> String {
@@ -81,12 +82,79 @@ public enum SystemPromptBuilder {
                 baseSection: standaloneBaseSection(memoryToolEnabled: memoryToolEnabled),
                 workingDirectoryPath: cwd,
                 preferredLanguageSection: responseLanguageSection ?? standaloneLanguageSection,
+                workflowSection: taskOrchestrationSection(allowedToolNames: allowedToolNames),
                 agentsSection: agentsSection,
                 memorySection: memorySection,
                 turnClosingInstruction: standaloneTurnClosingInstruction,
                 selectedSkillSection: selectedSkillSection
             )
         )
+    }
+
+    /// Returns guidance for deliberately using the session task graph only when the
+    /// current tool surface can create, inspect, and update that graph.
+    public static func taskOrchestrationSection(
+        allowedToolNames: Set<String>?
+    ) -> String? {
+        guard taskWorkflowToolsAreAvailable(allowedToolNames) else {
+            return nil
+        }
+
+        let delegationInstruction: String
+        if agentDelegationIsAvailable(allowedToolNames) {
+            delegationInstruction = """
+            When delegating runnable graph work, pass its taskID to agent.create so the \
+            assignment and execution attempt are recorded atomically. Independent tasks may \
+            run in parallel when their dependencies are empty. When a task graph is already \
+            active, every delegated agent must use taskID; do not create taskless agents outside \
+            that workflow.
+            """
+        } else {
+            delegationInstruction = """
+            Execute runnable graph work directly and record its lifecycle with task.update.
+            """
+        }
+
+        return """
+        Task workflow policy:
+        Before launching multiple delegated agents or beginning work with multiple phases, \
+        decide whether the request is a coordinated workflow. Create the session task graph \
+        with task.create first when work has multiple units, dependencies, concurrent delegation, durable \
+        progress, retry, validation, or review requirements. Define the work items together \
+        with stable IDs and explicit dependencies (including empty dependencies for \
+        independent work), then use task.list with runnableOnly=true to choose work and \
+        task.update to record progress, outcomes, blockers, and validation.
+
+        \(delegationInstruction)
+        A single self-contained delegation or a short disposable lookup does not require a \
+        task graph.
+        """
+    }
+
+    public static func taskWorkflowToolsAreAvailable(
+        _ allowedToolNames: Set<String>?
+    ) -> Bool {
+        guard let allowedToolNames else {
+            return true
+        }
+        return ["task.create", "task.list", "task.update"].allSatisfy {
+            tool($0, isAllowedBy: allowedToolNames)
+        }
+    }
+
+    /// Adds the workflow policy to an existing prompt exactly once. This keeps
+    /// restored or caller-provided system prompts current without discarding
+    /// their original instructions.
+    public static func appendingTaskOrchestrationSection(
+        to prompt: String?,
+        allowedToolNames: Set<String>?
+    ) -> String? {
+        guard let normalizedPrompt = prompt?.nilIfBlank,
+              let section = taskOrchestrationSection(allowedToolNames: allowedToolNames),
+              !normalizedPrompt.contains("Task workflow policy:") else {
+            return prompt
+        }
+        return normalizedPrompt + "\n\n" + section
     }
 
     public static func selectedSkillSection(skills: [PromptSkill]) -> String? {
@@ -135,6 +203,25 @@ public enum SystemPromptBuilder {
         Turn-closing rule:
         \(instruction)
         """
+    }
+
+    private static func agentDelegationIsAvailable(
+        _ allowedToolNames: Set<String>?
+    ) -> Bool {
+        guard let allowedToolNames else {
+            return true
+        }
+        return tool("agent.create", isAllowedBy: allowedToolNames)
+    }
+
+    private static func tool(
+        _ name: String,
+        isAllowedBy allowedToolNames: Set<String>
+    ) -> Bool {
+        allowedToolNames.contains(name)
+            || allowedToolNames.contains {
+                $0.hasSuffix(".") && name.hasPrefix($0)
+            }
     }
 
     private static func standaloneBaseSection(memoryToolEnabled: Bool) -> String {

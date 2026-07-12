@@ -31,6 +31,9 @@ public enum SessionTaskOrchestratorError: LocalizedError, Equatable {
     case attemptLimitExceeded(String)
     case permissionDenied(String)
     case invalidSnapshot(String)
+    case tasklessDelegationRequiresTaskID(String)
+    case tasklessDelegationConflict
+    case activeGraphBlockedByTasklessDelegation
 
     public var errorDescription: String? {
         switch self {
@@ -84,6 +87,12 @@ public enum SessionTaskOrchestratorError: LocalizedError, Equatable {
             return message
         case let .invalidSnapshot(message):
             return "Invalid task graph snapshot: \(message)"
+        case let .tasklessDelegationRequiresTaskID(graphID):
+            return "Active task graph '\(graphID)' requires every delegated sub-agent to include taskID."
+        case .tasklessDelegationConflict:
+            return "Coordinated delegation requires a task graph before more than one taskless sub-agent can run."
+        case .activeGraphBlockedByTasklessDelegation:
+            return "Cannot activate a task graph while a taskless delegated sub-agent is active. Wait for it to finish or close it first."
         }
     }
 }
@@ -128,6 +137,7 @@ public actor SessionTaskOrchestrator {
     var workingDirectories: [String: URL] = [:]
     var restoredSessionIDs = Set<String>()
     var executionScopes: [String: TaskExecutionScope] = [:]
+    var tasklessDelegationReservations: [String: Set<UUID>] = [:]
     var eventContinuations: [String: [UUID: AsyncStream<TaskGraphEvent>.Continuation]] = [:]
 
     public init(
@@ -195,6 +205,61 @@ public actor SessionTaskOrchestrator {
         return sessionStates[sessionID]?.graphs.values.sorted(by: Self.graphSortOrder) ?? []
     }
 
+    /// Atomically verifies that a taskless delegation can begin and retains a
+    /// lease that prevents a graph from becoming active until that delegation
+    /// is finished or closed. The lease closes the gap between checking graph
+    /// state and creating or resuming an agent in another actor.
+    func reserveTasklessDelegations(
+        sessionID rawSessionID: String,
+        count: Int,
+        retainingReservationIDs: Set<UUID> = [],
+        requiresExclusiveAccess: Bool
+    ) throws -> [UUID] {
+        let sessionID = try requireRootAccess(rawSessionID)
+        let existingReservations = tasklessDelegationReservations[sessionID] ?? []
+        if let activeGraphID = sessionStates[sessionID]?.graphs.values
+            .first(where: { $0.state == .active })?.id {
+            throw SessionTaskOrchestratorError.tasklessDelegationRequiresTaskID(activeGraphID)
+        }
+        guard retainingReservationIDs.isSubset(of: existingReservations) else {
+            throw SessionTaskOrchestratorError.tasklessDelegationConflict
+        }
+        guard count >= 0 else {
+            throw SessionTaskOrchestratorError.invalidSnapshot(
+                "Taskless delegation reservation count cannot be negative."
+            )
+        }
+        if requiresExclusiveAccess {
+            guard existingReservations == retainingReservationIDs,
+                  retainingReservationIDs.count + count == 1 else {
+                throw SessionTaskOrchestratorError.tasklessDelegationConflict
+            }
+        }
+
+        let reservationIDs = (0..<count).map { _ in UUID() }
+        if !reservationIDs.isEmpty {
+            tasklessDelegationReservations[sessionID, default: []]
+                .formUnion(reservationIDs)
+        }
+        return reservationIDs
+    }
+
+    func releaseTasklessDelegationReservation(
+        sessionID rawSessionID: String,
+        reservationID: UUID
+    ) throws {
+        let sessionID = try requireRootAccess(rawSessionID)
+        guard var reservations = tasklessDelegationReservations[sessionID] else {
+            return
+        }
+        reservations.remove(reservationID)
+        if reservations.isEmpty {
+            tasklessDelegationReservations.removeValue(forKey: sessionID)
+        } else {
+            tasklessDelegationReservations[sessionID] = reservations
+        }
+    }
+
     public func registeredSessionIDs() -> [String] {
         Array(Set(sessionStates.keys).union(workingDirectories.keys)).sorted()
     }
@@ -218,6 +283,9 @@ public actor SessionTaskOrchestrator {
         archivePreviousCurrent: Bool = true
     ) throws -> TaskGraphSnapshot {
         let sessionID = try requireRootAccess(rawSessionID)
+        if graphState == .active {
+            try requireNoTasklessDelegations(sessionID: sessionID)
+        }
         let graphID = try normalizedGraphID(rawGraphID)
         var sessionState = sessionStates[sessionID] ?? SessionState(
             currentGraphID: nil,
@@ -285,6 +353,10 @@ public actor SessionTaskOrchestrator {
             graphID = currentGraphID
         } else {
             graphID = "tasks_\(UUID().uuidString.lowercased())"
+        }
+
+        if sessionState.graphs[graphID] == nil, initialGraphState == .active {
+            try requireNoTasklessDelegations(sessionID: sessionID)
         }
 
         var graph: TaskGraphSnapshot
@@ -638,6 +710,10 @@ public actor SessionTaskOrchestrator {
             throw SessionTaskOrchestratorError.retryNotAllowed(taskID)
         }
 
+        if graph.state == .completed {
+            try requireNoTasklessDelegations(sessionID: sessionID)
+        }
+
         let now = Date()
         task.status = .pending
         task.statusReason = nil
@@ -707,6 +783,7 @@ public actor SessionTaskOrchestrator {
         sessionID rawSessionID: String
     ) throws -> TaskGraphSnapshot {
         let sessionID = try requireRootAccess(rawSessionID)
+        try requireNoTasklessDelegations(sessionID: sessionID)
         guard var sessionState = sessionStates[sessionID],
               var graph = sessionState.graphs[graphID] else {
             throw SessionTaskOrchestratorError.graphNotFound(graphID)
@@ -792,6 +869,7 @@ public actor SessionTaskOrchestrator {
         workingDirectories.removeValue(forKey: sessionID)
         restoredSessionIDs.remove(sessionID)
         executionScopes = executionScopes.filter { $0.value.rootSessionID != sessionID }
+        tasklessDelegationReservations.removeValue(forKey: sessionID)
         emit(sessionID: sessionID, graphID: nil, revision: nil, kind: .cleared)
     }
 

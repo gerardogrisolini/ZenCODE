@@ -13,7 +13,8 @@ extension DirectSubAgentRuntime {
         role: String,
         isolationMode: IsolationMode,
         taskID: String? = nil,
-        taskAttemptID: String? = nil
+        taskAttemptID: String? = nil,
+        allowedToolNames: Set<String>? = nil
     ) -> String {
         var lines = [
             "You are ZenCODE delegated sub-agent \(name).",
@@ -29,6 +30,10 @@ extension DirectSubAgentRuntime {
             }
             lines.append("You may use task.get/task.list to read only this task and its dependencies, and task.update only to append progress output to this active attempt.")
             lines.append("You must not change dependencies, reassign work, create nested sub-agents, mutate another task, or validate your own implementation. Final task state is recorded automatically from your outcome.")
+        } else if let taskWorkflowSection = SystemPromptBuilder.taskOrchestrationSection(
+            allowedToolNames: allowedToolNames
+        ) {
+            lines.append(taskWorkflowSection)
         }
         switch isolationMode {
         case .report:
