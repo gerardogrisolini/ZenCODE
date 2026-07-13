@@ -114,7 +114,7 @@ extension TerminalChatRenderingTests {
 //        #expect(ZenCODEACPBridge.toolIcon(for: "local.move") == "↔️")
 //        #expect(ZenCODEACPBridge.toolIcon(for: "memory.read") == "🧠")
 //        #expect(ZenCODEACPBridge.toolIcon(for: "agent.create") == "👥")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "task.create") == "👥")
+//        #expect(ZenCODEACPBridge.toolIcon(for: "tasks.create") == "👥")
 //        #expect(ZenCODEACPBridge.toolIcon(for: "git.diff") == "🔀")
 //        #expect(ZenCODEACPBridge.toolIcon(for: "web.fetch") == "🌐")
 //        #expect(ZenCODEACPBridge.toolIcon(for: "search.grep") == "🔎")

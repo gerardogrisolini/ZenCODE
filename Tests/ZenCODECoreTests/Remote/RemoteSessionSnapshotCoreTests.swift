@@ -57,9 +57,9 @@ extension RemoteSessionSnapshotTests {
     @Test
     func remoteInitialMessagesAugmentRestoredSystemHistoryWithTaskWorkflowPolicy() {
         let taskTools: Set<String> = [
-            "task.create",
-            "task.list",
-            "task.update",
+            "tasks.create",
+            "tasks.list",
+            "tasks.update",
             "agent.create",
         ]
         let messages = RemoteGenerationClient.initialMessages(
@@ -293,6 +293,31 @@ extension RemoteSessionSnapshotTests {
         #expect(toolPayloadNames.contains("tool_local_exec"))
         #expect(!toolPayloadNames.contains("local.exec"))
         #expect(localToolCall.name == "git.diff")
+    }
+
+    @Test
+    func remoteToolWireCatalogDoesNotMapSingularTaskNamespaceToTasks() {
+        let catalog = RemoteToolWireCatalog(
+            descriptors: [
+                DirectToolDescriptor(
+                    name: "tasks.list",
+                    description: "List task graph records.",
+                    inputSchema: #"{"type":"object","properties":{}}"#
+                )
+            ]
+        )
+        let singularToolCall = DirectAgentToolCall(
+            id: "call_tasks",
+            name: "task.list",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        #expect(
+            catalog.wireName(forToolName: "task.list")
+                != catalog.wireName(forToolName: "tasks.list")
+        )
+        #expect(catalog.localToolCall(from: singularToolCall).name == "task.list")
     }
 
     @Test

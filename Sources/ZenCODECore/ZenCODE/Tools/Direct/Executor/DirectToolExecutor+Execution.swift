@@ -93,7 +93,7 @@ extension DirectToolExecutor {
                 toolCall: toolCall
             )
             let request = DirectTodoRuntime.normalizedToolRequest(for: toolCall)
-            if request.name == "task.cancel",
+            if request.name == "tasks.cancel",
                let taskID = DirectTodoRuntime.firstString(["id"], in: request.arguments) {
                 _ = await subAgentRuntime.closeAgentAssigned(
                     to: taskID,

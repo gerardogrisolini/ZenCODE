@@ -65,7 +65,7 @@ extension TerminalChat {
                       !activePlan.isCompleted {
                 var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
                 allowedToolNames.formUnion([
-                    "task.list", "task.get", "task.update", "task.retry", "task.cancel"
+                    "tasks.list", "tasks.get", "tasks.update", "tasks.retry", "tasks.cancel"
                 ])
                 sessionConfiguration = currentSessionConfiguration(
                     allowedToolNames: allowedToolNames

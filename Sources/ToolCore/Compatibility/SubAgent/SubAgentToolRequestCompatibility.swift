@@ -17,23 +17,21 @@ public nonisolated enum SubAgentToolRequestCompatibility {
         "todo_write": "todo.write",
         "todo.update": "todo.write",
         "todo_update": "todo.write",
-        "task.create": "task.create",
-        "task_create": "task.create",
-        "task.list": "task.list",
-        "task_list": "task.list",
-        "tasks": "task.list",
-        "task.get": "task.get",
-        "task_get": "task.get",
-        "task.status": "task.get",
-        "task_status": "task.get",
-        "task.update": "task.update",
-        "task_update": "task.update",
-        "task.retry": "task.retry",
-        "task_retry": "task.retry",
-        "retry_task": "task.retry",
-        "task.cancel": "task.cancel",
-        "task_cancel": "task.cancel",
-        "cancel_task": "task.cancel",
+        "tasks.create": "tasks.create",
+        "tasks_create": "tasks.create",
+        "tasks.list": "tasks.list",
+        "tasks_list": "tasks.list",
+        "tasks": "tasks.list",
+        "tasks.get": "tasks.get",
+        "tasks_get": "tasks.get",
+        "tasks.status": "tasks.get",
+        "tasks_status": "tasks.get",
+        "tasks.update": "tasks.update",
+        "tasks_update": "tasks.update",
+        "tasks.retry": "tasks.retry",
+        "tasks_retry": "tasks.retry",
+        "tasks.cancel": "tasks.cancel",
+        "tasks_cancel": "tasks.cancel",
         "agent.create": "agent.create",
         "agent.spawn": "agent.create",
         "agent_spawn": "agent.create",
@@ -98,17 +96,17 @@ public nonisolated enum SubAgentToolRequestCompatibility {
         case (.todo, .write):
             return "todo.write"
         case (.task, .create):
-            return "task.create"
+            return "tasks.create"
         case (.task, .list):
-            return "task.list"
+            return "tasks.list"
         case (.task, .get):
-            return "task.get"
+            return "tasks.get"
         case (.task, .update):
-            return "task.update"
+            return "tasks.update"
         case (.task, .retry):
-            return "task.retry"
+            return "tasks.retry"
         case (.task, .cancel):
-            return "task.cancel"
+            return "tasks.cancel"
         case (.agent, .create):
             return "agent.create"
         case (.agent, .list):
@@ -175,7 +173,7 @@ public nonisolated enum SubAgentToolRequestCompatibility {
             switch token {
             case "todo", "todos":
                 return .todo
-            case "task", "tasks":
+            case "tasks":
                 return .task
             case "agent", "agents", "subagent", "subagents":
                 return .agent
@@ -255,7 +253,7 @@ public nonisolated enum SubAgentToolRequestCompatibility {
             assignString(["id"], from: arguments, to: "id", in: &normalized)
             assignString(["content", "title"], from: arguments, to: "content", in: &normalized)
             assignString(["status"], from: arguments, to: "status", in: &normalized)
-        case "task.create":
+        case "tasks.create":
             assignStructuredJSON(["tasks", "items"], from: arguments, to: "tasks", in: &normalized)
             assignString(["id"], from: arguments, to: "id", in: &normalized)
             assignString(["title", "name"], from: arguments, to: "title", in: &normalized)
@@ -265,15 +263,15 @@ public nonisolated enum SubAgentToolRequestCompatibility {
             assignStringArray(["dependsOn", "depends_on"], from: arguments, to: "dependsOn", in: &normalized)
             assignString(["assigneeAgentID", "assignee_agent_id", "agentID", "agent_id"], from: arguments, to: "assigneeAgentID", in: &normalized)
             assignString(["output"], from: arguments, to: "output", in: &normalized)
-        case "task.list":
+        case "tasks.list":
             assignString(["status"], from: arguments, to: "status", in: &normalized)
             assignString(["assigneeAgentID", "assignee_agent_id", "agentID", "agent_id"], from: arguments, to: "assigneeAgentID", in: &normalized)
-        case "task.get":
+        case "tasks.get":
             assignString(["id", "taskID", "task_id", "agentID", "agent_id"], from: arguments, to: "id", in: &normalized)
         case "agent.get", "agent.close":
             assignString(["id", "taskID", "task_id", "agentID", "agent_id", "name", "agent"], from: arguments, to: "id", in: &normalized)
             assignStringArray(["ids", "agentIDs", "agent_ids", "names"], from: arguments, to: "ids", in: &normalized)
-        case "task.update":
+        case "tasks.update":
             assignString(["id", "taskID", "task_id"], from: arguments, to: "id", in: &normalized)
             assignString(["title", "name"], from: arguments, to: "title", in: &normalized)
             assignString(["details", "description"], from: arguments, to: "details", in: &normalized)
@@ -282,7 +280,7 @@ public nonisolated enum SubAgentToolRequestCompatibility {
             assignStringArray(["dependsOn", "depends_on"], from: arguments, to: "dependsOn", in: &normalized)
             assignString(["assigneeAgentID", "assignee_agent_id", "agentID", "agent_id"], from: arguments, to: "assigneeAgentID", in: &normalized)
             assignString(["output"], from: arguments, to: "output", in: &normalized)
-        case "task.retry", "task.cancel":
+        case "tasks.retry", "tasks.cancel":
             assignString(["id", "taskID", "task_id"], from: arguments, to: "id", in: &normalized)
             assignString(["graphID", "graph_id"], from: arguments, to: "graphID", in: &normalized)
             assignString(["reason", "message"], from: arguments, to: "reason", in: &normalized)

@@ -341,8 +341,8 @@ extension TerminalChat {
         let dim = "\u{1B}[90m"
         let reset = "\u{1B}[0m"
         let title = AgentOutput.standardErrorIsTerminal
-            ? "👥 \(orange)Sub-Agents\(reset)"
-            : "👥 Sub-Agents"
+            ? "👥 \(orange)Sub-Agents\(reset):"
+            : "👥 Sub-Agents:"
 
         var output = ["\(linePrefix)\(title)"]
         for line in lines {

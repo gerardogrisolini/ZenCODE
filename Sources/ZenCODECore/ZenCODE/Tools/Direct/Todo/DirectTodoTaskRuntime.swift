@@ -72,7 +72,7 @@ public actor DirectTodoRuntime {
         guard let canonicalName = SubAgentToolRequestCompatibility.canonicalToolName(for: rawName) else {
             return false
         }
-        return canonicalName.hasPrefix("todo.") || canonicalName.hasPrefix("task.")
+        return canonicalName.hasPrefix("todo.") || canonicalName.hasPrefix("tasks.")
     }
 
     public func execute(

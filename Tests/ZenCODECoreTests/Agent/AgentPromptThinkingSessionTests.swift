@@ -95,9 +95,9 @@ extension AgentConfigurationTests {
     @Test
     func taskWorkflowPolicyIsConditionalOnTheRequiredTaskTools() throws {
         let taskTools: Set<String> = [
-            "task.create",
-            "task.list",
-            "task.update",
+            "tasks.create",
+            "tasks.list",
+            "tasks.update",
             "agent.create",
         ]
         let policy = try #require(
@@ -106,20 +106,33 @@ extension AgentConfigurationTests {
 
         #expect(policy.contains("Task workflow policy:"))
         #expect(policy.contains("Before launching multiple delegated agents"))
-        #expect(policy.contains("task.create"))
-        #expect(policy.contains("task.list with runnableOnly=true"))
+        #expect(policy.contains("tasks.create"))
+        #expect(policy.contains("tasks.list with runnableOnly=true"))
         #expect(policy.contains("taskID to agent.create"))
         #expect(policy.contains("every delegated agent must use taskID"))
         #expect(policy.contains("single self-contained delegation"))
         #expect(SystemPromptBuilder.taskWorkflowToolsAreAvailable(taskTools))
         #expect(SystemPromptBuilder.taskOrchestrationSection(
-            allowedToolNames: ["task.create", "task.list"]
+            allowedToolNames: ["tasks.create", "tasks.list"]
         ) == nil)
-        let namespaceTools: Set<String> = ["task.", "agent."]
+        let namespaceTools: Set<String> = ["tasks.", "agent."]
         #expect(SystemPromptBuilder.taskWorkflowToolsAreAvailable(namespaceTools))
         #expect(SystemPromptBuilder.taskOrchestrationSection(
             allowedToolNames: namespaceTools
         )?.contains("taskID to agent.create") == true)
+
+        let singularTaskTools: Set<String> = [
+            "task.create",
+            "task.list",
+            "task.update",
+        ]
+        #expect(!SystemPromptBuilder.taskWorkflowToolsAreAvailable(singularTaskTools))
+        #expect(!SystemPromptBuilder.taskWorkflowToolsAreAvailable(["task."]))
+        #expect(!SystemPromptBuilder.taskWorkflowToolsAreAvailable([
+            "feature.task.create",
+            "feature.task.list",
+            "feature.task.update",
+        ]))
 
         let standalonePrompt = SystemPromptBuilder.standalonePrompt(
             cwd: "/tmp/project",

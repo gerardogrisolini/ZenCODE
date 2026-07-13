@@ -258,9 +258,9 @@ struct DirectSubAgentRuntimeTests {
     @Test
     func tasklessSubAgentPromptReceivesWorkflowPolicyWhenItCanCoordinate() {
         let taskTools: Set<String> = [
-            "task.create",
-            "task.list",
-            "task.update",
+            "tasks.create",
+            "tasks.list",
+            "tasks.update",
             "agent.create",
         ]
         let tasklessPrompt = DirectSubAgentRuntime.systemPrompt(
@@ -625,7 +625,7 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func taskNamespacePrefixEnforcesTheCoordinatedDelegationGuard() async throws {
+    func tasksNamespacePrefixEnforcesTheCoordinatedDelegationGuard() async throws {
         let orchestrator = SessionTaskOrchestrator()
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
@@ -641,7 +641,7 @@ struct DirectSubAgentRuntimeTests {
                     ])
                 ],
                 workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
-                parentAllowedToolNames: ["agent.", "task."],
+                parentAllowedToolNames: ["agent.", "tasks."],
                 rootSessionID: "root"
             )
             Issue.record("The task namespace prefix should require a task graph")

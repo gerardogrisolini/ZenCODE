@@ -180,7 +180,7 @@ struct ReviewCommandTests {
 
         #expect(prompt.contains("separate code-quality/correctness Reviewers"))
         #expect(prompt.contains("first add one independent review task per Reviewer"))
-        #expect(prompt.contains("task.list with runnableOnly=true"))
+        #expect(prompt.contains("tasks.list with runnableOnly=true"))
         #expect(prompt.contains("pass each taskID to agent.create"))
         #expect(prompt.contains("dedicated Reviewer for plan coverage"))
     }

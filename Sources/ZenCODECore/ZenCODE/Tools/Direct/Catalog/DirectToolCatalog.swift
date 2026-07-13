@@ -364,32 +364,32 @@ public enum DirectToolCatalog {
             inputSchema: #"{"type":"object","properties":{"todos":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"content":{"type":"string"},"title":{"type":"string"},"status":{"type":"string"},"dependsOn":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}}},"required":["content"]}},"items":{"type":"array","items":{"type":"object"}},"id":{"type":"string"},"content":{"type":"string"},"title":{"type":"string"},"status":{"type":"string"},"dependsOn":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"mode":{"type":"string"}}}"#
         ),
         DirectToolDescriptor(
-            name: "task.create",
+            name: "tasks.create",
             description: "Atomically creates one or more tasks in the session task graph. Dependencies must reference tasks in the same graph.",
             inputSchema: #"{"type":"object","properties":{"graphID":{"type":"string"},"graph_id":{"type":"string"},"id":{"type":"string"},"title":{"type":"string"},"name":{"type":"string"},"details":{"type":"string"},"description":{"type":"string"},"order":{"type":"integer"},"priority":{"type":"string","enum":["low","normal","high"]},"dependsOn":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"acceptanceCriteria":{"type":"array","items":{"type":"string"}},"acceptance_criteria":{"type":"array","items":{"type":"string"}},"execution":{"type":"object"},"tasks":{"type":"array","items":{"type":"object"}},"items":{"type":"array","items":{"type":"object"}}}}"#
         ),
         DirectToolDescriptor(
-            name: "task.list",
+            name: "tasks.list",
             description: "Lists task graph records with derived runnable and dependency state.",
             inputSchema: #"{"type":"object","properties":{"graphID":{"type":"string"},"graph_id":{"type":"string"},"status":{"type":"string"},"assigneeAgentID":{"type":"string"},"assignee_agent_id":{"type":"string"},"agentID":{"type":"string"},"agent_id":{"type":"string"},"runnableOnly":{"type":"boolean"},"runnable_only":{"type":"boolean"},"includeTerminal":{"type":"boolean"},"include_terminal":{"type":"boolean"},"limit":{"type":"integer"}}}"#
         ),
         DirectToolDescriptor(
-            name: "task.get",
+            name: "tasks.get",
             description: "Returns one task with dependencies, dependents, attempts, results, evidence, and runnable reason.",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"graphID":{"type":"string"},"graph_id":{"type":"string"}},"required":["id"]}"#
         ),
         DirectToolDescriptor(
-            name: "task.update",
-            description: "Updates task metadata, progress, result, evidence, or an allowed lifecycle transition. Use task.retry and task.cancel for those operations.",
+            name: "tasks.update",
+            description: "Updates task metadata, progress, result, evidence, or an allowed lifecycle transition. Use tasks.retry and tasks.cancel for those operations.",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"graphID":{"type":"string"},"graph_id":{"type":"string"},"title":{"type":"string"},"name":{"type":"string"},"details":{"type":["string","null"]},"description":{"type":["string","null"]},"status":{"type":"string"},"statusReason":{"type":"string"},"status_reason":{"type":"string"},"priority":{"type":"string"},"dependsOn":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"output":{"type":"string"},"progress":{"type":"string"},"error":{"type":"string"},"evidence":{"type":"array","items":{}},"expectedRevision":{"type":"integer"},"expected_revision":{"type":"integer"}},"required":["id"]}"#
         ),
         DirectToolDescriptor(
-            name: "task.retry",
+            name: "tasks.retry",
             description: "Retries a failed or blocked task while preserving all prior attempts and outputs.",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"graphID":{"type":"string"},"graph_id":{"type":"string"},"expectedRevision":{"type":"integer"},"expected_revision":{"type":"integer"}},"required":["id"]}"#
         ),
         DirectToolDescriptor(
-            name: "task.cancel",
+            name: "tasks.cancel",
             description: "Cancels a task and its active attempt.",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"graphID":{"type":"string"},"graph_id":{"type":"string"},"reason":{"type":"string"}},"required":["id"]}"#
         )

@@ -37,8 +37,8 @@ extension TerminalChat {
         "memory.read",
         "memory.search",
         "todo.read",
-        "task.list",
-        "task.get",
+        "tasks.list",
+        "tasks.get",
         "web.search",
         "web.fetch",
     ]
@@ -195,15 +195,15 @@ extension TerminalChat {
         }
         return """
         Implement the active approved plan now, using the session task graph as the control \
-        plane. Start by calling task.list with runnableOnly=true. Execute small tasks directly, \
+        plane. Start by calling tasks.list with runnableOnly=true. Execute small tasks directly, \
         delegate independent read-only/report tasks in one agent.create batch using each taskID, \
         and run at most one isolationMode=implementation sub-agent at a time because all \
         implementation agents share the working directory. Before direct work, transition that \
-        task to in_progress with task.update; after implementation record output and either \
+        task to in_progress with tasks.update; after implementation record output and either \
         complete report work or move implementation work to awaiting_validation. Validate \
         implementation tasks independently before marking them completed. Repeat until the \
         graph is completed or a real blocker is recorded. Respect dependencies, never claim a \
-        task twice, use task.retry only explicitly, and do not recreate or replace the approved \
+        task twice, use tasks.retry only explicitly, and do not recreate or replace the approved \
         plan.
 
         Goal: \(plan.originalGoal)

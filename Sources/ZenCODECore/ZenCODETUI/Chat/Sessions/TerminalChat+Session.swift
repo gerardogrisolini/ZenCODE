@@ -97,7 +97,7 @@ extension TerminalChat {
             \(pointList)
 
             The task graph is the authoritative control plane for this approved plan. Call \
-            task.list with runnableOnly=true before choosing work. Use task.update to record \
+            tasks.list with runnableOnly=true before choosing work. Use tasks.update to record \
             direct progress and lifecycle transitions, and pass taskID to agent.create when \
             delegating so attempts are claimed atomically. Read-only report agents may run in \
             parallel, but run only one implementation agent at a time because they share this \

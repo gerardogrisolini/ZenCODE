@@ -57,10 +57,10 @@ public enum ToolCallPresentation {
             switch toolName {
             case "web.search", "memory.search":
                 return "search"
-            case "web.fetch", "memory.read", "todo.read", "task.list", "task.get",
+            case "web.fetch", "memory.read", "todo.read", "tasks.list", "tasks.get",
                  "feature.list", "feature.validate":
                 return "read"
-            case "memory.write", "todo.write", "task.update", "feature.scaffold",
+            case "memory.write", "todo.write", "tasks.update", "feature.scaffold",
                  "feature.install":
                 return "edit"
             case "memory.archive", "feature.delete":
@@ -99,7 +99,7 @@ public enum ToolCallPresentation {
             if toolName.hasPrefix("memory.") || toolName.hasPrefix("todo.") {
                 return "🧠"
             }
-            if toolName.hasPrefix("agent.") || toolName.hasPrefix("task.") {
+            if toolName.hasPrefix("agent.") || toolName.hasPrefix("tasks.") {
                 return "👥"
             }
             if toolName.hasPrefix("git.") {

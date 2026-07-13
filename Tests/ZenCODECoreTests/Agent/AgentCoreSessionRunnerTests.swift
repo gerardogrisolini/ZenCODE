@@ -332,7 +332,7 @@ struct AgentCoreSessionRunnerTests {
             systemPrompt: nil,
             cacheKey: nil,
             history: [],
-            allowedToolNames: ["task.list"]
+            allowedToolNames: ["tasks.list"]
         )
         let secondConfiguration = AgentCoreSessionConfiguration(
             sessionID: sessionID,
@@ -341,7 +341,7 @@ struct AgentCoreSessionRunnerTests {
             systemPrompt: nil,
             cacheKey: nil,
             history: [],
-            allowedToolNames: ["task.list"]
+            allowedToolNames: ["tasks.list"]
         )
 
         try await runner.createSession(configuration: firstConfiguration)

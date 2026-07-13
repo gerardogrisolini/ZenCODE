@@ -365,8 +365,8 @@ struct PlanCommandTests {
 
         #expect(prompt.contains("Active approved plan progress:"))
         #expect(prompt.contains("plan-1 [pending]: Implement"))
-        #expect(prompt.contains("task.list"))
-        #expect(prompt.contains("task.update"))
+        #expect(prompt.contains("tasks.list"))
+        #expect(prompt.contains("tasks.update"))
         #expect(!prompt.contains("todo.write"))
     }
 
@@ -450,8 +450,8 @@ struct PlanCommandTests {
                 "git.add",
                 "memory.read",
                 "memory.write",
-                "task.list",
-                "task.update",
+                "tasks.list",
+                "tasks.update",
                 "web.search"
             ]
         )
@@ -463,13 +463,13 @@ struct PlanCommandTests {
         #expect(tools.contains("search.locate"))
         #expect(tools.contains("git.diff"))
         #expect(tools.contains("memory.read"))
-        #expect(tools.contains("task.list"))
+        #expect(tools.contains("tasks.list"))
         #expect(tools.contains("web.search"))
         #expect(!tools.contains("local.writeFile"))
         #expect(!tools.contains("local.exec"))
         #expect(!tools.contains("git.add"))
         #expect(!tools.contains("memory.write"))
-        #expect(!tools.contains("task.update"))
+        #expect(!tools.contains("tasks.update"))
     }
 
     @Test

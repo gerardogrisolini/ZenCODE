@@ -111,7 +111,7 @@ public enum SystemPromptBuilder {
             """
         } else {
             delegationInstruction = """
-            Execute runnable graph work directly and record its lifecycle with task.update.
+            Execute runnable graph work directly and record its lifecycle with tasks.update.
             """
         }
 
@@ -119,11 +119,11 @@ public enum SystemPromptBuilder {
         Task workflow policy:
         Before launching multiple delegated agents or beginning work with multiple phases, \
         decide whether the request is a coordinated workflow. Create the session task graph \
-        with task.create first when work has multiple units, dependencies, concurrent delegation, durable \
+        with tasks.create first when work has multiple units, dependencies, concurrent delegation, durable \
         progress, retry, validation, or review requirements. Define the work items together \
         with stable IDs and explicit dependencies (including empty dependencies for \
-        independent work), then use task.list with runnableOnly=true to choose work and \
-        task.update to record progress, outcomes, blockers, and validation.
+        independent work), then use tasks.list with runnableOnly=true to choose work and \
+        tasks.update to record progress, outcomes, blockers, and validation.
 
         \(delegationInstruction)
         A single self-contained delegation or a short disposable lookup does not require a \
@@ -137,7 +137,7 @@ public enum SystemPromptBuilder {
         guard let allowedToolNames else {
             return true
         }
-        return ["task.create", "task.list", "task.update"].allSatisfy {
+        return ["tasks.create", "tasks.list", "tasks.update"].allSatisfy {
             tool($0, isAllowedBy: allowedToolNames)
         }
     }

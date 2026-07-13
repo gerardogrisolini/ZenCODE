@@ -109,7 +109,7 @@ extension DirectSubAgentRuntime {
                     parentAllowedToolNames: parentAllowedToolNames
                 )
                 if payload.taskID != nil, childAllowedToolNames != nil {
-                    childAllowedToolNames?.formUnion(["task.list", "task.get", "task.update"])
+                    childAllowedToolNames?.formUnion(["tasks.list", "tasks.get", "tasks.update"])
                 }
                 await backend.createSession(
                     id: sessionID,

@@ -13,7 +13,7 @@ public actor DirectTaskToolAdapter {
     }
 
     public static func isTaskToolName(_ rawName: String) -> Bool {
-        SubAgentToolRequestCompatibility.canonicalToolName(for: rawName)?.hasPrefix("task.") == true
+        SubAgentToolRequestCompatibility.canonicalToolName(for: rawName)?.hasPrefix("tasks.") == true
     }
 
     public func installTaskOrchestrator(_ orchestrator: SessionTaskOrchestrator) {
@@ -28,11 +28,11 @@ public actor DirectTaskToolAdapter {
         let request = DirectTodoRuntime.normalizedToolRequest(for: toolCall)
 
         switch request.name {
-        case "task.create":
+        case "tasks.create":
             let definitions = try Self.requestedTaskDefinitions(from: request.arguments)
             if Self.containsAssignee(in: request.arguments) {
                 throw SessionTaskOrchestratorError.permissionDenied(
-                    "Tasks are assigned atomically through agent.create(taskID:), not task.create."
+                    "Tasks are assigned atomically through agent.create(taskID:), not tasks.create."
                 )
             }
             let graph = try await orchestrator.createTasks(
@@ -50,7 +50,7 @@ public actor DirectTaskToolAdapter {
                 detailedTaskID: nil
             )
 
-        case "task.list":
+        case "tasks.list":
             let graphID = DirectTodoRuntime.firstString(
                 ["graphID", "graph_id"],
                 in: request.arguments
@@ -82,7 +82,7 @@ public actor DirectTaskToolAdapter {
             )
             return Self.renderList(views, graph: snapshot)
 
-        case "task.get":
+        case "tasks.get":
             let taskID = try DirectTodoRuntime.requiredString(["id"], in: request.arguments)
             let view = try await orchestrator.task(
                 sessionID: sessionID,
@@ -94,11 +94,11 @@ public actor DirectTaskToolAdapter {
             )
             return Self.renderTask(view, detailed: true)
 
-        case "task.update":
+        case "tasks.update":
             let taskID = try DirectTodoRuntime.requiredString(["id"], in: request.arguments)
             if Self.containsAssignee(in: request.arguments) {
                 throw SessionTaskOrchestratorError.permissionDenied(
-                    "Tasks are assigned atomically through agent.create(taskID:), not task.update."
+                    "Tasks are assigned atomically through agent.create(taskID:), not tasks.update."
                 )
             }
             let update = try Self.taskUpdate(from: request.arguments)
@@ -113,7 +113,7 @@ public actor DirectTaskToolAdapter {
             )
             return Self.renderTask(view, detailed: true)
 
-        case "task.retry":
+        case "tasks.retry":
             let taskID = try DirectTodoRuntime.requiredString(["id"], in: request.arguments)
             let view = try await orchestrator.retryTask(
                 sessionID: sessionID,
@@ -129,7 +129,7 @@ public actor DirectTaskToolAdapter {
             )
             return Self.renderTask(view, detailed: true)
 
-        case "task.cancel":
+        case "tasks.cancel":
             let taskID = try DirectTodoRuntime.requiredString(["id"], in: request.arguments)
             _ = try await orchestrator.cancelTask(
                 sessionID: sessionID,

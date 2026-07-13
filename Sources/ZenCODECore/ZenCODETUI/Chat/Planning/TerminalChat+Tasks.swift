@@ -154,7 +154,7 @@ extension TerminalChat {
         if failed > 0 { summary.append("\(failed) failed") }
 
         var lines = [
-            "⚡️ Task:",
+            "🫧 Tasks:",
             "**Graph:** `\(graph.id)` · **state:** `\(graph.state.rawValue)` · **revision:** \(graph.revision)",
             summary.joined(separator: " · "),
         ]

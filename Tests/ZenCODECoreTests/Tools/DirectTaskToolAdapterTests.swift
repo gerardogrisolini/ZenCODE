@@ -5,6 +5,58 @@ import Testing
 @Suite
 struct DirectTaskToolAdapterTests {
     @Test
+    func tasksNamespaceIsCanonicalAndSingularNamespaceIsRejected() {
+        let advertisedNames = DirectToolCatalog.todoTaskDescriptors
+            .map(\.name)
+            .filter { $0.hasPrefix("tasks.") || $0.hasPrefix("task.") }
+        #expect(advertisedNames == [
+            "tasks.create",
+            "tasks.list",
+            "tasks.get",
+            "tasks.update",
+            "tasks.retry",
+            "tasks.cancel",
+        ])
+
+        for action in ["create", "list", "get", "update", "retry", "cancel"] {
+            let canonicalName = "tasks.\(action)"
+            #expect(
+                SubAgentToolRequestCompatibility.canonicalToolName(for: canonicalName)
+                    == canonicalName
+            )
+            #expect(
+                SubAgentToolRequestCompatibility.canonicalToolName(for: "task.\(action)")
+                    == nil
+            )
+            #expect(
+                SubAgentToolRequestCompatibility.canonicalToolName(for: "task_\(action)")
+                    == nil
+            )
+        }
+        #expect(SubAgentToolRequestCompatibility.canonicalToolName(for: "retry_task") == nil)
+        #expect(SubAgentToolRequestCompatibility.canonicalToolName(for: "cancel_task") == nil)
+        #expect(DirectTaskToolAdapter.isTaskToolName("tasks.create"))
+        #expect(!DirectTaskToolAdapter.isTaskToolName("task.create"))
+        #expect(ToolCallPresentation.toolKind(for: "task.list") == "other")
+        #expect(!DirectToolExecutor.isAllowed(
+            "tasks.list",
+            allowedToolNames: ["task.list"]
+        ))
+        #expect(!DirectToolExecutor.isAllowed(
+            "tasks.list",
+            allowedToolNames: ["task."]
+        ))
+        #expect(!DirectToolExecutor.isAllowed(
+            "task.list",
+            allowedToolNames: ["tasks."]
+        ))
+        #expect(!DirectToolExecutor.isAllowed(
+            "tasks.update",
+            allowedToolNames: ["feature.task.update"]
+        ))
+    }
+
+    @Test
     func adaptersShareAuthoritativeGraphAcrossExecutors() async throws {
         let orchestrator = SessionTaskOrchestrator()
         let first = DirectTaskToolAdapter()
@@ -15,7 +67,7 @@ struct DirectTaskToolAdapterTests {
         _ = try await first.execute(
             sessionID: "session",
             toolCall: call(
-                name: "task.create",
+                name: "tasks.create",
                 arguments: [
                     "graphID": "graph",
                     "tasks": [
@@ -27,7 +79,7 @@ struct DirectTaskToolAdapterTests {
         )
         let output = try await second.execute(
             sessionID: "session",
-            toolCall: call(name: "task.list", arguments: [:])
+            toolCall: call(name: "tasks.list", arguments: [:])
         )
 
         #expect(output.contains("Task graph graph"))
@@ -45,7 +97,7 @@ struct DirectTaskToolAdapterTests {
             _ = try await adapter.execute(
                 sessionID: "session",
                 toolCall: call(
-                    name: "task.create",
+                    name: "tasks.create",
                     arguments: [
                         "tasks": [
                             ["id": "a", "title": "A"],
@@ -67,7 +119,7 @@ struct DirectTaskToolAdapterTests {
         _ = try await adapter.execute(
             sessionID: "session",
             toolCall: call(
-                name: "task.create",
+                name: "tasks.create",
                 arguments: [
                     "graphID": "graph",
                     "id": "long-title",
@@ -120,7 +172,7 @@ struct DirectTaskToolAdapterTests {
 
         let list = try await adapter.execute(
             sessionID: "child",
-            toolCall: call(name: "task.list", arguments: [:])
+            toolCall: call(name: "tasks.list", arguments: [:])
         )
         #expect(list.contains(" b: B"))
         #expect(!list.contains(" a: A"))
@@ -128,7 +180,7 @@ struct DirectTaskToolAdapterTests {
         _ = try await adapter.execute(
             sessionID: "child",
             toolCall: call(
-                name: "task.update",
+                name: "tasks.update",
                 arguments: ["id": "b", "output": "progress"]
             )
         )
@@ -140,7 +192,7 @@ struct DirectTaskToolAdapterTests {
             _ = try await adapter.execute(
                 sessionID: "child",
                 toolCall: call(
-                    name: "task.update",
+                    name: "tasks.update",
                     arguments: ["id": "b", "status": "completed"]
                 )
             )
@@ -148,14 +200,14 @@ struct DirectTaskToolAdapterTests {
         await #expect(throws: SessionTaskOrchestratorError.self) {
             _ = try await adapter.execute(
                 sessionID: "child",
-                toolCall: call(name: "task.get", arguments: ["id": "a"])
+                toolCall: call(name: "tasks.get", arguments: ["id": "a"])
             )
         }
         await #expect(throws: SessionTaskOrchestratorError.self) {
             _ = try await adapter.execute(
                 sessionID: "child",
                 toolCall: call(
-                    name: "task.list",
+                    name: "tasks.list",
                     arguments: ["graphID": "other-graph"]
                 )
             )
@@ -164,7 +216,7 @@ struct DirectTaskToolAdapterTests {
             _ = try await adapter.execute(
                 sessionID: "child",
                 toolCall: call(
-                    name: "task.create",
+                    name: "tasks.create",
                     arguments: ["id": "child-task", "title": "Escape scope"]
                 )
             )

@@ -63,7 +63,7 @@ struct MakeAgentsCommandTests {
         #expect(allowed.contains("local.writeFile"))
         #expect(!allowed.contains("local.exec"))
         #expect(!allowed.contains("local.editFile"))
-        #expect(!allowed.contains("task.update"))
+        #expect(!allowed.contains("tasks.update"))
         #expect(!allowed.contains("agent.create"))
         #expect(!allowed.contains("memory.write"))
     }

@@ -329,9 +329,9 @@ public enum TerminalToolSelectionCatalog {
                 detail: "Delegate work to sub-agents and coordinate session tasks.",
                 groupTitle: coreGroup,
                 allowedToolNames: descriptorNames.filter {
-                    $0.hasPrefix("agent.") || $0.hasPrefix("task.")
+                    $0.hasPrefix("agent.") || $0.hasPrefix("tasks.")
                 },
-                aliases: ["agents", "agent", "subagents", "sub-agents", "tasks", "task"]
+                aliases: ["agents", "agent", "subagents", "sub-agents", "tasks"]
             )
         ]
 
