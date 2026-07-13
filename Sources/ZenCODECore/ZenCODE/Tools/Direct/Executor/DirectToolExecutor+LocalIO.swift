@@ -113,8 +113,21 @@ extension DirectToolExecutor {
         return String(text.prefix(outputLimit)) + "\n... truncated to \(outputLimit) characters ..."
     }
 
-    public func modelOutput(from output: String) -> String {
-        let limit = min(outputLimit, Self.defaultModelOutputLimit)
+    public func modelOutput(
+        from output: String,
+        toolName: String? = nil
+    ) -> String {
+        let canonicalToolName = toolName.flatMap {
+            DirectSubAgentRuntime.canonicalSubAgentToolName(for: $0)
+        }
+        // Delegated reports are already curated model output. Keep them intact up
+        // to the executor's absolute safety limit so coordinators can consume a
+        // complete plan or review instead of an unrecoverable prefix.
+        let preservesDelegatedOutput = canonicalToolName == "agent.get"
+            || canonicalToolName == "agent.wait"
+        let limit = preservesDelegatedOutput
+            ? outputLimit
+            : min(outputLimit, Self.defaultModelOutputLimit)
         guard output.count > limit else {
             return output
         }

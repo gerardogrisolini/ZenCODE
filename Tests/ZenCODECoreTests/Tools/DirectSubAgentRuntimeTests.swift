@@ -12,6 +12,69 @@ import Testing
 @Suite
 struct DirectSubAgentRuntimeTests {
     @Test
+    func getAndWaitReturnCompleteLongOutputToTheModel() async throws {
+        let endMarker = "PLANNER_OUTPUT_END"
+        let plannerOutput = String(
+            repeating: "p",
+            count: DirectToolExecutor.defaultModelOutputLimit + 500
+        ) + endMarker
+        let backend = CapturingSubAgentRuntimeBackend(responseText: plannerOutput)
+        let executor = DirectToolExecutor(
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentBackendFactory: { backend }
+        )
+        let workingDirectory = URL(
+            fileURLWithPath: "/tmp/ZenCODE-sub-agent-output-tests",
+            isDirectory: true
+        )
+
+        let createResult = await executor.execute(
+            sessionID: "root",
+            toolCall: DirectAgentToolCall(
+                id: "create-planner",
+                name: "agent.create",
+                argumentsObject: [
+                    "name": "plan-author",
+                    "prompt": "Write the complete plan"
+                ],
+                argumentsJSON: #"{"name":"plan-author","prompt":"Write the complete plan"}"#
+            ),
+            workingDirectory: workingDirectory
+        )
+        #expect(createResult.status == DirectAgentToolResult.Status.completed)
+
+        let waitResult = await executor.execute(
+            sessionID: "root",
+            toolCall: DirectAgentToolCall(
+                id: "wait-planner",
+                name: "agent.wait",
+                argumentsObject: ["name": "plan-author"],
+                argumentsJSON: #"{"name":"plan-author"}"#
+            ),
+            workingDirectory: workingDirectory
+        )
+        let getResult = await executor.execute(
+            sessionID: "root",
+            toolCall: DirectAgentToolCall(
+                id: "get-planner",
+                name: "agent.get",
+                argumentsObject: ["name": "plan-author"],
+                argumentsJSON: #"{"name":"plan-author"}"#
+            ),
+            workingDirectory: workingDirectory
+        )
+
+        #expect(waitResult.modelOutput.contains(endMarker))
+        #expect(getResult.modelOutput.contains(endMarker))
+        #expect(!waitResult.modelOutput.contains("... truncated ..."))
+        #expect(!waitResult.modelOutput.contains("truncated for model context"))
+        #expect(!getResult.modelOutput.contains("... truncated ..."))
+        #expect(!getResult.modelOutput.contains("truncated for model context"))
+
+        await executor.subAgentRuntime.shutdown()
+    }
+
+    @Test
     func createAgentsUsesMatchedProfileModelFromRole() async throws {
         let planner = AgentProfile(
             id: "planner-profile",

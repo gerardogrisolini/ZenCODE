@@ -241,7 +241,7 @@ public actor DirectToolExecutor {
             return DirectAgentToolResult(
                 output: truncated(output),
                 summary: summary(from: output),
-                modelOutput: modelOutput(from: output)
+                modelOutput: modelOutput(from: output, toolName: toolCall.name)
             )
         } catch {
             let output = "Tool error: \(error.localizedDescription)"

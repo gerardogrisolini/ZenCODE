@@ -78,7 +78,7 @@ extension DirectSubAgentRuntime {
             if includeLatestOutput,
                let latestOutput = snapshot.latestOutput?.nilIfBlank {
                 lines.append("  latest_output:")
-                lines.append(Self.indented(Self.truncated(latestOutput, limit: 8_000)))
+                lines.append(Self.indented(latestOutput))
             }
         }
         return lines.joined(separator: "\n")
