@@ -21,6 +21,11 @@ public enum RemoteStreamTransport {
     /// which makes concurrent `decode` calls safe.
     public static let sharedStreamJSONDecoder = JSONDecoder()
 
+    /// Retrying only a failed TLS negotiation keeps the POST replay boundary
+    /// deliberately narrower than a general transport-error allowlist.
+    static let maximumStreamOpeningRetries = 2
+    static let streamOpeningRetryBaseDelayNanoseconds: UInt64 = 500_000_000
+
     // MARK: - URL construction
 
     public static func endpointURL(path: String, baseURL: String) throws -> URL {
@@ -60,6 +65,33 @@ public enum RemoteStreamTransport {
             outputFormatting: [.withoutEscapingSlashes]
         )
         return request
+    }
+
+    static func shouldRetryStreamOpening(
+        error: Error,
+        attempt: Int
+    ) -> Bool {
+        guard attempt >= 0,
+              attempt < maximumStreamOpeningRetries else {
+            return false
+        }
+        return urlErrorCode(from: error) == .secureConnectionFailed
+    }
+
+    static func streamOpeningRetryDelayNanoseconds(attempt: Int) -> UInt64 {
+        let exponent = UInt64(max(0, min(attempt, 10)))
+        return streamOpeningRetryBaseDelayNanoseconds << exponent
+    }
+
+    private static func urlErrorCode(from error: Error) -> URLError.Code? {
+        if let urlError = error as? URLError {
+            return urlError.code
+        }
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else {
+            return nil
+        }
+        return URLError.Code(rawValue: nsError.code)
     }
 
     // MARK: - Response validation

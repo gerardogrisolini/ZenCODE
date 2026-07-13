@@ -268,7 +268,7 @@ extension RemoteGenerationClient {
             ))
         }
         let requestStartedAt = Date()
-        let (bytes, response) = try await urlSession.bytes(for: request)
+        let (bytes, response) = try await openStream(for: request)
         try await RemoteStreamTransport.validateHTTPResponse(response, bytes: bytes)
 
         var accumulator = RemoteStreamAccumulator()
@@ -289,5 +289,32 @@ extension RemoteGenerationClient {
         }
         await accumulator.finish(onEvent: onEvent)
         return try accumulator.result(requestStartedAt: requestStartedAt)
+    }
+
+    /// Retries only while opening the TLS connection. Once a response has been
+    /// received, failures propagate so partial text or tool calls are never
+    /// replayed by issuing the streaming POST again, regardless of provider.
+    private func openStream(
+        for request: URLRequest
+    ) async throws -> (bytes: URLSession.AsyncBytes, response: URLResponse) {
+        var attempt = 0
+        while true {
+            do {
+                return try await urlSession.bytes(for: request)
+            } catch {
+                guard RemoteStreamTransport.shouldRetryStreamOpening(
+                    error: error,
+                    attempt: attempt
+                ) else {
+                    throw error
+                }
+                try Task.checkCancellation()
+                try await Task.sleep(
+                    nanoseconds: RemoteStreamTransport
+                        .streamOpeningRetryDelayNanoseconds(attempt: attempt)
+                )
+                attempt += 1
+            }
+        }
     }
 }

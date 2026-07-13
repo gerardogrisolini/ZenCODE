@@ -603,6 +603,125 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func streamChatCompletionsRetriesTransientTLSFailureBeforeResponse() async throws {
+        let response = """
+        data: {"choices":[{"delta":{"content":"recovered"},"finish_reason":"stop"}]}
+
+        data: [DONE]
+
+        """
+        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+            responseBody: Data(response.utf8),
+            failuresBeforeResponse: [.secureConnectionFailed]
+        )
+        let client = RemoteGenerationClient(
+            configuration: remoteStreamingConfiguration(),
+            provider: AgentRemoteProvider(
+                name: "Generic Provider",
+                baseURL: "https://provider.example/v1",
+                modelID: "unit-model",
+                chatEndpoint: .chatCompletions
+            ),
+            apiKey: "test-key",
+            urlSession: urlSession
+        )
+        let capturedEvents = CapturedDirectAgentEvents()
+
+        let result = try await client.streamChatCompletions(
+            messages: [["role": "user", "content": "hi"]],
+            sessionID: "session-tls-retry",
+            allowedToolNames: [],
+            thinkingSelection: nil,
+            onEvent: { event in
+                capturedEvents.append(event)
+            }
+        )
+        let requests = RemoteRequestCapturingURLProtocol.capturedRequests()
+
+        #expect(result.text == "recovered")
+        #expect(capturedEvents.contentText() == "recovered")
+        #expect(requests.count == 2)
+        #expect(requests.first?.body == requests.last?.body)
+    }
+
+    @Test
+    func streamChatCompletionsDoesNotRetryTLSFailureAfterResponseBegins() async {
+        let response = """
+        data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}
+
+        """
+        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+            responseBody: Data(response.utf8),
+            failureAfterResponse: .secureConnectionFailed
+        )
+        let client = RemoteGenerationClient(
+            configuration: remoteStreamingConfiguration(),
+            provider: AgentRemoteProvider(
+                name: "Generic Provider",
+                baseURL: "https://provider.example/v1",
+                modelID: "unit-model",
+                chatEndpoint: .chatCompletions
+            ),
+            apiKey: "test-key",
+            urlSession: urlSession
+        )
+        let capturedEvents = CapturedDirectAgentEvents()
+
+        do {
+            _ = try await client.streamChatCompletions(
+                messages: [["role": "user", "content": "hi"]],
+                sessionID: "session-tls-no-replay",
+                allowedToolNames: [],
+                thinkingSelection: nil,
+                onEvent: { event in
+                    capturedEvents.append(event)
+                }
+            )
+            Issue.record("Expected the TLS stream failure to propagate")
+        } catch {
+            #expect((error as? URLError)?.code == .secureConnectionFailed)
+        }
+
+        #expect(RemoteRequestCapturingURLProtocol.capturedRequests().count == 1)
+        #expect(capturedEvents.contentText() == "partial")
+    }
+
+    @Test
+    func tlsRetryPolicyIsErrorAndAttemptSpecific() {
+        #expect(RemoteStreamTransport.shouldRetryStreamOpening(
+            error: URLError(.secureConnectionFailed),
+            attempt: 0
+        ))
+        #expect(RemoteStreamTransport.shouldRetryStreamOpening(
+            error: NSError(
+                domain: NSURLErrorDomain,
+                code: URLError.secureConnectionFailed.rawValue
+            ),
+            attempt: 1
+        ))
+        #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
+            error: URLError(.serverCertificateUntrusted),
+            attempt: 0
+        ))
+        #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
+            error: URLError(.timedOut),
+            attempt: 0
+        ))
+        #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
+            error: URLError(.cancelled),
+            attempt: 0
+        ))
+        #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
+            error: URLError(.secureConnectionFailed),
+            attempt: RemoteStreamTransport.maximumStreamOpeningRetries
+        ))
+        #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
+            error: URLError(.secureConnectionFailed),
+            attempt: -1
+        ))
+    }
+
+    @Test
     func streamResponsesSendsOpenRouterSessionIDForStickyCacheRouting() async throws {
         let response = """
         data: {"type":"response.output_text.delta","delta":"ok"}

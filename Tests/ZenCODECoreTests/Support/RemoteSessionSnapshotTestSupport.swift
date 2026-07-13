@@ -312,12 +312,20 @@ struct CapturedRemoteRequest: Sendable {
 /// URLProtocol subclasses are invoked by URLSession across threads; static test state is protected by `lock`.
 final class RemoteRequestCapturingURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) private static var responseBody = Data()
+    nonisolated(unsafe) private static var failuresBeforeResponse: [URLError.Code] = []
+    nonisolated(unsafe) private static var failureAfterResponse: URLError.Code?
     nonisolated(unsafe) private static var requests: [CapturedRemoteRequest] = []
     private static let lock = NSLock()
 
-    static func urlSession(responseBody: Data) -> URLSession {
+    static func urlSession(
+        responseBody: Data,
+        failuresBeforeResponse: [URLError.Code] = [],
+        failureAfterResponse: URLError.Code? = nil
+    ) -> URLSession {
         lock.lock()
         self.responseBody = responseBody
+        self.failuresBeforeResponse = failuresBeforeResponse
+        self.failureAfterResponse = failureAfterResponse
         requests = []
         lock.unlock()
 
@@ -345,7 +353,16 @@ final class RemoteRequestCapturingURLProtocol: URLProtocol, @unchecked Sendable 
         Self.lock.lock()
         Self.requests.append(CapturedRemoteRequest(request: request, body: body))
         let responseBody = Self.responseBody
+        let failureCode = Self.failuresBeforeResponse.isEmpty
+            ? nil
+            : Self.failuresBeforeResponse.removeFirst()
+        let failureAfterResponse = Self.failureAfterResponse
         Self.lock.unlock()
+
+        if let failureCode {
+            client?.urlProtocol(self, didFailWithError: URLError(failureCode))
+            return
+        }
 
         let response = HTTPURLResponse(
             url: request.url ?? URL(string: "https://unit.test")!,
@@ -355,7 +372,16 @@ final class RemoteRequestCapturingURLProtocol: URLProtocol, @unchecked Sendable 
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: responseBody)
-        client?.urlProtocolDidFinishLoading(self)
+        if let failureAfterResponse {
+            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) { [self] in
+                client?.urlProtocol(
+                    self,
+                    didFailWithError: URLError(failureAfterResponse)
+                )
+            }
+        } else {
+            client?.urlProtocolDidFinishLoading(self)
+        }
     }
 
     override func stopLoading() {}
