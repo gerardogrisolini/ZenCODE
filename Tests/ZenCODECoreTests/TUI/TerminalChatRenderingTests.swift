@@ -486,6 +486,38 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func statusBarBeginRequestClearsRoundMetricsButKeepsContextWindow() {
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        _ = statusBar.update(
+            metrics: DirectAgentGenerationMetrics(
+                promptTokenCount: 120,
+                cachedPromptTokenCount: 800,
+                promptTokensPerSecond: 60,
+                completionTokenCount: 32,
+                completionTokensPerSecond: 8,
+                responseDurationSeconds: 4
+            )
+        )
+        _ = statusBar.update(
+            contextWindow: DirectAgentContextWindowStatus(
+                usedTokens: 952,
+                maxTokens: 10_000,
+                modelID: "test-model",
+                isApproximate: true
+            )
+        )
+
+        statusBar.beginRequest()
+
+        let state = statusBar.state.withLock { state in
+            (state.latestMetrics, state.latestContextWindow)
+        }
+        #expect(state.0 == nil)
+        #expect(state.1?.usedTokens == 952)
+        #expect(state.1?.maxTokens == 10_000)
+    }
+
+    @Test
     func statusBarGenerationTokenCountsFragmentIsCompactAndOptional() {
         let metrics = DirectAgentGenerationMetrics(
             promptTokenCount: 15_000,

@@ -57,7 +57,7 @@ extension TerminalStatusBar {
         current: DirectAgentGenerationMetrics?,
         update: DirectAgentGenerationMetrics
     ) -> DirectAgentGenerationMetrics {
-        guard let current else {
+        guard let current, !update.replacesPreviousMetrics else {
             return update
         }
         return DirectAgentGenerationMetrics(
@@ -74,7 +74,8 @@ extension TerminalStatusBar {
             completionTokensPerSecond: update.completionTokensPerSecond ?? current.completionTokensPerSecond,
             responseDurationSeconds: update.responseDurationSeconds ?? current.responseDurationSeconds,
             contextTokenCount: update.contextTokenCount ?? current.contextTokenCount,
-            clearsPromptMetrics: update.clearsPromptMetrics
+            clearsPromptMetrics: update.clearsPromptMetrics,
+            replacesPreviousMetrics: update.replacesPreviousMetrics
         )
     }
 

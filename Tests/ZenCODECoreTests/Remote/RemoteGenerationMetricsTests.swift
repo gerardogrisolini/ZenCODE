@@ -71,7 +71,7 @@ struct RemoteGenerationMetricsTests {
     }
 
     @Test
-    func generationMetricsUsesLatestPromptAndContextAndAggregatesCompletionAcrossRounds() {
+    func generationMetricsUsesLatestRoundCountsAndKeepsSummaryAggregated() {
         let startedAt = Date(timeIntervalSince1970: 100)
         let stats = [
             RemoteGenerationStats(
@@ -109,12 +109,19 @@ struct RemoteGenerationMetricsTests {
         ]
 
         let metrics = RemoteGenerationClient.generationMetrics(stats)
+        let summary = RemoteGenerationClient.generationSummary(stats)
 
         #expect(metrics?.promptTokenCount == 200)
         #expect(metrics?.cachedPromptTokenCount == 4_100)
-        #expect(metrics?.completionTokenCount == 75)
+        #expect(metrics?.completionTokenCount == 25)
         #expect(metrics?.contextTokenCount == 4_325)
         #expect(metrics?.clearsPromptMetrics == true)
+        #expect(metrics?.replacesPreviousMetrics == true)
+        #expect(
+            metrics.flatMap(TerminalStatusBar.generationTokenCountsFragment) == "C:4.1k P:200 G:25"
+        )
+        #expect(summary?.contains("Rounds: 2") == true)
+        #expect(summary?.contains("Output: 75 tokens") == true)
     }
 
     @Test
@@ -162,11 +169,15 @@ struct RemoteGenerationMetricsTests {
         #expect(metrics.promptTokenCount == nil)
         #expect(metrics.cachedPromptTokenCount == nil)
         #expect(metrics.contextTokenCount == nil)
-        #expect(metrics.completionTokenCount == 10)
+        #expect(metrics.completionTokenCount == nil)
         #expect(metrics.clearsPromptMetrics)
+        #expect(metrics.replacesPreviousMetrics)
         #expect(mergedMetrics.promptTokenCount == nil)
         #expect(mergedMetrics.cachedPromptTokenCount == nil)
         #expect(mergedMetrics.promptTokensPerSecond == nil)
+        #expect(mergedMetrics.completionTokenCount == nil)
+        #expect(mergedMetrics.completionTokensPerSecond == nil)
+        #expect(mergedMetrics.contextTokenCount == nil)
     }
 
     @Test
@@ -474,6 +485,7 @@ struct RemoteGenerationMetricsTests {
         #expect(visibleMetrics.responseDurationSeconds == 4)
         #expect(visibleMetrics.contextTokenCount == 992)
         #expect(visibleMetrics.clearsPromptMetrics)
+        #expect(visibleMetrics.replacesPreviousMetrics)
     }
 
     @Test
@@ -499,6 +511,7 @@ struct RemoteGenerationMetricsTests {
         #expect(visibleMetrics.responseDurationSeconds == 4)
         #expect(visibleMetrics.contextTokenCount == 992)
         #expect(visibleMetrics.clearsPromptMetrics)
+        #expect(visibleMetrics.replacesPreviousMetrics)
     }
 
     @Test

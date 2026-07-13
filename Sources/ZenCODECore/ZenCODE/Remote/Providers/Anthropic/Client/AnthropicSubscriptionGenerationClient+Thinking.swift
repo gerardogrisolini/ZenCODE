@@ -32,7 +32,8 @@ extension AnthropicSubscriptionGenerationClient {
             completionTokensPerSecond: metrics.completionTokensPerSecond,
             responseDurationSeconds: metrics.responseDurationSeconds,
             contextTokenCount: metrics.contextTokenCount,
-            clearsPromptMetrics: true
+            clearsPromptMetrics: true,
+            replacesPreviousMetrics: true
         )
     }
 

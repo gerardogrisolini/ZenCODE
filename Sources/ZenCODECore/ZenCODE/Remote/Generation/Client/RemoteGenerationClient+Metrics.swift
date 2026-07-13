@@ -238,6 +238,9 @@ extension RemoteGenerationClient {
             return nil
         }
 
+        let completionTokenCount = summed(
+            stats.compactMap(\.usage?.completionTokens)
+        )
         let promptTime = stats.reduce(0) { $0 + $1.prefillElapsed }
         let generateTime = stats.reduce(0) { $0 + $1.generationElapsed }
 
@@ -263,7 +266,7 @@ extension RemoteGenerationClient {
         } else {
             lines.append("  Prompt: n/a")
         }
-        if let completionTokenCount = metrics.completionTokenCount {
+        if let completionTokenCount {
             let speedSuffix = metrics.completionTokensPerSecond.map {
                 " (\(String(format: "%.1f", $0)) tok/s)"
             } ?? ""
@@ -377,9 +380,7 @@ extension RemoteGenerationClient {
             ?? latestUsage?.promptTokens
         let cachedPromptTokenCount = latestUsage?.cachedPromptTokens
         let contextTokenCount = latestUsage?.contextTokens
-        let completionTokenCount = summed(
-            stats.compactMap(\.usage?.completionTokens)
-        )
+        let completionTokenCount = latestUsage?.completionTokens
         let promptTokensPerSecond =
             average(stats.compactMap { stat in
                 stat.usage?.promptTokensPerSecond
@@ -412,7 +413,8 @@ extension RemoteGenerationClient {
             completionTokensPerSecond: completionTokensPerSecond,
             responseDurationSeconds: responseDurationSeconds,
             contextTokenCount: contextTokenCount,
-            clearsPromptMetrics: true
+            clearsPromptMetrics: true,
+            replacesPreviousMetrics: true
         )
     }
 

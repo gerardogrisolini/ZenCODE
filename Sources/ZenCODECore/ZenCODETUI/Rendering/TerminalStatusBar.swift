@@ -176,6 +176,9 @@ public final class TerminalStatusBar: Sendable {
     
     func beginRequest() {
         state.withLock { state in
+            // Keep the last known context window, but do not carry C/P/G or
+            // timing from the completed user turn into the next request.
+            state.latestMetrics = nil
             guard state.isStarted else {
                 return
             }

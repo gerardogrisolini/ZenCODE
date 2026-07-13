@@ -19,21 +19,105 @@ extension DirectToolExecutor {
             return nil
         }
 
-        let approved = await authorizationHandler(
-            AgentToolAuthorizationRequest(
-                sessionID: sessionID,
-                toolCallID: toolCall.id,
-                toolName: "local.exec",
-                title: "Run \(command)",
-                kind: "execute",
-                command: command,
-                workingDirectory: cwd.path
+        for authorizationCommand in Self.localExecAuthorizationCommands(in: command) {
+            let approved = await authorizationHandler(
+                AgentToolAuthorizationRequest(
+                    sessionID: sessionID,
+                    toolCallID: toolCall.id,
+                    toolName: "local.exec",
+                    title: "Run \(authorizationCommand)",
+                    kind: "execute",
+                    command: authorizationCommand,
+                    workingDirectory: cwd.path
+                )
             )
-        )
-        guard !approved else {
-            return nil
+            guard approved else {
+                return deniedLocalExecOutput(command: command, cwd: cwd)
+            }
         }
 
+        return nil
+    }
+
+    static func localExecAuthorizationCommands(in command: String) -> [String] {
+        enum Quote {
+            case none
+            case single
+            case double
+        }
+
+        let characters = Array(command)
+        var commands: [String] = []
+        var current = ""
+        var quote = Quote.none
+        var isEscaping = false
+        var index = 0
+
+        func appendCurrentCommand() {
+            let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                commands.append(trimmed)
+            }
+            current = ""
+        }
+
+        while index < characters.count {
+            let character = characters[index]
+
+            switch quote {
+            case .single:
+                current.append(character)
+                if character == "'" {
+                    quote = .none
+                }
+            case .double:
+                current.append(character)
+                if isEscaping {
+                    isEscaping = false
+                } else if character == "\\" {
+                    isEscaping = true
+                } else if character == "\"" {
+                    quote = .none
+                }
+            case .none:
+                if isEscaping {
+                    current.append(character)
+                    isEscaping = false
+                } else {
+                    switch character {
+                    case "\\":
+                        current.append(character)
+                        isEscaping = true
+                    case "'":
+                        current.append(character)
+                        quote = .single
+                    case "\"":
+                        current.append(character)
+                        quote = .double
+                    case "|":
+                        appendCurrentCommand()
+                        if index + 1 < characters.count,
+                           characters[index + 1] == "|" || characters[index + 1] == "&" {
+                            index += 1
+                        }
+                    default:
+                        current.append(character)
+                    }
+                }
+            }
+
+            index += 1
+        }
+
+        appendCurrentCommand()
+        if commands.isEmpty {
+            let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? [] : [trimmed]
+        }
+        return commands
+    }
+
+    private func deniedLocalExecOutput(command: String, cwd: URL) -> String {
         return """
         Command execution cancelled.
         The user did not approve this `local.exec` request, so no shell command was run.

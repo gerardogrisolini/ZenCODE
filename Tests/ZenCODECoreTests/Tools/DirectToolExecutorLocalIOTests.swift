@@ -42,6 +42,74 @@ struct DirectToolExecutorLocalIOTests {
         #expect(selectableToolNames.contains("git.push"))
     }
 
+    @Test
+    func localExecAuthorizationCommandsSplitShellPipelines() {
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(
+                in: "printf one | grep one|sort"
+            ) == ["printf one", "grep one", "sort"]
+        )
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(
+                in: "producer |& consumer"
+            ) == ["producer", "consumer"]
+        )
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(
+                in: "primary || fallback"
+            ) == ["primary", "fallback"]
+        )
+    }
+
+    @Test
+    func localExecAuthorizationCommandsPreserveQuotedAndEscapedPipes() {
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(
+                in: #"printf 'a|b' | grep a"#
+            ) == [#"printf 'a|b'"#, "grep a"]
+        )
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(
+                in: #"printf "a|b" | grep a"#
+            ) == [#"printf "a|b""#, "grep a"]
+        )
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(
+                in: #"printf a\|b | grep a"#
+            ) == [#"printf a\|b"#, "grep a"]
+        )
+    }
+
+    @Test
+    func localExecAuthorizesPipelineCommandsInOrderAndStopsAtDenial() async {
+        let recorder = LocalExecAuthorizationRecorder(decisions: [true, false, true])
+        let executor = DirectToolExecutor(
+            authorizationHandler: { request in
+                await recorder.authorize(request)
+            },
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+        )
+        let command = "printf one | grep one | sort"
+
+        let output = await executor.deniedLocalExecOutputIfNeeded(
+            sessionID: "session",
+            toolCall: DirectAgentToolCall(
+                id: "tool-call",
+                name: "local.exec",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            command: command,
+            cwd: URL(fileURLWithPath: "/tmp")
+        )
+        let authorizedCommands = await recorder.recordedCommands()
+
+        #expect(authorizedCommands == ["printf one", "grep one"])
+        #expect(output?.contains("no shell command was run") == true)
+        #expect(output?.contains(command) == true)
+    }
+
     private func runFileTool(
         _ name: String,
         arguments: [String: Any],
@@ -307,6 +375,28 @@ struct DirectToolExecutorLocalIOTests {
         #expect(output.contains("targetFeature"))
         #expect(output.contains("suggested_reads:"))
         #expect(output.contains("local.readFile path=\"\(source.path)\""))
+    }
+}
+
+private actor LocalExecAuthorizationRecorder {
+    private let decisions: [Bool]
+    private var commands: [String] = []
+
+    init(decisions: [Bool]) {
+        self.decisions = decisions
+    }
+
+    func authorize(_ request: AgentToolAuthorizationRequest) -> Bool {
+        let decisionIndex = commands.count
+        commands.append(request.command)
+        guard decisions.indices.contains(decisionIndex) else {
+            return false
+        }
+        return decisions[decisionIndex]
+    }
+
+    func recordedCommands() -> [String] {
+        commands
     }
 }
 
