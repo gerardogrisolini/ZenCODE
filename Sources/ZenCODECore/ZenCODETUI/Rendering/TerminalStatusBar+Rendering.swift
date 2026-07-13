@@ -308,7 +308,7 @@ extension TerminalStatusBar {
     func statusTextLocked(state: inout State) -> String {
         let tokensUsed = state.latestContextWindow?.usedTokens
         ?? state.latestMetrics?.totalTokenCount
-        var fragments = ["mode \(state.localExecAccessMode.label)"]
+        var fragments: [String] = []
         if let latestModelID = state.latestModelID {
             let model = Self.modelStatusFragment(
                 modelID: latestModelID,
@@ -348,10 +348,22 @@ extension TerminalStatusBar {
            let usageText = Self.subscriptionUsageFragment(latestSubscriptionUsage) {
             fragments.append(usageText)
         }
+        if let accessModeFragment = Self.accessModeStatusFragment(state.localExecAccessMode) {
+            fragments.append(accessModeFragment)
+        }
         if let latestGitStatusSummary = state.latestGitStatusSummary {
             fragments.append(Self.gitStatusFragment(summary: latestGitStatusSummary))
         }
         return fragments.joined(separator: " · ")
+    }
+
+    static func accessModeStatusFragment(_ accessMode: AgentLocalExecAccessMode) -> String? {
+        switch accessMode {
+        case .standard:
+            return nil
+        case .fullAccess:
+            return "\u{1B}[31m●\u{1B}[0m"
+        }
     }
     
 }

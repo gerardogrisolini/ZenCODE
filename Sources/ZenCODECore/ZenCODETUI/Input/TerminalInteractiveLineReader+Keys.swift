@@ -35,7 +35,7 @@ extension TerminalInteractiveLineReader {
     static func controlKey(for byte: UInt8) -> Key? {
         switch byte {
         case 0x04: return .endOfInput
-        case 0x01: return .home
+        case 0x01: return .toggleAccessMode
         case 0x05: return .end
         case 0x0B: return .clearAfterCursor
         case 0x15: return .clearBeforeCursor
@@ -277,7 +277,7 @@ extension TerminalInteractiveLineReader {
         }
 
         switch keyCode {
-        case 109:
+        case 97:
             return .toggleAccessMode
         case 116:
             return .toggleToolDetails

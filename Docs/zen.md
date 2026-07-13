@@ -155,7 +155,7 @@ Inside chat mode, type a prompt and press return. Commands start with `/`:
 Interactive terminals also support:
 
 - `Ctrl+T` to toggle compact/full tool output.
-- `Ctrl+M` to toggle the TUI runner between `mode default` and `mode full access`.
+- `Ctrl+A` to toggle the TUI runner between default and full access.
 
 Full access is temporary and is never written to settings, saved sessions, or
 `permissions.json`; a new TUI process always starts in default mode. While full
@@ -167,15 +167,18 @@ requested by delegated sub-agents or by Telegram prompts routed through that sam
 session. Switch back to default mode to restore approvals for subsequent
 commands; an already-started process is not revoked.
 
-`Ctrl+M` requires a terminal that reports advanced keyboard events through Kitty
-CSI-u or xterm `modifyOtherKeys`. Legacy terminals encode both `Ctrl+M` and
-Return as byte `0x0D`, so ZenCODE always treats that legacy byte as Return rather
-than risking accidental mode changes. The shortcut also requires ZenCODE's
-interactive input panel to be active. If that panel cannot start, for example in
-a very small terminal or when the controlling output is not a TTY, ZenCODE uses
-the blocking input fallback, ignores the mode shortcut, and keeps the runner in
-its current mode (normally `default`). This shortcut and access mode are TUI-only
-and do not change ACP modes or permission handling.
+The status bar shows no access indicator in default mode and a red dot only while
+full access is active.
+
+`Ctrl+A` uses an unambiguous legacy control code and therefore works in Apple
+Terminal as well as terminals with enhanced keyboard protocols. It replaces the
+usual `Ctrl+A` move-to-start shortcut in ZenCODE's interactive input panel; the
+dedicated Home key remains available. The shortcut requires that panel to be
+active. If the panel cannot start, for example in a very small terminal or when
+the controlling output is not a TTY, ZenCODE uses the blocking input fallback,
+ignores the shortcut, and keeps the runner in its current mode (normally
+`default`). The shortcut and access mode are TUI-only and do not change ACP
+modes or permission handling.
 
 ## Tool Selection
 

@@ -404,7 +404,7 @@ extension TerminalInteractiveLineReader {
         if hasActiveCommandSuggestionsLocked() {
             return "↑/↓ select · Tab complete · Enter choose"
         }
-        return "Enter queue · Option+Enter newline · Ctrl+T tools · Ctrl+M mode · Esc stop"
+        return "Enter queue · Option+Enter newline · Ctrl+T tools · Ctrl+A access · Esc stop"
     }
 
     func panelCompactHelpTextLocked() -> String? {
@@ -412,7 +412,7 @@ extension TerminalInteractiveLineReader {
               !hasActiveCommandSuggestionsLocked() else {
             return nil
         }
-        return "Ctrl+T tools · Ctrl+M mode"
+        return "Ctrl+T · Ctrl+A access"
     }
 
     struct CommandSuggestionSelection: Sendable {

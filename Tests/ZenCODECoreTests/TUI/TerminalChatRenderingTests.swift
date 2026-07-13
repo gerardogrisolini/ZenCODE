@@ -330,34 +330,40 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func statusBarAccessModeIsFirstAndSupportsFullAccess() {
+    func statusBarShowsAccessModeDotOnlyForFullAccess() {
         let statusBar = TerminalStatusBar(isEnabled: false)
         var defaultState = TerminalStatusBar.State()
         defaultState.latestModelID = "test-model"
 
         let defaultText = statusBar.statusTextLocked(state: &defaultState)
-        #expect(defaultText == "mode default · test-model")
+        #expect(defaultText == "test-model")
+        #expect(TerminalStatusBar.accessModeStatusFragment(.standard) == nil)
 
         var fullAccessState = defaultState
         fullAccessState.localExecAccessMode = .fullAccess
         fullAccessState.latestModelRuntime = "local"
         let fullAccessText = statusBar.statusTextLocked(state: &fullAccessState)
-        #expect(fullAccessText == "mode full access · test-model · local")
-        #expect(fullAccessText.hasPrefix("mode full access"))
+        let redDot = "\u{1B}[31m●\u{1B}[0m"
+        #expect(fullAccessText == "test-model · local · \(redDot)")
+        #expect(!fullAccessText.contains("mode full access"))
     }
 
     @Test
-    func statusBarKeepsFullAccessIndicatorVisibleAtLimitedWidth() {
+    func statusBarPlacesAccessModeDotImmediatelyBeforeFiles() {
         let statusBar = TerminalStatusBar(isEnabled: false)
         var state = TerminalStatusBar.State()
         state.localExecAccessMode = .fullAccess
-        state.latestModelID = "a-very-long-model-name"
+        state.latestModelID = "test-model"
+        state.latestGitStatusSummary = TerminalGitStatusSummary(
+            changedFileCount: 3,
+            additions: 12,
+            deletions: 4
+        )
 
         let statusText = statusBar.statusTextLocked(state: &state)
-        let fitted = TerminalStatusBar.fit(statusText, width: 18)
+        let redDot = "\u{1B}[31m●\u{1B}[0m"
 
-        #expect(fitted.hasPrefix("mode full access"))
-        #expect(TerminalStatusBar.visibleCharacterCount(fitted) <= 18)
+        #expect(statusText.contains("test-model · \(redDot) · \u{1B}[38;5;81m3\u{1B}[0m files"))
     }
 
     @Test
@@ -388,28 +394,28 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func narrowPanelHelpKeepsBothModeShortcutsVisible() {
+    func narrowPanelHelpKeepsAccessShortcutVisible() {
         let line = TerminalStatusBar.inputPanelModeLineText(
             modeText: "Prompt",
-            helpText: "Enter queue · Option+Enter newline · Ctrl+T tools · Ctrl+M mode · Esc stop",
-            compactHelpText: "Ctrl+T tools · Ctrl+M mode",
+            helpText: "Enter queue · Option+Enter newline · Ctrl+T tools · Ctrl+A access · Esc stop",
+            compactHelpText: "Ctrl+T · Ctrl+A access",
             width: 36
         )
 
-        #expect(line.contains("Ctrl+T tools"))
-        #expect(line.contains("Ctrl+M mode"))
+        #expect(line.contains("Ctrl+T"))
+        #expect(line.contains("Ctrl+A access"))
         #expect(TerminalStatusBar.visibleCharacterCount(line) <= 36)
     }
 
     @Test
-    func runtimeHelpListsCtrlMImmediatelyAfterCtrlT() throws {
+    func runtimeHelpListsCtrlAAccessModeShortcutAfterCtrlT() throws {
         let terminal = try makeTerminalForToolInterleavingTest()
         let help = terminal.renderHelpTextForCurrentAgent()
 
         #expect(
             help.contains(
                 "Ctrl+T toggles compact/full tool output.\n"
-                    + "Ctrl+M toggles default/full access for local.exec approvals in the interactive panel."
+                    + "Ctrl+A toggles default/full access for local.exec approvals in the interactive panel."
             )
         )
     }

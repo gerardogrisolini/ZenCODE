@@ -176,13 +176,13 @@ struct TerminalInteractiveLineReaderTests {
     func controlShortcutsDecodeKittyAndModifyOtherKeysSequences() {
         let reader = TerminalInteractiveLineReader()
 
-        #expect(reader.keyFromCSI(Array("109;5u".utf8)) == .toggleAccessMode)
-        #expect(reader.keyFromCSI(Array("27;5;109~".utf8)) == .toggleAccessMode)
+        #expect(reader.keyFromCSI(Array("97;5u".utf8)) == .toggleAccessMode)
+        #expect(reader.keyFromCSI(Array("27;5;97~".utf8)) == .toggleAccessMode)
         #expect(reader.keyFromCSI(Array("116;5u".utf8)) == .toggleToolDetails)
         #expect(reader.keyFromCSI(Array("27;5;116~".utf8)) == .toggleToolDetails)
 
         // An explicit Kitty press event and additional modifiers retain Control.
-        #expect(reader.keyFromCSI(Array("109;5:1u".utf8)) == .toggleAccessMode)
+        #expect(reader.keyFromCSI(Array("97;5:1u".utf8)) == .toggleAccessMode)
         #expect(reader.keyFromCSI(Array("116;7u".utf8)) == .toggleToolDetails)
     }
 
@@ -190,16 +190,19 @@ struct TerminalInteractiveLineReaderTests {
     func controlShortcutsRejectWrongModifiersAndKeyCodes() {
         let reader = TerminalInteractiveLineReader()
 
-        #expect(reader.keyFromCSI(Array("109;2u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("27;3;109~".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("97;2u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("27;3;97~".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("108;5u".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("27;5;117~".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("109;5:2u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("109;5:3u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("109;5:4u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("109;5:u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("1;5;109~".utf8)) != .toggleAccessMode)
-        #expect(reader.keyFromCSI(Array("27;5:1;109~".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("97;5:2u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("97;5:3u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("97;5:4u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("97;5:u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("1;5;97~".utf8)) != .toggleAccessMode)
+        #expect(reader.keyFromCSI(Array("27;5:1;97~".utf8)) == .unknown)
+
+        #expect(reader.keyFromCSI(Array("103;5u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("109;5u".utf8)) == .unknown)
     }
 
     @Test
@@ -209,6 +212,8 @@ struct TerminalInteractiveLineReaderTests {
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x0D) == .enter)
         #expect(reader.keyFromCSI(Array("13;5u".utf8)) == .enter)
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x14) == .toggleToolDetails)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x01) == .toggleAccessMode)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x07) == nil)
     }
 
     @Test
@@ -231,8 +236,8 @@ struct TerminalInteractiveLineReaderTests {
         }
         #expect(String(reader.panelBuffer) == "hello")
         #expect(reader.panelCursorIndex == 2)
-        #expect(reader.panelHelpTextLocked().contains("Ctrl+T tools · Ctrl+M mode"))
-        #expect(reader.panelCompactHelpTextLocked() == "Ctrl+T tools · Ctrl+M mode")
+        #expect(reader.panelHelpTextLocked().contains("Ctrl+T tools · Ctrl+A access"))
+        #expect(reader.panelCompactHelpTextLocked() == "Ctrl+T · Ctrl+A access")
     }
 
     @Test
