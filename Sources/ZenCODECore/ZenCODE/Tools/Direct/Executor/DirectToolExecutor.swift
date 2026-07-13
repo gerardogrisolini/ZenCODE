@@ -74,10 +74,20 @@ public actor DirectToolExecutor {
         self.authorizationHandler = authorizationHandler
         self.mcpRuntime = mcpRuntime
         self.swiftFeatureRuntime = swiftFeatureRuntime
-        self.preferredWorkspaceRootURL = preferredWorkspaceRootURL?.standardizedFileURL
+        self.preferredWorkspaceRootURL = preferredWorkspaceRootURL?
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
         self.borrowedSubAgentToolExecutor = borrowedSubAgentToolExecutor
+        // Propagate this executor's SwiftFeatureRuntime to subagent backends so
+        // they share the same discovery cache (consent, --list-tools results)
+        // rather than each getting a fresh runtime.
+        let parentSwiftFeatureRuntime = swiftFeatureRuntime
         self.subAgentRuntime = DirectSubAgentRuntime(
-            contextualBackendFactory: subAgentContextualBackendFactory,
+            contextualBackendFactory: { context in
+                try subAgentContextualBackendFactory(
+                    context.injecting(swiftFeatureRuntime: parentSwiftFeatureRuntime)
+                )
+            },
             profileResolver: subAgentProfileResolver
         )
     }
@@ -135,17 +145,37 @@ public actor DirectToolExecutor {
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL
         )
+        let excludingFeatureIDs = Self.mcpManagedSwiftFeatureIDs(
+            mcpDescriptors: mcpDescriptors
+        )
         let featureDescriptors = await swiftFeatureRuntime.descriptors(
             allowedToolNames: allowedToolNames,
-            excludingFeatureIDs: Self.mcpManagedSwiftFeatureIDs(
-                allowedToolNames: allowedToolNames,
-                mcpDescriptors: mcpDescriptors
-            )
+            excludingFeatureIDs: excludingFeatureIDs
         )
 
-        return Self.canonicalized(
+        let result = Self.canonicalized(
             coreDescriptors + featureDescriptors + mcpDescriptors
         )
+
+        // Diagnostic: if xcode tools are requested but none ended up in the
+        // final descriptor set, log which source failed to help debugging.
+        let requestsXcode = allowedToolNames?.contains(where: XcodeToolIntegration.isToolName) == true
+            || allowedToolNames == nil
+        if requestsXcode,
+           !result.contains(where: { XcodeToolIntegration.isToolName($0.name) }) {
+            let mcpHasXcode = mcpDescriptors.contains(where: { XcodeToolIntegration.isToolName($0.name) })
+            let featureExcluded = excludingFeatureIDs.contains(XcodeToolIntegration.featureID)
+            let featureHasXcode = featureDescriptors.contains(where: { XcodeToolIntegration.isToolName($0.name) })
+            ZenLogger.debug(
+                .xcodeToolExecutor,
+                "No xcode descriptors in result — MCP provided xcode: \(mcpHasXcode), "
+                    + "feature excluded: \(featureExcluded), "
+                    + "feature provided xcode: \(featureHasXcode), "
+                    + "preferredWorkspaceRootURL: \(preferredWorkspaceRootURL?.path ?? "nil")"
+            )
+        }
+
+        return result
     }
 
     public func chatCompletionToolPayloads(
@@ -316,13 +346,19 @@ public actor DirectToolExecutor {
         return false
     }
 
+    /// Feature IDs whose tools are provided by MCP and therefore must be excluded
+    /// from the Swift feature descriptor stream to avoid duplicates.
+    ///
+    /// Exclusion is driven solely by the MCP descriptors actually materialized for
+    /// the current session. This keeps the Swift feature runtime as a valid fallback
+    /// when MCP does not surface a feature's tools (e.g. the Xcode server is not
+    /// matched for the subagent's workspace), while still preventing duplication when
+    /// MCP does provide them.
     static func mcpManagedSwiftFeatureIDs(
-        allowedToolNames: Set<String>?,
         mcpDescriptors: [DirectToolDescriptor]
     ) -> Set<String> {
         var featureIDs = Set<String>()
-        if allowedToolNames?.contains(where: XcodeToolIntegration.isToolName) == true
-            || mcpDescriptors.contains(where: { XcodeToolIntegration.isToolName($0.name) }) {
+        if mcpDescriptors.contains(where: { XcodeToolIntegration.isToolName($0.name) }) {
             featureIDs.insert(XcodeToolIntegration.featureID)
         }
         return featureIDs

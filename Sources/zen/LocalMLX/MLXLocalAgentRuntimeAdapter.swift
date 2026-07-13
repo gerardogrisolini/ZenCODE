@@ -16,13 +16,14 @@ struct MLXLocalAgentRuntimeAdapter: @unchecked Sendable {
             eligibility: { configuration in
                 try? modelCatalog.resolve(id: configuration.modelID ?? initialModelID)
             },
-            localBackendBuilder: { model, configuration, mcpRuntime, subAgentBackendFactory in
+            localBackendBuilder: { model, configuration, mcpRuntime, swiftFeatureRuntime, subAgentBackendFactory in
                 MLXServerCoderBackend(
                     configuration: configuration,
                     runtime: runtime,
                     model: model,
                     kvCacheSettings: kvCacheSettings,
                     mcpRuntime: mcpRuntime,
+                    swiftFeatureRuntime: swiftFeatureRuntime,
                     subAgentContextualBackendFactory: subAgentBackendFactory.factory
                 )
             }

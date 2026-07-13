@@ -126,6 +126,7 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
         webSocketPool: ChatGPTSubscriptionWebSocketPool = ChatGPTSubscriptionWebSocketPool(),
         connectionScopeID: String? = nil,
+        swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
         subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
     ) {
         self.configuration = configuration
@@ -142,6 +143,7 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         self.toolExecutor = DirectToolExecutor(
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime ?? SwiftFeatureRuntime(),
             preferredWorkspaceRootURL: configuration.workingDirectory,
             subAgentContextualBackendFactory: subAgentContextualBackendFactory
                 ?? DirectSubAgentRuntime.unavailableContextualBackendFactory

@@ -17,7 +17,8 @@ public enum AgentRemoteBackendFactory {
         fallbackProvider: AgentRemoteProvider? = nil,
         fallbackAPIKey: String? = nil,
         urlSession: URLSession? = nil,
-        chatGPTConnectionScopeID: String? = nil
+        chatGPTConnectionScopeID: String? = nil,
+        swiftFeatureRuntime: SwiftFeatureRuntime? = nil
     ) throws -> any AgentRuntimeBackend {
         let selection = AgentSettingsStore.defaultSelection(
             explicitModelID: configuration.modelID
@@ -69,6 +70,7 @@ public enum AgentRemoteBackendFactory {
                 urlSession: urlSession,
                 mcpRuntime: mcpRuntime,
                 connectionScopeID: chatGPTConnectionScopeID,
+                swiftFeatureRuntime: swiftFeatureRuntime,
                 subAgentContextualBackendFactory: remoteSubAgentContextualBackendFactory(
                     configuration: resolvedConfiguration,
                     mcpRuntime: mcpRuntime,
@@ -78,7 +80,8 @@ public enum AgentRemoteBackendFactory {
                         baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
                         modelID: resolvedConfiguration.modelID ?? CodexAgentModel.defaultLLMID
                     ),
-                    urlSession: urlSession
+                    urlSession: urlSession,
+                    swiftFeatureRuntime: swiftFeatureRuntime
                 )
             )
 #else
@@ -93,11 +96,13 @@ public enum AgentRemoteBackendFactory {
                 provider: provider,
                 urlSession: urlSession,
                 mcpRuntime: mcpRuntime,
+                swiftFeatureRuntime: swiftFeatureRuntime,
                 subAgentContextualBackendFactory: remoteSubAgentContextualBackendFactory(
                     configuration: resolvedConfiguration,
                     mcpRuntime: mcpRuntime,
                     fallbackProvider: provider,
-                    urlSession: urlSession
+                    urlSession: urlSession,
+                    swiftFeatureRuntime: swiftFeatureRuntime
                 )
             )
 #else
@@ -111,12 +116,14 @@ public enum AgentRemoteBackendFactory {
             apiKey: apiKey,
             urlSession: urlSession,
             mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime,
             subAgentContextualBackendFactory: remoteSubAgentContextualBackendFactory(
                 configuration: resolvedConfiguration,
                 mcpRuntime: mcpRuntime,
                 fallbackProvider: provider,
                 fallbackAPIKey: apiKey,
-                urlSession: urlSession
+                urlSession: urlSession,
+                swiftFeatureRuntime: swiftFeatureRuntime
             )
         )
     }
@@ -126,7 +133,8 @@ public enum AgentRemoteBackendFactory {
         mcpRuntime: DirectMCPToolRuntime,
         fallbackProvider: AgentRemoteProvider,
         fallbackAPIKey: String? = nil,
-        urlSession: URLSession? = nil
+        urlSession: URLSession? = nil,
+        swiftFeatureRuntime: SwiftFeatureRuntime? = nil
     ) -> DirectSubAgentContextualBackendFactory {
         { context in
             try makeRemoteBackend(
@@ -135,7 +143,8 @@ public enum AgentRemoteBackendFactory {
                 fallbackProvider: fallbackProvider,
                 fallbackAPIKey: fallbackAPIKey,
                 urlSession: urlSession,
-                chatGPTConnectionScopeID: UUID().uuidString
+                chatGPTConnectionScopeID: UUID().uuidString,
+                swiftFeatureRuntime: context.swiftFeatureRuntime ?? swiftFeatureRuntime
             )
         }
     }

@@ -48,7 +48,8 @@ public actor AgentCoreBackend {
         fallbackProvider: AgentRemoteProvider? = nil,
         fallbackAPIKey: String? = nil,
         urlSession: URLSession? = nil,
-        chatGPTConnectionScopeID: String? = nil
+        chatGPTConnectionScopeID: String? = nil,
+        swiftFeatureRuntime: SwiftFeatureRuntime? = nil
     ) throws -> any AgentRuntimeBackend {
         try AgentRemoteBackendFactory.makeRemoteBackend(
             configuration: configuration,
@@ -56,7 +57,8 @@ public actor AgentCoreBackend {
             fallbackProvider: fallbackProvider,
             fallbackAPIKey: fallbackAPIKey,
             urlSession: urlSession,
-            chatGPTConnectionScopeID: chatGPTConnectionScopeID
+            chatGPTConnectionScopeID: chatGPTConnectionScopeID,
+            swiftFeatureRuntime: swiftFeatureRuntime
         )
     }
 

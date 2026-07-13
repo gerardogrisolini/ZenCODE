@@ -36,6 +36,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         apiKey: String?,
         urlSession: URLSession? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
+        swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
         subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
     ) {
         self.configuration = configuration
@@ -52,6 +53,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         self.toolExecutor = DirectToolExecutor(
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime ?? SwiftFeatureRuntime(),
             preferredWorkspaceRootURL: configuration.workingDirectory,
             subAgentContextualBackendFactory: subAgentContextualBackendFactory
                 ?? DirectSubAgentRuntime.unavailableContextualBackendFactory

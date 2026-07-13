@@ -42,6 +42,7 @@ actor MLXServerCoderBackend: AgentRuntimeBackend {
         model: MLXServerModelDescriptor,
         kvCacheSettings: MLXServerKVCacheSettings,
         mcpRuntime: DirectMCPToolRuntime,
+        swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
         subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
     ) {
         self.configuration = configuration
@@ -51,14 +52,16 @@ actor MLXServerCoderBackend: AgentRuntimeBackend {
         self.toolExecutor = DirectToolExecutor(
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime ?? SwiftFeatureRuntime(),
             preferredWorkspaceRootURL: configuration.workingDirectory,
-            subAgentContextualBackendFactory: subAgentContextualBackendFactory ?? { _ in
+            subAgentContextualBackendFactory: subAgentContextualBackendFactory ?? { context in
                 MLXServerCoderBackend(
                     configuration: configuration,
                     runtime: runtime,
                     model: model,
                     kvCacheSettings: kvCacheSettings,
-                    mcpRuntime: mcpRuntime
+                    mcpRuntime: mcpRuntime,
+                    swiftFeatureRuntime: context.swiftFeatureRuntime
                 )
             }
         )

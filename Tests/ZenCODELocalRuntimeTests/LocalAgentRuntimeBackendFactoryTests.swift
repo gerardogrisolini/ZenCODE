@@ -53,21 +53,49 @@ struct LocalAgentRuntimeBackendFactoryTests {
         #expect(childScopeID == "test-fresh-scope")
     }
 
+    @Test("contextual sub-agents inherit the parent's swiftFeatureRuntime")
+    func contextualSubAgentsInheritSwiftFeatureRuntime() async throws {
+        let parentRuntime = SwiftFeatureRuntime()
+        let factory = makeFactory()
+        let parent = try factory.makeBackend(
+            configuration: configuration(modelID: "local"),
+            mcpRuntime: DirectMCPToolRuntime(),
+            swiftFeatureRuntime: parentRuntime
+        ) as! FakeBackend
+
+        // Parent backend should have received the runtime.
+        let parentReceivedRuntime = await parent.swiftFeatureRuntime
+        #expect(parentReceivedRuntime === parentRuntime)
+
+        // Sub-agent created via contextual factory should inherit the same instance.
+        let context = DirectSubAgentRuntime.BackendContext(
+            requestedName: "child-agent",
+            requestedRole: "worker",
+            isolationMode: .report,
+            profile: AgentProfile(id: "child-agent", name: "Child", modelID: "local")
+        )
+        let child = try await parent.makeContextualBackend(context) as! FakeBackend
+        let childReceivedRuntime = await child.swiftFeatureRuntime
+        #expect(childReceivedRuntime === parentRuntime)
+    }
+
     private func makeFactory() -> LocalAgentRuntimeBackendFactory<String> {
         LocalAgentRuntimeBackendFactory(
             eligibility: { $0.modelID == "local" ? "local" : nil },
-            localBackendBuilder: { _, configuration, _, contextualBackendFactory in
+            localBackendBuilder: { _, configuration, _, swiftFeatureRuntime, contextualBackendFactory in
                 FakeBackend(
                     kind: .local,
                     configuration: configuration,
+                    swiftFeatureRuntime: swiftFeatureRuntime,
                     contextualBackendFactory: contextualBackendFactory.factory
                 )
             },
-            remoteBackendBuilder: { configuration, _, scopeID in
+            remoteBackendBuilder: { configuration, _, scopeID, swiftFeatureRuntime in
                 FakeBackend(
                     kind: .remote,
                     configuration: configuration,
-                    chatGPTConnectionScopeID: scopeID
+                    chatGPTConnectionScopeID: scopeID,
+                    swiftFeatureRuntime: swiftFeatureRuntime
                 )
             },
             chatGPTConnectionScopeIDSupplier: { "test-fresh-scope" }
@@ -95,17 +123,20 @@ private actor FakeBackend: AgentRuntimeBackend {
     let kind: Kind
     let configuration: AgentRuntimeConfiguration
     let chatGPTConnectionScopeID: String?
+    let swiftFeatureRuntime: SwiftFeatureRuntime?
     private let contextualBackendFactory: DirectSubAgentContextualBackendFactory?
 
     init(
         kind: Kind,
         configuration: AgentRuntimeConfiguration,
         chatGPTConnectionScopeID: String? = nil,
+        swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
         contextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
     ) {
         self.kind = kind
         self.configuration = configuration
         self.chatGPTConnectionScopeID = chatGPTConnectionScopeID
+        self.swiftFeatureRuntime = swiftFeatureRuntime
         self.contextualBackendFactory = contextualBackendFactory
     }
 

@@ -8,6 +8,7 @@
 import Foundation
 @testable import ZenCODECore
 import Testing
+import XcodeToolsFeature
 
 extension SwiftFeatureRuntimeTests {
     @Test
@@ -518,5 +519,39 @@ extension SwiftFeatureRuntimeTests {
 
         #expect(result.output.contains("feature-git-commit"))
         #expect(!result.output.contains("Git command cancelled."))
+    }
+
+    @Test
+    func mcpManagedSwiftFeatureIDsExcludesXcodeOnlyWhenMcpProvidesIt() {
+        // (a) feature xcode-tools NOT excluded when mcpDescriptors is empty,
+        //     even though xcode tool names are requested.
+        let empty = DirectToolExecutor.mcpManagedSwiftFeatureIDs(
+            mcpDescriptors: []
+        )
+        #expect(!empty.contains(XcodeToolIntegration.featureID))
+
+        // (b) feature xcode-tools IS excluded when mcpDescriptors contains an xcode tool.
+        let withXcode = DirectToolExecutor.mcpManagedSwiftFeatureIDs(
+            mcpDescriptors: [
+                DirectToolDescriptor(
+                    name: "xcode.BuildProject",
+                    description: "Builds an Xcode project",
+                    inputSchema: #"{"type":"object","properties":{}}"#
+                )
+            ]
+        )
+        #expect(withXcode.contains(XcodeToolIntegration.featureID))
+
+        // Non-xcode MCP descriptors must not exclude the xcode feature.
+        let nonXcode = DirectToolExecutor.mcpManagedSwiftFeatureIDs(
+            mcpDescriptors: [
+                DirectToolDescriptor(
+                    name: "figma.read",
+                    description: "Reads a Figma file",
+                    inputSchema: #"{"type":"object","properties":{}}"#
+                )
+            ]
+        )
+        #expect(!nonXcode.contains(XcodeToolIntegration.featureID))
     }
 }

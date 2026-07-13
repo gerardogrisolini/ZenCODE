@@ -188,17 +188,37 @@ public actor DirectSubAgentRuntime {
         public let requestedRole: String
         public let isolationMode: IsolationMode
         public let profile: AgentProfile?
+        /// Parent session's SwiftFeatureRuntime, propagated so subagents share the
+        /// same discovery cache (consent, `--list-tools` results) instead of each
+        /// getting a fresh runtime. `nil` for top-level sessions.
+        public let swiftFeatureRuntime: SwiftFeatureRuntime?
 
         public init(
             requestedName: String,
             requestedRole: String,
             isolationMode: IsolationMode,
-            profile: AgentProfile?
+            profile: AgentProfile?,
+            swiftFeatureRuntime: SwiftFeatureRuntime? = nil
         ) {
             self.requestedName = requestedName
             self.requestedRole = requestedRole
             self.isolationMode = isolationMode
             self.profile = profile
+            self.swiftFeatureRuntime = swiftFeatureRuntime
+        }
+
+        /// Returns a copy of this context with the given SwiftFeatureRuntime,
+        /// used by DirectToolExecutor to inject its own runtime for subagents.
+        public func injecting(
+            swiftFeatureRuntime: SwiftFeatureRuntime?
+        ) -> BackendContext {
+            BackendContext(
+                requestedName: requestedName,
+                requestedRole: requestedRole,
+                isolationMode: isolationMode,
+                profile: profile,
+                swiftFeatureRuntime: swiftFeatureRuntime
+            )
         }
 
         public var modelID: String? {

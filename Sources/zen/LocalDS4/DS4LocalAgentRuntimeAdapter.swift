@@ -15,11 +15,12 @@ struct DS4LocalAgentRuntimeAdapter: @unchecked Sendable {
                 }
                 return nil
             },
-            localBackendBuilder: { _, configuration, mcpRuntime, subAgentBackendFactory in
+            localBackendBuilder: { _, configuration, mcpRuntime, swiftFeatureRuntime, subAgentBackendFactory in
                 DS4CoderBackend(
                     configuration: configuration,
                     options: runtimeOptions,
                     mcpRuntime: mcpRuntime,
+                    swiftFeatureRuntime: swiftFeatureRuntime,
                     subAgentContextualBackendFactory: subAgentBackendFactory.factory
                 )
             }
