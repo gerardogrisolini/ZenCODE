@@ -36,10 +36,6 @@ public enum ZenCODECommandLineRunner {
                 return
             }
 
-            try AgentRuntimeLauncher.ensureProjectAgentsFileExists(
-                workingDirectory: configuration.workingDirectory
-            )
-
             let interactiveInputAvailable = TerminalRawInput.supportsInteractiveInput()
             let resolvedRunMode = configuration.resolvedRunMode(
                 stdinIsTerminal: interactiveInputAvailable

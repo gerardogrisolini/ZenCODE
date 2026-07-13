@@ -66,7 +66,7 @@ Important options:
 - `--acp`: run ACP JSON-RPC over stdio instead of terminal chat.
 - `--agent NAME`: select an agent profile from `agents.json`; defaults to `Default` when omitted.
 - `--model MODEL_ID`: override the agent-selected model for this run. Accepted forms include a model id, `remoteapimodel:<uuid>`, or `remoteapi:<uuid>`.
-- `--cwd PATH`: working directory for local tools. Defaults to the current directory, or home when launched from the executable directory.
+- `--cwd PATH`: working directory for local tools. An explicitly supplied path is used as-is after path normalization. Defaults to the current directory, or home when launched from the executable directory.
 - `--skills LIST`: initial skill selection by name/number, `all`, or `none`.
 - `--max-tool-rounds N`: maximum model/tool loop rounds per prompt. The default is shown by `zen --help`.
 - `--max-output-tokens N`: maximum generated tokens per model call. Default: model default.
@@ -119,6 +119,7 @@ Inside chat mode, type a prompt and press return. Commands start with `/`:
 - `/models`: show configured models and switch the current session model.
 - `/agents [list|<agent name>|<number>]`: switch agent profile.
 - `/tools [all|none|tool-name|package-name|tool-number]`: select which tool groups are exposed to the model.
+- `/make-agents`: ask the current model to inspect the exact current working directory and create or conservatively update its `AGENTS.md`. The command treats the directory as an arbitrary workspace, does not assume a repository, project type, language, or toolchain, and requires the `Files` tool group.
 - `/skills`: select installed prompt skills or install a skill from GitHub/local folder.
 - `/sessions [session name]`: list/load sessions, or save a named session snapshot for the current project.
 - `/sessions save`: refresh the currently active saved session. If no saved session is active yet, it saves a new session named after your first prompt.
@@ -331,9 +332,18 @@ When `/sessions <name>` saves a session, `ZenCODE` updates one active global res
 
 `ZenCODE` separates durable context by responsibility:
 
+- Project `AGENTS.md` contains durable workspace-specific constraints, important structure, confirmed commands or workflows, and non-obvious caveats. Check it into version control when it is shared guidance.
+- Global `~/.zencode/AGENTS.md` contains cross-workspace operating rules and preferences.
 - Project `MEMORY.md` in a workspace is the codebase journal. It should contain concise handoff entries with `Timestamp`, `Summary`, `State`, and `Next`.
 - Global `~/.zencode/MEMORY.md` is only a lightweight resume index for sessions that do not start inside a clear project.
-- Operating rules, team conventions, and preferences belong in `AGENTS.md`, not in memory.
+
+ZenCODE reads `AGENTS.md` from the current working directory when the file is present. Normal TUI, ACP, MLX, and DS4 startup never creates, audits, or rewrites a project file. In the terminal UI, enable the `Files` tool group and run:
+
+```text
+/make-agents
+```
+
+`/make-agents` starts a model turn rather than expanding a built-in template. The model first inspects the opened directory, which may be empty or may contain any kind of material, then derives only guidance supported by what it observes. If `AGENTS.md` exists, the model must read it and preserve useful user-authored guidance; otherwise it creates the file. The command targets only `AGENTS.md` in the exact current working directory and does not infer a Git, package, Xcode, or other “project root.” The dedicated turn excludes task, sub-agent, memory-write, shell, and unrelated mutation tools; it retains bounded read-only discovery plus `local.writeFile`, subject to the active profile's normal tool and permission policy. Keep durable team guidance versioned when appropriate.
 
 A good project memory entry records durable state, decisions, blockers, and next steps. It should not record every command, raw output, or facts obvious from the files.
 
@@ -404,7 +414,7 @@ This mode:
   reconnect, including for stateless ACP clients without a `session_id` (see the
   [Local MLX runtime guide](mlx-runtime.md) for details);
 - can run chat TUI or ACP with `--acp`;
-- creates a default project `AGENTS.md` if one is missing.
+- loads an existing `AGENTS.md` from the selected working directory without creating or rewriting one during startup; use `/make-agents` in chat to ask the model to create or update it.
 
 Example with explicit model and profile:
 
@@ -451,6 +461,7 @@ zen --mlx \
 - Setup starts automatically: required `~/.zencode` files are missing; complete `--setup`.
 - Model not found: run `/models` or check `~/.zencode/settings.json`; in `zen --mlx` mode check `~/.zencode/mlx/models.json`.
 - No tools available: use `/tools`, switch to a profile that permits tools, or check ACP client tool exposure.
+- `/make-agents` says the Files tool group is required: enable `Files` with `/tools`, or switch to an agent profile that includes it.
 - `/feature` unavailable: switch to the Builder agent with `/agents Builder`.
 - `/plan` says a goal is required: rerun it as `/plan <goal>` with the activity you want planned.
 - `/plan` says sub-agents are required: enable the `sub-agents` tool group with `/tools`, or switch to an agent profile that includes it.

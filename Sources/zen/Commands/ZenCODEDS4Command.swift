@@ -104,10 +104,6 @@ enum ZenCODEDS4Command {
     @MainActor
     private static func runAgent(arguments: [String]) async throws {
         let options = try ZenCODEDS4Options(arguments: arguments)
-        try AgentRuntimeLauncher.ensureProjectAgentsFileExists(
-            workingDirectory: options.workingDirectory
-        )
-
         let availableAgents = (try? AgentProfileStore.loadRequired())
             ?? AgentProfileStore.defaultProfiles()
         let runtimeOptions = options.runtimeOptions
@@ -242,6 +238,7 @@ private struct ZenCODEDS4Options {
         var agentName: String?
         var workingDirectoryPath = environment["PWD"]
             ?? FileManager.default.currentDirectoryPath
+        var hasExplicitWorkingDirectory = false
         var initialSkillSelection: String?
         var maxToolRounds = configuredSettings?.maxToolRounds
             ?? AgentToolRoundPolicy.defaultMaxToolRounds
@@ -300,6 +297,7 @@ private struct ZenCODEDS4Options {
                 agentName = try Self.requiredValue(after: argument, in: arguments, index: &index)
             case "--cwd":
                 workingDirectoryPath = try Self.requiredValue(after: argument, in: arguments, index: &index)
+                hasExplicitWorkingDirectory = true
             case "--skills":
                 initialSkillSelection = try Self.requiredValue(after: argument, in: arguments, index: &index)
             case "--ctx", "-c":
@@ -376,7 +374,8 @@ private struct ZenCODEDS4Options {
         self.modelID = modelID ?? modelURL.path
         self.agentName = agentName
         self.workingDirectory = AgentConfiguration.resolvedWorkingDirectory(
-            rawValue: workingDirectoryPath
+            rawValue: workingDirectoryPath,
+            applyLaunchDirectoryFallback: !hasExplicitWorkingDirectory
         )
         self.initialSkillSelection = initialSkillSelection
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)

@@ -15,6 +15,7 @@ enum TerminalSubmittedLineAction {
 
 enum TerminalPromptPurpose: Sendable, Equatable {
     case normal
+    case makeAgents
     case plan(originalGoal: String)
     case review
 }

@@ -58,7 +58,7 @@ This document summarizes the strengths of `ZenCODE`, my motivations for writing 
   agent's latest changes as a safety net.
 - **Saved sessions and structured memory**: per-project snapshots, a clear
   separation between project `MEMORY.md` (journal) and the global index, plus
-  `AGENTS.md` for operating rules.
+  `AGENTS.md` for durable global and repository guidance.
 - **Modular skills** selectable per session, installable from GitHub or a local
   folder.
 

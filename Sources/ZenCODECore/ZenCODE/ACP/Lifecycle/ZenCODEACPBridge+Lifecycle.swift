@@ -61,7 +61,10 @@ extension ZenCODEACPBridge {
     public func newSession(id: JSONValue?, params: [String: Any]) async throws {
         let rawCwd = Self.workingDirectory(from: params)
             ?? configuration.workingDirectory.path
-        let cwd = AgentConfiguration.resolvedWorkingDirectory(rawValue: rawCwd).path
+        let cwd = AgentConfiguration.resolvedWorkingDirectory(
+            rawValue: rawCwd,
+            applyLaunchDirectoryFallback: false
+        ).path
         await verboseACPLog(
             "session/new cwd=\(cwd) mcpServers=\(Self.mcpServerInputSummary(from: params))"
         )
@@ -365,7 +368,10 @@ extension ZenCODEACPBridge {
 
         let rawCwd = Self.workingDirectory(from: params)
             ?? configuration.workingDirectory.path
-        let workingDirectory = AgentConfiguration.resolvedWorkingDirectory(rawValue: rawCwd)
+        let workingDirectory = AgentConfiguration.resolvedWorkingDirectory(
+            rawValue: rawCwd,
+            applyLaunchDirectoryFallback: false
+        )
         await verboseACPLog(
             "session/restore id=\(sessionID) cwd=\(workingDirectory.path) replay=\(replayHistory) mcpServers=\(Self.mcpServerInputSummary(from: params))"
         )

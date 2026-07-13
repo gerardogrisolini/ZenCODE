@@ -104,7 +104,9 @@ public struct AgentConfiguration: Sendable {
         var rawModelID = agentEnvironmentValue("MODEL")
         var rawBearerToken = agentEnvironmentValue("BEARER_TOKEN")
         var rawRunMode = agentEnvironmentValue("MODE") ?? "automatic"
-        var rawWorkingDirectory = agentEnvironmentValue("CWD")
+        let environmentWorkingDirectory = agentEnvironmentValue("CWD")?.nilIfBlank
+        var hasExplicitWorkingDirectory = environmentWorkingDirectory != nil
+        var rawWorkingDirectory = environmentWorkingDirectory
             ?? Self.shellWorkingDirectory(environment: environment)
             ?? FileManager.default.currentDirectoryPath
         var rawInitialSkillSelection = agentEnvironmentValue("SKILLS")
@@ -148,6 +150,7 @@ public struct AgentConfiguration: Sendable {
                     throw AgentConfigurationError.missingValue(argument)
                 }
                 rawWorkingDirectory = arguments[index]
+                hasExplicitWorkingDirectory = true
             case "--skills":
                 index += 1
                 guard index < arguments.count else {
@@ -180,7 +183,10 @@ public struct AgentConfiguration: Sendable {
         guard let runMode = AgentRunMode(rawValue: normalizedRunMode == "auto" ? "automatic" : normalizedRunMode) else {
             throw AgentConfigurationError.invalidValue("--mode", rawRunMode)
         }
-        let workingDirectory = Self.resolvedWorkingDirectory(rawValue: rawWorkingDirectory)
+        let workingDirectory = Self.resolvedWorkingDirectory(
+            rawValue: rawWorkingDirectory,
+            applyLaunchDirectoryFallback: !hasExplicitWorkingDirectory
+        )
         let maxToolRounds = try Self.maxToolRounds(
             rawMaxToolRounds,
             argument: "--max-tool-rounds"
@@ -306,11 +312,15 @@ public struct AgentConfiguration: Sendable {
         )
     }
 
-    public static func resolvedWorkingDirectory(rawValue: String) -> URL {
+    public static func resolvedWorkingDirectory(
+        rawValue: String,
+        applyLaunchDirectoryFallback: Bool = true
+    ) -> URL {
         let candidate = URL(fileURLWithPath: rawValue)
             .standardizedFileURL
             .resolvingSymlinksInPath()
-        guard let executableDirectory = executableDirectoryURL(),
+        guard applyLaunchDirectoryFallback,
+              let executableDirectory = executableDirectoryURL(),
               sameFilePath(candidate, executableDirectory) else {
             return candidate
         }

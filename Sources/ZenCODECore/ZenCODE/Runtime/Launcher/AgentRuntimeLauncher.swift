@@ -7,29 +7,6 @@ import Foundation
 
 /// Shared entry points for launching ZenCODE terminal and ACP runtimes.
 public enum AgentRuntimeLauncher {
-    /// Creates the project's default `AGENTS.md` document when it is absent.
-    public static func ensureProjectAgentsFileExists(workingDirectory: URL) throws {
-        let standardizedWorkingDirectory = workingDirectory.standardizedFileURL
-        let agentsFileURL = standardizedWorkingDirectory
-            .appendingPathComponent(AgentsContextService.filename)
-        guard !FileManager.default.fileExists(atPath: agentsFileURL.path) else {
-            return
-        }
-
-        do {
-            _ = try ProjectContextFileService().createDefaultDocument(
-                kind: .agents,
-                at: standardizedWorkingDirectory,
-                projectName: standardizedWorkingDirectory.lastPathComponent
-            )
-        } catch {
-            throw AgentRuntimeLauncherError.unableToCreateProjectAgents(
-                agentsFileURL,
-                error
-            )
-        }
-    }
-
     /// Runs terminal chat, shutting down an explicitly supplied runner when the chat ends or fails.
     public static func runTerminalChat(
         configuration: AgentConfiguration,
@@ -93,16 +70,5 @@ public enum AgentRuntimeLauncher {
         }
 
         await bridge.shutdown()
-    }
-}
-
-public enum AgentRuntimeLauncherError: LocalizedError {
-    case unableToCreateProjectAgents(URL, Error)
-
-    public var errorDescription: String? {
-        switch self {
-        case let .unableToCreateProjectAgents(url, error):
-            return "Unable to create project AGENTS.md at \(url.path): \(error.localizedDescription)"
-        }
     }
 }

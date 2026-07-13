@@ -52,9 +52,6 @@ enum ZenCODEMLXCommand {
     @MainActor
     private static func runAgent(arguments: [String]) async throws {
         let options = try ZenCODEMLXOptions(arguments: arguments)
-        try AgentRuntimeLauncher.ensureProjectAgentsFileExists(
-            workingDirectory: options.workingDirectory
-        )
         try MLXMetalLibraryBootstrap.prepareIfNeeded()
 
         let settings = try MLXServerSettingsStore.loadRequired()
@@ -206,6 +203,7 @@ private struct ZenCODEMLXOptions {
         var agentName: String?
         var workingDirectoryPath = ProcessInfo.processInfo.environment["PWD"]
             ?? FileManager.default.currentDirectoryPath
+        var hasExplicitWorkingDirectory = false
         var initialSkillSelection: String?
         var maxToolRounds = AgentToolRoundPolicy.defaultMaxToolRounds
         var maxOutputTokens: Int?
@@ -222,6 +220,7 @@ private struct ZenCODEMLXOptions {
                 agentName = try Self.requiredValue(after: argument, in: arguments, index: &index)
             case "--cwd":
                 workingDirectoryPath = try Self.requiredValue(after: argument, in: arguments, index: &index)
+                hasExplicitWorkingDirectory = true
             case "--skills":
                 initialSkillSelection = try Self.requiredValue(after: argument, in: arguments, index: &index)
             case "--max-tool-rounds":
@@ -250,7 +249,8 @@ private struct ZenCODEMLXOptions {
         self.modelID = modelID
         self.agentName = agentName
         self.workingDirectory = AgentConfiguration.resolvedWorkingDirectory(
-            rawValue: workingDirectoryPath
+            rawValue: workingDirectoryPath,
+            applyLaunchDirectoryFallback: !hasExplicitWorkingDirectory
         )
         self.initialSkillSelection = initialSkillSelection
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)

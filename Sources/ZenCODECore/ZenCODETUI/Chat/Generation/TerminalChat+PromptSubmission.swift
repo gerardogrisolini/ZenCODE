@@ -107,6 +107,8 @@ extension TerminalChat {
             case let .prefillPrompt(prompt):
                 return .prefillPrompt(prompt)
             }
+        case let command where command == "/make-agents" || command.hasPrefix("/make-agents "):
+            return await handleMakeAgentsCommand(command)
         case let command where command == "/skills" || command.hasPrefix("/skills "):
             await handleSkillsCommand(command)
             return .continueChat

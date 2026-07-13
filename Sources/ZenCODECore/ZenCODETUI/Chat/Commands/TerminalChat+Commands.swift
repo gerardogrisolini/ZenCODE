@@ -226,6 +226,11 @@ extension TerminalChat {
             availability: .builderAgent
         ),
         TerminalChatCommandDescriptor(
+            command: "/make-agents",
+            summary: "create/update workspace guidance",
+            help: "/make-agents asks the model to inspect the current working directory and create or update its AGENTS.md without assuming a project type. It requires the Files tool group."
+        ),
+        TerminalChatCommandDescriptor(
             command: "/skills",
             summary: "select/install prompt skills",
             help: "/skills selects installed prompt skills or installs one from GitHub or a local folder."

@@ -52,6 +52,13 @@ extension TerminalChat {
                     allowedToolNames: allowedToolNames,
                     includesActivePlanProgress: false
                 )
+            } else if case .makeAgents = attempt.purpose {
+                var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
+                allowedToolNames.formIntersection(Self.makeAgentsAllowedToolNames)
+                sessionConfiguration = currentSessionConfiguration(
+                    allowedToolNames: allowedToolNames,
+                    includesActivePlanProgress: false
+                )
             } else if case .normal = attempt.purpose,
                       let activePlan,
                       activePlan.isApproved,
@@ -149,7 +156,7 @@ extension TerminalChat {
                                     toolCall: toolCall,
                                     result: result
                                 )
-                            case .review:
+                            case .makeAgents, .review:
                                 break
                             }
                         }
