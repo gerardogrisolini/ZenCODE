@@ -445,6 +445,87 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func taskOverviewWaitsForCompactToolCompletion() async throws {
+        let runner = AgentCoreSessionRunner(taskGraphStore: nil)
+        let terminal = try makeTerminalForToolInterleavingTest(sessionRunner: runner)
+        let orchestrator = await runner.taskOrchestrator
+        _ = try await orchestrator.createGraph(
+            sessionID: terminal.sessionID,
+            id: "render-interleaving",
+            source: .manual,
+            state: .active,
+            tasks: [
+                TaskDefinition(id: "first", title: "First"),
+                TaskDefinition(id: "second", title: "Second"),
+            ]
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "wait-tool",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        terminal.activeCompactToolCallID = toolCall.id
+        terminal.activeCompactToolRenderedRowCount = 1
+
+        await terminal.publishTaskGraphOverviewIfChanged(
+            observedSessionID: terminal.sessionID
+        )
+
+        #expect(terminal.lastRenderedTaskGraphOverviewSignature == nil)
+        #expect(terminal.activeCompactToolCallID == toolCall.id)
+        #expect(terminal.activeCompactToolRenderedRowCount == 1)
+        #expect(terminal.deferredTaskGraphOverviewRender)
+        #expect(!terminal.shouldPublishDeferredTaskGraphOverview())
+
+        terminal.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+        #expect(terminal.shouldPublishDeferredTaskGraphOverview())
+        await terminal.publishTaskGraphOverviewIfChanged(
+            observedSessionID: terminal.sessionID
+        )
+
+        #expect(terminal.activeCompactToolCallID == nil)
+        #expect(terminal.activeCompactToolRenderedRowCount == 0)
+        #expect(terminal.lastRenderedTaskGraphOverviewSignature != nil)
+        #expect(!terminal.deferredTaskGraphOverviewRender)
+    }
+
+    @Test
+    func subAgentOverviewWaitsForDetailedToolCompletion() async throws {
+        let terminal = try makeTerminalForToolInterleavingTest(
+            sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "wait-tool",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        terminal.toolOutputDetailLevel = .expanded
+        terminal.activeDetailedToolCallID = toolCall.id
+        terminal.activeDetailedToolRenderedRowCount = 3
+
+        await terminal.renderSubAgentOverview(force: true)
+
+        #expect(terminal.lastRenderedSubAgentOverviewSignature == nil)
+        #expect(terminal.activeDetailedToolCallID == toolCall.id)
+        #expect(terminal.activeDetailedToolRenderedRowCount == 3)
+
+        terminal.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+        await terminal.renderSubAgentOverview(force: true)
+
+        #expect(terminal.activeDetailedToolCallID == nil)
+        #expect(terminal.activeDetailedToolRenderedRowCount == 0)
+        #expect(terminal.lastRenderedSubAgentOverviewSignature != nil)
+    }
+
+    @Test
     func statusBarGitFragmentShowsDiffSummary() {
         let summary = TerminalGitStatusSummary(
             changedFileCount: 3,

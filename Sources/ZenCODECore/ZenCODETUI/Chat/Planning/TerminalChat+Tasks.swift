@@ -9,7 +9,10 @@ extension TerminalChat {
     func startTaskGraphObserver() {
         taskGraphObserverTask?.cancel()
         taskGraphObserverTask = nil
-        lastRenderedTaskGraphOverviewSignature = nil
+        toolOutputLock.withLock { _ in
+            lastRenderedTaskGraphOverviewSignature = nil
+            deferredTaskGraphOverviewRender = false
+        }
         let observedSessionID = sessionID
         let runner = sessionRunner
 
@@ -38,7 +41,10 @@ extension TerminalChat {
         guard let graph = try? await sessionRunner.taskGraphSnapshot(
             sessionID: observedSessionID
         ) else {
-            lastRenderedTaskGraphOverviewSignature = nil
+            toolOutputLock.withLock { _ in
+                deferredTaskGraphOverviewRender = false
+                lastRenderedTaskGraphOverviewSignature = nil
+            }
             return
         }
         let shouldRender = graph.tasks.count > 1 || graph.tasks.contains { task in
@@ -47,20 +53,44 @@ extension TerminalChat {
                 || task.status == .failed
                 || task.status == .awaitingValidation
         }
-        guard shouldRender,
-              let tasks = try? await sessionRunner.taskOrchestrator.listTasks(
-                  sessionID: observedSessionID
-              ) else {
+        guard shouldRender else {
+            toolOutputLock.withLock { _ in
+                deferredTaskGraphOverviewRender = false
+            }
+            return
+        }
+        guard let tasks = try? await sessionRunner.taskOrchestrator.listTasks(
+            sessionID: observedSessionID
+        ) else {
             return
         }
         let signature = Self.taskGraphOverviewSignature(graph)
-        guard signature != lastRenderedTaskGraphOverviewSignature else {
-            return
+        let markdown = Self.taskGraphMarkdown(graph: graph, tasks: tasks)
+        renderOverviewWhenToolOutputIsIdle(
+            shouldRender: {
+                signature != lastRenderedTaskGraphOverviewSignature
+            },
+            onDeferred: {
+                deferredTaskGraphOverviewRender = true
+            },
+            onSkippedWhileIdle: {
+                deferredTaskGraphOverviewRender = false
+            }
+        ) {
+            deferredTaskGraphOverviewRender = false
+            lastRenderedTaskGraphOverviewSignature = signature
+            finishThoughtOutputIfNeeded()
+            finishAssistantContentFormatting()
+            writeMarkdownMessage(markdown)
         }
-        lastRenderedTaskGraphOverviewSignature = signature
-        finishThoughtOutputIfNeeded()
-        finishAssistantContentFormatting()
-        writeMarkdownMessage(Self.taskGraphMarkdown(graph: graph, tasks: tasks))
+    }
+
+    func shouldPublishDeferredTaskGraphOverview() -> Bool {
+        toolOutputLock.withLock { _ in
+            deferredTaskGraphOverviewRender
+                && activeCompactToolCallID == nil
+                && activeDetailedToolCallID == nil
+        }
     }
 
     static func taskGraphOverviewSignature(_ graph: TaskGraphSnapshot) -> String {

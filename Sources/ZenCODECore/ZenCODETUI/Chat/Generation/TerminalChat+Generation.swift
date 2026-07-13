@@ -177,6 +177,11 @@ extension TerminalChat {
                         if Self.isFileMutationTool(toolCall.name) {
                             self.refreshStatusBarGitStatusSummaryForFileMutation()
                         }
+                        if self.shouldPublishDeferredTaskGraphOverview() {
+                            await self.publishTaskGraphOverviewIfChanged(
+                                observedSessionID: self.sessionID
+                            )
+                        }
                         await self.publishSubAgentOverviewIfChanged(
                             relatedToolName: toolCall.name
                         )

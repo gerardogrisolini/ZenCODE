@@ -29,6 +29,33 @@ extension TerminalChat {
         }
     }
 
+    /// Serializes overview output with tool start/completion so an overview cannot
+    /// move the cursor while the pending tool block still owns its terminal rows.
+    @discardableResult
+    func renderOverviewWhenToolOutputIsIdle(
+        shouldRender: () -> Bool = { true },
+        onDeferred: () -> Void = {},
+        onSkippedWhileIdle: () -> Void = {},
+        _ render: () -> Void
+    ) -> Bool {
+        toolOutputLock.withLock { _ in
+            let toolOutputIsIdle = activeCompactToolCallID == nil
+                && activeDetailedToolCallID == nil
+            guard shouldRender() else {
+                if toolOutputIsIdle {
+                    onSkippedWhileIdle()
+                }
+                return false
+            }
+            guard toolOutputIsIdle else {
+                onDeferred()
+                return false
+            }
+            render()
+            return true
+        }
+    }
+
     public func writeToolCallCompleted(
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult

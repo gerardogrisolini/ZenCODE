@@ -78,6 +78,7 @@ public final class TerminalChat: @unchecked Sendable {
     public var activeCompactToolRenderedRowCount = 0
     public var activeDetailedToolCallID: String?
     public var activeDetailedToolRenderedRowCount = 0
+    var deferredTaskGraphOverviewRender = false
     let toolOutputLock = Mutex(())
     public var isStreamingThoughtOutput = false
 

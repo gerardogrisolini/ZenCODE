@@ -68,19 +68,20 @@ extension TerminalChat {
             return
         }
         let signature = Self.subAgentOverviewSignature(snapshots)
-        guard force || signature != lastRenderedSubAgentOverviewSignature else {
-            return
-        }
+        let overview = Self.renderSubAgentOverview(snapshots) + "\n\n"
+        renderOverviewWhenToolOutputIsIdle(
+            shouldRender: {
+                force || signature != lastRenderedSubAgentOverviewSignature
+            }
+        ) {
+            if rememberSignature {
+                lastRenderedSubAgentOverviewSignature = signature
+            }
 
-        if rememberSignature {
-            lastRenderedSubAgentOverviewSignature = signature
+            finishThoughtOutputIfNeeded()
+            finishAssistantContentFormatting()
+            writeChatError(overview)
         }
-
-        finishThoughtOutputIfNeeded()
-        finishAssistantContentFormatting()
-        writeChatError(
-            Self.renderSubAgentOverview(snapshots) + "\n\n"
-        )
     }
 
     public static func renderSubAgentOverview(
