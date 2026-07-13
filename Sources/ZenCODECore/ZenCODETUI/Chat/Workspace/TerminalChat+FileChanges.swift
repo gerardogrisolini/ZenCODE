@@ -15,7 +15,7 @@ extension TerminalChat {
             return nil
         }
 
-        writeFileChangeSummary(summary, includeDiff: false)
+        await writeFileChangeSummary(summary, includeDiff: false)
         return summary
     }
 
@@ -30,18 +30,18 @@ extension TerminalChat {
         return summary
     }
 
-    public func handleChangesCommand(_ command: String) {
+    public func handleChangesCommand(_ command: String) async {
         let arguments = String(command.dropFirst("/changes".count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         let includeDiff = arguments == "diff" || arguments == "--diff"
 
         guard let summary = lastFileChangeSummary else {
-            writeSystemMessage("No tracked file changes.\n")
+            await writeSystemMessage("No tracked file changes.\n")
             return
         }
 
-        writeFileChangeSummary(summary, includeDiff: includeDiff)
+        await writeFileChangeSummary(summary, includeDiff: includeDiff)
     }
 
     public func handleUndoFileChangesCommand() async {
@@ -51,11 +51,11 @@ extension TerminalChat {
                 baseDirectoryURL: configuration.workingDirectory
             )
             lastFileChangeSummary = nil
-            writeSystemMessage("File changes reverted.\n")
+            await writeSystemMessage("File changes reverted.\n")
         } catch let error as TurnFileChangeUndoError {
-            writeSystemMessage("\(error.localizedDescription)\n")
+            await writeSystemMessage("\(error.localizedDescription)\n")
         } catch {
-            writeFailureMessage(
+            await writeFailureMessage(
                 "ZenCODE: unable to undo file changes: \(error.localizedDescription)\n"
             )
         }
@@ -64,14 +64,14 @@ extension TerminalChat {
     public func writeFileChangeSummary(
         _ summary: TurnFileChangeSummary,
         includeDiff: Bool
-    ) {
-        writeFileChangeSummaryMessage(Self.renderFileChangeSummary(summary))
+    ) async {
+        await writeFileChangeSummaryMessage(Self.renderFileChangeSummary(summary))
 
         guard includeDiff else {
             return
         }
 
-        writeFileChangeDiffs(summary)
+        await writeFileChangeDiffs(summary)
     }
 
     public static func renderFileChangeSummary(
@@ -148,7 +148,7 @@ extension TerminalChat {
         return line
     }
 
-    public func writeFileChangeDiffs(_ summary: TurnFileChangeSummary) {
+    public func writeFileChangeDiffs(_ summary: TurnFileChangeSummary) async {
         let patches = summary.entries.compactMap { entry -> String? in
             guard !entry.isBinary,
                   let patch = entry.patch?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -159,7 +159,7 @@ extension TerminalChat {
         }
 
         guard !patches.isEmpty else {
-            writeSystemMessage("No text patches available.\n")
+            await writeSystemMessage("No text patches available.\n")
             return
         }
 
@@ -167,6 +167,6 @@ extension TerminalChat {
             patches.joined(separator: "\n"),
             isEnabled: AgentOutput.standardErrorIsTerminal
         )
-        writeChatError("\n" + renderedPatch + "\n")
+        await writeChatError("\n" + renderedPatch + "\n")
     }
 }

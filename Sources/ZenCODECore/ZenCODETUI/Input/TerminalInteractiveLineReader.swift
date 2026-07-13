@@ -59,6 +59,7 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
     var panelOverlayOverride: TerminalPanelModeOverride?
     var panelCommandSuggestions: [TerminalCommandSuggestion] = []
     var panelCommandSuggestionIndex = 0
+    var panelRenderRevision: UInt64 = 0
 
     public init() {}
 

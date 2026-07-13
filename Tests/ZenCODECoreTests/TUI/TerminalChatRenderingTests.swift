@@ -374,23 +374,50 @@ struct TerminalChatRenderingTests {
 
         await terminal.synchronizeLocalExecAccessModeStatusBar()
 
-        let accessMode = terminal.statusBar.state.withLock { state in
-            state.localExecAccessMode
-        }
+        let accessMode = await terminal.statusBar.state.localExecAccessMode
         #expect(accessMode == .fullAccess)
     }
 
     @Test
-    func statusBarResetPreservesFullAccessMode() {
+    func statusBarResetPreservesFullAccessMode() async {
         let statusBar = TerminalStatusBar(isEnabled: false)
-        statusBar.update(localExecAccessMode: .fullAccess)
+        await statusBar.update(localExecAccessMode: .fullAccess)
 
-        statusBar.reset()
+        await statusBar.reset()
 
-        let accessMode = statusBar.state.withLock { state in
-            state.localExecAccessMode
-        }
+        let accessMode = await statusBar.state.localExecAccessMode
         #expect(accessMode == .fullAccess)
+    }
+
+    @Test
+    func statusBarRejectsStaleInputPanelSnapshots() async {
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        await statusBar.updateInputPanel(
+            text: "latest",
+            cursorIndex: 6,
+            modeText: "Prompt",
+            helpText: "Help",
+            revision: 2
+        )
+        await statusBar.updateInputPanel(
+            text: "stale",
+            cursorIndex: 5,
+            modeText: "Prompt",
+            helpText: "Help",
+            revision: 1
+        )
+
+        #expect(await statusBar.state.inputPanelState?.text == "latest")
+
+        await statusBar.clearInputPanel(revision: 3)
+        await statusBar.updateInputPanel(
+            text: "stale after clear",
+            cursorIndex: 17,
+            modeText: "Prompt",
+            helpText: "Help",
+            revision: 2
+        )
+        #expect(await statusBar.state.inputPanelState == nil)
     }
 
     @Test
@@ -421,27 +448,51 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func interleavedModeMessageClearsCompactToolRewriteState() throws {
-        let terminal = try makeTerminalForToolInterleavingTest()
-        terminal.activeCompactToolCallID = "compact-tool"
-        terminal.activeCompactToolRenderedRowCount = 2
-
-        terminal.writeAccessModeChangeMessage(.fullAccess)
-
-        #expect(terminal.activeCompactToolCallID == nil)
-        #expect(terminal.activeCompactToolRenderedRowCount == 0)
+    func generationOnlyAllowsCommandsWithConcurrencySafeState() {
+        #expect(TerminalChat.isAvailableDuringGeneration(for: "/help"))
+        #expect(TerminalChat.isAvailableDuringGeneration(for: "/tasks"))
+        #expect(TerminalChat.isAvailableDuringGeneration(for: "/tasks list"))
+        #expect(!TerminalChat.isAvailableDuringGeneration(for: "/tasks retry task-1"))
+        #expect(!TerminalChat.isAvailableDuringGeneration(for: "/open"))
+        #expect(!TerminalChat.isAvailableDuringGeneration(for: "/changes"))
+        #expect(!TerminalChat.isAvailableDuringGeneration(for: "/plan status"))
     }
 
     @Test
-    func interleavedModeMessageClearsDetailedToolRewriteState() throws {
+    func interleavedModeMessageClearsCompactToolRewriteState() async throws {
         let terminal = try makeTerminalForToolInterleavingTest()
-        terminal.activeDetailedToolCallID = "detailed-tool"
-        terminal.activeDetailedToolRenderedRowCount = 4
+        let toolCall = DirectAgentToolCall(
+            id: "compact-tool",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        await terminal.writeToolCallStarted(toolCall)
 
-        terminal.writeAccessModeChangeMessage(.standard)
+        await terminal.writeAccessModeChangeMessage(.fullAccess)
+        let snapshot = await terminal.renderCoordinator.snapshot()
 
-        #expect(terminal.activeDetailedToolCallID == nil)
-        #expect(terminal.activeDetailedToolRenderedRowCount == 0)
+        #expect(snapshot.activeCompactToolCallID == nil)
+        #expect(snapshot.activeCompactToolRenderedRowCount == 0)
+    }
+
+    @Test
+    func interleavedModeMessageClearsDetailedToolRewriteState() async throws {
+        let terminal = try makeTerminalForToolInterleavingTest()
+        let toolCall = DirectAgentToolCall(
+            id: "detailed-tool",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        await terminal.renderCoordinator.setToolOutputDetailLevel(.expanded)
+        await terminal.writeToolCallStarted(toolCall)
+
+        await terminal.writeAccessModeChangeMessage(.standard)
+        let snapshot = await terminal.renderCoordinator.snapshot()
+
+        #expect(snapshot.activeDetailedToolCallID == nil)
+        #expect(snapshot.activeDetailedToolRenderedRowCount == 0)
     }
 
     @Test
@@ -465,32 +516,33 @@ struct TerminalChatRenderingTests {
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
-        terminal.activeCompactToolCallID = toolCall.id
-        terminal.activeCompactToolRenderedRowCount = 1
+        await terminal.writeToolCallStarted(toolCall)
 
         await terminal.publishTaskGraphOverviewIfChanged(
             observedSessionID: terminal.sessionID
         )
+        let deferredSnapshot = await terminal.renderCoordinator.snapshot()
 
-        #expect(terminal.lastRenderedTaskGraphOverviewSignature == nil)
-        #expect(terminal.activeCompactToolCallID == toolCall.id)
-        #expect(terminal.activeCompactToolRenderedRowCount == 1)
-        #expect(terminal.deferredTaskGraphOverviewRender)
-        #expect(!terminal.shouldPublishDeferredTaskGraphOverview())
+        #expect(deferredSnapshot.lastRenderedTaskGraphOverviewSignature == nil)
+        #expect(deferredSnapshot.activeCompactToolCallID == toolCall.id)
+        #expect(deferredSnapshot.activeCompactToolRenderedRowCount > 0)
+        #expect(deferredSnapshot.deferredTaskGraphOverviewRender)
+        #expect(!(await terminal.shouldPublishDeferredTaskGraphOverview()))
 
-        terminal.writeToolCallCompleted(
+        await terminal.writeToolCallCompleted(
             toolCall,
             result: DirectAgentToolResult(output: "Done", summary: "Done")
         )
-        #expect(terminal.shouldPublishDeferredTaskGraphOverview())
+        #expect(await terminal.shouldPublishDeferredTaskGraphOverview())
         await terminal.publishTaskGraphOverviewIfChanged(
             observedSessionID: terminal.sessionID
         )
+        let renderedSnapshot = await terminal.renderCoordinator.snapshot()
 
-        #expect(terminal.activeCompactToolCallID == nil)
-        #expect(terminal.activeCompactToolRenderedRowCount == 0)
-        #expect(terminal.lastRenderedTaskGraphOverviewSignature != nil)
-        #expect(!terminal.deferredTaskGraphOverviewRender)
+        #expect(renderedSnapshot.activeCompactToolCallID == nil)
+        #expect(renderedSnapshot.activeCompactToolRenderedRowCount == 0)
+        #expect(renderedSnapshot.lastRenderedTaskGraphOverviewSignature != nil)
+        #expect(!renderedSnapshot.deferredTaskGraphOverviewRender)
     }
 
     @Test
@@ -504,25 +556,26 @@ struct TerminalChatRenderingTests {
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
-        terminal.toolOutputDetailLevel = .expanded
-        terminal.activeDetailedToolCallID = toolCall.id
-        terminal.activeDetailedToolRenderedRowCount = 3
+        await terminal.renderCoordinator.setToolOutputDetailLevel(.expanded)
+        await terminal.writeToolCallStarted(toolCall)
 
         await terminal.renderSubAgentOverview(force: true)
+        let deferredSnapshot = await terminal.renderCoordinator.snapshot()
 
-        #expect(terminal.lastRenderedSubAgentOverviewSignature == nil)
-        #expect(terminal.activeDetailedToolCallID == toolCall.id)
-        #expect(terminal.activeDetailedToolRenderedRowCount == 3)
+        #expect(deferredSnapshot.lastRenderedSubAgentOverviewSignature == nil)
+        #expect(deferredSnapshot.activeDetailedToolCallID == toolCall.id)
+        #expect(deferredSnapshot.activeDetailedToolRenderedRowCount > 0)
 
-        terminal.writeToolCallCompleted(
+        await terminal.writeToolCallCompleted(
             toolCall,
             result: DirectAgentToolResult(output: "Done", summary: "Done")
         )
         await terminal.renderSubAgentOverview(force: true)
+        let renderedSnapshot = await terminal.renderCoordinator.snapshot()
 
-        #expect(terminal.activeDetailedToolCallID == nil)
-        #expect(terminal.activeDetailedToolRenderedRowCount == 0)
-        #expect(terminal.lastRenderedSubAgentOverviewSignature != nil)
+        #expect(renderedSnapshot.activeDetailedToolCallID == nil)
+        #expect(renderedSnapshot.activeDetailedToolRenderedRowCount == 0)
+        #expect(renderedSnapshot.lastRenderedSubAgentOverviewSignature != nil)
     }
 
     @Test
@@ -539,6 +592,33 @@ struct TerminalChatRenderingTests {
         #expect(rendered.contains("\u{1B}[38;5;114m+12\u{1B}[0m"))
         #expect(rendered.contains("\u{1B}[38;5;203m-4\u{1B}[0m"))
         #expect(TerminalStatusBar.visibleCharacterCount(rendered) == "3 files +12 -4".count)
+    }
+
+    @Test
+    func statusBarRejectsStaleGitRefreshResults() async {
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        let staleGeneration = await statusBar.beginGitStatusRefresh()
+        let currentGeneration = await statusBar.beginGitStatusRefresh()
+        let stale = TerminalGitStatusSummary(
+            changedFileCount: 1,
+            additions: 1,
+            deletions: 0
+        )
+        let current = TerminalGitStatusSummary(
+            changedFileCount: 2,
+            additions: 4,
+            deletions: 1
+        )
+
+        _ = await statusBar.update(
+            gitStatusSummary: current,
+            refreshGeneration: currentGeneration
+        )
+        _ = await statusBar.update(
+            gitStatusSummary: stale,
+            refreshGeneration: staleGeneration
+        )
+        #expect(await statusBar.state.latestGitStatusSummary == current)
     }
 
     @Test
@@ -567,9 +647,9 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func statusBarBeginRequestClearsRoundMetricsButKeepsContextWindow() {
+    func statusBarBeginRequestClearsRoundMetricsButKeepsContextWindow() async {
         let statusBar = TerminalStatusBar(isEnabled: false)
-        _ = statusBar.update(
+        _ = await statusBar.update(
             metrics: DirectAgentGenerationMetrics(
                 promptTokenCount: 120,
                 cachedPromptTokenCount: 800,
@@ -579,7 +659,7 @@ struct TerminalChatRenderingTests {
                 responseDurationSeconds: 4
             )
         )
-        _ = statusBar.update(
+        _ = await statusBar.update(
             contextWindow: DirectAgentContextWindowStatus(
                 usedTokens: 952,
                 maxTokens: 10_000,
@@ -588,14 +668,12 @@ struct TerminalChatRenderingTests {
             )
         )
 
-        statusBar.beginRequest()
+        await statusBar.beginRequest()
 
-        let state = statusBar.state.withLock { state in
-            (state.latestMetrics, state.latestContextWindow)
-        }
-        #expect(state.0 == nil)
-        #expect(state.1?.usedTokens == 952)
-        #expect(state.1?.maxTokens == 10_000)
+        let state = await statusBar.state
+        #expect(state.latestMetrics == nil)
+        #expect(state.latestContextWindow?.usedTokens == 952)
+        #expect(state.latestContextWindow?.maxTokens == 10_000)
     }
 
     @Test

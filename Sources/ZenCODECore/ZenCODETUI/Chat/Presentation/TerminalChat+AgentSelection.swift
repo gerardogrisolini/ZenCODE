@@ -20,9 +20,9 @@ extension TerminalChat {
 
         if rawArguments.isEmpty {
             guard stdinIsTerminal else {
-                printAgentSelectionStatus()
-                renderAgentList(agents: try availableAgents())
-                writeSystemMessage(Self.renderAgentSelectionUsage())
+                await printAgentSelectionStatus()
+                await renderAgentList(agents: try availableAgents())
+                await writeSystemMessage(Self.renderAgentSelectionUsage())
                 return
             }
 
@@ -30,20 +30,20 @@ extension TerminalChat {
                 title: "Agent profiles",
                 items: try agentSelectionItems(),
                 selected: selectedAgent,
-                reservedBottomRows: statusBar.reservedRowsForOverlay()
+                reservedBottomRows: await statusBar.reservedRowsForOverlay()
             )
             if let selectedAgent {
                 try await applyAgentSelection(selectedAgent)
             } else {
-                printAgentSelectionStatus()
+                await printAgentSelectionStatus()
             }
             return
         }
 
         switch rawArguments.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "list", "ls", "status":
-            printAgentSelectionStatus()
-            renderAgentList(agents: try availableAgents())
+            await printAgentSelectionStatus()
+            await renderAgentList(agents: try availableAgents())
             return
         default:
             break
@@ -58,7 +58,7 @@ extension TerminalChat {
 
     public func applyAgentSelection(_ agent: AgentProfile) async throws {
         selectedAgent = agent
-        interactiveReader.setPanelCommandSuggestions(commandSuggestionsForCurrentAgent())
+        await interactiveReader.setPanelCommandSuggestions(commandSuggestionsForCurrentAgent())
         await applyAgentProfile(agent)
         activeSessionSystemPromptOverride = nil
         activePlan = nil
@@ -73,12 +73,12 @@ extension TerminalChat {
         try? await sessionRunner.clearTaskGraphs(sessionID: sessionID)
         printedModelID = nil
         didPrintActiveTools = false
-        statusBar.reset()
+        await statusBar.reset()
         try await createCurrentSession()
-        refreshInitialStatusBarContextWindow()
+        await refreshInitialStatusBarContextWindow()
         _ = try await preloadCurrentModel()
         await printActiveToolsIfNeeded()
-        writeSystemMessage("Switched to agent: \(agent.displayName). Session reset.\n")
+        await writeSystemMessage("Switched to agent: \(agent.displayName). Session reset.\n")
     }
 
     public func applyAgentProfile(_ agent: AgentProfile) async {
@@ -134,27 +134,27 @@ extension TerminalChat {
         throw TerminalAgentSelectionError.unknownAgent(token)
     }
 
-    public func printAgentSelectionStatus() {
-        writeSystemMessage(Self.renderSelectedAgent(selectedAgent))
+    public func printAgentSelectionStatus() async {
+        await writeSystemMessage(Self.renderSelectedAgent(selectedAgent))
     }
 
-    public func renderAgentList(agents: [AgentProfile]) {
+    public func renderAgentList(agents: [AgentProfile]) async {
         guard !agents.isEmpty else {
-            writeSystemMessage(
+            await writeSystemMessage(
                 "No agents configured in \(AgentProfileStore.agentsManifestURL().path).\n"
             )
             return
         }
 
-        writeSystemMessage("\nAvailable agents:\n")
+        await writeSystemMessage("\nAvailable agents:\n")
         for (offset, agent) in agents.enumerated() {
             let marker = selectedAgent == agent ? " *" : ""
             let detail = Self.agentSelectionDetail(agent)
-            writeSystemMessage(
+            await writeSystemMessage(
                 "  \(offset + 1). \(agent.displayName) - \(detail)\(marker)\n"
             )
         }
-        writeSystemMessage("\n")
+        await writeSystemMessage("\n")
     }
 
     public static func agentSelectionDetail(_ agent: AgentProfile) -> String {

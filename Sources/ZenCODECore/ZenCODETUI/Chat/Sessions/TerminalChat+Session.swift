@@ -23,7 +23,7 @@ extension TerminalChat {
                 discoverExternalTools: discoverExternalTools
             )
         )
-        startTaskGraphObserver()
+        await startTaskGraphObserver()
     }
 
     public func currentSessionConfiguration(
@@ -114,15 +114,15 @@ extension TerminalChat {
         )
     }
 
-    public func refreshInitialStatusBarContextWindow() {
-        refreshStatusBarThinkingSelection()
+    public func refreshInitialStatusBarContextWindow() async {
+        await refreshStatusBarThinkingSelection()
         let effectiveModelID = currentEffectiveModelID()
         if let hostedModel = hostedModelManifest(for: effectiveModelID) {
-            _ = statusBar.update(modelID: hostedModel.modelID)
+            _ = await statusBar.update(modelID: hostedModel.modelID)
             guard let maxTokens = hostedModel.configuredContextWindowLimit else {
                 return
             }
-            _ = statusBar.update(
+            _ = await statusBar.update(
                 contextWindow: DirectAgentContextWindowStatus(
                     usedTokens: nil,
                     maxTokens: maxTokens,
@@ -137,17 +137,17 @@ extension TerminalChat {
             explicitModelID: effectiveModelID
         ) else {
             if let effectiveModelID {
-                _ = statusBar.update(modelID: effectiveModelID)
+                _ = await statusBar.update(modelID: effectiveModelID)
             }
             return
         }
 
-        _ = statusBar.update(modelID: selection.modelID)
+        _ = await statusBar.update(modelID: selection.modelID)
         guard let maxTokens = selection.configuredContextWindowLimit else {
             return
         }
 
-        _ = statusBar.update(
+        _ = await statusBar.update(
             contextWindow: DirectAgentContextWindowStatus(
                 usedTokens: nil,
                 maxTokens: maxTokens,
@@ -158,8 +158,8 @@ extension TerminalChat {
     }
 
     @discardableResult
-    func refreshStatusBarThinkingSelection() -> Bool {
-        statusBar.update(thinkingSelection: currentAgentThinkingSelection())
+    func refreshStatusBarThinkingSelection() async -> Bool {
+        await statusBar.update(thinkingSelection: currentAgentThinkingSelection())
     }
 
     public func currentAgentThinkingSelection() -> AgentThinkingSelection? {
@@ -289,7 +289,7 @@ extension TerminalChat {
                 )
             }
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
         didPrintActiveTools = false
         return allowedToolNames
@@ -320,7 +320,7 @@ extension TerminalChat {
             .filter { workspaceSelectionKeys.contains($0.key) }
             .map(\.title)
             .joined(separator: ", ")
-        writeSystemMessage(
+        await writeSystemMessage(
             """
             Workspace access was not granted for \(configuration.workingDirectory.path).
             Disabled tools: \(disabledToolNames).

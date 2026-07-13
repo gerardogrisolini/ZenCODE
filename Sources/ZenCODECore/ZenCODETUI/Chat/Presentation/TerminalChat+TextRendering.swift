@@ -6,10 +6,10 @@
 import Foundation
 
 extension TerminalChat {
-    public func writeDiagnostic(_ message: String) {
+    public func writeDiagnostic(_ message: String) async {
         if message.hasPrefix("Generation done:") {
             if !didReceiveMetricsForCurrentPrompt {
-                writeChatError("\n\n[ZenCODE] \(compactGenerationSummary(message))\n")
+                await writeChatError("\n\n[ZenCODE] \(compactGenerationSummary(message))\n")
             }
             return
         }
@@ -18,109 +18,31 @@ extension TerminalChat {
             return
         }
 
-        writeChatError("\u{1B}[90m[ZenCODE] \(message)\u{1B}[0m\n")
+        await writeChatError("\u{1B}[90m[ZenCODE] \(message)\u{1B}[0m\n")
     }
 
-    public func writeThought(_ delta: String) {
-        let normalizedDelta = normalizedThoughtDelta(delta)
-        guard !normalizedDelta.isEmpty else {
-            return
-        }
-
-        guard isStreamingThoughtOutput
-                || !normalizedDelta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return
-        }
-
-        finishAssistantContentFormatting()
-        if !isStreamingThoughtOutput {
-            isStreamingThoughtOutput = true
-            let title = AgentOutput.standardErrorIsTerminal
-                ? "\u{1B}[90m🤔 Thinking:\u{1B}[0m"
-                : "🤔 Thinking:"
-            writeChatError("\(title)\n")
-        }
-        let renderedThought = thoughtMarkdownFormatter.consume(normalizedDelta)
-        let markdown = Self.renderThoughtMarkdown(renderedThought)
-        if !markdown.isEmpty {
-            writeChatError(markdown, preservesSpacing: true)
-        }
+    public func writeThought(_ delta: String) async {
+        await renderCoordinator.writeThought(delta)
     }
 
-    public func writeAssistantContent(_ delta: String) {
-        guard !delta.isEmpty else {
-            return
-        }
-        let normalizedDelta = normalizedAssistantDelta(delta)
-        guard !normalizedDelta.isEmpty else {
-            return
-        }
-        let renderedContent = assistantMarkdownFormatter.consume(normalizedDelta)
-        if !renderedContent.isEmpty {
-            writeChatOutput(renderedContent, preservesSpacing: true)
-        }
+    public func writeAssistantContent(_ delta: String) async {
+        await renderCoordinator.writeAssistantContent(delta)
     }
 
-    public func finishAssistantContentFormatting() {
-        let flushed = Self.flushBoldSectionBreak(state: &assistantBoldBreakState)
-        if !flushed.isEmpty {
-            _ = assistantMarkdownFormatter.consume(flushed)
-        }
-        let renderedContent = assistantMarkdownFormatter.finish()
-        if !renderedContent.isEmpty {
-            writeChatOutput(renderedContent, preservesSpacing: true)
-            if trailingChatNewlineCount == 0 {
-                writeChatOutput("\n")
-            }
-            flushChatOutput()
-        }
+    public func finishAssistantContentFormatting() async {
+        await renderCoordinator.finishAssistantContent()
     }
 
-    public func writeSubmittedPrompt(_ prompt: String) {
-        let background = "\u{1B}[48;5;236m"
-        let clearToEnd = "\u{1B}[K"
-        let reset = "\u{1B}[0m"
-        let renderedLines = prompt
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .enumerated()
-            .map { index, line in
-                let prefix = index == 0 ? "> " : "  "
-                return "\(background)\(prefix)\(line)\(clearToEnd)\(reset)"
-            }
-            .joined(separator: "\n")
-        writeChatError("\n\(renderedLines)\n\n")
+    public func writeSubmittedPrompt(_ prompt: String) async {
+        await renderCoordinator.writeSubmittedPrompt(prompt)
     }
 
-    public func finishThoughtOutputIfNeeded() {
-        guard isStreamingThoughtOutput else {
-            return
-        }
-        let flushed = Self.flushBoldSectionBreak(state: &thoughtBoldBreakState)
-        if !flushed.isEmpty {
-            _ = thoughtMarkdownFormatter.consume(flushed)
-        }
-        let renderedThought = thoughtMarkdownFormatter.finish()
-        let markdown = Self.renderThoughtMarkdown(renderedThought)
-        if !markdown.isEmpty {
-            writeChatError(markdown, preservesSpacing: true)
-        }
-        // Always emit a blank separator after the thinking block so the answer
-        // never starts glued to the reasoning. chatSpacingNormalized collapses
-        // these to at most two consecutive newlines, yielding exactly one blank
-        // line whether or not the formatter had buffered trailing content.
-        writeChatError("\n\n")
-        isStreamingThoughtOutput = false
+    public func finishThoughtOutputIfNeeded() async {
+        await renderCoordinator.finishThoughtOutput()
     }
 
-    func normalizedAssistantDelta(_ delta: String) -> String {
-        Self.normalizedBoldSectionBreak(delta, state: &assistantBoldBreakState)
-    }
-
-    func normalizedThoughtDelta(_ delta: String) -> String {
-        Self.normalizedBoldSectionBreak(
-            delta,
-            state: &thoughtBoldBreakState
-        )
+    func finishStreamingOutput() async {
+        await renderCoordinator.finishStreamingOutput()
     }
 
     /// Inserts a paragraph break before an inline bold span (`**`) that is glued
@@ -183,45 +105,16 @@ extension TerminalChat {
         return String(text[firstContentIndex...])
     }
 
-    func writeChatOutput(_ text: String, preservesSpacing: Bool = false) {
-        let normalizedText = preservesSpacing
-            ? chatSpacingPreserved(text)
-            : chatSpacingNormalized(text)
-        AgentOutput.standardOutput.writeString(chatLineInsetApplied(to: normalizedText))
+    func writeChatOutput(_ text: String, preservesSpacing: Bool = false) async {
+        await renderCoordinator.writeOutput(text, preservesSpacing: preservesSpacing)
     }
 
-    func flushChatOutput() {
-        guard AgentOutput.standardOutputIsTerminal else {
-            return
-        }
-        AgentOutput.standardOutput.synchronizeFile()
+    func flushChatOutput() async {
+        await renderCoordinator.flushOutput()
     }
 
-    func writeChatError(_ text: String, preservesSpacing: Bool = false) {
-        let normalizedText = preservesSpacing
-            ? chatSpacingPreserved(text)
-            : chatSpacingNormalized(text)
-        AgentOutput.standardError.writeString(chatLineInsetApplied(to: normalizedText))
-    }
-
-    func writeRawChatError(_ text: String) {
-        let normalizedText = chatSpacingNormalized(text)
-        AgentOutput.standardError.writeString(normalizedText)
-    }
-
-    func chatSpacingNormalized(_ text: String) -> String {
-        Self.chatSpacingNormalized(
-            text,
-            trailingNewlineCount: &trailingChatNewlineCount
-        )
-    }
-
-    func chatSpacingPreserved(_ text: String) -> String {
-        Self.updateTrailingNewlineCount(
-            afterPreserving: text,
-            trailingNewlineCount: &trailingChatNewlineCount
-        )
-        return text
+    func writeChatError(_ text: String, preservesSpacing: Bool = false) async {
+        await renderCoordinator.writeError(text, preservesSpacing: preservesSpacing)
     }
 
     static func chatSpacingNormalized(
@@ -265,73 +158,27 @@ extension TerminalChat {
         trailingNewlineCount = info.trailingNewlines
     }
 
-    func writeFailureMessage(_ text: String) {
-        writeChatError(
-            Self.failureMessageColorApplied(
-                to: text,
-                isEnabled: AgentOutput.standardErrorIsTerminal
-            )
-        )
+    func writeFailureMessage(_ text: String) async {
+        await renderCoordinator.writeFailureMessage(text)
     }
 
-    func writeSystemMessage(_ text: String) {
-        writeChatError(
-            Self.systemMessageColorApplied(
-                to: text,
-                isEnabled: AgentOutput.standardErrorIsTerminal
-            )
-        )
+    func writeSystemMessage(_ text: String) async {
+        await renderCoordinator.writeSystemMessage(text)
     }
 
     /// Renders a complete, non-streaming Markdown block through the same
     /// terminal formatter used for assistant responses. A dedicated formatter
     /// keeps command output from sharing buffered streaming state.
-    func writeMarkdownMessage(_ markdown: String) {
-        guard !markdown.isEmpty else {
-            return
-        }
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: AgentOutput.standardOutputIsTerminal
-        )
-        let rendered = formatter.consume(markdown) + formatter.finish()
-        guard !rendered.isEmpty else {
-            return
-        }
-        writeChatOutput(rendered, preservesSpacing: true)
-        if trailingChatNewlineCount == 0 {
-            writeChatOutput("\n")
-        }
-        flushChatOutput()
+    func writeMarkdownMessage(_ markdown: String) async {
+        await renderCoordinator.writeMarkdownMessage(markdown)
     }
 
-    func writeFileChangeSummaryMessage(_ text: String) {
-        writeChatError(
-            Self.fileChangeSummaryColorApplied(
-                to: text,
-                isEnabled: AgentOutput.standardErrorIsTerminal
-            )
-        )
+    func writeFileChangeSummaryMessage(_ text: String) async {
+        await renderCoordinator.writeFileChangeSummaryMessage(text)
     }
 
-    func writeOperationalMessage(_ text: String) {
-        writeChatError(
-            Self.operationalMessageColorApplied(
-                to: text,
-                isEnabled: AgentOutput.standardErrorIsTerminal
-            )
-        )
-    }
-
-    func chatLineInsetApplied(to text: String) -> String {
-        Self.chatLineInsetApplied(
-            to: text,
-            prefix: chatLineInsetPrefix,
-            isAtLineStart: &isAtStartOfChatLine
-        )
-    }
-
-    var chatLineInsetPrefix: String {
-        stdinIsTerminal ? Self.chatLineInsetPrefix : ""
+    func writeOperationalMessage(_ text: String) async {
+        await renderCoordinator.writeOperationalMessage(text)
     }
 
     static func chatLineInsetApplied(
@@ -521,8 +368,11 @@ extension TerminalChat {
         return "\u{1B}[38;5;75m\(text)\u{1B}[0m"
     }
 
-    static func renderThoughtMarkdown(_ renderedMarkdown: String) -> String {
-        guard AgentOutput.standardErrorIsTerminal,
+    static func renderThoughtMarkdown(
+        _ renderedMarkdown: String,
+        standardErrorIsTerminal: Bool = AgentOutput.standardErrorIsTerminal
+    ) -> String {
+        guard standardErrorIsTerminal,
               !renderedMarkdown.isEmpty else {
             return renderedMarkdown
         }

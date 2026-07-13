@@ -6,197 +6,26 @@
 import Foundation
 
 extension TerminalChat {
-    public func writeToolCallStarted(_ toolCall: DirectAgentToolCall) {
-        toolOutputLock.withLock { _ in
-            prepareForToolOutput()
-            guard toolOutputDetailLevel != .compact else {
-                writeCompactToolCallStarted(toolCall)
-                return
-            }
-
-            writeDetailedToolCallStarted(toolCall)
-        }
-    }
-
-    func prepareForToolOutput() {
-        flushChatOutput()
-        if AgentOutput.standardErrorIsTerminal {
-            // A single newline only terminates an assistant response that was
-            // streamed without a trailing newline. Emit two so there is always
-            // one blank row before the tool; chat spacing normalization retains
-            // the same result when the preceding output already ended in one.
-            writeChatError("\n\n")
-        }
-    }
-
-    /// Serializes overview output with tool start/completion so an overview cannot
-    /// move the cursor while the pending tool block still owns its terminal rows.
-    @discardableResult
-    func renderOverviewWhenToolOutputIsIdle(
-        shouldRender: () -> Bool = { true },
-        onDeferred: () -> Void = {},
-        onSkippedWhileIdle: () -> Void = {},
-        _ render: () -> Void
-    ) -> Bool {
-        toolOutputLock.withLock { _ in
-            let toolOutputIsIdle = activeCompactToolCallID == nil
-                && activeDetailedToolCallID == nil
-            guard shouldRender() else {
-                if toolOutputIsIdle {
-                    onSkippedWhileIdle()
-                }
-                return false
-            }
-            guard toolOutputIsIdle else {
-                onDeferred()
-                return false
-            }
-            render()
-            return true
-        }
+    public func writeToolCallStarted(_ toolCall: DirectAgentToolCall) async {
+        await renderCoordinator.writeToolCallStarted(toolCall)
     }
 
     public func writeToolCallCompleted(
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
-    ) {
-        toolOutputLock.withLock { _ in
-            guard toolOutputDetailLevel != .compact,
-                  activeCompactToolCallID != toolCall.id else {
-                writeCompactToolCallCompleted(toolCall, result: result)
-                return
-            }
-
-            writeDetailedToolCallCompleted(toolCall, result: result)
-        }
+    ) async {
+        await renderCoordinator.writeToolCallCompleted(toolCall, result: result)
     }
 
-    func writeDetailedToolCallStarted(_ toolCall: DirectAgentToolCall) {
-        let lines = Self.detailedToolCallStartedLines(for: toolCall)
-        activeDetailedToolCallID = toolCall.id
-        activeDetailedToolRenderedRowCount = Self.renderedTerminalRowCount(
-            for: lines,
-            contentInsetWidth: chatLineInsetPrefix.count
-        )
-        writeToolBlock(lines, codeLanguage: Self.codeLanguageHint(for: toolCall))
+    public func toggleToolDetailsOutput() async {
+        await renderCoordinator.toggleToolDetailsOutput()
     }
 
-    func writeDetailedToolCallCompleted(
-        _ toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult
-    ) {
-        let lines = Self.detailedToolCallCompletedLines(
-            for: toolCall,
-            result: result
-        )
-        let shouldRewriteActiveBlock = activeDetailedToolCallID == toolCall.id
-            && AgentOutput.standardErrorIsTerminal
-        let rewriteRowCount = activeDetailedToolRenderedRowCount
-        activeDetailedToolCallID = nil
-        activeDetailedToolRenderedRowCount = 0
-
-        if shouldRewriteActiveBlock {
-            AgentOutput.standardError.writeString("\u{1B}[\(max(1, rewriteRowCount))A\r\u{1B}[J")
-        }
-        writeToolBlock(lines, codeLanguage: Self.codeLanguageHint(for: toolCall))
-        writeChatError("\n")
+    func writeAccessModeChangeMessage(_ accessMode: AgentLocalExecAccessMode) async {
+        await renderCoordinator.writeAccessModeChangeMessage(accessMode)
     }
 
-    public func toggleToolDetailsOutput() {
-        toolOutputLock.withLock { _ in
-            finishActiveToolOutputBeforeInterleavedMessageLocked()
-            toolOutputDetailLevel = toolOutputDetailLevel.next
-            writeSystemMessage(
-                "Tool details: \(toolOutputDetailLevel.label)\n"
-            )
-        }
-    }
-
-    func writeAccessModeChangeMessage(_ accessMode: AgentLocalExecAccessMode) {
-        toolOutputLock.withLock { _ in
-            finishActiveToolOutputBeforeInterleavedMessageLocked()
-            switch accessMode {
-            case .standard:
-                writeSystemMessage(
-                    "Mode: default — local.exec approvals restored.\n"
-                )
-            case .fullAccess:
-                writeSystemMessage(
-                    "Mode: full access — local.exec commands run without approval.\n"
-                )
-            }
-        }
-    }
-
-    private func finishActiveToolOutputBeforeInterleavedMessageLocked() {
-        guard activeCompactToolCallID != nil || activeDetailedToolCallID != nil else {
-            return
-        }
-        activeCompactToolCallID = nil
-        activeCompactToolRenderedRowCount = 0
-        activeDetailedToolCallID = nil
-        activeDetailedToolRenderedRowCount = 0
-        // The active block can no longer be safely rewritten once another
-        // message is inserted below it. Terminate it and let completion append
-        // a fresh final block instead of moving the cursor over that message.
-        writeChatError("\n")
-    }
-
-    func writeCompactToolCallStarted(_ toolCall: DirectAgentToolCall) {
-        let lines = Self.compactToolLines(
-            for: toolCall,
-            statusIcon: "⏳",
-            contentInsetWidth: chatLineInsetPrefix.count
-        )
-        activeCompactToolCallID = toolCall.id
-        activeCompactToolRenderedRowCount = Self.renderedTerminalRowCount(
-            for: lines,
-            contentInsetWidth: chatLineInsetPrefix.count
-        )
-        writeCompactToolLines(lines, newline: false)
-    }
-
-    func writeCompactToolCallCompleted(
-        _ toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult
-    ) {
-        let icon = result.isFailure ? "⚠️" : "✅"
-        let lines = Self.compactToolLines(
-            for: toolCall,
-            statusIcon: icon,
-            contentInsetWidth: chatLineInsetPrefix.count
-        )
-        let shouldRewriteActiveLine = activeCompactToolCallID == toolCall.id
-            && AgentOutput.standardErrorIsTerminal
-        let rewriteRowCount = activeCompactToolRenderedRowCount
-        activeCompactToolCallID = nil
-        activeCompactToolRenderedRowCount = 0
-
-        if shouldRewriteActiveLine {
-            AgentOutput.standardError.writeString("\u{1B}[\(max(1, rewriteRowCount))A\r\u{1B}[J")
-        }
-        writeCompactToolLines(
-            lines,
-            newline: true
-        )
-    }
-
-    func writeCompactToolLines(
-        _ lines: [String],
-        newline: Bool = false,
-        terminator: String = "\n"
-    ) {
-        let text = Self.compactToolTerminalText(
-            lines,
-            lineInset: chatLineInsetPrefix,
-            newline: newline,
-            terminator: terminator
-        )
-        writeRawChatError(text)
-        isAtStartOfChatLine = terminator.hasSuffix("\n")
-    }
-
-        static func compactToolTerminalText(
+    static func compactToolTerminalText(
         _ lines: [String],
         lineInset: String,
         newline: Bool = false,
@@ -323,16 +152,6 @@ extension TerminalChat {
 
     static func displayWidth(_ text: String) -> Int {
         TerminalANSIText.visibleWidth(text)
-    }
-
-    func writeToolBlock(_ lines: [String], codeLanguage: String? = nil) {
-        let reset = "\u{1B}[0m"
-        let lineInset = chatLineInsetPrefix
-        let text = lines
-            .map { "\(lineInset)\(Self.renderDetailedToolLine($0, codeLanguage: codeLanguage))\(reset)" }
-            .joined(separator: "\n")
-        writeRawChatError("\(text)\n")
-        isAtStartOfChatLine = true
     }
 
     static func renderDetailedToolLine(

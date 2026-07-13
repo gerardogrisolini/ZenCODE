@@ -14,7 +14,7 @@ import Foundation
 extension TerminalChat {
     func synchronizeLocalExecAccessModeStatusBar() async {
         let accessMode = await sessionRunner.localExecAccessMode()
-        statusBar.update(localExecAccessMode: accessMode)
+        await statusBar.update(localExecAccessMode: accessMode)
     }
 
     func runBlockingInputLoop(initialInputLine: String?) async throws {
@@ -52,7 +52,7 @@ extension TerminalChat {
                     promptAttempt(prompt: prompt, isUserVisible: false, purpose: purpose)
                 )
             case let .prefillPrompt(prompt):
-                writeSystemMessage("Draft prompt:\n\(prompt)\n")
+                await writeSystemMessage("Draft prompt:\n\(prompt)\n")
             }
         }
     }
@@ -77,8 +77,8 @@ extension TerminalChat {
         }
 
         @discardableResult
-        func startPanelInput() -> Bool {
-            let didStart = interactiveReader.startPanelInput(
+        func startPanelInput() async -> Bool {
+            let didStart = await interactiveReader.startPanelInput(
                 statusBar: statusBar,
                 commandSuggestions: commandSuggestionsForCurrentAgent()
             ) { event in
@@ -87,8 +87,8 @@ extension TerminalChat {
             guard didStart else {
                 return false
             }
-            interactiveReader.setPanelProcessing(isGenerating)
-            interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+            await interactiveReader.setPanelProcessing(isGenerating)
+            await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
             return true
         }
 
@@ -96,13 +96,13 @@ extension TerminalChat {
             await interactiveReader.stopPanelInput(clearPanel: clearPanel)
         }
 
-        func startGeneration(attempt: TerminalPromptAttempt) {
+        func startGeneration(attempt: TerminalPromptAttempt) async {
             isGenerating = true
             didReceiveMetricsForCurrentPrompt = false
             didRefreshGitStatusDuringCurrentPrompt = false
-            statusBar.beginRequest()
-            statusBar.setProcessing(true)
-            interactiveReader.setPanelProcessing(true)
+            await statusBar.beginRequest()
+            await statusBar.setProcessing(true)
+            await interactiveReader.setPanelProcessing(true)
             generationTask = Task {
                 let result: TerminalChatGenerationResult
                 do {
@@ -129,20 +129,20 @@ extension TerminalChat {
             }
         }
 
-        func startDirectPrompt(_ prompt: String, origin: TerminalPromptOrigin) {
+        func startDirectPrompt(_ prompt: String, origin: TerminalPromptOrigin) async {
             let attempt = promptAttempt(prompt: prompt, origin: origin)
             if origin == .local {
-                writeSubmittedPrompt(prompt)
+                await writeSubmittedPrompt(prompt)
             } else {
-                writeTelegramSubmittedPrompt(prompt)
+                await writeTelegramSubmittedPrompt(prompt)
             }
-            startGeneration(attempt: attempt)
+            await startGeneration(attempt: attempt)
         }
 
         await synchronizeLocalExecAccessModeStatusBar()
 
-        guard startPanelInput() else {
-            statusBar.stop()
+        guard await startPanelInput() else {
+            await statusBar.stop()
             throw TerminalChatError.interactivePromptUnavailable
         }
         defer {
@@ -159,12 +159,18 @@ extension TerminalChat {
             let shouldSuspendPanel = origin == .local && Self.shouldSuspendPanelInput(for: line)
             if shouldSuspendPanel {
                 await stopPanelInput(clearPanel: false)
+                await renderCoordinator.setOverviewPublishingSuspended(true)
             }
 
-            switch await submittedLineAction(line, origin: origin) {
+            let action = await submittedLineAction(line, origin: origin)
+            if shouldSuspendPanel {
+                await renderCoordinator.setOverviewPublishingSuspended(false)
+            }
+
+            switch action {
             case .continueChat:
                 if shouldSuspendPanel {
-                    _ = startPanelInput()
+                    _ = await startPanelInput()
                 }
                 return true
             case .exitChat:
@@ -172,21 +178,21 @@ extension TerminalChat {
                 return false
             case let .runPrompt(prompt):
                 if shouldSuspendPanel {
-                    _ = startPanelInput()
+                    _ = await startPanelInput()
                 }
                 let attempt = promptAttempt(prompt: prompt, origin: origin)
                 if origin == .local {
-                    writeSubmittedPrompt(prompt)
+                    await writeSubmittedPrompt(prompt)
                 } else {
-                    writeTelegramSubmittedPrompt(prompt)
+                    await writeTelegramSubmittedPrompt(prompt)
                 }
-                startGeneration(attempt: attempt)
+                await startGeneration(attempt: attempt)
                 return true
             case let .runHiddenPrompt(prompt, purpose):
                 if shouldSuspendPanel {
-                    _ = startPanelInput()
+                    _ = await startPanelInput()
                 }
-                startGeneration(
+                await startGeneration(
                     attempt: promptAttempt(
                         prompt: prompt,
                         origin: origin,
@@ -197,9 +203,9 @@ extension TerminalChat {
                 return true
             case let .prefillPrompt(prompt):
                 if shouldSuspendPanel {
-                    _ = startPanelInput()
+                    _ = await startPanelInput()
                 }
-                interactiveReader.setPanelText(prompt)
+                await interactiveReader.setPanelText(prompt)
                 return true
             }
         }
@@ -210,7 +216,7 @@ extension TerminalChat {
                 switch inputEvent {
                 case let .submitted(line):
                     if activeVoiceRecordingSession != nil {
-                        voiceTranscriptionTask = stopVoiceRecordingAndTranscribe(
+                        voiceTranscriptionTask = await stopVoiceRecordingAndTranscribe(
                             eventQueue: eventQueue
                         )
                         continue
@@ -218,7 +224,7 @@ extension TerminalChat {
 
                     if !isGenerating, !queuedPrompts.isEmpty {
                         queuedPrompts.append(TerminalQueuedPrompt(text: line, origin: .local))
-                        interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                        await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
                         scheduleQueuedPromptIfNeeded()
                         continue
                     }
@@ -227,13 +233,13 @@ extension TerminalChat {
                         switch Self.submittedLineRole(for: line) {
                         case .empty, .prompt:
                             queuedPrompts.append(TerminalQueuedPrompt(text: line, origin: .local))
-                            interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                            await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
                             continue
                         case .slashCommand:
                             if Self.isAvailableDuringGeneration(for: line) {
                                 break
                             }
-                            writeFailureMessage(generatingSlashCommandMessage(for: line))
+                            await writeFailureMessage(generatingSlashCommandMessage(for: line))
                             continue
                         }
                     }
@@ -243,23 +249,23 @@ extension TerminalChat {
                     }
                 case .cancelRequested:
                     if activeVoiceRecordingSession != nil {
-                        cancelVoiceRecording()
+                        await cancelVoiceRecording()
                     } else if voiceTranscriptionTask != nil {
                         voiceTranscriptionTask?.cancel()
                         voiceTranscriptionTask = nil
-                        clearVoicePanelMode()
-                        writeSystemMessage("Voice transcription cancelled.\n")
+                        await clearVoicePanelMode()
+                        await writeSystemMessage("Voice transcription cancelled.\n")
                     } else {
                         generationTask?.cancel()
                     }
                 case .toggleToolDetailsRequested:
-                    self.toggleToolDetailsOutput()
-                    interactiveReader.refreshPanel()
+                    await self.toggleToolDetailsOutput()
+                    await interactiveReader.refreshPanel()
                 case .toggleAccessModeRequested:
                     let accessMode = await sessionRunner.toggleLocalExecAccessMode()
-                    statusBar.update(localExecAccessMode: accessMode)
-                    writeAccessModeChangeMessage(accessMode)
-                    interactiveReader.refreshPanel()
+                    await statusBar.update(localExecAccessMode: accessMode)
+                    await writeAccessModeChangeMessage(accessMode)
+                    await interactiveReader.refreshPanel()
                 case .endOfInput:
                     generationTask?.cancel()
                     break eventLoop
@@ -267,10 +273,10 @@ extension TerminalChat {
             case let .generationCompleted(result):
                 generationTask = nil
                 isGenerating = false
-                statusBar.setProcessing(false)
-                interactiveReader.setPanelProcessing(false)
+                await statusBar.setProcessing(false)
+                await interactiveReader.setPanelProcessing(false)
                 await finishPromptResult(result)
-                refreshStatusBarGitStatusSummaryAfterPromptIfNeeded()
+                await refreshStatusBarGitStatusSummaryAfterPromptIfNeeded()
                 scheduleQueuedPromptIfNeeded()
             case .startNextQueuedPrompt:
                 isQueuedPromptStartScheduled = false
@@ -278,9 +284,9 @@ extension TerminalChat {
                     continue
                 }
                 let nextPrompt = queuedPrompts.removeFirst()
-                interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
                 if nextPrompt.mode == .directPrompt {
-                    startDirectPrompt(nextPrompt.text, origin: nextPrompt.origin)
+                    await startDirectPrompt(nextPrompt.text, origin: nextPrompt.origin)
                     continue
                 }
                 guard await handleSubmittedPanelLine(
@@ -297,11 +303,11 @@ extension TerminalChat {
                     queuedPrompts: &queuedPrompts,
                     eventQueue: eventQueue
                 )
-                interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
                 scheduleQueuedPromptIfNeeded()
             case let .voicePromptProgress(progress):
                 if progress.origin == .local {
-                    interactiveReader.setPanelOverlay(
+                    await interactiveReader.setPanelOverlay(
                         TerminalPanelModeOverride(
                             modeText: "Transcribing voice",
                             helpText: progress.message
@@ -316,8 +322,8 @@ extension TerminalChat {
             case let .voicePromptCompleted(result):
                 if result.origin == .local {
                     voiceTranscriptionTask = nil
-                    clearVoicePanelMode()
-                    interactiveReader.setPanelProcessing(isGenerating)
+                    await clearVoicePanelMode()
+                    await interactiveReader.setPanelProcessing(isGenerating)
                 }
                 switch result.outcome {
                 case let .success(prompt):
@@ -329,7 +335,7 @@ extension TerminalChat {
                                 mode: .directPrompt
                             )
                         )
-                        interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                        await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
                         scheduleQueuedPromptIfNeeded()
                         await sendTelegramSystemMessageIfLinked(
                             "Transcription ready. Queued for the current ZenCODE session.",
@@ -340,10 +346,10 @@ extension TerminalChat {
                             "Transcription ready. ZenCODE is working.",
                             origin: result.origin
                         )
-                        startDirectPrompt(prompt, origin: result.origin)
+                        await startDirectPrompt(prompt, origin: result.origin)
                     }
                 case let .failure(message):
-                    writeFailureMessage("ZenCODE: \(message)\n")
+                    await writeFailureMessage("ZenCODE: \(message)\n")
                     await sendTelegramSystemMessageIfLinked(
                         "Voice transcription failed: \(message)",
                         origin: result.origin

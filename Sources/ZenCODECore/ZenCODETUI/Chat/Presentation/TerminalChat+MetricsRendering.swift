@@ -6,23 +6,23 @@
 import Foundation
 
 extension TerminalChat {
-    public func writeMetricsStatus(_ metrics: DirectAgentGenerationMetrics) {
-        _ = statusBar.update(metrics: metrics)
+    public func writeMetricsStatus(_ metrics: DirectAgentGenerationMetrics) async {
+        _ = await statusBar.update(metrics: metrics)
         guard Self.shouldPrintMetricsForAutomation(),
               metrics.completionTokensPerSecond != nil else {
             return
         }
-        writeChatError(
+        await writeChatError(
             "\n[ZenCODE] \(Self.metricsSummary(metrics))\n"
         )
     }
 
-    public func writeContextWindowStatus(_ status: DirectAgentContextWindowStatus) {
-        _ = statusBar.update(contextWindow: status)
+    public func writeContextWindowStatus(_ status: DirectAgentContextWindowStatus) async {
+        _ = await statusBar.update(contextWindow: status)
     }
 
-    public func writeSubscriptionUsageStatus(_ status: DirectAgentSubscriptionUsageStatus) {
-        _ = statusBar.update(subscriptionUsage: status)
+    public func writeSubscriptionUsageStatus(_ status: DirectAgentSubscriptionUsageStatus) async {
+        _ = await statusBar.update(subscriptionUsage: status)
     }
 
     public func compactGenerationSummary(_ message: String) -> String {

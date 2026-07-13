@@ -8,27 +8,27 @@
 import Foundation
 
 extension TerminalChat {
-    public func handleAttachCommand(_ command: String) throws {
+    public func handleAttachCommand(_ command: String) async throws {
         let rawArguments = String(command.dropFirst("/attach".count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawArguments.isEmpty else {
-            writeSystemMessage(Self.renderAttachmentUsage())
+            await writeSystemMessage(Self.renderAttachmentUsage())
             return
         }
 
         let paths = try Self.splitAttachmentCommandArguments(rawArguments)
         guard let first = paths.first else {
-            writeSystemMessage(Self.renderAttachmentUsage())
+            await writeSystemMessage(Self.renderAttachmentUsage())
             return
         }
 
         switch first.lowercased() {
         case "list":
-            writePendingAttachments()
+            await writePendingAttachments()
             return
         case "delete":
             let deleteArgument = paths.dropFirst().joined(separator: " ")
-            try deletePendingAttachments(argument: deleteArgument)
+            try await deletePendingAttachments(argument: deleteArgument)
             return
         default:
             break
@@ -39,28 +39,28 @@ extension TerminalChat {
         pendingAttachments.append(contentsOf: attachments)
 
         let noun = attachments.count == 1 ? "attachment" : "attachments"
-        writeSystemMessage(
+        await writeSystemMessage(
             "Added \(attachments.count) \(noun). \(pendingAttachments.count) pending.\n"
         )
-        writePendingAttachments()
+        await writePendingAttachments()
     }
 
-    public func deletePendingAttachments(argument: String) throws {
+    public func deletePendingAttachments(argument: String) async throws {
         let rawArgument = argument.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !pendingAttachments.isEmpty else {
-            writeSystemMessage("No pending attachments.\n")
+            await writeSystemMessage("No pending attachments.\n")
             return
         }
 
         guard !rawArgument.isEmpty else {
-            writeSystemMessage(Self.renderAttachmentDeleteUsage())
+            await writeSystemMessage(Self.renderAttachmentDeleteUsage())
             return
         }
 
         if rawArgument.lowercased() == "all" {
             pendingAttachments.removeAll()
-            writeSystemMessage("Removed all pending attachments.\n")
+            await writeSystemMessage("Removed all pending attachments.\n")
             return
         }
 
@@ -69,22 +69,22 @@ extension TerminalChat {
         }
 
         let removedAttachment = pendingAttachments.remove(at: index - 1)
-        writeSystemMessage(
+        await writeSystemMessage(
             "Removed attachment: \(removedAttachment.originalFilename)\n"
         )
-        writePendingAttachments()
+        await writePendingAttachments()
     }
 
-    public func writePendingAttachments() {
+    public func writePendingAttachments() async {
         guard !pendingAttachments.isEmpty else {
-            writeSystemMessage("No pending attachments.\n")
+            await writeSystemMessage("No pending attachments.\n")
             return
         }
 
         let lines = pendingAttachments.enumerated().map { index, attachment in
             Self.renderAttachmentLine(number: index + 1, attachment: attachment)
         }
-        writeSystemMessage(
+        await writeSystemMessage(
             """
             Pending attachments:
             \(lines.joined(separator: "\n"))

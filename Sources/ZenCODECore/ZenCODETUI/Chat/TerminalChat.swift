@@ -13,7 +13,6 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
-import Synchronization
 
 /// Detail level used when rendering executed tool calls in the terminal.
 public enum ToolOutputDetailLevel: CaseIterable, Sendable {
@@ -40,7 +39,7 @@ public enum ToolOutputDetailLevel: CaseIterable, Sendable {
     }
 }
 
-/// TerminalChat is driven by a single terminal event loop; @Sendable callbacks capture it to hop back into that loop.
+/// TerminalChat coordinates session state; all stateful terminal rendering is isolated by `renderCoordinator`.
 public final class TerminalChat: @unchecked Sendable {
     public let configuration: AgentConfiguration
     public let stdinIsTerminal: Bool
@@ -69,30 +68,9 @@ public final class TerminalChat: @unchecked Sendable {
     public var pendingAttachments: [AgentRuntimeAttachment] = []
     public var lastFileChangeSummary: TurnFileChangeSummary?
     public var activePlan: TerminalSessionPlan?
-    public var lastRenderedSubAgentOverviewSignature: String?
-    public var lastRenderedTaskGraphOverviewSignature: String?
     public var taskGraphObserverTask: Task<Void, Never>?
     public var availableSkillsCache: [PromptSkill]?
-    public var toolOutputDetailLevel: ToolOutputDetailLevel = .compact
-    public var activeCompactToolCallID: String?
-    public var activeCompactToolRenderedRowCount = 0
-    public var activeDetailedToolCallID: String?
-    public var activeDetailedToolRenderedRowCount = 0
-    var deferredTaskGraphOverviewRender = false
-    let toolOutputLock = Mutex(())
-    public var isStreamingThoughtOutput = false
-
-    var assistantBoldBreakState = TerminalChatBoldBreakState()
-    var thoughtBoldBreakState = TerminalChatBoldBreakState()
-    var isAtStartOfChatLine = true
-    var trailingChatNewlineCount = 0
-    public var assistantMarkdownFormatter = TerminalMarkdownStreamFormatter(
-        isEnabled: AgentOutput.standardOutputIsTerminal
-    )
-    public var thoughtMarkdownFormatter = TerminalMarkdownStreamFormatter(
-        isEnabled: AgentOutput.standardErrorIsTerminal,
-        removesUnbalancedStrongMarkers: true
-    )
+    let renderCoordinator: TerminalChatRenderCoordinator
     public let telegramControlService = TerminalTelegramControlService()
     let telegramPermissionBroker = TerminalTelegramPermissionBroker()
     public var telegramControlState = TerminalTelegramControlState.inactive()
@@ -111,6 +89,9 @@ public final class TerminalChat: @unchecked Sendable {
     ) {
         self.configuration = configuration
         self.stdinIsTerminal = stdinIsTerminal
+        self.renderCoordinator = TerminalChatRenderCoordinator(
+            stdinIsTerminal: stdinIsTerminal
+        )
         self.statusBar = TerminalStatusBar(
             isEnabled: stdinIsTerminal
                 && Self.supportsInteractiveStatusBar()
@@ -194,12 +175,12 @@ public final class TerminalChat: @unchecked Sendable {
         }
 
         await applyInitialAgentSelectionIfNeeded()
-        try handleMissingInitialModelSelectionIfNeeded()
+        try await handleMissingInitialModelSelectionIfNeeded()
         try applyInitialSkillSelectionIfNeeded()
         await ensureWorkspaceAccessIfNeeded()
 
         try await createCurrentSession()
-        refreshInitialStatusBarContextWindow()
+        await refreshInitialStatusBarContextWindow()
         _ = try await preloadCurrentModel(emitStatus: configuration.hostedModels != nil)
 
         if stdinIsTerminal {
@@ -207,13 +188,11 @@ public final class TerminalChat: @unchecked Sendable {
         }
         await printStartupSummary()
 
-        let statusBarStarted = statusBar.start()
-        refreshStatusBarGitStatusSummary()
+        let statusBarStarted = await statusBar.start()
+        await refreshStatusBarGitStatusSummary()
         defer {
-            Task {
-                _ = await telegramControlService.stop()
-            }
-            statusBar.stop()
+            _ = await telegramControlService.stop()
+            await statusBar.stop()
         }
 
         if stdinIsTerminal, statusBarStarted {

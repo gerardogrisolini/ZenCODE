@@ -51,7 +51,7 @@ layout are made explicit.
 | `Sources/ZenCODECore/ZenCODE` | Runtime domains: `Agent`, `Remote`, `Tools`, `Features`, `Context`, `Memory`, `FileChanges`, `Runtime`, and `Support`; `ZenCODETUI` and ACP remain source areas within this target. |
 | `Sources/ZenCODECore/ZenCODE/Runtime/Sessions` | Neutral session state and persistence, including the authoritative task DAG, attempt fencing, execution scopes, and atomic task-graph checkpoints. `AgentCoreSessionRunner` owns one orchestrator and injects it into every backend; direct task tools are stateless adapters and TUI/ACP code only projects or restores snapshots. |
 | `Sources/ZenCODECore/ZenCODE/ACP` | ACP protocol adaptation only: JSON-RPC routing, parsing, lifecycle, and event encoding. |
-| `Sources/ZenCODECore/ZenCODETUI` | Terminal-only state, input, rendering, and presentation. Shared runtime types must not be introduced here. |
+| `Sources/ZenCODECore/ZenCODETUI` | Terminal-only state, input, rendering, and presentation. `TerminalChatRenderCoordinator` is the sole owner of stateful chat writes and formatting/cursor state; `TerminalStatusBar` separately owns status and input-panel rendering state. Shared runtime types must not be introduced here. |
 | `Sources/LocalRuntimeSupport` | Internal local-runtime backend-selection support; it depends on `ZenCODECore` and is not a public product. |
 | `Sources/ZenCODESetup` | Interactive standalone-agent setup. |
 | `Sources/MLXServerCore` | Conditional local MLX runtime, catalog, loading, generation gate, and disk KV cache. |
@@ -104,11 +104,17 @@ only composition root for local backend selection.
 
 ## Consumer Migration Note
 
-No consumer action is required for this source reorganization. Public products
+No consumer action is required for the source reorganization. Public products
 and imports, `zen`, bundled feature executables, CLI behavior, and wire and
 persistence contracts remain unchanged. Consumers depend on SwiftPM products
 and modules, not repository source paths; internal targets such as
 `LocalRuntimeSupport` and `ZenPackageMetadata` are implementation details.
+
+The terminal-rendering concurrency migration is an intentional source-level
+exception: `TerminalChat` operations that may render or update terminal UI are
+async and callers must await them. Observable CLI output remains compatible;
+the actor boundary prevents independent tasks from mutating formatter, cursor,
+overlay, or status-bar state concurrently.
 
 ## Migration Rules
 

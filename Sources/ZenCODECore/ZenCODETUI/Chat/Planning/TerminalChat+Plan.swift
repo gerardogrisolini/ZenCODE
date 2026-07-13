@@ -49,9 +49,9 @@ extension TerminalChat {
 
         switch argument.lowercased() {
         case "status":
-            writeSubmittedPrompt(command)
+            await writeSubmittedPrompt(command)
             guard let activePlan else {
-                writeSystemMessage("No active plan.\n")
+                await writeSystemMessage("No active plan.\n")
                 return .continueChat
             }
             let graph = try? await sessionRunner.taskGraphSnapshot(
@@ -62,13 +62,13 @@ extension TerminalChat {
                 Self.plan(activePlan, applying: $0)
             } ?? activePlan
             self.activePlan = projectedPlan
-            writeMarkdownMessage(Self.planStatusTable(for: projectedPlan, graph: graph))
+            await writeMarkdownMessage(Self.planStatusTable(for: projectedPlan, graph: graph))
             return .continueChat
         case "approve":
-            writeSubmittedPrompt(command)
+            await writeSubmittedPrompt(command)
             guard var plan = activePlan,
                   !plan.consolidatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                writeFailureMessage(Self.planUnavailableForApprovalMessage)
+                await writeFailureMessage(Self.planUnavailableForApprovalMessage)
                 return .continueChat
             }
             do {
@@ -97,12 +97,12 @@ extension TerminalChat {
                     )
                 }
             } catch {
-                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
                 return .continueChat
             }
             plan.isApproved = true
             activePlan = plan
-            writeSystemMessage(
+            await writeSystemMessage(
                 "Approved the active plan and activated its task graph. Starting implementation now; /review will verify task claims against real files.\n"
             )
             return .runHiddenPrompt(
@@ -110,9 +110,9 @@ extension TerminalChat {
                 purpose: .normal
             )
         case "clear":
-            writeSubmittedPrompt(command)
+            await writeSubmittedPrompt(command)
             guard let plan = activePlan else {
-                writeSystemMessage("No active plan to clear.\n")
+                await writeSystemMessage("No active plan to clear.\n")
                 return .continueChat
             }
             do {
@@ -126,23 +126,23 @@ extension TerminalChat {
                     )
                 }
             } catch {
-                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
                 return .continueChat
             }
             activePlan = nil
-            writeSystemMessage("Cleared the active plan and archived its task graph.\n")
+            await writeSystemMessage("Cleared the active plan and archived its task graph.\n")
             return .continueChat
         default:
             break
         }
 
         guard !argument.isEmpty else {
-            writeFailureMessage(Self.planMissingGoalMessage)
+            await writeFailureMessage(Self.planMissingGoalMessage)
             return .continueChat
         }
 
         if !isSubAgentToolEnabled {
-            writeFailureMessage(
+            await writeFailureMessage(
                 """
                 ZenCODE: /plan requires the sub-agents tool group. \
                 Enable it with /tools (or switch to an agent that includes it) and try again.
@@ -154,11 +154,11 @@ extension TerminalChat {
 
         let plannerProfile = plannerProfileForDelegation()
 
-//        writeSystemMessage(
+//        await writeSystemMessage(
 //            "Starting planning pass for requested goal via Planner sub-agents...\n"
 //        )
 
-        writeSubmittedPrompt(command)
+        await writeSubmittedPrompt(command)
 
         return .runHiddenPrompt(
             Self.planDelegationPrompt(

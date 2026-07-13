@@ -14,7 +14,7 @@ import Glibc
 import Foundation
 
 extension TerminalChat {
-    public func handleMissingInitialModelSelectionIfNeeded() throws {
+    public func handleMissingInitialModelSelectionIfNeeded() async throws {
         guard currentEffectiveModelID() == nil,
               AgentSettingsStore.selectedModelID() == nil else {
             return
@@ -32,24 +32,24 @@ extension TerminalChat {
             let thinkingSelection = model.resolvedDefaultThinkingSelection
             manualModelIDOverride = model.id
             manualThinkingSelectionOverride = thinkingSelection
-            writeSystemMessage(
+            await writeSystemMessage(
                 "Selected model: \(modelDisplayTitle(model))\(thinkingSuffix(thinkingSelection))\n"
             )
             return
         }
 
         guard stdinIsTerminal,
-              let model = promptForModelSelection(
+              let model = await promptForModelSelection(
                   models: models,
                   message: "No model selected for ZenCODE."
               ) else {
             throw TerminalChatError.modelSelectionRequired
         }
 
-        let thinkingSelection = promptForThinkingSelection(model: model)
+        let thinkingSelection = await promptForThinkingSelection(model: model)
         manualModelIDOverride = model.id
         manualThinkingSelectionOverride = thinkingSelection
-        writeSystemMessage(
+        await writeSystemMessage(
             "Selected model: \(modelDisplayTitle(model))\(thinkingSuffix(thinkingSelection))\n"
         )
     }
@@ -62,18 +62,18 @@ extension TerminalChat {
             throw TerminalChatError.noConfiguredModels
         }
         guard stdinIsTerminal else {
-            renderModelList(models: models, message: nil)
-            writeSystemMessage("Model selection requires an interactive terminal.\n")
+            await renderModelList(models: models, message: nil)
+            await writeSystemMessage("Model selection requires an interactive terminal.\n")
             return
         }
 
         let previousEffectiveModelID = currentEffectiveModelID()
         let previousThinkingSelection = currentAgentThinkingSelection()
-        guard let selectedModel = promptForModelSelection(
+        guard let selectedModel = await promptForModelSelection(
             models: models,
             message: nil
         ) else {
-            writeSystemMessage("Model unchanged.\n")
+            await writeSystemMessage("Model unchanged.\n")
             return
         }
 
@@ -97,8 +97,8 @@ extension TerminalChat {
                     allowedToolNames: allowedToolNames
                 )
             )
-            statusBar.reset()
-            refreshInitialStatusBarContextWindow()
+            await statusBar.reset()
+            await refreshInitialStatusBarContextWindow()
             if previousThinkingSelection == selectedThinkingSelection {
                 return
             }
@@ -107,9 +107,9 @@ extension TerminalChat {
 
         await sessionRunner.shutdownBackendKeepingExternalTools()
         printedModelID = nil
-        statusBar.reset()
+        await statusBar.reset()
         try await createCurrentSession()
-        refreshInitialStatusBarContextWindow()
+        await refreshInitialStatusBarContextWindow()
         _ = try await preloadCurrentModel(emitStatus: configuration.hostedModels != nil)
     }
 
@@ -126,13 +126,13 @@ extension TerminalChat {
         guard let currentModel = effectiveModelID.flatMap({ modelID in
             models.first { $0.matches(modelID) }
         }) else {
-            writeSystemMessage("No current model selected. Use /models to choose a model first.\n")
+            await writeSystemMessage("No current model selected. Use /models to choose a model first.\n")
             return
         }
 
         let options = currentModel.availableThinkingSelections
         guard !options.isEmpty else {
-            writeSystemMessage(
+            await writeSystemMessage(
                 "\(modelDisplayTitle(currentModel)) does not support configurable thinking.\n"
             )
             return
@@ -146,12 +146,12 @@ extension TerminalChat {
         )
         let defaultSelection = currentSelection ?? currentModel.resolvedDefaultThinkingSelection
         guard stdinIsTerminal else {
-            renderThinkingList(
+            await renderThinkingList(
                 model: currentModel,
                 options: options,
                 selected: defaultSelection
             )
-            writeSystemMessage("Thinking selection requires an interactive terminal.\n")
+            await writeSystemMessage("Thinking selection requires an interactive terminal.\n")
             return
         }
 
@@ -159,9 +159,9 @@ extension TerminalChat {
             title: "Thinking / effort for \(modelDisplayTitle(currentModel))",
             items: thinkingSelectionItems(options),
             selected: defaultSelection,
-            reservedBottomRows: statusBar.reservedRowsForOverlay()
+            reservedBottomRows: await statusBar.reservedRowsForOverlay()
         ) else {
-            writeSystemMessage("Thinking unchanged.\n")
+            await writeSystemMessage("Thinking unchanged.\n")
             return
         }
 
@@ -178,7 +178,7 @@ extension TerminalChat {
                 allowedToolNames: allowedToolNames
             )
         )
-        refreshStatusBarThinkingSelection()
+        await refreshStatusBarThinkingSelection()
 
         if previousThinkingSelection == selectedThinkingSelection {
             return
@@ -193,7 +193,7 @@ extension TerminalChat {
     public func promptForModelSelection(
         models: [AgentSettingsModelManifest],
         message: String?
-    ) -> AgentSettingsModelManifest? {
+    ) async -> AgentSettingsModelManifest? {
         let selectedModelID = currentEffectiveModelID() ?? AgentSettingsStore.selectedModelID()
         let selectedModel = selectedModelID.flatMap { modelID in
             models.first { $0.matches(modelID) }
@@ -202,52 +202,52 @@ extension TerminalChat {
             title: message ?? "Available models",
             items: modelSelectionItems(models),
             selected: selectedModel,
-            reservedBottomRows: statusBar.reservedRowsForOverlay()
+            reservedBottomRows: await statusBar.reservedRowsForOverlay()
         )
     }
 
     public func renderModelList(
         models: [AgentSettingsModelManifest],
         message: String?
-    ) {
+    ) async {
         let selectedModelID = currentEffectiveModelID() ?? AgentSettingsStore.selectedModelID()
         if let message {
-            writeSystemMessage("\(message)\n")
+            await writeSystemMessage("\(message)\n")
         }
-        writeSystemMessage("\nAvailable models:\n")
+        await writeSystemMessage("\nAvailable models:\n")
         var offset = 1
         for group in AgentModelCatalogPresentation.groupedByProvider(models) {
-            writeSystemMessage("  \(group.title):\n")
+            await writeSystemMessage("  \(group.title):\n")
             for model in group.models {
                 let marker = selectedModelID.map(model.matches) == true ? " *" : ""
                 let title = AgentModelCatalogPresentation.modelTitle(for: model, in: group)
-                writeSystemMessage(
+                await writeSystemMessage(
                     "    \(offset). \(title)\(marker)\n"
                 )
                 offset += 1
             }
         }
-        writeSystemMessage("\n")
+        await writeSystemMessage("\n")
     }
 
     public func renderThinkingList(
         model: AgentSettingsModelManifest,
         options: [AgentThinkingSelection],
         selected: AgentThinkingSelection?
-    ) {
-        writeSystemMessage("\nThinking levels for \(modelDisplayTitle(model)):\n")
+    ) async {
+        await writeSystemMessage("\nThinking levels for \(modelDisplayTitle(model)):\n")
         for (offset, option) in options.enumerated() {
             let marker = option == selected ? " *" : ""
-            writeSystemMessage(
+            await writeSystemMessage(
                 "  \(offset + 1). \(option.menuTitle)\(marker)\n"
             )
         }
-        writeSystemMessage("\n")
+        await writeSystemMessage("\n")
     }
 
     public func promptForThinkingSelection(
         model: AgentSettingsModelManifest
-    ) -> AgentThinkingSelection? {
+    ) async -> AgentThinkingSelection? {
         let options = model.availableThinkingSelections
         guard !options.isEmpty else {
             return nil
@@ -263,7 +263,7 @@ extension TerminalChat {
             title: "Thinking / effort for \(modelDisplayTitle(model))",
             items: thinkingSelectionItems(options),
             selected: defaultSelection,
-            reservedBottomRows: statusBar.reservedRowsForOverlay()
+            reservedBottomRows: await statusBar.reservedRowsForOverlay()
         ) ?? defaultSelection
     }
 
@@ -328,27 +328,27 @@ extension TerminalChat {
     }
 
     public func preloadCurrentModel(emitStatus: Bool = true) async throws -> String {
-        refreshStatusBarThinkingSelection()
+        await refreshStatusBarThinkingSelection()
         let loadedModelID = try await sessionRunner.preloadModel(
             configuration: await currentSessionConfiguration()
         ) { event in
             switch event {
             case let .status(message):
                 if emitStatus && self.configuration.verboseLogging {
-                    self.writeChatError("[ZenCODE] \(message)\n")
+                    await self.writeChatError("[ZenCODE] \(message)\n")
                 }
             case let .modelLoaded(modelID):
-                _ = self.statusBar.update(modelID: modelID)
+                _ = await self.statusBar.update(modelID: modelID)
                 self.printedModelID = self.loadedModelDisplayTitle(modelID)
             case let .modelLoadedDetails(details):
                 if emitStatus {
-                    self.printLoadedModelDetails(details)
+                    await self.printLoadedModelDetails(details)
                 } else {
-                    _ = self.statusBar.update(modelID: details.modelID)
-                    _ = self.statusBar.update(modelRuntime: details.runtime)
+                    _ = await self.statusBar.update(modelID: details.modelID)
+                    _ = await self.statusBar.update(modelRuntime: details.runtime)
                 }
             case let .modelRuntime(runtime):
-                _ = self.statusBar.update(modelRuntime: runtime)
+                _ = await self.statusBar.update(modelRuntime: runtime)
             case .diagnostic,
                  .thought,
                  .metrics,
@@ -362,27 +362,27 @@ extension TerminalChat {
                 break
             }
         }
-        _ = statusBar.update(modelID: loadedModelID)
+        _ = await statusBar.update(modelID: loadedModelID)
         if !emitStatus {
             printedModelID = loadedModelDisplayTitle(loadedModelID)
         }
         return loadedModelID
     }
 
-    public func printModelIfNeeded(_ modelID: String) {
+    public func printModelIfNeeded(_ modelID: String) async {
         let displayTitle = loadedModelDisplayTitle(modelID)
         guard printedModelID != displayTitle else {
             return
         }
         printedModelID = displayTitle
-        refreshStatusBarThinkingSelection()
-        _ = statusBar.update(modelID: modelID)
-        printLoadedModelDetails(
+        await refreshStatusBarThinkingSelection()
+        _ = await statusBar.update(modelID: modelID)
+        await printLoadedModelDetails(
             DirectAgentLoadedModelDetails(modelID: modelID)
         )
     }
 
-    public func printLoadedModelDetails(_ details: DirectAgentLoadedModelDetails) {
+    public func printLoadedModelDetails(_ details: DirectAgentLoadedModelDetails) async {
         let modelID = details.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !modelID.isEmpty else {
             return
@@ -390,14 +390,14 @@ extension TerminalChat {
 
         let displayTitle = loadedModelDisplayTitle(modelID)
         printedModelID = displayTitle
-        refreshStatusBarThinkingSelection()
-        _ = statusBar.update(modelID: modelID)
-        _ = statusBar.update(modelRuntime: details.runtime)
+        await refreshStatusBarThinkingSelection()
+        _ = await statusBar.update(modelID: modelID)
+        _ = await statusBar.update(modelRuntime: details.runtime)
         let runtimeLabel = details.runtime?.lowercased().hasPrefix("ds4") == true ? "DS4" : "MLX"
         let loadedModelHeading = "ZenCODE \(runtimeLabel) loaded model"
 
         guard configuration.verboseLogging else {
-            writeOperationalMessage("\(loadedModelHeading): \(displayTitle)\n")
+            await writeOperationalMessage("\(loadedModelHeading): \(displayTitle)\n")
             return
         }
 
@@ -417,7 +417,7 @@ extension TerminalChat {
         if let kvCache = details.kvCache {
             lines.append("  kv_cache: \(kvCache)")
         }
-        writeOperationalMessage(lines.joined(separator: "\n") + "\n")
+        await writeOperationalMessage(lines.joined(separator: "\n") + "\n")
     }
 
     public func loadedModelDisplayTitle(_ modelID: String) -> String {

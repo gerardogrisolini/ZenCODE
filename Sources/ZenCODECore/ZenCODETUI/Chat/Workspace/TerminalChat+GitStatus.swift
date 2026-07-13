@@ -12,24 +12,28 @@ import Dispatch
 import Foundation
 
 extension TerminalChat {
-    func refreshStatusBarGitStatusSummaryForFileMutation() {
+    func refreshStatusBarGitStatusSummaryForFileMutation() async {
         didRefreshGitStatusDuringCurrentPrompt = true
-        refreshStatusBarGitStatusSummary()
+        await refreshStatusBarGitStatusSummary()
     }
 
-    func refreshStatusBarGitStatusSummaryAfterPromptIfNeeded() {
+    func refreshStatusBarGitStatusSummaryAfterPromptIfNeeded() async {
         guard !didRefreshGitStatusDuringCurrentPrompt else {
             return
         }
-        refreshStatusBarGitStatusSummary()
+        await refreshStatusBarGitStatusSummary()
     }
 
-    func refreshStatusBarGitStatusSummary() {
+    func refreshStatusBarGitStatusSummary() async {
         let workingDirectory = configuration.workingDirectory
         let statusBar = statusBar
+        let refreshGeneration = await statusBar.beginGitStatusRefresh()
         Task {
             let summary = await Self.gitStatusSummary(in: workingDirectory)
-            _ = statusBar.update(gitStatusSummary: summary)
+            _ = await statusBar.update(
+                gitStatusSummary: summary,
+                refreshGeneration: refreshGeneration
+            )
         }
     }
 

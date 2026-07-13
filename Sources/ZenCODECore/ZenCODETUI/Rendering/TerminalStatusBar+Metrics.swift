@@ -53,7 +53,7 @@ extension TerminalStatusBar {
         return runtime.uppercased()
     }
     
-    func mergedMetrics(
+    nonisolated func mergedMetrics(
         current: DirectAgentGenerationMetrics?,
         update: DirectAgentGenerationMetrics
     ) -> DirectAgentGenerationMetrics {
@@ -87,9 +87,9 @@ extension TerminalStatusBar {
         let resolvedUsedTokens = usedTokens ?? metricUsedTokens
         let usedText = resolvedUsedTokens.map(contextTokenCountText) ?? "0.0k"
         guard let maxTokens, maxTokens > 0 else {
-            return "\(usedText) / --"
+            return "\(usedText)/--"
         }
-        return "\(usedText) / \(contextWindowLimitText(maxTokens))"
+        return "\(usedText)/\(contextWindowLimitText(maxTokens))"
     }
     
     static func contextWindowLimitText(_ value: Int) -> String {

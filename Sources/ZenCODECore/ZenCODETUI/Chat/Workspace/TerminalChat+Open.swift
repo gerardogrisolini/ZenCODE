@@ -35,13 +35,13 @@ extension TerminalChat {
 
         let candidates = collectOpenCandidates()
         guard !candidates.isEmpty else {
-            writeSystemMessage("No files or URLs found in this conversation.\n")
+            await writeSystemMessage("No files or URLs found in this conversation.\n")
             return
         }
 
         guard stdinIsTerminal else {
-            writeSystemMessage(Self.renderOpenCandidateList(candidates))
-            writeSystemMessage("Selecting an item to open requires an interactive terminal.\n")
+            await writeSystemMessage(Self.renderOpenCandidateList(candidates))
+            await writeSystemMessage("Selecting an item to open requires an interactive terminal.\n")
             return
         }
 
@@ -57,9 +57,9 @@ extension TerminalChat {
             title: "Open file or URL",
             items: items,
             selected: 0,
-            reservedBottomRows: statusBar.reservedRowsForOverlay()
+            reservedBottomRows: await statusBar.reservedRowsForOverlay()
         ) else {
-            writeSystemMessage("Nothing opened.\n")
+            await writeSystemMessage("Nothing opened.\n")
             return
         }
 
@@ -74,7 +74,7 @@ extension TerminalChat {
 
         let resolved = resolvedOpenURL(from: argument)
         guard FileManager.default.fileExists(atPath: resolved.path) else {
-            writeFailureMessage("ZenCODE: file not found: \(argument)\n")
+            await writeFailureMessage("ZenCODE: file not found: \(argument)\n")
             return
         }
         await openTarget(resolved.path)
@@ -83,9 +83,9 @@ extension TerminalChat {
     private func openTarget(_ target: String) async {
         do {
             try await Self.runOpen(target: target)
-            writeSystemMessage("Opening \(target)\n")
+            await writeSystemMessage("Opening \(target)\n")
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
     }
 

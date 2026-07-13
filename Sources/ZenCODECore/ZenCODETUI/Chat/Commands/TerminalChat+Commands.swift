@@ -84,13 +84,15 @@ extension TerminalChat {
             return false
         }
         switch command {
-        case "/help", "/changes", "/open", "/tasks":
+        case "/help":
             return true
-        case "/plan":
-            let argument = String(line.dropFirst("/plan".count))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            return argument == "status"
+        case "/tasks":
+            let action = line
+                .dropFirst("/tasks".count)
+                .split(whereSeparator: \.isWhitespace)
+                .first?
+                .lowercased() ?? "status"
+            return ["status", "list", "ls"].contains(action)
         default:
             return false
         }

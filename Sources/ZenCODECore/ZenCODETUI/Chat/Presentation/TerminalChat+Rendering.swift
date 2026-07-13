@@ -62,7 +62,7 @@ extension TerminalChat {
         ])
 
         let startupBox = Self.renderStartupBox(lines: lines)
-        AgentOutput.standardError.writeString(startupBox + "\n")
+        await renderCoordinator.writeStartupSummary(startupBox + "\n")
     }
 
     public func toolCompletionSummary(

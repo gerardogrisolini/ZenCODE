@@ -6,13 +6,9 @@
 import Foundation
 
 extension TerminalChat {
-    func startTaskGraphObserver() {
-        taskGraphObserverTask?.cancel()
-        taskGraphObserverTask = nil
-        toolOutputLock.withLock { _ in
-            lastRenderedTaskGraphOverviewSignature = nil
-            deferredTaskGraphOverviewRender = false
-        }
+    func startTaskGraphObserver() async {
+        await stopTaskGraphObserver()
+        await renderCoordinator.resetOverview(.taskGraph)
         let observedSessionID = sessionID
         let runner = sessionRunner
 
@@ -21,32 +17,59 @@ extension TerminalChat {
             let stream = await orchestrator.events(sessionID: observedSessionID)
             var pendingRender: Task<Void, Never>?
             for await _ in stream {
-                pendingRender?.cancel()
+                guard !Task.isCancelled,
+                      let coordinator = self?.renderCoordinator,
+                      self?.sessionID == observedSessionID else {
+                    break
+                }
+                let publicationRevision = await coordinator.beginOverviewPublication(.taskGraph)
+                let previousRender = pendingRender
+                previousRender?.cancel()
                 pendingRender = Task { [weak self] in
                     try? await Task.sleep(nanoseconds: 150_000_000)
+                    await previousRender?.value
                     guard !Task.isCancelled, let self else { return }
                     await self.publishTaskGraphOverviewIfChanged(
-                        observedSessionID: observedSessionID
+                        observedSessionID: observedSessionID,
+                        publicationRevision: publicationRevision
                     )
                 }
             }
             pendingRender?.cancel()
+            await pendingRender?.value
         }
     }
 
+    func stopTaskGraphObserver() async {
+        let observer = taskGraphObserverTask
+        taskGraphObserverTask = nil
+        observer?.cancel()
+        await observer?.value
+    }
+
     func publishTaskGraphOverviewIfChanged(
-        observedSessionID: String
+        observedSessionID: String,
+        publicationRevision reservedPublicationRevision: Int? = nil
     ) async {
         guard sessionID == observedSessionID else { return }
+        let publicationRevision: Int
+        if let reservedPublicationRevision {
+            publicationRevision = reservedPublicationRevision
+        } else {
+            publicationRevision = await renderCoordinator.beginOverviewPublication(.taskGraph)
+        }
+        guard !Task.isCancelled else { return }
         guard let graph = try? await sessionRunner.taskGraphSnapshot(
             sessionID: observedSessionID
         ) else {
-            toolOutputLock.withLock { _ in
-                deferredTaskGraphOverviewRender = false
-                lastRenderedTaskGraphOverviewSignature = nil
-            }
+            guard !Task.isCancelled, sessionID == observedSessionID else { return }
+            await renderCoordinator.resetOverview(
+                .taskGraph,
+                revision: publicationRevision
+            )
             return
         }
+        guard !Task.isCancelled, sessionID == observedSessionID else { return }
         let shouldRender = graph.tasks.count > 1 || graph.tasks.contains { task in
             !task.attempts.isEmpty
                 || task.status == .blocked
@@ -54,43 +77,39 @@ extension TerminalChat {
                 || task.status == .awaitingValidation
         }
         guard shouldRender else {
-            toolOutputLock.withLock { _ in
-                deferredTaskGraphOverviewRender = false
-            }
+            await renderCoordinator.clearDeferredOverview(
+                .taskGraph,
+                revision: publicationRevision
+            )
             return
         }
         guard let tasks = try? await sessionRunner.taskOrchestrator.listTasks(
-            sessionID: observedSessionID
+            sessionID: observedSessionID,
+            graphID: graph.id
         ) else {
             return
         }
+        guard !Task.isCancelled,
+              sessionID == observedSessionID,
+              let currentGraph = try? await sessionRunner.taskGraphSnapshot(
+                sessionID: observedSessionID
+              ),
+              currentGraph.id == graph.id,
+              currentGraph.revision == graph.revision else {
+            return
+        }
+        guard !Task.isCancelled, sessionID == observedSessionID else { return }
         let signature = Self.taskGraphOverviewSignature(graph)
         let markdown = Self.taskGraphMarkdown(graph: graph, tasks: tasks)
-        renderOverviewWhenToolOutputIsIdle(
-            shouldRender: {
-                signature != lastRenderedTaskGraphOverviewSignature
-            },
-            onDeferred: {
-                deferredTaskGraphOverviewRender = true
-            },
-            onSkippedWhileIdle: {
-                deferredTaskGraphOverviewRender = false
-            }
-        ) {
-            deferredTaskGraphOverviewRender = false
-            lastRenderedTaskGraphOverviewSignature = signature
-            finishThoughtOutputIfNeeded()
-            finishAssistantContentFormatting()
-            writeMarkdownMessage(markdown)
-        }
+        _ = await renderCoordinator.renderTaskGraphOverview(
+            signature: signature,
+            markdown: markdown,
+            revision: publicationRevision
+        )
     }
 
-    func shouldPublishDeferredTaskGraphOverview() -> Bool {
-        toolOutputLock.withLock { _ in
-            deferredTaskGraphOverviewRender
-                && activeCompactToolCallID == nil
-                && activeDetailedToolCallID == nil
-        }
+    func shouldPublishDeferredTaskGraphOverview() async -> Bool {
+        await renderCoordinator.shouldPublishDeferredOverview(.taskGraph)
     }
 
     static func taskGraphOverviewSignature(_ graph: TaskGraphSnapshot) -> String {
@@ -104,7 +123,7 @@ extension TerminalChat {
     }
 
     func handleTasksCommand(_ command: String) async {
-        writeSubmittedPrompt(command)
+        await writeSubmittedPrompt(command)
         let argument = String(command.dropFirst("/tasks".count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let components = argument.split(whereSeparator: \.isWhitespace).map(String.init)
@@ -122,7 +141,7 @@ extension TerminalChat {
                     sessionID: sessionID,
                     taskID: components[1]
                 )
-                writeMarkdownMessage(Self.taskDetailMarkdown(view))
+                await writeMarkdownMessage(Self.taskDetailMarkdown(view))
             case "retry":
                 guard components.count >= 2 else {
                     throw TerminalTaskCommandError.missingTaskID(action)
@@ -131,7 +150,7 @@ extension TerminalChat {
                     id: components[1],
                     sessionID: sessionID
                 )
-                writeSystemMessage("Retried task \(components[1]).\n")
+                await writeSystemMessage("Retried task \(components[1]).\n")
                 try await renderCurrentTaskGraph()
             case "cancel":
                 guard components.count >= 2 else {
@@ -143,26 +162,36 @@ extension TerminalChat {
                     sessionID: sessionID,
                     reason: reason
                 )
-                writeSystemMessage("Cancelled task \(components[1]).\n")
+                await writeSystemMessage("Cancelled task \(components[1]).\n")
                 try await renderCurrentTaskGraph()
             case "clear":
                 try await sessionRunner.clearTaskGraphs(sessionID: sessionID)
-                writeSystemMessage("Cleared the session task graphs.\n")
+                await writeSystemMessage("Cleared the session task graphs.\n")
             default:
                 throw TerminalTaskCommandError.unknownAction(action)
             }
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
     }
 
     func renderCurrentTaskGraph() async throws {
+        let publicationRevision = await renderCoordinator.beginOverviewPublication(.taskGraph)
         guard let graph = try await sessionRunner.taskGraphSnapshot(sessionID: sessionID) else {
-            writeSystemMessage("No task graph for this session.\n")
+            await writeSystemMessage("No task graph for this session.\n")
             return
         }
-        let views = try await sessionRunner.taskOrchestrator.listTasks(sessionID: sessionID)
-        writeMarkdownMessage(Self.taskGraphMarkdown(graph: graph, tasks: views))
+        let views = try await sessionRunner.taskOrchestrator.listTasks(
+            sessionID: sessionID,
+            graphID: graph.id
+        )
+        _ = await renderCoordinator.renderTaskGraphOverview(
+            signature: Self.taskGraphOverviewSignature(graph),
+            markdown: Self.taskGraphMarkdown(graph: graph, tasks: views),
+            revision: publicationRevision,
+            force: true,
+            rememberSignature: false
+        )
     }
 
     static func taskGraphMarkdown(
@@ -183,8 +212,10 @@ extension TerminalChat {
         if blocked > 0 { summary.append("\(blocked) blocked") }
         if failed > 0 { summary.append("\(failed) failed") }
 
+        let orange = "\u{1B}[38;5;208m"
+        let reset = "\u{1B}[0m"
         var lines = [
-            "🫧 Tasks:",
+            "🫧 \(orange)Tasks:\(reset)",
             "**Graph:** `\(graph.id)` · **state:** `\(graph.state.rawValue)` · **revision:** \(graph.revision)",
             summary.joined(separator: " · "),
         ]

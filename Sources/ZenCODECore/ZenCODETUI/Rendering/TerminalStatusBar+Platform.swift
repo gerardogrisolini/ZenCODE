@@ -17,33 +17,41 @@ import os
 #endif
 
 extension TerminalStatusBar {
-    func startSpinnerTimerLocked(state: inout State) {
-        guard state.isStarted, state.spinnerTimer == nil else {
+    func startSpinnerTaskLocked(state: inout State) {
+        guard state.isStarted, state.spinnerTask == nil else {
             return
         }
-        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInteractive))
-        timer.schedule(deadline: .now() + .milliseconds(120), repeating: .milliseconds(120))
-        timer.setEventHandler { [weak self] in
-            self?.advanceSpinner()
-        }
-        state.spinnerTimer = timer
-        timer.resume()
-    }
-    
-    func stopSpinnerTimerLocked(state: inout State) {
-        state.spinnerTimer?.setEventHandler {}
-        state.spinnerTimer?.cancel()
-        state.spinnerTimer = nil
-    }
-    
-    func advanceSpinner() {
-        state.withLock { state in
-            guard state.isStarted, state.isProcessing else {
-                return
+        state.spinnerGeneration &+= 1
+        let generation = state.spinnerGeneration
+        state.spinnerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .milliseconds(120))
+                } catch {
+                    return
+                }
+                guard let self else {
+                    return
+                }
+                await self.advanceSpinner(generation: generation)
             }
-            state.spinnerIndex = (state.spinnerIndex + 1) % Self.spinnerFrames.count
-            renderLocked(state: &state)
         }
+    }
+
+    func stopSpinnerTaskLocked(state: inout State) {
+        state.spinnerGeneration &+= 1
+        state.spinnerTask?.cancel()
+        state.spinnerTask = nil
+    }
+
+    func advanceSpinner(generation: Int) {
+        guard state.isStarted,
+              state.isProcessing,
+              generation == state.spinnerGeneration else {
+            return
+        }
+        state.spinnerIndex = (state.spinnerIndex + 1) % Self.spinnerFrames.count
+        renderStatusLocked(state: &state)
     }
     
     func startResizeSignalSourceLocked(state: inout State) {
@@ -56,47 +64,53 @@ extension TerminalStatusBar {
             queue: .global(qos: .userInteractive)
         )
         source.setEventHandler { [weak self] in
-            self?.scheduleTerminalResize()
+            Task {
+                await self?.scheduleTerminalResize()
+            }
         }
         state.resizeSignalSource = source
         source.resume()
     }
     
     func stopResizeSignalSourceLocked(state: inout State) {
+        state.resizeGeneration &+= 1
+        state.isResizePending = false
+        state.resizeTask?.cancel()
+        state.resizeTask = nil
         state.resizeSignalSource?.setEventHandler {}
         state.resizeSignalSource?.cancel()
         state.resizeSignalSource = nil
     }
     
     func scheduleTerminalResize() {
-        let generation = state.withLock { state -> Int? in
-            guard state.isStarted else {
-                return nil
-            }
-            state.resizeGeneration += 1
-            state.isResizePending = true
-            return state.resizeGeneration
-        }
-        guard let generation else {
+        guard state.isStarted else {
             return
         }
-        
-        DispatchQueue.global(qos: .userInteractive).asyncAfter(
-            deadline: .now() + .milliseconds(80)
-        ) { [weak self] in
-            self?.handleTerminalResize(generation: generation)
+        state.resizeGeneration += 1
+        state.isResizePending = true
+        let generation = state.resizeGeneration
+        state.resizeTask?.cancel()
+        state.resizeTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(80))
+            } catch {
+                return
+            }
+            guard let self else {
+                return
+            }
+            await self.handleTerminalResize(generation: generation)
         }
     }
-    
+
     func handleTerminalResize(generation: Int) {
-        state.withLock { state in
+        withOutputBatch {
             guard state.isStarted, generation == state.resizeGeneration else {
                 return
             }
-            defer {
-                state.isResizePending = false
-            }
+            state.resizeTask = nil
             guard refreshTerminalGeometryLocked(state: &state) else {
+                state.isResizePending = false
                 return
             }
             state.isResizePending = false
@@ -136,7 +150,27 @@ extension TerminalStatusBar {
     }
     
     func writeLocked(_ text: String) {
-        output?.writeString(text)
+        guard !text.isEmpty else {
+            return
+        }
+        if outputBatchDepth > 0 {
+            batchedOutput += text
+        } else {
+            output?.writeString(text)
+        }
+    }
+
+    func withOutputBatch<T>(_ body: () -> T) -> T {
+        outputBatchDepth += 1
+        defer {
+            outputBatchDepth -= 1
+            if outputBatchDepth == 0, !batchedOutput.isEmpty {
+                let text = batchedOutput
+                batchedOutput.removeAll(keepingCapacity: true)
+                output?.writeString(text)
+            }
+        }
+        return body()
     }
     
     static func positiveInt(_ rawValue: String?) -> Int? {

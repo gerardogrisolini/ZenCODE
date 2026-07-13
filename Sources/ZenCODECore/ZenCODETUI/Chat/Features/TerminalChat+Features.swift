@@ -24,7 +24,7 @@ extension TerminalChat {
                     name: "feature.list",
                     arguments: ["includeTools": true]
                 )
-                writeSystemMessage(Self.renderFeatureCommandUsage())
+                await writeSystemMessage(Self.renderFeatureCommandUsage())
                 return .none
             }
             return await runFeatureWizard()
@@ -35,8 +35,8 @@ extension TerminalChat {
         switch action {
         case "list", "ls":
             guard tokens.isEmpty else {
-                writeFailureMessage("ZenCODE: /feature \(action) does not accept arguments.\n")
-                writeSystemMessage(Self.renderFeatureCommandUsage())
+                await writeFailureMessage("ZenCODE: /feature \(action) does not accept arguments.\n")
+                await writeSystemMessage(Self.renderFeatureCommandUsage())
                 return .none
             }
             await openFeatureSelectionMenu()
@@ -63,12 +63,12 @@ extension TerminalChat {
             ) else {
                 return .none
             }
-            writeSystemMessage(Self.renderFeatureManagementToolOutput(name: "feature.edit", output: output))
+            await writeSystemMessage(Self.renderFeatureManagementToolOutput(name: "feature.edit", output: output))
             guard let report = Self.decodeFeatureOutput(
                 SwiftFeatureEditReport.self,
                 from: output.trimmingCharacters(in: .whitespacesAndNewlines)
             ) else {
-                writeFailureMessage("ZenCODE: could not decode the feature.edit report.\n")
+                await writeFailureMessage("ZenCODE: could not decode the feature.edit report.\n")
                 return .none
             }
             if report.adopt != nil {
@@ -105,8 +105,8 @@ extension TerminalChat {
             }
             return .none
         default:
-            writeFailureMessage("ZenCODE: unknown /feature command '\(action)'.\n")
-            writeSystemMessage(Self.renderFeatureCommandUsage())
+            await writeFailureMessage("ZenCODE: unknown /feature command '\(action)'.\n")
+            await writeSystemMessage(Self.renderFeatureCommandUsage())
             return .none
         }
     }
@@ -123,14 +123,14 @@ extension TerminalChat {
         rawID: String?
     ) async -> String? {
         guard let rawID = rawID?.nilIfBlank else {
-            writeFailureMessage("ZenCODE: /feature \(action) requires a feature id, name, or list number.\n")
-            writeSystemMessage(Self.renderFeatureCommandUsage())
+            await writeFailureMessage("ZenCODE: /feature \(action) requires a feature id, name, or list number.\n")
+            await writeSystemMessage(Self.renderFeatureCommandUsage())
             return nil
         }
         do {
             return try await resolvedFeatureID(rawID)
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
             return nil
         }
     }
@@ -140,12 +140,12 @@ extension TerminalChat {
             includeTools: true,
             includeDisabled: true
         )
-        writeSystemMessage(Self.renderFeatureStatusList(statuses))
+        await writeSystemMessage(Self.renderFeatureStatusList(statuses))
     }
 
     private func openFeatureSelectionMenu() async {
         guard stdinIsTerminal else {
-            writeFailureMessage("ZenCODE: /feature list requires an interactive terminal.\n")
+            await writeFailureMessage("ZenCODE: /feature list requires an interactive terminal.\n")
             return
         }
 
@@ -159,7 +159,7 @@ extension TerminalChat {
             title: "Features",
             items: sortedStatuses.map(Self.featureCheckboxItem),
             selected: selectedIDs,
-            reservedBottomRows: statusBar.reservedRowsForOverlay()
+            reservedBottomRows: await statusBar.reservedRowsForOverlay()
         )
         if let requestedIDs {
             await applyFeatureSelection(

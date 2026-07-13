@@ -21,40 +21,30 @@ extension TerminalChat {
         case .turnOff:
             await stopTelegramControl()
         case .usage:
-            writeSystemMessage("Usage: /telegram [on|off]\n")
+            await writeSystemMessage("Usage: /telegram [on|off]\n")
         }
     }
 
-    func submittedTelegramLineAction(_ prompt: String) -> TerminalSubmittedLineAction {
+    func submittedTelegramLineAction(_ prompt: String) async -> TerminalSubmittedLineAction {
         switch TerminalTelegramRemoteCommand(text: prompt) {
         case .start:
-            Task {
-                await sendTelegramSystemMessageIfLinked(
-                    "Telegram is already linked to this ZenCODE session. Send a prompt or /help."
-                )
-            }
+            await sendTelegramSystemMessageIfLinked(
+                "Telegram is already linked to this ZenCODE session. Send a prompt or /help."
+            )
             return .continueChat
         case .help:
-            Task {
-                await sendTelegramSystemMessageIfLinked(telegramRemoteHelpText())
-            }
+            await sendTelegramSystemMessageIfLinked(telegramRemoteHelpText())
             return .continueChat
         case .status:
-            Task {
-                await sendTelegramSystemMessageIfLinked(telegramRemoteStatusText())
-            }
+            await sendTelegramSystemMessageIfLinked(telegramRemoteStatusText())
             return .continueChat
         case .changes:
-            Task {
-                await sendTelegramSystemMessageIfLinked(telegramRemoteChangesText())
-            }
+            await sendTelegramSystemMessageIfLinked(telegramRemoteChangesText())
             return .continueChat
         case .undo:
-            Task {
-                await sendTelegramSystemMessageIfLinked(
-                    "Use /undo in the TUI to revert file changes."
-                )
-            }
+            await sendTelegramSystemMessageIfLinked(
+                "Use /undo in the TUI to revert file changes."
+            )
             return .continueChat
         case .none:
             return .runPrompt(prompt)
@@ -186,24 +176,24 @@ extension TerminalChat {
         }
     }
 
-    func writeTelegramSubmittedPrompt(_ prompt: String) {
+    func writeTelegramSubmittedPrompt(_ prompt: String) async {
         let title = telegramLinkedChatTitle?.nilIfBlank ?? "Telegram"
-        writeSystemMessage("\n\(title) sent a prompt:\n")
-        writeSubmittedPrompt(prompt)
+        await writeSystemMessage("\n\(title) sent a prompt:\n")
+        await writeSubmittedPrompt(prompt)
     }
 
     func startTelegramControl() async {
         guard stdinIsTerminal else {
-            writeFailureMessage("ZenCODE: /telegram requires the interactive TUI.\n")
+            await writeFailureMessage("ZenCODE: /telegram requires the interactive TUI.\n")
             return
         }
         guard isTelegramConfigured() else {
-            writeFailureMessage(Self.unknownCommandMessage(for: "/telegram"))
+            await writeFailureMessage(Self.unknownCommandMessage(for: "/telegram"))
             return
         }
         guard let settings = AgentSettingsManifestStore.load()?.telegram,
               let linkedChatID = settings.linkedChatID else {
-            writeFailureMessage("ZenCODE: Telegram is not paired. Run zen --setup.\n")
+            await writeFailureMessage("ZenCODE: Telegram is not paired. Run zen --setup.\n")
             return
         }
 
@@ -212,7 +202,7 @@ extension TerminalChat {
             telegramLinkedChatTitle = settings.linkedChatTitle
                         telegramControlState = try await telegramControlService.start()
             let chatTitle = telegramLinkedChatTitle?.nilIfBlank ?? "chat \(linkedChatID)"
-            writeSystemMessage(
+            await writeSystemMessage(
                 """
                 Telegram remote control is active.
                 Linked chat: \(chatTitle)
@@ -227,7 +217,7 @@ extension TerminalChat {
             )
         } catch {
             telegramControlState.lastError = error.localizedDescription
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
     }
 
@@ -235,12 +225,12 @@ extension TerminalChat {
         telegramControlState = await telegramControlService.stop()
         telegramLinkedChatID = nil
         telegramLinkedChatTitle = nil
-        writeSystemMessage("Telegram remote control stopped.\n")
+        await writeSystemMessage("Telegram remote control stopped.\n")
     }
 
     func printTelegramStatus() async {
         telegramControlState = await telegramControlService.currentState()
-        writeSystemMessage(telegramStatusText() + "\n")
+        await writeSystemMessage(telegramStatusText() + "\n")
     }
 
     func telegramToolAuthorizationHandler(
@@ -339,7 +329,7 @@ extension TerminalChat {
             telegramControlState = try await telegramControlService.sendMessage(message, to: chatID)
         } catch {
             telegramControlState.lastError = error.localizedDescription
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
     }
 

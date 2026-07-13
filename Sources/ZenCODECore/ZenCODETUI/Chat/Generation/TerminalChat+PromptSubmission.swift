@@ -47,16 +47,16 @@ extension TerminalChat {
         }
 
         if origin != .local {
-            return submittedTelegramLineAction(prompt)
+            return await submittedTelegramLineAction(prompt)
         }
 
         if case .slashCommand = Self.submittedLineRole(for: prompt) {
             if let unavailableMessage = unavailableLocalSlashCommandMessage(for: prompt) {
-                writeFailureMessage(unavailableMessage)
+                await writeFailureMessage(unavailableMessage)
                 return .continueChat
             }
             guard Self.isKnownSlashCommand(prompt) else {
-                writeFailureMessage(Self.unknownCommandMessage(for: prompt))
+                await writeFailureMessage(Self.unknownCommandMessage(for: prompt))
                 return .continueChat
             }
         }
@@ -65,30 +65,30 @@ extension TerminalChat {
         case "/exit":
             return .exitChat
         case "/help":
-            writeSystemMessage(renderHelpTextForCurrentAgent())
+            await writeSystemMessage(renderHelpTextForCurrentAgent())
             return .continueChat
         case "/models":
             do {
                 try await selectModelInteractively()
             } catch {
-                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
             }
             return .continueChat
         case "/think":
             do {
                 try await selectThinkingInteractively()
             } catch {
-                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
             }
             return .continueChat
         case let command where command.hasPrefix("/think "):
-            writeFailureMessage("ZenCODE: /think does not accept arguments. Use /think to choose a level.\n")
+            await writeFailureMessage("ZenCODE: /think does not accept arguments. Use /think to choose a level.\n")
             return .continueChat
         case let command where command == "/agents" || command.hasPrefix("/agents "):
             do {
                 try await handleAgentsCommand(command)
             } catch {
-                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
             }
             return .continueChat
         case let command where command == "/tools" || command.hasPrefix("/tools "):
@@ -96,7 +96,7 @@ extension TerminalChat {
             return .continueChat
         case let command where command == "/feature" || command.hasPrefix("/feature "):
             guard AgentProfileStore.isBuilderAgent(selectedAgent) else {
-                writeFailureMessage(Self.renderFeatureCommandUnavailableForAgent())
+                await writeFailureMessage(Self.renderFeatureCommandUnavailableForAgent())
                 return .continueChat
             }
             switch await handleFeatureCommand(command) {
@@ -118,16 +118,16 @@ extension TerminalChat {
             return .continueChat
         case let command where command == "/attach" || command.hasPrefix("/attach "):
             do {
-                try handleAttachCommand(command)
+                try await handleAttachCommand(command)
             } catch {
-                writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
             }
             return .continueChat
                 case let command where command == "/open" || command.hasPrefix("/open "):
             await handleOpenCommand(command)
             return .continueChat
         case let command where command == "/changes" || command.hasPrefix("/changes "):
-            handleChangesCommand(command)
+            await handleChangesCommand(command)
             return .continueChat
         case "/undo":
             await handleUndoFileChangesCommand()
@@ -147,7 +147,7 @@ extension TerminalChat {
             return .continueChat
         default:
             if case .slashCommand = Self.submittedLineRole(for: prompt) {
-                writeFailureMessage(Self.unknownCommandMessage(for: prompt))
+                await writeFailureMessage(Self.unknownCommandMessage(for: prompt))
                 return .continueChat
             }
             return .runPrompt(prompt)
@@ -173,10 +173,10 @@ extension TerminalChat {
         do {
             didReceiveMetricsForCurrentPrompt = false
             didRefreshGitStatusDuringCurrentPrompt = false
-            statusBar.beginRequest()
-            statusBar.setProcessing(true)
+            await statusBar.beginRequest()
+            await statusBar.setProcessing(true)
             defer {
-                statusBar.setProcessing(false)
+                await statusBar.setProcessing(false)
             }
             let promptTask = Task {
                 try await generateResponse(attempt: attempt)
@@ -201,14 +201,14 @@ extension TerminalChat {
                 await stopMonitor.value
             }
             await finishPromptResult(.success(success))
-            refreshStatusBarGitStatusSummaryAfterPromptIfNeeded()
+            await refreshStatusBarGitStatusSummaryAfterPromptIfNeeded()
         } catch {
             let failure = TerminalChatGenerationFailure(
                 error: error,
                 origin: attempt.origin
             )
             await finishPromptResult(.failure(failure))
-            refreshStatusBarGitStatusSummaryAfterPromptIfNeeded()
+            await refreshStatusBarGitStatusSummaryAfterPromptIfNeeded()
         }
     }
 }

@@ -21,7 +21,7 @@ extension TerminalChat {
         if rawArguments.isEmpty {
             guard stdinIsTerminal else {
                 await printToolSelectionStatus()
-                writeSystemMessage(Self.renderToolSelectionUsage())
+                await writeSystemMessage(Self.renderToolSelectionUsage())
                 return
             }
 
@@ -33,7 +33,7 @@ extension TerminalChat {
                     selectedToolKeys,
                     items: items
                 ),
-                reservedBottomRows: statusBar.reservedRowsForOverlay()
+                reservedBottomRows: await statusBar.reservedRowsForOverlay()
             )
             if let selectedKeys {
                 await applyToolSelection(selectedKeys)
@@ -55,8 +55,8 @@ extension TerminalChat {
             )
             await applyToolSelection(selectedKeys)
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            writeSystemMessage(Self.renderToolSelectionUsage())
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeSystemMessage(Self.renderToolSelectionUsage())
         }
     }
 
@@ -78,7 +78,7 @@ extension TerminalChat {
             discoverExternalTools: shouldDiscoverExternalTools
         )
         let renderItems = await toolSelectionItems()
-        writeSystemMessage(Self.renderActiveTools(Array(allowedToolNames), items: renderItems, selectedKeys: selectedToolKeys))
+        await writeSystemMessage(Self.renderActiveTools(Array(allowedToolNames), items: renderItems, selectedKeys: selectedToolKeys))
         didPrintActiveTools = true
     }
 
@@ -87,7 +87,7 @@ extension TerminalChat {
             discoverExternalTools: false
         )
         let items = await toolSelectionItems()
-        writeSystemMessage(Self.renderActiveTools(Array(allowedToolNames), items: items, selectedKeys: selectedToolKeys))
+        await writeSystemMessage(Self.renderActiveTools(Array(allowedToolNames), items: items, selectedKeys: selectedToolKeys))
     }
 
     public static func shouldDiscoverExternalTools(
@@ -207,8 +207,8 @@ extension TerminalChat {
                from: rawArguments,
                baseDirectory: configuration.workingDirectory
            ) == nil {
-            writeFailureMessage("ZenCODE: /skills install requires a GitHub URL or local path.\n")
-            writeSystemMessage(Self.renderSkillSelectionUsage())
+            await writeFailureMessage("ZenCODE: /skills install requires a GitHub URL or local path.\n")
+            await writeSystemMessage(Self.renderSkillSelectionUsage())
             return
         }
 
@@ -227,27 +227,27 @@ extension TerminalChat {
 
         if rawArguments.isEmpty {
             guard stdinIsTerminal else {
-                printSkillSelectionStatus()
-                writeSystemMessage(Self.renderSkillSelectionUsage())
+                await printSkillSelectionStatus()
+                await writeSystemMessage(Self.renderSkillSelectionUsage())
                 return
             }
 
             let skillItems = skillCheckboxItems()
             guard !skillItems.isEmpty else {
-                writeSystemMessage("No prompt skills installed by the app.\n")
-                printSkillSelectionStatus()
+                await writeSystemMessage("No prompt skills installed by the app.\n")
+                await printSkillSelectionStatus()
                 return
             }
             let selectedSkillIDs = TerminalCheckboxMenu.select(
                 title: "Prompt skills",
                 items: skillItems,
                 selected: selectedSkillIDs,
-                reservedBottomRows: statusBar.reservedRowsForOverlay()
+                reservedBottomRows: await statusBar.reservedRowsForOverlay()
             )
             if let selectedSkillIDs {
                 await applySkillSelection(selectedSkillIDs)
             } else {
-                printSkillSelectionStatus()
+                await printSkillSelectionStatus()
             }
             return
         }
@@ -256,24 +256,24 @@ extension TerminalChat {
     }
 
     public func installSkill(fromGitHubURL url: URL) async {
-        writeSystemMessage("Installing skill from \(url.absoluteString)...\n")
+        await writeSystemMessage("Installing skill from \(url.absoluteString)...\n")
         do {
             let result = try await PromptSkillInstaller.install(fromGitHubURL: url)
             await finishInstalledSkill(result)
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            writeSystemMessage(Self.renderSkillSelectionUsage())
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeSystemMessage(Self.renderSkillSelectionUsage())
         }
     }
 
     public func installSkill(fromLocalURL url: URL) async {
-        writeSystemMessage("Installing skill from \(url.path)...\n")
+        await writeSystemMessage("Installing skill from \(url.path)...\n")
         do {
             let result = try PromptSkillInstaller.install(fromLocalURL: url)
             await finishInstalledSkill(result)
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            writeSystemMessage(Self.renderSkillSelectionUsage())
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeSystemMessage(Self.renderSkillSelectionUsage())
         }
     }
 
@@ -284,11 +284,11 @@ extension TerminalChat {
         do {
             try await createCurrentSession()
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
-        statusBar.reset()
-        refreshInitialStatusBarContextWindow()
-        writeSystemMessage(
+        await statusBar.reset()
+        await refreshInitialStatusBarContextWindow()
+        await writeSystemMessage(
             "Installed and selected skill: \(result.skill.title)\n"
         )
     }
@@ -301,8 +301,8 @@ extension TerminalChat {
             )
             await applySkillSelection(selectedSkillIDs)
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            writeSystemMessage(Self.renderSkillSelectionUsage())
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeSystemMessage(Self.renderSkillSelectionUsage())
         }
     }
 
@@ -312,15 +312,15 @@ extension TerminalChat {
         do {
             try await createCurrentSession()
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
-        statusBar.reset()
-        refreshInitialStatusBarContextWindow()
-        printSkillSelectionStatus()
+        await statusBar.reset()
+        await refreshInitialStatusBarContextWindow()
+        await printSkillSelectionStatus()
     }
 
-    public func printSkillSelectionStatus() {
-        writeSystemMessage(Self.renderSelectedSkills(selectedPromptSkills()))
+    public func printSkillSelectionStatus() async {
+        await writeSystemMessage(Self.renderSelectedSkills(selectedPromptSkills()))
     }
 
     public func skillCheckboxItems() -> [TerminalCheckboxMenuItem<String>] {

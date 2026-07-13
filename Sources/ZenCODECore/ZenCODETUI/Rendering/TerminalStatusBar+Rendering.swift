@@ -33,9 +33,14 @@ extension TerminalStatusBar {
     
     func refreshTerminalGeometryLocked(state: inout State) -> Bool {
         guard let output,
-              let geometry = Self.currentTerminalGeometry(fileDescriptor: output.fileDescriptor),
-              geometry.rows >= minimumRowsLocked(state: &state),
+              let geometry = Self.currentTerminalGeometry(fileDescriptor: output.fileDescriptor)
+        else {
+            invalidateTerminalGeometryLocked(state: &state)
+            return false
+        }
+        guard geometry.rows >= minimumRowsLocked(state: &state),
               geometry.columns >= 40 else {
+            invalidateTerminalGeometryLocked(state: &state)
             return false
         }
         guard geometry.rows != state.row || geometry.columns != state.columns else {
@@ -59,6 +64,12 @@ extension TerminalStatusBar {
         )
         writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
         return true
+    }
+
+    func invalidateTerminalGeometryLocked(state: inout State) {
+        state.row = 0
+        state.columns = 0
+        writeLocked("\u{1B}[r\u{1B}[?25h")
     }
     
     func writeScrollRegionLocked(state: inout State, moveCursorToPrompt: Bool) {
@@ -94,6 +105,16 @@ extension TerminalStatusBar {
         
         let sequence = "\u{1B}[?25l" + inputPanelRenderSequenceLocked(state: &state) + statusRenderSequenceLocked(state: &state)
         writeLocked(sequence)
+    }
+
+    /// Status-only invalidation used by spinner and metrics updates. The input
+    /// panel layout is unchanged, so rebuilding and repainting it would only add
+    /// allocations and terminal traffic.
+    func renderStatusLocked(state: inout State) {
+        guard state.row > 0, state.columns > 0, !state.isResizePending else {
+            return
+        }
+        writeLocked("\u{1B}[?25l" + statusRenderSequenceLocked(state: &state))
     }
     
     func inputPanelRenderSequenceLocked(state: inout State) -> String {
@@ -305,7 +326,7 @@ extension TerminalStatusBar {
         return max(5, minimumReservedRows + Self.minimumScrollableRows)
     }
     
-    func statusTextLocked(state: inout State) -> String {
+    nonisolated func statusTextLocked(state: inout State) -> String {
         let tokensUsed = state.latestContextWindow?.usedTokens
         ?? state.latestMetrics?.totalTokenCount
         var fragments: [String] = []

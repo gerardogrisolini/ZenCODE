@@ -30,7 +30,7 @@ extension TerminalChat {
       .trimmingCharacters(in: .whitespacesAndNewlines)
 
     if !isSubAgentToolEnabled {
-      writeFailureMessage(
+      await writeFailureMessage(
         """
         ZenCODE: /review requires the sub-agents tool group. \
         Enable it with /tools (or switch to an agent that includes it) and try again.
@@ -48,18 +48,18 @@ extension TerminalChat {
       graphID: approvedPlan?.id
     )
     guard lastFileChangeSummary != nil || approvedPlan != nil || taskGraph != nil else {
-      writeSystemMessage("No tracked session file changes to review.\n")
+      await writeSystemMessage("No tracked session file changes to review.\n")
       return .continueChat
     }
 
     let reviewerProfile = reviewerProfileForDelegation()
 
-//    writeSystemMessage(
+//    await writeSystemMessage(
 //      argument.isEmpty
 //        ? "Starting review of session changes...\n"
 //        : "Starting review of session changes with requested focus...\n"
 //    )
-      writeSubmittedPrompt("/review")
+      await writeSubmittedPrompt("/review")
 
     return .runHiddenPrompt(
       Self.reviewDelegationPrompt(

@@ -41,6 +41,7 @@ extension TerminalChat {
     /// Replaces the former `/clear` command.
     public func startNewSession() async {
         do {
+            await stopTaskGraphObserver()
             await sessionRunner.resetSession(id: sessionID)
             sessionID = Self.newTerminalSessionID()
             activeSessionCacheKey = nil
@@ -51,13 +52,13 @@ extension TerminalChat {
             activeSavedSessionName = nil
             activePlan = nil
             try await createCurrentSession()
-            statusBar.reset()
-            refreshInitialStatusBarContextWindow()
+            await statusBar.reset()
+            await refreshInitialStatusBarContextWindow()
             pendingAttachments.removeAll()
-            lastRenderedSubAgentOverviewSignature = nil
-            writeSystemMessage("Started a new session.\n")
+            await renderCoordinator.resetOverview(.subAgents)
+            await writeSystemMessage("Started a new session.\n")
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
     }
 
@@ -67,14 +68,14 @@ extension TerminalChat {
                 for: configuration.workingDirectory
             )
             guard !sessions.isEmpty else {
-                writeSystemMessage("No saved sessions for this project.\n")
-                writeSystemMessage(Self.renderSessionSelectionUsage())
+                await writeSystemMessage("No saved sessions for this project.\n")
+                await writeSystemMessage(Self.renderSessionSelectionUsage())
                 return
             }
 
             guard stdinIsTerminal else {
-                renderSavedSessionList(sessions)
-                writeSystemMessage(Self.renderSessionSelectionUsage())
+                await renderSavedSessionList(sessions)
+                await writeSystemMessage(Self.renderSessionSelectionUsage())
                 return
             }
 
@@ -83,16 +84,16 @@ extension TerminalChat {
                 title: "Saved sessions",
                 items: items,
                 selected: activeSavedSessionName,
-                reservedBottomRows: statusBar.reservedRowsForOverlay()
+                reservedBottomRows: await statusBar.reservedRowsForOverlay()
             ),
                   let selectedSession = sessions.first(where: { $0.name == selectedName }) else {
-                renderSavedSessionList(sessions)
+                await renderSavedSessionList(sessions)
                 return
             }
 
             try await loadSavedSession(selectedSession)
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
     }
 
@@ -102,13 +103,13 @@ extension TerminalChat {
                 for: configuration.workingDirectory
             )
             guard !sessions.isEmpty else {
-                writeSystemMessage("No saved sessions for this project.\n")
+                await writeSystemMessage("No saved sessions for this project.\n")
                 return
             }
 
             guard stdinIsTerminal else {
-                renderSavedSessionList(sessions)
-                writeSystemMessage(Self.renderSessionSelectionUsage())
+                await renderSavedSessionList(sessions)
+                await writeSystemMessage(Self.renderSessionSelectionUsage())
                 return
             }
 
@@ -117,7 +118,7 @@ extension TerminalChat {
                 title: "Delete saved sessions",
                 items: items,
                 selected: [],
-                reservedBottomRows: statusBar.reservedRowsForOverlay()
+                reservedBottomRows: await statusBar.reservedRowsForOverlay()
             ),
                   !selectedNames.isEmpty else {
                 return
@@ -133,13 +134,13 @@ extension TerminalChat {
                     activeSavedSessionName = nil
                 }
                 if didDelete {
-                    writeSystemMessage("Deleted session: \(selectedSession.name).\n")
+                    await writeSystemMessage("Deleted session: \(selectedSession.name).\n")
                 } else {
-                    writeFailureMessage("ZenCODE: saved session not found: \(selectedSession.name).\n")
+                    await writeFailureMessage("ZenCODE: saved session not found: \(selectedSession.name).\n")
                 }
             }
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
     }
 
@@ -154,7 +155,7 @@ extension TerminalChat {
                 ? activeSessionHistory
                 : activeSessionTranscript
         ) else {
-            writeFailureMessage(
+            await writeFailureMessage(
                 "ZenCODE: nothing to save yet. Send a prompt first, or use /sessions <session name>.\n"
             )
             return
@@ -166,12 +167,12 @@ extension TerminalChat {
     public func saveCurrentSession(named rawName: String) async {
         let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
-            writeSystemMessage(Self.renderSessionSelectionUsage())
+            await writeSystemMessage(Self.renderSessionSelectionUsage())
             return
         }
 
         guard let snapshot = await sessionRunner.snapshotSession(id: sessionID) else {
-            writeFailureMessage("ZenCODE: current session is not available to save.\n")
+            await writeFailureMessage("ZenCODE: current session is not available to save.\n")
             return
         }
 
@@ -199,7 +200,7 @@ extension TerminalChat {
             selectedTools: Self.selectedToolSelectionNames(selectedToolKeys),
             selectedSkillIDs: selectedSkillIDs.sorted(),
             thinkingSelection: currentAgentThinkingSelection()?.rawValue,
-            contextWindow: statusBar.currentContextWindowStatus().map {
+            contextWindow: await statusBar.currentContextWindowStatus().map {
                 TerminalSavedSessionContextWindow($0)
             },
             systemPrompt: snapshot.systemPrompt,
@@ -214,24 +215,24 @@ extension TerminalChat {
             await sessionRunner.saveSessionRuntimeCache(id: savedSession.sessionID)
             recordSavedSessionIndex(savedSession)
             activeSavedSessionName = savedSession.name
-            writeSystemMessage(
+            await writeSystemMessage(
                 "Saved session: \(savedSession.name) (\(savedSession.messageCount) messages).\n"
             )
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
     }
 
     public func compactCurrentSession() async {
         do {
-            let runtimeMaxTokens = statusBar.currentContextWindowStatus()?.maxTokens
+            let runtimeMaxTokens = await statusBar.currentContextWindowStatus()?.maxTokens
                 .flatMap { $0 > 0 ? $0 : nil }
             guard let result = try await sessionRunner.compactSession(
                 id: sessionID,
                 force: true,
                 maxTokensOverride: runtimeMaxTokens
             ) else {
-                writeSystemMessage(
+                await writeSystemMessage(
                     "Nothing to compact yet. The session may be too short or the current model has no context-window limit.\n"
                 )
                 return
@@ -242,7 +243,7 @@ extension TerminalChat {
             activeSessionHistory = snapshot.history
             activeSessionSystemPromptOverride = snapshot.systemPrompt
 
-            _ = statusBar.update(
+            _ = await statusBar.update(
                 contextWindow: DirectAgentContextWindowStatus(
                     usedTokens: result.estimatedTokenCount,
                     maxTokens: result.maxTokens,
@@ -250,11 +251,11 @@ extension TerminalChat {
                     isApproximate: true
                 )
             )
-            writeSystemMessage(
+            await writeSystemMessage(
                 "Compacted session context from \(Self.savedSessionTokenCountText(result.originalEstimatedTokenCount)) to \(Self.savedSessionTokenCountText(result.estimatedTokenCount)) estimated tokens, keeping \(result.keptRecentMessageCount) recent messages.\n"
             )
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
     }
 
@@ -275,6 +276,7 @@ extension TerminalChat {
     }
 
     public func loadSavedSession(_ savedSession: TerminalSavedSession) async throws {
+        await stopTaskGraphObserver()
         await sessionRunner.resetSession(id: sessionID)
         sessionID = savedSession.sessionID
         activeSessionCacheKey = savedSession.cacheKey
@@ -304,13 +306,13 @@ extension TerminalChat {
         await ensureWorkspaceAccessIfNeeded()
         pendingAttachments.removeAll()
         lastFileChangeSummary = nil
-        lastRenderedSubAgentOverviewSignature = nil
+        await renderCoordinator.resetOverview(.subAgents)
         await renderSubAgentOverview(force: false)
         didPrintActiveTools = false
         printedModelID = nil
-        statusBar.reset()
+        await statusBar.reset()
 
-                refreshInitialStatusBarContextWindow()
+                await refreshInitialStatusBarContextWindow()
         _ = try await preloadCurrentModel(emitStatus: configuration.hostedModels != nil)
         try await sessionRunner.restoreSession(
             configuration: await currentSessionConfiguration(discoverExternalTools: true)
@@ -321,38 +323,38 @@ extension TerminalChat {
                 sessionID: savedSession.sessionID
             )
         }
-        startTaskGraphObserver()
+        await startTaskGraphObserver()
         if let contextWindow = savedSession.contextWindow?.runtimeStatus {
-            _ = statusBar.update(contextWindow: contextWindow)
+            _ = await statusBar.update(contextWindow: contextWindow)
         }
         await printActiveToolsIfNeeded()
-        renderSavedSessionHistory(activeSessionTranscript)
-        writeSystemMessage(
+        await renderSavedSessionHistory(activeSessionTranscript)
+        await writeSystemMessage(
             "Loaded session: \(savedSession.name) (\(savedSession.messageCount) messages).\n"
         )
     }
 
-    public func renderSavedSessionHistory(_ history: [AgentRuntimeMessage]) {
+    public func renderSavedSessionHistory(_ history: [AgentRuntimeMessage]) async {
         guard Self.savedSessionHistoryHasVisibleContent(history) else {
             return
         }
 
-        finishThoughtOutputIfNeeded()
-        finishAssistantContentFormatting()
-        writeSystemMessage("\nRestored transcript:\n")
+        await finishThoughtOutputIfNeeded()
+        await finishAssistantContentFormatting()
+        await writeSystemMessage("\nRestored transcript:\n")
         var renderedToolResultIDs = Set<String>()
         for message in history {
             switch message.role {
             case .user:
-                renderSavedUserMessage(message)
+                await renderSavedUserMessage(message)
             case .assistant:
-                renderSavedAssistantMessage(
+                await renderSavedAssistantMessage(
                     message,
                     history: history,
                     renderedToolResultIDs: &renderedToolResultIDs
                 )
             case .tool:
-                renderSavedUnmatchedToolResultIfNeeded(
+                await renderSavedUnmatchedToolResultIfNeeded(
                     message,
                     renderedToolResultIDs: &renderedToolResultIDs
                 )
@@ -360,34 +362,34 @@ extension TerminalChat {
                 continue
             }
         }
-        finishThoughtOutputIfNeeded()
-        finishAssistantContentFormatting()
-        writeChatOutput("\n")
+        await finishThoughtOutputIfNeeded()
+        await finishAssistantContentFormatting()
+        await writeChatOutput("\n")
     }
 
-    private func renderSavedUserMessage(_ message: AgentRuntimeMessage) {
+    private func renderSavedUserMessage(_ message: AgentRuntimeMessage) async {
         let content = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !content.isEmpty else {
             return
         }
-        writeSubmittedPrompt(content)
+        await writeSubmittedPrompt(content)
     }
 
     private func renderSavedAssistantMessage(
         _ message: AgentRuntimeMessage,
         history: [AgentRuntimeMessage],
         renderedToolResultIDs: inout Set<String>
-    ) {
+    ) async {
         if let reasoning = message.reasoningContent?.nilIfBlank {
-            writeThought(reasoning)
-            finishThoughtOutputIfNeeded()
+            await writeThought(reasoning)
+            await finishThoughtOutputIfNeeded()
         }
 
         let content = message.content.trimmingCharacters(in: .newlines)
         if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            writeAssistantContent(content)
-            finishAssistantContentFormatting()
-            writeChatOutput("\n")
+            await writeAssistantContent(content)
+            await finishAssistantContentFormatting()
+            await writeChatOutput("\n")
         }
 
         for toolCall in message.toolCalls {
@@ -397,9 +399,9 @@ extension TerminalChat {
                 in: history,
                 renderedToolResultIDs: &renderedToolResultIDs
             ) {
-                writeToolCallCompleted(directToolCall, result: toolResult)
+                await writeToolCallCompleted(directToolCall, result: toolResult)
             } else {
-                writeToolCallStarted(directToolCall)
+                await writeToolCallStarted(directToolCall)
             }
         }
     }
@@ -407,7 +409,7 @@ extension TerminalChat {
     private func renderSavedUnmatchedToolResultIfNeeded(
         _ message: AgentRuntimeMessage,
         renderedToolResultIDs: inout Set<String>
-    ) {
+    ) async {
         let content = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !content.isEmpty else {
             return
@@ -423,7 +425,7 @@ extension TerminalChat {
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
-        writeToolCallCompleted(
+        await writeToolCallCompleted(
             toolCall,
             result: DirectAgentToolResult(
                 output: content,
@@ -539,15 +541,15 @@ extension TerminalChat {
         """
     }
 
-    public func renderSavedSessionList(_ sessions: [TerminalSavedSession]) {
-        writeSystemMessage("\nSaved sessions:\n")
+    public func renderSavedSessionList(_ sessions: [TerminalSavedSession]) async {
+        await writeSystemMessage("\nSaved sessions:\n")
         for (offset, session) in sessions.enumerated() {
             let marker = activeSavedSessionName == session.name ? " *" : ""
-            writeSystemMessage(
+            await writeSystemMessage(
                 "  \(offset + 1). \(session.name) - \(savedSessionDetail(session))\(marker)\n"
             )
         }
-        writeSystemMessage("\n")
+        await writeSystemMessage("\n")
     }
 
     public func savedSessionSelectionItems(

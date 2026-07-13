@@ -22,27 +22,27 @@ extension TerminalChat {
                 )
             ],
             selected: .mcpBridge,
-            reservedBottomRows: statusBar.reservedRowsForOverlay()
+            reservedBottomRows: await statusBar.reservedRowsForOverlay()
         ) else {
-            return cancelledFeatureWizard()
+            return await cancelledFeatureWizard()
         }
 
-        guard let id = promptFeatureLine("Feature id", required: true) else {
-            return cancelledFeatureWizard()
+        guard let id = await promptFeatureLine("Feature id", required: true) else {
+            return await cancelledFeatureWizard()
         }
         let defaultDisplayName = Self.featureWizardDisplayName(from: id)
-        guard let displayName = promptFeatureLine(
+        guard let displayName = await promptFeatureLine(
             "Display name",
             defaultValue: defaultDisplayName
         ) else {
-            return cancelledFeatureWizard()
+            return await cancelledFeatureWizard()
         }
-        let description = promptFeatureLine(
+        let description = await promptFeatureLine(
             "Description",
             defaultValue: template.defaultDescription(displayName: displayName)
         )
         guard let description else {
-            return cancelledFeatureWizard()
+            return await cancelledFeatureWizard()
         }
 
         var arguments: [String: Any] = [
@@ -54,29 +54,29 @@ extension TerminalChat {
         switch template {
         case .basic:
             let defaultToolName = "\(Self.featureWizardPrefix(from: id))run"
-            guard let toolName = promptFeatureLine(
+            guard let toolName = await promptFeatureLine(
                 "Tool name",
                 defaultValue: defaultToolName
             ) else {
-                return cancelledFeatureWizard()
+                return await cancelledFeatureWizard()
             }
             arguments["toolName"] = toolName
         case .mcpBridge:
             arguments["template"] = "mcp-bridge"
-            let serviceName = promptFeatureLine(
+            let serviceName = await promptFeatureLine(
                 "Service name",
                 defaultValue: displayName
             )
             guard let serviceName else {
-                return cancelledFeatureWizard()
+                return await cancelledFeatureWizard()
             }
             arguments["serviceName"] = serviceName
 
-            guard let toolPrefix = promptFeatureLine(
+            guard let toolPrefix = await promptFeatureLine(
                 "Tool prefix",
                 defaultValue: Self.featureWizardPrefix(from: id)
             ) else {
-                return cancelledFeatureWizard()
+                return await cancelledFeatureWizard()
             }
             arguments["toolPrefix"] = toolPrefix
 
@@ -95,29 +95,29 @@ extension TerminalChat {
                     )
                 ],
                 selected: .http,
-                reservedBottomRows: statusBar.reservedRowsForOverlay()
+                reservedBottomRows: await statusBar.reservedRowsForOverlay()
             ) else {
-                return cancelledFeatureWizard()
+                return await cancelledFeatureWizard()
             }
 
             switch transport {
             case .http:
-                guard let endpointURL = promptFeatureLine("MCP endpoint URL", required: true) else {
-                    return cancelledFeatureWizard()
+                guard let endpointURL = await promptFeatureLine("MCP endpoint URL", required: true) else {
+                    return await cancelledFeatureWizard()
                 }
                 arguments["endpointURL"] = endpointURL
             case .stdio:
-                guard let executablePath = promptFeatureLine("MCP executable path", required: true) else {
-                    return cancelledFeatureWizard()
+                guard let executablePath = await promptFeatureLine("MCP executable path", required: true) else {
+                    return await cancelledFeatureWizard()
                 }
                 arguments["executablePath"] = executablePath
-                if let rawArguments = promptFeatureLine("Executable arguments", defaultValue: "") {
+                if let rawArguments = await promptFeatureLine("Executable arguments", defaultValue: "") {
                     let parsedArguments = Self.featureWizardArguments(rawArguments)
                     if !parsedArguments.isEmpty {
                         arguments["arguments"] = parsedArguments
                     }
                 }
-                if let rawEnvironment = promptFeatureLine("Environment KEY=value pairs", defaultValue: "") {
+                if let rawEnvironment = await promptFeatureLine("Environment KEY=value pairs", defaultValue: "") {
                     let parsedEnvironment = Self.featureWizardEnvironment(rawEnvironment)
                     if !parsedEnvironment.isEmpty {
                         arguments["environment"] = parsedEnvironment
@@ -126,15 +126,15 @@ extension TerminalChat {
             }
         }
 
-        let shouldEnable = promptFeatureYesNo("Enable feature after build?", defaultValue: true) ?? false
+        let shouldEnable = await promptFeatureYesNo("Enable feature after build?", defaultValue: true) ?? false
         let shouldSelect = shouldEnable
-            ? (promptFeatureYesNo("Select feature for this session?", defaultValue: true) ?? false)
+            ? (await promptFeatureYesNo("Select feature for this session?", defaultValue: true) ?? false)
             : false
-        guard let requirements = promptFeatureLine(
+        guard let requirements = await promptFeatureLine(
             "Goal / requirements (empty to edit the generated prompt)",
             required: false
         ) else {
-            return cancelledFeatureWizard()
+            return await cancelledFeatureWizard()
         }
 
         return await createFeatureFromWizard(
@@ -164,12 +164,12 @@ extension TerminalChat {
         ) else {
             return .none
         }
-        writeSystemMessage(Self.renderFeatureManagementToolOutput(name: "feature.scaffold", output: scaffoldOutput))
+        await writeSystemMessage(Self.renderFeatureManagementToolOutput(name: "feature.scaffold", output: scaffoldOutput))
         guard let scaffoldReport = Self.decodeFeatureOutput(
             SwiftFeatureScaffoldReport.self,
             from: scaffoldOutput.trimmingCharacters(in: .whitespacesAndNewlines)
         ) else {
-            writeFailureMessage("ZenCODE: could not decode the feature.scaffold report.\n")
+            await writeFailureMessage("ZenCODE: could not decode the feature.scaffold report.\n")
             return .none
         }
         guard scaffoldReport.ok ?? true else {
@@ -188,7 +188,7 @@ extension TerminalChat {
             await applyToolSelection(nextSelection)
         }
 
-        writeSystemMessage(
+        await writeSystemMessage(
             Self.renderFeatureWizardCompletion(
                 id: id,
                 built: scaffoldReport.built ?? false,
@@ -211,8 +211,8 @@ extension TerminalChat {
         )
     }
 
-    private func cancelledFeatureWizard() -> TerminalFeatureCommandResult {
-        writeSystemMessage("Feature creation cancelled.\n")
+    private func cancelledFeatureWizard() async -> TerminalFeatureCommandResult {
+        await writeSystemMessage("Feature creation cancelled.\n")
         return .none
     }
 
@@ -227,7 +227,7 @@ extension TerminalChat {
         ) else {
             return false
         }
-        writeSystemMessage(Self.renderFeatureManagementToolOutput(name: name, output: output))
+        await writeSystemMessage(Self.renderFeatureManagementToolOutput(name: name, output: output))
         return Self.featureManagementToolSucceeded(name: name, output: output)
     }
 
@@ -245,7 +245,7 @@ extension TerminalChat {
                 )
             )
         } catch {
-            writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
             return nil
         }
     }
@@ -254,7 +254,7 @@ extension TerminalChat {
         _ label: String,
         defaultValue: String? = nil,
         required: Bool = false
-    ) -> String? {
+    ) async -> String? {
         while true {
             let prompt = defaultValue?.isEmpty == false
                 ? "\(label) [\(defaultValue!)]: "
@@ -272,14 +272,14 @@ extension TerminalChat {
             guard required else {
                 return ""
             }
-            writeFailureMessage("ZenCODE: \(label) is required.\n")
+            await writeFailureMessage("ZenCODE: \(label) is required.\n")
         }
     }
 
     func promptFeatureYesNo(
         _ label: String,
         defaultValue: Bool
-    ) -> Bool? {
+    ) async -> Bool? {
         let suffix = defaultValue ? "Y/n" : "y/N"
         while true {
             guard let line = interactiveReader.readLine(prompt: "\(label) [\(suffix)]: ") else {
@@ -293,7 +293,7 @@ extension TerminalChat {
             case "n", "no", "false", "0":
                 return false
             default:
-                writeFailureMessage("ZenCODE: answer yes or no.\n")
+                await writeFailureMessage("ZenCODE: answer yes or no.\n")
             }
         }
     }

@@ -69,19 +69,12 @@ extension TerminalChat {
         }
         let signature = Self.subAgentOverviewSignature(snapshots)
         let overview = Self.renderSubAgentOverview(snapshots) + "\n\n"
-        renderOverviewWhenToolOutputIsIdle(
-            shouldRender: {
-                force || signature != lastRenderedSubAgentOverviewSignature
-            }
-        ) {
-            if rememberSignature {
-                lastRenderedSubAgentOverviewSignature = signature
-            }
-
-            finishThoughtOutputIfNeeded()
-            finishAssistantContentFormatting()
-            writeChatError(overview)
-        }
+        _ = await renderCoordinator.renderSubAgentOverview(
+            signature: signature,
+            text: overview,
+            force: force,
+            rememberSignature: rememberSignature
+        )
     }
 
     public static func renderSubAgentOverview(
@@ -342,7 +335,7 @@ extension TerminalChat {
         let dim = "\u{1B}[90m"
         let reset = "\u{1B}[0m"
         let title = AgentOutput.standardErrorIsTerminal
-            ? "👥 \(orange)Sub-Agents\(reset):"
+            ? "👥 \(orange)Sub-Agents:\(reset)"
             : "👥 Sub-Agents:"
 
         var output = ["\(linePrefix)\(title)"]
@@ -366,7 +359,7 @@ extension TerminalChat {
                 output.append("\(linePrefix)\(prefix)\(wrappedLine)")
             }
         }
-        return "\n\(output.joined(separator: "\n"))"
+        return "\n\(output.joined(separator: "\n"))\n"
     }
 
     private static func subAgentOverviewSignature(

@@ -64,7 +64,7 @@ struct LocalAgentRuntimeBackendFactoryTests {
         ) as! FakeBackend
 
         // Parent backend should have received the runtime.
-        let parentReceivedRuntime = await parent.swiftFeatureRuntime
+        let parentReceivedRuntime = parent.swiftFeatureRuntime
         #expect(parentReceivedRuntime === parentRuntime)
 
         // Sub-agent created via contextual factory should inherit the same instance.
@@ -75,7 +75,7 @@ struct LocalAgentRuntimeBackendFactoryTests {
             profile: AgentProfile(id: "child-agent", name: "Child", modelID: "local")
         )
         let child = try await parent.makeContextualBackend(context) as! FakeBackend
-        let childReceivedRuntime = await child.swiftFeatureRuntime
+        let childReceivedRuntime = child.swiftFeatureRuntime
         #expect(childReceivedRuntime === parentRuntime)
     }
 

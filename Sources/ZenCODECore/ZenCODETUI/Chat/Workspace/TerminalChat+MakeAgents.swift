@@ -12,7 +12,7 @@ extension TerminalChat {
         let argument = String(command.dropFirst("/make-agents".count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard argument.isEmpty else {
-            writeFailureMessage(
+            await writeFailureMessage(
                 "ZenCODE: /make-agents does not accept arguments; it updates AGENTS.md in the current working directory.\n"
             )
             return .continueChat
@@ -22,13 +22,13 @@ extension TerminalChat {
             discoverExternalTools: false
         )
         guard Self.makeAgentsRequiredToolNames.isSubset(of: allowedToolNames) else {
-            writeFailureMessage(
+            await writeFailureMessage(
                 "ZenCODE: /make-agents requires the Files tool group. Enable it with /tools (or switch to an agent that includes it) and try again.\n"
             )
             return .continueChat
         }
 
-        writeSubmittedPrompt(command)
+        await writeSubmittedPrompt(command)
         return .runHiddenPrompt(
             Self.makeAgentsPrompt(
                 workingDirectory: configuration.workingDirectory

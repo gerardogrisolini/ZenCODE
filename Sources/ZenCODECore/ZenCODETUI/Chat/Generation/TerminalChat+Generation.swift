@@ -90,40 +90,37 @@ extension TerminalChat {
                     switch event {
                     case let .status(message):
                         if self.configuration.verboseLogging {
-                            self.writeChatError("[ZenCODE] \(message)\n")
+                            await self.writeChatError("[ZenCODE] \(message)\n")
                         }
                     case let .diagnostic(message):
                         if self.configuration.verboseLogging {
-                            self.writeDiagnostic(message)
+                            await self.writeDiagnostic(message)
                         }
                     case let .thought(message):
                         await transcriptTurn.appendThought(message)
-                        self.writeThought(message)
+                        await self.writeThought(message)
                     case let .modelLoaded(modelID):
-                        self.printModelIfNeeded(modelID)
+                        await self.printModelIfNeeded(modelID)
                     case let .modelLoadedDetails(details):
-                        self.printLoadedModelDetails(details)
+                        await self.printLoadedModelDetails(details)
                     case let .modelRuntime(runtime):
-                        _ = self.statusBar.update(modelRuntime: runtime)
+                        _ = await self.statusBar.update(modelRuntime: runtime)
                     case let .metrics(metrics):
                         self.didReceiveMetricsForCurrentPrompt = true
-                        self.writeMetricsStatus(metrics)
+                        await self.writeMetricsStatus(metrics)
                     case let .contextWindow(status):
-                        self.writeContextWindowStatus(status)
+                        await self.writeContextWindowStatus(status)
                     case let .subscriptionUsage(status):
-                        self.writeSubscriptionUsageStatus(status)
+                        await self.writeSubscriptionUsageStatus(status)
                     case let .content(delta):
                         if case .plan = attempt.purpose {
                             break
                         }
                         await transcriptTurn.appendAssistantContent(delta)
-                        self.finishThoughtOutputIfNeeded()
-                        self.writeAssistantContent(delta)
+                        await self.writeAssistantContent(delta)
                     case let .toolCallStarted(toolCall):
                         await transcriptTurn.appendToolCallStarted(toolCall)
-                        self.finishThoughtOutputIfNeeded()
-                        self.finishAssistantContentFormatting()
-                        self.writeToolCallStarted(toolCall)
+                        await self.writeToolCallStarted(toolCall)
                         if let telegramProgressReporter = telegramProgressReporter {
                             await telegramProgressReporter.enqueue(
                                 self.telegramToolStartedMessage(toolCall)
@@ -134,9 +131,7 @@ extension TerminalChat {
                         )
                     case let .toolCallCompleted(toolCall, result):
                         await transcriptTurn.appendToolCallCompleted(toolCall, result: result)
-                        self.finishThoughtOutputIfNeeded()
-                        self.finishAssistantContentFormatting()
-                        self.writeToolCallCompleted(toolCall, result: result)
+                        await self.writeToolCallCompleted(toolCall, result: result)
                         if !result.isFailure,
                            let update = Self.planPointUpdates(from: toolCall) {
                             switch attempt.purpose {
@@ -175,9 +170,9 @@ extension TerminalChat {
                             }
                         }
                         if Self.isFileMutationTool(toolCall.name) {
-                            self.refreshStatusBarGitStatusSummaryForFileMutation()
+                            await self.refreshStatusBarGitStatusSummaryForFileMutation()
                         }
-                        if self.shouldPublishDeferredTaskGraphOverview() {
+                        if await self.shouldPublishDeferredTaskGraphOverview() {
                             await self.publishTaskGraphOverviewIfChanged(
                                 observedSessionID: self.sessionID
                             )
@@ -227,8 +222,7 @@ extension TerminalChat {
             await publishSubAgentOverviewIfChanged()
             await telegramProgressReporter?.flush()
             if case .plan = attempt.purpose {
-                finishThoughtOutputIfNeeded()
-                writeAssistantContent(response.text)
+                await writeAssistantContent(response.text)
             }
             try await recordPlanAndTaskGraphIfNeeded(
                 responseText: response.text,
@@ -357,37 +351,35 @@ extension TerminalChat {
         switch result {
         case let .success(success):
             let response = success.response
-            finishThoughtOutputIfNeeded()
-            finishAssistantContentFormatting()
-            printModelIfNeeded(response.modelID)
+            await finishStreamingOutput()
+            await printModelIfNeeded(response.modelID)
             let responseText = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
             let completionText = responseText.isEmpty ? "Done." : responseText
             if responseText.isEmpty {
-                writeChatOutput("Done.")
+                await writeChatOutput("Done.")
             }
-            writeChatOutput("\n")
+            await writeChatOutput("\n")
             if let summary = success.fileChangeSummary {
-                writeFileChangeSummary(summary, includeDiff: false)
+                await writeFileChangeSummary(summary, includeDiff: false)
             }
             if let plan = success.automaticallyCompletedPlan {
-                writeMarkdownMessage(Self.planStatusTable(for: plan))
+                await writeMarkdownMessage(Self.planStatusTable(for: plan))
             }
             await sendTelegramCompletionIfLinked(completionText, origin: success.origin)
         case let .failure(failure):
-            finishThoughtOutputIfNeeded()
-            finishAssistantContentFormatting()
+            await finishStreamingOutput()
             if failure.isCancellation {
-                writeChatError("\nStopped.\n")
+                await writeChatError("\nStopped.\n")
                 await sendTelegramSystemMessageIfLinked("Stopped.", origin: failure.origin)
             } else {
-                writeFailureMessage("ZenCODE: \(failure.message)\n")
+                await writeFailureMessage("ZenCODE: \(failure.message)\n")
                 await sendTelegramSystemMessageIfLinked(
                     "ZenCODE failed: \(failure.message)",
                     origin: failure.origin
                 )
             }
             if let summary = failure.fileChangeSummary {
-                writeFileChangeSummary(summary, includeDiff: false)
+                await writeFileChangeSummary(summary, includeDiff: false)
             }
         }
     }

@@ -217,13 +217,13 @@ struct TerminalInteractiveLineReaderTests {
     }
 
     @Test
-    func accessModeToggleEventPreservesPanelTextAndCursor() {
+    func accessModeToggleEventPreservesPanelTextAndCursor() async {
         let reader = TerminalInteractiveLineReader()
         reader.panelBuffer = Array("hello")
         reader.panelCursorIndex = 2
         let events = Mutex<[TerminalPromptInputEvent]>([])
 
-        reader.handlePanelKey(.toggleAccessMode) { event in
+        await reader.handlePanelKey(.toggleAccessMode) { event in
             events.withLock { $0.append(event) }
         }
 
