@@ -19,6 +19,7 @@ extension TerminalChat {
         lines.append(contentsOf: visibleCommandDescriptorsForCurrentAgent().map(\.help))
         lines.append(contentsOf: [
             "Ctrl+T toggles compact/full tool output.",
+            "Ctrl+M toggles default/full access for local.exec approvals in the interactive panel.",
         ])
         return lines.joined(separator: "\n") + "\n\n"
     }

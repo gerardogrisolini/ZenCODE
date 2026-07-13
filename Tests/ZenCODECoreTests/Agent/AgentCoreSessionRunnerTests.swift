@@ -368,6 +368,397 @@ struct AgentCoreSessionRunnerTests {
         let interruptedRoots = await backend.interruptedRootSessionIDs()
         #expect(interruptedRoots == [sessionID])
     }
+
+    @Test
+    func localExecAccessModeRoutesDefaultAndPerPromptAuthorization() async throws {
+        let defaultAuthorizer = AuthorizationRecorder(decision: false)
+        let promptAuthorizer = AuthorizationRecorder(decision: false)
+        let approvingPromptAuthorizer = AuthorizationRecorder(decision: true)
+        let backendBox = AuthorizationBackendBox()
+        let runner = AgentCoreSessionRunner(
+            defaultToolAuthorizationHandler: { request in
+                await defaultAuthorizer.authorize(request)
+            },
+            backendFactory: { configuration, _ in
+                backendBox.makeBackend(handler: configuration.toolAuthorizationHandler)
+            }
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["local.exec", "local.readFile"]
+        )
+
+        try await runner.createSession(configuration: configuration)
+        backendBox.setAuthorizationRequests([
+            Self.authorizationRequest(sessionID: sessionID, toolName: "local.exec")
+        ])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "default",
+            attachments: [],
+            onEvent: { _ in }
+        )
+        #expect(backendBox.lastAuthorizationResults() == [false])
+        #expect(await defaultAuthorizer.toolNames() == ["local.exec"])
+
+        #expect(await runner.toggleLocalExecAccessMode() == .fullAccess)
+        backendBox.setAuthorizationRequests([
+            Self.authorizationRequest(sessionID: sessionID, toolName: "local.exec")
+        ])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "full access local exec",
+            attachments: [],
+            onEvent: { _ in }
+        )
+        #expect(backendBox.lastAuthorizationResults() == [true])
+        #expect(await defaultAuthorizer.toolNames() == ["local.exec"])
+
+        backendBox.setAuthorizationRequests([
+            Self.authorizationRequest(sessionID: sessionID, toolName: "local.readFile")
+        ])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "full access other tool",
+            attachments: [],
+            onEvent: { _ in }
+        )
+        #expect(backendBox.lastAuthorizationResults() == [false])
+        #expect(await defaultAuthorizer.toolNames() == ["local.exec", "local.readFile"])
+
+        #expect(await runner.toggleLocalExecAccessMode() == .standard)
+        backendBox.setAuthorizationRequests([
+            Self.authorizationRequest(sessionID: sessionID, toolName: "local.exec")
+        ])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "default restored",
+            attachments: [],
+            onEvent: { _ in }
+        )
+        #expect(backendBox.lastAuthorizationResults() == [false])
+        #expect(await defaultAuthorizer.toolNames() == ["local.exec", "local.readFile", "local.exec"])
+
+        backendBox.setAuthorizationRequests([
+            Self.authorizationRequest(sessionID: sessionID, toolName: "local.exec")
+        ])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "default per-prompt",
+            attachments: [],
+            authorizeTool: { request in
+                await approvingPromptAuthorizer.authorize(request)
+            },
+            onEvent: { _ in }
+        )
+        #expect(backendBox.lastAuthorizationResults() == [true])
+        #expect(await approvingPromptAuthorizer.toolNames() == ["local.exec"])
+        #expect(await defaultAuthorizer.toolNames() == ["local.exec", "local.readFile", "local.exec"])
+
+        #expect(await runner.toggleLocalExecAccessMode() == .fullAccess)
+        backendBox.setAuthorizationRequests([
+            Self.authorizationRequest(sessionID: sessionID, toolName: "local.exec.foo"),
+            Self.authorizationRequest(sessionID: sessionID, toolName: " local.exec"),
+            Self.authorizationRequest(sessionID: sessionID, toolName: "LOCAL.EXEC")
+        ])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "near-canonical names",
+            attachments: [],
+            onEvent: { _ in }
+        )
+        #expect(backendBox.lastAuthorizationResults() == [false, false, false])
+        #expect(
+            await defaultAuthorizer.toolNames().suffix(3)
+                == ["local.exec.foo", " local.exec", "LOCAL.EXEC"]
+        )
+
+        backendBox.setAuthorizationRequests([
+            Self.authorizationRequest(sessionID: sessionID, toolName: "local.exec"),
+            Self.authorizationRequest(sessionID: sessionID, toolName: "local.readFile")
+        ])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "per-prompt",
+            attachments: [],
+            authorizeTool: { request in
+                await promptAuthorizer.authorize(request)
+            },
+            onEvent: { _ in }
+        )
+        #expect(backendBox.lastAuthorizationResults() == [true, false])
+        #expect(await promptAuthorizer.toolNames() == ["local.readFile"])
+    }
+
+    @Test
+    func fullAccessDoesNotOverrideDirectToolAllowlist() async throws {
+        let backendBox = AuthorizationBackendBox()
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { configuration, _ in
+                backendBox.makeBackend(handler: configuration.toolAuthorizationHandler)
+            }
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-full-access-allowlist-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let markerURL = rootURL.appendingPathComponent("should-not-exist")
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: rootURL,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["local.exec"]
+        )
+
+        try await runner.createSession(configuration: configuration)
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "initialize backend",
+            attachments: [],
+            onEvent: { _ in }
+        )
+        #expect(await runner.toggleLocalExecAccessMode() == .fullAccess)
+        let authorizationHandler = try #require(backendBox.authorizationHandler())
+        let executor = DirectToolExecutor(
+            authorizationHandler: authorizationHandler,
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentBackendFactory: { CapturingAgentRuntimeBackend() }
+        )
+        let command = "touch '\(markerURL.path.replacingOccurrences(of: "'", with: "'\\''"))'"
+        let toolCall = DirectAgentToolCall(
+            id: "blocked-local-exec",
+            name: "local.exec",
+            argumentsObject: ["command": command],
+            argumentsJSON: #"{"command":"blocked"}"#
+        )
+
+        let result = await executor.execute(
+            sessionID: sessionID,
+            toolCall: toolCall,
+            workingDirectory: rootURL,
+            allowedToolNames: ["local.readFile"]
+        )
+
+        #expect(result.status == .permissionDenied)
+        #expect(!FileManager.default.fileExists(atPath: markerURL.path))
+    }
+
+    @Test
+    func localExecAccessModeSurvivesOptionUpdateAndSessionRebuild() async throws {
+        let backendBox = AuthorizationBackendBox()
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { configuration, _ in
+                backendBox.makeBackend(handler: configuration.toolAuthorizationHandler)
+            }
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        let baseConfiguration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["local.exec"]
+        )
+        let updatedConfiguration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: "updated",
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["local.exec", "local.readFile"]
+        )
+
+        try await runner.createSession(configuration: baseConfiguration)
+        #expect(await runner.toggleLocalExecAccessMode() == .fullAccess)
+        try await runner.updateSessionOptions(configuration: updatedConfiguration)
+        #expect(await runner.localExecAccessMode() == .fullAccess)
+
+        await runner.rebuildSession(id: sessionID)
+        #expect(await runner.localExecAccessMode() == .fullAccess)
+        try await runner.createSession(configuration: updatedConfiguration)
+        #expect(await runner.localExecAccessMode() == .fullAccess)
+    }
+
+    private static func authorizationRequest(
+        sessionID: String,
+        toolName: String
+    ) -> AgentToolAuthorizationRequest {
+        AgentToolAuthorizationRequest(
+            sessionID: sessionID,
+            toolCallID: UUID().uuidString,
+            toolName: toolName,
+            title: toolName,
+            kind: "execute",
+            command: "echo test",
+            workingDirectory: "/tmp"
+        )
+    }
+}
+
+private actor AuthorizationRecorder {
+    private let decision: Bool
+    private var requests: [AgentToolAuthorizationRequest] = []
+
+    init(decision: Bool) {
+        self.decision = decision
+    }
+
+    func authorize(_ request: AgentToolAuthorizationRequest) -> Bool {
+        requests.append(request)
+        return decision
+    }
+
+    func toolNames() -> [String] {
+        requests.map(\.toolName)
+    }
+}
+
+private final class AuthorizationBackendBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requests: [AgentToolAuthorizationRequest] = []
+    private var results: [Bool] = []
+    private var capturedAuthorizationHandler: AgentToolAuthorizationHandler?
+
+    func makeBackend(
+        handler: AgentToolAuthorizationHandler?
+    ) -> AuthorizationInvokingBackend {
+        lock.lock()
+        capturedAuthorizationHandler = handler
+        lock.unlock()
+        return AuthorizationInvokingBackend(handler: handler, box: self)
+    }
+
+    func authorizationHandler() -> AgentToolAuthorizationHandler? {
+        lock.lock()
+        defer { lock.unlock() }
+        return capturedAuthorizationHandler
+    }
+
+    func setAuthorizationRequests(_ requests: [AgentToolAuthorizationRequest]) {
+        lock.lock()
+        self.requests = requests
+        lock.unlock()
+    }
+
+    func authorizationRequests() -> [AgentToolAuthorizationRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
+    }
+
+    func setAuthorizationResults(_ results: [Bool]) {
+        lock.lock()
+        self.results = results
+        lock.unlock()
+    }
+
+    func lastAuthorizationResults() -> [Bool] {
+        lock.lock()
+        defer { lock.unlock() }
+        return results
+    }
+}
+
+private actor AuthorizationInvokingBackend: AgentRuntimeBackend {
+    private let handler: AgentToolAuthorizationHandler?
+    private let box: AuthorizationBackendBox
+    private var sessions: [String: AgentRuntimeSessionSnapshot] = [:]
+
+    init(handler: AgentToolAuthorizationHandler?, box: AuthorizationBackendBox) {
+        self.handler = handler
+        self.box = box
+    }
+
+    func createSession(
+        id: String,
+        cwd: String,
+        systemPrompt: String?,
+        history: [AgentRuntimeMessage],
+        cacheKey: String?,
+        allowedToolNames: Set<String>?,
+        thinkingSelection: AgentThinkingSelection?,
+        preserveThinking: Bool
+    ) {
+        sessions[id] = AgentRuntimeSessionSnapshot(
+            sessionID: id,
+            workingDirectoryPath: cwd,
+            systemPrompt: systemPrompt,
+            cacheKey: cacheKey,
+            history: history,
+            allowedToolNames: allowedToolNames,
+            thinkingSelection: thinkingSelection,
+            preserveThinking: preserveThinking
+        )
+    }
+
+    func createSessionIfNeeded(
+        id: String,
+        cwd: String,
+        systemPrompt: String?,
+        history: [AgentRuntimeMessage],
+        cacheKey: String?,
+        allowedToolNames: Set<String>?,
+        thinkingSelection: AgentThinkingSelection?,
+        preserveThinking: Bool
+    ) {
+        guard sessions[id] == nil else { return }
+        createSession(
+            id: id,
+            cwd: cwd,
+            systemPrompt: systemPrompt,
+            history: history,
+            cacheKey: cacheKey,
+            allowedToolNames: allowedToolNames,
+            thinkingSelection: thinkingSelection,
+            preserveThinking: preserveThinking
+        )
+    }
+
+    func updateSessionOptions(
+        id _: String,
+        systemPrompt _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func closeSession(id _: String) {}
+    func shutdown() async { sessions.removeAll() }
+    func preloadModel(onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void) async throws -> String {
+        "test-model"
+    }
+    func activeToolDescriptors() async -> [DirectToolDescriptor] { [] }
+
+    func sendPrompt(
+        sessionID _: String,
+        prompt _: String,
+        attachments _: [AgentRuntimeAttachment],
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> DirectAgentResponse {
+        var results: [Bool] = []
+        for request in box.authorizationRequests() {
+            results.append(await handler?(request) ?? true)
+        }
+        box.setAuthorizationResults(results)
+        return DirectAgentResponse(text: "", stopReason: "end_turn", modelID: "test-model")
+    }
+
+    func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? {
+        sessions[id]
+    }
 }
 
 private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {

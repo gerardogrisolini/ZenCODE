@@ -70,7 +70,7 @@ extension TerminalChat {
                 guard self != nil else {
                     return
                 }
-                await eventQueue.send(.telegramMessage(message))
+                eventQueue.send(.telegramMessage(message))
             }
         }
     }
@@ -156,7 +156,7 @@ extension TerminalChat {
                 let audio = try await self.telegramControlService.downloadVoiceAudio(voice)
                 let transcript = try await AgentVoiceTranscriptionService()
                     .transcribe(audio) { message in
-                        await eventQueue.send(
+                        eventQueue.send(
                             .voicePromptProgress(
                                 TerminalVoicePromptProgress(
                                     origin: .telegram(chatID: chatID),
@@ -165,7 +165,7 @@ extension TerminalChat {
                             )
                         )
                     }
-                await eventQueue.send(
+                eventQueue.send(
                     .voicePromptCompleted(
                         TerminalVoicePromptResult(
                             origin: .telegram(chatID: chatID),
@@ -174,7 +174,7 @@ extension TerminalChat {
                     )
                 )
             } catch {
-                await eventQueue.send(
+                eventQueue.send(
                     .voicePromptCompleted(
                         TerminalVoicePromptResult(
                             origin: .telegram(chatID: chatID),

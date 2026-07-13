@@ -7,6 +7,25 @@
 
 import Foundation
 
+public enum AgentLocalExecAccessMode: CaseIterable, Equatable, Sendable {
+    case standard
+    case fullAccess
+
+    public var next: AgentLocalExecAccessMode {
+        switch self {
+        case .standard: return .fullAccess
+        case .fullAccess: return .standard
+        }
+    }
+
+    public var label: String {
+        switch self {
+        case .standard: return "default"
+        case .fullAccess: return "full access"
+        }
+    }
+}
+
 public struct AgentToolAuthorizationRequest: Sendable {
     public let sessionID: String?
     public let toolCallID: String

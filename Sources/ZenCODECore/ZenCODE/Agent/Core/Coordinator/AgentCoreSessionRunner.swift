@@ -21,6 +21,7 @@ public actor AgentCoreSessionRunner {
     /// Maps each prompt ID to the session it belongs to so `authorizeTool`
     /// can route authorization requests to the correct handler.
     private var promptAuthorizationSessionIDs: [UUID: String] = [:]
+    private var localExecAccessModeState: AgentLocalExecAccessMode = .standard
     private let defaultToolAuthorizationHandler: AgentToolAuthorizationHandler?
     let mcpRuntime: DirectMCPToolRuntime
     public let taskOrchestrator: SessionTaskOrchestrator
@@ -38,6 +39,16 @@ public actor AgentCoreSessionRunner {
         self.backendFactory = backendFactory
         self.taskOrchestrator = taskOrchestrator
             ?? SessionTaskOrchestrator(store: taskGraphStore)
+    }
+
+    func localExecAccessMode() -> AgentLocalExecAccessMode {
+        localExecAccessModeState
+    }
+
+    @discardableResult
+    func toggleLocalExecAccessMode() -> AgentLocalExecAccessMode {
+        localExecAccessModeState = localExecAccessModeState.next
+        return localExecAccessModeState
     }
 
     public func createSession(
@@ -679,6 +690,10 @@ public actor AgentCoreSessionRunner {
     }
 
     private func authorizeTool(_ request: AgentToolAuthorizationRequest) async -> Bool {
+        if request.toolName == "local.exec", localExecAccessModeState == .fullAccess {
+            return true
+        }
+
         // Route authorization to the handler registered for the session that
         // owns the tool call, falling back to the first available handler
         // (for backwards compatibility) and finally the default handler.

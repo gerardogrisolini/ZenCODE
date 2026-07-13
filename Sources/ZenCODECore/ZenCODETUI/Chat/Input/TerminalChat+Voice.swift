@@ -108,7 +108,7 @@ extension TerminalChat {
             do {
                 let transcript = try await AgentVoiceTranscriptionService()
                     .transcribe(audio) { message in
-                        await eventQueue.send(
+                        eventQueue.send(
                             .voicePromptProgress(
                                 TerminalVoicePromptProgress(
                                     origin: origin,
@@ -117,7 +117,7 @@ extension TerminalChat {
                             )
                         )
                     }
-                await eventQueue.send(
+                eventQueue.send(
                     .voicePromptCompleted(
                         TerminalVoicePromptResult(
                             origin: origin,
@@ -128,7 +128,7 @@ extension TerminalChat {
             } catch is CancellationError {
                 return
             } catch {
-                await eventQueue.send(
+                eventQueue.send(
                     .voicePromptCompleted(
                         TerminalVoicePromptResult(
                             origin: origin,

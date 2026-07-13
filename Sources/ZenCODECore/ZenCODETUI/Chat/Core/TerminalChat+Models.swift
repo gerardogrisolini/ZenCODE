@@ -136,6 +136,7 @@ enum TerminalChatGenerationResult: Sendable {
 enum TerminalChatRuntimeEvent: Sendable {
     case input(TerminalPromptInputEvent)
     case generationCompleted(TerminalChatGenerationResult)
+    case startNextQueuedPrompt
     case telegramMessage(TerminalTelegramIncomingMessage)
     case voicePromptProgress(TerminalVoicePromptProgress)
     case voicePromptCompleted(TerminalVoicePromptResult)

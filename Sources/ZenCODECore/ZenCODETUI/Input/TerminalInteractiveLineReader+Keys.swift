@@ -20,29 +20,30 @@ extension TerminalInteractiveLineReader {
             return nil
         }
 
+        if let key = Self.controlKey(for: byte) {
+            return key
+        }
+
         switch byte {
-        case 0x04:
-            return .endOfInput
-        case 0x01:
-            return .home
-        case 0x05:
-            return .end
-        case 0x0B:
-            return .clearAfterCursor
-        case 0x15:
-            return .clearBeforeCursor
-        case 0x14:
-            return .toggleToolDetails
-        case 0x0D:
-            return .enter
-        case 0x09:
-            return .tab
-        case 0x7F, 0x08:
-            return .backspace
         case 0x1B:
             return readEscapeKey()
         default:
             return decodeCharacter(startingWith: byte).map(Key.character) ?? .unknown
+        }
+    }
+
+    static func controlKey(for byte: UInt8) -> Key? {
+        switch byte {
+        case 0x04: return .endOfInput
+        case 0x01: return .home
+        case 0x05: return .end
+        case 0x0B: return .clearAfterCursor
+        case 0x15: return .clearBeforeCursor
+        case 0x14: return .toggleToolDetails
+        case 0x0D: return .enter
+        case 0x09: return .tab
+        case 0x7F, 0x08: return .backspace
+        default: return nil
         }
     }
 
@@ -141,7 +142,7 @@ extension TerminalInteractiveLineReader {
         if let key = Self.shiftReturnKey(components: components, keyCodeIndex: 0, modifierIndex: 1) {
             return key
         }
-        if let key = Self.shiftReturnKey(components: components, keyCodeIndex: 2, modifierIndex: 1) {
+        if let key = Self.modifyOtherKeysKey(components: components) {
             return key
         }
         let numericPrefix = components.first
@@ -167,10 +168,16 @@ extension TerminalInteractiveLineReader {
             return .unknown
         }
         let components = sequence.split(separator: ";").map(String.init)
+        guard Self.isKittyPressEvent(components: components, modifierIndex: 1) else {
+            return .unknown
+        }
         if let key = Self.shiftReturnKey(components: components, keyCodeIndex: 0, modifierIndex: 1) {
             return key
         }
         if let key = Self.shiftReturnKey(components: components, keyCodeIndex: 2, modifierIndex: 1) {
+            return key
+        }
+        if let key = Self.controlShortcutKey(components: components, keyCodeIndex: 0, modifierIndex: 1) {
             return key
         }
         return .unknown
@@ -220,6 +227,63 @@ extension TerminalInteractiveLineReader {
 
     static func isReturnKeyCode(_ keyCode: Int?) -> Bool {
         keyCode == 10 || keyCode == 13
+    }
+
+    static func isKittyPressEvent(
+        components: [String],
+        modifierIndex: Int
+    ) -> Bool {
+        guard components.indices.contains(modifierIndex) else {
+            return true
+        }
+        let fields = components[modifierIndex].split(
+            separator: ":",
+            omittingEmptySubsequences: false
+        )
+        guard fields.count <= 2,
+              let modifier = fields.first.flatMap({ Int($0) }),
+              modifier > 0 else {
+            return false
+        }
+        guard fields.count == 2 else {
+            return true
+        }
+        return Int(fields[1]) == 1
+    }
+
+    static func modifyOtherKeysKey(components: [String]) -> Key? {
+        guard components.count == 3,
+              components[0] == "27",
+              Int(components[1]) != nil,
+              Int(components[2]) != nil else {
+            return nil
+        }
+        return shiftReturnKey(components: components, keyCodeIndex: 2, modifierIndex: 1)
+        ?? controlShortcutKey(components: components, keyCodeIndex: 2, modifierIndex: 1)
+    }
+
+    static func controlShortcutKey(
+        components: [String],
+        keyCodeIndex: Int,
+        modifierIndex: Int
+    ) -> Key? {
+        guard components.indices.contains(keyCodeIndex),
+              let keyCode = Self.integerPrefix(in: components[keyCodeIndex]),
+              components.indices.contains(modifierIndex),
+              let modifier = Self.integerPrefix(in: components[modifierIndex]),
+              modifier > 0,
+              ((modifier - 1) & 0b100) != 0 else {
+            return nil
+        }
+
+        switch keyCode {
+        case 109:
+            return .toggleAccessMode
+        case 116:
+            return .toggleToolDetails
+        default:
+            return nil
+        }
     }
 
     static func integerPrefix(in component: String) -> Int? {

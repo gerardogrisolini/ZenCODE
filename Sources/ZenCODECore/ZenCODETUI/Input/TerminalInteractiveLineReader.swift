@@ -33,6 +33,7 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
         case clearBeforeCursor
         case clearAfterCursor
         case toggleToolDetails
+        case toggleAccessMode
         case endOfInput
         case cancel
         case unknown
@@ -202,7 +203,7 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
                     }
                     buffer.removeSubrange(cursorIndex..<buffer.count)
                     redraw(prompt: prompt, buffer: buffer, cursorIndex: cursorIndex)
-                case .toggleToolDetails:
+                case .toggleToolDetails, .toggleAccessMode:
                     continue
                 case .endOfInput:
                     if buffer.isEmpty {

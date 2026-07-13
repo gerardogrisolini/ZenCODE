@@ -322,6 +322,9 @@ extension TerminalInteractiveLineReader {
         case .toggleToolDetails:
             onEvent(.toggleToolDetailsRequested)
             renderPanel()
+        case .toggleAccessMode:
+            onEvent(.toggleAccessModeRequested)
+            renderPanel()
         case .cancel:
             let isProcessing = withPanelLock { () -> Bool in
                 let isProcessing = panelIsProcessing
@@ -357,6 +360,7 @@ extension TerminalInteractiveLineReader {
             cursorIndex: Int,
             modeText: String,
             helpText: String,
+            compactHelpText: String?,
             suggestionLines: [String]
         ) in
             (
@@ -365,6 +369,7 @@ extension TerminalInteractiveLineReader {
                 cursorIndex: panelCursorIndex,
                 modeText: panelModeTextLocked(),
                 helpText: panelHelpTextLocked(),
+                compactHelpText: panelCompactHelpTextLocked(),
                 suggestionLines: panelCommandSuggestionLinesLocked()
             )
         }
@@ -374,6 +379,7 @@ extension TerminalInteractiveLineReader {
             cursorIndex: snapshot.cursorIndex,
             modeText: snapshot.modeText,
             helpText: snapshot.helpText,
+            compactHelpText: snapshot.compactHelpText,
             suggestionLines: snapshot.suggestionLines
         )
     }
@@ -398,7 +404,15 @@ extension TerminalInteractiveLineReader {
         if hasActiveCommandSuggestionsLocked() {
             return "↑/↓ select · Tab complete · Enter choose"
         }
-        return "Enter queue · Option+Enter newline · Ctrl+T tools · Esc stop"
+        return "Enter queue · Option+Enter newline · Ctrl+T tools · Ctrl+M mode · Esc stop"
+    }
+
+    func panelCompactHelpTextLocked() -> String? {
+        guard panelOverlayOverride == nil,
+              !hasActiveCommandSuggestionsLocked() else {
+            return nil
+        }
+        return "Ctrl+T tools · Ctrl+M mode"
     }
 
     struct CommandSuggestionSelection: Sendable {

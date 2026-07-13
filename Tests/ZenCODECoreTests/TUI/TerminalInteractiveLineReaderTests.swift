@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 03/06/26.
 //
 
+import Synchronization
 import Testing
 @testable import ZenCODECore
 
@@ -169,6 +170,69 @@ struct TerminalInteractiveLineReaderTests {
                 modifierIndex: 1
             ) == nil
         )
+    }
+
+    @Test
+    func controlShortcutsDecodeKittyAndModifyOtherKeysSequences() {
+        let reader = TerminalInteractiveLineReader()
+
+        #expect(reader.keyFromCSI(Array("109;5u".utf8)) == .toggleAccessMode)
+        #expect(reader.keyFromCSI(Array("27;5;109~".utf8)) == .toggleAccessMode)
+        #expect(reader.keyFromCSI(Array("116;5u".utf8)) == .toggleToolDetails)
+        #expect(reader.keyFromCSI(Array("27;5;116~".utf8)) == .toggleToolDetails)
+
+        // An explicit Kitty press event and additional modifiers retain Control.
+        #expect(reader.keyFromCSI(Array("109;5:1u".utf8)) == .toggleAccessMode)
+        #expect(reader.keyFromCSI(Array("116;7u".utf8)) == .toggleToolDetails)
+    }
+
+    @Test
+    func controlShortcutsRejectWrongModifiersAndKeyCodes() {
+        let reader = TerminalInteractiveLineReader()
+
+        #expect(reader.keyFromCSI(Array("109;2u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("27;3;109~".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("108;5u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("27;5;117~".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("109;5:2u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("109;5:3u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("109;5:4u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("109;5:u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("1;5;109~".utf8)) != .toggleAccessMode)
+        #expect(reader.keyFromCSI(Array("27;5:1;109~".utf8)) == .unknown)
+    }
+
+    @Test
+    func carriageReturnStillDecodesAsEnter() {
+        let reader = TerminalInteractiveLineReader()
+
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x0D) == .enter)
+        #expect(reader.keyFromCSI(Array("13;5u".utf8)) == .enter)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x14) == .toggleToolDetails)
+    }
+
+    @Test
+    func accessModeToggleEventPreservesPanelTextAndCursor() {
+        let reader = TerminalInteractiveLineReader()
+        reader.panelBuffer = Array("hello")
+        reader.panelCursorIndex = 2
+        let events = Mutex<[TerminalPromptInputEvent]>([])
+
+        reader.handlePanelKey(.toggleAccessMode) { event in
+            events.withLock { $0.append(event) }
+        }
+
+        let capturedEvents = events.withLock { $0 }
+        #expect(capturedEvents.count == 1)
+        if case .toggleAccessModeRequested = capturedEvents.first {
+            // Expected event.
+        } else {
+            Issue.record("Expected toggleAccessModeRequested")
+        }
+        #expect(String(reader.panelBuffer) == "hello")
+        #expect(reader.panelCursorIndex == 2)
+        #expect(reader.panelHelpTextLocked().contains("Ctrl+T tools · Ctrl+M mode"))
+        #expect(reader.panelCompactHelpTextLocked() == "Ctrl+T tools · Ctrl+M mode")
     }
 
     @Test

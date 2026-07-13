@@ -120,8 +120,10 @@ extension TerminalStatusBar {
             lines: inputPanelState.suggestionLines
         )
         let modeLine = Self.padded(
-            Self.fit(
-                "\(inputPanelState.modeText) · \(inputPanelState.helpText)",
+            Self.inputPanelModeLineText(
+                modeText: inputPanelState.modeText,
+                helpText: inputPanelState.helpText,
+                compactHelpText: inputPanelState.compactHelpText,
                 width: contentWidth
             ),
             width: contentWidth
@@ -194,6 +196,20 @@ extension TerminalStatusBar {
             "\u{1B}8"
         ]
         return parts.joined()
+    }
+
+    static func inputPanelModeLineText(
+        modeText: String,
+        helpText: String,
+        compactHelpText: String?,
+        width: Int
+    ) -> String {
+        let fullText = "\(modeText) · \(helpText)"
+        guard visibleCharacterCount(fullText) > width,
+              let compactHelpText else {
+            return fit(fullText, width: width)
+        }
+        return fit("\(modeText) · \(compactHelpText)", width: width)
     }
     
     func statusRenderSequenceLocked(state: inout State) -> String {
@@ -292,7 +308,7 @@ extension TerminalStatusBar {
     func statusTextLocked(state: inout State) -> String {
         let tokensUsed = state.latestContextWindow?.usedTokens
         ?? state.latestMetrics?.totalTokenCount
-        var fragments: [String] = []
+        var fragments = ["mode \(state.localExecAccessMode.label)"]
         if let latestModelID = state.latestModelID {
             let model = Self.modelStatusFragment(
                 modelID: latestModelID,

@@ -7,13 +7,15 @@ import Foundation
 
 extension TerminalChat {
     public func writeToolCallStarted(_ toolCall: DirectAgentToolCall) {
-        prepareForToolOutput()
-        guard toolOutputDetailLevel != .compact else {
-            writeCompactToolCallStarted(toolCall)
-            return
-        }
+        toolOutputLock.withLock { _ in
+            prepareForToolOutput()
+            guard toolOutputDetailLevel != .compact else {
+                writeCompactToolCallStarted(toolCall)
+                return
+            }
 
-        writeDetailedToolCallStarted(toolCall)
+            writeDetailedToolCallStarted(toolCall)
+        }
     }
 
     func prepareForToolOutput() {
@@ -31,13 +33,15 @@ extension TerminalChat {
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) {
-        guard toolOutputDetailLevel != .compact,
-              activeCompactToolCallID != toolCall.id else {
-            writeCompactToolCallCompleted(toolCall, result: result)
-            return
-        }
+        toolOutputLock.withLock { _ in
+            guard toolOutputDetailLevel != .compact,
+                  activeCompactToolCallID != toolCall.id else {
+                writeCompactToolCallCompleted(toolCall, result: result)
+                return
+            }
 
-        writeDetailedToolCallCompleted(toolCall, result: result)
+            writeDetailedToolCallCompleted(toolCall, result: result)
+        }
     }
 
     func writeDetailedToolCallStarted(_ toolCall: DirectAgentToolCall) {
@@ -72,20 +76,43 @@ extension TerminalChat {
     }
 
     public func toggleToolDetailsOutput() {
-        if activeCompactToolCallID != nil {
-            writeChatError("\n")
-            activeCompactToolCallID = nil
-            activeCompactToolRenderedRowCount = 0
+        toolOutputLock.withLock { _ in
+            finishActiveToolOutputBeforeInterleavedMessageLocked()
+            toolOutputDetailLevel = toolOutputDetailLevel.next
+            writeSystemMessage(
+                "Tool details: \(toolOutputDetailLevel.label)\n"
+            )
         }
-        if activeDetailedToolCallID != nil {
-            writeChatError("\n")
-            activeDetailedToolCallID = nil
-            activeDetailedToolRenderedRowCount = 0
+    }
+
+    func writeAccessModeChangeMessage(_ accessMode: AgentLocalExecAccessMode) {
+        toolOutputLock.withLock { _ in
+            finishActiveToolOutputBeforeInterleavedMessageLocked()
+            switch accessMode {
+            case .standard:
+                writeSystemMessage(
+                    "Mode: default — local.exec approvals restored.\n"
+                )
+            case .fullAccess:
+                writeSystemMessage(
+                    "Mode: full access — local.exec commands run without approval.\n"
+                )
+            }
         }
-        toolOutputDetailLevel = toolOutputDetailLevel.next
-        writeSystemMessage(
-            "Tool details: \(toolOutputDetailLevel.label)\n"
-        )
+    }
+
+    private func finishActiveToolOutputBeforeInterleavedMessageLocked() {
+        guard activeCompactToolCallID != nil || activeDetailedToolCallID != nil else {
+            return
+        }
+        activeCompactToolCallID = nil
+        activeCompactToolRenderedRowCount = 0
+        activeDetailedToolCallID = nil
+        activeDetailedToolRenderedRowCount = 0
+        // The active block can no longer be safely rewritten once another
+        // message is inserted below it. Terminate it and let completion append
+        // a fresh final block instead of moving the cursor over that message.
+        writeChatError("\n")
     }
 
     func writeCompactToolCallStarted(_ toolCall: DirectAgentToolCall) {

@@ -47,6 +47,7 @@ public final class TerminalStatusBar: Sendable {
         let cursorIndex: Int
         let modeText: String
         let helpText: String
+        let compactHelpText: String?
         let suggestionLines: [String]
     }
     
@@ -61,6 +62,7 @@ public final class TerminalStatusBar: Sendable {
         var resizeGeneration = 0
         var isResizePending = false
         var inputPanelState: InputPanelState?
+        var localExecAccessMode: AgentLocalExecAccessMode = .standard
         var latestModelID: String?
         var latestThinkingSelection: AgentThinkingSelection?
         var latestModelRuntime: String?
@@ -122,6 +124,7 @@ public final class TerminalStatusBar: Sendable {
         cursorIndex: Int,
         modeText: String,
         helpText: String,
+        compactHelpText: String? = nil,
         suggestionLines: [String] = []
     ) {
         state.withLock { state in
@@ -133,6 +136,7 @@ public final class TerminalStatusBar: Sendable {
                 cursorIndex: boundedCursorIndex,
                 modeText: modeText,
                 helpText: helpText,
+                compactHelpText: compactHelpText,
                 suggestionLines: Array(suggestionLines.prefix(6))
             )
             guard state.isStarted else {
@@ -208,6 +212,16 @@ public final class TerminalStatusBar: Sendable {
             } else {
                 stopSpinnerTimerLocked(state: &state)
             }
+            guard state.isStarted else {
+                return
+            }
+            renderLocked(state: &state)
+        }
+    }
+
+    public func update(localExecAccessMode: AgentLocalExecAccessMode) {
+        state.withLock { state in
+            state.localExecAccessMode = localExecAccessMode
             guard state.isStarted else {
                 return
             }

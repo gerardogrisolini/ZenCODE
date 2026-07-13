@@ -12,6 +12,11 @@ import Dispatch
 import Foundation
 
 extension TerminalChat {
+    func synchronizeLocalExecAccessModeStatusBar() async {
+        let accessMode = await sessionRunner.localExecAccessMode()
+        statusBar.update(localExecAccessMode: accessMode)
+    }
+
     func runBlockingInputLoop(initialInputLine: String?) async throws {
         var pendingInputLine = initialInputLine
         while true {
@@ -59,6 +64,17 @@ extension TerminalChat {
         var voiceTranscriptionTask: Task<Void, Never>?
         let telegramForwardingTask = startTelegramForwardingTask(eventQueue: eventQueue)
         var isGenerating = false
+        var isQueuedPromptStartScheduled = false
+
+        func scheduleQueuedPromptIfNeeded() {
+            guard !isGenerating,
+                  !queuedPrompts.isEmpty,
+                  !isQueuedPromptStartScheduled else {
+                return
+            }
+            isQueuedPromptStartScheduled = true
+            eventQueue.send(.startNextQueuedPrompt)
+        }
 
         @discardableResult
         func startPanelInput() -> Bool {
@@ -66,9 +82,7 @@ extension TerminalChat {
                 statusBar: statusBar,
                 commandSuggestions: commandSuggestionsForCurrentAgent()
             ) { event in
-                Task {
-                    await eventQueue.send(.input(event))
-                }
+                eventQueue.send(.input(event))
             }
             guard didStart else {
                 return false
@@ -111,7 +125,7 @@ extension TerminalChat {
                         failure
                     )
                 }
-                await eventQueue.send(.generationCompleted(result))
+                eventQueue.send(.generationCompleted(result))
             }
         }
 
@@ -124,6 +138,8 @@ extension TerminalChat {
             }
             startGeneration(attempt: attempt)
         }
+
+        await synchronizeLocalExecAccessModeStatusBar()
 
         guard startPanelInput() else {
             statusBar.stop()
@@ -188,26 +204,7 @@ extension TerminalChat {
             }
         }
 
-        eventLoop: while true {
-            if !isGenerating, !queuedPrompts.isEmpty {
-                let nextPrompt = queuedPrompts.removeFirst()
-                interactiveReader.setQueuedPromptCount(queuedPrompts.count)
-                if nextPrompt.mode == .directPrompt {
-                    startDirectPrompt(nextPrompt.text, origin: nextPrompt.origin)
-                    continue
-                }
-                guard await handleSubmittedPanelLine(
-                    nextPrompt.text,
-                    origin: nextPrompt.origin
-                ) else {
-                    break eventLoop
-                }
-                continue
-            }
-
-            guard let event = await eventQueue.next() else {
-                break eventLoop
-            }
+        eventLoop: for await event in eventQueue.events {
             switch event {
             case let .input(inputEvent):
                 switch inputEvent {
@@ -216,6 +213,13 @@ extension TerminalChat {
                         voiceTranscriptionTask = stopVoiceRecordingAndTranscribe(
                             eventQueue: eventQueue
                         )
+                        continue
+                    }
+
+                    if !isGenerating, !queuedPrompts.isEmpty {
+                        queuedPrompts.append(TerminalQueuedPrompt(text: line, origin: .local))
+                        interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                        scheduleQueuedPromptIfNeeded()
                         continue
                     }
 
@@ -251,6 +255,11 @@ extension TerminalChat {
                 case .toggleToolDetailsRequested:
                     self.toggleToolDetailsOutput()
                     interactiveReader.refreshPanel()
+                case .toggleAccessModeRequested:
+                    let accessMode = await sessionRunner.toggleLocalExecAccessMode()
+                    statusBar.update(localExecAccessMode: accessMode)
+                    writeAccessModeChangeMessage(accessMode)
+                    interactiveReader.refreshPanel()
                 case .endOfInput:
                     generationTask?.cancel()
                     break eventLoop
@@ -262,6 +271,25 @@ extension TerminalChat {
                 interactiveReader.setPanelProcessing(false)
                 await finishPromptResult(result)
                 refreshStatusBarGitStatusSummaryAfterPromptIfNeeded()
+                scheduleQueuedPromptIfNeeded()
+            case .startNextQueuedPrompt:
+                isQueuedPromptStartScheduled = false
+                guard !isGenerating, !queuedPrompts.isEmpty else {
+                    continue
+                }
+                let nextPrompt = queuedPrompts.removeFirst()
+                interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                if nextPrompt.mode == .directPrompt {
+                    startDirectPrompt(nextPrompt.text, origin: nextPrompt.origin)
+                    continue
+                }
+                guard await handleSubmittedPanelLine(
+                    nextPrompt.text,
+                    origin: nextPrompt.origin
+                ) else {
+                    break eventLoop
+                }
+                scheduleQueuedPromptIfNeeded()
             case let .telegramMessage(message):
                 await handleTelegramMessage(
                     message,
@@ -270,6 +298,7 @@ extension TerminalChat {
                     eventQueue: eventQueue
                 )
                 interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                scheduleQueuedPromptIfNeeded()
             case let .voicePromptProgress(progress):
                 if progress.origin == .local {
                     interactiveReader.setPanelOverlay(
@@ -292,7 +321,7 @@ extension TerminalChat {
                 }
                 switch result.outcome {
                 case let .success(prompt):
-                    if isGenerating {
+                    if isGenerating || !queuedPrompts.isEmpty {
                         queuedPrompts.append(
                             TerminalQueuedPrompt(
                                 text: prompt,
@@ -301,6 +330,7 @@ extension TerminalChat {
                             )
                         )
                         interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                        scheduleQueuedPromptIfNeeded()
                         await sendTelegramSystemMessageIfLinked(
                             "Transcription ready. Queued for the current ZenCODE session.",
                             origin: result.origin

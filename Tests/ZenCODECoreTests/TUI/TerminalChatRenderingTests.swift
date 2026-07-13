@@ -330,6 +330,115 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func statusBarAccessModeIsFirstAndSupportsFullAccess() {
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        var defaultState = TerminalStatusBar.State()
+        defaultState.latestModelID = "test-model"
+
+        let defaultText = statusBar.statusTextLocked(state: &defaultState)
+        #expect(defaultText == "mode default · test-model")
+
+        var fullAccessState = defaultState
+        fullAccessState.localExecAccessMode = .fullAccess
+        fullAccessState.latestModelRuntime = "local"
+        let fullAccessText = statusBar.statusTextLocked(state: &fullAccessState)
+        #expect(fullAccessText == "mode full access · test-model · local")
+        #expect(fullAccessText.hasPrefix("mode full access"))
+    }
+
+    @Test
+    func statusBarKeepsFullAccessIndicatorVisibleAtLimitedWidth() {
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        var state = TerminalStatusBar.State()
+        state.localExecAccessMode = .fullAccess
+        state.latestModelID = "a-very-long-model-name"
+
+        let statusText = statusBar.statusTextLocked(state: &state)
+        let fitted = TerminalStatusBar.fit(statusText, width: 18)
+
+        #expect(fitted.hasPrefix("mode full access"))
+        #expect(TerminalStatusBar.visibleCharacterCount(fitted) <= 18)
+    }
+
+    @Test
+    func statusBarSynchronizesFromCurrentRunnerAccessMode() async throws {
+        let runner = AgentCoreSessionRunner()
+        #expect(await runner.toggleLocalExecAccessMode() == .fullAccess)
+        let terminal = try makeTerminalForToolInterleavingTest(sessionRunner: runner)
+
+        await terminal.synchronizeLocalExecAccessModeStatusBar()
+
+        let accessMode = terminal.statusBar.state.withLock { state in
+            state.localExecAccessMode
+        }
+        #expect(accessMode == .fullAccess)
+    }
+
+    @Test
+    func statusBarResetPreservesFullAccessMode() {
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        statusBar.update(localExecAccessMode: .fullAccess)
+
+        statusBar.reset()
+
+        let accessMode = statusBar.state.withLock { state in
+            state.localExecAccessMode
+        }
+        #expect(accessMode == .fullAccess)
+    }
+
+    @Test
+    func narrowPanelHelpKeepsBothModeShortcutsVisible() {
+        let line = TerminalStatusBar.inputPanelModeLineText(
+            modeText: "Prompt",
+            helpText: "Enter queue · Option+Enter newline · Ctrl+T tools · Ctrl+M mode · Esc stop",
+            compactHelpText: "Ctrl+T tools · Ctrl+M mode",
+            width: 36
+        )
+
+        #expect(line.contains("Ctrl+T tools"))
+        #expect(line.contains("Ctrl+M mode"))
+        #expect(TerminalStatusBar.visibleCharacterCount(line) <= 36)
+    }
+
+    @Test
+    func runtimeHelpListsCtrlMImmediatelyAfterCtrlT() throws {
+        let terminal = try makeTerminalForToolInterleavingTest()
+        let help = terminal.renderHelpTextForCurrentAgent()
+
+        #expect(
+            help.contains(
+                "Ctrl+T toggles compact/full tool output.\n"
+                    + "Ctrl+M toggles default/full access for local.exec approvals in the interactive panel."
+            )
+        )
+    }
+
+    @Test
+    func interleavedModeMessageClearsCompactToolRewriteState() throws {
+        let terminal = try makeTerminalForToolInterleavingTest()
+        terminal.activeCompactToolCallID = "compact-tool"
+        terminal.activeCompactToolRenderedRowCount = 2
+
+        terminal.writeAccessModeChangeMessage(.fullAccess)
+
+        #expect(terminal.activeCompactToolCallID == nil)
+        #expect(terminal.activeCompactToolRenderedRowCount == 0)
+    }
+
+    @Test
+    func interleavedModeMessageClearsDetailedToolRewriteState() throws {
+        let terminal = try makeTerminalForToolInterleavingTest()
+        terminal.activeDetailedToolCallID = "detailed-tool"
+        terminal.activeDetailedToolRenderedRowCount = 4
+
+        terminal.writeAccessModeChangeMessage(.standard)
+
+        #expect(terminal.activeDetailedToolCallID == nil)
+        #expect(terminal.activeDetailedToolRenderedRowCount == 0)
+    }
+
+    @Test
     func statusBarGitFragmentShowsDiffSummary() {
         let summary = TerminalGitStatusSummary(
             changedFileCount: 3,
@@ -959,5 +1068,20 @@ struct TerminalChatRenderingTests {
         #expect(rendered.hasPrefix("\u{1B}[38;5;203mZenCODE: HTTP 402\u{1B}[0m\n\n"))
         #expect(rendered.contains("\u{1B}[38;5;203mRetry later.\u{1B}[0m\n"))
         #expect(rendered.hasSuffix("\n"))
+    }
+
+    private func makeTerminalForToolInterleavingTest(
+        sessionRunner: AgentCoreSessionRunner? = nil
+    ) throws -> TerminalChat {
+        let configuration = try AgentConfiguration(
+            hostedModelID: "mlx-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-tool-rendering", isDirectory: true)
+        )
+        return TerminalChat(
+            configuration: configuration,
+            stdinIsTerminal: false,
+            sessionRunner: sessionRunner
+        )
     }
 }

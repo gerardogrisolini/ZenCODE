@@ -13,6 +13,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import Synchronization
 
 /// Detail level used when rendering executed tool calls in the terminal.
 public enum ToolOutputDetailLevel: CaseIterable, Sendable {
@@ -77,6 +78,7 @@ public final class TerminalChat: @unchecked Sendable {
     public var activeCompactToolRenderedRowCount = 0
     public var activeDetailedToolCallID: String?
     public var activeDetailedToolRenderedRowCount = 0
+    let toolOutputLock = Mutex(())
     public var isStreamingThoughtOutput = false
 
     var assistantBoldBreakState = TerminalChatBoldBreakState()

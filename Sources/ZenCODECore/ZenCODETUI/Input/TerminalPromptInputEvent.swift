@@ -9,6 +9,7 @@ public enum TerminalPromptInputEvent: Sendable {
     case submitted(String)
     case cancelRequested
     case toggleToolDetailsRequested
+    case toggleAccessModeRequested
     case endOfInput
 }
 
