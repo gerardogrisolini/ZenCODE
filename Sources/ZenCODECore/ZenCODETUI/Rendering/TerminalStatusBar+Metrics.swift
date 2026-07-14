@@ -148,9 +148,11 @@ extension TerminalStatusBar {
         guard status.hasValues else {
             return nil
         }
-        let daily = status.dailyUsedPercent.map(usagePercentText) ?? "--"
-        let weekly = status.weeklyUsedPercent.map(usagePercentText) ?? "--"
-        return "D:\(daily) W:\(weekly)"
+        let fragments = [
+            status.dailyUsedPercent.map { "D:\(usagePercentText($0))" },
+            status.weeklyUsedPercent.map { "W:\(usagePercentText($0))" }
+        ].compactMap(\.self)
+        return fragments.joined(separator: " ")
     }
     
     static func usagePercentText(_ value: Double) -> String {

@@ -100,6 +100,34 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func boldSectionBreakSeparatesBackToBackBoldTitles() {
+        var state = TerminalChatBoldBreakState()
+
+        let chunks = ["**Planning isolated test execution**", "**Analyzing ANSI cursor**"]
+        var rendered = chunks
+            .map { TerminalChat.normalizedBoldSectionBreak($0, state: &state) }
+            .joined()
+        rendered += TerminalChat.flushBoldSectionBreak(state: &state)
+
+        #expect(
+            rendered ==
+            "**Planning isolated test execution**\n\n**Analyzing ANSI cursor**"
+        )
+    }
+
+    @Test
+    func boldSectionBreakDoesNotBreakBeforeClosingMarkerAfterPeriod() {
+        var state = TerminalChatBoldBreakState()
+
+        let rendered = TerminalChat.normalizedBoldSectionBreak(
+            "**Done.** next",
+            state: &state
+        ) + TerminalChat.flushBoldSectionBreak(state: &state)
+
+        #expect(rendered == "**Done.** next")
+    }
+
+    @Test
     func boldSectionBreakLeavesPlainBoldAndOrderedListsIntact() {
         var state = TerminalChatBoldBreakState()
 
@@ -327,6 +355,23 @@ struct TerminalChatRenderingTests {
                 thinkingSelection: nil
             ) == "Qwen3-Coder-30B-A3B-Instruct-4bit"
         )
+    }
+
+    @Test
+    func statusBarSubscriptionUsageOmitsUnavailableWindow() {
+        let weeklyOnly = DirectAgentSubscriptionUsageStatus(
+            provider: "ChatGPT",
+            dailyUsedPercent: nil,
+            weeklyUsedPercent: 42
+        )
+        let dailyOnly = DirectAgentSubscriptionUsageStatus(
+            provider: "ChatGPT",
+            dailyUsedPercent: 10,
+            weeklyUsedPercent: nil
+        )
+
+        #expect(TerminalStatusBar.subscriptionUsageFragment(weeklyOnly) == "W:42%")
+        #expect(TerminalStatusBar.subscriptionUsageFragment(dailyOnly) == "D:10%")
     }
 
     @Test

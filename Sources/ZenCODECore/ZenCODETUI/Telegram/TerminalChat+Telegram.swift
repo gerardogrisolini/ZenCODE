@@ -397,12 +397,7 @@ extension TerminalChat {
     }
 
     func telegramToolStartedMessage(_ toolCall: DirectAgentToolCall) -> String {
-        let kind = ToolCallPresentation.toolKind(for: toolCall.name)
-        guard let target = ToolCallPresentation.displayToolTarget(for: toolCall)?.nilIfBlank else {
-            return "🔧 \(kind)"
-        }
-        let fileName = URL(fileURLWithPath: target).lastPathComponent.nilIfBlank ?? target
-        return "🔧 \(kind) · \(Self.truncatedInline(fileName, limit: 120))"
+        TerminalTelegramToolCallFormatter.format(toolCall, workingDirectory: configuration.workingDirectory)
     }
 
     func telegramFileChangeSummaryMessage(_ summary: TurnFileChangeSummary) -> String {

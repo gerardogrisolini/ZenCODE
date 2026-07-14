@@ -16,6 +16,7 @@ import Foundation
 struct TerminalChatBoldBreakState {
     var previousCharacter: Character?
     var pendingAsterisk = false
+    var isBoldSpanOpen = false
 }
 
 extension TerminalChat {

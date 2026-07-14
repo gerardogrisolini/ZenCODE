@@ -440,10 +440,7 @@ actor TerminalChatRenderCoordinator {
         activeToolBlock = nil
 
         if shouldRewriteActiveBlock {
-            writeDirect(
-                "\u{1B}[\(max(1, rewriteRowCount))A\r\u{1B}[J",
-                to: .standardError
-            )
+            clearOwnedToolRows(rewriteRowCount)
         }
         writeToolBlock(lines, codeLanguage: TerminalChat.codeLanguageHint(for: toolCall))
         writeChatError("\n")
@@ -487,10 +484,7 @@ actor TerminalChatRenderCoordinator {
         activeToolBlock = nil
 
         if shouldRewriteActiveLine {
-            writeDirect(
-                "\u{1B}[\(max(1, rewriteRowCount))A\r\u{1B}[J",
-                to: .standardError
-            )
+            clearOwnedToolRows(rewriteRowCount)
         }
         writeCompactToolLines(lines, newline: true)
     }
@@ -519,6 +513,25 @@ actor TerminalChatRenderCoordinator {
             .joined(separator: "\n")
         writeRawChatError("\(text)\n")
         isAtStartOfChatLine = true
+    }
+
+    /// Removes only the rows occupied by the pending tool before redrawing it.
+    /// `CSI J` would erase from the transcript into the reserved input panel.
+    private func clearOwnedToolRows(_ rowCount: Int) {
+        let count = max(1, rowCount)
+        var sequence = "\u{1B}[\(count)A\r"
+
+        for row in 0..<count {
+            sequence += "\u{1B}[2K"
+            if row < count - 1 {
+                sequence += "\u{1B}[1B\r"
+            }
+        }
+        if count > 1 {
+            sequence += "\u{1B}[\(count - 1)A\r"
+        }
+
+        writeDirect(sequence, to: .standardError)
     }
 
     private func interruptActiveToolForInterleavedOutputIfNeeded() {

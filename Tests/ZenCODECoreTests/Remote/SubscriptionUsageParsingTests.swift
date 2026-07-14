@@ -41,6 +41,28 @@ struct SubscriptionUsageParsingTests {
     }
 
     @Test
+    func chatGPTClassifiesSingleWeeklyPrimaryWindowByDuration() throws {
+        let object: [String: Any] = [
+            "type": "codex.rate_limits",
+            "rate_limits": [
+                "primary": [
+                    "used_percent": 42.0,
+                    "window_minutes": 10_080,
+                    "resets_in_seconds": 86_400
+                ]
+            ]
+        ]
+
+        let usage = try #require(
+            ChatGPTSubscriptionGenerationClient.subscriptionUsage(from: object)
+        )
+        #expect(usage.dailyUsedPercent == nil)
+        #expect(usage.weeklyUsedPercent == 42.0)
+        #expect(usage.dailyResetsInSeconds == nil)
+        #expect(usage.weeklyResetsInSeconds == 86_400)
+    }
+
+    @Test
     func chatGPTFallsBackToPrimarySecondaryOrderingWithoutWindows() throws {
         let object: [String: Any] = [
             "rate_limits": [

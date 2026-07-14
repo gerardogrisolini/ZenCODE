@@ -10,7 +10,7 @@ import Testing
 @Suite("Terminal chat async render coordinator")
 struct TerminalChatRenderCoordinatorTests {
     @Test
-    func compactToolCompletionRewritesOwnedRowsInSequence() async {
+    func compactToolCompletionClearsOnlyOwnedRows() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = DirectAgentToolCall(
             id: "tool-1",
@@ -21,6 +21,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         await renderer.writeToolCallStarted(toolCall)
         let started = await renderer.snapshot()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
         #expect(started.activeCompactToolCallID == toolCall.id)
         #expect(started.activeCompactToolRenderedRowCount > 0)
 
@@ -35,14 +36,17 @@ struct TerminalChatRenderCoordinatorTests {
             .filter { $0.channel == .standardError }
             .map(\.text)
             .joined()
+        let completionEvents = Array(events.dropFirst(eventCountBeforeCompletion))
+        let rewriteSequence = completionEvents.first?.text ?? ""
 
         #expect(completed.activeCompactToolCallID == nil)
         #expect(completed.activeCompactToolRenderedRowCount == 0)
+        #expect(rewriteSequence.hasPrefix("\u{1B}[\(started.activeCompactToolRenderedRowCount)A\r"))
         #expect(
-            stderr.contains(
-                "\u{1B}[\(started.activeCompactToolRenderedRowCount)A\r\u{1B}[J"
-            )
+            rewriteSequence.components(separatedBy: "\u{1B}[2K").count - 1
+                == started.activeCompactToolRenderedRowCount
         )
+        #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
         #expect(stderr.contains("⏳"))
         #expect(stderr.contains("✅"))
         #expect(events.map(\.sequence) == Array(0..<UInt64(events.count)))
@@ -60,6 +64,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         await renderer.writeToolCallStarted(toolCall)
         let started = await renderer.snapshot()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
         await renderer.writeAssistantContent("")
         await renderer.writeThought(" \n")
         let afterEmptyDeltas = await renderer.snapshot()
@@ -74,11 +79,44 @@ struct TerminalChatRenderCoordinatorTests {
             afterEmptyDeltas.activeCompactToolRenderedRowCount
                 == started.activeCompactToolRenderedRowCount
         )
-        #expect(
-            combined.contains(
-                "\u{1B}[\(started.activeCompactToolRenderedRowCount)A\r\u{1B}[J"
-            )
+        let completionEvents = Array(
+            (await renderer.capturedWriteEvents()).dropFirst(eventCountBeforeCompletion)
         )
+        #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
+        #expect(combined.contains("✅"))
+    }
+
+    @Test
+    func detailedToolCompletionClearsOnlyOwnedRows() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let toolCall = DirectAgentToolCall(
+            id: "tool-detailed",
+            name: "local.readFile",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallStarted(toolCall)
+        let started = await renderer.snapshot()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+
+        let events = await renderer.capturedWriteEvents()
+        let completionEvents = Array(events.dropFirst(eventCountBeforeCompletion))
+        let rewriteSequence = completionEvents.first?.text ?? ""
+
+        #expect(started.activeDetailedToolCallID == toolCall.id)
+        #expect(started.activeDetailedToolRenderedRowCount > 0)
+        #expect(rewriteSequence.hasPrefix("\u{1B}[\(started.activeDetailedToolRenderedRowCount)A\r"))
+        #expect(
+            rewriteSequence.components(separatedBy: "\u{1B}[2K").count - 1
+                == started.activeDetailedToolRenderedRowCount
+        )
+        #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
     }
 
     @Test

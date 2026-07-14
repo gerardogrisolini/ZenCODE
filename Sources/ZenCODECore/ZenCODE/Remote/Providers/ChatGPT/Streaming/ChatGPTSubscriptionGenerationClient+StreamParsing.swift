@@ -231,8 +231,27 @@ extension ChatGPTSubscriptionGenerationClient {
                 dailyWindow = secondary
                 weeklyWindow = primary
             }
+        } else if let primaryWindow {
+            // Codex can now expose only a 7d primary window. Prefer the declared
+            // duration over the historical primary = 5h / secondary = weekly order.
+            if isWeeklyWindow(primaryWindow) {
+                dailyWindow = secondary
+                weeklyWindow = primary
+            } else {
+                dailyWindow = primary
+                weeklyWindow = secondary
+            }
+        } else if let secondaryWindow {
+            if isWeeklyWindow(secondaryWindow) {
+                dailyWindow = primary
+                weeklyWindow = secondary
+            } else {
+                dailyWindow = secondary
+                weeklyWindow = primary
+            }
         } else {
-            // Fallback to the conventional Codex ordering: primary = 5h, secondary = weekly.
+            // Preserve the conventional Codex ordering for older payloads that do
+            // not declare a window duration.
             dailyWindow = primary ?? secondary
             weeklyWindow = primary != nil ? secondary : nil
         }
@@ -253,6 +272,14 @@ extension ChatGPTSubscriptionGenerationClient {
             dailyResetsInSeconds: dailyWindow.flatMap { resetsInSeconds(fromWindow: $0) },
             weeklyResetsInSeconds: weeklyWindow.flatMap { resetsInSeconds(fromWindow: $0) }
         )
+    }
+
+    private static func isWeeklyWindow(_ windowMinutes: Int) -> Bool {
+        let expectedMinutes = 7 * 24 * 60
+        let tolerance = expectedMinutes / 20
+        let lowerBound = expectedMinutes - tolerance
+        let upperBound = expectedMinutes + tolerance
+        return (lowerBound...upperBound).contains(windowMinutes)
     }
 
     /// Resolves the seconds-until-reset for a Codex rate-limit window.

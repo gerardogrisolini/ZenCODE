@@ -64,11 +64,16 @@ extension TerminalChat {
             if state.pendingAsterisk {
                 state.pendingAsterisk = false
                 if character == "*" {
-                    // Confirmed `**`. Break only when glued to a sentence end.
-                    if let previous = state.previousCharacter,
-                       previous == "." || previous == "!" || previous == "?" {
+                    // Confirmed `**`. Break only before an opener glued to a
+                    // sentence end or directly to a previous closing `**`
+                    // (back-to-back bold section titles).
+                    let isOpener = !state.isBoldSpanOpen
+                    if isOpener,
+                       let previous = state.previousCharacter,
+                       previous == "." || previous == "!" || previous == "?" || previous == "*" {
                         output.append("\n\n")
                     }
+                    state.isBoldSpanOpen.toggle()
                     output.append("**")
                     state.previousCharacter = "*"
                     continue

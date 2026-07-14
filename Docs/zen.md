@@ -149,6 +149,7 @@ Inside chat mode, type a prompt and press return. Commands start with `/`:
 - `/telegram on`: turn Telegram on for the current TUI session. This also sends a confirmation message to the linked Telegram chat, so the iOS client is woken up and you do not need to message the bot first to start receiving notifications.
 - `/telegram off`: turn Telegram off for the current TUI session.
   This command is available only after Telegram was enabled and paired during `zen --setup`; otherwise it is treated as unknown.
+- When Telegram remote control is active, tool-start progress notifications report the concrete tool name and kind (e.g. `🔧 local.readFile · read`), followed by the workspace-relative file path when available, or another concise and safe contextual detail (command, pattern, query, URL, branch, revision, feature/task/agent identifier). Sensitive argument fields (file contents, full patches, prompts, old/new text, environment) are never serialized. Allowed contextual values are truncated but not redacted; they may contain operational data visible to the Telegram recipient.
 - `/voice`: start recording a voice prompt. Press `Enter` again to stop; the transcript becomes the prompt.
   This command is available only after local voice tools were enabled during `zen --setup`; otherwise it is treated as unknown.
 - `/exit`: close the session.
