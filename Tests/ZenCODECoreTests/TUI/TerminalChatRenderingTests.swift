@@ -96,7 +96,7 @@ struct TerminalChatRenderingTests {
             .joined()
         rendered += TerminalChat.flushBoldSectionBreak(state: &state)
 
-        #expect(rendered == "Fixed it incorrectly.\n\n**Identifying bugs** done")
+        #expect(rendered == "Fixed it incorrectly.\n**Identifying bugs** done")
     }
 
     @Test
@@ -111,7 +111,7 @@ struct TerminalChatRenderingTests {
 
         #expect(
             rendered ==
-            "**Planning isolated test execution**\n\n**Analyzing ANSI cursor**"
+            "**Planning isolated test execution**\n**Analyzing ANSI cursor**"
         )
     }
 
@@ -769,7 +769,7 @@ struct TerminalChatRenderingTests {
 
         #expect(
             statusBar.statusTextLocked(state: &state)
-                .contains("time 12.0s · P:15k G:20k")
+                .contains("12.0s sec · P:15k G:20k")
         )
     }
 
