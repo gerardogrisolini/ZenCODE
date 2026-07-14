@@ -1,4 +1,4 @@
-![ZenCODE](Docs/Images/logo.png)
+![ZenCODE](Docs/Images/social-preview.png)
 
 **ZenCODE** is a flexible coding agent for the terminal and ACP. Drive it with cloud providers, your existing ChatGPT and Claude subscriptions, or run fully on-device with Apple MLX and DS4.
 
