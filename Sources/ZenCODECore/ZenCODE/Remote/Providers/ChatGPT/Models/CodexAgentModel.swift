@@ -325,9 +325,3 @@ public nonisolated enum CodexAgentModel {
     }
 #endif
 }
-
-private extension String {
-    var nilIfEmpty: String? {
-        isEmpty ? nil : self
-    }
-}

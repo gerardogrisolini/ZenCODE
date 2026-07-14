@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 30/05/26.
 //
 
+import ToolCore
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -539,12 +540,5 @@ private enum WebToolsSupport {
             decoded = decoded.replacingOccurrences(of: entity, with: replacement)
         }
         return decoded
-    }
-}
-
-private extension String {
-    var nilIfBlank: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }

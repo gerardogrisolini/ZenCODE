@@ -18,20 +18,20 @@ enum JiraIssueParser {
 
         for section in sections {
             for issue in section["issues"]?.arrayValue ?? [] {
-                guard let key = issue["key"]?.stringValue?.trimmedNonEmpty else {
+                guard let key = issue["key"]?.stringValue?.nilIfBlank else {
                     continue
                 }
                 let summary = [
                     issue["summaryText"]?.stringValue,
                     issue["summary"]?.flattenedText()
-                ].compactMap { $0?.trimmedNonEmpty }.first ?? key
+                ].compactMap { $0?.nilIfBlank }.first ?? key
                 summaries.append(
                     JiraIssueSummary(
                         key: key,
                         summary: summary,
-                        status: issue["status"]?.flattenedText().trimmedNonEmpty,
-                        issueType: issue["issuetype"]?.flattenedText().trimmedNonEmpty,
-                        assignee: issue["assignee"]?.flattenedText().trimmedNonEmpty,
+                        status: issue["status"]?.flattenedText().nilIfBlank,
+                        issueType: issue["issuetype"]?.flattenedText().nilIfBlank,
+                        assignee: issue["assignee"]?.flattenedText().nilIfBlank,
                         url: browseURL(siteURL: siteURL, key: key)
                     )
                 )
@@ -42,16 +42,16 @@ enum JiraIssueParser {
     }
 
     static func issueDetail(from result: JSONValue, siteURL: URL) -> JiraIssueDetail? {
-        guard let key = result["key"]?.stringValue?.trimmedNonEmpty,
+        guard let key = result["key"]?.stringValue?.nilIfBlank,
               let fields = result["fields"]?.objectValue else {
             return nil
         }
 
         let names = result["names"]?.objectValue ?? [:]
-        let summary = fields["summary"]?.stringValue?.trimmedNonEmpty ?? key
+        let summary = fields["summary"]?.stringValue?.nilIfBlank ?? key
         let fieldTexts = fields.compactMap { fieldKey, fieldValue -> (name: String, value: String)? in
-            let name = names[fieldKey]?.stringValue?.trimmedNonEmpty ?? fieldKey
-            guard let value = fieldValue.flattenedText().trimmedNonEmpty else {
+            let name = names[fieldKey]?.stringValue?.nilIfBlank ?? fieldKey
+            guard let value = fieldValue.flattenedText().nilIfBlank else {
                 return nil
             }
             return (name, value)
@@ -86,12 +86,12 @@ enum JiraIssueParser {
         return JiraIssueDetail(
             key: key,
             summary: summary,
-            status: fields["status"]?["name"]?.stringValue?.trimmedNonEmpty,
-            issueType: fields["issuetype"]?["name"]?.stringValue?.trimmedNonEmpty,
-            assignee: fields["assignee"]?["displayName"]?.stringValue?.trimmedNonEmpty,
-            priority: fields["priority"]?["name"]?.stringValue?.trimmedNonEmpty,
+            status: fields["status"]?["name"]?.stringValue?.nilIfBlank,
+            issueType: fields["issuetype"]?["name"]?.stringValue?.nilIfBlank,
+            assignee: fields["assignee"]?["displayName"]?.stringValue?.nilIfBlank,
+            priority: fields["priority"]?["name"]?.stringValue?.nilIfBlank,
             url: browseURL(siteURL: siteURL, key: key),
-            description: fields["description"]?.flattenedText().trimmedNonEmpty,
+            description: fields["description"]?.flattenedText().nilIfBlank,
             acceptanceCriteria: acceptanceCriteria,
             designURLs: designURLs,
             referenceURLs: referenceURLs,

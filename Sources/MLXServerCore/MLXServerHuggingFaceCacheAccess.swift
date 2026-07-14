@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
+import ToolCore
 import Foundation
 import HuggingFace
 
@@ -17,7 +18,7 @@ public actor MLXServerHuggingFaceCacheAccessStore {
 
     public nonisolated static var cacheDirectory: URL {
         let settings = MLXServerSettingsStore.loadOrDefault()
-        if let configuredPath = settings.huggingFaceCache.directoryPath?.trimmedNonEmpty {
+        if let configuredPath = settings.huggingFaceCache.directoryPath?.nilIfBlank {
             return normalizedHubCacheDirectory(
                 for: URL(fileURLWithPath: configuredPath, isDirectory: true)
             )
@@ -215,12 +216,5 @@ public enum MLXServerHuggingFaceCacheAccessError: LocalizedError, Equatable, Sen
         case let .invalidAuthorizedDirectory(cachePath):
             return "Selected folder does not grant access to \(cachePath)."
         }
-    }
-}
-
-private extension String {
-    var trimmedNonEmpty: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }

@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 31/05/26.
 //
 
+import ToolCore
 import Foundation
 import FeatureKit
 
@@ -760,13 +761,6 @@ private enum SwiftToolsSupport {
     private static func tail(of text: String, lines count: Int) -> String {
         let lines = text.components(separatedBy: "\n")
         return lines.suffix(count).joined(separator: "\n")
-    }
-}
-
-private extension String {
-    var nilIfBlank: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

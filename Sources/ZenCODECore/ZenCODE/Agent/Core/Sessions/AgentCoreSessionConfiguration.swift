@@ -205,9 +205,3 @@ extension AgentCoreSessionConfiguration: Equatable {
         lhs.matchesSessionIdentity(rhs)
     }
 }
-
-private extension String {
-    var nilIfEmpty: String? {
-        isEmpty ? nil : self
-    }
-}

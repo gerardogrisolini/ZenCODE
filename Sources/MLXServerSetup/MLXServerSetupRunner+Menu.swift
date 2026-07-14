@@ -68,7 +68,7 @@ extension MLXServerSetupRunner {
             return "disabled"
         }
         let limit = settings.limitGB.map { String(format: "%.0f GB", $0) } ?? "no limit"
-        if let directoryPath = settings.directoryPath?.nilIfEmpty {
+        if let directoryPath = settings.directoryPath?.nilIfBlank {
             return "enabled, \(limit), \(directoryPath)"
         }
         return "enabled, \(limit), default directory"

@@ -173,13 +173,6 @@ struct MLXServerCachedModelCandidate: Sendable {
     }
 }
 
-extension String {
-    var trimmedNonEmpty: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-}
-
 extension FileHandle {
     func writeString(_ string: String) {
         try? write(contentsOf: Data(string.utf8))

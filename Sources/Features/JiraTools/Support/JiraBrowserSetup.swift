@@ -76,13 +76,13 @@ enum JiraBrowserSetup {
     private static func validateAndStore(
         _ submission: JiraSetupSubmission
     ) async -> Result<JiraAuthenticatedConfiguration, JiraSetupValidationError> {
-        guard let site = submission.site.trimmedNonEmpty else {
+        guard let site = submission.site.nilIfBlank else {
             return .failure(JiraSetupValidationError(message: "Enter the Jira site URL."))
         }
-        guard let email = submission.email.trimmedNonEmpty else {
+        guard let email = submission.email.nilIfBlank else {
             return .failure(JiraSetupValidationError(message: "Enter your Atlassian email."))
         }
-        guard let token = submission.token.trimmedNonEmpty else {
+        guard let token = submission.token.nilIfBlank else {
             return .failure(JiraSetupValidationError(message: "Enter your Atlassian API token."))
         }
 

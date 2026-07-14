@@ -70,7 +70,7 @@ extension MLXServerModelSetupRunner {
                 defaultValue: nil,
                 allowEmpty: true,
                 help: leadingModelSearchHelp
-            ).trimmedNonEmpty
+            ).nilIfBlank
 
             let models: [Model]
             do {

@@ -154,11 +154,6 @@ enum ZenCODEAgentProfileSetupError: LocalizedError {
 }
 
 private extension String {
-    var nilIfBlank: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
     var agentSetupKey: String {
         components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }

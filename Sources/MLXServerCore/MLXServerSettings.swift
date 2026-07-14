@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 25/05/26.
 //
 
+import ToolCore
 import Foundation
 
 public struct MLXServerSettings: Codable, Equatable, Sendable {
@@ -98,8 +99,8 @@ public struct MLXServerSettings: Codable, Equatable, Sendable {
         guard (1...Self.maximumWebServerThreadCount).contains(webServerThreadCount) else {
             throw MLXServerSettingsError.invalidWebServerThreadCount(webServerThreadCount)
         }
-        let normalizedTLSCertificatePath = tlsCertificatePath?.trimmedNonEmpty
-        let normalizedTLSPrivateKeyPath = tlsPrivateKeyPath?.trimmedNonEmpty
+        let normalizedTLSCertificatePath = tlsCertificatePath?.nilIfBlank
+        let normalizedTLSPrivateKeyPath = tlsPrivateKeyPath?.nilIfBlank
         if (normalizedTLSCertificatePath == nil) != (normalizedTLSPrivateKeyPath == nil) {
             throw MLXServerSettingsError.incompleteTLSConfiguration
         }
@@ -109,10 +110,10 @@ public struct MLXServerSettings: Codable, Equatable, Sendable {
             port: configuration.port,
             webServerThreadCount: webServerThreadCount,
             http2PriorKnowledge: http2PriorKnowledge,
-            apiKey: apiKey?.trimmedNonEmpty,
+            apiKey: apiKey?.nilIfBlank,
             tlsCertificatePath: normalizedTLSCertificatePath,
             tlsPrivateKeyPath: normalizedTLSPrivateKeyPath,
-            metricsLogPath: metricsLogPath?.trimmedNonEmpty,
+            metricsLogPath: metricsLogPath?.nilIfBlank,
             kvCache: kvCache.validated(),
             diskKVCache: try diskKVCache.validated(),
             huggingFaceCache: huggingFaceCache.validated()
@@ -216,8 +217,8 @@ public struct MLXServerHuggingFaceCacheSettings: Codable, Equatable, Sendable {
 
     public func validated() -> Self {
         Self(
-            directoryPath: directoryPath?.trimmedNonEmpty,
-            bookmark: bookmark?.trimmedNonEmpty
+            directoryPath: directoryPath?.nilIfBlank,
+            bookmark: bookmark?.nilIfBlank
         )
     }
 
@@ -253,7 +254,7 @@ public struct MLXServerDiskKVCacheSettings: Codable, Equatable, Sendable {
     }
 
     public func validated() throws -> Self {
-        let normalizedDirectoryPath = directoryPath?.trimmedNonEmpty
+        let normalizedDirectoryPath = directoryPath?.nilIfBlank
         if let limitGB,
            !limitGB.isFinite || !(0...Self.maximumLimitGB).contains(limitGB) {
             throw MLXServerSettingsError.invalidDiskKVCacheLimit
@@ -385,12 +386,5 @@ public enum MLXServerSettingsError: LocalizedError, Equatable, Sendable {
         case .invalidWebServerThreadCount(let value):
             return "Web server thread count \(value) is outside the supported range."
         }
-    }
-}
-
-private extension String {
-    var trimmedNonEmpty: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }

@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 30/05/26.
 //
 
+import ToolCore
 import Foundation
 #if canImport(Darwin)
 import Darwin
@@ -279,11 +280,6 @@ enum LocalToolsSupport {
 }
 
 extension String {
-    var nilIfBlank: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
     func replacingFirstOccurrence(of target: String, with replacement: String) -> String {
         guard let range = range(of: target) else {
             return self

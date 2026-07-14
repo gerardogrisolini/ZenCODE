@@ -370,6 +370,7 @@ if localMLXEnabled {
         .target(
             name: "MLXServerCore",
             dependencies: [
+                "ToolCore",
                 "ZenPackageMetadata",
                 .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "MLX", package: "mlx-swift"),

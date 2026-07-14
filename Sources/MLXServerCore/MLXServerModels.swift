@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 25/05/26.
 //
 
+import ToolCore
 import Foundation
 import MLXLLM
 import MLXLMCommon
@@ -56,7 +57,7 @@ public struct MLXServerModelsManifest: Codable, Equatable, Sendable {
             return normalized
         }
 
-        let normalizedDefaultModelID = defaultModelID?.trimmedNonEmpty
+        let normalizedDefaultModelID = defaultModelID?.nilIfBlank
         if let normalizedDefaultModelID,
            !normalizedModels.contains(where: { $0.id == normalizedDefaultModelID }) {
             throw MLXServerModelsManifestError.defaultModelNotFound(normalizedDefaultModelID)
@@ -135,14 +136,14 @@ public struct MLXServerModelRecord: Codable, Equatable, Sendable {
     }
 
     public func validated() throws -> Self {
-        guard let normalizedID = id.trimmedNonEmpty else {
+        guard let normalizedID = id.nilIfBlank else {
             throw MLXServerModelsManifestError.emptyModelID
         }
-        guard let normalizedRepositoryID = repositoryID.trimmedNonEmpty else {
+        guard let normalizedRepositoryID = repositoryID.nilIfBlank else {
             throw MLXServerModelsManifestError.emptyRepositoryID
         }
-        let normalizedDisplayName = displayName.trimmedNonEmpty ?? normalizedID
-        let normalizedRevision = revision.trimmedNonEmpty ?? "main"
+        let normalizedDisplayName = displayName.nilIfBlank ?? normalizedID
+        let normalizedRevision = revision.nilIfBlank ?? "main"
         return Self(
             id: normalizedID,
             displayName: normalizedDisplayName,
@@ -530,18 +531,10 @@ public struct MLXServerModelCatalog: Sendable {
     }
 
     public func resolve(id: String?) throws -> MLXServerModelDescriptor {
-        let requestedID = id?.trimmedNonEmpty ?? defaultModelID
+        let requestedID = id?.nilIfBlank ?? defaultModelID
         guard let model = models.first(where: { $0.id == requestedID || $0.configuration.name == requestedID }) else {
             throw MLXServerModelsManifestError.modelNotConfigured(requestedID)
         }
         return model
-    }
-}
-
-
-private extension String {
-    var trimmedNonEmpty: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }

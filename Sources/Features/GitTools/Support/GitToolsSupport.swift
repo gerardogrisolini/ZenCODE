@@ -3,6 +3,7 @@
 //  ZenCODE
 //
 
+import ToolCore
 import Foundation
 import FeatureKit
 
@@ -81,16 +82,5 @@ enum GitToolsFeatureError: LocalizedError {
         case let .permissionDenied(message):
             return message
         }
-    }
-}
-
-func firstNonBlank(_ values: String?...) -> String? {
-    values.compactMap { $0?.nilIfBlank }.first
-}
-
-extension String {
-    var nilIfBlank: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }

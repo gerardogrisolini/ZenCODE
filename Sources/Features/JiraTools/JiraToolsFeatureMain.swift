@@ -28,7 +28,7 @@ struct JiraSearchTool: FeatureTool {
     static let inputSchema = #"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#
 
     func run(_ input: Input, context _: FeatureContext) async throws -> String {
-        guard let query = input.query?.trimmedNonEmpty else {
+        guard let query = input.query?.nilIfBlank else {
             throw JiraToolsError.missingArgument("query")
         }
 
@@ -66,7 +66,7 @@ struct JiraReadTool: FeatureTool {
             input.key,
             input.url,
             input.query
-        ].compactMap({ $0?.trimmedNonEmpty }).first else {
+        ].compactMap({ $0?.nilIfBlank }).first else {
             throw JiraToolsError.missingArgument("issueKey")
         }
 

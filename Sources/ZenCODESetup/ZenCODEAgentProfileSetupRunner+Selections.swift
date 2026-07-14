@@ -33,28 +33,9 @@ extension ZenCODEAgentProfileSetupRunner {
     static func toolSelectionItems(
         existingTools: [String]
     ) -> [TerminalToolSelectionItem] {
-        let baseItems = TerminalToolSelectionCatalog.items(
+        return TerminalToolSelectionCatalog.items(
             featureStatuses: SwiftFeatureRuntime.defaultFeatureStatuses()
         )
-        var items = baseItems
-        let missingTools = existingTools.compactMap(\.nilIfBlank).filter { tool in
-            TerminalToolSelectionCatalog.selectionKeys(
-                for: tool,
-                items: baseItems
-            ).isEmpty
-        }
-        for tool in missingTools {
-            items.append(
-                TerminalToolSelectionItem(
-                    key: tool,
-                    title: tool,
-                    detail: "saved tool not currently listed",
-                    groupTitle: "Saved",
-                    allowedToolNames: [tool]
-                )
-            )
-        }
-        return items
     }
 
     static func promptSkillSelection(

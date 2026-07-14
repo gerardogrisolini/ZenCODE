@@ -140,7 +140,7 @@ enum JiraCredentialStore {
         }
         guard status == errSecSuccess,
               let data = item as? Data,
-              let token = String(data: data, encoding: .utf8)?.trimmedNonEmpty else {
+              let token = String(data: data, encoding: .utf8)?.nilIfBlank else {
             throw JiraToolsError.keychain(status)
         }
         return token
@@ -287,7 +287,7 @@ extension Array where Element == String {
         var seen = Set<String>()
         var result: [String] = []
         for value in self {
-            guard let normalized = value.trimmedNonEmpty else {
+            guard let normalized = value.nilIfBlank else {
                 continue
             }
             let key = normalized.lowercased()
@@ -296,13 +296,6 @@ extension Array where Element == String {
             }
         }
         return result
-    }
-}
-
-extension String {
-    var trimmedNonEmpty: String? {
-        let value = trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
     }
 }
 

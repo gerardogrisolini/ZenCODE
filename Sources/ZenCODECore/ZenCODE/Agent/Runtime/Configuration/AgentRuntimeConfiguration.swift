@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
+@_exported import ToolCore
 import Foundation
 
 public enum AgentLocalExecAccessMode: CaseIterable, Equatable, Sendable {
@@ -536,12 +537,5 @@ extension AgentRuntimeBackend {
 
     public func snapshotSession(id _: String) -> AgentRuntimeSessionSnapshot? {
         nil
-    }
-}
-
-extension String {
-    public var nilIfBlank: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }
