@@ -92,6 +92,71 @@ struct DS4TranscriptSplitterTests {
         #expect(result.thought == "reasoning")
     }
 
+    // MARK: - Bug 1: leading newlines after thinking boundary
+
+    @Test
+    func stripsLeadingNewlinesAfterThinkClose() {
+        var splitter = DS4TranscriptSplitter(startsInThinking: true)
+        let result = render(
+            splitter.consume("reasoning</think>\n\n\nvisible") + splitter.finish()
+        )
+        #expect(result.thought == "reasoning")
+        #expect(result.content == "visible")
+    }
+
+    @Test
+    func stripsLeadingNewlinesAcrossChunks() {
+        var splitter = DS4TranscriptSplitter(startsInThinking: true)
+        var parts = splitter.consume("reasoning</think>")
+        parts += splitter.consume("\n\n")
+        parts += splitter.consume("\nvisible")
+        parts += splitter.finish()
+        let result = render(parts)
+        #expect(result.thought == "reasoning")
+        #expect(result.content == "visible")
+    }
+
+    @Test
+    func preservesNewlinesWithinContent() {
+        var splitter = DS4TranscriptSplitter(startsInThinking: true)
+        let result = render(
+            splitter.consume("reasoning</think>line1\n\nline2") + splitter.finish()
+        )
+        #expect(result.content == "line1\n\nline2")
+    }
+
+    // MARK: - Bug 2: stray close tags in visible content
+
+    @Test
+    func stripsStrayCloseTagInContent() {
+        var splitter = DS4TranscriptSplitter(startsInThinking: false)
+        let result = render(
+            splitter.consume("hello</think>world") + splitter.finish()
+        )
+        #expect(result.content == "helloworld")
+        #expect(result.thought.isEmpty)
+    }
+
+    @Test
+    func stripsStrayCloseTagSplitAcrossChunks() {
+        var splitter = DS4TranscriptSplitter(startsInThinking: false)
+        var parts = splitter.consume("hello</thin")
+        parts += splitter.consume("k>world")
+        parts += splitter.finish()
+        let result = render(parts)
+        #expect(result.content == "helloworld")
+    }
+
+    @Test
+    func preservesWellFormedThinkSpanWithTrailingStrayClose() {
+        var splitter = DS4TranscriptSplitter(startsInThinking: false)
+        let result = render(
+            splitter.consume("a<think>secret</think>b</think>c") + splitter.finish()
+        )
+        #expect(result.content == "abc")
+        #expect(result.thought == "secret")
+    }
+
     @Test
     func streamingFilterSplitsThoughtAndContent() {
         var filter = DS4StreamingOutputFilter(startsInThinking: true)

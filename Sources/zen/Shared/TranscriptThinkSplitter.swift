@@ -26,6 +26,12 @@ struct TranscriptThinkSplitter {
     private var isThinking: Bool
     private var pending = ""
 
+    /// When set, leading newlines are stripped from the next visible-content
+    /// chunk emitted after a thinking→content boundary. The model typically
+    /// emits blank lines immediately after `</think>`; without this the TUI
+    /// shows 3–4 blank lines instead of one.
+    private var suppressLeadingNewlinesInNextContent = false
+
     // Accumulators built during streaming — avoids re-parsing rawText at end of turn.
     private(set) var visibleText = ""
     private(set) var historyVisibleText = ""
@@ -66,6 +72,7 @@ struct TranscriptThinkSplitter {
                     pending.removeSubrange(pending.startIndex..<closeRange.upperBound)
                     isThinking = false
                     historyVisibleStarted = true
+                    suppressLeadingNewlinesInNextContent = true
                     continue
                 }
 
@@ -79,23 +86,41 @@ struct TranscriptThinkSplitter {
                 appendReasoning(safePrefix)
                 pending.removeFirst(safePrefix.count)
             } else {
-                if let openRange = pending.earliestRange(ofAny: Self.openTags) {
-                    let content = String(pending[..<openRange.lowerBound])
-                    if !content.isEmpty {
-                        parts.append(.content(content))
-                        appendContent(content)
-                    }
+                // Detect and remove stray close tags (e.g. `</think>`) that
+                // leak into visible content — models occasionally emit them
+                // outside a thinking span, and they should never appear on
+                // screen. Only strip a close tag that appears before any open
+                // tag so a well-formed `<think>…</think>` span is unaffected.
+                let openRange = pending.earliestRange(ofAny: Self.openTags)
+                let strayCloseRange = pending.earliestRange(ofAny: Self.closeTags)
+                if let strayCloseRange,
+                   openRange == nil || strayCloseRange.lowerBound < openRange!.lowerBound {
+                    emitContent(
+                        String(pending[..<strayCloseRange.lowerBound]),
+                        into: &parts
+                    )
+                    pending.removeSubrange(pending.startIndex..<strayCloseRange.upperBound)
+                    suppressLeadingNewlinesInNextContent = true
+                    continue
+                }
+
+                if let openRange {
+                    emitContent(
+                        String(pending[..<openRange.lowerBound]),
+                        into: &parts
+                    )
                     pending.removeSubrange(pending.startIndex..<openRange.upperBound)
                     isThinking = true
                     continue
                 }
 
-                let safePrefix = pending.removingSuffixThatCanStartAny(Self.openTags)
+                let safePrefix = pending.removingSuffixThatCanStartAny(
+                    Self.openTags + Self.closeTags
+                )
                 guard !safePrefix.isEmpty else {
                     break
                 }
-                parts.append(.content(safePrefix))
-                appendContent(safePrefix)
+                emitContent(safePrefix, into: &parts)
                 pending.removeFirst(safePrefix.count)
             }
         }
@@ -109,17 +134,37 @@ struct TranscriptThinkSplitter {
         }
         let value = pending
         pending = ""
-        let part: Part = isThinking ? .thought(value) : .content(value)
-        switch part {
-        case .content(let text):
-            appendContent(text)
-        case .thought(let text):
-            appendReasoning(text)
+        if isThinking {
+            appendReasoning(value)
+            return [.thought(value)]
         }
-        return [part]
+        var parts: [Part] = []
+        emitContent(value, into: &parts)
+        return parts
     }
 
     // MARK: - Accumulation
+
+    /// Emits a visible-content chunk, stripping leading newlines when the
+    /// splitter just crossed a thinking→content boundary. The suppression
+    /// flag persists across chunks that contain only newlines so that blank
+    /// lines split across stream boundaries are fully consumed.
+    private mutating func emitContent(_ text: String, into parts: inout [Part]) {
+        let content: String
+        if suppressLeadingNewlinesInNextContent {
+            let stripped = text.drop(while: \.isNewline)
+            content = String(stripped)
+            // Keep suppressing until non-newline content is actually emitted.
+            suppressLeadingNewlinesInNextContent = content.isEmpty && !text.isEmpty
+        } else {
+            content = text
+        }
+        guard !content.isEmpty else {
+            return
+        }
+        parts.append(.content(content))
+        appendContent(content)
+    }
 
     private mutating func appendContent(_ text: String) {
         visibleText.append(text)
