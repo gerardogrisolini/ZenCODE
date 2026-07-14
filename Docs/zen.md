@@ -1,8 +1,8 @@
 # ZenCODE Guide
 
-`ZenCODE` is the autonomous coding agent runtime included in this repository. It can run as a standalone terminal agent, as an ACP stdio agent for compatible clients, or through `zen --mlx` to use the local MLX runtime directly without HTTP.
+`ZenCODE` is the autonomous coding agent runtime included in this repository. It can run as a standalone terminal agent, as an ACP stdio agent for compatible clients, with cloud providers or your existing ChatGPT/Claude subscription, or fully on-device through `zen --mlx` to use the local MLX runtime directly without HTTP.
 
-Use this guide to set up providers, agent profiles, tools, skills, saved sessions, memory, and day-to-day terminal commands.
+Use this guide to set up providers, subscriptions, agent profiles, tools, skills, saved sessions, memory, and day-to-day terminal commands.
 
 ## Modes
 
@@ -26,7 +26,7 @@ Use this guide to set up providers, agent profiles, tools, skills, saved session
    zen --mlx
    ```
 
-Standalone `zen` uses providers/models from `~/.zencode/settings.json`. Direct `zen --mlx` uses the local `~/.zencode/mlx/models.json` catalog and the local MLX runtime directly.
+Standalone `zen` uses providers/models from `~/.zencode/settings.json`. During setup you can configure cloud API providers (OpenAI-compatible, OpenRouter, local servers), sign in with your **ChatGPT Subscription** or **Claude Subscription** through the browser, or use the local MLX/DS4 runtimes. Direct `zen --mlx` uses the local `~/.zencode/mlx/models.json` catalog and the local MLX runtime directly.
 
 ## First Setup
 

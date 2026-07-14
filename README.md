@@ -1,16 +1,26 @@
 ![ZenCODE](Docs/Images/logo.png)
 
-**ZenCODE** is a local-first coding agent powered by Apple MLX and DS4. Standalone terminal + ACP, no cloud required.
+**ZenCODE** is a flexible coding agent for the terminal and ACP. Drive it with cloud providers, your existing ChatGPT and Claude subscriptions, or run fully on-device with Apple MLX and DS4.
 
-Keywords: ZenCODE, MLX coding agent, local LLM coding assistant, Apple Silicon AI agent, Apple MLX, ACP agent, on-device LLM, terminal coding agent for macOS.
+Keywords: ZenCODE, coding agent, AI coding assistant, ChatGPT subscription coding agent, Claude subscription coding agent, cloud LLM agent, OpenAI-compatible coding agent, OpenRouter coding agent, local LLM coding assistant, Apple MLX, ACP agent, on-device LLM, terminal coding agent for macOS and Linux.
 
-The default macOS path can run fully on-device: no cloud, no API keys, and no data leaving your machine when you use the local MLX runtime. Remote providers are also available through setup when you want them.
+ZenCODE is provider-agnostic: bring your own API key for any OpenAI-compatible endpoint (OpenRouter, local servers, and more), sign in once with your ChatGPT or Claude subscription through the browser, or run completely on-device with the local MLX or DS4 runtimes — no cloud, no API keys, and no data leaving your machine.
 
-## Runtimes
+## Providers and Runtimes
+
+ZenCODE supports several ways to run the model, all selected through `zen --setup`:
+
+- **Cloud API providers** — bring an API key for any OpenAI-compatible endpoint, including OpenRouter, local servers, and any `/v1`-compatible provider.
+- **ChatGPT Subscription** — sign in with your existing ChatGPT subscription through the browser. No API key required.
+- **Claude Subscription** — sign in with your existing Claude (Anthropic) subscription through the browser. No API key required.
+- **Local MLX runtime** — run fully on-device with Apple MLX (`zen --mlx`), with no HTTP server and no remote provider required.
+- **Local DS4 runtime** — run a local DS4 runtime loaded in-process (`zen --ds4`), with native DSML tool calls and no DS4 webserver.
+
+## Run
 
 - `zen` runs the standalone terminal and ACP coding agent with configured providers.
-- `zen --mlx` runs the same agent on the local MLX runtime directly, with no HTTP server and no remote provider required.
-- `zen --ds4` runs the same agent on a local DS4 runtime loaded in-process, with native DSML tool calls and no DS4 webserver.
+- `zen --mlx` runs the same agent on the local MLX runtime directly.
+- `zen --ds4` runs the same agent on a local DS4 runtime loaded in-process.
 
 ## Install
 
@@ -57,22 +67,17 @@ swift --version
 
 ## Quick Start
 
-Set up the standalone agent:
+Choose how ZenCODE runs — a cloud API provider, a ChatGPT or Claude subscription, or a local runtime — during setup, then start the agent:
 
 ```bash
 zen --setup
 zen
 ```
 
-Run the local MLX runtime:
+Prefer fully on-device? Use the local runtimes:
 
 ```bash
 zen --mlx
-```
-
-Run the local DS4 runtime:
-
-```bash
 zen --ds4
 ```
 

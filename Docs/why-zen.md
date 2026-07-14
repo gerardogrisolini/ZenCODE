@@ -2,15 +2,21 @@
 This document summarizes the strengths of `ZenCODE`, my motivations for writing it, and why it is often a better choice than other agents.
 
 ## Strengths
-### Execution and privacy
-- **Local-first on Apple Silicon**: with `zen --mlx`, inference runs
+### Run anywhere: cloud, subscriptions, or on-device
+- **Provider-agnostic**: drive ZenCODE with any OpenAI-compatible API endpoint
+  (OpenRouter, local servers, or any `/v1` provider), sign in with your existing
+  **ChatGPT** or **Claude subscription** through the browser — no API key needed —
+  or run fully on-device with `zen --mlx` / `zen --ds4`. The choice is yours,
+  per provider, configured during `zen --setup`.
+- **Subscriptions supported**: use your existing ChatGPT or Claude (Anthropic)
+  subscription directly via browser OAuth sign-in, without paying for separate
+  API keys.
+- **On-device privacy when you want it**: with `zen --mlx`, inference runs
   entirely on the local MLX runtime, in the same process, **with no HTTP server
   and no remote provider**. Your code never leaves the machine.
-- **Dual mode**: the same agent works with configurable remote providers or in
-  fully local mode, chosen based on cost and privacy.
-- **Pragmatic cross-platform support**: macOS with local MLX; Linux and Windows
-  (via WSL) in remote-only mode, without pulling Metal dependencies into the
-  build.
+- **Pragmatic cross-platform support**: macOS with cloud, subscriptions, or
+  local MLX/DS4; Linux and Windows (via WSL) with cloud providers and
+  subscriptions, without pulling Metal dependencies into the build.
 
 ### Full control over tools
 - **Granular selection with `/tools`**: you decide exactly which tool groups
@@ -71,7 +77,10 @@ This document summarizes the strengths of `ZenCODE`, my motivations for writing 
 
 1. **Full and reversible control over tools**: unlike agents with fixed or opaque tool sets, here you enable and disable each group, reset everything with `/tools none`, and add custom tools as durable Swift Features.
 2. **Swift vs Node**: because it is written entirely in Swift, `ZenCODE` delivers **native performance, greater stability, and a smaller security surface** than apps built on Node.js, which rely on an interpreted runtime and large npm dependency chains.
-3. **Real privacy and zero inference cost**: in-process local MLX inference eliminates cloud calls and code leakage, whereas many agents depend on paid remote APIs.
+3. **Real privacy and zero inference cost, when you choose it**: in-process
+   local MLX inference eliminates cloud calls and code leakage. Prefer a cloud
+   provider? ZenCODE works with any OpenAI-compatible API or your existing
+   ChatGPT/Claude subscription — no separate API key required for subscriptions.
 4. **No HTTP overhead locally**: the model runs in the same process, avoiding the serialization of calls over a local server.
 5. **Efficient session continuity**: the persistent KV cache with a content-derived key drastically reduces re-prefill, even for statelessients.
 6. **Native Xcode integration via ACP**: it fits directly into the Apple workflow as an Xcode 27 coding agent.
