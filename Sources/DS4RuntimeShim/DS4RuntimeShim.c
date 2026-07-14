@@ -4,6 +4,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -232,6 +233,12 @@ int zencode_ds4_engine_open(
     }
     engine->handle = handle;
     engine->library_path = strdup(library_path);
+    if (!engine->library_path) {
+        set_error(error, error_len, "out of memory duplicating DS4 library path");
+        zencode_ds4_engine_close(engine);
+        free(default_library_path);
+        return 1;
+    }
 
     if (resolve_symbols(handle, &engine->sym, error, error_len) != 0) {
         zencode_ds4_engine_close(engine);
