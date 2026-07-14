@@ -353,17 +353,17 @@ extension TerminalStatusBar {
             fragments.append(contextText)
         }
         if let duration = state.latestMetrics?.responseDurationSeconds {
-            fragments.append("time \(Self.durationText(duration))")
+            fragments.append(Self.durationText(duration))
         }
         if let latestMetrics = state.latestMetrics,
            let tokenCountsText = Self.generationTokenCountsFragment(latestMetrics) {
             fragments.append(tokenCountsText)
         }
         if let prefillRate = state.latestMetrics?.promptTokensPerSecond {
-            fragments.append("pre \(Self.rateText(prefillRate)) tok/s")
+            fragments.append("P:\(Self.rateText(prefillRate)) t/s")
         }
         if let generationRate = state.latestMetrics?.completionTokensPerSecond {
-            fragments.append("gen \(Self.rateText(generationRate)) tok/s")
+            fragments.append("G:\(Self.rateText(generationRate)) t/s")
         }
         if let latestSubscriptionUsage = state.latestSubscriptionUsage,
            let usageText = Self.subscriptionUsageFragment(latestSubscriptionUsage) {

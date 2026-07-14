@@ -136,6 +136,7 @@ extension TerminalStatusBar {
             metrics.promptTokenCount.map { "P:\(tokenCountText($0))" },
             metrics.completionTokenCount.map { "G:\(tokenCountText($0))" }
         ].compactMap(\.self)
+        
         guard !fragments.isEmpty else {
             return nil
         }
@@ -178,13 +179,13 @@ extension TerminalStatusBar {
             return "--"
         }
         if value < 60 {
-            return String(format: "%.1fs", value)
+            return String(format: "%.1fs", value) + " sec"
         }
         let roundedSeconds = Int(value.rounded())
         let minutes = roundedSeconds / 60
         let seconds = roundedSeconds % 60
         if minutes < 60 {
-            return String(format: "%d:%02d", minutes, seconds)
+            return String(format: "%d:%02d", minutes, seconds) + " min"
         }
         let hours = minutes / 60
         return String(format: "%d:%02d:%02d", hours, minutes % 60, seconds)
