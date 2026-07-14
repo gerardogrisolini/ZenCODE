@@ -71,7 +71,7 @@ extension TerminalChat {
                     if isOpener,
                        let previous = state.previousCharacter,
                        previous == "." || previous == "!" || previous == "?" || previous == "*" {
-                        output.append("\n\n")
+                        output.append("\n")
                     }
                     state.isBoldSpanOpen.toggle()
                     output.append("**")
