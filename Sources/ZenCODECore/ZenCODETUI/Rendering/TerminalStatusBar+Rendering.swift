@@ -353,7 +353,7 @@ extension TerminalStatusBar {
             fragments.append(contextText)
         }
         if let duration = state.latestMetrics?.responseDurationSeconds {
-            fragments.append("time \(Self.durationText(duration))")
+            fragments.append(Self.durationText(duration))
         }
         if let latestMetrics = state.latestMetrics,
            let tokenCountsText = Self.generationTokenCountsFragment(latestMetrics) {

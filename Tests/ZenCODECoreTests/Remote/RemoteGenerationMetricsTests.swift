@@ -118,7 +118,7 @@ struct RemoteGenerationMetricsTests {
         #expect(metrics?.clearsPromptMetrics == true)
         #expect(metrics?.replacesPreviousMetrics == true)
         #expect(
-            metrics.flatMap(TerminalStatusBar.generationTokenCountsFragment) == "C:4.1k P:200 G:25"
+            metrics.flatMap(TerminalStatusBar.generationTokenCountsFragment) == "c:4.1k p:200 g:25"
         )
         #expect(summary?.contains("Rounds: 2") == true)
         #expect(summary?.contains("Output: 75 tokens") == true)
@@ -212,7 +212,7 @@ struct RemoteGenerationMetricsTests {
         #expect(metrics.completionTokenCount == 3_000)
         #expect(
             TerminalStatusBar.generationTokenCountsFragment(metrics)
-                == "C:20k P:5.0k G:3.0k"
+                == "c:20k p:5.0k g:3.0k"
         )
     }
 

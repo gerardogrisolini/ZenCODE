@@ -45,10 +45,7 @@ struct WebSearchTool: FeatureTool {
             throw WebToolsFeatureError.permissionDenied("Unable to build the web search request.")
         }
 
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 20
-        request.setValue("ZenCODE/1.0", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await WebToolsSupport.fetchWithRetry(url: url)
         try WebToolsSupport.validateHTTPResponse(response)
 
         let html = String(decoding: data, as: UTF8.self)
@@ -91,11 +88,15 @@ struct WebFetchTool: FeatureTool {
     )
 
     func run(_ input: Input, context _: FeatureContext) async throws -> String {
-        guard let rawURL = input.url?.nilIfBlank,
-              let url = URL(string: rawURL),
-              let scheme = url.scheme?.lowercased(),
-              ["http", "https"].contains(scheme) else {
+        guard let rawURL = input.url?.nilIfBlank else {
             throw WebToolsFeatureError.missingArgument("url")
+        }
+        guard let url = URL(string: rawURL) else {
+            throw WebToolsFeatureError.invalidURL(rawURL)
+        }
+        let scheme = url.scheme?.lowercased()
+        guard let scheme, ["http", "https"].contains(scheme) else {
+            throw WebToolsFeatureError.unsupportedScheme(scheme ?? "(none)")
         }
 
         let maxBytes = max(1_024, min(input.maxBytes ?? 120_000, 1_000_000))
@@ -169,13 +170,17 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
     }
 
     private func load(url: URL, timeout: TimeInterval) async throws -> RenderedPage {
+        // Split the budget so a slow navigation doesn't starve JS settle.
+        let navigationBudget = timeout * 0.6
+        let settleBudget = min(timeout - navigationBudget, 6)
+
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             self.loadContinuation = continuation
             self.didResume = false
             self.timeoutTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                try? await Task.sleep(nanoseconds: UInt64(navigationBudget * 1_000_000_000))
                 self?.resume(.failure(WebToolsFeatureError.permissionDenied(
-                    "Timed out rendering the page after \(Int(timeout))s."
+                    "Timed out loading the page after \(Int(navigationBudget))s."
                 )))
             }
             self.webView.load(URLRequest(url: url))
@@ -183,8 +188,8 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
 
         // Wait for client-side scripts to settle instead of a fixed delay:
         // poll until the document is ready and the rendered text length is
-        // stable, bounded by the same timeout budget as the navigation.
-        await waitUntilSettled(timeout: timeout)
+        // stable, bounded by the remaining settle budget.
+        await waitUntilSettled(timeout: settleBudget)
 
         let title = (try? await evaluateString("document.title")) ?? ""
         let finalURL = (try? await evaluateString("location.href")) ?? url.absoluteString
@@ -339,12 +344,18 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
 
 private enum WebToolsFeatureError: LocalizedError {
     case missingArgument(String)
+    case invalidURL(String)
+    case unsupportedScheme(String)
     case permissionDenied(String)
 
     var errorDescription: String? {
         switch self {
         case let .missingArgument(argument):
             return "Missing required argument: \(argument)"
+        case let .invalidURL(value):
+            return "Invalid URL: \(value)"
+        case let .unsupportedScheme(scheme):
+            return "Unsupported URL scheme '\(scheme)'. Only http and https are supported."
         case let .permissionDenied(message):
             return message
         }
@@ -365,6 +376,45 @@ private enum WebToolsSupport {
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw WebToolsFeatureError.permissionDenied("The web request failed with HTTP status \(httpResponse.statusCode).")
         }
+    }
+
+    /// Fetches a URL with retry on transient failures (429, 5xx, network
+    /// errors). Backs off exponentially before each retry.
+    static func fetchWithRetry(
+        url: URL,
+        maxAttempts: Int = 3,
+        timeout: TimeInterval = 20
+    ) async throws -> (Data, URLResponse) {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        request.setValue("ZenCODE/1.0", forHTTPHeaderField: "User-Agent")
+
+        var lastError: Error?
+        for attempt in 0..<maxAttempts {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                if let http = response as? HTTPURLResponse,
+                   http.statusCode == 429 || (500..<600).contains(http.statusCode) {
+                    lastError = WebToolsFeatureError.permissionDenied(
+                        "The web request failed with HTTP status \(http.statusCode)."
+                    )
+                    if attempt < maxAttempts - 1 {
+                        let backoff = UInt64(pow(2.0, Double(attempt))) * 500_000_000
+                        try? await Task.sleep(nanoseconds: backoff)
+                        continue
+                    }
+                }
+                return (data, response)
+            } catch {
+                lastError = error
+                if attempt < maxAttempts - 1 {
+                    let backoff = UInt64(pow(2.0, Double(attempt))) * 500_000_000
+                    try? await Task.sleep(nanoseconds: backoff)
+                    continue
+                }
+            }
+        }
+        throw lastError ?? WebToolsFeatureError.permissionDenied("The web request failed after \(maxAttempts) attempts.")
     }
 
     /// Raw HTTP fetch used as the non-Apple fallback for `web.fetch`.

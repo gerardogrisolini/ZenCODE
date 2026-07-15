@@ -690,7 +690,7 @@ struct TerminalChatRenderingTests {
             )
 
         #expect(
-            TerminalStatusBar.generationTokenCountsFragment(metrics) == "C:800 P:120 G:32"
+            TerminalStatusBar.generationTokenCountsFragment(metrics) == "c:800 p:120 g:32"
         )
     }
 
@@ -739,7 +739,7 @@ struct TerminalChatRenderingTests {
             completionTokensPerSecond: nil
         )
 
-        #expect(TerminalStatusBar.generationTokenCountsFragment(metrics) == "P:15k G:20k")
+        #expect(TerminalStatusBar.generationTokenCountsFragment(metrics) == "p:15k g:20k")
         #expect(TerminalStatusBar.generationTokenCountsFragment(unavailableMetrics) == nil)
     }
 
@@ -754,7 +754,7 @@ struct TerminalChatRenderingTests {
         )
 
         #expect(
-            TerminalStatusBar.generationTokenCountsFragment(metrics) == "C:0 P:15k G:2.0k"
+            TerminalStatusBar.generationTokenCountsFragment(metrics) == "c:0 p:15k g:2.0k"
         )
     }
 
@@ -772,7 +772,7 @@ struct TerminalChatRenderingTests {
 
         #expect(
             statusBar.statusTextLocked(state: &state)
-                .contains("time 12.0 · p:15k g:20k")
+                .contains("35.0k/-- · 0:00:12 · p:15k g:20k")
         )
     }
 

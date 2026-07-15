@@ -178,17 +178,10 @@ extension TerminalStatusBar {
         guard value.isFinite, value >= 0 else {
             return "--"
         }
-        if value < 60 {
-            return String(format: "%.1f", value)
-        }
-        let roundedSeconds = Int(value.rounded())
-        let minutes = roundedSeconds / 60
-        let seconds = roundedSeconds % 60
-        if minutes < 60 {
-            return String(format: "%d:%02d", minutes, seconds)
-        }
-        let hours = minutes / 60
-        return String(format: "%d:%02d:%02d", hours, minutes % 60, seconds)
+        let style = Duration.TimeFormatStyle(pattern: .hourMinuteSecond)
+        return Duration
+            .seconds(value)
+            .formatted(style)
     }
     
     static func visibleCharacterCount(_ text: String) -> Int {
