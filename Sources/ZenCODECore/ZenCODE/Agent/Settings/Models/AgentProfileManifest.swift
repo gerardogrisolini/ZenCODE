@@ -32,6 +32,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
     public let modelID: String?
     public let modelProvider: String?
     public let thinkingSelection: AgentThinkingSelection?
+    public let capability: Int?
 
     public init(
         id: String,
@@ -42,7 +43,8 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         skills: [AgentProfileSkill] = [],
         modelID: String? = nil,
         modelProvider: String? = nil,
-        thinkingSelection: AgentThinkingSelection? = nil
+        thinkingSelection: AgentThinkingSelection? = nil,
+        capability: Int? = nil
     ) {
         self.id = id.nilIfBlank ?? UUID().uuidString
         self.name = name.nilIfBlank ?? AgentProfileStore.defaultAgentName
@@ -53,6 +55,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         self.modelID = modelID?.nilIfBlank
         self.modelProvider = modelProvider?.nilIfBlank
         self.thinkingSelection = thinkingSelection
+        self.capability = capability.map { min(max($0, 1), 10) }
     }
 
     public init(from decoder: Decoder) throws {
@@ -69,6 +72,8 @@ public struct AgentProfile: Codable, Hashable, Sendable {
             AgentThinkingSelection.self,
             forKey: .thinkingSelection
         )
+        self.capability = try container.decodeIfPresent(Int.self, forKey: .capability)
+            .map { min(max($0, 1), 10) }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -81,6 +86,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         case modelID
         case modelProvider
         case thinkingSelection
+        case capability
     }
 
     public var displayName: String {
@@ -442,7 +448,8 @@ public enum AgentProfileStore {
             skills: agent.skills,
             modelID: agent.modelID,
             modelProvider: agent.modelProvider,
-            thinkingSelection: agent.thinkingSelection
+            thinkingSelection: agent.thinkingSelection,
+            capability: agent.capability
         )
     }
 

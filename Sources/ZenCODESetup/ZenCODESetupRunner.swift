@@ -361,6 +361,11 @@ public enum ZenCODESetupRunner {
             return SetupSectionConfigurationResult(
                 manifest: try requireExistingManifest(manifest)
             )
+        case .agentModels:
+            try ZenCODEAgentProfileSetupRunner.configureAgentModels()
+            return SetupSectionConfigurationResult(
+                manifest: try requireExistingManifest(manifest)
+            )
         case .additionalGroup(let index, _, _):
             guard additionalSectionGroups.indices.contains(index) else {
                 throw ZenCODESetupError.invalidChoice(String(index + 1))

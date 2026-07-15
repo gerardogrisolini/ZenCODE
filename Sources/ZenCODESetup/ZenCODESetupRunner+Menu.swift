@@ -103,6 +103,8 @@ extension ZenCODESetupRunner {
             return setupStatusMarker(manifest.map { selectedModel(in: $0) != nil } ?? false)
         case .agents:
             return setupStatusMarker(agentsSetupDetail() != "not configured")
+        case .agentModels:
+            return setupStatusMarker(agentModelsSetupDetail() != "not configured", optional: true)
         case .telegram:
             return setupStatusMarker(manifest?.telegram?.isEnabled == true, optional: true)
         case .voice:
@@ -139,6 +141,10 @@ extension ZenCODESetupRunner {
             SetupSectionOption(
                 section: .agents,
                 detail: agentsSetupDetail()
+            ),
+            SetupSectionOption(
+                section: .agentModels,
+                detail: agentModelsSetupDetail()
             )
         ]
 
@@ -200,6 +206,17 @@ extension ZenCODESetupRunner {
             return "configured"
         }
         return "\(agents.count) agents"
+    }
+
+    static func agentModelsSetupDetail() -> String {
+        guard let agents = try? AgentProfileStore.loadRequired() else {
+            return "not configured"
+        }
+        let withModel = agents.filter { $0.modelID != nil }
+        guard !withModel.isEmpty else {
+            return "no models assigned"
+        }
+        return "\(withModel.count)/\(agents.count) agents with model"
     }
 
     static func providersAndModelsSetupDetail(

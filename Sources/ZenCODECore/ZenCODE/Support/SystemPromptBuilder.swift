@@ -125,6 +125,12 @@ public enum SystemPromptBuilder {
         independent work), then use tasks.list with runnableOnly=true to choose work and \
         tasks.update to record progress, outcomes, blockers, and validation.
 
+        Complexity: set tasks.create `complexity` (1–10) on every task. 1–3 = simple lookup, \
+        single-file edit, or mechanical change; 4–6 = standard multi-file implementation or \
+        focused analysis; 7–10 = complex architecture, cross-system integration, or deep \
+        reasoning. Complexity drives agent selection: match it to the capability of the \
+        delegated agent when one is available.
+
         \(delegationInstruction)
         A single self-contained delegation or a short disposable lookup does not require a \
         task graph.
@@ -140,6 +146,38 @@ public enum SystemPromptBuilder {
         return ["tasks.create", "tasks.list", "tasks.update"].allSatisfy {
             tool($0, isAllowedBy: allowedToolNames)
         }
+    }
+
+    /// Generates a roster of delegatable agent profiles that have a dedicated
+    /// model and capability value, so the model can match agent capability to
+    /// task complexity when delegating via `agent.create`.
+    /// Agents without a model (and therefore without capability) are excluded.
+    public static func delegatableAgentsSection(
+        agents: [AgentProfile],
+        allowedToolNames: Set<String>?
+    ) -> String? {
+        guard agentDelegationIsAvailable(allowedToolNames) else {
+            return nil
+        }
+        let roster = agents
+            .filter { $0.modelID != nil && $0.capability != nil }
+            .sorted { ($0.capability ?? 0) < ($1.capability ?? 0) }
+        guard !roster.isEmpty else {
+            return nil
+        }
+
+        let lines = roster.compactMap { agent -> String? in
+            guard let capability = agent.capability else { return nil }
+            let role = agent.displayName.lowercased()
+            return "- \(agent.displayName) (capability \(capability)/10): \(role)"
+        }
+
+        return """
+        Delegatable agent profiles (match agent capability to task complexity):
+        \(lines.joined(separator: "\n"))
+        Low-complexity tasks (1–3) → low-capability agent; medium (4–6) → mid-capability; high (7–10) → high-capability. \
+        Pass the agent name as `profile` or `agent` in agent.create.
+        """
     }
 
     /// Adds the workflow policy to an existing prompt exactly once. This keeps

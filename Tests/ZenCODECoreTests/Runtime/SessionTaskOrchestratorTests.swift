@@ -324,6 +324,68 @@ struct SessionTaskOrchestratorTests {
         #expect(siblings.contains { $0.lastPathComponent.contains(".corrupt-") })
     }
 
+    @Test
+    func complexityDefaultsToFiveAndClampsToRange() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "session", id: "graph", source: .manual, state: .active,
+            tasks: [
+                TaskDefinition(id: "default", title: "Default complexity"),
+                TaskDefinition(id: "low", title: "Clamped low", complexity: -5),
+                TaskDefinition(id: "high", title: "Clamped high", complexity: 99),
+                TaskDefinition(id: "explicit", title: "Explicit", complexity: 7),
+            ]
+        )
+        let snapshot = try await orchestrator.graphSnapshot(sessionID: "session", graphID: "graph")
+        let tasks = snapshot?.tasks ?? []
+        #expect(tasks.first { $0.id == "default" }?.complexity == 5)
+        #expect(tasks.first { $0.id == "low" }?.complexity == 1)
+        #expect(tasks.first { $0.id == "high" }?.complexity == 10)
+        #expect(tasks.first { $0.id == "explicit" }?.complexity == 7)
+    }
+
+    @Test
+    func complexityIsUpdatedViaTaskUpdate() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "session", id: "graph", source: .manual, state: .active,
+            tasks: [TaskDefinition(id: "a", title: "A")]
+        )
+        _ = try await orchestrator.updateTask(
+            sessionID: "session", taskID: "a", graphID: "graph",
+            update: TaskUpdate(complexity: 8)
+        )
+        let snapshot = try await orchestrator.graphSnapshot(sessionID: "session", graphID: "graph")
+        #expect(snapshot?.tasks.first?.complexity == 8)
+    }
+
+    @Test
+    func taskRecordDecodesWithoutComplexityKeyForBackwardCompat() throws {
+        let json = """
+        {
+            "id": "legacy",
+            "title": "Legacy task",
+            "details": null,
+            "order": 1,
+            "status": "pending",
+            "priority": "normal",
+            "dependsOn": [],
+            "execution": {"executor": "coordinator", "toolNames": [], "fileScopes": []},
+            "acceptanceCriteria": [],
+            "activeAttemptID": null,
+            "attempts": [],
+            "result": null,
+            "statusReason": null,
+            "revision": 1,
+            "createdAt": 0,
+            "updatedAt": 0
+        }
+        """.data(using: .utf8)!
+        let record = try JSONDecoder().decode(TaskRecord.self, from: json)
+        #expect(record.complexity == 5)
+        #expect(record.id == "legacy")
+    }
+
     private func makeTwoTaskGraph() async throws -> SessionTaskOrchestrator {
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(

@@ -290,3 +290,105 @@ extension AgentConfigurationTests {
         #expect(hiddenOnly == "Active tools: none\n")
     }
 }
+
+@Suite
+struct AgentProfileCapabilityTests {
+    @Test
+    func defaultProfilesHaveNoCapability() {
+        let profiles = AgentProfileStore.defaultProfiles()
+        #expect(profiles.allSatisfy { $0.capability == nil })
+    }
+
+    @Test
+    func capabilityClampsToRange() {
+        let clamped = AgentProfile(id: "test", name: "Test", capability: 50)
+        #expect(clamped.capability == 10)
+
+        let low = AgentProfile(id: "test", name: "Test", capability: -3)
+        #expect(low.capability == 1)
+
+        let inRange = AgentProfile(id: "test", name: "Test", capability: 7)
+        #expect(inRange.capability == 7)
+    }
+
+    @Test
+    func capabilityDecodesWithBackwardCompat() throws {
+        let json = """
+        {"id":"a","name":"Test","tools":[]}
+        """.data(using: .utf8)!
+        let profile = try JSONDecoder().decode(AgentProfile.self, from: json)
+        #expect(profile.capability == nil)
+        #expect(profile.name == "Test")
+    }
+
+    @Test
+    func capabilityRoundTripsThroughCodable() throws {
+        let profile = AgentProfile(id: "x", name: "Test", modelID: "gpt-4", capability: 8)
+        let data = try JSONEncoder().encode(profile)
+        let decoded = try JSONDecoder().decode(AgentProfile.self, from: data)
+        #expect(decoded.capability == 8)
+        #expect(decoded.modelID == "gpt-4")
+    }
+}
+
+@Suite
+struct DelegatableAgentsSectionTests {
+    @Test
+    func excludesAgentsWithoutModelOrCapability() {
+        let agents = [
+            AgentProfile(id: "1", name: "WithModel", modelID: "gpt-4", capability: 5),
+            AgentProfile(id: "2", name: "NoModel"),
+            AgentProfile(id: "3", name: "ModelNoCapability", modelID: "claude"),
+        ]
+        let section = SystemPromptBuilder.delegatableAgentsSection(
+            agents: agents,
+            allowedToolNames: nil
+        )
+        #expect(section != nil)
+        #expect(section?.contains("WithModel") == true)
+        #expect(section?.contains("NoModel") == false)
+        #expect(section?.contains("ModelNoCapability") == false)
+    }
+
+    @Test
+    func returnsNilWhenNoAgentsHaveCapability() {
+        let agents = [
+            AgentProfile(id: "1", name: "Bare"),
+            AgentProfile(id: "2", name: "ModelOnly", modelID: "gpt"),
+        ]
+        let section = SystemPromptBuilder.delegatableAgentsSection(
+            agents: agents,
+            allowedToolNames: nil
+        )
+        #expect(section == nil)
+    }
+
+    @Test
+    func returnsNilWhenDelegationNotAvailable() {
+        let agents = [
+            AgentProfile(id: "1", name: "Capable", modelID: "gpt-4", capability: 5),
+        ]
+        let section = SystemPromptBuilder.delegatableAgentsSection(
+            agents: agents,
+            allowedToolNames: ["tasks.create"]
+        )
+        #expect(section == nil)
+    }
+
+    @Test
+    func sortsRosterByCapability() {
+        let agents = [
+            AgentProfile(id: "1", name: "High", modelID: "opus", capability: 9),
+            AgentProfile(id: "2", name: "Low", modelID: "mini", capability: 2),
+            AgentProfile(id: "3", name: "Mid", modelID: "sonnet", capability: 5),
+        ]
+        let section = SystemPromptBuilder.delegatableAgentsSection(
+            agents: agents,
+            allowedToolNames: nil
+        )
+        #expect(section != nil)
+        let lines = section?.split(separator: "\n").filter { $0.hasPrefix("- ") }
+        #expect(lines?.first?.contains("Low") == true)
+        #expect(lines?.last?.contains("High") == true)
+    }
+}

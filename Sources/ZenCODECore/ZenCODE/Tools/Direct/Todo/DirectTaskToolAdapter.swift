@@ -241,7 +241,8 @@ extension DirectTaskToolAdapter {
                 ["acceptanceCriteria", "acceptance_criteria"],
                 in: object
             ) ?? [],
-            output: DirectTodoRuntime.firstString(["output"], in: object)
+            output: DirectTodoRuntime.firstString(["output"], in: object),
+            complexity: DirectTodoRuntime.firstInt(["complexity"], in: object)
         )
     }
 
@@ -272,7 +273,8 @@ extension DirectTaskToolAdapter {
             expectedRevision: DirectTodoRuntime.firstInt(
                 ["expectedRevision", "expected_revision"],
                 in: arguments
-            )
+            ),
+            complexity: DirectTodoRuntime.firstInt(["complexity"], in: arguments)
         )
     }
 
@@ -388,6 +390,7 @@ extension DirectTaskToolAdapter {
         var fragments = [
             "[\(task.status.rawValue)] \(task.id): \(task.title)",
             "priority=\(task.priority.rawValue)",
+            "complexity=\(task.complexity)",
             "runnable=\(view.isRunnable)",
             "revision=\(task.revision)",
             "attempts=\(task.attempts.count)",

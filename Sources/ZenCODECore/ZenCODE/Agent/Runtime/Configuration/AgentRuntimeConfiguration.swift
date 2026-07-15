@@ -301,6 +301,7 @@ public struct AgentRuntimeConfiguration: Sendable {
     public let maxOutputTokens: Int?
     public let verboseLogging: Bool
     public let appMode: Bool
+    public let locksModelToSession: Bool
     public let toolAuthorizationHandler: AgentToolAuthorizationHandler?
 
     public init(
@@ -313,6 +314,7 @@ public struct AgentRuntimeConfiguration: Sendable {
         maxOutputTokens: Int? = nil,
         verboseLogging: Bool,
         appMode: Bool = false,
+        locksModelToSession: Bool = false,
         toolAuthorizationHandler: AgentToolAuthorizationHandler?
     ) {
         self.modelID = modelID?.nilIfBlank
@@ -326,6 +328,7 @@ public struct AgentRuntimeConfiguration: Sendable {
         self.maxOutputTokens = maxOutputTokens
         self.verboseLogging = verboseLogging
         self.appMode = appMode
+        self.locksModelToSession = locksModelToSession
         self.toolAuthorizationHandler = toolAuthorizationHandler
     }
 
@@ -340,6 +343,7 @@ public struct AgentRuntimeConfiguration: Sendable {
             maxOutputTokens: maxOutputTokens,
             verboseLogging: verboseLogging,
             appMode: appMode,
+            locksModelToSession: locksModelToSession,
             toolAuthorizationHandler: toolAuthorizationHandler
         )
     }
@@ -372,6 +376,7 @@ public struct AgentRuntimeConfiguration: Sendable {
             maxOutputTokens: maxOutputTokens,
             verboseLogging: verboseLogging,
             appMode: appMode,
+            locksModelToSession: locksModelToSession,
             toolAuthorizationHandler: toolAuthorizationHandler
         )
     }
@@ -389,6 +394,7 @@ public struct AgentRuntimeConfiguration: Sendable {
             maxOutputTokens: maxOutputTokens,
             verboseLogging: verboseLogging,
             appMode: appMode,
+            locksModelToSession: locksModelToSession,
             toolAuthorizationHandler: toolAuthorizationHandler
         )
     }
@@ -399,6 +405,7 @@ public enum AgentStandaloneSystemPrompt {
         cwd: String,
         memoryToolEnabled: Bool = false,
         allowedToolNames: Set<String>? = nil,
+        locksModelToSession: Bool = false,
         fileManager: FileManager = .default,
         globalAgentsDirectoryURL: URL? = nil,
         selectedAgentSection: String? = nil,
@@ -411,7 +418,16 @@ public enum AgentStandaloneSystemPrompt {
             globalAgentsDirectoryURL: globalAgentsDirectoryURL
         )
         .promptSection(workingDirectory: workingDirectory)
-        let agentsSection = [selectedAgentSection, agentsNotice]
+        let delegatableSection: String? = locksModelToSession
+            ? nil
+            : {
+                  let delegatableAgents = (try? AgentProfileStore.loadRequired(fileManager: fileManager)) ?? []
+                  return SystemPromptBuilder.delegatableAgentsSection(
+                      agents: delegatableAgents,
+                      allowedToolNames: allowedToolNames
+                  )
+              }()
+        let agentsSection = [selectedAgentSection, agentsNotice, delegatableSection]
             .compactMap { $0?.nilIfBlank }
             .joined(separator: "\n\n")
             .nilIfBlank

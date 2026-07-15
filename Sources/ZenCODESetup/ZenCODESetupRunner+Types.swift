@@ -117,6 +117,7 @@ enum SetupSection: Equatable, Hashable {
     case voice
     case features
     case agents
+    case agentModels
     case additionalGroup(Int, title: String, aliases: Set<String>)
     case finish
     case cancel
@@ -139,6 +140,8 @@ enum SetupSection: Equatable, Hashable {
             return "Features"
         case .agents:
             return "Agents"
+        case .agentModels:
+            return "Agent models & capability"
         case .additionalGroup(_, let title, _):
             return title
         case .finish:
@@ -152,7 +155,7 @@ enum SetupSection: Equatable, Hashable {
         switch self {
         case .providersAndModels:
             return .required
-        case .defaultModelSettings, .agents:
+        case .defaultModelSettings, .agents, .agentModels:
             return .recommended
         case .telegram, .voice, .features, .additionalGroup:
             return .optional
@@ -167,7 +170,7 @@ enum SetupSection: Equatable, Hashable {
         switch self {
         case .providersAndModels, .agents, .features, .additionalGroup, .finish, .cancel:
             return false
-        case .defaultModelSettings, .defaultModel, .defaultThinking, .telegram, .voice:
+        case .defaultModelSettings, .defaultModel, .defaultThinking, .telegram, .voice, .agentModels:
             return true
         }
     }
@@ -201,6 +204,8 @@ enum SetupSection: Equatable, Hashable {
             return ["features", "feature", "tools", "swift features", "enable features", "disable features"]
         case .agents:
             return ["agents", "agent", "profiles", "agent profiles"]
+        case .agentModels:
+            return ["agent models", "agent capability", "models", "capability", "agent models & capability"]
         case .additionalGroup(_, _, let aliases):
             return aliases
         case .finish:

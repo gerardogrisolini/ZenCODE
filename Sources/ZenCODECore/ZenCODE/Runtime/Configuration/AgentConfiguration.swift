@@ -266,7 +266,7 @@ public struct AgentConfiguration: Sendable {
         )
         let effectiveModelID = AgentSettingsStore.resolvedEffectiveModelID(
             explicitModelID: requestedModelID,
-            agentModelID: selectedAgent?.modelID,
+            agentModelID: nil,
             manifest: hostedManifest
         ) ?? normalizedModelID
 
@@ -308,6 +308,7 @@ public struct AgentConfiguration: Sendable {
             maxOutputTokens: maxOutputTokens,
             verboseLogging: verboseLogging,
             appMode: appMode,
+            locksModelToSession: hostedAgentProfiles != nil,
             toolAuthorizationHandler: nil
         )
     }

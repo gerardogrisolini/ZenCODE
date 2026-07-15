@@ -122,6 +122,119 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func createAgentWithoutModelProfileInheritsParentConfiguration() async throws {
+        let minimal = AgentProfile(
+            id: "minimal-profile",
+            name: "Minimal",
+            tools: []
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let recorder = SubAgentFactoryRecorder()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { context in
+                recorder.append(context)
+                return backend
+            },
+            profileResolver: { payload in
+                DirectSubAgentRuntime.agentProfile(
+                    matching: payload,
+                    in: [minimal]
+                )
+            }
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("quick-task"),
+                "role": .string("Minimal"),
+                "isolationMode": .string("report")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
+            parentAllowedToolNames: nil
+        )
+
+        let context = try #require(recorder.contexts.first)
+        #expect(context.profile == minimal)
+        #expect(context.modelID == nil)
+        #expect(context.thinkingSelection == nil)
+    }
+
+    @Test
+    func applyingSubAgentBackendContextSwapsModelWhenProfileHasModel() {
+        let parentConfig = AgentRuntimeConfiguration(
+            modelID: "parent-model",
+            bearerToken: nil,
+            workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
+            maxToolRounds: 4,
+            verboseLogging: false,
+            toolAuthorizationHandler: nil
+        )
+        let profile = AgentProfile(
+            id: "builder",
+            name: "Builder",
+            modelID: "builder-model"
+        )
+        let context = DirectSubAgentRuntime.BackendContext(
+            requestedName: "Builder",
+            requestedRole: "worker",
+            isolationMode: .report,
+            profile: profile
+        )
+        let result = parentConfig.applyingSubAgentBackendContext(context)
+        #expect(result.modelID == "builder-model")
+    }
+
+    @Test
+    func applyingSubAgentBackendContextPreservesModelWhenProfileHasNoModel() {
+        let parentConfig = AgentRuntimeConfiguration(
+            modelID: "parent-model",
+            bearerToken: nil,
+            workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
+            maxToolRounds: 4,
+            verboseLogging: false,
+            toolAuthorizationHandler: nil
+        )
+        let profile = AgentProfile(
+            id: "minimal",
+            name: "Minimal"
+        )
+        let context = DirectSubAgentRuntime.BackendContext(
+            requestedName: "Minimal",
+            requestedRole: "worker",
+            isolationMode: .report,
+            profile: profile
+        )
+        let result = parentConfig.applyingSubAgentBackendContext(context)
+        #expect(result.modelID == "parent-model")
+    }
+
+    @Test
+    func applyingSubAgentBackendContextPreservesModelWhenLockedToSession() {
+        let parentConfig = AgentRuntimeConfiguration(
+            modelID: "local-mlx-model",
+            bearerToken: nil,
+            workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
+            maxToolRounds: 4,
+            verboseLogging: false,
+            locksModelToSession: true,
+            toolAuthorizationHandler: nil
+        )
+        let profile = AgentProfile(
+            id: "builder",
+            name: "Builder",
+            modelID: "some-other-model"
+        )
+        let context = DirectSubAgentRuntime.BackendContext(
+            requestedName: "Builder",
+            requestedRole: "worker",
+            isolationMode: .report,
+            profile: profile
+        )
+        let result = parentConfig.applyingSubAgentBackendContext(context)
+        #expect(result.modelID == "local-mlx-model")
+    }
+
+    @Test
     func createAgentsUseUniqueEphemeralSessionsWithoutCacheKeys() async throws {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(

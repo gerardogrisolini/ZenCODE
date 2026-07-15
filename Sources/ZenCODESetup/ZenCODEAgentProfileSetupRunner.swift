@@ -205,10 +205,6 @@ public enum ZenCODEAgentProfileSetupRunner {
             title: "Prompt skills for \(name)",
             defaultSkills: defaultAgent?.skills ?? []
         )
-        let modelSelection = promptModelSelection(
-            title: "Dedicated model for \(name) (optional)",
-            defaultAgent: defaultAgent
-        )
         let instructions = try promptInstructions(defaultValue: defaultAgent?.instructions)
 
         return AgentProfileStore.normalizedAgentForSave(AgentProfile(
@@ -218,9 +214,10 @@ public enum ZenCODEAgentProfileSetupRunner {
             symbolName: symbolName,
             tools: tools,
             skills: skills,
-            modelID: modelSelection?.modelID,
-            modelProvider: modelSelection?.modelProvider,
-            thinkingSelection: modelSelection?.thinkingSelection
+            modelID: defaultAgent?.modelID,
+            modelProvider: defaultAgent?.modelProvider,
+            thinkingSelection: defaultAgent?.thinkingSelection,
+            capability: defaultAgent?.capability
         ))
     }
 

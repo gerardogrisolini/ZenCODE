@@ -236,6 +236,56 @@ struct DirectTaskToolAdapterTests {
         }
     }
 
+    @Test
+    func complexityIsParsedAndRenderedFromToolCall() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
+
+        _ = try await adapter.execute(
+            sessionID: "session",
+            toolCall: call(
+                name: "tasks.create",
+                arguments: [
+                    "graphID": "graph",
+                    "tasks": [
+                        ["id": "a", "title": "A", "complexity": 3],
+                        ["id": "b", "title": "B", "complexity": 9],
+                    ],
+                ]
+            )
+        )
+        let output = try await adapter.execute(
+            sessionID: "session",
+            toolCall: call(name: "tasks.list", arguments: [:])
+        )
+
+        #expect(output.contains("complexity=3"))
+        #expect(output.contains("complexity=9"))
+    }
+
+    @Test
+    func complexityDefaultIsRenderedWhenNotSpecified() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
+
+        _ = try await adapter.execute(
+            sessionID: "session",
+            toolCall: call(
+                name: "tasks.create",
+                arguments: [
+                    "graphID": "graph",
+                    "tasks": [["id": "a", "title": "A"]],
+                ]
+            )
+        )
+        let output = try await adapter.execute(
+            sessionID: "session",
+            toolCall: call(name: "tasks.list", arguments: [:])
+        )
+
+        #expect(output.contains("complexity=5"))
+    }
+
     private func call(name: String, arguments: [String: Any]) -> DirectAgentToolCall {
         let data = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys])
         return DirectAgentToolCall(

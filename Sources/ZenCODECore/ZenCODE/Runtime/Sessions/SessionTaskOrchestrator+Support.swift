@@ -137,6 +137,7 @@ extension SessionTaskOrchestrator {
                     execution: definition.execution,
                     acceptanceCriteria: definition.acceptanceCriteria,
                     result: result,
+                    complexity: definition.complexity ?? 5,
                     createdAt: now,
                     updatedAt: now
                 )

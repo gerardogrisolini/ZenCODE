@@ -371,6 +371,10 @@ extension AgentRuntimeConfiguration {
     public func applyingSubAgentBackendContext(
         _ context: DirectSubAgentRuntime.BackendContext
     ) -> AgentRuntimeConfiguration {
+        if locksModelToSession {
+            return self
+        }
+
         guard let requestedModelID = context.modelID else {
             return self
         }

@@ -72,6 +72,7 @@ extension TerminalChat {
             cwd: configuration.workingDirectory.path,
             memoryToolEnabled: memoryToolEnabled,
             allowedToolNames: allowedToolNames,
+            locksModelToSession: configuration.hostedAgentProfiles != nil,
             selectedAgentSection: selectedAgent?.promptSection(memoryToolEnabled: memoryToolEnabled),
                         selectedSkillSection: SystemPromptBuilder.selectedSkillSection(
                 skills: selectedPromptSkills()

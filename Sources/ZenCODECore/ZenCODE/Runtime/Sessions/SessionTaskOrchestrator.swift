@@ -514,7 +514,8 @@ public actor SessionTaskOrchestrator {
                   update.dependsOn == nil,
                   update.status == nil,
                   update.error == nil,
-                  update.evidence.isEmpty else {
+                  update.evidence.isEmpty,
+                  update.complexity == nil else {
                 throw SessionTaskOrchestratorError.permissionDenied(
                     "A delegated sub-agent may only append progress output to its own attempt."
                 )
@@ -533,6 +534,7 @@ public actor SessionTaskOrchestrator {
             || update.details != nil
             || update.clearsDetails
             || update.priority != nil
+            || update.complexity != nil
         if changesMetadata,
            (task.status != .pending || !task.attempts.isEmpty) {
             throw SessionTaskOrchestratorError.graphNotMutable(graph.id)
@@ -552,6 +554,9 @@ public actor SessionTaskOrchestrator {
         }
         if let priority = update.priority {
             task.priority = priority
+        }
+        if let complexity = update.complexity {
+            task.complexity = complexity
         }
         if let dependencies = update.dependsOn {
             task.dependsOn = Self.uniqueIdentifiers(dependencies)

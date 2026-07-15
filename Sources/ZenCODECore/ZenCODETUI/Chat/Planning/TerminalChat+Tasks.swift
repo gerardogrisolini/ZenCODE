@@ -239,6 +239,7 @@ extension TerminalChat {
             case .pending: marker = "○"
             }
             var suffix: [String] = []
+            suffix.append("complexity: \(view.task.complexity)/10")
             if let agentID = view.task.assigneeAgentID {
                 suffix.append(agentID)
             }
@@ -262,7 +263,7 @@ extension TerminalChat {
             "",
             "**Title:** \(escapedTaskMarkdown(task.title))",
             "",
-            "**Status:** `\(task.status.rawValue)` · **priority:** `\(task.priority.rawValue)` · **revision:** \(task.revision)",
+            "**Status:** `\(task.status.rawValue)` · **priority:** `\(task.priority.rawValue)` · **complexity:** `\(task.complexity)/10` · **revision:** \(task.revision)",
             "",
             "**Runnable:** `\(view.isRunnable)`",
         ]

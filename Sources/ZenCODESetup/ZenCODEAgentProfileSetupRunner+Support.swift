@@ -20,7 +20,8 @@ extension ZenCODEAgentProfileSetupRunner {
         let skills = agent.skills.isEmpty ? "" : " | skills: \(skillList(agent.skills))"
         let model = agent.modelID.map { " | model: \($0)" } ?? ""
         let thinking = agent.thinkingSelection.map { " | thinking: \($0.displayTitle)" } ?? ""
-        return "\(tools)\(skills)\(model)\(thinking)"
+        let capability = agent.capability.map { " | capability: \($0)/10" } ?? ""
+        return "\(tools)\(skills)\(model)\(thinking)\(capability)"
     }
 
 

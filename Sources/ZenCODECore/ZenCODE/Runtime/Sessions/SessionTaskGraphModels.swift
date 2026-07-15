@@ -268,6 +268,7 @@ public struct TaskRecord: Codable, Equatable, Sendable, Identifiable {
     public var result: TaskResult?
     public var statusReason: String?
     public var revision: Int
+    public var complexity: Int
     public let createdAt: Date
     public var updatedAt: Date
 
@@ -286,6 +287,7 @@ public struct TaskRecord: Codable, Equatable, Sendable, Identifiable {
         result: TaskResult? = nil,
         statusReason: String? = nil,
         revision: Int = 1,
+        complexity: Int = 5,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -303,8 +305,50 @@ public struct TaskRecord: Codable, Equatable, Sendable, Identifiable {
         self.result = result
         self.statusReason = statusReason?.nilIfBlank
         self.revision = revision
+        self.complexity = min(max(complexity, 1), 10)
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case details
+        case order
+        case status
+        case priority
+        case dependsOn
+        case execution
+        case acceptanceCriteria
+        case activeAttemptID
+        case attempts
+        case result
+        case statusReason
+        case revision
+        case complexity
+        case createdAt
+        case updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.title = try container.decode(String.self, forKey: .title)
+        self.details = try container.decodeIfPresent(String.self, forKey: .details)?.nilIfBlank
+        self.order = try container.decode(Int.self, forKey: .order)
+        self.status = try container.decode(TaskStatus.self, forKey: .status)
+        self.priority = try container.decode(TaskPriority.self, forKey: .priority)
+        self.dependsOn = try container.decodeIfPresent([String].self, forKey: .dependsOn) ?? []
+        self.execution = try container.decodeIfPresent(TaskExecutionSpec.self, forKey: .execution) ?? TaskExecutionSpec()
+        self.acceptanceCriteria = try container.decodeIfPresent([String].self, forKey: .acceptanceCriteria) ?? []
+        self.activeAttemptID = try container.decodeIfPresent(String.self, forKey: .activeAttemptID)?.nilIfBlank
+        self.attempts = try container.decodeIfPresent([TaskAttempt].self, forKey: .attempts) ?? []
+        self.result = try container.decodeIfPresent(TaskResult.self, forKey: .result)
+        self.statusReason = try container.decodeIfPresent(String.self, forKey: .statusReason)?.nilIfBlank
+        self.revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 1
+        self.complexity = try container.decodeIfPresent(Int.self, forKey: .complexity).map { min(max($0, 1), 10) } ?? 5
+        self.createdAt = try container.decode(Date.self, forKey: .createdAt)
+        self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
 
     public var activeAttempt: TaskAttempt? {
@@ -390,6 +434,7 @@ public struct TaskDefinition: Equatable, Sendable {
     public var execution: TaskExecutionSpec
     public var acceptanceCriteria: [String]
     public var output: String?
+    public var complexity: Int?
 
     public init(
         id: String? = nil,
@@ -401,7 +446,8 @@ public struct TaskDefinition: Equatable, Sendable {
         dependsOn: [String] = [],
         execution: TaskExecutionSpec = TaskExecutionSpec(),
         acceptanceCriteria: [String] = [],
-        output: String? = nil
+        output: String? = nil,
+        complexity: Int? = nil
     ) {
         self.id = id?.nilIfBlank
         self.title = title
@@ -413,6 +459,7 @@ public struct TaskDefinition: Equatable, Sendable {
         self.execution = execution
         self.acceptanceCriteria = acceptanceCriteria
         self.output = output
+        self.complexity = complexity.flatMap { min(max($0, 1), 10) }
     }
 }
 
@@ -428,6 +475,7 @@ public struct TaskUpdate: Equatable, Sendable {
     public var error: String?
     public var evidence: [TaskEvidence]
     public var expectedRevision: Int?
+    public var complexity: Int?
 
     public init(
         title: String? = nil,
@@ -440,7 +488,8 @@ public struct TaskUpdate: Equatable, Sendable {
         output: String? = nil,
         error: String? = nil,
         evidence: [TaskEvidence] = [],
-        expectedRevision: Int? = nil
+        expectedRevision: Int? = nil,
+        complexity: Int? = nil
     ) {
         self.title = title
         self.details = details
@@ -453,6 +502,7 @@ public struct TaskUpdate: Equatable, Sendable {
         self.error = error
         self.evidence = evidence
         self.expectedRevision = expectedRevision
+        self.complexity = complexity.flatMap { min(max($0, 1), 10) }
     }
 }
 
