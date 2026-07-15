@@ -20,12 +20,15 @@ extension DirectToolExecutor {
         }
 
         for authorizationCommand in Self.localExecAuthorizationCommands(in: command) {
+            let displayIdentity = Self.localExecAuthorizationDisplayIdentity(
+                in: authorizationCommand
+            )
             let approved = await authorizationHandler(
                 AgentToolAuthorizationRequest(
                     sessionID: sessionID,
                     toolCallID: toolCall.id,
                     toolName: "local.exec",
-                    title: "Run \(authorizationCommand)",
+                    title: "Run \(displayIdentity)",
                     kind: "execute",
                     command: authorizationCommand,
                     workingDirectory: cwd.path
@@ -40,81 +43,53 @@ extension DirectToolExecutor {
     }
 
     static func localExecAuthorizationCommands(in command: String) -> [String] {
-        enum Quote {
-            case none
-            case single
-            case double
-        }
-
-        let characters = Array(command)
-        var commands: [String] = []
-        var current = ""
-        var quote = Quote.none
-        var isEscaping = false
-        var index = 0
-
-        func appendCurrentCommand() {
-            let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                commands.append(trimmed)
-            }
-            current = ""
-        }
-
-        while index < characters.count {
-            let character = characters[index]
-
-            switch quote {
-            case .single:
-                current.append(character)
-                if character == "'" {
-                    quote = .none
-                }
-            case .double:
-                current.append(character)
-                if isEscaping {
-                    isEscaping = false
-                } else if character == "\\" {
-                    isEscaping = true
-                } else if character == "\"" {
-                    quote = .none
-                }
-            case .none:
-                if isEscaping {
-                    current.append(character)
-                    isEscaping = false
-                } else {
-                    switch character {
-                    case "\\":
-                        current.append(character)
-                        isEscaping = true
-                    case "'":
-                        current.append(character)
-                        quote = .single
-                    case "\"":
-                        current.append(character)
-                        quote = .double
-                    case "|":
-                        appendCurrentCommand()
-                        if index + 1 < characters.count,
-                           characters[index + 1] == "|" || characters[index + 1] == "&" {
-                            index += 1
-                        }
-                    default:
-                        current.append(character)
-                    }
-                }
-            }
-
-            index += 1
-        }
-
-        appendCurrentCommand()
-        if commands.isEmpty {
+        let segments = LocalExecCommandParser.commandSegments(in: command)
+        guard !segments.isEmpty else {
             let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? [] : [trimmed]
         }
+
+        // Keep only segments whose executable identity is worth prompting for,
+        // skipping harmless built-ins/keywords. Deduplicate by identity so that
+        // repeated executables in the same pipeline (e.g. two `grep`) produce a
+        // single authorization request.
+        var seenIdentities = Set<String>()
+        var commands: [String] = []
+        for segment in segments {
+            switch LocalExecCommandParser.executableIdentity(for: segment) {
+            case .skip:
+                continue
+            case .executable(let name):
+                guard seenIdentities.insert(name).inserted else {
+                    continue
+                }
+                commands.append(segment)
+            case .unresolved(let raw):
+                guard seenIdentities.insert(raw).inserted else {
+                    continue
+                }
+                commands.append(segment)
+            }
+        }
+
         return commands
+    }
+
+    /// Returns the clean executable identity (for display titles) of the first
+    /// authorizable segment in `command`, falling back to the trimmed command.
+    static func localExecAuthorizationDisplayIdentity(in command: String) -> String {
+        let segments = LocalExecCommandParser.commandSegments(in: command)
+        for segment in segments {
+            switch LocalExecCommandParser.executableIdentity(for: segment) {
+            case .skip:
+                continue
+            case .executable(let name):
+                return name
+            case .unresolved(let raw):
+                return raw
+            }
+        }
+        return command.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func deniedLocalExecOutput(command: String, cwd: URL) -> String {

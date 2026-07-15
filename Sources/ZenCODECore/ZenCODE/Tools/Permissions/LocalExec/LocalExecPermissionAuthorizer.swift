@@ -51,13 +51,26 @@ public actor LocalExecPermissionAuthorizer {
     }
 
     static func commandPermissionIdentity(for command: String) -> String? {
-        let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let firstWord = trimmedCommand
-            .split(whereSeparator: \.isWhitespace)
-            .first else {
-            return nil
+        // Use the shared parser: the identity is the first authorizable
+        // executable of the first non-skip segment. Harmless built-ins/keywords
+        // are skipped so that e.g. `pwd && rm -rf tmp` yields `rm` rather than
+        // the inert `pwd`.
+        for segment in LocalExecCommandParser.commandSegments(in: command) {
+            switch LocalExecCommandParser.executableIdentity(for: segment) {
+            case .skip:
+                continue
+            case .executable(let name):
+                return name
+            case .unresolved(let raw):
+                return raw
+            }
         }
-        return String(firstWord)
+
+        // All segments were skip (e.g. `true`, `cd /tmp`): no identity to
+        // persist. Returning nil keeps the manifest and cache consistent with
+        // `localExecAuthorizationCommands`, which produces no request for
+        // all-skip commands.
+        return nil
     }
 
     static func persistedCommandPermissionIdentity(for command: String) -> String? {

@@ -81,6 +81,129 @@ struct DirectToolExecutorLocalIOTests {
     }
 
     @Test
+    func localExecAuthorizationCommandsSplitOnAndAnd() {
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(in: "cmd1 && cmd2")
+            == ["cmd1", "cmd2"]
+        )
+    }
+
+    @Test
+    func localExecAuthorizationCommandsSplitOnSemicolon() {
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(in: "cmd1; cmd2")
+            == ["cmd1", "cmd2"]
+        )
+    }
+
+    @Test
+    func localExecAuthorizationCommandsSplitOnBackgroundAmpersand() {
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(in: "cmd &")
+            == ["cmd"]
+        )
+    }
+
+    @Test
+    func localExecAuthorizationCommandsSplitOnNewlines() {
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(in: "cmd1\ncmd2")
+            == ["cmd1", "cmd2"]
+        )
+    }
+
+    @Test
+    func localExecAuthorizationCommandsSkipHarmlessBuiltins() {
+        // `true` and `false` are skipped, so they produce no authorization
+        // request.
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(
+                in: "swift build 2>&1 | tail -n 20 || true"
+            ) == ["swift build 2>&1", "tail -n 20"]
+        )
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(in: "false || make")
+            == ["make"]
+        )
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(in: "true")
+            == []
+        )
+    }
+
+    @Test
+    func localExecAuthorizationCommandsDeduplicateRepeatedExecutables() {
+        // Two `grep` invocations share an identity, so only the first is
+        // surfaced for authorization.
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(
+                in: "grep foo | sort | grep bar"
+            ) == ["grep foo", "sort"]
+        )
+    }
+
+    @Test
+    func localExecAuthorizationCommandsDoNotSplitInsideCommandSubstitution() {
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(
+                in: "echo $(ls | wc -l)"
+            ) == ["echo $(ls | wc -l)"]
+        )
+    }
+
+    @Test
+    func localExecAuthorizationCommandsDoNotSplitInsideBackticks() {
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(
+                in: "echo `ls | wc -l`"
+            ) == ["echo `ls | wc -l`"]
+        )
+    }
+
+    @Test
+    func localExecAuthorizationDisplayIdentityExtractsExecutable() {
+        #expect(
+            DirectToolExecutor.localExecAuthorizationDisplayIdentity(
+                in: "swift build 2>&1"
+            ) == "swift"
+        )
+        #expect(
+            DirectToolExecutor.localExecAuthorizationDisplayIdentity(
+                in: "FOO=bar make all"
+            ) == "make"
+        )
+    }
+
+    @Test
+    func localExecAuthorizationCommandsSurfaceExecutablesInsideControlFlow() {
+        // C1: control-flow keywords are consumed; the real executable surfaces.
+        // `if /bin/touch /tmp/x` → identity `/bin/touch` (prompted).
+        // `then true` → keyword consumed, `true` is skip → no prompt.
+        // `fi` → keyword-only → skip → no prompt.
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(
+                in: "if /bin/touch /tmp/x; then true; fi"
+            ) == ["if /bin/touch /tmp/x"]
+        )
+        // The `if` segment has identity `/bin/touch` (prompted).
+        #expect(
+            DirectToolExecutor.localExecAuthorizationDisplayIdentity(
+                in: "if /bin/touch /tmp/x"
+            ) == "/bin/touch"
+        )
+    }
+
+    @Test
+    func localExecAuthorizationCommandsSkipBuiltinsWithRedirections() {
+        // C2: a built-in with redirection is prompted, not skipped.
+        #expect(
+            DirectToolExecutor.localExecAuthorizationCommands(
+                in: "true > out.txt"
+            ) == ["true > out.txt"]
+        )
+    }
+
+    @Test
     func localExecAuthorizesPipelineCommandsInOrderAndStopsAtDenial() async {
         let recorder = LocalExecAuthorizationRecorder(decisions: [true, false, true])
         let executor = DirectToolExecutor(
@@ -108,6 +231,36 @@ struct DirectToolExecutorLocalIOTests {
         #expect(authorizedCommands == ["printf one", "grep one"])
         #expect(output?.contains("no shell command was run") == true)
         #expect(output?.contains(command) == true)
+    }
+
+    @Test
+    func localExecSkipsHarmlessBuiltinsEndToEnd() async {
+        let recorder = LocalExecAuthorizationRecorder(decisions: [true, true])
+        let executor = DirectToolExecutor(
+            authorizationHandler: { request in
+                await recorder.authorize(request)
+            },
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+        )
+        // `true` is a harmless builtin and must not produce a request.
+        let command = "swift build 2>&1 | tail -n 20 || true"
+
+        let output = await executor.deniedLocalExecOutputIfNeeded(
+            sessionID: "session",
+            toolCall: DirectAgentToolCall(
+                id: "tool-call",
+                name: "local.exec",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            command: command,
+            cwd: URL(fileURLWithPath: "/tmp")
+        )
+        let authorizedCommands = await recorder.recordedCommands()
+
+        #expect(authorizedCommands == ["swift build 2>&1", "tail -n 20"])
+        #expect(output == nil)
     }
 
     private func runFileTool(
