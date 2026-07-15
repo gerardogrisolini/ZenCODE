@@ -162,6 +162,7 @@ zen --mlx --acp --cwd /path/to/project
 - [ZenCODE guide](Docs/zen.md)
 - [Local MLX runtime guide](Docs/mlx-runtime.md)
 - [DS4 direct runtime guide](Docs/ds4.md)
+- [Agents and sub-agents guide](Docs/agents.md)
 - [Builder agent guide](Docs/builder.md)
 - [Planner agent guide](Docs/planner.md)
 - [Reviewer agent guide](Docs/reviewer.md)
