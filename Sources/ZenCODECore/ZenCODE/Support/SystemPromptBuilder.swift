@@ -125,10 +125,9 @@ public enum SystemPromptBuilder {
         independent work), then use tasks.list with runnableOnly=true to choose work and \
         tasks.update to record progress, outcomes, blockers, and validation.
 
-        Complexity: set tasks.create `complexity` (1–10) on every task. 1–3 = simple lookup, \
-        single-file edit, or mechanical change; 4–6 = standard multi-file implementation or \
-        focused analysis; 7–10 = complex architecture, cross-system integration, or deep \
-        reasoning. Complexity drives agent selection: match it to the capability of the \
+        Complexity: set tasks.create `complexity` (1–10) on every task. \
+        \(TaskRecord.complexityRubric). \
+        Complexity drives agent selection: match it to the capability of the \
         delegated agent when one is available.
 
         \(delegationInstruction)

@@ -122,6 +122,66 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func createAgentsWarnsWhenRequestedProfileDoesNotMatch() async throws {
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in nil }
+        )
+
+        let output = try await runtime.createAgents(
+            arguments: [
+                "name": .string("review-pass"),
+                "profile": .string("Rewiever"),
+                "isolationMode": .string("report")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
+            parentAllowedToolNames: nil
+        )
+
+        #expect(output.contains("Warning: requested profile \"Rewiever\""))
+        #expect(output.contains("inherits the parent session's model"))
+    }
+
+    @Test
+    func createAgentsWarnsWhenTaskComplexityExceedsProfileCapability() async throws {
+        let minimal = AgentProfile(
+            id: "minimal-profile",
+            name: "Minimal",
+            tools: [],
+            modelID: "minimal-model",
+            capability: 5
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { payload in
+                DirectSubAgentRuntime.agentProfile(matching: payload, in: [minimal])
+            }
+        )
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "default", id: "graph", source: .manual, state: .active,
+            tasks: [TaskDefinition(id: "hard-task", title: "Hard work", complexity: 9)]
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        let output = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Minimal"),
+                "taskID": .string("hard-task"),
+                "isolationMode": .string("report")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
+            parentAllowedToolNames: nil
+        )
+
+        #expect(output.contains("Warning: task \"hard-task\" has complexity 9"))
+        #expect(output.contains("capability 5/10"))
+    }
+
+    @Test
     func createAgentWithoutModelProfileInheritsParentConfiguration() async throws {
         let minimal = AgentProfile(
             id: "minimal-profile",

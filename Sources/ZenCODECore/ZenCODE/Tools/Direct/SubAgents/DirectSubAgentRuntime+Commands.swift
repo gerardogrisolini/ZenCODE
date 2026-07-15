@@ -53,6 +53,7 @@ extension DirectSubAgentRuntime {
         var createdIDs: [String] = []
         var createdBackends: [(String, any AgentRuntimeBackend)] = []
         var claimReceipts: [TaskClaimReceipt] = []
+        var advisories: [String] = []
         do {
             try validateImplementationPayloads(payloads)
             let claims = prepared.compactMap { item -> TaskClaim? in
@@ -81,6 +82,14 @@ extension DirectSubAgentRuntime {
                 let payload = item.payload
                 let id = item.id
                 let sessionID = "\(id)_session"
+                if item.profile == nil,
+                   let requestedProfile = payload.profileReference?.nilIfBlank {
+                    advisories.append(
+                        "Warning: requested profile \"\(requestedProfile)\" for agent "
+                            + "\"\(payload.name)\" did not match any configured agent profile; "
+                            + "the sub-agent inherits the parent session's model."
+                    )
+                }
                 let backendContext = Self.backendContext(
                     for: payload,
                     profile: item.profile
@@ -93,6 +102,21 @@ extension DirectSubAgentRuntime {
 
                 let receipt = receiptsByAgentID[id]
                 if let receipt, let taskOrchestrator {
+                    if let capability = item.profile?.capability,
+                       let taskView = try? await taskOrchestrator.task(
+                           sessionID: rootSessionID,
+                           taskID: receipt.taskID,
+                           graphID: receipt.graphID
+                       ),
+                       taskView.task.complexity > capability {
+                        advisories.append(
+                            "Warning: task \"\(receipt.taskID)\" has complexity "
+                                + "\(taskView.task.complexity) but agent \"\(payload.name)\" "
+                                + "uses profile \"\(item.profile?.name ?? "unknown")\" with "
+                                + "capability \(capability)/10; consider a higher-capability "
+                                + "profile if this attempt underperforms."
+                        )
+                    }
                     try await taskOrchestrator.registerExecutionScope(
                         executionSessionID: sessionID,
                         scope: TaskExecutionScope(
@@ -195,8 +219,12 @@ extension DirectSubAgentRuntime {
 
         latestOverviewBatchID = overviewBatchID
         let snapshots = snapshots(for: createdIDs)
-        return "Created \(snapshots.count) delegated sub-agent\(snapshots.count == 1 ? "" : "s").\n"
+        var response = "Created \(snapshots.count) delegated sub-agent\(snapshots.count == 1 ? "" : "s").\n"
             + Self.renderSnapshots(snapshots)
+        if !advisories.isEmpty {
+            response += "\n" + advisories.joined(separator: "\n")
+        }
+        return response
     }
 
     func reserveTasklessDelegationReservations(

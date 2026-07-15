@@ -286,6 +286,41 @@ struct DirectTaskToolAdapterTests {
         #expect(output.contains("complexity=5"))
     }
 
+    @Test
+    func retryAppendsEscalationHintAfterFailedAttempt() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
+
+        _ = try await adapter.execute(
+            sessionID: "session",
+            toolCall: call(
+                name: "tasks.create",
+                arguments: [
+                    "graphID": "graph",
+                    "tasks": [["id": "a", "title": "A", "complexity": 8]],
+                ]
+            )
+        )
+        let receipt = try #require(try await orchestrator.claimTasks(
+            sessionID: "session",
+            claims: [TaskClaim(taskID: "a", agentID: "agent-a")]
+        ).first)
+        _ = try await orchestrator.failAttempt(
+            sessionID: "session",
+            taskID: "a",
+            attemptID: receipt.attemptID,
+            error: "Attempt failed."
+        )
+
+        let output = try await adapter.execute(
+            sessionID: "session",
+            toolCall: call(name: "tasks.retry", arguments: ["id": "a"])
+        )
+
+        #expect(output.contains("Hint: 1 previous attempt on this task (complexity 8) did not succeed"))
+        #expect(output.contains("higher-capability agent profile"))
+    }
+
     private func call(name: String, arguments: [String: Any]) -> DirectAgentToolCall {
         let data = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys])
         return DirectAgentToolCall(

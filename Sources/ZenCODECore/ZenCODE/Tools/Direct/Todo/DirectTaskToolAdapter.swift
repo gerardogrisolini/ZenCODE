@@ -127,7 +127,17 @@ public actor DirectTaskToolAdapter {
                     in: request.arguments
                 )
             )
-            return Self.renderTask(view, detailed: true)
+            var rendered = Self.renderTask(view, detailed: true)
+            let unsuccessfulAttempts = view.task.attempts.filter {
+                $0.status == .failed || $0.status == .interrupted
+            }
+            if !unsuccessfulAttempts.isEmpty {
+                let noun = unsuccessfulAttempts.count == 1 ? "attempt" : "attempts"
+                rendered += "\nHint: \(unsuccessfulAttempts.count) previous \(noun) on this "
+                    + "task (complexity \(view.task.complexity)) did not succeed; consider "
+                    + "delegating the retry to a higher-capability agent profile than before."
+            }
+            return rendered
 
         case "tasks.cancel":
             let taskID = try DirectTodoRuntime.requiredString(["id"], in: request.arguments)

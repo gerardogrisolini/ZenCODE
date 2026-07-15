@@ -20,6 +20,29 @@ struct SessionTaskOrchestratorTests {
     }
 
     @Test
+    func complexityIsClampedOnCreationAndUpdate() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "session", id: "graph", source: .manual, state: .active,
+            tasks: [
+                TaskDefinition(id: "high", title: "High", complexity: 42),
+                TaskDefinition(id: "low", title: "Low", complexity: -3),
+                TaskDefinition(id: "default", title: "Default"),
+            ]
+        )
+        #expect(try await orchestrator.task(sessionID: "session", taskID: "high").task.complexity == 10)
+        #expect(try await orchestrator.task(sessionID: "session", taskID: "low").task.complexity == 1)
+        #expect(try await orchestrator.task(sessionID: "session", taskID: "default").task.complexity == 5)
+
+        var update = TaskUpdate()
+        update.complexity = 0
+        let updated = try await orchestrator.updateTask(
+            sessionID: "session", taskID: "high", update: update
+        )
+        #expect(updated.task.complexity == 1)
+    }
+
+    @Test
     func rejectsDuplicateSelfAndCyclicDependencies() async throws {
         let duplicate = SessionTaskOrchestrator()
         await #expect(throws: SessionTaskOrchestratorError.self) {

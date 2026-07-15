@@ -370,8 +370,8 @@ struct TerminalChatRenderingTests {
             weeklyUsedPercent: nil
         )
 
-        #expect(TerminalStatusBar.subscriptionUsageFragment(weeklyOnly) == "W:42%")
-        #expect(TerminalStatusBar.subscriptionUsageFragment(dailyOnly) == "D:10%")
+        #expect(TerminalStatusBar.subscriptionUsageFragment(weeklyOnly) == "w:42%")
+        #expect(TerminalStatusBar.subscriptionUsageFragment(dailyOnly) == "d:10%")
     }
 
     @Test
@@ -772,7 +772,7 @@ struct TerminalChatRenderingTests {
 
         #expect(
             statusBar.statusTextLocked(state: &state)
-                .contains("12.0s sec · P:15k G:20k")
+                .contains("time 12.0 · p:15k g:20k")
         )
     }
 

@@ -132,9 +132,9 @@ extension TerminalStatusBar {
         _ metrics: DirectAgentGenerationMetrics
     ) -> String? {
         let fragments = [
-            metrics.cachedPromptTokenCount.map { "C:\(tokenCountText($0))" },
-            metrics.promptTokenCount.map { "P:\(tokenCountText($0))" },
-            metrics.completionTokenCount.map { "G:\(tokenCountText($0))" }
+            metrics.cachedPromptTokenCount.map { "c:\(tokenCountText($0))" },
+            metrics.promptTokenCount.map { "p:\(tokenCountText($0))" },
+            metrics.completionTokenCount.map { "g:\(tokenCountText($0))" }
         ].compactMap(\.self)
         
         guard !fragments.isEmpty else {
@@ -150,8 +150,8 @@ extension TerminalStatusBar {
             return nil
         }
         let fragments = [
-            status.dailyUsedPercent.map { "D:\(usagePercentText($0))" },
-            status.weeklyUsedPercent.map { "W:\(usagePercentText($0))" }
+            status.dailyUsedPercent.map { "d:\(usagePercentText($0))" },
+            status.weeklyUsedPercent.map { "w:\(usagePercentText($0))" }
         ].compactMap(\.self)
         return fragments.joined(separator: " ")
     }
@@ -179,13 +179,13 @@ extension TerminalStatusBar {
             return "--"
         }
         if value < 60 {
-            return String(format: "%.1fs", value) + " sec"
+            return String(format: "%.1f", value)
         }
         let roundedSeconds = Int(value.rounded())
         let minutes = roundedSeconds / 60
         let seconds = roundedSeconds % 60
         if minutes < 60 {
-            return String(format: "%d:%02d", minutes, seconds) + " min"
+            return String(format: "%d:%02d", minutes, seconds)
         }
         let hours = minutes / 60
         return String(format: "%d:%02d:%02d", hours, minutes % 60, seconds)

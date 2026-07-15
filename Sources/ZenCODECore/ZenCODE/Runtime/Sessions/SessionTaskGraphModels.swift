@@ -254,6 +254,19 @@ public struct TaskResult: Codable, Equatable, Sendable {
 }
 
 public struct TaskRecord: Codable, Equatable, Sendable, Identifiable {
+    /// The valid range for task complexity; values outside it are clamped.
+    public static let complexityRange: ClosedRange<Int> = 1...10
+
+    /// Clamps a raw complexity value into `complexityRange`.
+    public static func clampedComplexity(_ value: Int) -> Int {
+        min(max(value, complexityRange.lowerBound), complexityRange.upperBound)
+    }
+
+    /// The canonical complexity rubric shared by tool schemas and system prompts.
+    public static let complexityRubric = "1-3 = simple lookup, single-file edit, or mechanical change; "
+        + "4-6 = standard multi-file implementation or focused analysis; "
+        + "7-10 = complex architecture, cross-system integration, or deep reasoning"
+
     public let id: String
     public var title: String
     public var details: String?
@@ -305,7 +318,7 @@ public struct TaskRecord: Codable, Equatable, Sendable, Identifiable {
         self.result = result
         self.statusReason = statusReason?.nilIfBlank
         self.revision = revision
-        self.complexity = min(max(complexity, 1), 10)
+        self.complexity = Self.clampedComplexity(complexity)
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -459,7 +472,7 @@ public struct TaskDefinition: Equatable, Sendable {
         self.execution = execution
         self.acceptanceCriteria = acceptanceCriteria
         self.output = output
-        self.complexity = complexity.flatMap { min(max($0, 1), 10) }
+        self.complexity = complexity.map(TaskRecord.clampedComplexity)
     }
 }
 
@@ -502,7 +515,7 @@ public struct TaskUpdate: Equatable, Sendable {
         self.error = error
         self.evidence = evidence
         self.expectedRevision = expectedRevision
-        self.complexity = complexity.flatMap { min(max($0, 1), 10) }
+        self.complexity = complexity.map(TaskRecord.clampedComplexity)
     }
 }
 

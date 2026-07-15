@@ -556,7 +556,7 @@ public actor SessionTaskOrchestrator {
             task.priority = priority
         }
         if let complexity = update.complexity {
-            task.complexity = complexity
+            task.complexity = TaskRecord.clampedComplexity(complexity)
         }
         if let dependencies = update.dependsOn {
             task.dependsOn = Self.uniqueIdentifiers(dependencies)
