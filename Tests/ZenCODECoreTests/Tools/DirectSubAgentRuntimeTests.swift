@@ -12,6 +12,51 @@ import Testing
 @Suite
 struct DirectSubAgentRuntimeTests {
     @Test
+    func agentWithoutExplicitToolsInheritsParentGrant() async throws {
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend }
+        )
+
+        _ = try await runtime.execute(
+            rootSessionID: "root",
+            toolCall: DirectAgentToolCall(
+                id: "create-worker",
+                name: "agent.create",
+                argumentsObject: [
+                    "name": "worker-1",
+                    "role": "worker",
+                    "prompt": "Do the delegated work"
+                ],
+                argumentsJSON: #"{"name":"worker-1","role":"worker","prompt":"Do the delegated work"}"#
+            ),
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-inheritance-tests"),
+            allowedToolNames: nil
+        )
+        let unrestrictedSession = try #require(await backend.createdSessions().first)
+        #expect(unrestrictedSession.allowedToolNames == nil)
+
+        _ = try await runtime.execute(
+            rootSessionID: "root",
+            toolCall: DirectAgentToolCall(
+                id: "create-worker-2",
+                name: "agent.create",
+                argumentsObject: [
+                    "name": "worker-2",
+                    "role": "worker",
+                    "prompt": "Do more delegated work"
+                ],
+                argumentsJSON: #"{"name":"worker-2","role":"worker","prompt":"Do more delegated work"}"#
+            ),
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-inheritance-tests"),
+            allowedToolNames: ["local.readFile", "local.writeFile"]
+        )
+        let restrictedSession = try #require(await backend.createdSessions().last)
+        #expect(restrictedSession.allowedToolNames == ["local.readFile", "local.writeFile"])
+        await runtime.shutdown()
+    }
+
+    @Test
     func getAndWaitReturnCompleteLongOutputToTheModel() async throws {
         let endMarker = "PLANNER_OUTPUT_END"
         let plannerOutput = String(
@@ -101,8 +146,7 @@ struct DirectSubAgentRuntimeTests {
         let output = try await runtime.createAgents(
             arguments: [
                 "name": .string("planning-pass"),
-                "role": .string("Planner"),
-                "isolationMode": .string("report")
+                "role": .string("Planner")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
             parentAllowedToolNames: nil
@@ -132,8 +176,7 @@ struct DirectSubAgentRuntimeTests {
         let output = try await runtime.createAgents(
             arguments: [
                 "name": .string("review-pass"),
-                "profile": .string("Rewiever"),
-                "isolationMode": .string("report")
+                "profile": .string("Rewiever")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
             parentAllowedToolNames: nil
@@ -170,8 +213,7 @@ struct DirectSubAgentRuntimeTests {
             arguments: [
                 "name": .string("worker"),
                 "profile": .string("Minimal"),
-                "taskID": .string("hard-task"),
-                "isolationMode": .string("report")
+                "taskID": .string("hard-task")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
             parentAllowedToolNames: nil
@@ -206,8 +248,7 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "name": .string("quick-task"),
-                "role": .string("Minimal"),
-                "isolationMode": .string("report")
+                "role": .string("Minimal")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
             parentAllowedToolNames: nil
@@ -237,7 +278,6 @@ struct DirectSubAgentRuntimeTests {
         let context = DirectSubAgentRuntime.BackendContext(
             requestedName: "Builder",
             requestedRole: "worker",
-            isolationMode: .report,
             profile: profile
         )
         let result = parentConfig.applyingSubAgentBackendContext(context)
@@ -261,7 +301,6 @@ struct DirectSubAgentRuntimeTests {
         let context = DirectSubAgentRuntime.BackendContext(
             requestedName: "Minimal",
             requestedRole: "worker",
-            isolationMode: .report,
             profile: profile
         )
         let result = parentConfig.applyingSubAgentBackendContext(context)
@@ -287,7 +326,6 @@ struct DirectSubAgentRuntimeTests {
         let context = DirectSubAgentRuntime.BackendContext(
             requestedName: "Builder",
             requestedRole: "worker",
-            isolationMode: .report,
             profile: profile
         )
         let result = parentConfig.applyingSubAgentBackendContext(context)
@@ -388,7 +426,6 @@ struct DirectSubAgentRuntimeTests {
             arguments: [
                 "name": .string("reporter"),
                 "taskID": .string("task-a"),
-                "isolationMode": .string("report"),
                 "prompt": .string("Do the report"),
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -439,13 +476,11 @@ struct DirectSubAgentRuntimeTests {
         let tasklessPrompt = DirectSubAgentRuntime.systemPrompt(
             name: "coordinator",
             role: "Coordinator",
-            isolationMode: .report,
             allowedToolNames: taskTools
         )
         let taskBoundPrompt = DirectSubAgentRuntime.systemPrompt(
             name: "worker",
             role: "Worker",
-            isolationMode: .report,
             taskID: "task-1",
             allowedToolNames: taskTools
         )
@@ -827,7 +862,7 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func implementationCompletionAwaitsValidation() async throws {
+    func delegatedTaskCompletionCompletesTask() async throws {
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(
             sessionID: "root",
@@ -843,7 +878,6 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "taskID": .string("task-a"),
-                "isolationMode": .string("implementation"),
                 "prompt": .string("Implement"),
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -853,7 +887,7 @@ struct DirectSubAgentRuntimeTests {
         _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
 
         let task = try await orchestrator.task(sessionID: "root", taskID: "task-a")
-        #expect(task.task.status == .awaitingValidation)
+        #expect(task.task.status == .completed)
         #expect(task.task.result?.output == "implementation complete")
     }
 
@@ -972,7 +1006,7 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func createRejectsOversizedBatchesAndParallelImplementationWork() async throws {
+    func createRejectsOversizedBatches() async throws {
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
         )
@@ -983,26 +1017,6 @@ struct DirectSubAgentRuntimeTests {
         await #expect(throws: DirectSubAgentRuntimeError.self) {
             _ = try await runtime.createAgents(
                 arguments: ["agents": .array(oversized)],
-                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
-                parentAllowedToolNames: nil
-            )
-        }
-        await #expect(throws: DirectSubAgentRuntimeError.self) {
-            _ = try await runtime.createAgents(
-                arguments: [
-                    "agents": .array([
-                        .object([
-                            "name": .string("writer-a"),
-                            "isolationMode": .string("implementation"),
-                            "prompt": .string("Implement A"),
-                        ]),
-                        .object([
-                            "name": .string("writer-b"),
-                            "isolationMode": .string("implementation"),
-                            "prompt": .string("Implement B"),
-                        ]),
-                    ])
-                ],
                 workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
                 parentAllowedToolNames: nil
             )
@@ -1030,7 +1044,6 @@ struct DirectSubAgentRuntimeTests {
                 arguments: [
                     "name": .string(sessionID),
                     "taskID": .string("shared-task"),
-                    "isolationMode": .string("report"),
                     "prompt": .string("Wait"),
                 ],
                 workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -1085,6 +1098,7 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
         let id: String
         let cacheKey: String?
         let historyCount: Int
+        let allowedToolNames: Set<String>?
     }
 
     private var thinkingSelection: AgentThinkingSelection?
@@ -1110,7 +1124,7 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
         systemPrompt _: String?,
         history: [AgentRuntimeMessage],
         cacheKey: String?,
-        allowedToolNames _: Set<String>?,
+        allowedToolNames: Set<String>?,
         thinkingSelection: AgentThinkingSelection?,
         preserveThinking _: Bool
     ) {
@@ -1118,7 +1132,8 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
             CreatedSession(
                 id: id,
                 cacheKey: cacheKey,
-                historyCount: history.count
+                historyCount: history.count,
+                allowedToolNames: allowedToolNames
             )
         )
         self.thinkingSelection = thinkingSelection

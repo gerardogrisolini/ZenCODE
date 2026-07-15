@@ -292,18 +292,18 @@ struct MLXMemoryServiceTests {
     }
 
     @Test
-    func defaultAgentPromptFollowsActiveMemoryToolState() {
-        let defaultAgent = AgentProfileStore.defaultProfiles()[0]
+    func developerPromptFollowsActiveMemoryToolState() {
+        let developer = AgentProfileStore.defaultProfiles()[0]
         let withoutMemory = AgentCoreAppSessionFactory.resolvedSystemPrompt(
             providedSystemPrompt: nil,
             cwd: "/tmp/project",
-            selectedAgent: defaultAgent,
+            selectedAgent: developer,
             allowedToolNames: []
         )
         let withMemory = AgentCoreAppSessionFactory.resolvedSystemPrompt(
             providedSystemPrompt: nil,
             cwd: "/tmp/project",
-            selectedAgent: defaultAgent,
+            selectedAgent: developer,
             allowedToolNames: ["memory.read", "memory.write"]
         )
 
@@ -316,19 +316,20 @@ struct MLXMemoryServiceTests {
     }
 
     @Test
-    func defaultAgentProfilesIncludeRecommendedOperatingModes() throws {
+    func recommendedAgentProfilesIncludeOperatingModes() throws {
         let profiles = AgentProfileStore.defaultProfiles()
         let names = Set(profiles.map(\.name))
 
-                #expect(names == Set([
-            "Default",
+        #expect(names == Set([
+            "Developer",
             "Builder",
             "Minimal",
             "Xcode",
             "Reviewer",
+            "Reporter",
             "Planner"
         ]))
         #expect(Set(profiles.map(\.id)).count == profiles.count)
-        #expect(try AgentProfileStore.defaultProfile(in: profiles).name == "Default")
+        #expect(try AgentProfileStore.developerProfile(in: profiles).name == "Developer")
     }
 }

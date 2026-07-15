@@ -1,6 +1,6 @@
 # Agents and Sub-Agents
 
-How agent profiles work, how the runtime delegates to sub-agents, and what each setup parameter controls. Per-profile guides: [builder.md](builder.md), [planner.md](planner.md), [reviewer.md](reviewer.md), [xcode.md](xcode.md).
+How agent profiles work, how the runtime delegates to sub-agents, and what each setup parameter controls. Per-profile guides: [builder.md](builder.md), [planner.md](planner.md), [reviewer.md](reviewer.md), [reporter.md](reporter.md), [xcode.md](xcode.md).
 
 ## Agent Profiles
 
@@ -23,16 +23,17 @@ Select a profile with `/agents <name>` or `--agent <name>` at launch. Switching 
 
 ## Recommended Profiles
 
-| Profile | Role | Default tools |
+| Profile | Role | Toolset |
 | --- | --- | --- |
-| `Default` | General coding agent | coding + web + sub-agents |
+| `Developer` | General development and coordination | coding + web + sub-agents |
 | `Builder` | Swift feature packages | coding + web |
 | `Minimal` | Essential tools, brief replies | shell, files, text |
 | `Xcode` | Xcode-native via ACP | shell, memory, web |
 | `Reviewer` | Read-only code review | coding without shell |
+| `Reporter` | Code analysis and evidence-based reports | files, search, text, git |
 | `Planner` | Read-only planning | files, search, text, git, memory, web |
 
-Profiles are examples — you can edit, add, or remove them in setup. A `Default` profile must always exist (several runtime paths fall back to it).
+Profiles are examples — you can edit, add, or remove them in setup. A `Developer` profile must always exist because runtime fallback paths select it.
 
 ## Tool Groups
 
@@ -53,7 +54,7 @@ Lifecycle:
 3. The sub-agent inherits the workspace and its profile's tool allowlist.
 4. The coordinator uses `agent.message`, `agent.wait`, `agent.get`, and `agent.close`.
 
-`isolationMode` controls write authority: `report` = read-only (used by `/plan` and `/review`); implementation modes grant write authority.
+Write authority is determined by the sub-agent's effective tool allowlist. By default it inherits the parent session's enabled tools; passing `toolNames` narrows that grant. `/plan` and `/review` explicitly pass read-only allowlists, while delegated coding work receives editing tools only when the parent grant permits them.
 
 ## Capability Routing
 
@@ -62,7 +63,7 @@ The runtime builds a delegation roster containing only profiles that have **both
 ```
 Delegatable agent profiles (match agent capability to task complexity):
 - Minimal (capability 3/10): minimal
-- Default (capability 7/10): default
+- Developer (capability 7/10): developer
 Low-complexity (1–3) → low-capability; medium (4–6) → mid; high (7–10) → high.
 ```
 

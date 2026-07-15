@@ -17,10 +17,15 @@ public actor LocalExecPermissionAuthorizer {
     private var alwaysAllowedKeys = Set<String>()
     private var didLoadPersistedAllowedCommands = false
 
+    /// Tool names this authorizer gates: shell commands plus the destructive
+    /// direct tools. Everything else is pre-approved by tool selection.
+    public static let gatedToolNames: Set<String> =
+        DirectToolExecutor.destructiveGatedToolNames.union(["local.exec"])
+
     public init() {}
 
     public func authorize(_ request: AgentToolAuthorizationRequest) async -> Bool {
-        guard request.toolName == "local.exec" else {
+        guard Self.gatedToolNames.contains(request.toolName) else {
             return true
         }
 
@@ -42,7 +47,11 @@ public actor LocalExecPermissionAuthorizer {
             return true
         case .allowAlways:
             alwaysAllowedKeys.insert(cacheKey)
-            persistAllowedCommand(for: request)
+            // Only shell command identities are persisted across sessions;
+            // destructive tool approvals live for the current process only.
+            if request.toolName == "local.exec" {
+                persistAllowedCommand(for: request)
+            }
             return true
         case .deny:
             return false

@@ -92,28 +92,17 @@ enum SwiftBundledFeatureCatalog {
     }
 
     private static func searchToolDescriptors() -> [ToolDescriptor] {
-        DirectToolCatalog.localSearchDescriptors.map(\.toolDescriptor) + [
-            ToolDescriptor(
-                name: "search.grep",
-                description: "Searches text with grep from a local path. Use context for surrounding lines and filesOnly to list only matching file paths.",
-                inputSchema: #"{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"glob":{"type":"string"},"maxResults":{"type":"number"},"max_results":{"type":"number"},"context":{"type":"number"},"filesOnly":{"type":"boolean"},"files_only":{"type":"boolean"}},"required":["pattern"]}"#
-            )
-        ]
+        #if canImport(Darwin) || canImport(Glibc)
+        (DirectToolCatalog.localSearchDescriptors
+            + DirectToolCatalog.macOSProcessDescriptors.filter { $0.name == "search.grep" })
+            .map(\.toolDescriptor)
+        #else
+        DirectToolCatalog.localSearchDescriptors.map(\.toolDescriptor)
+        #endif
     }
 
     private static func webToolDescriptors() -> [ToolDescriptor] {
-        [
-            ToolDescriptor(
-                name: "web.search",
-                description: "Searches the public web and returns matching results with titles, URLs, and snippets.",
-                inputSchema: #"{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"number"},"domains":{"type":"array","items":{"type":"string"}}},"required":["query"]}"#
-            ),
-            ToolDescriptor(
-                name: "web.fetch",
-                description: "Fetches an HTTP or HTTPS URL and returns response metadata plus a UTF-8 text preview.",
-                inputSchema: #"{"type":"object","properties":{"url":{"type":"string"},"maxBytes":{"type":"number"},"timeoutSeconds":{"type":"number"}},"required":["url"]}"#
-            )
-        ]
+        DirectToolCatalog.webDescriptors.map(\.toolDescriptor)
     }
 
     private static func gitToolDescriptors() -> [ToolDescriptor] {

@@ -690,7 +690,11 @@ public actor AgentCoreSessionRunner {
     }
 
     private func authorizeTool(_ request: AgentToolAuthorizationRequest) async -> Bool {
-        if request.toolName == "local.exec", localExecAccessModeState == .fullAccess {
+        // Full access skips prompts for shell commands and for the destructive
+        // direct tools alike; otherwise gating deletes while allowing `rm -rf`
+        // through local.exec would only push callers toward the shell.
+        if localExecAccessModeState == .fullAccess,
+           LocalExecPermissionAuthorizer.gatedToolNames.contains(request.toolName) {
             return true
         }
 

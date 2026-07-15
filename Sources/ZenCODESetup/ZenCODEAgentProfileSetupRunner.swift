@@ -199,7 +199,7 @@ public enum ZenCODEAgentProfileSetupRunner {
         ).nilIfBlank
         let tools = promptToolSelection(
             title: "Tools for \(name)",
-            defaultTools: defaultAgent?.tools ?? AgentProfileStore.defaultToolNames
+            defaultTools: defaultAgent?.tools ?? AgentProfileStore.developerToolNames
         )
         let skills = promptSkillSelection(
             title: "Prompt skills for \(name)",

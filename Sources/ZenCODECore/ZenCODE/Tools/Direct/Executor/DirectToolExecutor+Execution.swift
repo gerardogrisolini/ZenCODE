@@ -25,6 +25,18 @@ extension DirectToolExecutor {
             throw DirectToolError.unknownTool(toolCall.name)
 #endif
         }
+        if DirectExecJobRuntime.isExecJobToolName(toolCall.name) {
+            // Job management only inspects or stops processes that were already
+            // authorized at launch through local.exec, so it is not gated.
+            return try await execJobRuntime.execute(toolCall: toolCall)
+        }
+        if let deniedOutput = await deniedDestructiveToolOutputIfNeeded(
+            sessionID: sessionID,
+            toolCall: toolCall,
+            workingDirectory: workingDirectory
+        ) {
+            return deniedOutput
+        }
         if let output = try await executeCoreLocalFileOrTextTool(
             toolCall: toolCall,
             workingDirectory: workingDirectory
@@ -138,7 +150,18 @@ extension DirectToolExecutor {
         ) {
             return deniedOutput
         }
-        let timeout = TimeInterval(arguments.int("timeoutSeconds", "timeout") ?? 120)
+        // Clamp so a mistyped timeout can neither block the session for hours
+        // nor drop below one second. Background jobs manage their own lifetime.
+        let timeout = min(max(TimeInterval(arguments.int("timeoutSeconds", "timeout") ?? 120), 1), 3_600)
+        if arguments.bool("background") == true {
+            return try await execJobRuntime.startBackgroundJob(
+                command: command,
+                shellPath: Self.defaultShellPath(),
+                workingDirectory: cwd,
+                environment: DeveloperToolEnvironment.processEnvironment(),
+                timeout: arguments.int("timeoutSeconds", "timeout").map(TimeInterval.init)
+            )
+        }
         let result = await runProcess(
             executable: Self.defaultShellPath(),
             arguments: ["-lc", command],

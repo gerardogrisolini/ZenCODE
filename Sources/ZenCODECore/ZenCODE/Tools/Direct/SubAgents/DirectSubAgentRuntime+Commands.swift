@@ -55,7 +55,6 @@ extension DirectSubAgentRuntime {
         var claimReceipts: [TaskClaimReceipt] = []
         var advisories: [String] = []
         do {
-            try validateImplementationPayloads(payloads)
             let claims = prepared.compactMap { item -> TaskClaim? in
                 guard let taskID = item.payload.taskID else { return nil }
                 return TaskClaim(taskID: taskID, agentID: item.id, executor: .subAgent)
@@ -141,7 +140,6 @@ extension DirectSubAgentRuntime {
                     systemPrompt: Self.systemPrompt(
                         name: payload.name,
                         role: payload.role,
-                        isolationMode: payload.isolationMode,
                         taskID: payload.taskID,
                         taskAttemptID: receipt?.attemptID,
                         allowedToolNames: childAllowedToolNames
@@ -166,7 +164,6 @@ extension DirectSubAgentRuntime {
                     role: payload.role.nilIfBlank ?? "worker",
                     profileID: item.profile?.id,
                     profileName: item.profile?.name,
-                    isolationMode: payload.isolationMode,
                     overviewBatchID: overviewBatchID,
                     backend: backend,
                     createdAt: now,
@@ -283,7 +280,6 @@ extension DirectSubAgentRuntime {
 
         let targetIDs = try resolveMessageTargetIDs(arguments: arguments)
         try validateOpenMessageTargets(targetIDs)
-        try validateImplementationPromptTargets(targetIDs)
         let tasklessAgents = targetIDs.compactMap { agents[$0] }
             .filter { $0.taskID == nil }
         let tasklessAgentsBySession = Dictionary(
@@ -328,7 +324,6 @@ extension DirectSubAgentRuntime {
 
         do {
             try validateOpenMessageTargets(targetIDs)
-            try validateImplementationPromptTargets(targetIDs)
             for (agentID, reservationID) in reservationIDsByAgentID {
                 guard var agent = agents[agentID] else {
                     throw DirectSubAgentRuntimeError.agentNotFound(agentID)

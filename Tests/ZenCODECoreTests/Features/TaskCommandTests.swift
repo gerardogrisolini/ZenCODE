@@ -130,7 +130,6 @@ struct TaskCommandTests {
             taskAttemptOrdinal: 2,
             name: "worker",
             role: "worker",
-            isolationMode: .implementation,
             status: .running,
             pending: true,
             latestOutput: nil,

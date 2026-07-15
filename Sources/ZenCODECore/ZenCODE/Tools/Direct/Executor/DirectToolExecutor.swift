@@ -36,6 +36,7 @@ public actor DirectToolExecutor {
     public let swiftFeatureRuntime: SwiftFeatureRuntime
     public let todoRuntime = DirectTodoRuntime()
     public let taskToolAdapter = DirectTaskToolAdapter()
+    public let execJobRuntime = DirectExecJobRuntime()
     public let preferredWorkspaceRootURL: URL?
     public var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
     public var toolProviderRegistry = AgentToolProviderRegistry()
@@ -111,6 +112,7 @@ public actor DirectToolExecutor {
 
     public func shutdown() async {
         await subAgentRuntime.shutdown()
+        await execJobRuntime.shutdown()
     }
 
     public func closeSubAgent(id: String) async -> Bool {

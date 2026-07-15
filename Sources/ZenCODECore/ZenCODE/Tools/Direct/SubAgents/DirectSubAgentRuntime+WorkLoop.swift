@@ -9,7 +9,6 @@ import Foundation
 
 extension DirectSubAgentRuntime {
     public func queuePrompt(_ prompt: String, for agentID: String) throws {
-        try validateImplementationPromptTargets([agentID])
         guard var agent = agents[agentID] else {
             throw DirectSubAgentRuntimeError.agentNotFound(agentID)
         }
@@ -25,43 +24,6 @@ extension DirectSubAgentRuntime {
         agent.updatedAt = .now
         agents[agentID] = agent
         startAgentIfNeeded(agentID: agentID)
-    }
-
-    func validateImplementationPayloads(
-        _ payloads: [RequestedAgentPayload]
-    ) throws {
-        let promptedImplementations = payloads.filter {
-            $0.isolationMode == .implementation && $0.prompt != nil
-        }
-        guard promptedImplementations.count <= 1 else {
-            throw DirectSubAgentRuntimeError.unsafeImplementationParallelism
-        }
-        if !promptedImplementations.isEmpty,
-           agents.values.contains(where: {
-               $0.isolationMode == .implementation && $0.status.isPending
-           }) {
-            throw DirectSubAgentRuntimeError.unsafeImplementationParallelism
-        }
-    }
-
-    func validateImplementationPromptTargets(_ agentIDs: [String]) throws {
-        let targetIDs = Set(agentIDs)
-        let implementationTargetIDs = targetIDs.filter {
-            agents[$0]?.isolationMode == .implementation
-        }
-        guard implementationTargetIDs.count <= 1 else {
-            throw DirectSubAgentRuntimeError.unsafeImplementationParallelism
-        }
-        guard !implementationTargetIDs.isEmpty else { return }
-
-        let anotherWriterIsActive = agents.values.contains { agent in
-            agent.isolationMode == .implementation
-                && agent.status.isPending
-                && !targetIDs.contains(agent.id)
-        }
-        guard !anotherWriterIsActive else {
-            throw DirectSubAgentRuntimeError.unsafeImplementationParallelism
-        }
     }
 
     public func startAgentIfNeeded(agentID: String) {
@@ -273,7 +235,7 @@ extension DirectSubAgentRuntime {
                 taskID: taskID,
                 attemptID: attemptID,
                 output: agent.latestOutput,
-                requiresValidation: agent.isolationMode == .implementation
+                requiresValidation: false
             )
         }
         await releaseTasklessDelegationReservation(releasedReservation)

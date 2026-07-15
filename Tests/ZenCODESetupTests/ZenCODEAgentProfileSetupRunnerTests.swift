@@ -13,17 +13,17 @@ import Testing
 @Suite
 struct ZenCODEAgentProfileSetupRunnerTests {
     @Test
-        func setupPreparationPreservesCustomAgentsAndAddsRequiredDefaults() throws {
+    func setupPreparationPreservesCustomAgentsAndAddsRequiredDefaults() throws {
         let existingAgents = [
             AgentProfile(
-                id: AgentProfileStore.defaultAgentID.uuidString,
-                name: "Default",
-                tools: AgentProfileStore.defaultToolNames
+                id: AgentProfileStore.developerAgentID.uuidString,
+                name: AgentProfileStore.developerAgentName,
+                tools: AgentProfileStore.developerToolNames
             ),
             AgentProfile(
                 id: "11111111-1111-1111-1111-111111111111",
                 name: "Custom",
-                tools: AgentProfileStore.defaultToolNames
+                tools: AgentProfileStore.developerToolNames
             )
         ]
 
@@ -31,11 +31,13 @@ struct ZenCODEAgentProfileSetupRunnerTests {
         let names = Set(prepared.map(\.name))
         let minimal = try #require(prepared.first { $0.name == "Minimal" })
         let xcode = try #require(prepared.first { $0.name == AgentProfileStore.xcodeAgentName })
+        let reporter = try #require(prepared.first { $0.name == AgentProfileStore.reporterAgentName })
         let planner = try #require(prepared.first { $0.name == AgentProfileStore.plannerAgentName })
 
-        #expect(names == ["Default", "Custom", "Minimal", "Builder", "Xcode", "Reviewer", "Planner"])
+        #expect(names == ["Developer", "Custom", "Minimal", "Builder", "Xcode", "Reviewer", "Reporter", "Planner"])
         #expect(minimal.tools == AgentProfileStore.minimalToolNames)
         #expect(xcode.tools == AgentProfileStore.xcodeToolNames)
+        #expect(reporter.tools == AgentProfileStore.reporterToolNames)
         #expect(planner.tools == AgentProfileStore.plannerToolNames)
     }
 

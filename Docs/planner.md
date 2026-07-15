@@ -29,11 +29,11 @@ A goal is required. Examples:
 /plan refactor TerminalChat command routing
 ```
 
-Requires the `sub-agents` tool group. Enable it with `/tools sub-agents` or switch to a profile that includes it (such as `Default`).
+Requires the `sub-agents` tool group. Enable it with `/tools sub-agents` or switch to a profile that includes it (such as `Developer`).
 
 ## Read-Only Safety
 
-`/plan` delegates with `isolationMode "report"` and a read-only tool allowlist: files, search, non-mutating Git, read-only memory/task tools, and web. The Planner cannot edit files, run shell commands, or perform mutating operations.
+`/plan` delegates with an explicit read-only tool allowlist: files, search, non-mutating Git, read-only memory/task tools, and web. The Planner cannot edit files, run shell commands, or perform mutating operations.
 
 ## How Delegation Works
 

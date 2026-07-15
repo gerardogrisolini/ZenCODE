@@ -32,7 +32,7 @@ Requires the `sub-agents` tool group. Enable it with `/tools sub-agents` or swit
 
 ## Read-Only Safety
 
-`/review` delegates with `isolationMode "report"` and a read-only tool allowlist: local read/list, text, and search tools. It intentionally excludes Git and memory tools so a review cannot expand beyond the current session changes.
+`/review` delegates with an explicit read-only tool allowlist: local read/list, text, and search tools. It intentionally excludes Git and memory tools so a review cannot expand beyond the current session changes.
 
 ## How Delegation Works
 

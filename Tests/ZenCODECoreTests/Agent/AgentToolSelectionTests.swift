@@ -47,11 +47,11 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    func defaultAgentProfilesEnableCoreAndFeaturePackageTools() {
+    func developerProfileEnablesCoreAndFeaturePackageTools() {
         let profile = AgentProfile(
-            id: "default",
-            name: "Default",
-            tools: AgentProfileStore.defaultToolNames
+            id: "developer",
+            name: "Developer",
+            tools: AgentProfileStore.developerToolNames
         )
         let allowedToolNames = profile.allowedToolNames()
 
@@ -116,15 +116,15 @@ extension AgentConfigurationTests {
         #expect(allowedToolNames.contains("swift.outline"))
         #expect(allowedToolNames.contains("swift.build"))
 
-        let defaultProfile = AgentProfile(
-            id: "default",
-            name: "Default",
-            tools: AgentProfileStore.defaultToolNames
+        let developerProfile = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            tools: AgentProfileStore.developerToolNames
         )
-        let defaultAllowedToolNames = defaultProfile.allowedToolNames()
+        let developerAllowedToolNames = developerProfile.allowedToolNames()
 
-        #expect(!defaultAllowedToolNames.contains("swift.outline"))
-        #expect(!defaultAllowedToolNames.contains("swift.build"))
+        #expect(!developerAllowedToolNames.contains("swift.outline"))
+        #expect(!developerAllowedToolNames.contains("swift.build"))
     }
 
     @Test

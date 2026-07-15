@@ -227,8 +227,8 @@ extension TerminalChat {
       - A task in awaiting_validation is not completed and must never be reported as validated.
 
       Delegation rules:
-      - Create the sub-agents with agent.create using role "Reviewer" and \
-      isolationMode "report" (read-only; they must not edit files).
+      - Create the sub-agents with agent.create using role "Reviewer"; Reviewers are \
+      read-only and must not edit files.
       - Restrict each Reviewer to this read-only toolset by passing \
       toolNames: [\(toolList)].
       - If a task graph is active, append one independent review task per Reviewer to that \
@@ -359,8 +359,8 @@ extension TerminalChat {
       \(reviewChangeSummarySection(changeSummary))
 
       Delegation rules:
-      - Create the sub-agents with agent.create using role "Reviewer" and \
-      isolationMode "report" (read-only; they must not edit files).
+      - Create the sub-agents with agent.create using role "Reviewer"; Reviewers are \
+      read-only and must not edit files.
       - Restrict each Reviewer to this read-only toolset by passing \
       toolNames: [\(toolList)].
       - When the review surface can be partitioned into independent areas (for \

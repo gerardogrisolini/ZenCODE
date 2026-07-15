@@ -108,7 +108,7 @@ public enum DirectToolCatalog {
         DirectToolDescriptor(
             name: "local.writeFile",
             description: "Creates or overwrites a UTF-8 text file.",
-            inputSchema: #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"},"content":{"type":"string"},"createDirectories":{"type":"boolean"}},"required":["file_path","content"]}"#
+            inputSchema: #"{"type":"object","properties":{"path":{"type":"string"},"file_path":{"type":"string"},"content":{"type":"string"},"createDirectories":{"type":"boolean"}},"required":["path","content"]}"#
         ),
         DirectToolDescriptor(
             name: "local.replace",
@@ -162,7 +162,7 @@ public enum DirectToolCatalog {
         ),
         DirectToolDescriptor(
             name: "web.fetch",
-            description: "Fetches an HTTP or HTTPS URL and returns response metadata plus a UTF-8 text preview.",
+            description: "Opens an HTTP or HTTPS URL. On Apple platforms it renders the page in a silent in-process WebKit view (JavaScript executed) and returns extracted Markdown; on other platforms it falls back to a raw HTTP fetch preview.",
             inputSchema: #"{"type":"object","properties":{"url":{"type":"string"},"maxBytes":{"type":"number"},"timeoutSeconds":{"type":"number"}},"required":["url"]}"#
         )
     ]
@@ -250,19 +250,26 @@ public enum DirectToolCatalog {
 
 #if canImport(Darwin) || canImport(Glibc)
     public static var coreProcessDescriptors: [DirectToolDescriptor] {
-        macOSProcessDescriptors.filter { $0.name == "local.exec" }
+        macOSProcessDescriptors.filter {
+            $0.name == "local.exec" || $0.name == "exec.job"
+        }
     }
 
     public static let macOSProcessDescriptors: [DirectToolDescriptor] = [
         DirectToolDescriptor(
             name: "search.grep",
-            description: "Searches text with grep from a local path. Use context for surrounding lines and filesOnly to list only matching file paths.",
+            description: "Searches text with grep from a local path. Use context for surrounding lines and filesOnly to list only matching file paths. VCS and build directories (.git, .build, .swiftpm, node_modules, DerivedData) are skipped.",
             inputSchema: #"{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"glob":{"type":"string"},"maxResults":{"type":"number"},"max_results":{"type":"number"},"context":{"type":"number"},"filesOnly":{"type":"boolean"},"files_only":{"type":"boolean"}},"required":["pattern"]}"#
         ),
         DirectToolDescriptor(
             name: "local.exec",
-            description: "Runs a shell command in the working directory and returns stdout, stderr, and exit code. Reserve this for commands not covered by dedicated file, text, search, Git, web, Xcode, Figma, memory, or feature tools.",
-            inputSchema: #"{"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"workingDirectory":{"type":"string"},"timeoutSeconds":{"type":"number"},"timeout":{"type":"number"}},"required":["command"]}"#
+            description: "Runs a shell command in the working directory and returns stdout, stderr, and exit code. Set background=true to start a long-running command (dev server, watcher, tail) as a background job and return its job id immediately; manage it with exec.job. Reserve this for commands not covered by dedicated file, text, search, Git, web, Xcode, Figma, memory, or feature tools.",
+            inputSchema: #"{"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"workingDirectory":{"type":"string"},"background":{"type":"boolean","description":"Start the command as a background job and return a job id immediately."},"timeoutSeconds":{"type":"number"},"timeout":{"type":"number"}},"required":["command"]}"#
+        ),
+        DirectToolDescriptor(
+            name: "exec.job",
+            description: "Manages background jobs started by local.exec with background=true. action=poll returns job status plus new output since offset; action=kill terminates a job; action=list lists known jobs.",
+            inputSchema: #"{"type":"object","properties":{"action":{"type":"string","enum":["poll","kill","list"]},"id":{"type":"string"},"jobID":{"type":"string"},"job_id":{"type":"string"},"offset":{"type":"number","description":"Byte offset returned by the previous poll; only newer output is returned."}},"required":["action"]}"#
         ),
         DirectToolDescriptor(
             name: "git.status",
@@ -398,8 +405,8 @@ public enum DirectToolCatalog {
     public static let subAgentDescriptors: [DirectToolDescriptor] = [
         DirectToolDescriptor(
             name: "agent.create",
-            description: "Creates up to 8 delegated sub-agents. For coordinated work, define the session task graph first and pass taskID to atomically claim each runnable task and record a fenced execution attempt. A taskID is required while a task graph is active and for parallel or concurrent delegation when task workflow tools are available. A single self-contained delegation may omit taskID. Each sub-agent inherits the parent session's enabled tools by default. If name, role, or profile matches an agent profile in agents.json, that profile's model is used. Independent report agents may run in parallel; because implementation agents share one working directory, only one may have queued or running work at a time.",
-            inputSchema: #"{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"isolationMode":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}},"agents":{"type":"array","maxItems":8,"items":{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"isolationMode":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}}}}},"items":{"type":"array","items":{"type":"object"}}}}"#
+            description: "Creates up to 8 delegated sub-agents; independent sub-agents run in parallel. For coordinated work, define the session task graph first and pass taskID to atomically claim each runnable task and record a fenced execution attempt. A taskID is required while a task graph is active and for parallel or concurrent delegation when task workflow tools are available. A single self-contained delegation may omit taskID. Pass profile (or agent) to run the sub-agent with one of the agent profiles from agents.json, matched by name, role, or profile; otherwise the sub-agent uses the session's model. Each sub-agent inherits the parent session's enabled tools unless toolNames narrows them.",
+            inputSchema: #"{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}},"agents":{"type":"array","maxItems":8,"items":{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}}}}},"items":{"type":"array","items":{"type":"object"}}}}"#
         ),
         DirectToolDescriptor(
             name: "agent.list",

@@ -350,7 +350,7 @@ extension TerminalChat {
     }
 
     private func telegramRemoteStatusText() -> String {
-        let agent = selectedAgent?.displayName ?? "Default"
+        let agent = selectedAgent?.displayName ?? AgentProfileStore.developerAgentName
         let model = currentEffectiveModelID() ?? "default model"
         return "Session active.\nAgent: \(agent)\nModel: \(model)\nWorking directory: \(configuration.workingDirectory.path)"
     }

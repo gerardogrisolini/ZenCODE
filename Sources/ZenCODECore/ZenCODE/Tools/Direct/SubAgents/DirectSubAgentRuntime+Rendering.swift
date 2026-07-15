@@ -11,7 +11,6 @@ extension DirectSubAgentRuntime {
     public static func systemPrompt(
         name: String,
         role: String,
-        isolationMode: IsolationMode,
         taskID: String? = nil,
         taskAttemptID: String? = nil,
         allowedToolNames: Set<String>? = nil
@@ -35,12 +34,6 @@ extension DirectSubAgentRuntime {
         ) {
             lines.append(taskWorkflowSection)
         }
-        switch isolationMode {
-        case .report:
-            lines.append("Isolation mode: report. Investigate, inspect, build, test, review, and summarize, but do not make file edits or other mutating changes.")
-        case .implementation:
-            lines.append("Isolation mode: implementation. You may edit code, but keep changes narrowly scoped to the delegated task.")
-        }
         return lines.joined(separator: "\n")
     }
 
@@ -54,7 +47,7 @@ extension DirectSubAgentRuntime {
 
         var lines = ["Sub-agents:"]
         for snapshot in snapshots {
-            var summary = "- \(snapshot.id) name=\(snapshot.name) role=\(snapshot.role) status=\(snapshot.status.rawValue) pending=\(snapshot.pending) isolation=\(snapshot.isolationMode.rawValue)"
+            var summary = "- \(snapshot.id) name=\(snapshot.name) role=\(snapshot.role) status=\(snapshot.status.rawValue) pending=\(snapshot.pending)"
             if let taskID = snapshot.taskID?.nilIfBlank {
                 summary += " task=\(taskID)"
             }

@@ -13,7 +13,6 @@ public enum DirectSubAgentRuntimeError: LocalizedError {
     case agentNotFound(String)
     case agentClosed(String)
     case agentLimitExceeded(Int)
-    case unsafeImplementationParallelism
     case taskGraphRequiredForCoordinatedDelegation
     case taskIDRequiredForActiveTaskGraph(String)
 
@@ -29,8 +28,6 @@ public enum DirectSubAgentRuntimeError: LocalizedError {
             return "Delegated sub-agent '\(name)' is closed."
         case let .agentLimitExceeded(limit):
             return "A single agent.create request supports at most \(limit) delegated sub-agents."
-        case .unsafeImplementationParallelism:
-            return "Only one implementation sub-agent may run at a time because delegated agents share the working directory."
         case .taskGraphRequiredForCoordinatedDelegation:
             return "Coordinated delegation requires a task graph. Create the workflow with tasks.create, use tasks.list with runnableOnly=true, then pass taskID for every delegated task."
         case let .taskIDRequiredForActiveTaskGraph(graphID):

@@ -47,7 +47,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         capability: Int? = nil
     ) {
         self.id = id.nilIfBlank ?? UUID().uuidString
-        self.name = name.nilIfBlank ?? AgentProfileStore.defaultAgentName
+        self.name = name.nilIfBlank ?? AgentProfileStore.developerAgentName
         self.instructions = instructions?.nilIfBlank
         self.symbolName = symbolName?.nilIfBlank
         self.tools = tools
@@ -240,9 +240,11 @@ public struct AgentProfileSkill: Codable, Hashable, Sendable {
 }
 
 public enum AgentProfileStore {
-    public static let defaultAgentName = "Default"
-    public static let defaultAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
-        public static let builderAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000007")!
+    public static let developerAgentName = "Developer"
+    public static let developerAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000012")!
+    public static let reporterAgentName = "Reporter"
+    public static let reporterAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000013")!
+    public static let builderAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000007")!
     public static let minimalAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000008")!
     public static let xcodeAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000009")!
     public static let reviewerAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!
@@ -266,7 +268,7 @@ public enum AgentProfileStore {
         //TerminalToolSelectionCatalog.featurePackageKey(id: "swift-tools"),
         "memory"
     ]
-    public static let defaultToolNames: [String] = codingToolNames + [
+    public static let developerToolNames: [String] = codingToolNames + [
         TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools"),
         "sub-agents"
     ]
@@ -274,7 +276,13 @@ public enum AgentProfileStore {
     public static let builderToolNames: [String] = codingToolNames + [
         TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools")
     ]
-            public static let reviewerToolNames: [String] = codingToolNames.filter { $0 != "shell" }
+    public static let reviewerToolNames: [String] = codingToolNames.filter { $0 != "shell" }
+    public static let reporterToolNames: [String] = [
+        "files",
+        TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools"),
+        "text",
+        TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools")
+    ]
     public static let plannerToolNames: [String] = [
         "files",
         TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools"),
@@ -362,15 +370,15 @@ public enum AgentProfileStore {
     public static func defaultProfiles() -> [AgentProfile] {
         [
             AgentProfile(
-                id: defaultAgentID.uuidString,
-                name: defaultAgentName,
+                id: developerAgentID.uuidString,
+                name: developerAgentName,
                 instructions: """
-                General coding agent. Solve the user's request with available tools and keep replies concise.
+                Developer agent. Implement the user's request with the available tools, keep changes focused, and validate important work before reporting completion.
 
                 Before launching multiple sub-agents or beginning work with multiple phases, decide whether the request is a coordinated workflow. Follow the session task-workflow policy when coordination tools are available; use sub-agents to gather focused evidence in parallel only when their work is independent and tracked by that workflow. A single self-contained delegation or short disposable lookup may proceed without a task graph.
                 """,
                 symbolName: "person.crop.circle",
-                tools: defaultToolNames
+                tools: developerToolNames
             ),
             AgentProfile(
                 id: builderAgentID.uuidString,
@@ -409,6 +417,17 @@ public enum AgentProfileStore {
                 """,
                 symbolName: "magnifyingglass.circle",
                 tools: reviewerToolNames
+            ),
+            AgentProfile(
+                id: reporterAgentID.uuidString,
+                name: reporterAgentName,
+                instructions: """
+                Reporter agent. Analyze the requested code surface and produce a structured, evidence-based report.
+
+                Explain architecture, dependencies, control and data flows, APIs, configuration, tests, implementation status, and likely change impact as relevant. Distinguish verified facts from inferences and cite important evidence with file:line references.
+                """,
+                symbolName: "doc.text.magnifyingglass",
+                tools: reporterToolNames
             ),
             AgentProfile(
                 id: plannerAgentID.uuidString,
@@ -453,9 +472,9 @@ public enum AgentProfileStore {
         )
     }
 
-    public static func defaultProfile(in agents: [AgentProfile]) throws -> AgentProfile {
-        guard let agent = agents.first(where: { $0.name.selectionKey == defaultAgentName.selectionKey }) else {
-            throw AgentProfileStoreError.defaultAgentMissing(agentsManifestURL())
+    public static func developerProfile(in agents: [AgentProfile]) throws -> AgentProfile {
+        guard let agent = agents.first(where: { $0.name.selectionKey == developerAgentName.selectionKey }) else {
+            throw AgentProfileStoreError.developerAgentMissing(agentsManifestURL())
         }
         return agent
     }
@@ -533,7 +552,7 @@ public enum AgentProfileStoreError: LocalizedError {
     case invalidFile(URL, Error)
     case unsupportedVersion(URL, Int, Int)
     case noAgents(URL)
-    case defaultAgentMissing(URL)
+    case developerAgentMissing(URL)
 
     public var errorDescription: String? {
         switch self {
@@ -547,8 +566,8 @@ public enum AgentProfileStoreError: LocalizedError {
             return "Unsupported ZenCODE agents file \(url.path): version \(found), expected \(expected)"
         case let .noAgents(url):
             return "The ZenCODE agents file \(url.path) does not contain any agents."
-        case let .defaultAgentMissing(url):
-            return "The ZenCODE agents file \(url.path) does not contain the Default agent."
+        case let .developerAgentMissing(url):
+            return "The ZenCODE agents file \(url.path) does not contain the Developer agent."
         }
     }
 }

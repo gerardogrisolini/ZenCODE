@@ -154,7 +154,7 @@ extension TerminalChat {
         let name = snapshot.name.nilIfBlank ?? snapshot.id
         let marker = coloredStatusMarker(for: snapshot)
         let badge = statusBadge(for: snapshot)
-        let meta = dimText("\(snapshot.isolationMode.rawValue) · updated \(age)")
+        let meta = dimText("updated \(age)")
         return "\(marker) \(boldText(name))  \(badge)  \(meta)"
     }
 
@@ -370,7 +370,6 @@ extension TerminalChat {
                 snapshot.id,
                 snapshot.name,
                 snapshot.role,
-                snapshot.isolationMode.rawValue,
                 snapshot.status.rawValue,
                 snapshot.pending ? "pending" : "idle",
                 snapshot.modelID?.nilIfBlank ?? "",

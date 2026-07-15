@@ -46,20 +46,6 @@ public actor DirectSubAgentRuntime {
         }
     }
 
-    public enum IsolationMode: String, Sendable {
-        case report
-        case implementation
-
-        public init(rawValue: String?) {
-            switch rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-            case "implementation", "edit", "coding":
-                self = .implementation
-            default:
-                self = .report
-            }
-        }
-    }
-
     public struct AgentRecord {
         public let id: String
         public let sessionID: String
@@ -72,7 +58,6 @@ public actor DirectSubAgentRuntime {
         public let role: String
         public let profileID: String?
         public let profileName: String?
-        public let isolationMode: IsolationMode
         let overviewBatchID: UUID
         public let backend: any AgentRuntimeBackend
         public let createdAt: Date
@@ -107,7 +92,6 @@ public actor DirectSubAgentRuntime {
         public let role: String
         public let profileID: String?
         public let profileName: String?
-        public let isolationMode: IsolationMode
         public let status: Status
         public let pending: Bool
         public let modelID: String?
@@ -132,7 +116,6 @@ public actor DirectSubAgentRuntime {
             role: String,
             profileID: String? = nil,
             profileName: String? = nil,
-            isolationMode: IsolationMode,
             status: Status,
             pending: Bool,
             modelID: String? = nil,
@@ -156,7 +139,6 @@ public actor DirectSubAgentRuntime {
             self.role = role
             self.profileID = profileID?.nilIfBlank
             self.profileName = profileName?.nilIfBlank
-            self.isolationMode = isolationMode
             self.status = status
             self.pending = pending
             self.modelID = modelID
@@ -179,14 +161,12 @@ public actor DirectSubAgentRuntime {
         public let profileReference: String?
         public let taskID: String?
         public let prompt: String?
-        public let isolationMode: IsolationMode
         public let allowedToolNames: Set<String>?
     }
 
     public struct BackendContext: Sendable {
         public let requestedName: String
         public let requestedRole: String
-        public let isolationMode: IsolationMode
         public let profile: AgentProfile?
         /// Parent session's SwiftFeatureRuntime, propagated so subagents share the
         /// same discovery cache (consent, `--list-tools` results) instead of each
@@ -196,13 +176,11 @@ public actor DirectSubAgentRuntime {
         public init(
             requestedName: String,
             requestedRole: String,
-            isolationMode: IsolationMode,
             profile: AgentProfile?,
             swiftFeatureRuntime: SwiftFeatureRuntime? = nil
         ) {
             self.requestedName = requestedName
             self.requestedRole = requestedRole
-            self.isolationMode = isolationMode
             self.profile = profile
             self.swiftFeatureRuntime = swiftFeatureRuntime
         }
@@ -215,7 +193,6 @@ public actor DirectSubAgentRuntime {
             BackendContext(
                 requestedName: requestedName,
                 requestedRole: requestedRole,
-                isolationMode: isolationMode,
                 profile: profile,
                 swiftFeatureRuntime: swiftFeatureRuntime
             )

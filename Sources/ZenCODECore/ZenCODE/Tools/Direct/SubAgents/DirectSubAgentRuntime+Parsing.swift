@@ -46,7 +46,6 @@ extension DirectSubAgentRuntime {
         BackendContext(
             requestedName: payload.name,
             requestedRole: payload.role,
-            isolationMode: payload.isolationMode,
             profile: profile
         )
     }
@@ -92,9 +91,6 @@ extension DirectSubAgentRuntime {
             )?.nilIfBlank,
             taskID: firstString(["taskID", "task_id"], in: object)?.nilIfBlank,
             prompt: firstString(["prompt", "message", "initialPrompt", "initial_prompt"], in: object)?.nilIfBlank,
-            isolationMode: IsolationMode(
-                rawValue: firstString(["isolationMode", "isolation_mode", "mode"], in: object)
-            ),
             allowedToolNames: explicitAllowedToolNames(from: object)
         )
     }

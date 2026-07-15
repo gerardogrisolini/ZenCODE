@@ -286,10 +286,12 @@ public enum TerminalToolSelectionCatalog {
             TerminalToolSelectionItem(
                 key: "shell",
                 title: "Shell",
-                detail: "Run shell commands in the workspace.",
+                detail: "Run shell commands and manage background jobs in the workspace.",
                 groupTitle: coreGroup,
-                allowedToolNames: descriptorNames.filter { $0 == "local.exec" },
-                aliases: ["bash", "sh", "zsh", "exec"],
+                allowedToolNames: descriptorNames.filter {
+                    $0 == "local.exec" || $0 == "exec.job"
+                },
+                aliases: ["bash", "sh", "zsh", "exec", "jobs"],
                 requiresWorkspaceAccess: true
             ),
             TerminalToolSelectionItem(

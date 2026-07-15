@@ -52,11 +52,12 @@ extension ZenCODEAgentProfileSetupRunner {
 
     static var requiredDefaultAgentNames: Set<String> {
                 Set([
-            AgentProfileStore.defaultAgentName,
+            AgentProfileStore.developerAgentName,
             AgentProfileStore.builderAgentName,
             "Minimal",
             AgentProfileStore.xcodeAgentName,
             AgentProfileStore.reviewerAgentName,
+            AgentProfileStore.reporterAgentName,
             AgentProfileStore.plannerAgentName
         ].map(agentSetupNameKey))
     }

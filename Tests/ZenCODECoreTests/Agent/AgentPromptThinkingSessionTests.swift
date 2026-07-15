@@ -171,8 +171,8 @@ extension AgentConfigurationTests {
             providedSystemPrompt: "Client instructions written in English.",
             cwd: "/tmp/project",
             selectedAgent: AgentProfile(
-                id: "default",
-                name: "Default",
+                id: "developer",
+                name: "Developer",
                 instructions: "Selected agent instructions written in English."
             ),
             allowedToolNames: []
@@ -194,8 +194,20 @@ extension AgentConfigurationTests {
             workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
         )
 
-        #expect(configuration.selectedAgent?.displayName == AgentProfileStore.defaultAgentName)
+        #expect(configuration.selectedAgent?.displayName == AgentProfileStore.developerAgentName)
         #expect(configuration.hostedAgentProfiles == nil)
+    }
+
+    @Test
+    func removedDefaultProfileNameIsRejected() {
+        #expect(throws: AgentConfigurationError.self) {
+            _ = try AgentConfiguration(
+                hostedModelID: "mlx-community/test",
+                agentName: "Default",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
+            )
+        }
     }
 
     @Test

@@ -114,6 +114,11 @@ extension DirectToolExecutor {
     }
 
 #if canImport(Darwin) || canImport(Glibc)
+    /// Generous anti-runaway guard: legitimate commands rarely exceed this many
+    /// stdout lines, while an unbounded producer (`yes`, busy log loops) would
+    /// otherwise grow process memory without limit before output truncation.
+    public static let processStdoutLineLimit = 100_000
+
     public func runProcess(
         executable: String,
         arguments: [String],
@@ -127,11 +132,15 @@ extension DirectToolExecutor {
                 arguments: arguments,
                 workingDirectory: cwd,
                 environment: environment,
-                timeout: timeout
+                timeout: timeout,
+                stdoutLineLimit: Self.processStdoutLineLimit
             )
+            let stdout = result.stdoutWasTruncated
+                ? result.stdout + "\n[stdout truncated after \(Self.processStdoutLineLimit) lines; the command was terminated. Narrow its output or redirect it to a file.]"
+                : result.stdout
             return ProcessResult(
                 status: result.exitCode,
-                stdout: result.stdout,
+                stdout: stdout,
                 stderr: result.stderr,
                 timedOut: result.timedOut
             )

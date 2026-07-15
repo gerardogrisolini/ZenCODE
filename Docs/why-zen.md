@@ -32,7 +32,7 @@ Why this project exists and where it differs from other coding agents.
 
 ## Agentic workflow
 
-- Agent profiles (`Default`, `Builder`, `Minimal`, `Xcode`, `Planner`, `Reviewer`) with dedicated tools, skills, model, and instructions — see [agents.md](agents.md).
+- Agent profiles (`Developer`, `Builder`, `Minimal`, `Xcode`, `Planner`, `Reviewer`, `Reporter`) with dedicated tools, skills, model, and instructions — see [agents.md](agents.md).
 - `/plan` authored by one read-only `Planner`, `/review` delegated to read-only `Reviewer` sub-agents.
 - Dynamic Swift Features: the Builder generates reusable Swift packages as durable tools.
 - Change tracking and `/undo` as a safety net.

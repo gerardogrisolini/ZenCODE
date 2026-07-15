@@ -144,7 +144,7 @@ struct LocalWriteFileTool: FeatureTool {
     static let description = "Creates or overwrites a UTF-8 text file."
     static let inputSchema = buildInputSchema(
         CommonSchemaProperties.pathAliases + [.string("content"), .boolean("createDirectories")],
-        required: ["file_path", "content"]
+        required: ["path", "content"]
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {

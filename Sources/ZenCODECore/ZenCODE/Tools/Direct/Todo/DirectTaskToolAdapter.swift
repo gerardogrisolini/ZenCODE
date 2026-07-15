@@ -212,10 +212,6 @@ extension DirectTaskToolAdapter {
         case "sub_agent", "subagent", "agent": executor = .subAgent
         default: executor = .coordinator
         }
-        let isolationMode = DirectTodoRuntime.firstString(
-            ["isolationMode", "isolation_mode"],
-            in: executionObject
-        ).flatMap { TaskIsolationMode(rawValue: $0.lowercased()) }
 
         return TaskDefinition(
             id: DirectTodoRuntime.firstString(["id", "taskID", "task_id"], in: object),
@@ -237,7 +233,6 @@ extension DirectTaskToolAdapter {
                     in: executionObject
                 ),
                 role: DirectTodoRuntime.firstString(["role"], in: executionObject),
-                isolationMode: isolationMode,
                 toolNames: DirectTodoRuntime.firstStringList(
                     ["toolNames", "tool_names", "tools"],
                     in: executionObject

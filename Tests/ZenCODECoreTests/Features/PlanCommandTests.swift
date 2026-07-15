@@ -514,7 +514,7 @@ struct PlanCommandTests {
         #expect(prompt.contains("name \"plan-author\""))
         #expect(prompt.contains("role \"Planner\""))
         #expect(prompt.contains("profile \"\(planner.id)\""))
-        #expect(prompt.contains("isolationMode \"report\""))
+        #expect(prompt.contains("The Planner must not edit files or run mutating commands"))
         #expect(prompt.contains("toolNames:"))
         #expect(prompt.contains("agent.wait"))
         #expect(prompt.contains("same Planner to correct it with agent.message"))
@@ -587,8 +587,8 @@ struct PlanCommandTests {
                     latestOutput: "Draft"
                 ),
                 subAgentSnapshot(
-                    name: "default-agent",
-                    role: "Default",
+                    name: "developer-agent",
+                    role: "Developer",
                     latestOutput: "Default fallback plan"
                 ),
             ]
@@ -598,7 +598,7 @@ struct PlanCommandTests {
     }
 
     @Test
-    func plannerAuthoredResponseRejectsAPlannerRoleUsingTheDefaultProfile() {
+    func plannerAuthoredResponseRejectsAPlannerRoleUsingTheDeveloperProfile() {
         let response = TerminalChat.plannerAuthoredPlanResponse(
             parentResponse: DirectAgentResponse(
                 text: "Default fallback plan",
@@ -609,7 +609,7 @@ struct PlanCommandTests {
                 subAgentSnapshot(
                     name: TerminalChat.planAuthorAgentName,
                     role: "Planner",
-                    profileName: "Default",
+                    profileName: "Developer",
                     latestOutput: "Impersonated plan"
                 )
             ]
@@ -647,7 +647,6 @@ struct PlanCommandTests {
             name: TerminalChat.planAuthorAgentName,
             role: "Planner",
             profileName: AgentProfileStore.plannerAgentName,
-            isolationMode: .report,
             status: .idle,
             pending: false,
             modelID: "planner-model",
@@ -909,7 +908,6 @@ struct PlanCommandTests {
             name: name,
             role: role,
             profileName: profileName,
-            isolationMode: .report,
             status: status,
             pending: pending,
             modelID: modelID,

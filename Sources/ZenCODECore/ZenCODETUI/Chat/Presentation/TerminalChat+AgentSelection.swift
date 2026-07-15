@@ -173,8 +173,8 @@ extension TerminalChat {
 
     private static func agentPurposeSummary(_ agent: AgentProfile) -> String {
         switch agent.id.lowercased() {
-        case AgentProfileStore.defaultAgentID.uuidString.lowercased():
-            return "General coding with web, memory, and sub-agents"
+        case AgentProfileStore.developerAgentID.uuidString.lowercased():
+            return "General software development with web, memory, and sub-agents"
         case AgentProfileStore.builderAgentID.uuidString.lowercased():
             return "Create, build, and manage Swift feature tools"
         case AgentProfileStore.minimalAgentID.uuidString.lowercased():
@@ -183,6 +183,8 @@ extension TerminalChat {
             return "ACP agent for Xcode with Xcode-native tools"
         case AgentProfileStore.reviewerAgentID.uuidString.lowercased():
             return "Read-only reviewer for delegated code review"
+        case AgentProfileStore.reporterAgentID.uuidString.lowercased():
+            return "Read-only code analysis and evidence-based reports"
         case AgentProfileStore.plannerAgentID.uuidString.lowercased():
             return "Read-only planner for implementation workflows"
         default:

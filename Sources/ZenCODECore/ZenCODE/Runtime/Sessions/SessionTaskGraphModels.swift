@@ -131,16 +131,10 @@ public enum TaskExecutorKind: String, Codable, Equatable, Sendable {
     case subAgent = "sub_agent"
 }
 
-public enum TaskIsolationMode: String, Codable, Equatable, Sendable {
-    case report
-    case implementation
-}
-
 public struct TaskExecutionSpec: Codable, Equatable, Sendable {
     public var executor: TaskExecutorKind
     public var profile: String?
     public var role: String?
-    public var isolationMode: TaskIsolationMode?
     public var toolNames: [String]
     public var fileScopes: [String]
 
@@ -148,14 +142,12 @@ public struct TaskExecutionSpec: Codable, Equatable, Sendable {
         executor: TaskExecutorKind = .coordinator,
         profile: String? = nil,
         role: String? = nil,
-        isolationMode: TaskIsolationMode? = nil,
         toolNames: [String] = [],
         fileScopes: [String] = []
     ) {
         self.executor = executor
         self.profile = profile?.nilIfBlank
         self.role = role?.nilIfBlank
-        self.isolationMode = isolationMode
         self.toolNames = toolNames.compactMap(\.nilIfBlank)
         self.fileScopes = fileScopes.compactMap(\.nilIfBlank)
     }

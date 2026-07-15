@@ -422,7 +422,7 @@ public struct AgentConfiguration: Sendable {
         availableAgents: [AgentProfile]
     ) throws -> AgentProfile? {
         guard let rawAgentName else {
-            return try AgentProfileStore.defaultProfile(in: availableAgents)
+            return try AgentProfileStore.developerProfile(in: availableAgents)
         }
 
         let normalizedName = normalizedAgentLookupValue(rawAgentName)

@@ -170,5 +170,6 @@ zen --mlx --acp --cwd /path/to/project
 - [Builder agent guide](Docs/builder.md)
 - [Planner agent guide](Docs/planner.md)
 - [Reviewer agent guide](Docs/reviewer.md)
+- [Reporter agent guide](Docs/reporter.md)
 - [Aion UI manual setup](Docs/aion-ui.md)
 - [Xcode 27 ACP setup](Docs/xcode.md)

@@ -289,7 +289,6 @@ public nonisolated enum SubAgentToolRequestCompatibility {
             assignString(["name"], from: arguments, to: "name", in: &normalized)
             assignString(["role"], from: arguments, to: "role", in: &normalized)
             assignString(["prompt", "message", "initialPrompt", "initial_prompt"], from: arguments, to: "prompt", in: &normalized)
-            assignString(["isolationMode", "isolation_mode", "mode"], from: arguments, to: "isolationMode", in: &normalized)
             assignStringArray(
                 ["allowedTools", "allowed_tools", "toolNames", "tool_names", "toolKinds", "tool_kinds", "tools"],
                 from: arguments,

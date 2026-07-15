@@ -37,7 +37,7 @@ zen [--setup] [--acp] [--agent NAME] [--model MODEL_ID] [--cwd PATH] [--skills L
 
 - `--setup`: open setup, then exit.
 - `--acp`: run ACP JSON-RPC over stdio.
-- `--agent NAME`: select an agent profile (default: `Default`).
+- `--agent NAME`: select an agent profile (default: `Developer`).
 - `--model MODEL_ID`: override the agent-selected model.
 - `--cwd PATH`: working directory for local tools.
 - `--skills LIST`: initial skill selection by name/number, `all`, or `none`.
@@ -49,7 +49,7 @@ Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, 
 
 ## Agent Profiles
 
-Agent profiles live in `~/.zencode/agents.json` and are managed in setup. The recommended profiles are `Default`, `Builder`, `Minimal`, `Xcode`, `Planner`, and `Reviewer`. Each defines tools, skills, model, and instructions.
+Agent profiles live in `~/.zencode/agents.json` and are managed in setup. The recommended profiles are `Developer`, `Builder`, `Minimal`, `Xcode`, `Planner`, `Reviewer`, and `Reporter`. Each defines tools, skills, model, and instructions.
 
 Switch profiles in the TUI without restarting:
 
@@ -173,7 +173,7 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, a
 ```bash
 zen --mlx --cwd /path/to/project                    # local MLX
 zen --ds4 --cwd /path/to/project                    # local DS4
-zen --mlx --model qwen3-mlx --agent Default         # explicit model and profile
+zen --mlx --model qwen3-mlx --agent Developer       # explicit model and profile
 ```
 
 See [mlx-runtime.md](mlx-runtime.md) and [ds4.md](ds4.md) for runtime-specific setup and configuration.

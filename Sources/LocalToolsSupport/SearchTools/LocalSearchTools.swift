@@ -14,6 +14,10 @@ import Glibc
 import FeatureKit
 
 
+/// Directories that are skipped by recursive text searches: VCS metadata and
+/// build products dwarf real sources and produce noisy, slow matches.
+let searchExcludedDirectories = [".git", ".build", ".swiftpm", "node_modules", "DerivedData"]
+
 struct SearchGlobTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let pattern: String?
@@ -45,7 +49,7 @@ struct SearchGrepTool: FeatureTool {
     }
 
     static let name = "search.grep"
-    static let description = "Searches text with grep from a local path. Use context for surrounding lines and filesOnly to list only matching file paths."
+    static let description = "Searches text with grep from a local path. Use context for surrounding lines and filesOnly to list only matching file paths. VCS and build directories (.git, .build, .swiftpm, node_modules, DerivedData) are skipped."
     static let inputSchema = buildInputSchema(
         [.string("pattern"), .string("path"), .string("glob")]
             + CommonSchemaProperties.limit
@@ -61,6 +65,9 @@ struct SearchGrepTool: FeatureTool {
         let maxResults = max(1, input.maxResults ?? input.max_results ?? 200)
         let filesOnly = input.filesOnly ?? input.files_only ?? false
         var processArguments = ["-E", "-R", "-n", "-I"]
+        for excludedDirectory in searchExcludedDirectories {
+            processArguments.append("--exclude-dir=\(excludedDirectory)")
+        }
         if filesOnly {
             processArguments.append("-l")
         } else if let contextLines = input.context, contextLines > 0 {
@@ -116,7 +123,7 @@ struct SearchLocateTool: FeatureTool {
         let path = context.resolvePath(input.path ?? ".")
         let maxResults = min(max(1, input.maxResults ?? input.max_results ?? 40), 500)
         var processArguments = ["-E", "-R", "-n", "-I"]
-        for excludedDirectory in [".git", ".build", ".swiftpm", "node_modules", "DerivedData"] {
+        for excludedDirectory in searchExcludedDirectories {
             processArguments.append("--exclude-dir=\(excludedDirectory)")
         }
         processArguments.append(contentsOf: ["-m", "\(maxResults)", "-e", pattern, "--", path.path])

@@ -39,7 +39,6 @@ struct LocalAgentRuntimeBackendFactoryTests {
         let context = DirectSubAgentRuntime.BackendContext(
             requestedName: "remote-agent",
             requestedRole: "worker",
-            isolationMode: .report,
             profile: AgentProfile(id: "remote-agent", name: "Remote", modelID: "remote")
         )
 
@@ -71,7 +70,6 @@ struct LocalAgentRuntimeBackendFactoryTests {
         let context = DirectSubAgentRuntime.BackendContext(
             requestedName: "child-agent",
             requestedRole: "worker",
-            isolationMode: .report,
             profile: AgentProfile(id: "child-agent", name: "Child", modelID: "local")
         )
         let child = try await parent.makeContextualBackend(context) as! FakeBackend

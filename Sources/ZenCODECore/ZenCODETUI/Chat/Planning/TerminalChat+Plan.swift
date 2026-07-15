@@ -196,12 +196,10 @@ extension TerminalChat {
         return """
         Implement the active approved plan now, using the session task graph as the control \
         plane. Start by calling tasks.list with runnableOnly=true. Execute small tasks directly, \
-        delegate independent read-only/report tasks in one agent.create batch using each taskID, \
-        and run at most one isolationMode=implementation sub-agent at a time because all \
-        implementation agents share the working directory. Before direct work, transition that \
-        task to in_progress with tasks.update; after implementation record output and either \
-        complete report work or move implementation work to awaiting_validation. Validate \
-        implementation tasks independently before marking them completed. Repeat until the \
+        and delegate independent tasks in one agent.create batch using each taskID; delegated \
+        sub-agents run in parallel. Before direct work, transition that \
+        task to in_progress with tasks.update; after the work record output and complete the \
+        task, validating risky changes before marking them completed. Repeat until the \
         graph is completed or a real blocker is recorded. Respect dependencies, never claim a \
         task twice, use tasks.retry only explicitly, and do not recreate or replace the approved \
         plan.
@@ -548,8 +546,8 @@ extension TerminalChat {
 
             Planner authoring rules:
             - Create exactly one sub-agent with agent.create. Use name \
-            "\(planAuthorAgentName)", role "Planner", profile "\(planner.id)", and isolationMode \
-            "report" (read-only; it must not edit files or run mutating commands).
+            "\(planAuthorAgentName)", role "Planner", and profile "\(planner.id)". The Planner \
+            must not edit files or run mutating commands.
             - Restrict the Planner to this read-only planning toolset by passing \
             toolNames: [\(toolList)].
             - Give that Planner the complete requested goal and every relevant constraint \
@@ -603,7 +601,6 @@ extension TerminalChat {
                     AgentProfileStore.plannerAgentName
                 ) == .orderedSame
                 && isPlannerSnapshotProfile(snapshot)
-                && snapshot.isolationMode == .report
                 && (snapshot.status == .idle || snapshot.status == .closed)
                 && !snapshot.pending
                 && snapshot.latestOutput?.trimmingCharacters(
