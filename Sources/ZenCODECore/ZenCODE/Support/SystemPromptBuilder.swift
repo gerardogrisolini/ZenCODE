@@ -127,8 +127,7 @@ public enum SystemPromptBuilder {
 
         Complexity: set tasks.create `complexity` (1–10) on every task. \
         \(TaskRecord.complexityRubric). \
-        Complexity drives agent selection: match it to the capability of the \
-        delegated agent when one is available.
+        Agent selection policy: \(TaskRecord.agentSelectionPolicy)
 
         \(delegationInstruction)
         A single self-contained delegation or a short disposable lookup does not require a \
@@ -148,8 +147,8 @@ public enum SystemPromptBuilder {
     }
 
     /// Generates a roster of delegatable agent profiles that have a dedicated
-    /// model and capability value, so the model can match agent capability to
-    /// task complexity when delegating via `agent.create`.
+    /// model and capability value, so the model can apply role and tool
+    /// compatibility before matching agent capability to task complexity.
     /// Agents without a model (and therefore without capability) are excluded.
     public static func delegatableAgentsSection(
         agents: [AgentProfile],
@@ -167,16 +166,29 @@ public enum SystemPromptBuilder {
 
         let lines = roster.compactMap { agent -> String? in
             guard let capability = agent.capability else { return nil }
-            let role = agent.displayName.lowercased()
-            return "- \(agent.displayName) (capability \(capability)/10): \(role)"
+            let roleSummary = delegationRoleSummary(for: agent)
+            return "- \(agent.displayName) (capability \(capability)/10): \(roleSummary)"
         }
 
         return """
-        Delegatable agent profiles (match agent capability to task complexity):
+        Delegatable agent profiles (ordered by capability; filter by role and constraints first):
         \(lines.joined(separator: "\n"))
-        Low-complexity tasks (1–3) → low-capability agent; medium (4–6) → mid-capability; high (7–10) → high-capability. \
-        Pass the agent name as `profile` or `agent` in agent.create.
+        Agent selection policy: \(TaskRecord.agentSelectionPolicy)
+        Pass the selected profile name as `profile` or `agent` in agent.create. Give the \
+        sub-agent an explicit role and scope. Its effective tools come from the parent grant; \
+        `toolNames` can only narrow that grant.
         """
+    }
+
+    private static func delegationRoleSummary(for agent: AgentProfile) -> String {
+        guard let instructions = agent.instructions?.nilIfBlank else {
+            return "No role constraints declared."
+        }
+        return instructions
+            .components(separatedBy: .newlines)
+            .compactMap(\.nilIfBlank)
+            .first
+            ?? "No role constraints declared."
     }
 
     /// Adds the workflow policy to an existing prompt exactly once. This keeps

@@ -403,4 +403,37 @@ struct DelegatableAgentsSectionTests {
         #expect(lines?.first?.contains("Low") == true)
         #expect(lines?.last?.contains("High") == true)
     }
+
+    @Test
+    func rendersEnglishRoleAwareSelectionPolicy() throws {
+        let agents = [
+            AgentProfile(
+                id: "reviewer",
+                name: "Reviewer",
+                instructions: """
+                Reviewer agent. Perform read-only code review. Do not edit files.
+
+                Report findings with file and line references.
+                """,
+                modelID: "review-model",
+                capability: 9
+            ),
+        ]
+
+        let section = try #require(SystemPromptBuilder.delegatableAgentsSection(
+            agents: agents,
+            allowedToolNames: nil
+        ))
+
+        #expect(section.contains(
+            "ordered by capability; filter by role and constraints first"
+        ))
+        #expect(section.contains(
+            "Reviewer (capability 9/10): Reviewer agent. Perform read-only code review. Do not edit files."
+        ))
+        #expect(!section.contains("Report findings with file and line references."))
+        #expect(section.contains(TaskRecord.agentSelectionPolicy))
+        #expect(section.contains("effective tools come from the parent grant"))
+        #expect(section.contains("`toolNames` can only narrow that grant"))
+    }
 }

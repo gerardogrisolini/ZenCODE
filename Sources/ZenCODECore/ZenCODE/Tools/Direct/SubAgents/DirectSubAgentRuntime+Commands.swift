@@ -108,12 +108,16 @@ extension DirectSubAgentRuntime {
                            graphID: receipt.graphID
                        ),
                        taskView.task.complexity > capability {
+                        let capabilityGap = taskView.task.complexity - capability
                         advisories.append(
                             "Warning: task \"\(receipt.taskID)\" has complexity "
                                 + "\(taskView.task.complexity) but agent \"\(payload.name)\" "
                                 + "uses profile \"\(item.profile?.name ?? "unknown")\" with "
-                                + "capability \(capability)/10; consider a higher-capability "
-                                + "profile if this attempt underperforms."
+                                + "capability \(capability)/10, a capability gap of "
+                                + "\(capabilityGap). Use this profile only when no "
+                                + "role-compatible profile with the required tool access has "
+                                + "sufficient capability; otherwise select the lowest-capability "
+                                + "compatible profile that meets the task complexity."
                         )
                     }
                     try await taskOrchestrator.registerExecutionScope(

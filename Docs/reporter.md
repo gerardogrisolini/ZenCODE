@@ -41,7 +41,7 @@ It intentionally excludes `shell`, `sub-agents`, memory, and web so reports stay
 
 ## Capability Routing
 
-`Reporter` has a mid-range capability and is matched to medium-complexity (4–6) analysis tasks when the runtime builds a delegation roster. See [agents.md](agents.md) for how capability routing works.
+`Reporter` is role-compatible with evidence-based analysis and reporting tasks. After filtering by role, constraints, and required tool access, the coordinator compares the task complexity with `Reporter`'s configured capability. See [agents.md](agents.md) for the complete selection policy.
 
 ## When To Use Reporter
 

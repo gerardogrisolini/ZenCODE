@@ -221,6 +221,21 @@ struct DirectSubAgentRuntimeTests {
 
         #expect(output.contains("Warning: task \"hard-task\" has complexity 9"))
         #expect(output.contains("capability 5/10"))
+        #expect(output.contains("capability gap of 4"))
+        #expect(output.contains("role-compatible profile"))
+    }
+
+    @Test
+    func agentCreateDescriptorUsesCanonicalEnglishSelectionPolicy() throws {
+        let descriptor = try #require(
+            DirectToolCatalog.subAgentDescriptors.first { $0.name == "agent.create" }
+        )
+
+        #expect(descriptor.description.contains(TaskRecord.agentSelectionPolicy))
+        #expect(descriptor.description.contains("Give each sub-agent an explicit role and scope"))
+        #expect(descriptor.description.contains(
+            "inherits the parent session's enabled tools unless toolNames narrows them"
+        ))
     }
 
     @Test

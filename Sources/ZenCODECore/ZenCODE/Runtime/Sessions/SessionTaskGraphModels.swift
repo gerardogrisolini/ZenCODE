@@ -259,6 +259,16 @@ public struct TaskRecord: Codable, Equatable, Sendable, Identifiable {
         + "4-6 = standard multi-file implementation or focused analysis; "
         + "7-10 = complex architecture, cross-system integration, or deep reasoning"
 
+    /// The canonical policy for selecting a delegated agent from task complexity.
+    public static let agentSelectionPolicy =
+        "Determine the task type and required tools before comparing capability. "
+        + "Exclude profiles whose stated role or constraints are incompatible, and do not "
+        + "delegate when the effective tool grant cannot perform the work. Among compatible "
+        + "profiles, choose the one with the lowest capability that is greater than or equal "
+        + "to task complexity. If none meets the complexity, choose the highest-capability "
+        + "compatible profile and explicitly report the capability gap. Never select a "
+        + "profile by capability alone."
+
     public let id: String
     public var title: String
     public var details: String?

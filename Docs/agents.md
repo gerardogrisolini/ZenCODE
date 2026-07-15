@@ -58,16 +58,23 @@ Write authority is determined by the sub-agent's effective tool allowlist. By de
 
 ## Capability Routing
 
-The runtime builds a delegation roster containing only profiles that have **both** `modelID` and `capability`. The model matches task complexity to agent capability:
+The runtime builds a delegation roster containing only profiles that have **both** `modelID` and `capability`. Each roster entry includes the first non-empty line of the profile instructions so the model can see its role and constraints. Profiles are ordered by capability, but capability is not the first selection criterion:
 
 ```
-Delegatable agent profiles (match agent capability to task complexity):
-- Minimal (capability 3/10): minimal
-- Developer (capability 7/10): developer
-Low-complexity (1–3) → low-capability; medium (4–6) → mid; high (7–10) → high.
+Delegatable agent profiles (ordered by capability; filter by role and constraints first):
+- Minimal (capability 3/10): Minimal agent. Use essential tools only, answer briefly, and avoid extra workflow unless asked.
+- Developer (capability 7/10): Developer agent. Implement the user's request with the available tools, keep changes focused, and validate important work before reporting completion.
 ```
 
-This is capability-based, not seniority-based: a junior/senior split is expressed by combining `capability` with `modelID` and a restrictive or permissive `tools` set — not by inventing nominal roles.
+The model applies this policy in order:
+
+1. Determine the task type and required tools.
+2. Exclude profiles whose stated role or constraints are incompatible. For example, never assign implementation or editing to a read-only planning or review profile.
+3. Do not delegate when the effective child tool grant cannot perform the work. A child inherits the parent grant, and `toolNames` can only narrow it.
+4. Among compatible profiles, choose the one with the lowest capability greater than or equal to task complexity.
+5. If none meets the complexity, choose the highest-capability compatible profile and explicitly report the capability gap.
+
+The model must never select a profile by capability alone. Capability represents model strength rather than role, seniority, or tool authority. The runtime currently advises when complexity exceeds the selected profile's capability; it does not replace the model's explicit profile choice.
 
 ## Task Graph Integration
 

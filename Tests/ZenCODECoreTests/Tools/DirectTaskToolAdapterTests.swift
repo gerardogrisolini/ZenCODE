@@ -57,6 +57,17 @@ struct DirectTaskToolAdapterTests {
     }
 
     @Test
+    func taskSchemasUseCanonicalEnglishAgentSelectionPolicy() throws {
+        for name in ["tasks.create", "tasks.update"] {
+            let descriptor = try #require(
+                DirectToolCatalog.todoTaskDescriptors.first { $0.name == name }
+            )
+            #expect(descriptor.inputSchema.contains(TaskRecord.complexityRubric))
+            #expect(descriptor.inputSchema.contains(TaskRecord.agentSelectionPolicy))
+        }
+    }
+
+    @Test
     func adaptersShareAuthoritativeGraphAcrossExecutors() async throws {
         let orchestrator = SessionTaskOrchestrator()
         let first = DirectTaskToolAdapter()
@@ -318,7 +329,9 @@ struct DirectTaskToolAdapterTests {
         )
 
         #expect(output.contains("Hint: 1 previous attempt on this task (complexity 8) did not succeed"))
-        #expect(output.contains("higher-capability agent profile"))
+        #expect(output.contains("lowest role-compatible profile"))
+        #expect(output.contains("highest-capability compatible profile"))
+        #expect(output.contains("report the capability gap"))
     }
 
     private func call(name: String, arguments: [String: Any]) -> DirectAgentToolCall {

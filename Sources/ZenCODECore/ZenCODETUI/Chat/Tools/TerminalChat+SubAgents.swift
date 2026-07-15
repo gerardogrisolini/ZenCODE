@@ -150,12 +150,10 @@ extension TerminalChat {
     private static func renderSubAgentHeader(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot
     ) -> String {
-        let age = relativeAgeText(since: snapshot.updatedAt)
         let name = snapshot.name.nilIfBlank ?? snapshot.id
         let marker = coloredStatusMarker(for: snapshot)
         let badge = statusBadge(for: snapshot)
-        let meta = dimText("updated \(age)")
-        return "\(marker) \(boldText(name))  \(badge)  \(meta)"
+        return "\(marker) \(boldText(name))  \(badge)"
     }
 
     private static func renderSubAgentModel(
@@ -382,24 +380,5 @@ extension TerminalChat {
             ].joined(separator: "\u{1F}")
         }
         .joined(separator: "\u{1E}")
-    }
-
-    private static func relativeAgeText(since date: Date) -> String {
-        let seconds = max(0, Int(Date().timeIntervalSince(date).rounded()))
-        if seconds < 60 {
-            return "\(seconds)s ago"
-        }
-
-        let minutes = seconds / 60
-        if minutes < 60 {
-            return "\(minutes)m ago"
-        }
-
-        let hours = minutes / 60
-        if hours < 24 {
-            return "\(hours)h ago"
-        }
-
-        return "\(hours / 24)d ago"
     }
 }
