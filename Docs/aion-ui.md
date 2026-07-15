@@ -1,22 +1,19 @@
 # Aion UI
 
-Aion UI può eseguire gli agent locali tramite ACP stdio usando dei Custom Agent
-manuali.
+Aion UI can run local ZenCODE agents as ACP stdio Custom Agents.
 
-## Custom Agent: `ZenCODE`
+## ZenCODE (remote providers)
 
-In Aion UI, apri *Edit Custom Agent* e imposta:
+In Aion UI, open *Edit Custom Agent* and set:
 
 - **Display Name**: `ZenCODE`
 - **Command**: `zen`
 - **Arguments**: `--acp`
-- **Environment Variables**: nessuna
+- **Environment Variables**: none
 
-## Custom Agent: `ZenCODE` con MLX locale
-
-In Aion UI, apri *Edit Custom Agent* e imposta:
+## ZenCODE with local MLX
 
 - **Display Name**: `ZenCODE MLX`
 - **Command**: `zen`
 - **Arguments**: `--mlx --acp`
-- **Environment Variables**: nessuna
+- **Environment Variables**: none

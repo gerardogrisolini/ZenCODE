@@ -43,10 +43,12 @@ Xcode or the Apple command line tools.
 curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh | bash
 ```
 
-On Linux, `zen` runs in remote-only mode: the local MLX runtime is Apple-only,
-so the build does not pull in MLX/Metal and you drive the agent through
-configured remote providers (`zen --setup`). The standalone agent, TUI, ACP
-bridge, and bundled feature executables work normally.
+On Linux, the local MLX runtime is Apple-only and not available, but the local
+DS4 runtime is supported. The Linux build does not pull in MLX/Metal
+dependencies. You can drive the agent through configured remote providers
+(`zen --setup`) or use local DS4 inference (`zen --ds4`) when DS4 support is
+compiled in. The standalone agent, TUI, ACP bridge, and bundled feature
+executables work normally.
 
 Windows is supported through WSL. Install Ubuntu first, then run the Linux
 installer inside the Ubuntu shell:
@@ -63,7 +65,9 @@ swift --version
 ```
 
 > Note: `zen --mlx` is unavailable on Linux/WSL because local MLX inference
-> requires Apple Silicon and Metal.
+> requires Apple Silicon and Metal. Local DS4 inference (`zen --ds4`) is
+> available on Linux when DS4 support is compiled in; see the
+> [DS4 guide](Docs/ds4.md).
 
 ## Quick Start
 

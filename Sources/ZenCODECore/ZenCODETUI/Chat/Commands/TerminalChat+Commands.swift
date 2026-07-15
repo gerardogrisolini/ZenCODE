@@ -93,6 +93,8 @@ extension TerminalChat {
                 .first?
                 .lowercased() ?? "status"
             return ["status", "list", "ls"].contains(action)
+        case "/telegram":
+            return true
         default:
             return false
         }

@@ -1,100 +1,68 @@
 # ZenCODE DS4
 
-`zen --ds4` runs the coding agent on a local DS4 runtime loaded in the
-same process. It does not start or talk to `ds4-server`.
+`zen --ds4` runs the coding agent on a local DS4 runtime loaded in-process. It does not start or talk to `ds4-server`.
 
-DS4 build support, runtime configuration, and model selection are separate.
-ZenCODE does not vendor DS4 headers or source files: DS4-enabled builds use a
-local DS4 checkout selected during install. Runtime parameters and model
-selection happen later inside `zen --setup`.
+DS4 build support, runtime configuration, and model selection are separate. ZenCODE does not vendor DS4 headers: DS4-enabled builds use a local DS4 checkout selected during install. Runtime parameters and model selection happen later in `zen --setup`.
 
 ## Requirements
 
-- macOS on Apple Silicon for the bundled DS4 Metal build helper, or Linux with
-  a DS4 runtime library built from the DS4 checkout.
+- macOS on Apple Silicon (bundled Metal build helper) or Linux (DS4 runtime built from checkout).
 - A local DS4 source/build checkout.
-- A DS4 GGUF model file, for example `ds4flash.gguf`.
-- `make` and platform toolchains needed by DS4.
+- A DS4 GGUF model file (for example `ds4flash.gguf`).
+- `make` and platform toolchains.
 
-## Source Build With DS4
+## Source Build
 
-The installer asks whether to compile DS4 support and defaults to yes. When DS4
-is enabled, it then asks for the DS4 checkout directory, uses its `ds4.h` at
-build time, and registers the runtime library:
+The installer asks whether to compile DS4 support (defaults to yes), then asks for the checkout directory and uses its `ds4.h` at build time:
 
 ```bash
 Scripts/install.sh
 ```
 
-On later installs, the DS4 directory saved in `~/.zencode/ds4/settings.json`
-is offered as the default.
-
-For manual SwiftPM builds:
+Manual SwiftPM build:
 
 ```bash
 ZENCODE_BUILD_DS4=1 ZENCODE_DS4_ROOT=/path/to/ds4 swift build -c release --product zen
 ```
 
-## One-Time Runtime Setup
+On later installs, the saved directory from `~/.zencode/ds4/settings.json` is offered as default.
 
-Open setup:
+## Runtime Setup
+
+### Register the runtime
 
 ```bash
-zen --setup
+zen --setup          # Local inference → DS4 runtime → enter checkout path
 ```
 
-Then open `Local inference`, then `DS4 runtime`, and enter the local DS4
-checkout/build directory. Setup registers the runtime library and can build
-`libds4.dylib` on macOS when the bundled build helper is available.
-
-For non-interactive installs, you can still use the helper script from a
-checkout or from the `Scripts` directory installed next to `zen`:
+Or non-interactively:
 
 ```bash
-Scripts/setup-ds4.sh /path/to/ds4
+Scripts/setup-ds4.sh /path/to/ds4                        # build + register
+Scripts/setup-ds4.sh /path/to/ds4 --skip-build           # register existing library only
+Scripts/setup-ds4.sh /path/to/ds4 --skip-build --library /path/to/ds4/libds4.so   # Linux
 ```
 
-The runtime setup:
+This validates the directory, builds `libds4.dylib` on macOS, and writes `~/.zencode/ds4/settings.json`. It does not select a model.
 
-- validates the DS4 directory
-- builds `/path/to/ds4/libds4.dylib` on macOS, or validates an existing
-  runtime library when used with `--skip-build`
-- writes `~/.zencode/ds4/settings.json`
-
-It does not choose a model.
-
-## Setup
-
-After registering the runtime, choose the model from setup:
+### Select the model
 
 ```bash
-zen --setup
+zen --setup          # Local inference → DS4 local GGUF model
 ```
 
-Open `Local inference`. The DS4 entries are:
+Scans the DS4 root for `.gguf` files, or enter a model path manually.
 
-- `DS4 runtime`: backend, context window, output/tool limits, SSD streaming,
-  MTP, sampling, and other runtime flags.
-- `DS4 local GGUF model`: selects an existing local/downloaded `.gguf` file. It
-  scans the DS4 root for local GGUF files and also lets you enter an existing
-  model path manually. Downloadable remote models are not mixed into this list.
-
-After configuring the runtime and selecting the model, validate the
-configuration:
+### Validate and run
 
 ```bash
-zen --ds4 --doctor
-```
-
-Then run DS4 mode with the stored settings:
-
-```bash
-zen --ds4
+zen --ds4 --doctor   # validate configuration
+zen --ds4            # run
 ```
 
 ## Configuration File
 
-The install script writes:
+Install writes:
 
 ```json
 {
@@ -104,7 +72,7 @@ The install script writes:
 }
 ```
 
-`zen --setup` adds the selected model path and runtime parameters:
+`zen --setup` adds model path and runtime parameters:
 
 ```json
 {
@@ -119,24 +87,11 @@ The install script writes:
 }
 ```
 
-By default the file is stored at:
-
-```text
-~/.zencode/ds4/settings.json
-```
-
-If `ZENCODE_SUPPORT_DIRECTORY` is set, the DS4 settings file is stored under
-that support directory instead.
+Stored at `~/.zencode/ds4/settings.json` (or under `ZENCODE_SUPPORT_DIRECTORY`).
 
 ## Overrides
 
-Runtime configuration precedence is:
-
-1. CLI arguments
-2. environment variables
-3. `~/.zencode/ds4/settings.json`
-
-Useful CLI overrides:
+Precedence: CLI arguments > environment variables > settings file.
 
 ```bash
 zen --ds4 --ds4-root /path/to/ds4 --model /path/to/model.gguf
@@ -144,70 +99,41 @@ zen --ds4 --ctx 65536
 zen --ds4 --library /path/to/libds4.dylib
 ```
 
-Equivalent environment variables:
-
 ```bash
 export ZENCODE_DS4_ROOT=/path/to/ds4
 export ZENCODE_DS4_LIBRARY=/path/to/ds4/libds4.dylib
 export ZENCODE_DS4_MODEL=/path/to/ds4flash.gguf
-export ZENCODE_DS4_TOP_K=0   # top-k sampling cutoff; 0 disables top-k
+export ZENCODE_DS4_TOP_K=0   # 0 disables top-k
 ```
 
 ## SSD Streaming
 
-For models larger than available RAM, use DS4 SSD streaming options:
+For models larger than available RAM:
 
 ```bash
-zen --ds4 \
-  --ssd-streaming \
-  --ssd-streaming-cache-experts 32GB
+zen --ds4 --ssd-streaming --ssd-streaming-cache-experts 32GB
 ```
 
-These options can be saved from `zen --setup` under `Local inference`,
-then `DS4 runtime`. The install script only records the DS4 root and runtime
-library. The model path is recorded by `DS4 local GGUF model` and must point to
-an existing local `.gguf` file.
+Saveable from `zen --setup` under Local inference → DS4 runtime. When setup asks for `SSD streaming cache`, enter `32GB` (not just `32`, which means 32 experts).
 
-When setup asks for `SSD streaming cache`, enter `32GB` to match the old
-`--ssd-streaming-cache-experts 32GB` command. Entering only `32` means cache 32
-experts, not 32GB of SSD streaming cache.
-
-## Rebuilding DS4
-
-To rebuild only the DS4 dynamic library:
+## Rebuilding
 
 ```bash
-Scripts/build-ds4-runtime.sh /path/to/ds4
+Scripts/build-ds4-runtime.sh /path/to/ds4                    # rebuild dylib (macOS)
+Scripts/setup-ds4.sh /path/to/ds4 --skip-build               # rewrite settings without rebuild
 ```
 
-The bundled build helper currently targets macOS/Metal. On Linux, build the DS4
-runtime from the DS4 checkout, then register it with:
-
-```bash
-Scripts/setup-ds4.sh /path/to/ds4 --skip-build --library /path/to/ds4/libds4.so
-```
-
-To rewrite runtime settings without rebuilding:
-
-```bash
-Scripts/setup-ds4.sh /path/to/ds4 --skip-build
-```
+On Linux, build the runtime from the DS4 checkout, then register it with `--skip-build --library`.
 
 ## Troubleshooting
-
-If `zen --ds4` cannot find DS4, run:
 
 ```bash
 zen --ds4 --doctor
 ```
 
-Common fixes:
+- **Missing DS4 root**: `Scripts/setup-ds4.sh /path/to/ds4`
+- **Missing `libds4.dylib`**: `Scripts/build-ds4-runtime.sh /path/to/ds4`
+- **Missing model**: `zen --setup` → Local inference → DS4 local GGUF model
+- **Wrong flags**: `zen --setup` → Local inference → DS4 runtime
 
-- missing DS4 root: run `Scripts/setup-ds4.sh /path/to/ds4`
-- missing `libds4.dylib`: run `Scripts/build-ds4-runtime.sh /path/to/ds4`
-- missing model: run `zen --setup`, open `Local inference`, then
-  `DS4 local GGUF model`
-- wrong DS4 flags: run `zen --setup`, open `Local inference`, then `DS4 runtime`
-
-`zen --ds4` uses native DSML tool calls in-process, so tool execution does
-not require `ds4-server`.
+`zen --ds4` uses native tool calls in-process; tool execution does not require `ds4-server`.
