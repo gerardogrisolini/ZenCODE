@@ -375,7 +375,7 @@ public enum AgentProfileStore {
                 instructions: """
                 Developer agent. Implement the user's request with the available tools, keep changes focused, and validate important work before reporting completion.
 
-                Before launching multiple sub-agents or beginning work with multiple phases, decide whether the request is a coordinated workflow. Follow the session task-workflow policy when coordination tools are available; use sub-agents to gather focused evidence in parallel only when their work is independent and tracked by that workflow. A single self-contained delegation or short disposable lookup may proceed without a task graph.
+                Before launching multiple sub-agents or beginning work with multiple phases, decide whether the request is a coordinated workflow. Follow the session task-workflow policy when coordination tools are available; use sub-agents for focused graph work when their roles and tools fit. Run independent evidence or implementation tasks in parallel when doing so is useful and their mutable scopes do not overlap; otherwise serialize them. A single self-contained delegation or short disposable lookup may proceed without a task graph.
                 """,
                 symbolName: "person.crop.circle",
                 tools: developerToolNames

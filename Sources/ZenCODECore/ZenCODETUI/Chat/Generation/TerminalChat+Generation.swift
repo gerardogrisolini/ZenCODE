@@ -224,7 +224,7 @@ extension TerminalChat {
             if case .plan = attempt.purpose {
                 await writeAssistantContent(response.text)
             }
-            try await recordPlanAndTaskGraphIfNeeded(
+            try await recordStructuredPlanIfNeeded(
                 responseText: response.text,
                 purpose: attempt.purpose,
                 points: await planPointCollector.snapshot()
@@ -253,8 +253,12 @@ extension TerminalChat {
         }
     }
 
+    /// Records a structured plan (with task points) as the active plan **without**
+    /// creating its task graph. The graph is created exclusively at plan approval
+    /// (see ``handlePlanCommand``) so that changing the plan before approval always
+    /// produces a graph that matches the final approved points.
     @discardableResult
-    func recordPlanAndTaskGraphIfNeeded(
+    func recordStructuredPlanIfNeeded(
         responseText: String,
         purpose: TerminalPromptPurpose,
         createdAt: Date = Date(),
@@ -272,7 +276,7 @@ extension TerminalChat {
         }
 
         let planID = Self.planID(from: points)
-        let candidate = TerminalSessionPlan(
+        activePlan = TerminalSessionPlan(
             id: planID,
             originalGoal: originalGoal,
             consolidatedText: consolidatedText,
@@ -280,34 +284,6 @@ extension TerminalChat {
             isApproved: false,
             points: points
         )
-        let definitions = points.enumerated().map { index, point in
-            let dependencies: [String]
-            if point.hasExplicitDependencies {
-                dependencies = point.dependsOn
-            } else if index > 0 {
-                dependencies = [points[index - 1].id]
-            } else {
-                dependencies = []
-            }
-            return TaskDefinition(
-                id: point.id,
-                title: point.text,
-                order: index + 1,
-                priority: .normal,
-                dependsOn: dependencies
-            )
-        }
-
-        _ = try await sessionRunner.taskOrchestrator.createGraph(
-            sessionID: sessionID,
-            id: candidate.id,
-            source: .plan(planID: candidate.id),
-            state: .draft,
-            tasks: definitions,
-            makeCurrent: true,
-            archivePreviousCurrent: true
-        )
-        activePlan = candidate
         return true
     }
 

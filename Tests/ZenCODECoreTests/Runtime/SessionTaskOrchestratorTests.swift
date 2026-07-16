@@ -409,6 +409,67 @@ struct SessionTaskOrchestratorTests {
         #expect(record.id == "legacy")
     }
 
+    @Test
+    func removeGraphEliminatesGraphAndAllowsRecreationWithSameID() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "session",
+            id: "plan-stale",
+            source: .plan(planID: "plan-stale"),
+            state: .draft,
+            tasks: [TaskDefinition(id: "plan-stale-1", title: "Old", order: 1)]
+        )
+        #expect(try await orchestrator.graphSnapshot(
+            sessionID: "session", graphID: "plan-stale"
+        ) != nil)
+
+        let removed = try await orchestrator.removeGraph(
+            id: "plan-stale",
+            sessionID: "session"
+        )
+        #expect(removed.id == "plan-stale")
+        #expect(try await orchestrator.graphSnapshot(
+            sessionID: "session", graphID: "plan-stale"
+        ) == nil)
+
+        // The same id can now be reused for a fresh graph.
+        let recreated = try await orchestrator.createGraph(
+            sessionID: "session",
+            id: "plan-stale",
+            source: .plan(planID: "plan-stale"),
+            state: .draft,
+            tasks: [
+                TaskDefinition(id: "plan-stale-1", title: "New A", order: 1),
+                TaskDefinition(id: "plan-stale-2", title: "New B", order: 2),
+            ]
+        )
+        #expect(recreated.tasks.count == 2)
+        #expect(recreated.tasks.map(\.title) == ["New A", "New B"])
+    }
+
+    @Test
+    func removeGraphRejectsGraphWithActiveAttempt() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "session",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "a", title: "A", order: 1)]
+        )
+        _ = try await orchestrator.claimTasks(
+            sessionID: "session",
+            claims: [TaskClaim(taskID: "a", agentID: "worker")]
+        )
+
+        await #expect(throws: SessionTaskOrchestratorError.self) {
+            _ = try await orchestrator.removeGraph(
+                id: "graph",
+                sessionID: "session"
+            )
+        }
+    }
+
     private func makeTwoTaskGraph() async throws -> SessionTaskOrchestrator {
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(

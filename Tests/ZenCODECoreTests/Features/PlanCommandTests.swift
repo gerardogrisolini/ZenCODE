@@ -234,6 +234,11 @@ struct PlanCommandTests {
         case let .runHiddenPrompt(prompt, purpose):
             #expect(prompt.contains("Planning goal requested by the user: fix the planner command"))
             #expect(prompt.contains("agent.create"))
+            #expect(prompt.contains("\"Dependencies\" entry"))
+            #expect(prompt.contains("DAG with the minimum safe edges"))
+            #expect(prompt.contains("must not chain items merely because"))
+            #expect(prompt.contains("never add an edge merely"))
+            #expect(prompt.contains("parallelism has no useful benefit"))
             #expect(purpose == .plan(originalGoal: "fix the planner command"))
         case .runPrompt(_):
             Issue.record("/plan <goal> should keep the generated delegation prompt hidden")
@@ -276,6 +281,8 @@ struct PlanCommandTests {
         #expect(purpose == .normal)
         #expect(prompt.contains("Implement the active approved plan now"))
         #expect(prompt.contains("First consolidated plan"))
+        #expect(prompt.contains("parallel execution has a real benefit"))
+        #expect(prompt.contains("mutable file or resource scopes do not overlap"))
 
         #expect(terminal.recordPlanIfNeeded(
             responseText: "Second consolidated plan",
@@ -367,6 +374,9 @@ struct PlanCommandTests {
         #expect(prompt.contains("plan-1 [pending]: Implement"))
         #expect(prompt.contains("tasks.list"))
         #expect(prompt.contains("tasks.update"))
+        #expect(prompt.contains("Run independent read-only or implementation tasks in parallel"))
+        #expect(prompt.contains("mutable file or resource scopes do not overlap"))
+        #expect(prompt.contains("Otherwise serialize them"))
         #expect(!prompt.contains("todo.write"))
     }
 
@@ -729,7 +739,27 @@ struct PlanCommandTests {
     }
 
     @Test
-    func validPlanCreatesDraftGraphAndApprovalActivatesProjectedStatus() async throws {
+    func taskDefinitionsUseOnlyRealDependenciesInsteadOfListOrder() {
+        let definitions = TerminalChat.taskDefinitions(for: [
+            TerminalSessionPlanPoint(id: "plan-dag-1", text: "Update module A"),
+            TerminalSessionPlanPoint(id: "plan-dag-2", text: "Update module B"),
+            TerminalSessionPlanPoint(
+                id: "plan-dag-3",
+                text: "Run integrated validation",
+                dependsOn: ["plan-dag-1", "plan-dag-2"],
+                hasExplicitDependencies: true
+            ),
+        ])
+
+        #expect(definitions.map(\.dependsOn) == [
+            [],
+            [],
+            ["plan-dag-1", "plan-dag-2"],
+        ])
+    }
+
+    @Test
+    func validPlanIsRecordedWithoutGraphAndApprovalCreatesActiveGraph() async throws {
         let terminal = try makeTerminal()
         let points = [
             TerminalSessionPlanPoint(
@@ -746,29 +776,30 @@ struct PlanCommandTests {
             ),
         ]
 
-        #expect(try await terminal.recordPlanAndTaskGraphIfNeeded(
+        #expect(try await terminal.recordStructuredPlanIfNeeded(
             responseText: "1. Implement model\n2. Run validation",
             purpose: .plan(originalGoal: "Ship graph"),
             points: points
         ))
-        let draft = try #require(try await terminal.sessionRunner.taskGraphSnapshot(
+        // The task graph is NOT created during plan definition, only at approval.
+        #expect(try await terminal.sessionRunner.taskGraphSnapshot(
             sessionID: terminal.sessionID,
             graphID: "plan-graph"
-        ))
-        #expect(draft.state == .draft)
-        #expect(draft.source == .plan(planID: "plan-graph"))
-        #expect(draft.tasks.map(\.dependsOn) == [[], ["plan-graph-1"]])
+        ) == nil)
         #expect(terminal.activePlan?.id == "plan-graph")
 
         let approval = await terminal.handlePlanCommand("/plan approve")
         guard case .runHiddenPrompt = approval else {
-            Issue.record("Approval should activate the draft and start implementation")
+            Issue.record("Approval should create and activate the task graph")
             return
         }
-        #expect(try await terminal.sessionRunner.taskGraphSnapshot(
+        let active = try #require(try await terminal.sessionRunner.taskGraphSnapshot(
             sessionID: terminal.sessionID,
             graphID: "plan-graph"
-        )?.state == .active)
+        ))
+        #expect(active.state == .active)
+        #expect(active.source == .plan(planID: "plan-graph"))
+        #expect(active.tasks.map(\.dependsOn) == [[], ["plan-graph-1"]])
 
         let receipt = try #require(try await terminal.sessionRunner.taskOrchestrator.claimTasks(
             sessionID: terminal.sessionID,
@@ -822,34 +853,88 @@ struct PlanCommandTests {
     }
 
     @Test
-    func invalidReplacementLeavesPreviousPlanAndGraphUntouched() async throws {
+    func planReplacementSucceedsAndInvalidDependenciesSurfaceAtApproval() async throws {
         let terminal = try makeTerminal()
-        _ = try await terminal.recordPlanAndTaskGraphIfNeeded(
+        _ = try await terminal.recordStructuredPlanIfNeeded(
             responseText: "1. Existing",
             purpose: .plan(originalGoal: "Existing"),
             points: [TerminalSessionPlanPoint(id: "plan-old-1", text: "Existing")]
         )
-        let existingPlan = try #require(terminal.activePlan)
 
-        await #expect(throws: SessionTaskOrchestratorError.self) {
-            _ = try await terminal.recordPlanAndTaskGraphIfNeeded(
-                responseText: "1. Invalid",
-                purpose: .plan(originalGoal: "Invalid"),
-                points: [
-                    TerminalSessionPlanPoint(
-                        id: "plan-new-1",
-                        text: "Invalid",
-                        dependsOn: ["missing"],
-                        hasExplicitDependencies: true
-                    )
-                ]
-            )
-        }
+        // Plan definition no longer validates task dependencies; the graph is
+        // created exclusively at approval time.
+        _ = try await terminal.recordStructuredPlanIfNeeded(
+            responseText: "1. Invalid",
+            purpose: .plan(originalGoal: "Invalid"),
+            points: [
+                TerminalSessionPlanPoint(
+                    id: "plan-new-1",
+                    text: "Invalid",
+                    dependsOn: ["missing"],
+                    hasExplicitDependencies: true
+                )
+            ]
+        )
 
-        #expect(terminal.activePlan == existingPlan)
+        // The replacement succeeded at definition time.
+        #expect(terminal.activePlan?.originalGoal == "Invalid")
+        #expect(terminal.activePlan?.id == "plan-new")
+        // No graph exists yet (not created during definition).
         #expect(try await terminal.sessionRunner.taskGraphSnapshot(
-            sessionID: terminal.sessionID
-        )?.id == "plan-old")
+            sessionID: terminal.sessionID,
+            graphID: "plan-new"
+        ) == nil)
+
+        // Approval fails because the graph cannot be created with a missing dependency.
+        _ = await terminal.handlePlanCommand("/plan approve")
+        #expect(terminal.activePlan?.isApproved == false)
+    }
+
+    @Test
+    func changingPlanBeforeApprovalProducesGraphWithUpdatedTasks() async throws {
+        let terminal = try makeTerminal()
+
+        // First plan definition: two tasks.
+        _ = try await terminal.recordStructuredPlanIfNeeded(
+            responseText: "1. First\n2. Second",
+            purpose: .plan(originalGoal: "Goal"),
+            points: [
+                TerminalSessionPlanPoint(id: "plan-changed-1", text: "First"),
+                TerminalSessionPlanPoint(id: "plan-changed-2", text: "Second"),
+            ]
+        )
+        #expect(terminal.activePlan?.points.count == 2)
+
+        // The user revises the plan before approving: now three tasks with
+        // different content. Because the graph is not created during definition,
+        // this replacement does not touch any stale graph.
+        _ = try await terminal.recordStructuredPlanIfNeeded(
+            responseText: "1. Revised A\n2. Revised B\n3. Revised C",
+            purpose: .plan(originalGoal: "Goal"),
+            points: [
+                TerminalSessionPlanPoint(id: "plan-changed-1", text: "Revised A"),
+                TerminalSessionPlanPoint(id: "plan-changed-2", text: "Revised B"),
+                TerminalSessionPlanPoint(id: "plan-changed-3", text: "Revised C"),
+            ]
+        )
+        #expect(terminal.activePlan?.points.count == 3)
+        #expect(terminal.activePlan?.points.map(\.text) == ["Revised A", "Revised B", "Revised C"])
+
+        // Approving must create a graph that reflects the final (revised) tasks,
+        // not the original ones.
+        let approval = await terminal.handlePlanCommand("/plan approve")
+        guard case .runHiddenPrompt = approval else {
+            Issue.record("Approval should start implementation")
+            return
+        }
+        let graph = try #require(try await terminal.sessionRunner.taskGraphSnapshot(
+            sessionID: terminal.sessionID,
+            graphID: "plan-changed"
+        ))
+        #expect(graph.state == .active)
+        #expect(graph.tasks.count == 3)
+        #expect(graph.tasks.map(\.title) == ["Revised A", "Revised B", "Revised C"])
+        #expect(graph.tasks.map(\.id) == ["plan-changed-1", "plan-changed-2", "plan-changed-3"])
     }
 
     private func makeTerminal() throws -> TerminalChat {

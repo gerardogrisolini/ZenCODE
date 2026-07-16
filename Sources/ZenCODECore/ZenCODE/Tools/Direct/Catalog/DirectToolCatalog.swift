@@ -372,7 +372,7 @@ public enum DirectToolCatalog {
         ),
         DirectToolDescriptor(
             name: "tasks.create",
-            description: "Atomically creates one or more tasks in the session task graph. Dependencies must reference tasks in the same graph.",
+            description: "Atomically creates one or more tasks in the session task graph. Dependencies must reference tasks in the same graph. Model true prerequisites as edges, leave independent tasks dependency-free, and prefer safe, useful parallelism over list-order sequencing.",
             inputSchema: #"{"type":"object","properties":{"graphID":{"type":"string"},"graph_id":{"type":"string"},"id":{"type":"string"},"title":{"type":"string"},"name":{"type":"string"},"details":{"type":"string"},"description":{"type":"string"},"order":{"type":"integer"},"priority":{"type":"string","enum":["low","normal","high"]},"complexity":{"type":"integer","minimum":1,"maximum":10,"description":"Task difficulty 1-10. \#(TaskRecord.complexityRubric). Agent selection policy: \#(TaskRecord.agentSelectionPolicy)"},"dependsOn":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"acceptanceCriteria":{"type":"array","items":{"type":"string"}},"acceptance_criteria":{"type":"array","items":{"type":"string"}},"execution":{"type":"object"},"tasks":{"type":"array","items":{"type":"object"}},"items":{"type":"array","items":{"type":"object"}}}}"#
         ),
         DirectToolDescriptor(

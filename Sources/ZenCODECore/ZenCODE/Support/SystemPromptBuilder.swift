@@ -104,10 +104,11 @@ public enum SystemPromptBuilder {
         if agentDelegationIsAvailable(allowedToolNames) {
             delegationInstruction = """
             When delegating runnable graph work, pass its taskID to agent.create so the \
-            assignment and execution attempt are recorded atomically. Independent tasks may \
-            run in parallel when their dependencies are empty. When a task graph is already \
-            active, every delegated agent must use taskID; do not create taskless agents outside \
-            that workflow.
+            assignment and execution attempt are recorded atomically. Delegate independent \
+            runnable tasks together when parallel execution is safe and useful; serialize work \
+            that mutates overlapping files or shared state. When a task graph is already active, \
+            every delegated agent must use taskID; do not create taskless agents outside that \
+            workflow.
             """
         } else {
             delegationInstruction = """
@@ -124,6 +125,15 @@ public enum SystemPromptBuilder {
         with stable IDs and explicit dependencies (including empty dependencies for \
         independent work), then use tasks.list with runnableOnly=true to choose work and \
         tasks.update to record progress, outcomes, blockers, and validation.
+
+        When defining tasks, prefer a dependency graph that maximizes safe, useful parallelism \
+        over a linear sequence. Add an edge only for a real prerequisite, required output or \
+        decision, validation ordering, or a shared mutable resource that cannot be changed \
+        safely in parallel. Never serialize tasks merely because they appear in a numbered \
+        order. Give independent tasks empty dependencies when parallel execution reduces elapsed \
+        time or separates ownership cleanly. Keep work sequential when concurrency offers no \
+        meaningful benefit, would create overlapping edits, or adds coordination risk; do not \
+        split trivial work solely to manufacture parallelism.
 
         Complexity: set tasks.create `complexity` (1–10) on every task. \
         \(TaskRecord.complexityRubric). \

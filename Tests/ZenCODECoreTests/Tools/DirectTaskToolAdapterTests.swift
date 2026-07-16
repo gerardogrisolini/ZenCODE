@@ -65,6 +65,11 @@ struct DirectTaskToolAdapterTests {
             #expect(descriptor.inputSchema.contains(TaskRecord.complexityRubric))
             #expect(descriptor.inputSchema.contains(TaskRecord.agentSelectionPolicy))
         }
+        let createDescriptor = try #require(
+            DirectToolCatalog.todoTaskDescriptors.first { $0.name == "tasks.create" }
+        )
+        #expect(createDescriptor.description.contains("leave independent tasks dependency-free"))
+        #expect(createDescriptor.description.contains("safe, useful parallelism"))
     }
 
     @Test

@@ -55,6 +55,17 @@ public extension AgentCoreSessionRunner {
         )
     }
 
+    @discardableResult
+    func removeTaskGraph(
+        id graphID: String,
+        sessionID: String
+    ) async throws -> TaskGraphSnapshot {
+        try await taskOrchestrator.removeGraph(
+            id: graphID,
+            sessionID: sessionID
+        )
+    }
+
     func clearTaskGraphs(sessionID: String) async throws {
         try await taskOrchestrator.clearTaskGraphs(sessionID: sessionID)
     }

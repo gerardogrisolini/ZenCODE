@@ -69,6 +69,7 @@ public actor TerminalStatusBar {
         var latestThinkingSelection: AgentThinkingSelection?
         var latestModelRuntime: String?
         var latestMetrics: DirectAgentGenerationMetrics?
+        var shouldReplaceMetricsOnNextUpdate = false
         var latestContextWindow: DirectAgentContextWindowStatus?
         var latestSubscriptionUsage: DirectAgentSubscriptionUsageStatus?
         var latestGitStatusSummary: TerminalGitStatusSummary?
@@ -211,20 +212,12 @@ public actor TerminalStatusBar {
     }
 
     func beginRequest() {
-        guard state.latestMetrics != nil else {
-            return
-        }
-        // Keep the last known context window, but do not carry C/P/G or timing
-        // from the completed user turn into the next request.
-        state.latestMetrics = nil
-        guard state.isStarted else {
-            return
-        }
-        renderStatusLocked(state: &state)
+        state.shouldReplaceMetricsOnNextUpdate = true
     }
 
     public func reset() {
         state.latestMetrics = nil
+        state.shouldReplaceMetricsOnNextUpdate = false
         state.latestContextWindow = nil
         state.latestModelID = nil
         state.latestThinkingSelection = nil
@@ -309,8 +302,10 @@ public actor TerminalStatusBar {
 
     @discardableResult
     public func update(metrics: DirectAgentGenerationMetrics) -> Bool {
+        let currentMetrics = state.shouldReplaceMetricsOnNextUpdate ? nil : state.latestMetrics
+        state.shouldReplaceMetricsOnNextUpdate = false
         state.latestMetrics = mergedMetrics(
-            current: state.latestMetrics,
+            current: currentMetrics,
             update: metrics
         )
         guard state.isStarted else {

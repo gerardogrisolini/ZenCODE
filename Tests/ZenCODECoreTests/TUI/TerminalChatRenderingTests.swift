@@ -695,7 +695,51 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func statusBarBeginRequestClearsRoundMetricsButKeepsContextWindow() async {
+    func statusBarKeepsLatestAnalyticsAfterCompletionAndCancellation() async {
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        let metrics = DirectAgentGenerationMetrics(
+            promptTokenCount: 120,
+            cachedPromptTokenCount: 800,
+            promptTokensPerSecond: 60,
+            completionTokenCount: 32,
+            completionTokensPerSecond: 8,
+            responseDurationSeconds: 4
+        )
+        let contextWindow = DirectAgentContextWindowStatus(
+            usedTokens: 952,
+            maxTokens: 10_000,
+            modelID: "test-model",
+            isApproximate: true
+        )
+
+        await statusBar.beginRequest()
+        await statusBar.setProcessing(true)
+        _ = await statusBar.update(metrics: metrics)
+        _ = await statusBar.update(contextWindow: contextWindow)
+        await statusBar.setProcessing(false)
+
+        var state = await statusBar.state
+        #expect(state.latestMetrics?.promptTokenCount == 120)
+        #expect(state.latestMetrics?.completionTokenCount == 32)
+        #expect(state.latestMetrics?.responseDurationSeconds == 4)
+        #expect(state.latestContextWindow?.usedTokens == 952)
+        #expect(state.latestContextWindow?.maxTokens == 10_000)
+
+        await statusBar.beginRequest()
+        await statusBar.setProcessing(true)
+        // Esc stops the request without requiring another metrics update.
+        await statusBar.setProcessing(false)
+
+        state = await statusBar.state
+        #expect(state.latestMetrics?.promptTokenCount == 120)
+        #expect(state.latestMetrics?.completionTokenCount == 32)
+        #expect(state.latestMetrics?.responseDurationSeconds == 4)
+        #expect(state.latestContextWindow?.usedTokens == 952)
+        #expect(state.latestContextWindow?.maxTokens == 10_000)
+    }
+
+    @Test
+    func statusBarFirstMetricsOfNewRequestReplacePreviousAnalytics() async {
         let statusBar = TerminalStatusBar(isEnabled: false)
         _ = await statusBar.update(
             metrics: DirectAgentGenerationMetrics(
@@ -707,21 +751,26 @@ struct TerminalChatRenderingTests {
                 responseDurationSeconds: 4
             )
         )
-        _ = await statusBar.update(
-            contextWindow: DirectAgentContextWindowStatus(
-                usedTokens: 952,
-                maxTokens: 10_000,
-                modelID: "test-model",
-                isApproximate: true
-            )
-        )
 
         await statusBar.beginRequest()
 
+        #expect(await statusBar.state.latestMetrics?.promptTokenCount == 120)
+        _ = await statusBar.update(
+            metrics: DirectAgentGenerationMetrics(
+                promptTokenCount: nil,
+                promptTokensPerSecond: nil,
+                completionTokenCount: 5,
+                completionTokensPerSecond: 2
+            )
+        )
+
         let state = await statusBar.state
-        #expect(state.latestMetrics == nil)
-        #expect(state.latestContextWindow?.usedTokens == 952)
-        #expect(state.latestContextWindow?.maxTokens == 10_000)
+        #expect(state.latestMetrics?.promptTokenCount == nil)
+        #expect(state.latestMetrics?.cachedPromptTokenCount == nil)
+        #expect(state.latestMetrics?.promptTokensPerSecond == nil)
+        #expect(state.latestMetrics?.completionTokenCount == 5)
+        #expect(state.latestMetrics?.completionTokensPerSecond == 2)
+        #expect(state.latestMetrics?.responseDurationSeconds == nil)
     }
 
     @Test

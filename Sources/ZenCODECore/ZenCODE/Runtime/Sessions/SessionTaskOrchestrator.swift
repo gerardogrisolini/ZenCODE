@@ -843,6 +843,30 @@ public actor SessionTaskOrchestrator {
         return graph
     }
 
+    /// Removes a task graph entirely from the session so it can be recreated with
+    /// the same id (unlike ``archiveGraph`` which preserves it in an archived state).
+    /// Used when a draft plan changes and its task graph must be rebuilt at approval.
+    @discardableResult
+    public func removeGraph(
+        id graphID: String,
+        sessionID rawSessionID: String
+    ) throws -> TaskGraphSnapshot {
+        let sessionID = try requireRootAccess(rawSessionID)
+        guard var sessionState = sessionStates[sessionID],
+              let graph = sessionState.graphs[graphID] else {
+            throw SessionTaskOrchestratorError.graphNotFound(graphID)
+        }
+        guard !graph.tasks.contains(where: { $0.activeAttemptID != nil }) else {
+            throw SessionTaskOrchestratorError.graphNotMutable(graphID)
+        }
+        sessionState.graphs[graphID] = nil
+        if sessionState.currentGraphID == graphID {
+            sessionState.currentGraphID = nil
+        }
+        try commit(sessionID: sessionID, state: sessionState, eventKind: .archived, graphID: graphID)
+        return graph
+    }
+
     public func clearTaskGraphs(sessionID rawSessionID: String) throws {
         let sessionID = try requireRootAccess(rawSessionID)
         let active = sessionStates[sessionID]?.graphs.values.flatMap(\.tasks)

@@ -72,11 +72,20 @@ extension TerminalChat {
                 return .continueChat
             }
             do {
-                if try await sessionRunner.taskGraphSnapshot(
-                    sessionID: sessionID,
-                    graphID: plan.id
-                ) == nil,
-                   !plan.points.isEmpty {
+                // The task graph is created exclusively at approval time so that
+                // changes made to the plan before approval are always reflected.
+                // On first approval, remove any stale graph and (re)create it from
+                // the current plan points. On re-approval, preserve progress.
+                if !plan.isApproved, !plan.points.isEmpty {
+                    if try await sessionRunner.taskGraphSnapshot(
+                        sessionID: sessionID,
+                        graphID: plan.id
+                    ) != nil {
+                        _ = try await sessionRunner.removeTaskGraph(
+                            id: plan.id,
+                            sessionID: sessionID
+                        )
+                    }
                     _ = try await sessionRunner.taskOrchestrator.createGraph(
                         sessionID: sessionID,
                         id: plan.id,
@@ -195,14 +204,15 @@ extension TerminalChat {
         }
         return """
         Implement the active approved plan now, using the session task graph as the control \
-        plane. Start by calling tasks.list with runnableOnly=true. Execute small tasks directly, \
-        and delegate independent tasks in one agent.create batch using each taskID; delegated \
-        sub-agents run in parallel. Before direct work, transition that \
-        task to in_progress with tasks.update; after the work record output and complete the \
-        task, validating risky changes before marking them completed. Repeat until the \
-        graph is completed or a real blocker is recorded. Respect dependencies, never claim a \
-        task twice, use tasks.retry only explicitly, and do not recreate or replace the approved \
-        plan.
+        plane. Start by calling tasks.list with runnableOnly=true. Execute small tasks directly. \
+        When multiple independent tasks are runnable, delegate them in one agent.create batch \
+        using each taskID if parallel execution has a real benefit and their mutable file or \
+        resource scopes do not overlap; otherwise process them sequentially. Delegated \
+        sub-agents run in parallel. Before direct work, transition that task to in_progress with \
+        tasks.update; after the work record output and complete the task, validating risky \
+        changes before marking them completed. Repeat until the graph is completed or a real \
+        blocker is recorded. Respect dependencies, never claim a task twice, use tasks.retry only \
+        explicitly, and do not recreate or replace the approved plan.
 
         Goal: \(plan.originalGoal)
 
@@ -307,19 +317,13 @@ extension TerminalChat {
         for points: [TerminalSessionPlanPoint]
     ) -> [TaskDefinition] {
         points.enumerated().map { index, point in
-            let dependencies: [String]
-            if point.hasExplicitDependencies {
-                dependencies = point.dependsOn
-            } else if index > 0 {
-                dependencies = [points[index - 1].id]
-            } else {
-                dependencies = []
-            }
-            return TaskDefinition(
+            TaskDefinition(
                 id: point.id,
                 title: point.text,
                 order: index + 1,
-                dependsOn: dependencies
+                // List order is presentational, not an implicit dependency. The
+                // Planner/coordinator must record every real prerequisite explicitly.
+                dependsOn: point.dependsOn
             )
         }
     }
@@ -556,7 +560,16 @@ extension TerminalChat {
             - Require the Planner's final response to include an ordered, numbered \
             "Implementation plan" whose items are directly actionable, plus likely \
             files/areas to touch, dependencies, risks, edge cases, open questions, and the \
-            test/validation strategy.
+            test/validation strategy. For every numbered item, require an explicit \
+            "Dependencies" entry that names prerequisite item numbers or says "none".
+            - Require the Planner to design those dependencies as a DAG with the minimum safe \
+            edges. It should expose parallel branches when tasks can proceed independently and \
+            parallel execution provides a real latency or ownership benefit. It must add an edge \
+            when one item consumes another's output or decision, validation must follow \
+            implementation, or concurrent work would mutate overlapping files or shared state. \
+            It must not chain items merely because they are numbered in that order, and must not \
+            split trivial work solely to manufacture parallelism. A sequential chain is correct \
+            when concurrency offers no meaningful benefit or would add conflict risk.
             - Require the Planner to support this workflow loop: /plan <goal> -> /plan \
             approve (which automatically starts implementation) -> /review -> corrections \
             until the work is complete. It must not tell the user to send another \
@@ -577,10 +590,13 @@ extension TerminalChat {
             item for every numbered implementation point authored by the Planner. Copy each \
             point's wording and order without reinterpretation. Use a fresh short token \
             shared by this plan and stable IDs "plan-<token>-1", "plan-<token>-2", and so \
-            on. Keep every status "pending". Include dependsOn for every item: use the stable \
-            IDs of prerequisite points, or an explicit empty array for independent points. \
-            If the Planner did not specify dependencies, use a safe sequential chain. Do not \
-            include risks, background notes, open questions, or validation summaries as \
+            on. Keep every status "pending". Include dependsOn for every item: translate the \
+            Planner's prerequisite item numbers to stable task IDs, and use an explicit empty \
+            array for independent points. If a dependency is missing or ambiguous, infer only \
+            genuine prerequisites using the same DAG rules above; never add an edge merely \
+            because one point appears earlier. Use sequential dependencies when parallelism has \
+            no useful benefit or overlapping mutable work would make concurrent execution unsafe. \
+            Do not include risks, background notes, open questions, or validation summaries as \
             separate items.
             - Your final response must be exactly the Planner's latest output, verbatim. Do \
             not add an introduction or conclusion, summarize it, change its wording, reorder \

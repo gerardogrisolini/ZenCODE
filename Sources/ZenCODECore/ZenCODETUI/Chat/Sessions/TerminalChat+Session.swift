@@ -100,10 +100,11 @@ extension TerminalChat {
             The task graph is the authoritative control plane for this approved plan. Call \
             tasks.list with runnableOnly=true before choosing work. Use tasks.update to record \
             direct progress and lifecycle transitions, and pass taskID to agent.create when \
-            delegating so attempts are claimed atomically. Read-only report agents may run in \
-            parallel, but run only one implementation agent at a time because they share this \
-            working directory. Respect dependencies and validate implementation tasks before \
-            completing them; checklist tools are not part of plan progress reporting.
+            delegating so attempts are claimed atomically. Run independent read-only or \
+            implementation tasks in parallel when doing so has a real benefit and their mutable \
+            file or resource scopes do not overlap. Otherwise serialize them because delegated \
+            agents share this working directory. Respect dependencies and validate implementation \
+            tasks before completing them; checklist tools are not part of plan progress reporting.
             """
         guard let baseSystemPrompt = baseSystemPrompt?.trimmingCharacters(
             in: .whitespacesAndNewlines
