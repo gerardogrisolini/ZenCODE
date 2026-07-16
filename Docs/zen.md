@@ -74,11 +74,18 @@ Commands start with `/`:
 - `/exit` — close the session.
 
 **Sessions and memory:**
-- `/sessions [name]` — list/load sessions, or save a named snapshot.
-- `/sessions save` — refresh the active saved session.
+- `/sessions` — list and select saved sessions.
+- `/sessions <name>` — save or overwrite a named snapshot.
+- `/sessions save` — save the current session (derives a name from the first prompt if none is active).
 - `/sessions compact` — force context compaction without saving.
 - `/sessions new` — reset to a fresh, unsaved session.
 - `/sessions delete` — delete a saved snapshot.
+- `/sessions tree` — show the session checkpoint tree with entry IDs and branches.
+- `/sessions branches` — list all branches (leaves) in the checkpoint tree.
+- `/sessions checkpoint [label]` — create a named checkpoint at the current position.
+- `/sessions restore <entry-id|branch-index>` — restore in-place from a checkpoint, branching from that point.
+- `/sessions fork <entry-id|branch-index> <new-name>` — fork into a new session file from a checkpoint entry.
+- `/sessions fork <session-name> <entry-id|branch-index> <new-name>` — fork from a named saved session.
 
 **Attachments:**
 - `/attach <file> [file ...]` — attach image/video files to the next prompt.
@@ -159,7 +166,33 @@ zen --skills "review,swift"
 /sessions new                    # fresh, unsaved session
 ```
 
-Version 3 snapshots embed the current task graph and active plan; v2 remains loadable. MLX sessions save the runtime snapshot; remote sessions save the local transcript with replay metadata. Subscription sessions persist continuation metadata for efficient resume.
+### Checkpoint Trees
+
+Every session stores its conversation as a **tree of checkpoint entries** alongside the flat message history. Each entry (message, checkpoint marker, branch summary, model change) is linked to its parent via an entry ID, so you can branch from any point and explore alternatives without losing the original path.
+
+```text
+/sessions tree                   # show the checkpoint tree (with entry IDs)
+/sessions branches               # list all branches (leaves)
+/sessions checkpoint stable      # create a labelled checkpoint
+/sessions save                   # persist the checkpoint tree to disk
+/sessions restore a1b2c3d4       # restore in-place by entry ID (branches)
+/sessions restore 2              # restore by branch index
+/sessions fork a1b2c3d4 experiment-B   # fork by entry ID into a new file
+/sessions fork 2 experiment-B    # fork by branch index
+/sessions fork my-session a1b2c3d4 experiment-B  # fork from a named session
+```
+
+The tree is visualised with entry IDs and `← active` marking the current position.
+
+**In-place branching** with `/sessions restore` navigates the active session to an earlier checkpoint. Messages you send after restore form a new branch in the tree. The original path is preserved and visible in `/sessions tree`.
+
+**Forking** with `/sessions fork` writes a new session file containing only the messages up to the selected checkpoint, leaving the source session unchanged.
+
+> Checkpoints created with `/sessions checkpoint` are in-memory until you run `/sessions save`. Run `/sessions save` before `/sessions restore` or `/sessions fork` to persist them.
+
+### Session Format
+
+Version 4 snapshots embed the checkpoint tree alongside the task graph and active plan. Sessions saved before v4 are not loadable. MLX sessions save the runtime snapshot; remote sessions save the local transcript with replay metadata. Subscription sessions persist continuation metadata for efficient resume.
 
 ## Memory and Project Context
 

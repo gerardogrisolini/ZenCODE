@@ -49,6 +49,17 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    func savedSessionCommandParsesCheckpointSubcommands() {
+        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "tree") == .tree)
+        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "branches") == .branches)
+        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "checkpoint") == .checkpoint(label: nil))
+        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "checkpoint stable") == .checkpoint(label: "stable"))
+        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "fork a1b2c3d4 new-name") == .fork(args: "a1b2c3d4 new-name"))
+        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "restore a1b2c3d4") == .restore(entryID: "a1b2c3d4"))
+        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "restore 2") == .restore(entryID: "2"))
+    }
+
+    @Test
     func derivedSessionNameUsesFirstUserPrompt() {
         let messages = [
             AgentRuntimeMessage(role: .system, content: "system prompt"),

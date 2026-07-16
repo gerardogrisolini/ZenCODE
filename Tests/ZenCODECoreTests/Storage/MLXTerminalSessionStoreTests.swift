@@ -113,24 +113,24 @@ struct MLXTerminalSessionStoreTests {
         )
         let loaded = try TerminalSessionStore.load(from: fileURL)
 
-        #expect(loaded.version == 3)
+        #expect(loaded.version == TerminalSavedSession.currentVersion)
         #expect(loaded.taskGraph == graph)
     }
 
     @Test
-    func loadsVersionTwoSnapshotWithoutTaskGraph() throws {
+    func rejectsVersionThreeSnapshot() throws {
         let supportDirectory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: supportDirectory) }
-        let fileURL = supportDirectory.appendingPathComponent("legacy.mlxsession")
+        let fileURL = supportDirectory.appendingPathComponent("v3.mlxsession")
         try FileManager.default.createDirectory(
             at: supportDirectory,
             withIntermediateDirectories: true
         )
         let propertyList: [String: Any] = [
-            "version": 2,
-            "name": "v2",
-            "sessionID": "terminal-v2",
-            "workingDirectoryPath": "/tmp/v2-project",
+            "version": 3,
+            "name": "v3",
+            "sessionID": "terminal-v3",
+            "workingDirectoryPath": "/tmp/v3-project",
             "createdAt": Date(timeIntervalSince1970: 10),
             "savedAt": Date(timeIntervalSince1970: 20),
             "selectedTools": [],
@@ -144,14 +144,21 @@ struct MLXTerminalSessionStoreTests {
         )
         try data.write(to: fileURL)
 
-        let loaded = try TerminalSessionStore.load(from: fileURL)
-
-        #expect(loaded.version == 2)
-        #expect(loaded.taskGraph == nil)
+        #expect(throws: Error.self) {
+            try TerminalSessionStore.load(from: fileURL)
+        }
     }
 
     @Test
     func decodesLegacyPlanWithoutStructuredPoints() throws {
+        let checkpointTreeData = try PropertyListEncoder().encode(
+            SessionCheckpointTree.fromLinearHistory([], sessionID: "terminal-legacy-plan")
+        )
+        let checkpointTreeDict = try PropertyListSerialization.propertyList(
+            from: checkpointTreeData,
+            format: nil
+        ) as! [String: Any]
+
         let legacyPropertyList: [String: Any] = [
             "version": TerminalSavedSession.currentVersion,
             "name": "legacy plan",
@@ -162,6 +169,7 @@ struct MLXTerminalSessionStoreTests {
             "selectedTools": [],
             "selectedSkillIDs": [],
             "history": [],
+            "checkpointTree": checkpointTreeDict,
             "activePlan": [
                 "originalGoal": "Legacy goal",
                 "consolidatedText": "Legacy consolidated plan",
@@ -184,6 +192,14 @@ struct MLXTerminalSessionStoreTests {
 
     @Test
     func decodesLegacySnapshotWithoutActivePlan() throws {
+        let checkpointTreeData = try PropertyListEncoder().encode(
+            SessionCheckpointTree.fromLinearHistory([], sessionID: "terminal-legacy")
+        )
+        let checkpointTreeDict = try PropertyListSerialization.propertyList(
+            from: checkpointTreeData,
+            format: nil
+        ) as! [String: Any]
+
         let legacyPropertyList: [String: Any] = [
             "version": TerminalSavedSession.currentVersion,
             "name": "legacy",
@@ -194,6 +210,7 @@ struct MLXTerminalSessionStoreTests {
             "selectedTools": [],
             "selectedSkillIDs": [],
             "history": [],
+            "checkpointTree": checkpointTreeDict,
         ]
         let data = try PropertyListSerialization.data(
             fromPropertyList: legacyPropertyList,
@@ -327,6 +344,10 @@ struct MLXTerminalSessionStoreTests {
                 AgentRuntimeMessage(role: .user, content: "visible ciao")
             ],
             activePlan: activePlan,
+            checkpointTree: SessionCheckpointTree.fromLinearHistory(
+                snapshot.history,
+                sessionID: snapshot.sessionID
+            ),
             supportDirectoryURL: supportDirectory
         )
         let listedSessions = try runner.savedSessions(
@@ -394,7 +415,11 @@ struct MLXTerminalSessionStoreTests {
             """,
             history: [
                 AgentRuntimeMessage(role: .user, content: "recent")
-            ]
+            ],
+            checkpointTree: SessionCheckpointTree.fromLinearHistory(
+                [AgentRuntimeMessage(role: .user, content: "recent")],
+                sessionID: "terminal-test"
+            )
         )
 
         let displayHistory = TerminalChat.savedSessionDisplayHistory(session)
@@ -465,7 +490,13 @@ struct MLXTerminalSessionStoreTests {
             ],
             transcriptHistory: transcriptHistory,
             activePlan: activePlan,
-            taskGraph: taskGraph
+            taskGraph: taskGraph,
+            checkpointTree: SessionCheckpointTree.fromLinearHistory(
+                transcriptHistory ?? [
+                    AgentRuntimeMessage(role: .user, content: "ciao"),
+                ],
+                sessionID: "terminal-test"
+            )
         )
     }
 

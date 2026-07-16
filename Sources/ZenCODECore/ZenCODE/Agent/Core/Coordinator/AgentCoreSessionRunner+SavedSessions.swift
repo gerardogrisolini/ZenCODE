@@ -47,6 +47,7 @@ public extension AgentCoreSessionRunner {
         contextWindow: TerminalSavedSessionContextWindow?,
         transcriptHistory: [AgentRuntimeMessage]?,
         activePlan: TerminalSessionPlan? = nil,
+        checkpointTree: SessionCheckpointTree,
         supportDirectoryURL: URL? = nil
     ) async throws -> TerminalSavedSession {
         guard let snapshot = await snapshotSession(id: sessionID) ?? fallbackSnapshot else {
@@ -79,7 +80,8 @@ public extension AgentCoreSessionRunner {
             history: snapshot.history,
             transcriptHistory: transcriptHistory,
             activePlan: activePlan,
-            taskGraph: taskGraph
+            taskGraph: taskGraph,
+            checkpointTree: checkpointTree
         )
 
         _ = try TerminalSessionStore.save(

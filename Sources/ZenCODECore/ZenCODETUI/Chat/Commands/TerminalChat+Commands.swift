@@ -241,8 +241,21 @@ extension TerminalChat {
         ),
         TerminalChatCommandDescriptor(
                         command: "/sessions",
-            summary: "save/load/compact/new/delete sessions",
-            help: "/sessions saves, restores, compacts context (/sessions compact), starts a new session (/sessions new), or deletes named session snapshots for this project."
+            summary: "manage sessions and checkpoints",
+            help: """
+            /sessions                    List and select saved sessions
+            /sessions <name>             Save or overwrite a named snapshot
+            /sessions save               Save the current session
+            /sessions new                Start a new session
+            /sessions compact            Compact context
+            /sessions delete             Delete a session
+            /sessions tree               Show the checkpoint tree
+            /sessions branches           List branches (leaves)
+            /sessions checkpoint [label] Create a checkpoint (run /sessions save after)
+            /sessions restore <id|index>  Restore in-place from a checkpoint (branches)
+            /sessions fork <id|index> <new-name>  Fork into a new session file
+            /sessions fork <session> <id|index> <new-name>  Fork from a named session
+            """
         ),
         TerminalChatCommandDescriptor(
             command: "/attach",

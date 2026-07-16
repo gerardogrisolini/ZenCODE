@@ -152,6 +152,13 @@ struct PersistedContractCompatibilityTests {
                     TerminalSessionPlanPoint(id: "1", text: "Inspect", status: .completed),
                     TerminalSessionPlanPoint(id: "2", text: "Report", status: .inProgress)
                 ]
+            ),
+            checkpointTree: SessionCheckpointTree.fromLinearHistory(
+                [
+                    AgentRuntimeMessage(role: .user, content: "Inspect the change."),
+                    AgentRuntimeMessage(role: .assistant, content: "I found one issue.")
+                ],
+                sessionID: "persisted-contract"
             )
         )
 

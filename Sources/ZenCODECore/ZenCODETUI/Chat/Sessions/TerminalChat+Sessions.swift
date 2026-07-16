@@ -13,6 +13,11 @@ enum TerminalSavedSessionCommandAction: Equatable, Sendable {
     case newSession
     case saveActive
     case compact
+    case tree
+    case branches
+    case checkpoint(label: String?)
+    case fork(args: String)
+    case restore(entryID: String)
     case saveNamed(String)
 }
 
@@ -32,6 +37,16 @@ extension TerminalChat {
             await saveActiveSession()
         case .compact:
             await compactCurrentSession()
+        case .tree:
+            await displayCheckpointTree()
+        case .branches:
+            await listBranches()
+        case let .checkpoint(label):
+            await createCheckpoint(label: label)
+        case let .fork(args):
+            await handleForkCommand(args)
+        case let .restore(entryID):
+            await handleRestoreCommand(entryID)
         case let .saveNamed(name):
             await saveCurrentSession(named: name)
         }
@@ -50,6 +65,7 @@ extension TerminalChat {
             activeSessionSystemPromptOverride = nil
             resetResponseLanguageLock()
             activeSavedSessionName = nil
+            activeCheckpointTree = nil
             activePlan = nil
             try await createCurrentSession()
             await statusBar.reset()
@@ -207,7 +223,9 @@ extension TerminalChat {
             history: snapshot.history,
             transcriptHistory: activeSessionTranscript,
             activePlan: activePlan,
-            taskGraph: taskGraph
+            taskGraph: taskGraph,
+            checkpointTree: (activeCheckpointTree ?? existingSession?.checkpointTree)?.mergingHistory(activeSessionTranscript)
+                ?? SessionCheckpointTree.fromLinearHistory(activeSessionTranscript, sessionID: snapshot.sessionID)
         )
 
         do {
@@ -215,6 +233,7 @@ extension TerminalChat {
             await sessionRunner.saveSessionRuntimeCache(id: savedSession.sessionID)
             recordSavedSessionIndex(savedSession)
             activeSavedSessionName = savedSession.name
+            activeCheckpointTree = savedSession.checkpointTree
             await writeSystemMessage(
                 "Saved session: \(savedSession.name) (\(savedSession.messageCount) messages).\n"
             )
@@ -276,14 +295,43 @@ extension TerminalChat {
     }
 
     public func loadSavedSession(_ savedSession: TerminalSavedSession) async throws {
+        try await loadSavedSession(savedSession, checkpointEntryID: nil)
+    }
+
+    /// Loads a saved session, optionally restoring from a specific checkpoint
+    /// entry in the tree.  When `checkpointEntryID` is provided the message
+    /// history is rebuilt from the root-to-entry path and a new branch is
+    /// started from that entry.
+    public func loadSavedSession(
+        _ savedSession: TerminalSavedSession,
+        checkpointEntryID: String?
+    ) async throws {
+        let tree = savedSession.checkpointTree
+        let restoredMessages: [AgentRuntimeMessage]
+        let restoredTranscript: [AgentRuntimeMessage]
+        var workingTree = tree
+
+        if let entryID = checkpointEntryID,
+           tree.entry(id: entryID) != nil {
+            restoredMessages = tree.messages(from: entryID)
+            restoredTranscript = restoredMessages
+            // Move the active leaf to the selected entry so new messages branch
+            // from it rather than from the previous leaf.
+            workingTree.navigate(to: entryID)
+        } else {
+            restoredMessages = savedSession.history
+            restoredTranscript = Self.savedSessionDisplayHistory(savedSession)
+        }
+
         await stopTaskGraphObserver()
         await sessionRunner.resetSession(id: sessionID)
         sessionID = savedSession.sessionID
         activeSessionCacheKey = savedSession.cacheKey
-        activeSessionHistory = savedSession.history
-        activeSessionTranscript = Self.savedSessionDisplayHistory(savedSession)
+        activeSessionHistory = restoredMessages
+        activeSessionTranscript = restoredTranscript
         activeSessionSystemPromptOverride = savedSession.systemPrompt
         activePlan = savedSession.activePlan
+        activeCheckpointTree = workingTree
         resetResponseLanguageLock()
         activeSavedSessionName = savedSession.name
         manualModelIDOverride = savedSession.modelID ?? configuration.modelID
@@ -596,7 +644,166 @@ extension TerminalChat {
     }
 
     public static func renderSessionSelectionUsage() -> String {
-        "Usage: /sessions\n       /sessions <session name>\n       /sessions save\n       /sessions compact\n       /sessions new\n       /sessions delete\n"
+        """
+        Usage: /sessions                    List and select saved sessions
+               /sessions <name>             Save or overwrite a named snapshot
+               /sessions save               Save the current session
+               /sessions new                Start a new session
+               /sessions compact            Compact context
+               /sessions delete             Delete a session
+               /sessions tree               Show the checkpoint tree
+               /sessions branches           List branches (leaves)
+               /sessions checkpoint [label] Create a checkpoint
+               /sessions restore <id|index> Restore in-place from a checkpoint
+               /sessions fork <id|index> <new-name>  Fork into a new file
+        """
+    }
+
+    // MARK: - Checkpoint tree operations
+
+    /// Renders the checkpoint tree of the active (or given) saved session as
+    /// an indented text outline for display in the TUI.
+    public func renderCheckpointTree(
+        for savedSession: TerminalSavedSession? = nil
+    ) -> String {
+        let tree: SessionCheckpointTree
+        if let savedSession {
+            tree = savedSession.checkpointTree
+        } else if let activeCheckpointTree {
+            tree = activeCheckpointTree
+        } else {
+            return "No checkpoint tree available. Save the session first with /sessions save."
+        }
+        let header = "Session checkpoint tree (\(tree.branches.count) branch(es), \(tree.entries.count) entries):\n"
+        return header + tree.treeDescription()
+    }
+
+    /// Displays the checkpoint tree in the terminal.
+    public func displayCheckpointTree(
+        for savedSession: TerminalSavedSession? = nil
+    ) async {
+        let output = renderCheckpointTree(for: savedSession)
+        await writeSystemMessage("\n\(output)\n")
+    }
+
+    /// Creates a manual checkpoint at the current position in the active
+    /// session's tree.
+    public func createCheckpoint(label: String?) async {
+        if activeCheckpointTree == nil {
+            activeCheckpointTree = SessionCheckpointTree.fromLinearHistory(
+                activeSessionTranscript,
+                sessionID: sessionID
+            )
+        }
+        guard var tree = activeCheckpointTree else { return }
+        let entry = tree.append(.checkpoint(label: label?.nilIfBlank))
+        activeCheckpointTree = tree
+        let labelDisplay = label?.nilIfBlank ?? "unnamed"
+        await writeSystemMessage(
+            "Checkpoint created: \(labelDisplay) (id: \(entry.id)).\n"
+        )
+    }
+
+    /// Restores the session from a specific checkpoint entry, branching from
+    /// that point.  Subsequent messages will form a new branch in the tree.
+    public func restoreFromCheckpoint(
+        _ savedSession: TerminalSavedSession,
+        entryID: String
+    ) async throws {
+        let tree = savedSession.checkpointTree
+        guard tree.entry(id: entryID) != nil else {
+            await writeFailureMessage(
+                "Checkpoint entry \(entryID) not found in session \(savedSession.name).\n"
+            )
+            return
+        }
+        try await loadSavedSession(savedSession, checkpointEntryID: entryID)
+        let messageCount = activeSessionTranscript.filter { $0.role != .system }.count
+        await writeSystemMessage(
+            "Restored from checkpoint \(entryID) (\(messageCount) messages on this branch).\n"
+        )
+    }
+
+    /// Forks a saved session from a specific checkpoint entry into a new
+    /// session file.  The new session contains only the messages on the path
+    /// from root to the selected entry.
+    @discardableResult
+    public func forkFromCheckpoint(
+        _ savedSession: TerminalSavedSession,
+        entryID: String,
+        newName: String
+    ) async throws -> TerminalSavedSession? {
+        let tree = savedSession.checkpointTree
+        guard tree.entry(id: entryID) != nil else {
+            await writeFailureMessage(
+                "Checkpoint entry \(entryID) not found in session \(savedSession.name).\n"
+            )
+            return nil
+        }
+        let forkedMessages = tree.messages(from: entryID)
+        var forkedTree = SessionCheckpointTree.fromLinearHistory(
+            forkedMessages,
+            sessionID: savedSession.sessionID
+        )
+        // Preserve any checkpoint labels from the original path.
+        for entry in tree.path(from: entryID) {
+            if case let .checkpoint(label) = entry.kind, let label {
+                forkedTree.append(.checkpoint(label: label))
+            }
+        }
+        let now = Date()
+        let forkedSession = TerminalSavedSession(
+            name: newName,
+            sessionID: savedSession.sessionID,
+            cacheKey: savedSession.cacheKey,
+            workingDirectoryPath: savedSession.workingDirectoryPath,
+            createdAt: now,
+            savedAt: now,
+            modelID: savedSession.modelID,
+            agentID: savedSession.agentID,
+            agentName: savedSession.agentName,
+            selectedTools: savedSession.selectedTools,
+            selectedSkillIDs: savedSession.selectedSkillIDs,
+            thinkingSelection: savedSession.thinkingSelection,
+            contextWindow: savedSession.contextWindow,
+            systemPrompt: savedSession.systemPrompt,
+            history: forkedMessages,
+            transcriptHistory: forkedMessages,
+            activePlan: nil,
+            taskGraph: nil,
+            checkpointTree: forkedTree
+        )
+        _ = try TerminalSessionStore.save(forkedSession)
+        recordSavedSessionIndex(forkedSession)
+        await writeSystemMessage(
+            "Forked session '\(newName)' from checkpoint \(entryID) (\(forkedMessages.filter { $0.role != .system }.count) messages).\n"
+        )
+        return forkedSession
+    }
+
+    /// Lists all branches (leaves) in the active or given session's tree.
+    public func listBranches(
+        for savedSession: TerminalSavedSession? = nil
+    ) async {
+        let tree: SessionCheckpointTree
+        if let savedSession {
+            tree = savedSession.checkpointTree
+        } else if let activeCheckpointTree {
+            tree = activeCheckpointTree
+        } else {
+            await writeSystemMessage("No checkpoint tree available.\n")
+            return
+        }
+        let branches = tree.branches
+        await writeSystemMessage("\nBranches (\(branches.count)):\n")
+        for (offset, branch) in branches.enumerated() {
+            let active = branch.leafID == tree.activeLeafID ? " *" : ""
+            let labelPart = branch.label.map { " [\($0)]" } ?? ""
+            await writeSystemMessage(
+                "  \(offset + 1).\(active)\(labelPart) \(branch.messageCount) msgs — \(branch.preview)\n"
+            )
+        }
+        await writeSystemMessage("\n")
     }
 
 }

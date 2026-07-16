@@ -49,7 +49,7 @@ public struct TerminalSavedSessionContextWindow: Codable, Equatable, Sendable {
 }
 
 public struct TerminalSavedSession: Codable, Equatable, Sendable {
-    public static let currentVersion = 3
+    public static let currentVersion = 4
 
     public let version: Int
     public let name: String
@@ -70,6 +70,8 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
     public let transcriptHistory: [AgentRuntimeMessage]?
     public let activePlan: TerminalSessionPlan?
     public let taskGraph: TaskGraphSnapshot?
+    /// Session checkpoint tree (v4+).
+    public let checkpointTree: SessionCheckpointTree
 
     public init(
         version: Int = Self.currentVersion,
@@ -90,7 +92,8 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         history: [AgentRuntimeMessage],
         transcriptHistory: [AgentRuntimeMessage]? = nil,
         activePlan: TerminalSessionPlan? = nil,
-        taskGraph: TaskGraphSnapshot? = nil
+        taskGraph: TaskGraphSnapshot? = nil,
+        checkpointTree: SessionCheckpointTree
     ) {
         self.version = version
         self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -113,6 +116,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         self.transcriptHistory = transcriptHistory
         self.activePlan = activePlan
         self.taskGraph = taskGraph
+        self.checkpointTree = checkpointTree
     }
 
     public var displayHistory: [AgentRuntimeMessage] {
@@ -297,7 +301,7 @@ public enum TerminalSessionStore {
     }
 
     private static func validate(_ session: TerminalSavedSession) throws {
-        guard session.version == 2 || session.version == TerminalSavedSession.currentVersion else {
+        guard session.version == TerminalSavedSession.currentVersion else {
             throw MLXTerminalSessionStoreError.unsupportedVersion(session.version)
         }
         guard session.name.nilIfBlank != nil else {

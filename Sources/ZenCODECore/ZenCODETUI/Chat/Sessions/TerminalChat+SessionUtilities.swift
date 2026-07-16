@@ -10,7 +10,20 @@ extension TerminalChat {
         rawArguments: String
     ) -> TerminalSavedSessionCommandAction {
         let trimmedArguments = rawArguments.trimmingCharacters(in: .whitespacesAndNewlines)
-                switch trimmedArguments.lowercased() {
+        // Split into subcommand + remainder for keyword-based actions.
+        let firstSpace = trimmedArguments.firstIndex(of: " ")
+        let subcommand: String
+        let remainder: String
+        if let firstSpace {
+            subcommand = String(trimmedArguments[..<firstSpace]).lowercased()
+            remainder = String(trimmedArguments[trimmedArguments.index(after: firstSpace)...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            subcommand = trimmedArguments.lowercased()
+            remainder = ""
+        }
+
+        switch subcommand {
         case "":
             return .list
         case "delete":
@@ -21,6 +34,16 @@ extension TerminalChat {
             return .saveActive
         case "compact":
             return .compact
+        case "tree":
+            return .tree
+        case "branches":
+            return .branches
+        case "checkpoint":
+            return .checkpoint(label: remainder.nilIfBlank)
+        case "fork":
+            return .fork(args: remainder)
+        case "restore":
+            return .restore(entryID: remainder)
         default:
             return .saveNamed(trimmedArguments)
         }

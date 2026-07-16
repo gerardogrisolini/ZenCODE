@@ -56,6 +56,9 @@ public final class TerminalChat: @unchecked Sendable {
     public var activeResponseLanguageName: String?
     public var didLockResponseLanguage = false
     public var activeSavedSessionName: String?
+    /// Tracks the checkpoint tree for the active session. Populated when a
+    /// session is loaded or saved, and updated as messages accumulate.
+    public var activeCheckpointTree: SessionCheckpointTree?
     public var printedModelID: String?
     public var didPrintActiveTools = false
     public var didReceiveMetricsForCurrentPrompt = false
