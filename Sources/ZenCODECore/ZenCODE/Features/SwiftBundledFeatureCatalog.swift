@@ -13,6 +13,7 @@ enum SwiftBundledFeatureCatalog {
     static func definitions() -> [SwiftFeatureRuntime.BundledFeatureDefinition] {
         let search = metadata(for: "search-tools")
         let web = metadata(for: "web-tools")
+        let browser = metadata(for: "browser-tools")
         let git = metadata(for: "git-tools")
         let swift = metadata(for: "swift-tools")
         let jira = metadata(for: "jira-tools")
@@ -33,6 +34,14 @@ enum SwiftBundledFeatureCatalog {
                 description: "Search the web and fetch URLs as text.",
                 sourceRelativePath: web.sourceRelativePath,
                 tools: webToolDescriptors(),
+                invocationTimeoutSeconds: 180
+            ),
+            SwiftFeatureRuntime.BundledFeatureDefinition(
+                id: browser.id,
+                executableName: browser.productName,
+                description: "Search Google and visit pages using a real Chrome browser.",
+                sourceRelativePath: browser.sourceRelativePath,
+                tools: browserToolDescriptors(),
                 invocationTimeoutSeconds: 180
             ),
             SwiftFeatureRuntime.BundledFeatureDefinition(
@@ -103,6 +112,21 @@ enum SwiftBundledFeatureCatalog {
 
     private static func webToolDescriptors() -> [ToolDescriptor] {
         DirectToolCatalog.webDescriptors.map(\.toolDescriptor)
+    }
+
+    private static func browserToolDescriptors() -> [ToolDescriptor] {
+        [
+            ToolDescriptor(
+                name: "browser.google_search",
+                description: "Searches Google using a real Chrome browser and returns visible links plus a text snapshot as markdown. A visible Chrome window is launched on first use.",
+                inputSchema: #"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#
+            ),
+            ToolDescriptor(
+                name: "browser.visit_page",
+                description: "Visits a page in a real Chrome browser, scrolls to load dynamic content, and returns the rendered content as markdown. A visible Chrome window is launched on first use.",
+                inputSchema: #"{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}"#
+            ),
+        ]
     }
 
     private static func gitToolDescriptors() -> [ToolDescriptor] {

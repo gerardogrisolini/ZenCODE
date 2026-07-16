@@ -48,6 +48,12 @@ public enum ZenBundledFeatureCatalog {
             isInstalledOnLinux: true
         ),
         ZenBundledFeatureMetadata(
+            id: "browser-tools",
+            productName: "browser-tools-feature",
+            sourceRelativePath: "Sources/Features/BrowserTools",
+            isInstalledOnLinux: true
+        ),
+        ZenBundledFeatureMetadata(
             id: "git-tools",
             productName: "git-tools-feature",
             sourceRelativePath: "Sources/Features/GitTools",

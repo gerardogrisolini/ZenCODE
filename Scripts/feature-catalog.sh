@@ -10,6 +10,7 @@ zencode_select_feature_products() {
             FEATURE_PRODUCTS=(
                 "search-tools-feature"
                 "web-tools-feature"
+                "browser-tools-feature"
                 "git-tools-feature"
                 "swift-tools-feature"
                 "xcode-tools-feature"
@@ -21,6 +22,7 @@ zencode_select_feature_products() {
             FEATURE_PRODUCTS=(
                 "search-tools-feature"
                 "web-tools-feature"
+                "browser-tools-feature"
                 "git-tools-feature"
                 "xcode-tools-feature"
                 "figma-tools-feature"

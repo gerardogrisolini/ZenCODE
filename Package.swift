@@ -85,6 +85,11 @@ let bundledFeatureTargetDefinitions: [BundledFeatureTargetDefinition] = [
         dependencies: ["FeatureKit"]
     ),
     BundledFeatureTargetDefinition(
+        executableName: "browser-tools-feature",
+        sourceRelativePath: "Sources/Features/BrowserTools",
+        dependencies: ["FeatureKit"]
+    ),
+    BundledFeatureTargetDefinition(
         executableName: "git-tools-feature",
         sourceRelativePath: "Sources/Features/GitTools",
         dependencies: ["FeatureKit"]
