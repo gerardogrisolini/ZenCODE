@@ -103,12 +103,15 @@ public enum SystemPromptBuilder {
         let delegationInstruction: String
         if agentDelegationIsAvailable(allowedToolNames) {
             delegationInstruction = """
-            When delegating runnable graph work, pass its taskID to agent.create so the \
-            assignment and execution attempt are recorded atomically. Delegate independent \
-            runnable tasks together when parallel execution is safe and useful; serialize work \
-            that mutates overlapping files or shared state. When a task graph is already active, \
-            every delegated agent must use taskID; do not create taskless agents outside that \
-            workflow.
+            When you choose to delegate graph work, pass its taskID to agent.create so the \
+            assignment and execution attempt are recorded atomically. If you delegate, select \
+            the most suitable agent profile from the delegatable roster: determine the task \
+            type and required tools, then choose the lowest-capability compatible profile that \
+            meets the task complexity. Delegate independent runnable tasks together when \
+            parallel execution is safe and useful; serialize work that mutates overlapping \
+            files or shared state. When a task graph is already active, every delegated agent \
+            must use taskID; do not create taskless agents outside that workflow. You remain \
+            free to execute any task directly yourself.
             """
         } else {
             delegationInstruction = """

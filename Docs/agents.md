@@ -54,7 +54,7 @@ Lifecycle:
 3. The sub-agent inherits the workspace and its profile's tool allowlist.
 4. The coordinator uses `agent.message`, `agent.wait`, `agent.get`, and `agent.close`.
 
-Write authority is determined by the sub-agent's effective tool allowlist. By default it inherits the parent session's enabled tools; passing `toolNames` narrows that grant. `/plan` and `/review` explicitly pass read-only allowlists, while delegated coding work receives editing tools only when the parent grant permits them.
+Write authority is determined by the sub-agent's effective tool allowlist. By default it inherits the parent session's enabled tools; passing `toolNames` narrows that grant. `/plan` and `/review` explicitly pass read-only allowlists, while delegated coding work receives editing tools only when the parent grant permits them. `/workflow` delegates implementation tasks with the sub-agent's default inherited grant, so the parent profile must include the necessary editing tools.
 
 ## Capability Routing
 
@@ -78,7 +78,9 @@ The model must never select a profile by capability alone. Capability represents
 
 ## Task Graph Integration
 
-Coordinated multi-step work is tracked by the session task graph (`SessionTaskOrchestrator`). The coordinator creates tasks with dependencies, selects runnable work with `tasks.list`, and assigns delegated tasks by passing `taskID` to `agent.create` for atomic claims. A sub-agent joins a graph only at creation time; taskless agents are for single self-contained lookups. See the [zen.md](zen.md) task orchestration section for details.
+Coordinated multi-step work is tracked by the session task graph (`SessionTaskOrchestrator`). The coordinator creates tasks with dependencies, selects runnable work with `tasks.list`, and assigns delegated tasks by passing `taskID` to `agent.create` for atomic claims. A sub-agent joins a graph only at creation time; taskless agents are for single self-contained lookups.
+
+`/workflow <goal>` automates this pattern: the current agent inspects the workspace, creates the task graph with `tasks.create`, delegates every task to the best-matching sub-agent via `agent.create(taskID:)`, and reviews results. Unlike `/plan`, there is no separate Planner sub-agent or approval step — the current agent is the sole planner, coordinator, and final reviewer. See the [zen.md](zen.md) task orchestration section for details.
 
 ## Setup Parameters
 

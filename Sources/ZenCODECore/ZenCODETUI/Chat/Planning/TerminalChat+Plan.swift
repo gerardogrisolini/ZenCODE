@@ -204,15 +204,10 @@ extension TerminalChat {
         }
         return """
         Implement the active approved plan now, using the session task graph as the control \
-        plane. Start by calling tasks.list with runnableOnly=true. Execute small tasks directly. \
-        When multiple independent tasks are runnable, delegate them in one agent.create batch \
-        using each taskID if parallel execution has a real benefit and their mutable file or \
-        resource scopes do not overlap; otherwise process them sequentially. Delegated \
-        sub-agents run in parallel. Before direct work, transition that task to in_progress with \
-        tasks.update; after the work record output and complete the task, validating risky \
-        changes before marking them completed. Repeat until the graph is completed or a real \
-        blocker is recorded. Respect dependencies, never claim a task twice, use tasks.retry only \
-        explicitly, and do not recreate or replace the approved plan.
+        plane. Complete every task in the graph, deciding for yourself whether to work \
+        directly or delegate. Validate important changes before marking tasks completed. \
+        Stop when the graph is completed or a real blocker is reached. Do not recreate or \
+        replace the approved plan.
 
         Goal: \(plan.originalGoal)
 

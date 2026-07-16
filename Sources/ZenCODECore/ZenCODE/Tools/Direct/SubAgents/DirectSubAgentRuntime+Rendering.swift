@@ -20,7 +20,8 @@ extension DirectSubAgentRuntime {
             "Role: \(role)",
             SystemPromptBuilder.responseLanguageSection(),
             "You are running inside ZenCODE and receive the complete direct toolset available to this process, including local, shell, git, MCP, and sub-agent tools when exposed.",
-            "Work only on the delegated scope. Be concise, concrete, and report blockers clearly."
+            "Work only on the delegated scope. Be concise, concrete, and report blockers clearly.",
+            "Briefly narrate progress at each meaningful step — what you are inspecting, deciding, building, or validating — rather than working silently. Your intermediate output is streamed to the coordinator, so short status updates let progress be observed incrementally instead of only seeing your final result."
         ]
         if let taskID {
             lines.append("Assigned task: \(taskID)")

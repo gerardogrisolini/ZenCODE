@@ -276,6 +276,12 @@ extension TerminalChat {
             help: "/plan <goal> creates a new unapproved plan. Use /plan status to show item progress, /plan approve to approve it and start implementation immediately, or /plan clear to remove it.",
             requiresArgument: true
         ),
+        TerminalChatCommandDescriptor(
+            command: "/workflow",
+            summary: "plan and delegate all work to sub-agents",
+            help: "/workflow <goal> plans the work, creates a task graph, and delegates every task to the best-matching sub-agent. The current agent stays as coordinator and final reviewer.",
+            requiresArgument: true
+        ),
                 TerminalChatCommandDescriptor(
             command: "/review",
             summary: "review changes via sub-agents",

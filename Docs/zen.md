@@ -102,9 +102,21 @@ Commands start with `/`:
 - `/plan status` — show plan progress from the graph state.
 - `/plan approve` — activate the plan and start implementation.
 - `/plan clear` — archive the graph and remove the active plan.
+- `/workflow <goal>` — plan and delegate all work to sub-agents. The current agent creates the task graph, delegates every task to the best-matching sub-agent, and stays as coordinator and final reviewer. No separate Planner sub-agent or approval step. Use `/tasks` to monitor progress.
 - `/review [focus]` — delegate review to read-only `Reviewer` sub-agents. See [reviewer.md](reviewer.md).
 - `/make-agents` — ask the model to create or update `AGENTS.md` for the current directory. Requires the `Files` tool group.
 - `/feature` — manage Swift feature packages (Builder profile only). See [builder.md](builder.md).
+
+**`/plan` vs `/workflow`:**
+
+| | `/plan` | `/workflow` |
+|---|---|---|
+| **Planning** | Delegated to a read-only Planner sub-agent | Done by the current agent directly |
+| **Approval step** | Yes — `/plan approve` activates the graph | No — starts immediately |
+| **Task implementation** | The current agent works freely: directly or by delegating, as it sees fit | Every task is delegated to a sub-agent; the current agent never implements directly |
+| **Sub-agent selection** | The model decides per task if and when to delegate | The model must assign the best-matching profile to every task |
+| **Role of current agent** | Implementer (can delegate when useful) | Coordinator and final reviewer only |
+| **Monitor progress** | `/plan status` or `/tasks` | `/tasks` |
 
 **Optional integrations:**
 - `/telegram` / `/telegram on` / `/telegram off` — remote control (requires setup). Available even while a prompt is running.
@@ -183,7 +195,7 @@ See [mlx-runtime.md](mlx-runtime.md) and [ds4.md](ds4.md) for runtime-specific s
 1. `zen --setup` — configure providers, models, agents.
 2. `cd /path/to/project && zen` — start in the target project.
 3. `/tools` and `/skills` — select tools and skills.
-4. `/plan <goal>` — optional planning pass before editing.
+4. `/plan <goal>` or `/workflow <goal>` — optional planning before editing. `/plan` delegates to a Planner sub-agent with an approval step; `/workflow` plans directly and delegates all implementation to sub-agents.
 5. Implement with the active profile.
 6. `/changes diff` and Git — inspect changes.
 7. `/review` — read-only review before commit.
@@ -197,6 +209,6 @@ See [mlx-runtime.md](mlx-runtime.md) and [ds4.md](ds4.md) for runtime-specific s
 - **No tools available**: use `/tools`, switch profile, or check ACP client tool exposure.
 - **`/make-agents` needs Files**: enable `Files` with `/tools` or switch profile.
 - **`/feature` unavailable**: switch to `/agents Builder`.
-- **`/plan` or `/review` needs sub-agents**: enable `sub-agents` with `/tools` or switch profile.
+- **`/plan`, `/workflow`, or `/review` needs sub-agents**: enable `sub-agents` with `/tools` or switch profile.
 - **Xcode tools missing**: make sure Xcode is running. See [xcode.md](xcode.md).
 - **Figma tools missing**: make sure the Figma desktop MCP server is enabled.

@@ -70,6 +70,15 @@ extension TerminalChat {
                 sessionConfiguration = currentSessionConfiguration(
                     allowedToolNames: allowedToolNames
                 )
+            } else if case .workflow = attempt.purpose {
+                var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
+                allowedToolNames.formUnion([
+                    "tasks.create", "tasks.list", "tasks.get",
+                    "tasks.update", "tasks.retry", "tasks.cancel"
+                ])
+                sessionConfiguration = currentSessionConfiguration(
+                    allowedToolNames: allowedToolNames
+                )
             } else if case .review = attempt.purpose {
                 sessionConfiguration = currentSessionConfiguration(
                     allowedToolNames: sessionConfiguration.allowedToolNames ?? [],
@@ -151,7 +160,7 @@ extension TerminalChat {
                                     toolCall: toolCall,
                                     result: result
                                 )
-                            case .makeAgents, .review:
+                            case .makeAgents, .review, .workflow:
                                 break
                             }
                         }
