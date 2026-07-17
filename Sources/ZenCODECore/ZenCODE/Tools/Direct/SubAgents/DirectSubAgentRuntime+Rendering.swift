@@ -49,6 +49,9 @@ extension DirectSubAgentRuntime {
         var lines = ["Sub-agents:"]
         for snapshot in snapshots {
             var summary = "- \(snapshot.id) name=\(snapshot.name) role=\(snapshot.role) status=\(snapshot.status.rawValue) pending=\(snapshot.pending)"
+            if let profileName = snapshot.profileName?.nilIfBlank {
+                summary += " profile=\(profileName)"
+            }
             if let taskID = snapshot.taskID?.nilIfBlank {
                 summary += " task=\(taskID)"
             }

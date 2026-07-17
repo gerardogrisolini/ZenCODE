@@ -1736,6 +1736,199 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func subAgentOverviewRendersAgentProfileLineWhenProfileNamePresent() {
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_profile",
+            name: "builder",
+            role: "Builder",
+            profileID: "developer-profile",
+            profileName: "Developer",
+            status: .running,
+            pending: true,
+            modelID: "gpt-5",
+            modelRuntime: "remote",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+        let lines = rendered.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+
+        #expect(rendered.contains("agent: Developer"))
+
+        // The "agent:" line must appear after the "role:" line.
+        let roleIndex = lines.firstIndex { $0.contains("role: Builder") }
+        let agentIndex = lines.firstIndex { $0.contains("agent: Developer") }
+        #expect(roleIndex != nil)
+        #expect(agentIndex != nil)
+        if let roleIndex, let agentIndex {
+            #expect(agentIndex > roleIndex)
+        }
+    }
+
+    @Test
+    func subAgentOverviewOmitsAgentProfileLineWhenProfileNameIsNil() {
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_no_profile",
+            name: "builder",
+            role: "Builder",
+            status: .running,
+            pending: true,
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+
+        #expect(!rendered.contains("agent:"))
+        #expect(rendered.contains("role: Builder"))
+    }
+
+    @Test
+    func subAgentOverviewResolvesFriendlyModelTitleViaResolver() {
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_resolved",
+            name: "planner",
+            role: "Planner",
+            status: .running,
+            pending: true,
+            modelID: "gpt-5",
+            modelRuntime: "remote",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let resolver: (String) -> String = { id in
+            id == "gpt-5" ? "GPT-5 Turbo" : id
+        }
+        let rendered = ansiStripped(
+            TerminalChat.renderSubAgentOverview([snapshot], modelTitleResolver: resolver)
+        )
+
+        #expect(rendered.contains("model: GPT-5 Turbo · remote"))
+        #expect(!rendered.contains("model: gpt-5"))
+    }
+
+    @Test
+    func subAgentOverviewStripsRemoteAPIUUIDPrefixForUnresolvableModel() {
+        let rawModelID = "remoteapi:d3eea8e9-eccf-499e-9697-298ede7af8d5:glm-5.2"
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_remote",
+            name: "worker",
+            role: "Worker",
+            status: .running,
+            pending: true,
+            modelID: rawModelID,
+            modelRuntime: "remote",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let resolver: (String) -> String = {
+            TerminalChat.resolvedSubAgentModelTitle(for: $0)
+        }
+        let rendered = ansiStripped(
+            TerminalChat.renderSubAgentOverview([snapshot], modelTitleResolver: resolver)
+        )
+
+        #expect(rendered.contains("model: glm-5.2 · remote"))
+        #expect(!rendered.contains("remoteapi:"))
+        #expect(!rendered.contains("d3eea8e9"))
+    }
+
+    @Test
+    func resolvedSubAgentModelTitleStripsRemoteAPIInternalID() {
+        #expect(
+            TerminalChat.resolvedSubAgentModelTitle(
+                for: "remoteapi:d3eea8e9-eccf-499e-9697-298ede7af8d5:glm-5.2"
+            ) == "glm-5.2"
+        )
+    }
+
+    @Test
+    func resolvedSubAgentModelTitleLeavesUnrelatedIDsUnchanged() {
+        #expect(TerminalChat.resolvedSubAgentModelTitle(for: "gpt-5") == "gpt-5")
+        #expect(
+            TerminalChat.resolvedSubAgentModelTitle(for: "remoteapi:provider:mlx-community/model")
+                == "remoteapi:provider:mlx-community/model"
+        )
+    }
+
+    @Test
+    func subAgentModelNameStrippingRemoteAPIPrefixHandlesEdgeCases() {
+        #expect(
+            TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix(
+                "remoteapi:d3eea8e9-eccf-499e-9697-298ede7af8d5:glm-5.2"
+            ) == "glm-5.2"
+        )
+        #expect(
+            TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix("gpt-5") == nil
+        )
+        // Non-UUID provider segment must not be stripped.
+        #expect(
+            TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix(
+                "remoteapi:openrouter:anthropic/claude"
+            ) == nil
+        )
+        // Missing model name segment.
+        #expect(
+            TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix(
+                "remoteapi:d3eea8e9-eccf-499e-9697-298ede7af8d5"
+            ) == nil
+        )
+    }
+
+    @Test
+    func renderSnapshotsIncludesProfileNameWhenPresent() {
+        let now = Date(timeIntervalSince1970: 10)
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent-snapshot",
+            name: "worker",
+            role: "worker",
+            profileID: "dev-profile",
+            profileName: "Developer",
+            status: .running,
+            pending: true,
+            modelID: "gpt-5",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: now,
+            updatedAt: now
+        )
+
+        let rendered = DirectSubAgentRuntime.renderSnapshots([snapshot])
+        #expect(rendered.contains("profile=Developer"))
+        #expect(rendered.contains("model=gpt-5"))
+    }
+
+    @Test
+    func renderSnapshotsOmitsProfileWhenNameIsAbsent() {
+        let now = Date(timeIntervalSince1970: 10)
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent-snapshot",
+            name: "worker",
+            role: "worker",
+            status: .running,
+            pending: true,
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: now,
+            updatedAt: now
+        )
+
+        let rendered = DirectSubAgentRuntime.renderSnapshots([snapshot])
+        #expect(!rendered.contains("profile="))
+    }
+
+    @Test
     func subAgentOverviewRendersActivityWithoutCurrentTool() {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_3",

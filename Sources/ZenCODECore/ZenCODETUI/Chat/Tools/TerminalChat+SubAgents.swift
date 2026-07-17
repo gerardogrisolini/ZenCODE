@@ -68,7 +68,11 @@ extension TerminalChat {
             return
         }
         let signature = Self.subAgentOverviewSignature(snapshots)
-        let overview = Self.renderSubAgentOverview(snapshots) + "\n\n"
+        let resolver = subAgentModelTitleResolver()
+        let overview = Self.renderSubAgentOverview(
+            snapshots,
+            modelTitleResolver: resolver
+        ) + "\n\n"
         _ = await renderCoordinator.renderSubAgentOverview(
             signature: signature,
             text: overview,
@@ -78,7 +82,8 @@ extension TerminalChat {
     }
 
     public static func renderSubAgentOverview(
-        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
+        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
+        modelTitleResolver: (String) -> String = { $0 }
     ) -> String {
         var lines = [SubAgentOverviewLine.summary(renderSubAgentSummary(snapshots))]
 
@@ -95,6 +100,9 @@ extension TerminalChat {
             if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 lines.append(.regular("\(dimText("role:")) \(snapshot.role)"))
             }
+            if let profileName = snapshot.profileName?.nilIfBlank {
+                lines.append(.regular("\(dimText("agent:")) \(profileName)"))
+            }
             if let taskID = snapshot.taskID?.nilIfBlank {
                 var taskText = "\(dimText("task:")) \(inlineText(taskID))"
                 if let attempt = snapshot.taskAttemptOrdinal {
@@ -102,7 +110,10 @@ extension TerminalChat {
                 }
                 lines.append(.regular(taskText, maxWrappedLines: 2))
             }
-            if let model = renderSubAgentModel(snapshot) {
+            if let model = renderSubAgentModel(
+                snapshot,
+                modelTitleResolver: modelTitleResolver
+            ) {
                 lines.append(.regular(model))
             }
             let activityLines = renderSubAgentActivityLines(snapshot)
@@ -157,16 +168,75 @@ extension TerminalChat {
     }
 
     private static func renderSubAgentModel(
-        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
+        modelTitleResolver: (String) -> String
     ) -> String? {
         guard let modelID = snapshot.modelID?.nilIfBlank else {
             return nil
         }
-        var text = modelID
+        var text = modelTitleResolver(modelID)
         if let runtime = snapshot.modelRuntime?.nilIfBlank {
             text += " · \(runtime)"
         }
         return "\(dimText("model:")) \(inlineText(text))"
+    }
+
+    /// Builds the model title resolver used by the instance overview renderer.
+    private func subAgentModelTitleResolver() -> (String) -> String {
+        { modelID in
+            Self.resolvedSubAgentModelTitle(
+                for: modelID,
+                hostedModel: self.hostedModelManifest(for: modelID)
+            )
+        }
+    }
+
+    /// Resolves a sub-agent model identifier into a human-readable title.
+    ///
+    /// Resolution order:
+    /// 1. Hosted model manifest (from the active configuration) →
+    ///    `AgentModelCatalogPresentation.modelTitle(for:)`, which includes the
+    ///    provider when it distinguishes the model.
+    /// 2. Internal `remoteapi:<uuid>:<modelID>` identifier that did not resolve
+    ///    against the catalog → the significant model name, with the internal
+    ///    provider UUID prefix removed.
+    /// 3. Any other identifier → returned unchanged.
+    public static func resolvedSubAgentModelTitle(
+        for modelID: String,
+        hostedModel: AgentSettingsModelManifest? = nil
+    ) -> String {
+        if let hostedModel {
+            return AgentModelCatalogPresentation.modelTitle(for: hostedModel)
+        }
+        if let stripped = subAgentModelNameStrippingRemoteAPIPrefix(modelID) {
+            return stripped
+        }
+        return modelID
+    }
+
+    /// Returns the significant model name when `modelID` is an internal
+    /// `remoteapi:<uuid>:<modelName>` identifier, otherwise `nil`.
+    public static func subAgentModelNameStrippingRemoteAPIPrefix(
+        _ modelID: String
+    ) -> String? {
+        let trimmed = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased().hasPrefix("remoteapi:") else {
+            return nil
+        }
+        let afterPrefix = trimmed.dropFirst("remoteapi:".count)
+        guard !afterPrefix.isEmpty else {
+            return nil
+        }
+        guard let colonRange = afterPrefix.range(of: ":") else {
+            return nil
+        }
+        let providerSegment = afterPrefix[afterPrefix.startIndex..<colonRange.lowerBound]
+        let modelName = afterPrefix[colonRange.upperBound...]
+        guard UUID(uuidString: String(providerSegment)) != nil,
+              !modelName.isEmpty else {
+            return nil
+        }
+        return String(modelName)
     }
 
     private static func renderSubAgentActivityLines(
@@ -368,6 +438,7 @@ extension TerminalChat {
                 snapshot.id,
                 snapshot.name,
                 snapshot.role,
+                snapshot.profileName?.nilIfBlank ?? "",
                 snapshot.status.rawValue,
                 snapshot.pending ? "pending" : "idle",
                 snapshot.modelID?.nilIfBlank ?? "",
