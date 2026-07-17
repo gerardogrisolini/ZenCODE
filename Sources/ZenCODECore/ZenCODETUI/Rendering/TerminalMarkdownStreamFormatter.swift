@@ -33,6 +33,18 @@ public struct TerminalMarkdownStreamFormatter {
     // buffering on pathological inputs.
     private static let hardBufferedBlockLineCount = 80
     private static let hardBufferedBlockCharacterCount = 12_000
+    // Dedicated buffering cap for GFM tables. Tables can only be laid out once
+    // the whole block is known (column widths), so they are exempt from the
+    // soft cap above. To avoid unbounded buffering on a pathological table that
+    // never ends, this dedicated cap triggers an explicit degradation (see
+    // `flushTruncatedTable`): the rows accumulated so far are rendered as a
+    // complete, coherent table followed by a dim "… table truncated" marker,
+    // and further rows of the same block are discarded (the marker already
+    // signals the loss). Generous 4x multiple of the soft cap so realistic
+    // tables render in full while still bounding memory.
+    private static let maxBufferedTableLineCount = 64
+    private static let maxBufferedTableCharacterCount = 8_000
+    private static let tableTruncationMarker = "… table truncated"
     
     /// Multi-line markdown constructs that must be parsed as a whole block
     /// rather than one isolated line at a time. Buffering these lets the
@@ -68,6 +80,12 @@ public struct TerminalMarkdownStreamFormatter {
     // 1./1./1. because each item is parsed as a standalone document.
     private var streamingOrderedStart: Int?
     private var nextOrderedNumber = 0
+    // Set once the active table block has hit its cap and emitted its
+    // truncation marker. While true the block stays open (blockKind == .table)
+    // so further table rows are routed here and discarded instead of being
+    // flushed as new prose, keeping buffering bounded. A following non-table
+    // line ends the block normally and resets this flag (see `flushBlock`).
+    private var tableTruncated = false
     
     public init(
         isEnabled: Bool,
@@ -220,6 +238,15 @@ public struct TerminalMarkdownStreamFormatter {
                 return flushed
             }
             if lineContinuesBlock(line, trimmed: trimmed) {
+                if tableTruncated {
+                    // The active table block already hit its cap and emitted a
+                    // truncation marker. Discard further table rows so buffering
+                    // stays bounded; the block stays open until a non-table line
+                    // ends it (preserving that text). The marker already signals
+                    // the data loss, so emitting these rows as raw prose would
+                    // only add noise and could never reconstruct the table.
+                    return ""
+                }
                 blockLines.append(line)
                 if shouldFlushBufferedBlock() {
                     return flushBufferedBlockForSafety()
@@ -433,11 +460,13 @@ public struct TerminalMarkdownStreamFormatter {
         guard let kind = blockKind, !blockLines.isEmpty else {
             blockKind = nil
             blockLines = []
+            tableTruncated = false
             return ""
         }
         let lines = blockLines
         blockKind = nil
         blockLines = []
+        tableTruncated = false
         return renderBlock(lines: lines, kind: kind)
     }
 
@@ -461,10 +490,20 @@ public struct TerminalMarkdownStreamFormatter {
 
     private func shouldFlushBufferedBlock() -> Bool {
         // Tables require the complete block to compute column layout, so they
-        // are never flushed by the safety limit; they flush naturally when a
-        // non-table line ends the block. A confirmed table (.table) is exempt
-        // for the same reason as a one-line candidate (.tableCandidate).
-        guard blockKind != .tableCandidate, blockKind != .table else {
+        // are exempt from the soft list/blockquote caps. They use a dedicated,
+        // more generous cap: a table is rendered whole or, once the cap is
+        // exceeded, explicitly truncated (see `flushTruncatedTable`). We never
+        // route a partial table through the generic flush, which would yield an
+        // incoherent AST/layout. A confirmed table (.table) uses the dedicated
+        // table cap; a one-line candidate (.tableCandidate) holds a single
+        // unresolved header line and is never flushed here.
+        if blockKind == .table {
+            if blockLines.count >= Self.maxBufferedTableLineCount {
+                return true
+            }
+            return blockLines.reduce(0) { $0 + $1.count } >= Self.maxBufferedTableCharacterCount
+        }
+        guard blockKind != .tableCandidate else {
             return false
         }
         if blockLines.count >= Self.maxBufferedBlockLineCount {
@@ -478,6 +517,13 @@ public struct TerminalMarkdownStreamFormatter {
     /// children are never promoted to the top level. Only fall back to a full
     /// flush past the much higher hard cap to avoid unbounded buffering.
     private mutating func flushBufferedBlockForSafety() -> String {
+        // Tables: render the rows accumulated so far as a complete table and
+        // append an explicit dim truncation marker, then mark the block as
+        // truncated so subsequent rows are discarded. This never flushes a
+        // half-table as raw markdown, which would corrupt the column layout.
+        if blockKind == .table {
+            return flushTruncatedTable()
+        }
         if blockKind == .list {
             if let partial = flushCompletedListItems(), !partial.isEmpty {
                 return partial
@@ -501,6 +547,25 @@ public struct TerminalMarkdownStreamFormatter {
             return ""
         }
         return flushBlock()
+    }
+
+    /// Explicit degradation for a table that exceeded its buffering cap. The
+    /// rows buffered so far (header + delimiter + as many body rows as fit) are
+    /// rendered as a single, coherent table, followed by a dim
+    /// "… table truncated" marker line. The block is then marked truncated:
+    /// `blockKind` stays `.table` so further rows are routed back here and
+    /// discarded (bounded memory), while a following non-table line ends the
+    /// block normally and is never lost. We discard rather than emit subsequent
+    /// rows as literal text because raw `| a | b |` prose would be visually
+    /// noisy and could not reconstruct the table; the marker communicates the
+    /// loss unambiguously and keeps output coherent with the formatter's style.
+    private mutating func flushTruncatedTable() -> String {
+        let lines = blockLines
+        blockLines = []
+        tableTruncated = true
+        var rendered = renderBlock(lines: lines, kind: .table)
+        rendered += "\(Self.dim)\(Self.tableTruncationMarker)\(Self.reset)\n"
+        return rendered
     }
 
     /// Whether the buffered block has exceeded the much higher hard cap used

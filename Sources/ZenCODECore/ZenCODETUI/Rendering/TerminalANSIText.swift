@@ -61,10 +61,38 @@ enum TerminalANSIText {
         || (0xFE20...0xFE2F).contains(value)
     }
     
+    /// Returns `true` for scalars that occupy a double-width (wide) cell on a
+    /// terminal because they present as color emoji.
+    ///
+    /// - Note: **Width policy.** A scalar is reported as wide when it belongs to
+    ///   a range that the Unicode `EastAsianWidth.txt` marks as East Asian
+    ///   Width = `W` *and* that has a default emoji presentation — i.e. it
+    ///   renders as a wide glyph even without a trailing VS16 (U+FE0F)
+    ///   selector. This includes the common symbol pictographs used by the TUI
+    ///   such as U+23F3 ⏳ (the standard "pending" status icon), U+231A ⌚,
+    ///   U+2B50 ⭐ and U+2B55 🔵, which were previously under-counted as
+    ///   width 1. The dense pictographic emoji blocks (0x1F000–0x1FAFF and
+    ///   0x2600–0x27BF) are reported as a whole. A VS16 selector forcing a
+    ///   text-presentation symbol into emoji presentation is handled separately
+    ///   in `visibleWidth(of:)`.
     private static func isEmojiPresentationScalar(_ scalar: Unicode.Scalar) -> Bool {
         let value = scalar.value
+        // East Asian Width = W with a default emoji presentation (rendered wide
+        // without a trailing VS16 selector). These symbol ranges sit outside
+        // the dense pictographic blocks but are unambiguously wide emoji.
+        if (0x231A...0x231B).contains(value)   // ⌚ ⌛ watch, hourglass done
+            || (0x23E9...0x23EC).contains(value)   // ⏩ ⏪ ⏫ ⏬
+            || value == 0x23F0                     // ⏰ alarm clock
+            || value == 0x23F3                     // ⏳ hourglass (pending icon)
+            || (0x25FD...0x25FE).contains(value)   // ◽ ◾ squares
+            || (0x2B1B...0x2B1C).contains(value)   // ⬛ ⬜ squares
+            || value == 0x2B50                     // ⭐ star
+            || value == 0x2B55 {                   // 🔵 hollow circle
+            return true
+        }
+        // Dense pictographic / emoji blocks.
         return (0x1F000...0x1FAFF).contains(value)
-        || (0x2600...0x27BF).contains(value)
+            || (0x2600...0x27BF).contains(value)
     }
     
     private static func isWideOrFullwidthScalar(_ scalar: Unicode.Scalar) -> Bool {
@@ -96,17 +124,22 @@ enum TerminalANSIText {
             return text
         }
 
-        let scalars = Array(text.unicodeScalars)
         var result = ""
         var visible = 0
-        var index = 0
+        var index = text.startIndex
         var hasStyle = false
         let maxContent = width - ellipsisWidth
 
-        while index < scalars.count {
-            if scalars[index] == "\u{1B}" {
-                let end = endOfEscapeSequence(in: scalars, from: index)
-                let sequence = String(String.UnicodeScalarView(scalars[index..<end]))
+        // Iterate by extended grapheme cluster (Character), not by scalar, so
+        // that multi-scalar clusters — ZWJ families, skin-tone modifiers, flag
+        // pairs and keycap sequences — are never split across the cut and are
+        // measured consistently with `visibleWidth(_:)`. ANSI escape sequences
+        // are preserved verbatim in between.
+        while index < text.endIndex {
+            let character = text[index]
+            if character.unicodeScalars.first == "\u{1B}" {
+                let end = endOfEscapeSequence(in: text, from: index)
+                let sequence = String(text[index..<end])
                 result += sequence
                 if sequence.hasSuffix("m") && !sequence.contains("[0m") {
                     hasStyle = true
@@ -116,14 +149,13 @@ enum TerminalANSIText {
                 index = end
                 continue
             }
-            let character = Character(scalars[index])
             let charWidth = visibleWidth(of: character)
             if visible + charWidth > maxContent {
                 break
             }
             result.append(character)
             visible += charWidth
-            index += 1
+            index = text.index(after: index)
         }
         result += ellipsis
         if hasStyle {

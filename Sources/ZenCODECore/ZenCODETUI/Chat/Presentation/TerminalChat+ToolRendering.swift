@@ -59,7 +59,8 @@ extension TerminalChat {
     static func compactToolLines(
         for toolCall: DirectAgentToolCall,
         statusIcon: String,
-        contentInsetWidth: Int = 0
+        contentInsetWidth: Int = 0,
+        columnWidth: Int? = nil
     ) -> [String] {
         let title = ToolCallPresentation.toolTitle(for: toolCall)
         let icon = ToolCallPresentation.toolIcon(for: toolCall.name)
@@ -79,7 +80,8 @@ extension TerminalChat {
             compactToolStatusLine(
                 target: target,
                 statusIcon: statusIcon,
-                contentInsetWidth: contentInsetWidth
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
             )
         ]
     }
@@ -87,9 +89,11 @@ extension TerminalChat {
     static func compactToolStatusLine(
         target: String,
         statusIcon: String,
-        contentInsetWidth: Int = 0
+        contentInsetWidth: Int = 0,
+        columnWidth: Int? = nil
     ) -> String {
-        let columns = max(20, terminalColumnCount() - contentInsetWidth)
+        let resolvedColumns = columnWidth ?? terminalColumnCount()
+        let columns = max(20, resolvedColumns - contentInsetWidth)
         let suffixWidth = displayWidth(statusIcon)
         // Reserve one extra trailing column so the rendered line (inset + target
         // + " " + status icon) never occupies the full terminal width. A line
@@ -107,9 +111,11 @@ extension TerminalChat {
 
     static func renderedTerminalRowCount(
         for lines: [String],
-        contentInsetWidth: Int = 0
+        contentInsetWidth: Int = 0,
+        columnWidth: Int? = nil
     ) -> Int {
-        let columns = max(1, terminalColumnCount() - contentInsetWidth)
+        let resolvedColumns = columnWidth ?? terminalColumnCount()
+        let columns = max(1, resolvedColumns - contentInsetWidth)
         return lines.reduce(0) { result, line in
             let segments = line.split(
                 omittingEmptySubsequences: false,

@@ -18,8 +18,8 @@ import os
 
 extension TerminalStatusBar {
     func configureTerminalLocked(state: inout State, moveCursorToPrompt: Bool = true) -> Bool {
-        guard let output,
-              let geometry = Self.currentTerminalGeometry(fileDescriptor: output.fileDescriptor),
+        let fileDescriptor = output?.fileDescriptor ?? 1
+        guard let geometry = Self.currentTerminalGeometry(fileDescriptor: fileDescriptor),
               geometry.rows >= minimumRowsLocked(state: &state),
               geometry.columns >= 40 else {
             return false
@@ -32,8 +32,8 @@ extension TerminalStatusBar {
     }
     
     func refreshTerminalGeometryLocked(state: inout State) -> Bool {
-        guard let output,
-              let geometry = Self.currentTerminalGeometry(fileDescriptor: output.fileDescriptor)
+        let fileDescriptor = output?.fileDescriptor ?? 1
+        guard let geometry = Self.currentTerminalGeometry(fileDescriptor: fileDescriptor)
         else {
             invalidateTerminalGeometryLocked(state: &state)
             return false
@@ -51,6 +51,8 @@ extension TerminalStatusBar {
         let oldReservedRows = reservedBottomRowsLocked(state: &state)
         state.row = geometry.rows
         state.columns = geometry.columns
+        // Geometry changed: invalidate the status cache so the next render is not suppressed.
+        state.lastStatusRender = nil
         let newReservedRows = reservedBottomRowsLocked(state: &state)
         let oldRowWrapFactor = max(1, (oldColumns + geometry.columns - 1) / geometry.columns)
         let rowsToClear = min(
@@ -69,6 +71,7 @@ extension TerminalStatusBar {
     func invalidateTerminalGeometryLocked(state: inout State) {
         state.row = 0
         state.columns = 0
+        state.lastStatusRender = nil
         writeLocked("\u{1B}[r\u{1B}[?25h")
     }
     
@@ -103,7 +106,12 @@ extension TerminalStatusBar {
             return
         }
         
-        let sequence = "\u{1B}[?25l" + inputPanelRenderSequenceLocked(state: &state) + statusRenderSequenceLocked(state: &state)
+        let statusSequence = statusRenderSequenceLocked(state: &state)
+        // The full render paints both input panel and status, so update the
+        // status cache to the sequence just written. Subsequent status-only
+        // renders with identical content will be suppressed.
+        state.lastStatusRender = statusSequence
+        let sequence = "\u{1B}[?25l" + inputPanelRenderSequenceLocked(state: &state) + statusSequence
         writeLocked(sequence)
     }
 
@@ -114,7 +122,12 @@ extension TerminalStatusBar {
         guard state.row > 0, state.columns > 0, !state.isResizePending else {
             return
         }
-        writeLocked("\u{1B}[?25l" + statusRenderSequenceLocked(state: &state))
+        let sequence = statusRenderSequenceLocked(state: &state)
+        guard state.lastStatusRender != sequence else {
+            return
+        }
+        state.lastStatusRender = sequence
+        writeLocked(sequence)
     }
     
     func inputPanelRenderSequenceLocked(state: inout State) -> String {

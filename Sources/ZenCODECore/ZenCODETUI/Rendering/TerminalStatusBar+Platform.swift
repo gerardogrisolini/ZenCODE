@@ -149,6 +149,16 @@ extension TerminalStatusBar {
         return nil
     }
     
+    /// Writes text to the terminal output. Uses the injected `outputSink` when
+    /// set (testing), otherwise writes to the controlling-terminal FileHandle.
+    func performOutput(_ text: String) {
+        if let outputSink {
+            outputSink(text)
+        } else {
+            output?.writeString(text)
+        }
+    }
+
     func writeLocked(_ text: String) {
         guard !text.isEmpty else {
             return
@@ -156,7 +166,7 @@ extension TerminalStatusBar {
         if outputBatchDepth > 0 {
             batchedOutput += text
         } else {
-            output?.writeString(text)
+            performOutput(text)
         }
     }
 
@@ -167,7 +177,7 @@ extension TerminalStatusBar {
             if outputBatchDepth == 0, !batchedOutput.isEmpty {
                 let text = batchedOutput
                 batchedOutput.removeAll(keepingCapacity: true)
-                output?.writeString(text)
+                performOutput(text)
             }
         }
         return body()

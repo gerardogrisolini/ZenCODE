@@ -48,9 +48,14 @@ actor TerminalChatRenderCoordinator {
         let isStreamingThoughtOutput: Bool
     }
 
+    /// Tracks the active tool block so it can be cleared in place on
+    /// completion.  ``columnWidth`` records the terminal width observed when
+    /// ``rows`` was calculated: if the width changes before completion the
+    /// saved row count is stale and the destructive clear is suppressed (see
+    /// ``clearOwnedToolRows``).
     private enum ActiveToolBlock: Sendable, Equatable {
-        case compact(id: String, rows: Int)
-        case detailed(id: String, rows: Int)
+        case compact(id: String, rows: Int, columnWidth: Int)
+        case detailed(id: String, rows: Int, columnWidth: Int)
     }
 
     private struct PendingWrite: Sendable {
@@ -80,6 +85,10 @@ actor TerminalChatRenderCoordinator {
     private let lineInset: String
     private let capturesWrites: Bool
     private let streamingFlushDelay: Duration?
+    /// Returns the current terminal column count.  Overridable in tests to
+    /// simulate a deterministic resize between tool start and completion.
+    /// Defaults to ``TerminalChat.terminalColumnCount``.
+    private let columnWidthProvider: @Sendable () -> Int
 
     private var nextWriteSequence: UInt64 = 0
     private var capturedWrites: [WriteEvent] = []
@@ -121,7 +130,10 @@ actor TerminalChatRenderCoordinator {
         standardOutputIsTerminal: Bool = AgentOutput.standardOutputIsTerminal,
         standardErrorIsTerminal: Bool = AgentOutput.standardErrorIsTerminal,
         capturesWrites: Bool = false,
-        streamingFlushDelay: Duration? = .milliseconds(32)
+        streamingFlushDelay: Duration? = .milliseconds(32),
+        columnWidthProvider: @Sendable @escaping () -> Int = {
+            TerminalChat.terminalColumnCount()
+        }
     ) {
         self.standardOutput = standardOutput
         self.standardError = standardError
@@ -130,6 +142,7 @@ actor TerminalChatRenderCoordinator {
         self.lineInset = stdinIsTerminal ? TerminalChat.chatLineInsetPrefix : ""
         self.capturesWrites = capturesWrites
         self.streamingFlushDelay = streamingFlushDelay
+        self.columnWidthProvider = columnWidthProvider
         self.assistantMarkdownFormatter = TerminalMarkdownStreamFormatter(
             isEnabled: standardOutputIsTerminal
         )
@@ -371,7 +384,7 @@ actor TerminalChatRenderCoordinator {
         finishAssistantContentFormatting()
 
         let activeCompactID: String?
-        if case let .compact(id, _) = activeToolBlock {
+        if case let .compact(id, _, _) = activeToolBlock {
             activeCompactID = id
         } else {
             activeCompactID = nil
@@ -416,12 +429,15 @@ actor TerminalChatRenderCoordinator {
 
     private func writeDetailedToolCallStarted(_ toolCall: DirectAgentToolCall) {
         let lines = TerminalChat.detailedToolCallStartedLines(for: toolCall)
+        let startWidth = columnWidthProvider()
         activeToolBlock = .detailed(
             id: toolCall.id,
             rows: TerminalChat.renderedTerminalRowCount(
                 for: lines,
-                contentInsetWidth: lineInset.count
-            )
+                contentInsetWidth: lineInset.count,
+                columnWidth: startWidth
+            ),
+            columnWidth: startWidth
         )
         writeToolBlock(lines, codeLanguage: TerminalChat.codeLanguageHint(for: toolCall))
     }
@@ -436,9 +452,19 @@ actor TerminalChatRenderCoordinator {
         )
         let rewriteRowCount: Int
         let shouldRewriteActiveBlock: Bool
-        if case let .detailed(id, rows) = activeToolBlock {
+        if case let .detailed(id, rows, startWidth) = activeToolBlock {
             rewriteRowCount = rows
-            shouldRewriteActiveBlock = id == toolCall.id && standardErrorIsTerminal
+            // Safety fuse: if the terminal width changed between tool start and
+            // completion, the saved row count is stale. Emitting cursor-up /
+            // erase sequences based on a stale count can erase transcript rows
+            // or leave orphaned rows. Instead, degrade fail-safe: skip the
+            // destructive clear and let the completed block be written in
+            // append-only mode. The stale pending block remains visible — an
+            // accepted cosmetic trade-off that is always preferable to
+            // corrupting the transcript.
+            let widthChanged = startWidth != columnWidthProvider()
+            shouldRewriteActiveBlock
+                = id == toolCall.id && standardErrorIsTerminal && !widthChanged
         } else {
             rewriteRowCount = 0
             shouldRewriteActiveBlock = false
@@ -454,17 +480,21 @@ actor TerminalChatRenderCoordinator {
     }
 
     private func writeCompactToolCallStarted(_ toolCall: DirectAgentToolCall) {
+        let startWidth = columnWidthProvider()
         let lines = TerminalChat.compactToolLines(
             for: toolCall,
             statusIcon: "⏳",
-            contentInsetWidth: lineInset.count
+            contentInsetWidth: lineInset.count,
+            columnWidth: startWidth
         )
         activeToolBlock = .compact(
             id: toolCall.id,
             rows: TerminalChat.renderedTerminalRowCount(
                 for: lines,
-                contentInsetWidth: lineInset.count
-            )
+                contentInsetWidth: lineInset.count,
+                columnWidth: startWidth
+            ),
+            columnWidth: startWidth
         )
         writeCompactToolLines(lines, newline: false)
     }
@@ -477,13 +507,20 @@ actor TerminalChatRenderCoordinator {
         let lines = TerminalChat.compactToolLines(
             for: toolCall,
             statusIcon: icon,
-            contentInsetWidth: lineInset.count
+            contentInsetWidth: lineInset.count,
+            columnWidth: columnWidthProvider()
         )
         let rewriteRowCount: Int
         let shouldRewriteActiveLine: Bool
-        if case let .compact(id, rows) = activeToolBlock {
+        if case let .compact(id, rows, startWidth) = activeToolBlock {
             rewriteRowCount = rows
-            shouldRewriteActiveLine = id == toolCall.id && standardErrorIsTerminal
+            // Safety fuse: see ``writeDetailedToolCallCompleted`` for the full
+            // rationale. A width change means the saved row count can no longer
+            // be trusted, so the destructive clear is suppressed and the
+            // completed block is written in append-only mode.
+            let widthChanged = startWidth != columnWidthProvider()
+            shouldRewriteActiveLine
+                = id == toolCall.id && standardErrorIsTerminal && !widthChanged
         } else {
             rewriteRowCount = 0
             shouldRewriteActiveLine = false
@@ -738,10 +775,10 @@ actor TerminalChatRenderCoordinator {
         let compact: (String?, Int)
         let detailed: (String?, Int)
         switch activeToolBlock {
-        case let .compact(id, rows):
+        case let .compact(id, rows, _):
             compact = (id, rows)
             detailed = (nil, 0)
-        case let .detailed(id, rows):
+        case let .detailed(id, rows, _):
             compact = (nil, 0)
             detailed = (id, rows)
         case nil:

@@ -503,7 +503,10 @@ struct TerminalChatRenderCoordinatorTests {
 
     private func makeRenderer(
         standardErrorIsTerminal: Bool,
-        streamingFlushDelay: Duration? = nil
+        streamingFlushDelay: Duration? = nil,
+        columnWidthProvider: @Sendable @escaping () -> Int = {
+            TerminalChat.terminalColumnCount()
+        }
     ) -> TerminalChatRenderCoordinator {
         TerminalChatRenderCoordinator(
             stdinIsTerminal: false,
@@ -512,7 +515,259 @@ struct TerminalChatRenderCoordinatorTests {
             standardOutputIsTerminal: false,
             standardErrorIsTerminal: standardErrorIsTerminal,
             capturesWrites: true,
-            streamingFlushDelay: streamingFlushDelay
+            streamingFlushDelay: streamingFlushDelay,
+            columnWidthProvider: columnWidthProvider
+        )
+    }
+}
+
+/// Mutable, thread-safe-ish box for simulating terminal resize in tests.
+/// Tests are single-threaded (async on one task), so plain `var` is safe;
+/// `@unchecked Sendable` satisfies the `@Sendable` closure requirement.
+private final class ColumnWidthBox: @unchecked Sendable {
+    var width: Int
+    init(_ width: Int) { self.width = width }
+}
+
+/// Detects a CSI cursor-up sequence (`ESC [ <digits> A`), the destructive
+/// move emitted only by ``TerminalChatRenderCoordinator``'s
+/// ``clearOwnedToolRows``. Color/reset codes end in `m`, erase-line ends in
+/// `K`, and cursor-down ends in `B`, so none of them ever produce a false
+/// positive here.
+private func containsCursorUpSequence(_ text: String) -> Bool {
+    var pos = text.startIndex
+    while let r = text.range(of: "\u{1B}[", range: pos..<text.endIndex) {
+        var i = r.upperBound
+        var sawDigit = false
+        while i < text.endIndex, text[i].isNumber {
+            sawDigit = true
+            i = text.index(after: i)
+        }
+        if sawDigit, i < text.endIndex, text[i] == "A" {
+            return true
+        }
+        pos = r.upperBound
+    }
+    return false
+}
+
+@Suite("Tool block safety fuse on terminal resize")
+struct TerminalChatToolBlockResizeTests {
+    @Test
+    func compactResizeFromWideToNarrowSkipsDestructiveClear() async {
+        let widthBox = ColumnWidthBox(100)
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { widthBox.width }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "resize-compact-100-40",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.writeToolCallStarted(toolCall)
+        let started = await renderer.snapshot()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents()
+            .count
+        #expect(started.activeCompactToolCallID == toolCall.id)
+        #expect(started.activeCompactToolRenderedRowCount > 0)
+
+        // Simulate terminal shrink between start and completion.
+        widthBox.width = 40
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+
+        let events = await renderer.capturedWriteEvents()
+        let completionEvents = Array(events.dropFirst(eventCountBeforeCompletion))
+        let completionText = completionEvents.map(\.text).joined()
+
+        // No destructive cursor-up sequence — the stale row count must not be
+        // used to move the cursor or erase rows.
+        #expect(!containsCursorUpSequence(completionText))
+        // The completed block (✅) is present in append-only mode.
+        #expect(completionText.contains("✅"))
+        // The pending block (⏳) remains visible because we skipped the clear.
+        let stderr = events
+            .filter { $0.channel == .standardError }
+            .map(\.text)
+            .joined()
+        #expect(stderr.contains("⏳"))
+        #expect(stderr.contains("✅"))
+    }
+
+    @Test
+    func compactResizeFromNarrowToWideSkipsDestructiveClear() async {
+        let widthBox = ColumnWidthBox(40)
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { widthBox.width }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "resize-compact-40-100",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.writeToolCallStarted(toolCall)
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents()
+            .count
+
+        // Simulate terminal grow between start and completion.
+        widthBox.width = 100
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+
+        let events = await renderer.capturedWriteEvents()
+        let completionEvents = Array(events.dropFirst(eventCountBeforeCompletion))
+        let completionText = completionEvents.map(\.text).joined()
+
+        #expect(!containsCursorUpSequence(completionText))
+        #expect(completionText.contains("✅"))
+    }
+
+    @Test
+    func detailedResizeFromWideToNarrowSkipsDestructiveClear() async {
+        let widthBox = ColumnWidthBox(100)
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { widthBox.width }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "resize-detailed-100-40",
+            name: "local.readFile",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        await renderer.setToolOutputDetailLevel(.expanded)
+
+        await renderer.writeToolCallStarted(toolCall)
+        let started = await renderer.snapshot()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents()
+            .count
+        #expect(started.activeDetailedToolCallID == toolCall.id)
+        #expect(started.activeDetailedToolRenderedRowCount > 0)
+
+        // Simulate terminal shrink between start and completion.
+        widthBox.width = 40
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+
+        let events = await renderer.capturedWriteEvents()
+        let completionEvents = Array(events.dropFirst(eventCountBeforeCompletion))
+        let completionText = completionEvents.map(\.text).joined()
+
+        #expect(!containsCursorUpSequence(completionText))
+        #expect(completionText.contains("✅"))
+    }
+
+    @Test
+    func compactNoResizeClearsAsBefore() async {
+        let widthBox = ColumnWidthBox(100)
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { widthBox.width }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "resize-compact-stable",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.writeToolCallStarted(toolCall)
+        let started = await renderer.snapshot()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents()
+            .count
+        #expect(started.activeCompactToolRenderedRowCount > 0)
+
+        // Width unchanged: the completion should emit the normal destructive
+        // clear + rewrite (same behaviour as before the safety fuse).
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+
+        let events = await renderer.capturedWriteEvents()
+        let completionEvents = Array(events.dropFirst(eventCountBeforeCompletion))
+        let rewriteSequence = completionEvents.first?.text ?? ""
+
+        #expect(
+            rewriteSequence.hasPrefix(
+                "\u{1B}[\(started.activeCompactToolRenderedRowCount)A\r"
+            )
+        )
+        #expect(
+            rewriteSequence.components(separatedBy: "\u{1B}[2K").count - 1
+                == started.activeCompactToolRenderedRowCount
+        )
+        #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
+    }
+
+    @Test
+    func detailedNoResizeClearsAsBefore() async {
+        let widthBox = ColumnWidthBox(100)
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { widthBox.width }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "resize-detailed-stable",
+            name: "local.readFile",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        await renderer.setToolOutputDetailLevel(.expanded)
+
+        await renderer.writeToolCallStarted(toolCall)
+        let started = await renderer.snapshot()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents()
+            .count
+        #expect(started.activeDetailedToolRenderedRowCount > 0)
+
+        // Width unchanged: normal destructive clear + rewrite.
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+
+        let events = await renderer.capturedWriteEvents()
+        let completionEvents = Array(events.dropFirst(eventCountBeforeCompletion))
+        let rewriteSequence = completionEvents.first?.text ?? ""
+
+        #expect(
+            rewriteSequence.hasPrefix(
+                "\u{1B}[\(started.activeDetailedToolRenderedRowCount)A\r"
+            )
+        )
+        #expect(
+            rewriteSequence.components(separatedBy: "\u{1B}[2K").count - 1
+                == started.activeDetailedToolRenderedRowCount
+        )
+        #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
+    }
+
+    private func makeRenderer(
+        standardErrorIsTerminal: Bool,
+        columnWidthProvider: @Sendable @escaping () -> Int
+    ) -> TerminalChatRenderCoordinator {
+        TerminalChatRenderCoordinator(
+            stdinIsTerminal: false,
+            standardOutput: nil,
+            standardError: nil,
+            standardOutputIsTerminal: false,
+            standardErrorIsTerminal: standardErrorIsTerminal,
+            capturesWrites: true,
+            streamingFlushDelay: nil,
+            columnWidthProvider: columnWidthProvider
         )
     }
 }

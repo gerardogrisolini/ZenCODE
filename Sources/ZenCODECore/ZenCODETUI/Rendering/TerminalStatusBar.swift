@@ -74,10 +74,19 @@ public actor TerminalStatusBar {
         var latestSubscriptionUsage: DirectAgentSubscriptionUsageStatus?
         var latestGitStatusSummary: TerminalGitStatusSummary?
         var gitStatusRefreshGeneration: UInt64 = 0
+        /// Cache of the last status-only render sequence written to the terminal.
+        /// When the next `renderStatusLocked` produces an identical sequence, the
+        /// write is skipped to avoid redundant redraw traffic (spinner ticks, which
+        /// always change the frame, are unaffected; this catches identical metric /
+        /// git / context-window updates).
+        var lastStatusRender: String?
     }
 
     nonisolated let isEnabled: Bool
     let output: FileHandle?
+    /// Injectable write sink used in place of `output?.writeString` when set.
+    /// Production code leaves this nil; tests supply a closure to observe output.
+    var outputSink: (@Sendable (String) -> Void)?
     var state = State()
     var outputBatchDepth = 0
     var batchedOutput = ""
@@ -93,10 +102,19 @@ public actor TerminalStatusBar {
         self.output = Self.openControllingTerminal()
     }
 
+    /// Internal initializer for tests: accepts a write sink closure instead of
+    /// opening the controlling terminal. When `outputSink` is set, all writes go
+    /// through the closure, allowing tests to assert on emitted sequences.
+    init(isEnabled: Bool, outputSink: @escaping @Sendable (String) -> Void) {
+        self.isEnabled = isEnabled
+        self.output = nil
+        self.outputSink = outputSink
+    }
+
     @discardableResult
     public func start() -> Bool {
         withOutputBatch {
-            guard isEnabled, !state.isStarted, output != nil else {
+            guard isEnabled, !state.isStarted, (output != nil || outputSink != nil) else {
                 return state.isStarted
             }
             guard configureTerminalLocked(state: &state) else {
@@ -122,6 +140,7 @@ public actor TerminalStatusBar {
             stopResizeSignalSourceLocked(state: &state)
             clearLocked(state: &state)
             writeLocked("\u{1B}[r\u{1B}[?25h")
+            state.lastStatusRender = nil
             state.isStarted = false
         }
     }
@@ -387,6 +406,35 @@ public actor TerminalStatusBar {
             return 0
         }
         return reservedBottomRowsLocked(state: &state)
+    }
+
+    // MARK: - Test support
+
+    /// Configures terminal geometry and optional status fields without rendering,
+    /// so tests can control initial state before exercising the render cache.
+    func configureForTesting(
+        row: Int = 24,
+        columns: Int = 100,
+        modelID: String? = nil,
+        isProcessing: Bool = false
+    ) {
+        state.isStarted = true
+        state.row = row
+        state.columns = columns
+        state.latestModelID = modelID
+        state.isProcessing = isProcessing
+    }
+
+    /// Renders the status-only overlay using the actor's current state. Exposed
+    /// for testing the render cache (identical renders must be suppressed).
+    func renderStatusOverlay() {
+        renderStatusLocked(state: &state)
+    }
+
+    /// Renders the full overlay (input panel + status) using the actor's current
+    /// state. Exposed for testing cache invalidation on full renders.
+    func renderOverlay() {
+        renderLocked(state: &state)
     }
 
 }
