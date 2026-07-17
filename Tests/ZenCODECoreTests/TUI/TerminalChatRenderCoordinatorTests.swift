@@ -426,6 +426,147 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func firstStreamingChunkIsFlushedImmediatelyWithoutDelay() async {
+        let clock = StreamingClock()
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: false,
+            streamingFlushDelay: .milliseconds(32),
+            streamingNow: { clock.now }
+        )
+
+        await renderer.writeAssistantContent("Answer")
+        // Leading-edge: the very first chunk must already be visible
+        // without waiting for the 32 ms trailing-edge timer.
+        let events = await renderer.capturedWriteEvents()
+        #expect(!events.isEmpty)
+        #expect(events.map(\.text).joined().contains("Answer"))
+    }
+
+    @Test
+    func subsequentStreamingChunksAreCoalescedAfterLeadingEdgeFlush() async {
+        let clock = StreamingClock()
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: false,
+            streamingFlushDelay: .seconds(5),
+            streamingNow: { clock.now }
+        )
+
+        await renderer.writeAssistantContent("Answer")
+        let firstCount = await renderer.capturedWriteEvents().count
+        #expect(firstCount == 1)
+
+        // Still inside the idle window: the next chunk must NOT be
+        // emitted immediately — it is coalesced for the trailing-edge timer.
+        // The large flush delay guarantees the real Task.sleep timer cannot
+        // fire between the write and the assertion on a slow CI: the clock
+        // controls the leading-edge idle check, but the timer sleeps in wall
+        // time, so only an oversized delay eliminates the race.
+        clock.advance(by: .milliseconds(1))
+        await renderer.writeAssistantContent(" continues")
+        let secondCount = await renderer.capturedWriteEvents().count
+        #expect(secondCount == 1)
+
+        // Flush the coalesced remainder deterministically. finishStreamingOutput
+        // cancels the pending trailing-edge timer and emits the buffered chunk.
+        await renderer.finishStreamingOutput()
+        let events = await renderer.capturedWriteEvents()
+        #expect(events.count == 2)
+        #expect(events.map(\.text).joined().contains("Answer continues"))
+    }
+
+    @Test
+    func leadingEdgeReArmsAfterIdleWindowElapses() async {
+        let clock = StreamingClock()
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: false,
+            streamingFlushDelay: .milliseconds(32),
+            streamingNow: { clock.now }
+        )
+
+        await renderer.writeAssistantContent("First")
+        let firstEvents = await renderer.capturedWriteEvents()
+        #expect(firstEvents.count == 1)
+
+        // Advance past the idle window so the leading edge re-arms.
+        clock.advance(by: .milliseconds(40))
+        await renderer.writeAssistantContent("Second")
+        let secondEvents = await renderer.capturedWriteEvents()
+        #expect(secondEvents.count == 2)
+    }
+
+    @Test
+    func leadingEdgeFlushPreservesWriteEventOrder() async {
+        let clock = StreamingClock()
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: false,
+            streamingFlushDelay: .milliseconds(32),
+            streamingNow: { clock.now }
+        )
+
+        await renderer.writeAssistantContent("alpha")
+        clock.advance(by: .milliseconds(1))
+        await renderer.writeAssistantContent("beta")
+        await renderer.waitForScheduledStreamingFlush()
+
+        let events = await renderer.capturedWriteEvents()
+        #expect(events.count == 2)
+        #expect(events.map(\.sequence) == [0, 1])
+        #expect(events[0].text.contains("alpha"))
+        #expect(events[1].text.contains("beta"))
+    }
+
+    @Test
+    func leadingEdgeFlushPreservesCrossChannelWriteEventOrder() async {
+        let clock = StreamingClock()
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: false,
+            streamingFlushDelay: .seconds(5),
+            streamingNow: { clock.now }
+        )
+
+        // Thought on stderr: the thinking title is the very first chunk of a
+        // burst and is leading-edge flushed immediately so the user sees it
+        // without waiting for the trailing-edge timer.
+        await renderer.writeThought("Planning")
+        let afterThought = await renderer.capturedWriteEvents()
+        #expect(afterThought.allSatisfy { $0.channel == .standardError })
+        #expect(afterThought.map(\.text).joined().contains("Thinking:"))
+
+        // Cross-channel switch to assistant on stdout. writeAssistantContent
+        // first finishes the pending thought (flushing the coalesced body and
+        // trailing newlines to stderr), then buffers the assistant chunk.
+        // The large flush delay guarantees the real timer cannot fire during
+        // the assertions below.
+        clock.advance(by: .milliseconds(1))
+        await renderer.writeAssistantContent("Answer")
+        let afterSwitch = await renderer.capturedWriteEvents()
+
+        // The thought body was flushed to stderr by the finish.
+        #expect(afterSwitch.filter { $0.channel == .standardError }
+            .map(\.text).joined().contains("Planning"))
+        // The assistant chunk on stdout is still coalesced behind the timer
+        // (not yet flushed) because the thought-finish reset the idle window.
+        #expect(afterSwitch.filter { $0.channel == .standardOutput }.isEmpty)
+
+        // Flush the coalesced assistant remainder and cancel the timer.
+        await renderer.finishStreamingOutput()
+        let events = await renderer.capturedWriteEvents()
+
+        // Sequence numbers are strictly monotonic across both channels.
+        #expect(events.map(\.sequence) == Array(0..<UInt64(events.count)))
+
+        // Every stderr (thought) event precedes every stdout (assistant) event.
+        if let lastStderr = events.lastIndex(where: { $0.channel == .standardError }),
+           let firstStdout = events.firstIndex(where: { $0.channel == .standardOutput }) {
+            #expect(lastStderr < firstStdout)
+        }
+
+        // The assistant content is present on stdout after the flush.
+        #expect(events.filter { $0.channel == .standardOutput }
+            .map(\.text).joined().contains("Answer"))
+    }
+
+    @Test
     func thoughtAndAssistantDeltasShareOneOrderedStreamingState() async {
         let renderer = makeRenderer(standardErrorIsTerminal: false)
 
@@ -504,6 +645,9 @@ struct TerminalChatRenderCoordinatorTests {
     private func makeRenderer(
         standardErrorIsTerminal: Bool,
         streamingFlushDelay: Duration? = nil,
+        streamingNow: @Sendable @escaping () -> ContinuousClock.Instant = {
+            ContinuousClock().now
+        },
         columnWidthProvider: @Sendable @escaping () -> Int = {
             TerminalChat.terminalColumnCount()
         }
@@ -516,6 +660,7 @@ struct TerminalChatRenderCoordinatorTests {
             standardErrorIsTerminal: standardErrorIsTerminal,
             capturesWrites: true,
             streamingFlushDelay: streamingFlushDelay,
+            streamingNow: streamingNow,
             columnWidthProvider: columnWidthProvider
         )
     }
@@ -527,6 +672,17 @@ struct TerminalChatRenderCoordinatorTests {
 private final class ColumnWidthBox: @unchecked Sendable {
     var width: Int
     init(_ width: Int) { self.width = width }
+}
+
+/// Controllable clock for deterministic leading-edge flush tests.  Because
+/// the render coordinator is an actor and tests are single-tasked, the plain
+/// `var` is safe to mutate between `await` points; `@unchecked Sendable`
+/// satisfies the `@Sendable` closure requirement.
+private final class StreamingClock: @unchecked Sendable {
+    private(set) var now = ContinuousClock().now
+    func advance(by duration: Duration) {
+        now = now.advanced(by: duration)
+    }
 }
 
 /// Detects a CSI cursor-up sequence (`ESC [ <digits> A`), the destructive

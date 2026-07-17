@@ -62,8 +62,8 @@ extension TerminalChat {
     // MARK: - Live refresh during agent.* tool calls
 
     /// Starts a periodic refresh of the sub-agent overview so progress
-    /// (current activity, tool, output preview) remains visible while a
-    /// blocking `agent.*` tool call such as `agent.wait` is executing.
+    /// (current activity and tool) remains visible while a blocking `agent.*`
+    /// tool call such as `agent.wait` is executing.
     ///
     /// Each tick reuses the existing signature-deduped publication path
     /// (`renderSubAgentOverview(force:)`): when the snapshot signature has not
@@ -155,6 +155,7 @@ extension TerminalChat {
                 lines.append(.regular("", maxWrappedLines: 1))
             }
             lines.append(.regular(renderSubAgentHeader(snapshot)))
+            lines.append(.regular(dimText("id: \(snapshot.id)"), maxWrappedLines: 1))
             if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 lines.append(.regular("\(dimText("role:")) \(snapshot.role)"))
             }
@@ -184,7 +185,6 @@ extension TerminalChat {
             ) {
                 lines.append(detail)
             }
-            lines.append(.regular(dimText("id: \(snapshot.id)"), maxWrappedLines: 1))
         }
 
         return renderSubAgentOverviewLines(lines)
@@ -302,8 +302,7 @@ extension TerminalChat {
     ) -> [SubAgentOverviewLine] {
         let currentToolName = snapshot.currentToolName?.nilIfBlank
         let currentActivity = snapshot.currentActivity?.nilIfBlank
-        let latestContentPreview = snapshot.latestContentPreview?.nilIfBlank
-        guard currentToolName != nil || currentActivity != nil || latestContentPreview != nil else {
+        guard currentToolName != nil || currentActivity != nil else {
             return []
         }
 
@@ -320,13 +319,6 @@ extension TerminalChat {
            !isToolOnlyActivity(currentActivity, currentToolName: currentToolName) {
             lines.append(
                 .current("\(dimText("activity:")) \(inlineText(currentActivity))")
-            )
-        }
-
-        if let latestContentPreview,
-           !hasSameInlineText(latestContentPreview, as: currentActivity) {
-            lines.append(
-                .current("\(dimText("preview:")) \(inlineText(latestContentPreview))")
             )
         }
 
@@ -366,16 +358,6 @@ extension TerminalChat {
             return false
         }
         return inlineText(activity) == "running \(currentToolName)"
-    }
-
-    private static func hasSameInlineText(
-        _ lhs: String,
-        as rhs: String?
-    ) -> Bool {
-        guard let rhs else {
-            return false
-        }
-        return inlineText(lhs) == inlineText(rhs)
     }
 
     private static func statusBadge(
@@ -503,7 +485,6 @@ extension TerminalChat {
                 snapshot.modelRuntime?.nilIfBlank ?? "",
                 snapshot.currentActivity?.nilIfBlank ?? "",
                 snapshot.currentToolName?.nilIfBlank ?? "",
-                snapshot.latestContentPreview?.nilIfBlank ?? "",
                 snapshot.latestOutput?.nilIfBlank ?? "",
                 snapshot.latestError?.nilIfBlank ?? ""
             ].joined(separator: "\u{1F}")

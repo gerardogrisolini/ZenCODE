@@ -85,6 +85,10 @@ actor TerminalChatRenderCoordinator {
     private let lineInset: String
     private let capturesWrites: Bool
     private let streamingFlushDelay: Duration?
+    /// Injectable monotonic clock used to decide when a leading-edge flush is
+    /// safe.  Tests pass a controllable closure so the idle-window check is
+    /// deterministic; production uses the wall clock.
+    private let streamingNow: @Sendable () -> ContinuousClock.Instant
     /// Returns the current terminal column count.  Overridable in tests to
     /// simulate a deterministic resize between tool start and completion.
     /// Defaults to ``TerminalChat.terminalColumnCount``.
@@ -96,6 +100,10 @@ actor TerminalChatRenderCoordinator {
     private var pendingStreamingByteCount = 0
     private var scheduledStreamingFlush: Task<Void, Never>?
     private var streamingFlushGeneration: UInt64 = 0
+    /// Wall-clock (or injected) instant of the most recent streaming flush.
+    /// Used by the leading-edge logic to suppress redundant immediate flushes
+    /// while a burst is still active (trailing-edge coalescing window).
+    private var lastStreamingFlushInstant: ContinuousClock.Instant?
 
     private var assistantBoldBreakState = TerminalChatBoldBreakState()
     private var thoughtBoldBreakState = TerminalChatBoldBreakState()
@@ -131,6 +139,9 @@ actor TerminalChatRenderCoordinator {
         standardErrorIsTerminal: Bool = AgentOutput.standardErrorIsTerminal,
         capturesWrites: Bool = false,
         streamingFlushDelay: Duration? = .milliseconds(32),
+        streamingNow: @Sendable @escaping () -> ContinuousClock.Instant = {
+            ContinuousClock().now
+        },
         columnWidthProvider: @Sendable @escaping () -> Int = {
             TerminalChat.terminalColumnCount()
         }
@@ -142,6 +153,7 @@ actor TerminalChatRenderCoordinator {
         self.lineInset = stdinIsTerminal ? TerminalChat.chatLineInsetPrefix : ""
         self.capturesWrites = capturesWrites
         self.streamingFlushDelay = streamingFlushDelay
+        self.streamingNow = streamingNow
         self.columnWidthProvider = columnWidthProvider
         self.assistantMarkdownFormatter = TerminalMarkdownStreamFormatter(
             isEnabled: standardOutputIsTerminal
@@ -982,10 +994,36 @@ actor TerminalChatRenderCoordinator {
         standardErrorTrailingNewlineCount = info.trailingNewlines
     }
 
+    /// Returns `true` when enough time has elapsed since the last streaming
+    /// flush that a leading-edge flush is safe (i.e. we are not in the middle
+    /// of an active burst).  The idle window mirrors ``streamingFlushDelay``
+    /// so that a trailing-edge timer and a re-armed leading edge are
+    /// consistent.
+    private func streamingLeadingEdgeIsIdle(at now: ContinuousClock.Instant) -> Bool {
+        guard let lastFlush = lastStreamingFlushInstant else {
+            return true
+        }
+        let idleWindow = streamingFlushDelay ?? .milliseconds(32)
+        return now - lastFlush >= idleWindow
+    }
+
     private func bufferStreamingWrite(_ text: String, to channel: OutputChannel) {
         guard !text.isEmpty else {
             return
         }
+
+        // Leading-edge optimisation: when this is the first chunk of a new
+        // burst (buffer was empty), no trailing-edge timer is pending, and the
+        // stream has been idle long enough, flush immediately so the user sees
+        // the first token without waiting for ``streamingFlushDelay``.
+        // Subsequent chunks within the burst fall through to the normal
+        // timer-based coalescing path.
+        let wasBufferEmpty = pendingStreamingWrites.isEmpty
+        let now = streamingNow()
+        let canFlushLeadingEdge = streamingFlushDelay != nil
+            && wasBufferEmpty
+            && scheduledStreamingFlush == nil
+            && streamingLeadingEdgeIsIdle(at: now)
 
         if pendingStreamingWrites.last?.channel == channel {
             pendingStreamingWrites[pendingStreamingWrites.count - 1].text += text
@@ -996,6 +1034,8 @@ actor TerminalChatRenderCoordinator {
 
         if pendingStreamingByteCount >= Self.streamingFlushByteThreshold {
             flushPendingStreamingWrites()
+        } else if canFlushLeadingEdge {
+            flushPendingStreamingWrites(cancellingScheduledFlush: false)
         } else {
             scheduleStreamingFlushIfNeeded()
         }
@@ -1044,6 +1084,7 @@ actor TerminalChatRenderCoordinator {
         for write in writes {
             emitDirect(write.text, to: write.channel)
         }
+        lastStreamingFlushInstant = streamingNow()
     }
 
     private func writeDirect(_ text: String, to channel: OutputChannel) {

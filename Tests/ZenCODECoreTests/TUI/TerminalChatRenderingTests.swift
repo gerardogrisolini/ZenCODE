@@ -2143,7 +2143,7 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func subAgentOverviewRendersCurrentContentPreviewWhenAvailable() {
+    func subAgentOverviewOmitsContentPreview() {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_preview",
             name: "writer",
@@ -2162,7 +2162,8 @@ struct TerminalChatRenderingTests {
 
         #expect(rendered.contains("▸ current:"))
         #expect(rendered.contains("activity: thinking through the answer"))
-        #expect(rendered.contains("preview: Drafting the final summary"))
+        #expect(!rendered.contains("preview:"))
+        #expect(!rendered.contains("Drafting the final summary"))
     }
 
     @Test

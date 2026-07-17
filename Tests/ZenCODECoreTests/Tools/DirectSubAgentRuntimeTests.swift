@@ -57,6 +57,40 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func thoughtDeltasAccumulateInCurrentActivity() async throws {
+        let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend }
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("thinking-worker"),
+                "prompt": .string("Investigate the issue")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-thinking-tests"),
+            parentAllowedToolNames: nil
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+
+        await runtime.recordEvent(.thought("Considering the "), agentID: agentID)
+        await runtime.recordEvent(.thought("available evidence"), agentID: agentID)
+
+        let snapshot = try #require(await runtime.snapshots().first)
+        #expect(snapshot.currentActivity == "thinking: Considering the available evidence")
+
+        await runtime.recordEvent(
+            .thought(String(repeating: "x", count: 200)),
+            agentID: agentID
+        )
+        let cappedActivity = try #require(await runtime.snapshots().first?.currentActivity)
+        await runtime.recordEvent(.thought("additional delta"), agentID: agentID)
+        #expect(await runtime.snapshots().first?.currentActivity == cappedActivity)
+
+        await runtime.shutdown()
+    }
+
+    @Test
     func getAndWaitReturnCompleteLongOutputToTheModel() async throws {
         let endMarker = "PLANNER_OUTPUT_END"
         let plannerOutput = String(

@@ -70,6 +70,7 @@ public actor DirectSubAgentRuntime {
         public var modelID: String? = nil
         public var modelRuntime: String? = nil
         public var currentActivity: String? = nil
+        var currentThoughtBuffer: String? = nil
         public var currentToolName: String? = nil
         public var latestContentPreview: String? = nil
         public var latestEventAt: Date? = nil

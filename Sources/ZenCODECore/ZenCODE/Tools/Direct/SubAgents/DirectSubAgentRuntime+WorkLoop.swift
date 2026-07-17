@@ -107,35 +107,50 @@ extension DirectSubAgentRuntime {
 
         switch event {
         case let .status(message):
+            agent.currentThoughtBuffer = nil
             agent.currentActivity = message.nilIfBlank.map { Self.truncatedActivity($0) }
         case let .diagnostic(message):
+            agent.currentThoughtBuffer = nil
             if let message = message.nilIfBlank {
                 agent.currentActivity = Self.truncatedActivity(message)
             }
         case let .thought(delta):
-            if let thought = delta.nilIfBlank {
-                agent.currentActivity = "thinking: \(Self.truncatedActivity(thought))"
+            let currentActivity = agent.currentActivity
+            if let activity = Self.updatedThoughtActivity(
+                currentActivity,
+                thoughtBuffer: &agent.currentThoughtBuffer,
+                appending: delta
+            ) {
+                agent.currentActivity = activity
             }
         case let .modelLoaded(modelID):
+            agent.currentThoughtBuffer = nil
             agent.modelID = modelID.nilIfBlank ?? agent.modelID
             if let modelID = modelID.nilIfBlank {
                 agent.currentActivity = "loaded model \(modelID)"
             }
         case let .modelLoadedDetails(details):
+            agent.currentThoughtBuffer = nil
             agent.modelID = details.modelID.nilIfBlank ?? agent.modelID
             agent.modelRuntime = details.runtime ?? agent.modelRuntime
             agent.currentActivity = "loaded model \(details.modelID)"
         case let .modelRuntime(runtime):
             agent.modelRuntime = runtime.nilIfBlank ?? agent.modelRuntime
         case let .content(delta):
-            if let preview = Self.updatedPreview(agent.latestContentPreview, appending: delta) {
+            agent.currentThoughtBuffer = nil
+            if let preview = Self.updatedStreamingPreview(
+                agent.latestContentPreview,
+                appending: delta
+            ) {
                 agent.latestContentPreview = preview
                 agent.currentActivity = preview
             }
         case let .toolCallStarted(toolCall):
+            agent.currentThoughtBuffer = nil
             agent.currentToolName = toolCall.name
             agent.currentActivity = "running \(toolCall.name)"
         case let .toolCallCompleted(toolCall, result):
+            agent.currentThoughtBuffer = nil
             agent.currentToolName = nil
             let summary = result.summary.nilIfBlank ?? result.output.nilIfBlank
             agent.currentActivity = summary.map { "completed \(toolCall.name): \(Self.truncatedActivity($0))" }
@@ -154,7 +169,23 @@ extension DirectSubAgentRuntime {
         agents[agentID] = agent
     }
 
-    private static func updatedPreview(
+    private static func updatedThoughtActivity(
+        _ currentActivity: String?,
+        thoughtBuffer: inout String?,
+        appending delta: String
+    ) -> String? {
+        let prefix = "thinking: "
+        if currentActivity?.hasPrefix(prefix) != true {
+            thoughtBuffer = nil
+        }
+        thoughtBuffer = (thoughtBuffer ?? "") + delta
+        guard let thought = thoughtBuffer?.nilIfBlank else {
+            return currentActivity
+        }
+        return prefix + truncatedActivity(thought)
+    }
+
+    private static func updatedStreamingPreview(
         _ current: String?,
         appending delta: String
     ) -> String? {
@@ -213,6 +244,7 @@ extension DirectSubAgentRuntime {
         agent.latestError = nil
         agent.modelID = response.modelID.nilIfBlank ?? agent.modelID
         agent.currentActivity = nil
+        agent.currentThoughtBuffer = nil
         agent.currentToolName = nil
         agent.latestContentPreview = nil
         agent.status = agent.pendingPrompts.isEmpty ? .idle : .queued
@@ -254,6 +286,7 @@ extension DirectSubAgentRuntime {
             agent.status = .failed
             agent.latestError = error.localizedDescription
             agent.currentActivity = nil
+            agent.currentThoughtBuffer = nil
             agent.currentToolName = nil
         }
         agent.updatedAt = .now
@@ -283,6 +316,7 @@ extension DirectSubAgentRuntime {
             agent.status = .closed
             agent.latestError = "Cancelled."
             agent.currentActivity = nil
+            agent.currentThoughtBuffer = nil
             agent.currentToolName = nil
         }
         agent.updatedAt = .now

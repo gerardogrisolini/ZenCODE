@@ -78,7 +78,7 @@ public final class TerminalChat: @unchecked Sendable {
     var subAgentOverviewRefreshTask: Task<Void, Never>?
     /// Interval between automatic sub-agent overview refreshes. Exposed as a
     /// mutable instance property so tests can shorten it.
-    var subAgentOverviewRefreshInterval = Duration.milliseconds(800)
+    var subAgentOverviewRefreshInterval = Duration.seconds(2)
     /// Test hook invoked at the start of each refresh tick. When set, the tick
     /// awaits this closure before rendering, allowing tests to deterministically
     /// gate tick timing. Captured at `start` time; `nil` in production.
