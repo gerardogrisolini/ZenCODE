@@ -102,6 +102,11 @@ actor TerminalChatRenderCoordinator {
 
     private var toolOutputDetailLevel: ToolOutputDetailLevel = .compact
     private var activeToolBlock: ActiveToolBlock?
+    /// True while the active tool block belongs to an `agent.*` tool call
+    /// (e.g. `agent.wait`). Sub-agent overviews are allowed to interleave with
+    /// such blocks so progress remains visible during long-running delegated
+    /// work. Cleared whenever `activeToolBlock` becomes `nil`.
+    private var activeToolBlockIsSubAgentTool = false
     private var pendingOverviews: [OverviewKind: PendingOverview] = [:]
     private var nextOverviewSequence: UInt64 = 0
     private var overviewSignatures: [OverviewKind: String] = [:]
@@ -349,7 +354,8 @@ actor TerminalChatRenderCoordinator {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
         prepareForToolOutput()
-
+        activeToolBlockIsSubAgentTool = DirectSubAgentRuntime
+            .isSubAgentToolName(toolCall.name)
         if toolOutputDetailLevel == .compact {
             writeCompactToolCallStarted(toolCall)
         } else {
@@ -438,6 +444,7 @@ actor TerminalChatRenderCoordinator {
             shouldRewriteActiveBlock = false
         }
         activeToolBlock = nil
+        activeToolBlockIsSubAgentTool = false
 
         if shouldRewriteActiveBlock {
             clearOwnedToolRows(rewriteRowCount)
@@ -482,6 +489,7 @@ actor TerminalChatRenderCoordinator {
             shouldRewriteActiveLine = false
         }
         activeToolBlock = nil
+        activeToolBlockIsSubAgentTool = false
 
         if shouldRewriteActiveLine {
             clearOwnedToolRows(rewriteRowCount)
@@ -546,6 +554,7 @@ actor TerminalChatRenderCoordinator {
             return
         }
         activeToolBlock = nil
+        activeToolBlockIsSubAgentTool = false
         writeChatError("\n")
     }
 
@@ -633,6 +642,23 @@ actor TerminalChatRenderCoordinator {
             sequence: nextOverviewSequence
         )
         nextOverviewSequence &+= 1
+
+        // A sub-agent overview may interleave with an active `agent.*` tool
+        // block (e.g. agent.wait) so progress stays visible while the blocking
+        // call is in flight. The interrupt is performed ONLY when it is the
+        // sole remaining obstacle to rendering: publication must not be
+        // suspended and no assistant/thought streaming may be active. This
+        // preserves the deferred path and tool-block row ownership when
+        // publication is suspended or while streaming is in progress.
+        if kind == .subAgents,
+           activeToolBlock != nil,
+           activeToolBlockIsSubAgentTool,
+           !overviewPublishingSuspended,
+           !isStreamingAssistantOutput,
+           !isStreamingThoughtOutput {
+            finishActiveToolOutputBeforeInterleavedMessage()
+        }
+
         guard canRenderOverview else {
             pendingOverviews[kind] = overview
             return .deferred

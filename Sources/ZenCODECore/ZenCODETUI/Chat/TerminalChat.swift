@@ -72,6 +72,17 @@ public final class TerminalChat: @unchecked Sendable {
     public var lastFileChangeSummary: TurnFileChangeSummary?
     public var activePlan: TerminalSessionPlan?
     public var taskGraphObserverTask: Task<Void, Never>?
+    /// Periodically republishes the sub-agent overview while a blocking
+    /// `agent.*` tool call (e.g. `agent.wait`) is executing. Started from
+    /// `.toolCallStarted` and stopped from `.toolCallCompleted` / end-of-turn.
+    var subAgentOverviewRefreshTask: Task<Void, Never>?
+    /// Interval between automatic sub-agent overview refreshes. Exposed as a
+    /// mutable instance property so tests can shorten it.
+    var subAgentOverviewRefreshInterval = Duration.milliseconds(800)
+    /// Test hook invoked at the start of each refresh tick. When set, the tick
+    /// awaits this closure before rendering, allowing tests to deterministically
+    /// gate tick timing. Captured at `start` time; `nil` in production.
+    var onSubAgentOverviewTick: (@Sendable () async -> Void)?
     public var availableSkillsCache: [PromptSkill]?
     let renderCoordinator: TerminalChatRenderCoordinator
     public let telegramControlService = TerminalTelegramControlService()
@@ -112,6 +123,7 @@ public final class TerminalChat: @unchecked Sendable {
 
     deinit {
         taskGraphObserverTask?.cancel()
+        subAgentOverviewRefreshTask?.cancel()
     }
 
     public static func supportsInteractiveStatusBar() -> Bool {

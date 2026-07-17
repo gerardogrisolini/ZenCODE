@@ -59,6 +59,64 @@ extension TerminalChat {
         await renderSubAgentOverview(force: false)
     }
 
+    // MARK: - Live refresh during agent.* tool calls
+
+    /// Starts a periodic refresh of the sub-agent overview so progress
+    /// (current activity, tool, output preview) remains visible while a
+    /// blocking `agent.*` tool call such as `agent.wait` is executing.
+    ///
+    /// Each tick reuses the existing signature-deduped publication path
+    /// (`renderSubAgentOverview(force:)`): when the snapshot signature has not
+    /// changed since the last render the coordinator short-circuits and no
+    /// output is written.
+    ///
+    /// Idempotent — calling it while a task is already running is a no-op.
+    ///
+    /// - Note: ``subAgentOverviewRefreshTask`` is accessed only from the serial
+    ///   event-delivery context: ``AgentCoreSessionRunner`` delivers ``onEvent``
+    ///   callbacks sequentially (one at a time via cooperative await), which
+    ///   is the expected contract for all session backends. The guard-and-assign
+    ///   in `start` and the read-and-nil in `stop` are therefore never
+    ///   concurrent. The refresh task itself never touches this property.
+    func startSubAgentOverviewRefreshIfNeeded() {
+        guard subAgentOverviewRefreshTask == nil else { return }
+        let interval = subAgentOverviewRefreshInterval
+        let tickHook = onSubAgentOverviewTick
+        subAgentOverviewRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: interval)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                if let tickHook {
+                    await tickHook()
+                }
+                guard !Task.isCancelled, let self else { return }
+                await self.renderSubAgentOverview(force: false)
+            }
+        }
+    }
+
+    /// Stops the periodic refresh and **drains** the running task before
+    /// publishing a final snapshot.
+    ///
+    /// The drain (`await task.value`) guarantees that no in-flight tick can
+    /// publish a stale overview after this method returns: a tick suspended in
+    /// `subAgentSnapshots()` or the coordinator actor completes (or exits via
+    /// cancellation) before the final render runs, eliminating the
+    /// publish-A-after-B race that a bare `cancel()` would leave open.
+    ///
+    /// Idempotent — safe to call when no task is running.
+    func stopSubAgentOverviewRefresh() async {
+        let task = subAgentOverviewRefreshTask
+        subAgentOverviewRefreshTask = nil
+        task?.cancel()
+        await task?.value
+        await renderSubAgentOverview(force: false)
+    }
+
     public func renderSubAgentOverview(
         force: Bool,
         rememberSignature: Bool = true

@@ -10,6 +10,31 @@ import Markdown
 import Testing
 @testable import ZenCODECore
 
+/// Deterministic gate for testing the refresh-tick drain. `wait()` suspends
+/// the caller until `release()` is invoked, allowing tests to control exactly
+/// when an in-flight tick resumes.
+private actor TickGate {
+    private var entered = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var stopCompleted = false
+
+    func wait() async {
+        entered = true
+        await withCheckedContinuation { c in
+            continuation = c
+        }
+    }
+
+    func hasEntered() -> Bool { entered }
+    func isStopCompleted() -> Bool { stopCompleted }
+    func markStopCompleted() { stopCompleted = true }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 @Suite
 struct TerminalChatRenderingTests {
     @Test
@@ -595,13 +620,13 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func subAgentOverviewWaitsForDetailedToolCompletion() async throws {
+    func subAgentOverviewDeferredDuringNonAgentToolBlock() async throws {
         let terminal = try makeTerminalForToolInterleavingTest(
             sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
         )
         let toolCall = DirectAgentToolCall(
-            id: "wait-tool",
-            name: "agent.wait",
+            id: "exec-tool",
+            name: "local.exec",
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
@@ -611,6 +636,9 @@ struct TerminalChatRenderingTests {
         await terminal.renderSubAgentOverview(force: true)
         let deferredSnapshot = await terminal.renderCoordinator.snapshot()
 
+        // The overview stays deferred because a non-agent tool block must not
+        // be interleaved — its in-place rewrite (clearOwnedToolRows) would be
+        // corrupted by the interleaved output.
         #expect(deferredSnapshot.lastRenderedSubAgentOverviewSignature == nil)
         #expect(deferredSnapshot.activeDetailedToolCallID == toolCall.id)
         #expect(deferredSnapshot.activeDetailedToolRenderedRowCount > 0)
@@ -625,6 +653,133 @@ struct TerminalChatRenderingTests {
         #expect(renderedSnapshot.activeDetailedToolCallID == nil)
         #expect(renderedSnapshot.activeDetailedToolRenderedRowCount == 0)
         #expect(renderedSnapshot.lastRenderedSubAgentOverviewSignature != nil)
+    }
+
+    @Test
+    func subAgentOverviewRendersDuringAgentToolBlock() async throws {
+        let terminal = try makeTerminalForToolInterleavingTest(
+            sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "wait-tool",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        await terminal.renderCoordinator.setToolOutputDetailLevel(.expanded)
+        await terminal.writeToolCallStarted(toolCall)
+
+        await terminal.renderSubAgentOverview(force: true)
+        let renderedSnapshot = await terminal.renderCoordinator.snapshot()
+
+        // The overview is rendered immediately (not deferred) because the
+        // active tool block belongs to an agent.* tool call — its in-place
+        // presentation is closed first so progress stays visible during the
+        // blocking wait.
+        #expect(renderedSnapshot.lastRenderedSubAgentOverviewSignature != nil)
+        #expect(renderedSnapshot.activeDetailedToolCallID == nil)
+
+        // Completion still works correctly: the coordinator sees
+        // activeToolBlock == nil and writes the final block without an
+        // in-place rewrite.
+        await terminal.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+        let completedSnapshot = await terminal.renderCoordinator.snapshot()
+
+        #expect(completedSnapshot.activeDetailedToolCallID == nil)
+        #expect(completedSnapshot.activeDetailedToolRenderedRowCount == 0)
+    }
+
+    @Test
+    func subAgentOverviewRendersDuringAgentToolBlockCompact() async throws {
+        let terminal = try makeTerminalForToolInterleavingTest(
+            sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "create-tool",
+            name: "agent.create",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        // Default detail level is .compact.
+        await terminal.writeToolCallStarted(toolCall)
+
+        await terminal.renderSubAgentOverview(force: true)
+        let renderedSnapshot = await terminal.renderCoordinator.snapshot()
+
+        #expect(renderedSnapshot.lastRenderedSubAgentOverviewSignature != nil)
+        #expect(renderedSnapshot.activeCompactToolCallID == nil)
+    }
+
+    @Test
+    func subAgentOverviewRefreshTaskLifecycle() async throws {
+        let terminal = try makeTerminalForToolInterleavingTest()
+
+        // No refresh running initially.
+        #expect(terminal.subAgentOverviewRefreshTask == nil)
+
+        // Start refresh (simulating .toolCallStarted for agent.wait).
+        terminal.startSubAgentOverviewRefreshIfNeeded()
+        #expect(terminal.subAgentOverviewRefreshTask != nil)
+
+        // Idempotent: a second start must not replace or cancel the running
+        // task (guard prevents creating a duplicate).
+        terminal.startSubAgentOverviewRefreshIfNeeded()
+        #expect(terminal.subAgentOverviewRefreshTask != nil)
+
+        // Stop refresh (simulating .toolCallCompleted).
+        await terminal.stopSubAgentOverviewRefresh()
+        #expect(terminal.subAgentOverviewRefreshTask == nil)
+
+        // Idempotent: stopping when already stopped is a safe no-op.
+        await terminal.stopSubAgentOverviewRefresh()
+        #expect(terminal.subAgentOverviewRefreshTask == nil)
+    }
+
+    @Test
+    func subAgentOverviewRefreshDrainsInFlightTickBeforeReturning() async throws {
+        let terminal = try makeTerminalForToolInterleavingTest()
+        terminal.subAgentOverviewRefreshInterval = .milliseconds(1)
+
+        // A gate that suspends the first tick inside the hook, deterministically
+        // simulating an in-flight tick (suspended in subAgentSnapshots or the
+        // coordinator actor) without relying on sleep timing.
+        let gate = TickGate()
+        terminal.onSubAgentOverviewTick = { await gate.wait() }
+
+        // Start the refresh. The first tick fires after ~1ms and suspends
+        // inside gate.wait().
+        terminal.startSubAgentOverviewRefreshIfNeeded()
+
+        // Poll until the tick has entered the hook — it is now in-flight.
+        while await !gate.hasEntered() {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+
+        // Start stop() in the background.
+        let stopTask = Task {
+            await terminal.stopSubAgentOverviewRefresh()
+            await gate.markStopCompleted()
+        }
+
+        // Brief yield to let stop() reach its drain point (await task.value).
+        // The tick is deterministically blocked in gate.wait(), so this sleep
+        // only covers cooperative-pool scheduling latency, not timing.
+        try await Task.sleep(for: .milliseconds(5))
+
+        // stop() must NOT have completed yet: it is blocked draining the tick.
+        // With the old implementation (bare cancel, no await task.value) stop()
+        // would have completed immediately — this assertion would fail.
+        #expect(await !gate.isStopCompleted())
+
+        // Release the tick. The drain completes, stop() proceeds to its final
+        // render, and the stop task finishes.
+        await gate.release()
+        await stopTask.value
+        #expect(await gate.isStopCompleted())
+        #expect(terminal.subAgentOverviewRefreshTask == nil)
     }
 
     @Test

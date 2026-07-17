@@ -447,6 +447,60 @@ struct TerminalChatRenderCoordinatorTests {
         }
     }
 
+    @Test
+    func subAgentOverviewStaysDeferredWhenPublishingSuspendedDuringAgentToolBlock() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let toolCall = DirectAgentToolCall(
+            id: "wait-tool",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        await renderer.writeToolCallStarted(toolCall)
+        let startedSnapshot = await renderer.snapshot()
+
+        await renderer.setOverviewPublishingSuspended(true)
+
+        // Capture write events before the render attempt — no new output
+        // should be produced while publication is suspended.
+        let writeCountBeforeRender = await renderer.capturedWriteEvents().count
+
+        let result = await renderer.renderSubAgentOverview(
+            signature: "agents:suspended",
+            text: "Agents updated.\n\n",
+            force: false,
+            rememberSignature: true
+        )
+        let suspendedSnapshot = await renderer.snapshot()
+        let writeCountAfterRender = await renderer.capturedWriteEvents().count
+
+        // Publication is suspended: the overview must stay deferred and the
+        // active agent.* tool block must NOT be interrupted — its in-place
+        // rewrite rows must remain intact for a later toolCallCompleted.
+        #expect(result == .deferred)
+        #expect(suspendedSnapshot.lastRenderedSubAgentOverviewSignature == nil)
+        #expect(suspendedSnapshot.deferredSubAgentOverviewRender)
+        #expect(suspendedSnapshot.activeCompactToolCallID == toolCall.id)
+        #expect(
+            suspendedSnapshot.activeCompactToolRenderedRowCount
+                == startedSnapshot.activeCompactToolRenderedRowCount
+        )
+        // No writes at all: neither the overview body nor a stray newline
+        // from an interrupted tool block.
+        #expect(writeCountBeforeRender == writeCountAfterRender)
+
+        // Resume and complete: the tool block was preserved, so the
+        // completion handler can still clear the owned rows correctly.
+        await renderer.setOverviewPublishingSuspended(false)
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+        let completedSnapshot = await renderer.snapshot()
+        #expect(completedSnapshot.activeCompactToolCallID == nil)
+        #expect(completedSnapshot.activeCompactToolRenderedRowCount == 0)
+    }
+
     private func makeRenderer(
         standardErrorIsTerminal: Bool,
         streamingFlushDelay: Duration? = nil

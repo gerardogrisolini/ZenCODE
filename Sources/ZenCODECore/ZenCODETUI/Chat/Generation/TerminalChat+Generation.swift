@@ -138,6 +138,9 @@ extension TerminalChat {
                         await self.publishSubAgentOverviewIfChanged(
                             relatedToolName: toolCall.name
                         )
+                        if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
+                            self.startSubAgentOverviewRefreshIfNeeded()
+                        }
                     case let .toolCallCompleted(toolCall, result):
                         await transcriptTurn.appendToolCallCompleted(toolCall, result: result)
                         await self.writeToolCallCompleted(toolCall, result: result)
@@ -189,6 +192,9 @@ extension TerminalChat {
                         await self.publishSubAgentOverviewIfChanged(
                             relatedToolName: toolCall.name
                         )
+                        if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
+                            await self.stopSubAgentOverviewRefresh()
+                        }
                     case let .sessionSnapshot(snapshot):
                         self.activeSessionCacheKey = snapshot.cacheKey
                         self.activeSessionHistory = snapshot.history
@@ -228,7 +234,7 @@ extension TerminalChat {
                     telegramFileChangeSummaryMessage(summary)
                 )
             }
-            await publishSubAgentOverviewIfChanged()
+            await stopSubAgentOverviewRefresh()
             await telegramProgressReporter?.flush()
             if case .plan = attempt.purpose {
                 await writeAssistantContent(response.text)
@@ -253,7 +259,7 @@ extension TerminalChat {
                     telegramFileChangeSummaryMessage(summary)
                 )
             }
-            await publishSubAgentOverviewIfChanged()
+            await stopSubAgentOverviewRefresh()
             await telegramProgressReporter?.flush()
             throw TerminalChatGenerationRunError(
                 underlying: error,
