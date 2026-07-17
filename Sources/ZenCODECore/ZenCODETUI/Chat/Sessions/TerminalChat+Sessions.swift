@@ -16,7 +16,6 @@ enum TerminalSavedSessionCommandAction: Equatable, Sendable {
     case tree
     case branches
     case checkpoint(label: String?)
-    case fork(args: String)
     case restore(entryID: String)
     case saveNamed(String)
 }
@@ -43,8 +42,6 @@ extension TerminalChat {
             await listBranches()
         case let .checkpoint(label):
             await createCheckpoint(label: label)
-        case let .fork(args):
-            await handleForkCommand(args)
         case let .restore(entryID):
             await handleRestoreCommand(entryID)
         case let .saveNamed(name):
@@ -654,8 +651,8 @@ extension TerminalChat {
                /sessions tree               Show the checkpoint tree
                /sessions branches           List branches (leaves)
                /sessions checkpoint [label] Create a checkpoint
-               /sessions restore <id|index> Restore in-place from a checkpoint
-               /sessions fork <id|index> <new-name>  Fork into a new file
+               /sessions restore [id|index] Restore in-place from a checkpoint
+                                            (interactive picker when omitted)
         """
     }
 
@@ -722,63 +719,6 @@ extension TerminalChat {
         await writeSystemMessage(
             "Restored from checkpoint \(entryID) (\(messageCount) messages on this branch).\n"
         )
-    }
-
-    /// Forks a saved session from a specific checkpoint entry into a new
-    /// session file.  The new session contains only the messages on the path
-    /// from root to the selected entry.
-    @discardableResult
-    public func forkFromCheckpoint(
-        _ savedSession: TerminalSavedSession,
-        entryID: String,
-        newName: String
-    ) async throws -> TerminalSavedSession? {
-        let tree = savedSession.checkpointTree
-        guard tree.entry(id: entryID) != nil else {
-            await writeFailureMessage(
-                "Checkpoint entry \(entryID) not found in session \(savedSession.name).\n"
-            )
-            return nil
-        }
-        let forkedMessages = tree.messages(from: entryID)
-        var forkedTree = SessionCheckpointTree.fromLinearHistory(
-            forkedMessages,
-            sessionID: savedSession.sessionID
-        )
-        // Preserve any checkpoint labels from the original path.
-        for entry in tree.path(from: entryID) {
-            if case let .checkpoint(label) = entry.kind, let label {
-                forkedTree.append(.checkpoint(label: label))
-            }
-        }
-        let now = Date()
-        let forkedSession = TerminalSavedSession(
-            name: newName,
-            sessionID: savedSession.sessionID,
-            cacheKey: savedSession.cacheKey,
-            workingDirectoryPath: savedSession.workingDirectoryPath,
-            createdAt: now,
-            savedAt: now,
-            modelID: savedSession.modelID,
-            agentID: savedSession.agentID,
-            agentName: savedSession.agentName,
-            selectedTools: savedSession.selectedTools,
-            selectedSkillIDs: savedSession.selectedSkillIDs,
-            thinkingSelection: savedSession.thinkingSelection,
-            contextWindow: savedSession.contextWindow,
-            systemPrompt: savedSession.systemPrompt,
-            history: forkedMessages,
-            transcriptHistory: forkedMessages,
-            activePlan: nil,
-            taskGraph: nil,
-            checkpointTree: forkedTree
-        )
-        _ = try TerminalSessionStore.save(forkedSession)
-        recordSavedSessionIndex(forkedSession)
-        await writeSystemMessage(
-            "Forked session '\(newName)' from checkpoint \(entryID) (\(forkedMessages.filter { $0.role != .system }.count) messages).\n"
-        )
-        return forkedSession
     }
 
     /// Lists all branches (leaves) in the active or given session's tree.

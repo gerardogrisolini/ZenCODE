@@ -20,8 +20,19 @@ public struct TerminalMarkdownStreamFormatter {
     private static let code = "\u{1B}[38;5;180m"
     private static let maxBufferedLineLength = 240
     private static let maxMarkdownBufferedLineLength = 2_000
-    private static let maxBufferedBlockLineCount = 80
-    private static let maxBufferedBlockCharacterCount = 12_000
+    // Soft safety net that drives incremental streaming. Kept low so list-heavy
+    // model responses stay responsive: lists and blockquotes are already flushed
+    // incrementally as each item/line completes, so this only nudges buffering
+    // for constructs that are still open (a list item with many children).
+    private static let maxBufferedBlockLineCount = 16
+    private static let maxBufferedBlockCharacterCount = 2_000
+    // Much higher last-resort cap. The soft limit above never truncates a block
+    // mid-structure: for lists it flushes only completed items, and for a single
+    // deeply-nested item it keeps buffering (preserving hierarchy) until this
+    // hard cap is reached. Only then does it force-flush to avoid unbounded
+    // buffering on pathological inputs.
+    private static let hardBufferedBlockLineCount = 80
+    private static let hardBufferedBlockCharacterCount = 12_000
     
     /// Multi-line markdown constructs that must be parsed as a whole block
     /// rather than one isolated line at a time. Buffering these lets the
@@ -49,6 +60,14 @@ public struct TerminalMarkdownStreamFormatter {
     private var codeFenceLanguage: String?
     private var blockLines: [String] = []
     private var blockKind: BlockKind?
+    // Streaming ordered-list state. While flushing an ordered list item-by-item,
+    // `streamingOrderedStart` holds the list's original start number and
+    // `nextOrderedNumber` the number to assign to the next flushed top-level
+    // item. This keeps ascending numbers (1./2./3.) even when the source uses
+    // the common lazy "1./1./1." convention, which would otherwise render as
+    // 1./1./1. because each item is parsed as a standalone document.
+    private var streamingOrderedStart: Int?
+    private var nextOrderedNumber = 0
     
     public init(
         isEnabled: Bool,
@@ -158,10 +177,52 @@ public struct TerminalMarkdownStreamFormatter {
         }
 
         if blockKind != nil {
+            // Lists and blockquotes stream incrementally: when a new top-level
+            // item or quote line begins, the buffered content is already a
+            // complete, self-contained block and can be rendered right away.
+            // This keeps list-heavy model responses from appearing only at the
+            // end of the stream. Tables still buffer fully (layout needs it).
+            if shouldStreamIncrementally(forLine: line, trimmed: trimmed) {
+                // A blockquote whose buffered lines still hold an open `**` span
+                // must keep buffering until the span closes; otherwise each line
+                // would be parsed in isolation and the bold run (or, for the
+                // thinking formatter, both markers) would be lost. A stray closer
+                // that can never pair is still bounded by the hard cap below so a
+                // malformed marker degrades to bounded latency, not unbounded
+                // buffering.
+                if blockKind == .blockQuote, !bufferedStrongMarkersAreBalanced() {
+                    blockLines.append(line)
+                    if isPastHardBufferCap() {
+                        return flushBlock()
+                    }
+                    return ""
+                }
+                // A change in top-level list type (bullet ↔ ordered) starts a new
+                // markdown list block: flush the whole previous block (keeping
+                // the visual separation between the two list types) and restart
+                // with fresh numbering state.
+                if blockKind == .list,
+                   listMarkerTypeChanged(toOrdered: leadingOrderedNumber(in: trimmed) != nil) {
+                    // Flush the previous list block, adding a blank line after it
+                    // so the visual separation between the two list types matches
+                    // what the markdown document renderer produces.
+                    let flushed = flushBlock()
+                    beginListBlock(line: line, trimmed: trimmed)
+                    return flushed + "\n"
+                }
+                let kind = blockKind
+                let flushed = flushBlock()
+                blockKind = kind
+                // Restart the block with the incoming line so its continuation
+                // lines (nested items, wrapped quote text) stay buffered until
+                // they close, preserving nested-list and multi-paragraph runs.
+                blockLines = [line]
+                return flushed
+            }
             if lineContinuesBlock(line, trimmed: trimmed) {
                 blockLines.append(line)
                 if shouldFlushBufferedBlock() {
-                    return flushBlock()
+                    return flushBufferedBlockForSafety()
                 }
                 return ""
             }
@@ -170,10 +231,16 @@ public struct TerminalMarkdownStreamFormatter {
         }
         
         if let kind = blockKind(forStartLine: trimmed) {
-            blockKind = kind
-            blockLines = [line]
+            if kind == .list {
+                // Record ordered-list state up front so incremental flushes can
+                // keep ascending numbers across separately-rendered items.
+                beginListBlock(line: line, trimmed: trimmed)
+            } else {
+                blockKind = kind
+                blockLines = [line]
+            }
             if shouldFlushBufferedBlock() {
-                return flushBlock()
+                return flushBufferedBlockForSafety()
             }
             return ""
         }
@@ -196,12 +263,58 @@ public struct TerminalMarkdownStreamFormatter {
             if isListMarker(trimmed) {
                 return true
             }
+            // An out-of-range "ordered-like" line (10+ digits) is not a real
+            // marker, but within an active list the markdown parser treats it as
+            // a lazy continuation of the current item. Keep it buffered so the
+            // parser makes that decision instead of flushing the list early and
+            // rendering the line as a separate paragraph.
+            if isOutOfRangeOrderedLikeMarker(trimmed) {
+                return true
+            }
             return line.first == " " || line.first == "\t"
         case .blockQuote:
             return trimmed.hasPrefix(">")
         case .table:
             return isPotentialTableRow(trimmed)
         }
+    }
+
+    /// Returns true when the incoming line begins a fresh top-level item or
+    /// quote line within the active block, meaning the previously buffered
+    /// content is already complete and can be rendered immediately (incremental
+    /// streaming). Tables never stream incrementally: their column layout can
+    /// only be computed once the whole table is known.
+    private func shouldStreamIncrementally(
+        forLine line: String,
+        trimmed: String
+    ) -> Bool {
+        guard !blockLines.isEmpty else {
+            return false
+        }
+        switch blockKind {
+        case .list:
+            // A non-indented list marker starts a new top-level item; indented
+            // lines belong to the current item and must stay buffered until the
+            // next top-level marker arrives.
+            return isTopLevelListMarker(line, trimmed: trimmed)
+        case .blockQuote:
+            // Each ">" line can render independently as a blockquote, so the
+            // previous line flushes as soon as the next one arrives — unless an
+            // inline `**` span is still open across lines (see the balance guard
+            // in handleCompleteLine), in which case the block keeps buffering.
+            return trimmed.hasPrefix(">")
+        case .tableCandidate, .table, .none:
+            return false
+        }
+    }
+
+    /// A list marker at column 0 (no leading indentation): a top-level item
+    /// rather than a nested or indented continuation line.
+    private func isTopLevelListMarker(_ line: String, trimmed: String) -> Bool {
+        guard line.first != " ", line.first != "\t" else {
+            return false
+        }
+        return isListMarker(trimmed)
     }
     
     private func blockKind(forStartLine trimmed: String) -> BlockKind? {
@@ -317,32 +430,237 @@ public struct TerminalMarkdownStreamFormatter {
     /// Renders and clears the buffered multi-line block, parsing it as a single
     /// markdown document so nested structure is preserved.
     private mutating func flushBlock() -> String {
-        guard blockKind != nil, !blockLines.isEmpty else {
+        guard let kind = blockKind, !blockLines.isEmpty else {
             blockKind = nil
             blockLines = []
             return ""
         }
-        let sourceLines = blockKind == .list
-            ? compactListBlockLines(blockLines)
-            : blockLines
-        let source = sanitizedMarkdownSource(sourceLines.joined(separator: "\n"))
+        let lines = blockLines
         blockKind = nil
         blockLines = []
-        
+        return renderBlock(lines: lines, kind: kind)
+    }
+
+    /// Renders an arbitrary slice of buffered lines as a single markdown
+    /// document. Shared by the full-block flush and the incremental/partial
+    /// list flushes so ordered-list renumbering is applied consistently.
+    private mutating func renderBlock(lines: [String], kind: BlockKind) -> String {
+        var sourceLines = kind == .list
+            ? compactListBlockLines(lines)
+            : lines
+        if kind == .list, streamingOrderedStart != nil {
+            let renumbered = renumberTopLevelOrderedMarkers(sourceLines, from: nextOrderedNumber)
+            sourceLines = renumbered.lines
+            nextOrderedNumber = renumbered.next
+        }
+        let source = sanitizedMarkdownSource(sourceLines.joined(separator: "\n"))
         var renderer = makeRenderer()
         let document = Document(parsing: source)
-        let rendered = renderer.visit(document)
-        return wrapIfNeeded(rendered) + "\n"
+        return wrapIfNeeded(renderer.visit(document)) + "\n"
     }
 
     private func shouldFlushBufferedBlock() -> Bool {
-        guard blockKind != .tableCandidate else {
+        // Tables require the complete block to compute column layout, so they
+        // are never flushed by the safety limit; they flush naturally when a
+        // non-table line ends the block. A confirmed table (.table) is exempt
+        // for the same reason as a one-line candidate (.tableCandidate).
+        guard blockKind != .tableCandidate, blockKind != .table else {
             return false
         }
         if blockLines.count >= Self.maxBufferedBlockLineCount {
             return true
         }
         return blockLines.reduce(0) { $0 + $1.count } >= Self.maxBufferedBlockCharacterCount
+    }
+
+    /// Handles the safety-limit trigger. For lists, flush only the completed
+    /// top-level items and keep the still-open item buffered so its nested
+    /// children are never promoted to the top level. Only fall back to a full
+    /// flush past the much higher hard cap to avoid unbounded buffering.
+    private mutating func flushBufferedBlockForSafety() -> String {
+        if blockKind == .list {
+            if let partial = flushCompletedListItems(), !partial.isEmpty {
+                return partial
+            }
+            // No completed item to split off (a single deeply-nested item).
+            // Keep buffering until the hard cap, preserving hierarchy in the
+            // common case; force-flush only as a last resort.
+            if isPastHardBufferCap() {
+                return flushBlock()
+            }
+            return ""
+        }
+        // A blockquote with an open `**` span must defer flush until the span
+        // closes (or the hard cap), matching the guard in handleCompleteLine.
+        // Without this, a single quote line beyond the soft char cap would be
+        // flushed in isolation and the multiline bold run would be lost.
+        if blockKind == .blockQuote, !bufferedStrongMarkersAreBalanced() {
+            if isPastHardBufferCap() {
+                return flushBlock()
+            }
+            return ""
+        }
+        return flushBlock()
+    }
+
+    /// Whether the buffered block has exceeded the much higher hard cap used
+    /// only as a last resort to bound buffering on pathological inputs.
+    private func isPastHardBufferCap() -> Bool {
+        blockLines.count >= Self.hardBufferedBlockLineCount
+            || blockLines.reduce(0) { $0 + $1.count } >= Self.hardBufferedBlockCharacterCount
+    }
+
+    /// Whether the incoming top-level list marker is a different type (ordered
+    /// vs unordered) than the current list block. In markdown such a change
+    /// starts a new list block, so the old one should be flushed in full and
+    /// numbering state reset.
+    private func listMarkerTypeChanged(toOrdered newIsOrdered: Bool) -> Bool {
+        let blockIsOrdered = streamingOrderedStart != nil
+        return newIsOrdered != blockIsOrdered
+    }
+
+    /// Flushes every completed top-level list item, leaving the last
+    /// (still-open) item and its continuation/nested lines buffered. Returns nil
+    /// when there is no completed item to split off (only one open item).
+    private mutating func flushCompletedListItems() -> String? {
+        guard blockKind == .list,
+              let split = lastTopLevelItemStartIndex(in: blockLines),
+              split > 0 else {
+            return nil
+        }
+        let toFlush = Array(blockLines[..<split])
+        blockLines = Array(blockLines[split...])
+        return renderBlock(lines: toFlush, kind: .list)
+    }
+
+    /// Index of the last top-level (column-0) list marker in `lines`, or nil
+    /// when there is none. Used to split completed items from the still-open one.
+    private func lastTopLevelItemStartIndex(in lines: [String]) -> Int? {
+        var lastIndex: Int?
+        for (index, line) in lines.enumerated() {
+            guard line.first != " ", line.first != "\t" else { continue }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty, isListMarker(trimmed) else { continue }
+            lastIndex = index
+        }
+        return lastIndex
+    }
+
+    /// Starts a fresh list block and records whether it is an ordered list so
+    /// the streaming flush can keep ascending numbers across separately-rendered
+    /// items (the common "1./1./1." lazy convention renders as 1./2./3.).
+    private mutating func beginListBlock(line: String, trimmed: String) {
+        blockKind = .list
+        blockLines = [line]
+        if let start = leadingOrderedNumber(in: trimmed) {
+            streamingOrderedStart = start
+            nextOrderedNumber = start
+        } else {
+            streamingOrderedStart = nil
+            nextOrderedNumber = 0
+        }
+    }
+
+    /// Rewrites the leading number of every top-level ordered-list marker so a
+    /// list streamed item-by-item keeps ascending numbers. Unordered markers and
+    /// indented continuation lines are left untouched. Renumbering stops once the
+    /// ascending number would reach 10 digits (1_000_000_000): beyond that Swift
+    /// Markdown treats the marker as plain text, so leaving it verbatim keeps the
+    /// rendered output coherent with the document parser.
+    private func renumberTopLevelOrderedMarkers(
+        _ lines: [String],
+        from start: Int
+    ) -> (lines: [String], next: Int) {
+        var current = start
+        var result: [String] = []
+        result.reserveCapacity(lines.count)
+        for line in lines {
+            if line.first != " ", line.first != "\t",
+               current <= 999_999_999,
+               let replaced = renumberLeadingOrderedMarker(in: line, to: current) {
+                result.append(replaced)
+                current += 1
+            } else {
+                result.append(line)
+            }
+        }
+        return (result, current)
+    }
+
+    /// Replaces the leading "<digits>." of an ordered marker with `number.`.
+    /// Returns nil when the line does not start with an ordered marker.
+    private func renumberLeadingOrderedMarker(in line: String, to number: Int) -> String? {
+        var index = line.startIndex
+        while index < line.endIndex, line[index].isNumber {
+            index = line.index(after: index)
+        }
+        guard index > line.startIndex,
+              index < line.endIndex,
+              line[index] == "." else {
+            return nil
+        }
+        let afterDot = line.index(after: index)
+        guard afterDot == line.endIndex || line[afterDot].isWhitespace else {
+            return nil
+        }
+        return "\(number)." + line[afterDot...]
+    }
+
+    /// The leading integer of an ordered-list marker (e.g. "1." -> 1), or nil
+    /// when the trimmed line is not an ordered marker. Values beyond a safe
+    /// threshold are treated as non-markers: no real list has millions of items,
+    /// and incrementing such a number during renumbering would overflow Int.
+    private func leadingOrderedNumber(in trimmed: String) -> Int? {
+        var digits = ""
+        var index = trimmed.startIndex
+        while index < trimmed.endIndex, trimmed[index].isNumber {
+            digits.append(trimmed[index])
+            index = trimmed.index(after: index)
+        }
+        guard !digits.isEmpty,
+              index < trimmed.endIndex,
+              trimmed[index] == "." else {
+            return nil
+        }
+        let afterDot = trimmed.index(after: index)
+        guard afterDot == trimmed.endIndex || trimmed[afterDot].isWhitespace else {
+            return nil
+        }
+        // Clamp to a safe range: Swift Markdown accepts up to 9 digits, so valid
+        // markers up to 999_999_999 are supported. Beyond that the number can't
+        // be a real list index, and incrementing it during renumbering would risk
+        // overflow. Treat out-of-range values as plain markers (verbatim render).
+        guard digits.count <= 9, let value = Int(digits), value <= 999_999_999 else {
+            return nil
+        }
+        return value
+    }
+
+    /// True when the `**` strong markers accumulated in the current block buffer
+    /// are all paired. When unbalanced, an inline span is still open across
+    /// lines and the block must keep buffering instead of streaming line-by-line.
+    private func bufferedStrongMarkersAreBalanced() -> Bool {
+        hasBalancedStrongMarkers(in: blockLines.joined(separator: "\n"))
+    }
+
+    /// Whether every `**` marker in `source` (outside inline code) is paired
+    /// with an opener/closer, using the same pairing rules as the sanitizer.
+    private func hasBalancedStrongMarkers(in source: String) -> Bool {
+        let markers = strongMarkersOutsideInlineCode(in: source)
+        guard !markers.isEmpty else {
+            return true
+        }
+        var openStack: [Int] = []
+        var kept = Set<Int>()
+        for (index, marker) in markers.enumerated() {
+            if marker.canClose, let opener = openStack.popLast() {
+                kept.insert(opener)
+                kept.insert(index)
+            } else if marker.canOpen {
+                openStack.append(index)
+            }
+        }
+        return kept.count == markers.count
     }
 
     private func compactListBlockLines(_ lines: [String]) -> [String] {
@@ -441,18 +759,42 @@ public struct TerminalMarkdownStreamFormatter {
     
     private func isOrderedListMarker(in line: String) -> Bool {
         var index = line.startIndex
-        var sawDigit = false
+        var digits = 0
         while index < line.endIndex, line[index].isNumber {
-            sawDigit = true
+            digits += 1
             index = line.index(after: index)
         }
-        guard sawDigit,
+        // Swift Markdown accepts up to 9-digit ordered markers; 10+ digits are
+        // plain text. Keep this consistent with leadingOrderedNumber so the
+        // streaming classification matches the parser's list detection.
+        guard digits > 0, digits <= 9,
               index < line.endIndex,
               line[index] == "." else {
             return false
         }
         let afterDot = line.index(after: index)
         return afterDot < line.endIndex && line[afterDot].isWhitespace
+    }
+
+    /// True when the line looks like an ordered-list marker (digits + "." +
+    /// whitespace) but the leading number has 10+ digits, which Swift Markdown
+    /// rejects as plain text rather than a list marker. Within an active list
+    /// block such a line is buffered as a continuation line so the parser can
+    /// decide whether it is a lazy continuation of the current item.
+    private func isOutOfRangeOrderedLikeMarker(_ trimmed: String) -> Bool {
+        var digits = 0
+        var index = trimmed.startIndex
+        while index < trimmed.endIndex, trimmed[index].isNumber {
+            digits += 1
+            index = trimmed.index(after: index)
+        }
+        guard digits > 9,
+              index < trimmed.endIndex,
+              trimmed[index] == "." else {
+            return false
+        }
+        let afterDot = trimmed.index(after: index)
+        return afterDot == trimmed.endIndex || trimmed[afterDot].isWhitespace
     }
     
     private func leadingIndent(in line: String) -> (indent: String, body: String) {

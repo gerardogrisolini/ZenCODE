@@ -252,9 +252,7 @@ extension TerminalChat {
             /sessions tree               Show the checkpoint tree
             /sessions branches           List branches (leaves)
             /sessions checkpoint [label] Create a checkpoint (run /sessions save after)
-            /sessions restore <id|index>  Restore in-place from a checkpoint (branches)
-            /sessions fork <id|index> <new-name>  Fork into a new session file
-            /sessions fork <session> <id|index> <new-name>  Fork from a named session
+            /sessions restore [id|index]  Restore in-place from a checkpoint (interactive picker when omitted)
             """
         ),
         TerminalChatCommandDescriptor(

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Markdown
 import Testing
 @testable import ZenCODECore
 
@@ -1074,11 +1075,534 @@ struct TerminalChatRenderingTests {
         let rendered = formatter.consume("> first line\n> second line\n")
             + formatter.finish()
 
-        // The two quoted lines are buffered and rendered as a single block.
+        // Blockquote lines stream incrementally (one rendered as the next
+        // arrives), yet produce the same visual result as a single block.
         #expect(rendered.contains("first line"))
         #expect(rendered.contains("second line"))
         // Literal blockquote markers are consumed by the renderer.
         #expect(!rendered.contains("> first line"))
+    }
+
+    @Test
+    func markdownFormatterStreamsListItemByItem() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        // The first item is complete as soon as the second top-level marker
+        // arrives, so it is rendered before finish() is ever called.
+        let streamed = formatter.consume("- alpha\n- beta\n")
+        #expect(streamed.contains("alpha"))
+        #expect(streamed.contains("•"))
+        // The last item stays buffered until the stream ends.
+        #expect(!streamed.contains("beta"))
+
+        let tail = formatter.finish()
+        #expect(tail.contains("beta"))
+    }
+
+    @Test
+    func markdownFormatterStreamsOrderedListPreservingNumbers() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        let streamed = formatter.consume("1. first\n2. second\n")
+        // Each item flushes independently but keeps its source start number.
+        #expect(streamed.contains("1."))
+        #expect(streamed.contains("first"))
+        #expect(!streamed.contains("second"))
+
+        let tail = formatter.finish()
+        #expect(tail.contains("2."))
+        #expect(tail.contains("second"))
+    }
+
+    @Test
+    func markdownFormatterStreamsLazyOrderedListWithAscendingNumbers() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        // The common lazy "1./1./1." convention must render as 1./2./3. even
+        // though each item is flushed as a standalone document while streaming.
+        let streamed = formatter.consume("1. alpha\n1. beta\n1. gamma\n") + formatter.finish()
+        let plain = TerminalANSIText.stripANSI(streamed)
+
+        #expect(plain.contains("1. alpha"))
+        #expect(plain.contains("2. beta"))
+        #expect(plain.contains("3. gamma"))
+        // The lazy source markers must not leak through unchanged.
+        #expect(!plain.contains("1. beta"))
+        #expect(!plain.contains("1. gamma"))
+    }
+
+    @Test
+    func markdownFormatterStreamsNestedListMatchingWholeBlock() {
+        var streaming = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        let source = "- top\n  - nested\n- top two\n"
+
+        // Feed the nested list one line per delta.
+        var streamed = ""
+        for line in source.split(separator: "\n", omittingEmptySubsequences: false) {
+            streamed += streaming.consume(line + "\n")
+        }
+        streamed += streaming.finish()
+
+        // Independent oracle: render the whole block directly through the
+        // markdown renderer, bypassing the stream formatter entirely. Using a
+        // second copy of the (modified) formatter would not be independent.
+        var expectedRenderer = TerminalSwiftMarkdownRenderer(
+            supportsHyperlinks: false,
+            renderWidth: 79
+        )
+        let expected = expectedRenderer.visit(Document(parsing: source)) + "\n"
+
+        // Streaming line by line produces the same rendering as parsing the
+        // whole block at once: nested structure and indentation are preserved.
+        #expect(streamed == expected)
+        #expect(streamed.contains("•"))
+        #expect(streamed.contains("◦"))
+    }
+
+    @Test
+    func markdownFormatterStreamsBlockQuoteIncrementally() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        // The first quote line is rendered as soon as the next one arrives.
+        let streamed = formatter.consume("> first line\n> second line\n")
+        #expect(streamed.contains("first line"))
+        #expect(!streamed.contains("> first line"))
+        // The last quote line stays buffered until the stream ends.
+        #expect(!streamed.contains("second line"))
+
+        let tail = formatter.finish()
+        #expect(tail.contains("second line"))
+    }
+
+    @Test
+    func markdownFormatterStreamsTableWithManyRowsIntact() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        // A confirmed table with more rows than the soft safety limit (16) must
+        // stay intact: it is never split mid-table by the safety flush.
+        var source = "| A | B |\n| --- | --- |\n"
+        for row in 1...20 {
+            source += "| \(row) | \(row * 10) |\n"
+        }
+
+        let rendered = formatter.consume(source) + formatter.finish()
+
+        // The whole table renders as a single box-drawing block.
+        #expect(rendered.contains("┌"))
+        #expect(rendered.contains("└"))
+        // The last row is present, proving no rows were dropped or spilled out
+        // as literal text by an early safety flush.
+        #expect(rendered.contains("200"))
+        // Only one table border block exists (a single ┌ line).
+        #expect(rendered.components(separatedBy: "┌").count - 1 == 1)
+    }
+
+    @Test
+    func markdownFormatterStreamsListItemWithManyNestedChildren() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        // A single top-level item with many nested children exceeds the soft
+        // safety limit (16 lines). The hierarchy must be preserved: the nested
+        // children must never be promoted to top-level bullets.
+        var source = "- parent\n"
+        for child in 1...20 {
+            source += "  - child \(child)\n"
+        }
+
+        let rendered = formatter.consume(source) + formatter.finish()
+
+        // The last nested child is present and stays nested (◦ glyph), proving
+        // the safety flush did not truncate the item mid-structure.
+        #expect(rendered.contains("child 20"))
+        #expect(rendered.contains("◦"))
+        // Exactly one top-level bullet (•) for the parent item.
+        let topLevelBullets = rendered.components(separatedBy: "•").count - 1
+        #expect(topLevelBullets == 1)
+    }
+
+    @Test
+    func markdownFormatterThinkingPreservesMultilineBoldInBlockQuote() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false,
+            removesUnbalancedStrongMarkers: true
+        )
+
+        // A bold span that straddles two quote lines. Streaming line by line
+        // would make each `**` unbalanced and the thinking formatter would drop
+        // both markers; the blockquote must buffer until the span closes.
+        let streamed = formatter.consume("> **first line\n> second line**\n") + formatter.finish()
+
+        // Both strong markers survived and the bold run rendered.
+        #expect(streamed.contains("\u{1B}[1mfirst line"))
+        #expect(streamed.contains("second line\u{1B}[0m"))
+        // No stray literal markers leaked into the output.
+        #expect(!streamed.contains("**"))
+    }
+
+    @Test
+    func markdownFormatterStreamsBulletToOrderedTransitionRenumbered() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        // A bullet item followed (with a blank line, still inside the list
+        // block) by lazy "1./1." ordered items. The ordered segment must
+        // restart numbering from 1 and ascend to 2, not stay "1./1.".
+        let streamed = formatter.consume("- bullet\n\n1. first\n1. second\n") + formatter.finish()
+        let plain = TerminalANSIText.stripANSI(streamed)
+
+        #expect(plain.contains("1. first"))
+        #expect(plain.contains("2. second"))
+        #expect(!plain.contains("1. second"))
+        // A blank line separates the two list-type blocks (matching the document
+        // renderer) rather than concatenating them directly.
+        #expect(plain.contains("\n\n1. first"))
+    }
+
+    @Test
+    func markdownFormatterStreamsOrderedBulletOrderedRestartsFromOne() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        // ordered → bullet → ordered: each type change starts a new list block,
+        // so the second ordered segment restarts at 1./2. (not continues 3./4.).
+        let streamed = formatter.consume(
+            "1. alpha\n1. beta\n\n- bullet\n\n1. gamma\n1. delta\n"
+        ) + formatter.finish()
+        let plain = TerminalANSIText.stripANSI(streamed)
+
+        #expect(plain.contains("1. alpha"))
+        #expect(plain.contains("2. beta"))
+        #expect(plain.contains("1. gamma"))
+        #expect(plain.contains("2. delta"))
+        // The second ordered segment did not inherit the counter.
+        #expect(!plain.contains("3. gamma"))
+        #expect(!plain.contains("4. delta"))
+        // Blank separators appear at both type-change boundaries (the rendered
+        // bullet glyph is •, not the literal source marker).
+        #expect(plain.contains("2. beta\n\n• bullet"))
+        #expect(plain.contains("bullet\n\n1. gamma"))
+    }
+
+    @Test
+    func markdownFormatterStreamsFirstItemBeyondCharLimitPreservesHierarchy() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        // A single top-level item whose first line alone exceeds the soft char
+        // limit (2000), followed by nested children. The children must not be
+        // orphaned: the item stays buffered until the hard cap, preserving
+        // hierarchy.
+        let longWord = String(repeating: "x", count: 2100)
+        var source = "- \(longWord)\n"
+        for child in 1...3 {
+            source += "  - child \(child)\n"
+        }
+
+        let rendered = formatter.consume(source) + formatter.finish()
+
+        // The children stayed nested (◦), proving the item was not flushed
+        // mid-structure by the soft char limit.
+        #expect(rendered.contains("child 3"))
+        #expect(rendered.contains("◦"))
+        let topLevelBullets = rendered.components(separatedBy: "•").count - 1
+        #expect(topLevelBullets == 1)
+    }
+
+    @Test
+    func markdownFormatterUnbalancedBlockQuoteFlushesWithinHardCap() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false,
+            removesUnbalancedStrongMarkers: true
+        )
+
+        // A blockquote with an opener `**` that is never closed. It must keep
+        // buffering past the soft cap but eventually flush at the hard cap
+        // (80 lines) instead of buffering indefinitely.
+        var source = "> **unclosed bold\n"
+        for line in 1...85 {
+            source += "> filler line \(line)\n"
+        }
+
+        // consume() alone must produce output (the hard cap forced a flush)
+        // rather than buffering everything indefinitely.
+        let partial = formatter.consume(source)
+        #expect(!partial.isEmpty)
+        #expect(partial.contains("unclosed bold"))
+
+        // finish() drains the remainder, so the whole quote is rendered.
+        let rendered = partial + formatter.finish()
+        #expect(rendered.contains("filler line 85"))
+    }
+
+    @Test
+    func markdownFormatterStrayCloserInBlockQuoteDoesNotBlockIndefinitely() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false,
+            removesUnbalancedStrongMarkers: true
+        )
+
+        // A stray closer `**` with no preceding opener can never pair, so the
+        // balance guard would block forever without the hard cap.
+        var source = "> stray**\n"
+        for line in 1...85 {
+            source += "> line \(line)\n"
+        }
+
+        let rendered = formatter.consume(source)
+
+        // The hard cap forced a flush; the formatter did not hang.
+        #expect(!rendered.isEmpty)
+        #expect(rendered.contains("stray"))
+    }
+
+    @Test
+    func markdownFormatterHandlesIntMaxOrderedMarkerWithoutCrash() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        // A pathological ordered marker at Int.max (19 digits) must not crash
+        // the renumbering arithmetic (overflow would trap). It renders verbatim.
+        let streamed = formatter.consume(
+            "9223372036854775807. item\n9223372036854775807. item\n"
+        ) + formatter.finish()
+
+        // No crash: the items rendered and the huge number is preserved verbatim
+        // (renumbering is skipped for out-of-range values).
+        #expect(streamed.contains("9223372036854775807"))
+        #expect(streamed.contains("item"))
+    }
+
+    @Test
+    func markdownFormatterRenumbersNineDigitOrderedMarkers() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        // Swift Markdown accepts up to 9-digit ordered markers. Two lazy markers
+        // at 10000000 (8 digits) must renumber to 10000000./10000001.
+        let streamed8 = formatter.consume(
+            "10000000. item\n10000000. item\n"
+        ) + formatter.finish()
+        let plain8 = TerminalANSIText.stripANSI(streamed8)
+        #expect(plain8.contains("10000000. item"))
+        #expect(plain8.contains("10000001. item"))
+
+        // 9-digit markers are also valid and renumber correctly.
+        var formatter9 = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+        let streamed9 = formatter9.consume(
+            "999999998. item\n999999998. item\n"
+        ) + formatter9.finish()
+        let plain9 = TerminalANSIText.stripANSI(streamed9)
+        #expect(plain9.contains("999999998. item"))
+        #expect(plain9.contains("999999999. item"))
+    }
+
+    @Test
+    func markdownFormatterLeavesTenDigitOrderedMarkerVerbatimWithoutCrash() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        // 10 digits exceed the markdown limit (9). Renumbering is skipped, the
+        // marker renders verbatim, and no overflow crash occurs.
+        let streamed = formatter.consume(
+            "1000000000. item\n1000000000. item\n"
+        ) + formatter.finish()
+        let plain = TerminalANSIText.stripANSI(streamed)
+
+        // Both items render verbatim with the original number.
+        #expect(plain.contains("1000000000. item"))
+        // No incremented number appears.
+        #expect(!plain.contains("1000000001"))
+    }
+
+    @Test
+    func markdownFormatterDoesNotClassifyTenDigitMarkerAsListTransition() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        // A bullet item followed by a 10-digit marker. Swift Markdown treats the
+        // 10-digit line as a lazy continuation of the bullet item (indented
+        // under it), NOT as a new list block. The formatter must buffer it as a
+        // continuation line so the rendered structure matches the document
+        // parser exactly.
+        let source = "- bullet\n1000000000. first\n"
+        let streamed = formatter.consume(source) + formatter.finish()
+
+        // Independent oracle: render the whole document directly through the
+        // markdown renderer, bypassing the stream formatter. Using a second
+        // formatter copy would not be independent.
+        var expectedRenderer = TerminalSwiftMarkdownRenderer(
+            supportsHyperlinks: false,
+            renderWidth: 79
+        )
+        let expected = expectedRenderer.visit(Document(parsing: source)) + "\n"
+
+        // The streaming output matches the full-document rendering: the 10-digit
+        // line stays inside the list item as a lazy continuation (indented under
+        // the bullet), not flushed as a separate paragraph.
+        #expect(streamed == expected)
+
+        let plain = TerminalANSIText.stripANSI(streamed)
+        // The 10-digit line is present and indented as a continuation.
+        #expect(plain.contains("1000000000. first"))
+        // No block separator between the bullet and the continuation line.
+        #expect(!plain.contains("\n\n1000000000."))
+    }
+
+    @Test
+    func markdownFormatterStopsRenumberingAtNineDigitBoundary() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        // Starting at 999_999_999 (9 digits, the max valid marker). The second
+        // item would renumber to 1_000_000_000 (10 digits), which Swift Markdown
+        // treats as plain text. The formatter must stop renumbering there and
+        // leave the marker verbatim, keeping the output coherent with the parser.
+        let streamed = formatter.consume(
+            "999999999. alpha\n999999999. beta\n"
+        ) + formatter.finish()
+        let plain = TerminalANSIText.stripANSI(streamed)
+
+        // First item renumbered to its start number.
+        #expect(plain.contains("999999999. alpha"))
+        // Second item is left verbatim — not renumbered to 1000000000, which
+        // would be parsed as a paragraph and lose ordered styling.
+        #expect(plain.contains("999999999. beta"))
+        // No 10-digit number was generated.
+        #expect(!plain.contains("1000000000"))
+    }
+
+    @Test
+    func markdownFormatterThinkingPreservesBoldInLongBlockQuote() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false,
+            removesUnbalancedStrongMarkers: true
+        )
+
+        // A blockquote whose first line (with the `**` opener) exceeds the soft
+        // char cap (2000). The soft-cap safety flush must not fire mid-span;
+        // the blockquote keeps buffering until the `**` closes so the bold run
+        // survives in the thinking formatter.
+        let longBody = String(repeating: "x", count: 2050)
+        let streamed = formatter.consume("> **\(longBody)\n> close**\n") + formatter.finish()
+
+        // Both strong markers survived and the bold run rendered.
+        #expect(streamed.contains("\u{1B}[1m"))
+        #expect(streamed.contains("close"))
+        #expect(!streamed.contains("**"))
+    }
+
+    @Test
+    func markdownFormatterStreamsTableIntactUntilComplete() {
+        var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
+
+        // The header stays buffered while the table is still only a candidate.
+        let header = formatter.consume("| A | B |\n")
+        #expect(header == "")
+
+        let rendered = formatter.consume("| --- | --- |\n| 1 | 2 |\n") + formatter.finish()
+        // Once complete, the full table (with box drawing) is rendered intact.
+        #expect(rendered.contains("┌"))
+        #expect(rendered.contains("A"))
+        #expect(rendered.contains("1"))
+    }
+
+    @Test
+    func markdownFormatterStreamsCodeFenceWithoutParsingBody() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false
+        )
+
+        let opened = formatter.consume("```swift\n")
+        // The opening fence streams immediately.
+        #expect(opened.contains("\u{1B}[90m```swift\u{1B}[0m"))
+
+        let body = formatter.consume("- not a list\n**not bold**\n")
+        // Inside the fence, markdown markers are preserved verbatim.
+        #expect(body.contains("- not a list"))
+        #expect(body.contains("**not bold**"))
+        #expect(!body.contains("•"))
+
+        let closed = formatter.consume("```\n") + formatter.finish()
+        #expect(closed.contains("\u{1B}[90m```\u{1B}[0m"))
+    }
+
+    @Test
+    func markdownFormatterStreamsProseUnchanged() {
+        var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
+
+        let first = formatter.consume("Plain prose line.\n")
+        let blank = formatter.consume("\n")
+
+        #expect(first == "Plain prose line.\n")
+        #expect(blank == "\n")
+        #expect(formatter.finish() == "")
     }
 
     @Test

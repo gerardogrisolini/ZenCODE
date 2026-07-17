@@ -83,9 +83,7 @@ Commands start with `/`:
 - `/sessions tree` — show the session checkpoint tree with entry IDs and branches.
 - `/sessions branches` — list all branches (leaves) in the checkpoint tree.
 - `/sessions checkpoint [label]` — create a named checkpoint at the current position.
-- `/sessions restore <entry-id|branch-index>` — restore in-place from a checkpoint, branching from that point.
-- `/sessions fork <entry-id|branch-index> <new-name>` — fork into a new session file from a checkpoint entry.
-- `/sessions fork <session-name> <entry-id|branch-index> <new-name>` — fork from a named saved session.
+- `/sessions restore [entry-id|branch-index]` — restore in-place from a checkpoint, branching from that point; without an argument an interactive picker over the checkpoint entries opens.
 
 **Attachments:**
 - `/attach <file> [file ...]` — attach image/video files to the next prompt.
@@ -175,20 +173,18 @@ Every session stores its conversation as a **tree of checkpoint entries** alongs
 /sessions branches               # list all branches (leaves)
 /sessions checkpoint stable      # create a labelled checkpoint
 /sessions save                   # persist the checkpoint tree to disk
+/sessions restore                # restore via interactive entry picker
 /sessions restore a1b2c3d4       # restore in-place by entry ID (branches)
 /sessions restore 2              # restore by branch index
-/sessions fork a1b2c3d4 experiment-B   # fork by entry ID into a new file
-/sessions fork 2 experiment-B    # fork by branch index
-/sessions fork my-session a1b2c3d4 experiment-B  # fork from a named session
 ```
 
-The tree is visualised with entry IDs and `← active` marking the current position.
+The tree is visualised as a flat outline: single-child chains stay at the same indentation level, branch connectors (`├─`/`└─`) appear only where the tree actually forks, and `← active` marks the current position.
 
-**In-place branching** with `/sessions restore` navigates the active session to an earlier checkpoint. Messages you send after restore form a new branch in the tree. The original path is preserved and visible in `/sessions tree`.
+**In-place branching** with `/sessions restore` navigates the active session to an earlier checkpoint. Messages you send after restore form a new branch in the tree. The original path is preserved and visible in `/sessions tree`. Run it without an argument to choose the restore point from an interactive picker with the active leaf preselected.
 
-**Forking** with `/sessions fork` writes a new session file containing only the messages up to the selected checkpoint, leaving the source session unchanged.
+To split a conversation into a separate file, restore to the desired point and then `/sessions save <new-name>`: the new snapshot keeps the full checkpoint tree while the original session file stays unchanged.
 
-> Checkpoints created with `/sessions checkpoint` are in-memory until you run `/sessions save`. Run `/sessions save` before `/sessions restore` or `/sessions fork` to persist them.
+> Checkpoints created with `/sessions checkpoint` are in-memory until you run `/sessions save`. Run `/sessions save` before `/sessions restore` to persist them.
 
 ### Session Format
 

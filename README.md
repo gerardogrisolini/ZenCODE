@@ -120,8 +120,8 @@ ZENCODE_BUILD_DS4=1 ZENCODE_DS4_ROOT=/path/to/ds4 swift build -c release --produ
                /sessions tree            Show the checkpoint tree
                /sessions branches        List branches (leaves)
                /sessions checkpoint [label]  Create a checkpoint
-               /sessions restore <id|index>   Restore in-place from a checkpoint
-               /sessions fork <id|index> <new-name>  Fork into a new session file
+               /sessions restore [id|index]   Restore in-place from a checkpoint
+                                              (interactive picker when omitted)
 /open        Open a referenced file, URL, or attachment
 /changes     Review the latest tracked file changes
 /undo        Revert the latest tracked agent changes

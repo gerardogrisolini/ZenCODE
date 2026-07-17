@@ -36,7 +36,7 @@ Why this project exists and where it differs from other coding agents.
 - `/plan` authored by one read-only `Planner`, `/review` delegated to read-only `Reviewer` sub-agents.
 - Dynamic Swift Features: the Builder generates reusable Swift packages as durable tools.
 - Change tracking and `/undo` as a safety net.
-- Saved sessions with checkpoint trees: per-project snapshots with branching, checkpoints, in-place restore, and fork from any point; project `MEMORY.md` journal, `AGENTS.md` for durable guidance.
+- Saved sessions with checkpoint trees: per-project snapshots with branching, checkpoints, and in-place restore from any point; project `MEMORY.md` journal, `AGENTS.md` for durable guidance.
 - Modular skills selectable per session, installable from GitHub or a local folder.
 
 ## Extras

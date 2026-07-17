@@ -40,8 +40,6 @@ extension TerminalChat {
             return .branches
         case "checkpoint":
             return .checkpoint(label: remainder.nilIfBlank)
-        case "fork":
-            return .fork(args: remainder)
         case "restore":
             return .restore(entryID: remainder)
         default:

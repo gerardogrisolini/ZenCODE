@@ -256,9 +256,65 @@ struct SessionCheckpointTreeTests {
         #expect(description.contains("[user] Hello world"))
         #expect(description.contains("[assistant] Hi there"))
         #expect(description.contains("← active"))
-        // Entry IDs should be visible for restore/fork
+        // Entry IDs should be visible for restore
         let firstEntry = tree.entries[0]
         #expect(description.contains(firstEntry.id))
+    }
+
+    @Test
+    func treeDescriptionKeepsLinearChainsFlat() {
+        let messages = (0..<20).map { index in
+            AgentRuntimeMessage(role: .user, content: "Message \(index)")
+        }
+        let tree = SessionCheckpointTree.fromLinearHistory(messages, sessionID: "test")
+
+        let lines = tree.treeDescription().components(separatedBy: "\n")
+        #expect(lines.count == messages.count)
+        // Linear history must not indent: every line starts with the entry ID.
+        for line in lines {
+            #expect(!line.hasPrefix(" "))
+            #expect(!line.contains("└─"))
+        }
+    }
+
+    @Test
+    func treeDescriptionIndentsOnlyAtBranchPoints() {
+        var tree = SessionCheckpointTree.fromLinearHistory(
+            [AgentRuntimeMessage(role: .user, content: "Root")],
+            sessionID: "test"
+        )
+        let rootID = tree.entries[0].id
+        let branchA = tree.branch(
+            from: rootID,
+            kind: .message(AgentRuntimeMessage(role: .assistant, content: "Branch A"))
+        )
+        _ = tree.branch(
+            from: branchA.id,
+            kind: .message(AgentRuntimeMessage(role: .assistant, content: "A follow-up"))
+        )
+        _ = tree.branch(
+            from: rootID,
+            kind: .message(AgentRuntimeMessage(role: .assistant, content: "Branch B"))
+        )
+
+        let lines = tree.treeDescription().components(separatedBy: "\n")
+        #expect(lines.count == 4)
+        #expect(lines[0].hasPrefix(rootID))
+        #expect(lines[1].hasPrefix("├─ "))
+        // The follow-up continues branch A at the same indentation level.
+        #expect(lines[2].hasPrefix("│  ") && !lines[2].contains("─"))
+        #expect(lines[3].hasPrefix("└─ "))
+    }
+
+    @Test
+    func treeDescriptionCollapsesWhitespaceInPreviews() {
+        let messages = [
+            AgentRuntimeMessage(role: .user, content: "line one\n\tline\t\ttwo   spaced"),
+        ]
+        let tree = SessionCheckpointTree.fromLinearHistory(messages, sessionID: "test")
+
+        let description = tree.treeDescription()
+        #expect(description.contains("[user] line one line two spaced"))
     }
 
     // MARK: - Entry ID generation

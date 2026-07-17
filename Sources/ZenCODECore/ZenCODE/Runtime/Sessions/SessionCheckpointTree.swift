@@ -299,8 +299,8 @@ public struct SessionCheckpointTree: Codable, Equatable, Sendable {
         var lines: [String] = []
         appendTreeLines(
             entry: root,
-            prefix: "",
-            isLastChild: true,
+            linePrefix: "",
+            continuationPrefix: "",
             depth: 0,
             maxDepth: maxDepth,
             into: &lines
@@ -308,45 +308,73 @@ public struct SessionCheckpointTree: Codable, Equatable, Sendable {
         return lines.joined(separator: "\n")
     }
 
+    /// Renders a chain of single-child entries at the same indentation level
+    /// and only indents when the tree actually branches, so long linear
+    /// histories stay readable.  `depth` counts branch points, not entries.
     private func appendTreeLines(
         entry: SessionCheckpointEntry,
-        prefix: String,
-        isLastChild: Bool,
+        linePrefix: String,
+        continuationPrefix: String,
         depth: Int,
         maxDepth: Int,
         into lines: inout [String]
     ) {
-        guard depth <= maxDepth else { return }
-        let connector = depth == 0 ? "" : (isLastChild ? "└─ " : "├─ ")
-        let marker = entry.id == activeLeafID ? " ← active" : ""
-        lines.append("\(prefix)\(connector)\(entry.id) \(entryLabel(entry))\(marker)")
-        let kids = children(of: entry.id)
-        let childPrefix = depth == 0 ? "" : prefix + (isLastChild ? "   " : "│  ")
-        for (index, child) in kids.enumerated() {
-            appendTreeLines(
-                entry: child,
-                prefix: childPrefix,
-                isLastChild: index == kids.count - 1,
-                depth: depth + 1,
-                maxDepth: maxDepth,
-                into: &lines
-            )
+        guard depth <= maxDepth else {
+            lines.append("\(continuationPrefix)…")
+            return
+        }
+        var current = entry
+        var isFirstLine = true
+        while true {
+            let prefix = isFirstLine ? linePrefix : continuationPrefix
+            let marker = current.id == activeLeafID ? " ← active" : ""
+            lines.append("\(prefix)\(current.id) \(entryLabel(current))\(marker)")
+            isFirstLine = false
+            let kids = children(of: current.id)
+            switch kids.count {
+            case 0:
+                return
+            case 1:
+                current = kids[0]
+            default:
+                for (index, child) in kids.enumerated() {
+                    let isLast = index == kids.count - 1
+                    appendTreeLines(
+                        entry: child,
+                        linePrefix: continuationPrefix + (isLast ? "└─ " : "├─ "),
+                        continuationPrefix: continuationPrefix + (isLast ? "   " : "│  "),
+                        depth: depth + 1,
+                        maxDepth: maxDepth,
+                        into: &lines
+                    )
+                }
+                return
+            }
         }
     }
 
-    private func entryLabel(_ entry: SessionCheckpointEntry) -> String {
+    /// A one-line human-readable label for a tree entry (kind + preview).
+    public func entryLabel(_ entry: SessionCheckpointEntry) -> String {
         switch entry.kind {
         case let .message(msg):
-            let preview = msg.content.prefix(60).replacingOccurrences(of: "\n", with: " ")
-            return "[\(msg.role.rawValue)] \(preview)"
+            return "[\(msg.role.rawValue)] \(Self.entryPreview(msg.content, limit: 60))"
         case let .checkpoint(label):
             return "[checkpoint] \(label ?? "unnamed")"
         case let .branchSummary(summary, _):
-            let preview = summary.prefix(40).replacingOccurrences(of: "\n", with: " ")
-            return "[branch-summary] \(preview)…"
+            return "[branch-summary] \(Self.entryPreview(summary, limit: 40))…"
         case let .modelChange(modelID):
             return "[model] \(modelID)"
         }
+    }
+
+    /// Collapses runs of whitespace (newlines, tabs, multiple spaces) into
+    /// single spaces before truncating, so previews stay on one clean line.
+    private static func entryPreview(_ text: String, limit: Int) -> String {
+        let collapsed = text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return String(collapsed.prefix(limit))
     }
 
     // MARK: - ID generation

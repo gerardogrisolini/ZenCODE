@@ -133,13 +133,6 @@ public nonisolated enum CodexAgentModel {
             subtitle: "Small, fast, and cost-efficient model for simpler coding tasks",
             contextWindowTokenLimit: effectiveContextWindowTokenLimit(272_000),
             thinkingSupport: standardThinkingSupport
-        ),
-        ModelOption(
-            modelID: "gpt-5.3-codex-spark",
-            title: "GPT-5.3 Codex Spark",
-            subtitle: "Ultra-fast coding",
-            contextWindowTokenLimit: 128_000,
-            thinkingSupport: standardThinkingSupport
         )
     ]
     public static var thinkingSupport: ModelThinkingSupport {
