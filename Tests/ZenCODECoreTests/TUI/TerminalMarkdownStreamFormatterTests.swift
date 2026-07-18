@@ -284,7 +284,133 @@ struct TerminalMarkdownStreamFormatterTests {
         }
     }
 
-    // MARK: (f) Block markers are not emitted raw
+    @Test
+    func tailWrappingUsesTerminalColumnsForWideCJKPrefix() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 20,
+            supportsHyperlinks: false
+        )
+
+        // Five CJK graphemes occupy ten terminal columns, not five character
+        // positions. The buffered inline tail must wrap from column ten.
+        let first = formatter.consume("漢字語花猫")
+        #expect(first == "漢字語花猫")
+
+        let rendered = first + formatter.consume(" word word word\n")
+        for line in rendered.components(separatedBy: "\n") {
+            let width = TerminalANSIText.visibleWidth(line)
+            #expect(width <= 20, "Line too wide (\(width)): \(line)")
+        }
+    }
+
+    // MARK: (f) Unicode boundaries across deltas
+
+    @Test
+    func combiningMarkSplitAcrossDeltasIsPreservedBeforeInlineTail() {
+        var formatter = makeFormatter()
+
+        let rendered = formatter.consume("Cafe")
+            + formatter.consume("\u{0301} `code`\n")
+
+        #expect(TerminalANSIText.stripANSI(rendered).contains("Cafe\u{0301} code"))
+        #expect(rendered.contains("\u{1B}[38;5;180mcode\u{1B}[0m"))
+    }
+
+    @Test
+    func zwjGraphemeSplitAcrossDeltasIsPreservedBeforeInlineTail() {
+        var formatter = makeFormatter()
+
+        let rendered = formatter.consume("Pair 👨")
+            + formatter.consume("\u{200D}👩 `code`\n")
+
+        #expect(TerminalANSIText.stripANSI(rendered).contains("Pair 👨\u{200D}👩 code"))
+        #expect(rendered.contains("\u{1B}[38;5;180mcode\u{1B}[0m"))
+    }
+
+    @Test
+    func flagGraphemeSplitAcrossDeltasIsPreservedBeforeInlineTail() {
+        var formatter = makeFormatter()
+
+        let rendered = formatter.consume("Flag 🇮")
+            + formatter.consume("🇹 `code`\n")
+
+        #expect(TerminalANSIText.stripANSI(rendered).contains("Flag 🇮🇹 code"))
+        #expect(rendered.contains("\u{1B}[38;5;180mcode\u{1B}[0m"))
+    }
+
+    // MARK: (g) Safety flushes retain line context
+
+    @Test
+    func markerAfterStreamingSafetyThresholdStaysMidLineProse() {
+        var formatter = makeFormatter()
+        let prefix = String(repeating: "a", count: 241)
+
+        var rendered = formatter.consume(prefix)
+        #expect(rendered == prefix)
+        rendered += formatter.consume(" - still prose\n")
+        rendered += formatter.finish()
+
+        let visible = TerminalANSIText.stripANSI(rendered)
+        #expect(visible.contains(" - still prose"))
+        #expect(!visible.contains("•"))
+    }
+
+    @Test
+    func markerAfterMarkdownSafetyFlushStaysMidLineProse() {
+        var formatter = makeFormatter()
+
+        _ = formatter.consume("Prefix ")
+        // The leading `*` keeps this tail buffered until the markdown safety
+        // cap is crossed. A subsequent list-looking marker remains in the same
+        // logical line after that forced flush.
+        _ = formatter.consume("*" + String(repeating: "x", count: 2_001))
+        var rendered = formatter.consume(" - still prose\n")
+        rendered += formatter.finish()
+
+        let visible = TerminalANSIText.stripANSI(rendered)
+        #expect(visible.contains(" - still prose"))
+        #expect(!visible.contains("•"))
+    }
+
+    // MARK: (h) Single emphasis and code-span sanitizer
+
+    @Test
+    func singleDelimiterEmphasisIsRenderedWithoutChangingIntrawordUnderscores() {
+        var formatter = makeFormatter()
+
+        let emphasized = formatter.consume("Use *italics* and _also italics_.\n")
+        #expect(emphasized.contains("\u{1B}[3mitalics\u{1B}[0m"))
+        #expect(emphasized.contains("\u{1B}[3malso italics\u{1B}[0m"))
+
+        let identifier = formatter.consume("snake_case remains literal\n")
+        #expect(TerminalANSIText.stripANSI(identifier).contains("snake_case"))
+        #expect(!identifier.contains("\u{1B}[3m"))
+    }
+
+    @Test
+    func singleDelimiterEmphasisStillRendersAfterAStreamedPrefix() {
+        var formatter = makeFormatter()
+
+        let prefix = formatter.consume("Use ")
+        let tail = formatter.consume("*italics* and _also italics_.\n")
+        let rendered = prefix + tail
+
+        #expect(rendered.contains("\u{1B}[3mitalics\u{1B}[0m"))
+        #expect(rendered.contains("\u{1B}[3malso italics\u{1B}[0m"))
+    }
+
+    @Test
+    func thoughtFormatterPreservesStrongMarkerInsideDoubleBacktickCodeSpan() {
+        var formatter = makeThoughtFormatter()
+
+        let rendered = formatter.consume("``**literal``\n")
+
+        #expect(rendered.contains("\u{1B}[38;5;180m"))
+        #expect(TerminalANSIText.stripANSI(rendered).contains("**literal"))
+    }
+
+    // MARK: (i) Block markers are not emitted raw
 
     @Test
     func headingMarkerIsNotEmittedRaw() {

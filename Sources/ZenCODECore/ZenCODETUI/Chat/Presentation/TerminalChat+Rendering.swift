@@ -5,12 +5,6 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
-#if canImport(Darwin)
-
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
 import Foundation
 
 struct TerminalChatBoldBreakState {
@@ -224,23 +218,40 @@ extension TerminalChat {
         return trimmedValue.isEmpty ? nil : trimmedValue
     }
 
-    public static func terminalColumnCount() -> Int {
-        var size = winsize()
-        if ioctl(AgentOutput.standardError.fileDescriptor, TIOCGWINSZ, &size) == 0,
-           size.ws_col > 0 {
-            return Int(size.ws_col)
-        }
-        return 100
+    public static func terminalColumnCount(forceRefresh: Bool = false) -> Int {
+        TerminalWidth.current(
+            descriptors: [AgentOutput.standardError.fileDescriptor],
+            fallback: 100,
+            forceRefresh: forceRefresh
+        )
     }
 
     public static func terminalBoxHorizontalInset(columns _: Int? = nil) -> Int {
         return 0
     }
 
+    /// Reflows `text` to a budget of `width` grapheme clusters per row and joins
+    /// the wrapped rows with newlines.
+    ///
+    /// - Note: **Count-based family.** Like ``wrapInline(_:width:)`` and
+    ///   ``truncatedInline(_:limit:)``, this measures extended grapheme clusters
+    ///   (`String.count`), not visible terminal columns. It intentionally differs
+    ///   from the width-aware `fitDisplayWidth` / ``TerminalANSIText`` family:
+    ///   emoji and CJK glyphs count as one here even when they occupy two cells.
+    ///   Routing these startup, overview, or Telegram helpers through the
+    ///   width-aware core would change their wrap points.
     public static func fitInline(_ text: String, width: Int) -> String {
         wrapInline(text, width: width).joined(separator: "\n")
     }
 
+    /// Word-wraps `text` to at most `width` grapheme clusters per line, breaking
+    /// on whitespace when possible.
+    ///
+    /// - Note: **Count-based family.** `width` is a `String.count` budget, so a
+    ///   double-width emoji or CJK glyph is one unit here even when it occupies
+    ///   two terminal columns. This matches ``fitInline(_:width:)`` and
+    ///   ``truncatedInline(_:limit:)`` and intentionally differs from the
+    ///   width-aware `fitDisplayWidth` / ``TerminalANSIText`` family.
     public static func wrapInline(_ text: String, width: Int) -> [String] {
         let singleLine = text
             .replacingOccurrences(of: "\n", with: " ")
@@ -283,12 +294,50 @@ extension TerminalChat {
         allowedToolNames.contains { $0.hasPrefix("memory.") }
     }
 
+    /// Collapses `text` to a single line and truncates it to at most `limit`
+    /// grapheme clusters, appending an `...` ellipsis when content is cut and
+    /// the marker fits the supplied budget.
+    ///
+    /// - Note: **Count-based family.** `limit` is measured in extended grapheme
+    ///   clusters (`String.count`), so a double-width emoji or CJK glyph is one
+    ///   unit even when it renders in two terminal columns. This deliberately
+    ///   differs from width-aware `fitDisplayWidth` and
+    ///   ``TerminalANSIText/truncate(_:to:)``: routing this helper through that
+    ///   core would silently change startup, overview, and Telegram output. The
+    ///   `...` glyph has a three-cluster budget, while its measurement remains
+    ///   count-based.
     public static func truncatedInline(_ text: String, limit: Int) -> String {
         let singleLine = inlineText(text)
-        guard singleLine.count > limit else {
-            return singleLine
+        return truncatedByCount(singleLine, limit: limit, ellipsis: "...")
+    }
+
+    /// Shared count-based truncation core for the inline (non-width) family.
+    /// Cuts `text` to at most `limit` grapheme clusters, reserving room for
+    /// `ellipsis` and appending it only when content is actually removed.
+    ///
+    /// This mirrors the parametric-ellipsis shape of the width-based core
+    /// ``TerminalANSIText/truncate(_:to:ellipsis:ellipsisWidth:)`` so the two
+    /// families read consistently, but it deliberately measures with
+    /// `String.count`/`prefix` (one unit per grapheme) instead of visible
+    /// columns. Callers are expected to have already flattened newlines
+    /// (e.g. via ``inlineText(_:)``). No ANSI handling is performed because the
+    /// count-based callers never carry escape sequences.
+    static func truncatedByCount(
+        _ text: String,
+        limit: Int,
+        ellipsis: String = "..."
+    ) -> String {
+        let boundedLimit = max(0, limit)
+        guard text.count > boundedLimit else {
+            return text
         }
-        return String(singleLine.prefix(limit - 3)) + "..."
+        // The count-based contract is still an upper bound even when there is
+        // insufficient room for the ellipsis. In that case preserve the prefix
+        // without a marker instead of passing a negative count to `prefix`.
+        guard boundedLimit >= ellipsis.count else {
+            return String(text.prefix(boundedLimit))
+        }
+        return String(text.prefix(boundedLimit - ellipsis.count)) + ellipsis
     }
 
     public static func inlineText(_ text: String) -> String {

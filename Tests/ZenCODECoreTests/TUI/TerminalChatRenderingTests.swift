@@ -40,17 +40,17 @@ struct TerminalChatRenderingTests {
     @Test
     func removingLeadingLineBreaksPreservesContent() {
 
-        #expect(TerminalChat.removingLeadingLineBreaks("\n\nCiao") == "Ciao")
-        #expect(TerminalChat.removingLeadingLineBreaks("\r\nCiao") == "Ciao")
-        #expect(TerminalChat.removingLeadingLineBreaks("Ciao") == "Ciao")
-        #expect(TerminalChat.removingLeadingLineBreaks("\n\n") == "")
+        #expect(TerminalChatTextFormatting.removingLeadingLineBreaks("\n\nCiao") == "Ciao")
+        #expect(TerminalChatTextFormatting.removingLeadingLineBreaks("\r\nCiao") == "Ciao")
+        #expect(TerminalChatTextFormatting.removingLeadingLineBreaks("Ciao") == "Ciao")
+        #expect(TerminalChatTextFormatting.removingLeadingLineBreaks("\n\n") == "")
     }
 
     @Test
     func chatLineInsetIsAppliedOnlyAtLineStarts() {
         var isAtLineStart = true
         #expect(
-            TerminalChat.chatLineInsetApplied(
+            TerminalChatTextFormatting.chatLineInsetApplied(
                 to: "ciao\nmondo",
                 prefix: " ",
                 isAtLineStart: &isAtLineStart
@@ -59,7 +59,7 @@ struct TerminalChatRenderingTests {
         #expect(isAtLineStart == false)
 
         #expect(
-            TerminalChat.chatLineInsetApplied(
+            TerminalChatTextFormatting.chatLineInsetApplied(
                 to: "!",
                 prefix: " ",
                 isAtLineStart: &isAtLineStart
@@ -68,7 +68,7 @@ struct TerminalChatRenderingTests {
         #expect(isAtLineStart == false)
 
         #expect(
-            TerminalChat.chatLineInsetApplied(
+            TerminalChatTextFormatting.chatLineInsetApplied(
                 to: "\nOK",
                 prefix: " ",
                 isAtLineStart: &isAtLineStart
@@ -77,14 +77,49 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func chatLineInsetWithoutPrefixTracksOnlyTheFinalCharacter() {
+        var isAtLineStart = false
+        let lineEnding = "ciao\n"
+
+        #expect(
+            TerminalChatTextFormatting.chatLineInsetApplied(
+                to: lineEnding,
+                prefix: "",
+                isAtLineStart: &isAtLineStart
+            ) == lineEnding
+        )
+        #expect(isAtLineStart)
+
+        let content = "mondo"
+        #expect(
+            TerminalChatTextFormatting.chatLineInsetApplied(
+                to: content,
+                prefix: "",
+                isAtLineStart: &isAtLineStart
+            ) == content
+        )
+        #expect(!isAtLineStart)
+
+        isAtLineStart = true
+        #expect(
+            TerminalChatTextFormatting.chatLineInsetApplied(
+                to: "",
+                prefix: "",
+                isAtLineStart: &isAtLineStart
+            ).isEmpty
+        )
+        #expect(isAtLineStart)
+    }
+
+    @Test
     func chatSpacingNormalizationLimitsVisibleBlankRowsAcrossWrites() {
         var trailingNewlineCount = 0
 
-        let first = TerminalChat.chatSpacingNormalized(
+        let first = TerminalChatTextFormatting.chatSpacingNormalized(
             "Thinking\n\n",
             trailingNewlineCount: &trailingNewlineCount
         )
-        let second = TerminalChat.chatSpacingNormalized(
+        let second = TerminalChatTextFormatting.chatSpacingNormalized(
             "\n🛠️  Read\n\n\nNext",
             trailingNewlineCount: &trailingNewlineCount
         )
@@ -96,14 +131,135 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func chatSpacingNormalizationWithoutNewlineResetsTrailingCount() {
+        var trailingNewlineCount = 2
+        let text = "Contenuto senza ritorno a capo"
+
+        #expect(
+            TerminalChatTextFormatting.chatSpacingNormalized(
+                text,
+                trailingNewlineCount: &trailingNewlineCount
+            ) == text
+        )
+        #expect(trailingNewlineCount == 0)
+    }
+
+    @Test
+    func chatSpacingTreatsCRLFAsOneBoundaryAndCapsBlankRows() {
+        var state = TerminalChatTextFormatting.ChatSpacingState()
+
+        let first = TerminalChatTextFormatting.chatSpacingNormalized(
+            "Thinking\r\n\r\n",
+            state: &state
+        )
+        let overflow = TerminalChatTextFormatting.chatSpacingNormalized(
+            "\r\nNext",
+            state: &state
+        )
+
+        #expect(first == "Thinking\r\n\r\n")
+        #expect(overflow == "Next")
+        #expect(!("\(first)\(overflow)".contains("\r\n\r\n\r\n")))
+        #expect(state.trailingNewlineCount == 0)
+    }
+
+    @Test
+    func chatLineInsetRecognizesCRLFAcrossStreamingDeltas() {
+        var state = TerminalChatTextFormatting.ChatLineInsetState(
+            isAtLineStart: false
+        )
+
+        let first = TerminalChatTextFormatting.chatLineInsetApplied(
+            to: "before\r",
+            prefix: " ",
+            state: &state
+        )
+        let second = TerminalChatTextFormatting.chatLineInsetApplied(
+            to: "\nafter",
+            prefix: " ",
+            state: &state
+        )
+
+        #expect(first == "before\r")
+        #expect(second == "\n after")
+        #expect(!state.isAtLineStart)
+    }
+
+    @Test
+    func chatLineInsetRecognizesInBufferCRLF() {
+        var state = TerminalChatTextFormatting.ChatLineInsetState(
+            isAtLineStart: false
+        )
+
+        let rendered = TerminalChatTextFormatting.chatLineInsetApplied(
+            to: "before\r\nafter",
+            prefix: " ",
+            state: &state
+        )
+
+        #expect(rendered == "before\r\n after")
+        #expect(!state.isAtLineStart)
+    }
+
+    @Test
+    func terminalWidthForceRefreshBypassesTheMonotonicTTL() {
+        let probe = TerminalWidthProbe(120)
+        let now = ContinuousClock().now
+        let descriptors: [Int32] = [-9_876]
+
+        #expect(
+            TerminalWidth.current(
+                descriptors: descriptors,
+                fallback: 80,
+                forceRefresh: true,
+                now: now,
+                measure: { _ in probe.measure() }
+            ) == 120
+        )
+
+        probe.width = 40
+        #expect(
+            TerminalWidth.current(
+                descriptors: descriptors,
+                fallback: 80,
+                now: now.advanced(by: .milliseconds(10)),
+                measure: { _ in probe.measure() }
+            ) == 120
+        )
+        #expect(probe.readCount == 1)
+
+        #expect(
+            TerminalWidth.current(
+                descriptors: descriptors,
+                fallback: 80,
+                forceRefresh: true,
+                now: now.advanced(by: .milliseconds(10)),
+                measure: { _ in probe.measure() }
+            ) == 40
+        )
+        #expect(probe.readCount == 2)
+
+        probe.width = 72
+        #expect(
+            TerminalWidth.current(
+                descriptors: descriptors,
+                fallback: 80,
+                now: now.advanced(by: .milliseconds(300)),
+                measure: { _ in probe.measure() }
+            ) == 72
+        )
+        #expect(probe.readCount == 3)
+    }
+
+    @Test
     func toolOutputSpacingLeavesABlankRowAfterUnterminatedAssistantContent() {
         var trailingNewlineCount = 0
-        TerminalChat.updateTrailingNewlineCount(
+        TerminalChatTextFormatting.updateTrailingNewlineCount(
             afterPreserving: "Risposta del modello.",
             trailingNewlineCount: &trailingNewlineCount
         )
 
-        let separator = TerminalChat.chatSpacingNormalized(
+        let separator = TerminalChatTextFormatting.chatSpacingNormalized(
             "\n\n",
             trailingNewlineCount: &trailingNewlineCount
         )
@@ -118,9 +274,9 @@ struct TerminalChatRenderingTests {
 
         let chunks = ["Fixed it incorrectly.", "*", "*Identifying bugs** done"]
         var rendered = chunks
-            .map { TerminalChat.normalizedBoldSectionBreak($0, state: &state) }
+            .map { TerminalChatTextFormatting.normalizedBoldSectionBreak($0, state: &state) }
             .joined()
-        rendered += TerminalChat.flushBoldSectionBreak(state: &state)
+        rendered += TerminalChatTextFormatting.flushBoldSectionBreak(state: &state)
 
         #expect(rendered == "Fixed it incorrectly.\n**Identifying bugs** done")
     }
@@ -131,9 +287,9 @@ struct TerminalChatRenderingTests {
 
         let chunks = ["**Planning isolated test execution**", "**Analyzing ANSI cursor**"]
         var rendered = chunks
-            .map { TerminalChat.normalizedBoldSectionBreak($0, state: &state) }
+            .map { TerminalChatTextFormatting.normalizedBoldSectionBreak($0, state: &state) }
             .joined()
-        rendered += TerminalChat.flushBoldSectionBreak(state: &state)
+        rendered += TerminalChatTextFormatting.flushBoldSectionBreak(state: &state)
 
         #expect(
             rendered ==
@@ -145,10 +301,10 @@ struct TerminalChatRenderingTests {
     func boldSectionBreakDoesNotBreakBeforeClosingMarkerAfterPeriod() {
         var state = TerminalChatBoldBreakState()
 
-        let rendered = TerminalChat.normalizedBoldSectionBreak(
+        let rendered = TerminalChatTextFormatting.normalizedBoldSectionBreak(
             "**Done.** next",
             state: &state
-        ) + TerminalChat.flushBoldSectionBreak(state: &state)
+        ) + TerminalChatTextFormatting.flushBoldSectionBreak(state: &state)
 
         #expect(rendered == "**Done.** next")
     }
@@ -157,17 +313,17 @@ struct TerminalChatRenderingTests {
     func boldSectionBreakLeavesPlainBoldAndOrderedListsIntact() {
         var state = TerminalChatBoldBreakState()
 
-        let plainBold = TerminalChat.normalizedBoldSectionBreak(
+        let plainBold = TerminalChatTextFormatting.normalizedBoldSectionBreak(
             "Use **bold** here",
             state: &state
-        ) + TerminalChat.flushBoldSectionBreak(state: &state)
+        ) + TerminalChatTextFormatting.flushBoldSectionBreak(state: &state)
         #expect(plainBold == "Use **bold** here")
 
         var listState = TerminalChatBoldBreakState()
-        let orderedList = TerminalChat.normalizedBoldSectionBreak(
+        let orderedList = TerminalChatTextFormatting.normalizedBoldSectionBreak(
             "1. First. 2. Second",
             state: &listState
-        ) + TerminalChat.flushBoldSectionBreak(state: &listState)
+        ) + TerminalChatTextFormatting.flushBoldSectionBreak(state: &listState)
         #expect(orderedList == "1. First. 2. Second")
     }
 
@@ -176,7 +332,7 @@ struct TerminalChatRenderingTests {
         var state = TerminalChatBoldBreakState()
         let chunks = [" Analizzo il bug.", " Verifico i test", ".", " Scrivo la fix"]
         let rendered = chunks
-            .map { TerminalChat.normalizedBoldSectionBreak($0, state: &state) }
+            .map { TerminalChatTextFormatting.normalizedBoldSectionBreak($0, state: &state) }
             .joined()
 
         #expect(rendered == " Analizzo il bug. Verifico i test. Scrivo la fix")
@@ -186,7 +342,7 @@ struct TerminalChatRenderingTests {
     @Test
     func thoughtNormalizationLeavesPlainNumbersInline() {
         var state = TerminalChatBoldBreakState()
-        let rendered = TerminalChat.normalizedBoldSectionBreak(
+        let rendered = TerminalChatTextFormatting.normalizedBoldSectionBreak(
             "Uso la versione 1.2. Poi continuo",
             state: &state
         )
@@ -349,7 +505,7 @@ struct TerminalChatRenderingTests {
 
     @Test
     func systemMessageColoringWrapsNonBlankLines() {
-        let rendered = TerminalChat.systemMessageColorApplied(
+        let rendered = TerminalChatTextFormatting.systemMessageColorApplied(
             to: "Tool details: full\n",
             isEnabled: true
         )
@@ -365,6 +521,24 @@ struct TerminalChatRenderingTests {
             "/models, /agents"
         ])
         #expect(!TerminalChat.fitInline("Commands: /help, /models, /agents", width: 18).contains("..."))
+    }
+
+    @Test
+    func truncatedInlineCountsWideGraphemesInsteadOfDisplayColumns() {
+        // `😀` and `界` are each two terminal cells, but each consumes one
+        // count-based truncation unit. A width-aware core would return `...`.
+        #expect(TerminalChat.truncatedInline("😀界abc", limit: 4) == "😀...")
+    }
+
+    @Test
+    func truncatedByCountHandlesBudgetsNoLargerThanItsEllipsis() {
+        // The count-based family must never pass a negative length to `prefix`.
+        // It omits the marker when its three graphemes cannot fit in the budget.
+        #expect(TerminalChat.truncatedByCount("abcdef", limit: 3) == "...")
+        #expect(TerminalChat.truncatedByCount("abcdef", limit: 2) == "ab")
+        #expect(TerminalChat.truncatedByCount("abcdef", limit: 1) == "a")
+        #expect(TerminalChat.truncatedByCount("abcdef", limit: 0).isEmpty)
+        #expect(TerminalChat.truncatedByCount("abcdef", limit: -1).isEmpty)
     }
 
     @Test
@@ -1058,7 +1232,7 @@ struct TerminalChatRenderingTests {
     func preservedSpacingTracksTrailingNewlinesThroughANSI() {
         var trailingNewlineCount = 0
 
-        TerminalChat.updateTrailingNewlineCount(
+        TerminalChatTextFormatting.updateTrailingNewlineCount(
             afterPreserving: "\u{1B}[90mthinking\n\u{1B}[0m",
             trailingNewlineCount: &trailingNewlineCount
         )
@@ -1107,7 +1281,7 @@ struct TerminalChatRenderingTests {
 
         """) + formatter.finish()
         var isAtLineStart = true
-        let insetRendered = TerminalChat.chatLineInsetApplied(
+        let insetRendered = TerminalChatTextFormatting.chatLineInsetApplied(
             to: rendered,
             prefix: " ",
             isAtLineStart: &isAtLineStart
@@ -1762,7 +1936,7 @@ struct TerminalChatRenderingTests {
 
     @Test
     func dimmedANSISequenceMapsHeadingAccentToMutedSteel() {
-        let dimmed = TerminalChat.dimmedANSISequence(
+        let dimmed = TerminalChatTextFormatting.dimmedANSISequence(
             "\u{1B}[1;38;5;75m",
             gray: "\u{1B}[90m",
             reset: "\u{1B}[0m"
@@ -1775,7 +1949,7 @@ struct TerminalChatRenderingTests {
 
     @Test
     func dimmedANSISequenceMapsInlineCodeAccentToMutedTan() {
-        let dimmed = TerminalChat.dimmedANSISequence(
+        let dimmed = TerminalChatTextFormatting.dimmedANSISequence(
             "\u{1B}[38;5;180m",
             gray: "\u{1B}[90m",
             reset: "\u{1B}[0m"
@@ -1786,7 +1960,7 @@ struct TerminalChatRenderingTests {
 
     @Test
     func dimmedANSISequenceCollapsesResetToGray() {
-        let dimmed = TerminalChat.dimmedANSISequence(
+        let dimmed = TerminalChatTextFormatting.dimmedANSISequence(
             "\u{1B}[0m",
             gray: "\u{1B}[90m",
             reset: "\u{1B}[0m"
@@ -1797,7 +1971,7 @@ struct TerminalChatRenderingTests {
 
     @Test
     func dimmedANSISequenceFallsBackToGrayForUnmappedColor() {
-        let dimmed = TerminalChat.dimmedANSISequence(
+        let dimmed = TerminalChatTextFormatting.dimmedANSISequence(
             "\u{1B}[38;5;200m",
             gray: "\u{1B}[90m",
             reset: "\u{1B}[0m"
@@ -1809,10 +1983,10 @@ struct TerminalChatRenderingTests {
 
     @Test
     func mutedThoughtAccentMapsKnownAccentFamilies() {
-        #expect(TerminalChat.mutedThoughtAccent(for: 75) == 109)
-        #expect(TerminalChat.mutedThoughtAccent(for: 180) == 144)
-        #expect(TerminalChat.mutedThoughtAccent(for: 108) == 108)
-        #expect(TerminalChat.mutedThoughtAccent(for: 200) == nil)
+        #expect(TerminalChatTextFormatting.mutedThoughtAccent(for: 75) == 109)
+        #expect(TerminalChatTextFormatting.mutedThoughtAccent(for: 180) == 144)
+        #expect(TerminalChatTextFormatting.mutedThoughtAccent(for: 108) == 108)
+        #expect(TerminalChatTextFormatting.mutedThoughtAccent(for: 200) == nil)
     }
 
     @Test
@@ -1862,6 +2036,73 @@ struct TerminalChatRenderingTests {
         #expect(!rendered.contains("│"))
         #expect(!rendered.contains("└"))
         #expect(visibleLines.allSatisfy { $0.count <= 122 })
+    }
+
+    @Test
+    func subAgentOverviewKeepsMultipleSnapshotsCompactAcrossBoundaries() {
+        let now = Date(timeIntervalSince1970: 0)
+        let snapshots = [
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "agent-first",
+                name: "first-agent",
+                role: "",
+                status: .closed,
+                pending: false,
+                latestOutput: nil,
+                latestError: nil,
+                createdAt: now,
+                updatedAt: now
+            ),
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "agent-second",
+                name: "second-agent",
+                role: "",
+                status: .closed,
+                pending: false,
+                latestOutput: nil,
+                latestError: nil,
+                createdAt: now,
+                updatedAt: now
+            ),
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "agent-third",
+                name: "third-agent",
+                role: "",
+                status: .closed,
+                pending: false,
+                latestOutput: nil,
+                latestError: nil,
+                createdAt: now,
+                updatedAt: now
+            )
+        ]
+
+        let visibleLines = ansiStripped(TerminalChat.renderSubAgentOverview(snapshots))
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        let summaryIndex = visibleLines.firstIndex { $0.contains("3 total") }
+        let firstHeaderIndex = visibleLines.firstIndex { $0.contains("first-agent") }
+        let firstIDIndex = visibleLines.firstIndex { $0.contains("id: agent-first") }
+        let secondHeaderIndex = visibleLines.firstIndex { $0.contains("second-agent") }
+        let secondIDIndex = visibleLines.firstIndex { $0.contains("id: agent-second") }
+        let thirdHeaderIndex = visibleLines.firstIndex { $0.contains("third-agent") }
+
+        let contentLines = Array(visibleLines.dropFirst().dropLast())
+        #expect(contentLines.allSatisfy { !$0.isEmpty })
+        #expect(summaryIndex != nil)
+        #expect(firstHeaderIndex != nil)
+        #expect(firstIDIndex != nil)
+        #expect(secondHeaderIndex != nil)
+        #expect(secondIDIndex != nil)
+        #expect(thirdHeaderIndex != nil)
+
+        if let summaryIndex, let firstHeaderIndex,
+           let firstIDIndex, let secondHeaderIndex,
+           let secondIDIndex, let thirdHeaderIndex {
+            #expect(firstHeaderIndex == summaryIndex + 1)
+            #expect(secondHeaderIndex == firstIDIndex + 1)
+            #expect(thirdHeaderIndex == secondIDIndex + 1)
+        }
     }
 
     @Test
@@ -2239,7 +2480,7 @@ struct TerminalChatRenderingTests {
 
     @Test
     func failureMessageColoringWrapsNonBlankLines() {
-        let rendered = TerminalChat.failureMessageColorApplied(
+        let rendered = TerminalChatTextFormatting.failureMessageColorApplied(
             to: "ZenCODE: HTTP 402\n\nRetry later.\n",
             isEnabled: true
         )
@@ -2262,5 +2503,21 @@ struct TerminalChatRenderingTests {
             stdinIsTerminal: false,
             sessionRunner: sessionRunner
         )
+    }
+}
+
+
+/// Deterministic probe used to exercise `TerminalWidth` without issuing ioctl.
+private final class TerminalWidthProbe: @unchecked Sendable {
+    var width: Int
+    private(set) var readCount = 0
+
+    init(_ width: Int) {
+        self.width = width
+    }
+
+    func measure() -> Int {
+        readCount += 1
+        return width
     }
 }

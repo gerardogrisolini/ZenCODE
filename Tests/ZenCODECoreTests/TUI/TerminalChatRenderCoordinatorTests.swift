@@ -53,6 +53,64 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func compactCompletionKeepsActiveStyleWhenDetailLevelChanges() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let toolCall = DirectAgentToolCall(
+            id: "compact-style-change",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.writeToolCallStarted(toolCall)
+        let started = await renderer.snapshot()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+
+        let events = await renderer.capturedWriteEvents()
+        let completionText = events
+            .dropFirst(eventCountBeforeCompletion)
+            .map(\.text)
+            .joined()
+
+        #expect(started.activeCompactToolCallID == toolCall.id)
+        #expect(containsCursorUpSequence(completionText))
+        #expect(!completionText.contains("status: ✅"))
+    }
+
+    @Test
+    func compactCompletionReadsColumnWidthOnce() async {
+        let widthBox = ColumnWidthBox(100)
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: {
+                widthBox.readCount += 1
+                return widthBox.width
+            }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "compact-width-capture",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.writeToolCallStarted(toolCall)
+        #expect(widthBox.readCount == 1)
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+
+        #expect(widthBox.readCount == 2)
+    }
+
+    @Test
     func emptyContentDoesNotRelinquishToolRows() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = DirectAgentToolCall(
@@ -755,6 +813,179 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(completedSnapshot.activeCompactToolRenderedRowCount == 0)
     }
 
+    @Test
+    func staleCompletionDoesNotRelinquishNewerToolOwnership() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let first = DirectAgentToolCall(
+            id: "overlap-first",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        let second = DirectAgentToolCall(
+            id: "overlap-second",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.writeToolCallStarted(first)
+        await renderer.writeToolCallStarted(second)
+        let eventCountBeforeStaleCompletion = await renderer.capturedWriteEvents().count
+
+        // The first completion is stale: the later start owns the one physical
+        // rewrite slot, so this result must append without clearing that slot.
+        await renderer.writeToolCallCompleted(
+            first,
+            result: DirectAgentToolResult(output: "first", summary: "first")
+        )
+        let afterStaleCompletion = await renderer.snapshot()
+        let staleCompletionText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventCountBeforeStaleCompletion)
+            .map(\.text)
+            .joined()
+
+        #expect(afterStaleCompletion.activeCompactToolCallID == second.id)
+        #expect(!containsCursorUpSequence(staleCompletionText))
+        #expect(staleCompletionText.contains("✅"))
+
+        let eventCountBeforeOwningCompletion = await renderer.capturedWriteEvents().count
+        await renderer.writeToolCallCompleted(
+            second,
+            result: DirectAgentToolResult(output: "second", summary: "second")
+        )
+        let afterOwningCompletion = await renderer.snapshot()
+        let owningCompletionText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventCountBeforeOwningCompletion)
+            .map(\.text)
+            .joined()
+
+        #expect(afterOwningCompletion.activeCompactToolCallID == nil)
+        #expect(containsCursorUpSequence(owningCompletionText))
+    }
+
+    @Test
+    func detailedCompletionKeepsItsOwnedStyleAfterSwitchingToCompact() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let toolCall = DirectAgentToolCall(
+            id: "detailed-style-change",
+            name: "local.readFile",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallStarted(toolCall)
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+        await renderer.setToolOutputDetailLevel(.compact)
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+
+        let completionText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventCountBeforeCompletion)
+            .map(\.text)
+            .joined()
+        #expect(containsCursorUpSequence(completionText))
+        #expect(TerminalANSIText.stripANSI(completionText).contains("status: ✅"))
+    }
+
+    @Test
+    func completionUsesExplicitFreshWidthProviderBeforeClearingRows() async {
+        let cachedWidth = ColumnWidthBox(100)
+        let freshWidth = ColumnWidthBox(40)
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: {
+                cachedWidth.readCount += 1
+                return cachedWidth.width
+            },
+            freshColumnWidthProvider: {
+                freshWidth.readCount += 1
+                return freshWidth.width
+            }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "fresh-width-provider",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.writeToolCallStarted(toolCall)
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+
+        let completionText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventCountBeforeCompletion)
+            .map(\.text)
+            .joined()
+        #expect(cachedWidth.readCount == 1)
+        #expect(freshWidth.readCount == 1)
+        #expect(!containsCursorUpSequence(completionText))
+        #expect(completionText.contains("✅"))
+    }
+
+    @Test
+    func separateTerminalTopologyClosesAssistantOutputUsingStdoutCursor() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            standardOutputIsTerminal: true,
+            cursorTopology: .separate
+        )
+
+        await renderer.writeAssistantContent("Answer")
+        // stderr ends a row on its own terminal, not on stdout's terminal.
+        await renderer.writeError("\n")
+        await renderer.finishAssistantContent()
+
+        let stdout = await renderer.capturedWriteEvents()
+            .filter { $0.channel == .standardOutput }
+            .map(\.text)
+            .joined()
+        #expect(TerminalANSIText.stripANSI(stdout) == "Answer\n")
+    }
+
+    @Test
+    func sharedTerminalTopologyReusesTheErrorCursorForAssistantCompletion() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            standardOutputIsTerminal: true,
+            cursorTopology: .shared
+        )
+
+        await renderer.writeAssistantContent("Answer")
+        await renderer.writeError("\n")
+        await renderer.finishAssistantContent()
+
+        let stdout = await renderer.capturedWriteEvents()
+            .filter { $0.channel == .standardOutput }
+            .map(\.text)
+            .joined()
+        // The shared stderr newline already closed the physical row, so stdout
+        // must not add a duplicate line boundary.
+        #expect(TerminalANSIText.stripANSI(stdout) == "Answer")
+    }
+
+    @Test
+    func aLoneThoughtAsteriskIsFlushedAtEndOfStream() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: false)
+
+        await renderer.writeThought("*")
+        await renderer.finishThoughtOutput()
+
+        let stderr = await renderer.capturedWriteEvents()
+            .filter { $0.channel == .standardError }
+            .map(\.text)
+            .joined()
+        #expect(stderr.contains("🤔 Thinking:"))
+        #expect(stderr.contains("*"))
+    }
+
     private func makeRenderer(
         stdinIsTerminal: Bool = false,
         standardErrorIsTerminal: Bool,
@@ -763,20 +994,32 @@ struct TerminalChatRenderCoordinatorTests {
         streamingNow: @Sendable @escaping () -> ContinuousClock.Instant = {
             ContinuousClock().now
         },
-        columnWidthProvider: @Sendable @escaping () -> Int = {
-            TerminalChat.terminalColumnCount()
-        }
+        columnWidthProvider: (@Sendable () -> Int)? = nil,
+        freshColumnWidthProvider: (@Sendable () -> Int)? = nil,
+        cursorTopology: TerminalChatRenderCoordinator.CursorTopology? = nil
     ) -> TerminalChatRenderCoordinator {
-        TerminalChatRenderCoordinator(
+        let resolvedTopology: TerminalChatRenderCoordinator.CursorTopology?
+        if let cursorTopology {
+            resolvedTopology = cursorTopology
+        } else if standardOutputIsTerminal && standardErrorIsTerminal {
+            // Existing tests with two captured TTY channels model the legacy
+            // one-terminal transcript explicitly.
+            resolvedTopology = .shared
+        } else {
+            resolvedTopology = nil
+        }
+        return TerminalChatRenderCoordinator(
             stdinIsTerminal: stdinIsTerminal,
             standardOutput: nil,
             standardError: nil,
             standardOutputIsTerminal: standardOutputIsTerminal,
             standardErrorIsTerminal: standardErrorIsTerminal,
+            cursorTopology: resolvedTopology,
             capturesWrites: true,
             streamingFlushDelay: streamingFlushDelay,
             streamingNow: streamingNow,
-            columnWidthProvider: columnWidthProvider
+            columnWidthProvider: columnWidthProvider,
+            freshColumnWidthProvider: freshColumnWidthProvider
         )
     }
 }
@@ -786,6 +1029,7 @@ struct TerminalChatRenderCoordinatorTests {
 /// `@unchecked Sendable` satisfies the `@Sendable` closure requirement.
 private final class ColumnWidthBox: @unchecked Sendable {
     var width: Int
+    var readCount = 0
     init(_ width: Int) { self.width = width }
 }
 

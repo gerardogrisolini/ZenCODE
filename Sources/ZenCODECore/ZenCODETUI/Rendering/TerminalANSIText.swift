@@ -29,7 +29,11 @@ enum TerminalANSIText {
     }
     
     
-    private static func visibleWidth(of character: Character) -> Int {
+    /// Number of visible terminal columns occupied by a single extended
+    /// grapheme cluster, applying the same double-width policy as
+    /// ``visibleWidth(_:)``. Exposed so width-aware callers (truncation,
+    /// fitting) can measure per-character without materializing a `String`.
+    static func visibleWidth(of character: Character) -> Int {
         let scalars = character.unicodeScalars
         guard let first = scalars.first else {
             return 0
@@ -37,10 +41,19 @@ enum TerminalANSIText {
         if scalars.allSatisfy(isZeroWidthScalar) {
             return 0
         }
-        if scalars.contains(where: isEmojiPresentationScalar)
-            || scalars.contains("\u{FE0F}")
+        if isWideOrFullwidthScalar(first) {
+            return 2
+        }
+        // A text-presentation selector overrides the default emoji presentation
+        // for symbol characters such as U+23F3 (⏳). Conversely, VS16 selects
+        // emoji presentation for normally narrow symbols such as U+2702 (✂).
+        // Keep the selector checks ahead of the scalar property so the rendered
+        // width follows the explicit presentation requested by the text.
+        if scalars.contains("\u{FE0F}")
             || scalars.contains("\u{200D}")
-            || isWideOrFullwidthScalar(first) {
+            || scalars.contains("\u{20E3}")
+            || (!scalars.contains("\u{FE0E}")
+                && scalars.contains(where: isEmojiPresentationScalar)) {
             return 2
         }
         return 1
@@ -61,38 +74,14 @@ enum TerminalANSIText {
         || (0xFE20...0xFE2F).contains(value)
     }
     
-    /// Returns `true` for scalars that occupy a double-width (wide) cell on a
-    /// terminal because they present as color emoji.
+    /// Returns `true` when Unicode assigns an emoji presentation by default.
     ///
-    /// - Note: **Width policy.** A scalar is reported as wide when it belongs to
-    ///   a range that the Unicode `EastAsianWidth.txt` marks as East Asian
-    ///   Width = `W` *and* that has a default emoji presentation — i.e. it
-    ///   renders as a wide glyph even without a trailing VS16 (U+FE0F)
-    ///   selector. This includes the common symbol pictographs used by the TUI
-    ///   such as U+23F3 ⏳ (the standard "pending" status icon), U+231A ⌚,
-    ///   U+2B50 ⭐ and U+2B55 🔵, which were previously under-counted as
-    ///   width 1. The dense pictographic emoji blocks (0x1F000–0x1FAFF and
-    ///   0x2600–0x27BF) are reported as a whole. A VS16 selector forcing a
-    ///   text-presentation symbol into emoji presentation is handled separately
-    ///   in `visibleWidth(of:)`.
+    /// This deliberately uses Unicode's `Emoji_Presentation` property rather
+    /// than treating entire symbol blocks as emoji. Many symbols in U+2600…
+    /// U+27BF are text-presentation by default and occupy one terminal cell
+    /// until a VS16 selector explicitly requests their emoji presentation.
     private static func isEmojiPresentationScalar(_ scalar: Unicode.Scalar) -> Bool {
-        let value = scalar.value
-        // East Asian Width = W with a default emoji presentation (rendered wide
-        // without a trailing VS16 selector). These symbol ranges sit outside
-        // the dense pictographic blocks but are unambiguously wide emoji.
-        if (0x231A...0x231B).contains(value)   // ⌚ ⌛ watch, hourglass done
-            || (0x23E9...0x23EC).contains(value)   // ⏩ ⏪ ⏫ ⏬
-            || value == 0x23F0                     // ⏰ alarm clock
-            || value == 0x23F3                     // ⏳ hourglass (pending icon)
-            || (0x25FD...0x25FE).contains(value)   // ◽ ◾ squares
-            || (0x2B1B...0x2B1C).contains(value)   // ⬛ ⬜ squares
-            || value == 0x2B50                     // ⭐ star
-            || value == 0x2B55 {                   // 🔵 hollow circle
-            return true
-        }
-        // Dense pictographic / emoji blocks.
-        return (0x1F000...0x1FAFF).contains(value)
-            || (0x2600...0x27BF).contains(value)
+        scalar.properties.isEmojiPresentation
     }
     
     private static func isWideOrFullwidthScalar(_ scalar: Unicode.Scalar) -> Bool {
@@ -123,18 +112,43 @@ enum TerminalANSIText {
         guard visibleWidth(stripANSI(text)) > width else {
             return text
         }
+        return truncate(
+            text,
+            to: width,
+            ellipsis: ellipsis,
+            ellipsisWidth: ellipsisWidth
+        )
+    }
 
+    /// Width-aware truncation core with a parametric ellipsis glyph. Shared by
+    /// ``truncate(_:to:)`` (`…`, width 1) and `TerminalChat.fitDisplayWidth`
+    /// (`...`, width 3) so both cut at identical grapheme boundaries. Callers
+    /// are responsible for the "already fits" short-circuit and for any
+    /// glyph-specific short-width fallback; this core assumes `width` leaves at
+    /// least `width - ellipsisWidth` columns of content budget and that `text`
+    /// exceeds `width` visible columns.
+    ///
+    /// Iterates by extended grapheme cluster (Character), not by scalar, so
+    /// that multi-scalar clusters — ZWJ families, skin-tone modifiers, flag
+    /// pairs and keycap sequences — are never split across the cut and are
+    /// measured consistently with `visibleWidth(_:)`. ANSI escape sequences are
+    /// preserved verbatim in between, and a reset is emitted when a style is
+    /// still open at the cut so styling never leaks past the truncation. Per
+    /// grapheme width is measured with `visibleWidth(of:)` to avoid allocating
+    /// a `String` for every character.
+    static func truncate(
+        _ text: String,
+        to width: Int,
+        ellipsis: String,
+        ellipsisWidth: Int
+    ) -> String {
         var result = ""
         var visible = 0
         var index = text.startIndex
         var hasStyle = false
+        var hyperlinkClosure: String?
         let maxContent = width - ellipsisWidth
 
-        // Iterate by extended grapheme cluster (Character), not by scalar, so
-        // that multi-scalar clusters — ZWJ families, skin-tone modifiers, flag
-        // pairs and keycap sequences — are never split across the cut and are
-        // measured consistently with `visibleWidth(_:)`. ANSI escape sequences
-        // are preserved verbatim in between.
         while index < text.endIndex {
             let character = text[index]
             if character.unicodeScalars.first == "\u{1B}" {
@@ -145,6 +159,14 @@ enum TerminalANSIText {
                     hasStyle = true
                 } else if sequence == "\u{1B}[0m" {
                     hasStyle = false
+                }
+                if let hyperlink = osc8HyperlinkState(for: sequence) {
+                    switch hyperlink {
+                    case let .open(closure):
+                        hyperlinkClosure = closure
+                    case .close:
+                        hyperlinkClosure = nil
+                    }
                 }
                 index = end
                 continue
@@ -158,6 +180,13 @@ enum TerminalANSIText {
             index = text.index(after: index)
         }
         result += ellipsis
+        // OSC 8 state is independent from SGR. A terminal reset does not close
+        // a hyperlink, so emit the matching BEL/ST closure when a cut falls in
+        // its label. Keep it after the ellipsis, mirroring the existing SGR
+        // contract where the ellipsis remains part of the active rendition.
+        if let hyperlinkClosure {
+            result += hyperlinkClosure
+        }
         if hasStyle {
             result += reset
         }
@@ -304,8 +333,16 @@ enum TerminalANSIText {
                     current += reset
                 }
                 lines.append(current)
-                current = continuationIndent + activeStyle
-                currentWidth = visibleWidth(continuationIndent)
+                // An otherwise valid indent can leave too little room for a
+                // double-width grapheme. Fit its continuation copy to the
+                // remaining budget of this row rather than emitting a row wider
+                // than `width`.
+                let fittedIndent = prefixFittingVisibleWidth(
+                    continuationIndent,
+                    width: max(0, width - characterWidth)
+                )
+                current = fittedIndent + activeStyle
+                currentWidth = visibleWidth(fittedIndent)
             }
 
             current.append(character)
@@ -353,6 +390,77 @@ enum TerminalANSIText {
             .dropLast()
             .split(separator: ";")
         return codes.isEmpty || codes.contains("0") || codes.contains("")
+    }
+
+    /// Returns the longest prefix of `text` whose visible width does not exceed
+    /// `width`. ANSI escapes remain intact and do not consume the budget.
+    private static func prefixFittingVisibleWidth(_ text: String, width: Int) -> String {
+        guard width > 0 else {
+            return ""
+        }
+
+        var result = ""
+        var used = 0
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            if character.unicodeScalars.first == "\u{1B}" {
+                let end = endOfEscapeSequence(in: text, from: index)
+                result += String(text[index..<end])
+                index = end
+                continue
+            }
+
+            let characterWidth = visibleWidth(of: character)
+            guard used + characterWidth <= width else {
+                break
+            }
+            result.append(character)
+            used += characterWidth
+            index = text.index(after: index)
+        }
+        return result
+    }
+
+    private enum OSC8HyperlinkState {
+        case open(closure: String)
+        case close
+    }
+
+    /// Identifies a complete OSC 8 hyperlink sequence and, for an opener,
+    /// returns the matching closure using its original terminator convention.
+    /// OSC 8 accepts both BEL and ST (`ESC \\`) terminators; preserving the
+    /// opener's convention avoids injecting a mixed sequence into the stream.
+    private static func osc8HyperlinkState(for sequence: String) -> OSC8HyperlinkState? {
+        guard sequence.hasPrefix("\u{1B}]") else {
+            return nil
+        }
+
+        let terminator: String
+        let payloadEnd: String.Index
+        if sequence.hasSuffix("\u{07}") {
+            terminator = "\u{07}"
+            payloadEnd = sequence.index(before: sequence.endIndex)
+        } else if sequence.hasSuffix("\u{1B}\\") {
+            terminator = "\u{1B}\\"
+            payloadEnd = sequence.index(sequence.endIndex, offsetBy: -2)
+        } else {
+            return nil
+        }
+
+        let payloadStart = sequence.index(sequence.startIndex, offsetBy: 2)
+        let fields = sequence[payloadStart..<payloadEnd].split(
+            separator: ";",
+            maxSplits: 2,
+            omittingEmptySubsequences: false
+        )
+        guard fields.count == 3, fields[0] == "8" else {
+            return nil
+        }
+        if fields[2].isEmpty {
+            return .close
+        }
+        return .open(closure: "\u{1B}]8;;\(terminator)")
     }
     
     

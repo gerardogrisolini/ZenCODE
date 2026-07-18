@@ -93,7 +93,7 @@ extension TerminalChat {
         columnWidth: Int? = nil
     ) -> String {
         let resolvedColumns = columnWidth ?? terminalColumnCount()
-        let columns = max(20, resolvedColumns - contentInsetWidth)
+        let columns = max(0, resolvedColumns - contentInsetWidth)
         let suffixWidth = displayWidth(statusIcon)
         // Reserve one extra trailing column so the rendered line (inset + target
         // + " " + status icon) never occupies the full terminal width. A line
@@ -101,11 +101,18 @@ extension TerminalChat {
         // terminals without deferred wrap advance the cursor an extra row, so
         // the in-place rewrite on completion moves up one row too few and leaves
         // the previous title line behind, duplicating the tool header.
-        let textWidthLimit = max(1, columns - suffixWidth - 2)
+        let safeLineWidth = max(0, columns - 1)
+        let textWidthLimit = safeLineWidth - suffixWidth - 1
+        guard textWidthLimit > 0 else {
+            return suffixWidth <= safeLineWidth ? statusIcon : ""
+        }
         let fittedTarget = fitDisplayWidth(
             compactToolInlineTarget(target),
             width: textWidthLimit
         )
+        guard !fittedTarget.isEmpty else {
+            return suffixWidth <= safeLineWidth ? statusIcon : ""
+        }
         return "\(fittedTarget) \(statusIcon)"
     }
 
@@ -166,22 +173,37 @@ extension TerminalChat {
         guard displayWidth(text) > width else {
             return text
         }
+        guard width > 0 else {
+            return ""
+        }
         guard width > 3 else {
-            return String(text.prefix(max(0, width)))
-        }
-
-        var output = ""
-        var currentWidth = 0
-        let ellipsisWidth = 3
-        for character in text {
-            let characterWidth = displayWidth(String(character))
-            guard currentWidth + characterWidth <= width - ellipsisWidth else {
-                break
+            // There is no room for the three-column ellipsis. Keep the prior
+            // no-ellipsis fallback, but make it genuinely width-aware: a wide
+            // grapheme cannot be copied into a one-cell budget.
+            var output = ""
+            var outputWidth = 0
+            for character in text {
+                let characterWidth = TerminalANSIText.visibleWidth(of: character)
+                guard outputWidth + characterWidth <= width else {
+                    break
+                }
+                output.append(character)
+                outputWidth += characterWidth
             }
-            output.append(character)
-            currentWidth += characterWidth
+            return output
         }
-        return output + "..."
+        // Delegate the grapheme-safe cut to the shared width-aware core,
+        // keeping the "..." ellipsis (width 3). The core measures each grapheme
+        // with `visibleWidth(of:)`, so this no longer allocates a `String` per
+        // character. `fitDisplayWidth` inputs carry no ANSI, so the core's
+        // escape handling is a no-op and the output is byte-identical to the
+        // previous inline loop.
+        return TerminalANSIText.truncate(
+            text,
+            to: width,
+            ellipsis: "...",
+            ellipsisWidth: 3
+        )
     }
 
     static func displayWidth(_ text: String) -> Int {

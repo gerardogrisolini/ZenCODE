@@ -29,6 +29,14 @@ actor TerminalChatRenderCoordinator {
         case standardError
     }
 
+    /// Describes whether stdout and stderr address one physical cursor.
+    /// Terminal capability alone is insufficient: two independent TTYs have
+    /// separate cursor positions and therefore must not share spacing state.
+    enum CursorTopology: Sendable, Equatable {
+        case shared
+        case separate
+    }
+
     struct WriteEvent: Sendable, Equatable {
         let sequence: UInt64
         let channel: OutputChannel
@@ -48,19 +56,62 @@ actor TerminalChatRenderCoordinator {
         let isStreamingThoughtOutput: Bool
     }
 
+    private enum ToolBlockStyle: Sendable, Equatable {
+        case compact
+        case detailed
+    }
+
+    private enum ToolBlockLifecycle {
+        case started
+        case completed(DirectAgentToolResult)
+
+        var isCompletion: Bool {
+            if case .completed = self {
+                return true
+            }
+            return false
+        }
+    }
+
     /// Tracks the active tool block so it can be cleared in place on
-    /// completion.  ``columnWidth`` records the terminal width observed when
-    /// ``rows`` was calculated: if the width changes before completion the
-    /// saved row count is stale and the destructive clear is suppressed (see
+    /// completion. `columnWidth` records the terminal width observed when
+    /// `rows` was calculated: if the width changes before completion the saved
+    /// row count is stale and the destructive clear is suppressed (see
     /// ``clearOwnedToolRows``).
-    private enum ActiveToolBlock: Sendable, Equatable {
-        case compact(id: String, rows: Int, columnWidth: Int)
-        case detailed(id: String, rows: Int, columnWidth: Int)
+    private struct ActiveToolBlock: Sendable, Equatable {
+        let id: String
+        let style: ToolBlockStyle
+        let rows: Int
+        let columnWidth: Int
     }
 
     private struct PendingWrite: Sendable {
         let channel: OutputChannel
         var text: String
+    }
+
+    /// Mutable render state for one output channel. `hasContent` is used only
+    /// for stdout, where markdown blocks may need a separating newline.
+    private struct CursorState: Sendable {
+        var spacing = TerminalChatTextFormatting.ChatSpacingState()
+        var lineInset = TerminalChatTextFormatting.ChatLineInsetState()
+    }
+
+    private struct ChannelState: Sendable {
+        let isTerminal: Bool
+        var cursor = CursorState()
+        var hasContent = false
+    }
+
+    /// Mutable formatting state for one independently streamed content flow.
+    private struct StreamingContentState {
+        var boldBreakState = TerminalChatBoldBreakState()
+        var markdownFormatter: TerminalMarkdownStreamFormatter
+        var isStreaming = false
+
+        init(markdownFormatter: TerminalMarkdownStreamFormatter) {
+            self.markdownFormatter = markdownFormatter
+        }
     }
 
     private enum OverviewContent: Sendable {
@@ -80,19 +131,24 @@ actor TerminalChatRenderCoordinator {
 
     private let standardOutput: FileHandle?
     private let standardError: FileHandle?
-    private let standardOutputIsTerminal: Bool
-    private let standardErrorIsTerminal: Bool
+    private var standardOutputState: ChannelState
+    private var standardErrorState: ChannelState
+    private var sharedCursorState = CursorState()
+    private let cursorTopology: CursorTopology
     private let lineInset: String
     private let capturesWrites: Bool
     private let streamingFlushDelay: Duration?
     /// Injectable monotonic clock used to decide when a leading-edge flush is
-    /// safe.  Tests pass a controllable closure so the idle-window check is
-    /// deterministic; production uses the wall clock.
+    /// safe. Tests pass a controllable closure so the idle-window check is
+    /// deterministic; production uses `ContinuousClock`.
     private let streamingNow: @Sendable () -> ContinuousClock.Instant
-    /// Returns the current terminal column count.  Overridable in tests to
+    /// Returns the current terminal column count. Overridable in tests to
     /// simulate a deterministic resize between tool start and completion.
-    /// Defaults to ``TerminalChat.terminalColumnCount``.
     private let columnWidthProvider: @Sendable () -> Int
+    /// Reads the current width immediately before a destructive cursor clear.
+    /// Production bypasses the short-lived width cache; injected providers keep
+    /// their existing behavior unless an explicit fresh provider is supplied.
+    private let freshColumnWidthProvider: @Sendable () -> Int
 
     private var nextWriteSequence: UInt64 = 0
     private var capturedWrites: [WriteEvent] = []
@@ -105,17 +161,8 @@ actor TerminalChatRenderCoordinator {
     /// while a burst is still active (trailing-edge coalescing window).
     private var lastStreamingFlushInstant: ContinuousClock.Instant?
 
-    private var assistantBoldBreakState = TerminalChatBoldBreakState()
-    private var thoughtBoldBreakState = TerminalChatBoldBreakState()
-    private var isAtStartOfChatLine = true
-    private var trailingChatNewlineCount = 0
-    private var assistantMarkdownFormatter: TerminalMarkdownStreamFormatter
-    private var thoughtMarkdownFormatter: TerminalMarkdownStreamFormatter
-    private var isStreamingAssistantOutput = false
-    private var isStreamingThoughtOutput = false
-    private var hasStandardOutputContent = false
-    private var standardOutputTrailingNewlineCount = 0
-    private var standardErrorTrailingNewlineCount = 0
+    private var assistantStreamingState: StreamingContentState
+    private var thoughtStreamingState: StreamingContentState
 
     private var toolOutputDetailLevel: ToolOutputDetailLevel = .compact
     private var activeToolBlock: ActiveToolBlock?
@@ -137,64 +184,110 @@ actor TerminalChatRenderCoordinator {
         standardError: FileHandle? = AgentOutput.standardError,
         standardOutputIsTerminal: Bool = AgentOutput.standardOutputIsTerminal,
         standardErrorIsTerminal: Bool = AgentOutput.standardErrorIsTerminal,
+        cursorTopology: CursorTopology? = nil,
         capturesWrites: Bool = false,
         streamingFlushDelay: Duration? = .milliseconds(32),
         streamingNow: @Sendable @escaping () -> ContinuousClock.Instant = {
             ContinuousClock().now
         },
-        columnWidthProvider: @Sendable @escaping () -> Int = {
-            TerminalChat.terminalColumnCount()
-        }
+        columnWidthProvider: (@Sendable () -> Int)? = nil,
+        freshColumnWidthProvider: (@Sendable () -> Int)? = nil
     ) {
         self.standardOutput = standardOutput
         self.standardError = standardError
-        self.standardOutputIsTerminal = standardOutputIsTerminal
-        self.standardErrorIsTerminal = standardErrorIsTerminal
-        self.lineInset = stdinIsTerminal ? TerminalChat.chatLineInsetPrefix : ""
+        self.standardOutputState = ChannelState(isTerminal: standardOutputIsTerminal)
+        self.standardErrorState = ChannelState(isTerminal: standardErrorIsTerminal)
+        self.cursorTopology = cursorTopology ?? Self.defaultCursorTopology(
+            standardOutput: standardOutput,
+            standardError: standardError,
+            standardOutputIsTerminal: standardOutputIsTerminal,
+            standardErrorIsTerminal: standardErrorIsTerminal
+        )
+        self.lineInset = stdinIsTerminal ? TerminalChatTextFormatting.chatLineInsetPrefix : ""
         self.capturesWrites = capturesWrites
         self.streamingFlushDelay = streamingFlushDelay
         self.streamingNow = streamingNow
-        self.columnWidthProvider = columnWidthProvider
-        self.assistantMarkdownFormatter = TerminalMarkdownStreamFormatter(
-            isEnabled: standardOutputIsTerminal
+        if let columnWidthProvider {
+            self.columnWidthProvider = columnWidthProvider
+            self.freshColumnWidthProvider = freshColumnWidthProvider
+                ?? columnWidthProvider
+        } else {
+            self.columnWidthProvider = {
+                TerminalChat.terminalColumnCount()
+            }
+            self.freshColumnWidthProvider = freshColumnWidthProvider ?? {
+                TerminalChat.terminalColumnCount(forceRefresh: true)
+            }
+        }
+        self.assistantStreamingState = StreamingContentState(
+            markdownFormatter: TerminalMarkdownStreamFormatter(
+                isEnabled: standardOutputIsTerminal
+            )
         )
-        self.thoughtMarkdownFormatter = TerminalMarkdownStreamFormatter(
-            isEnabled: standardErrorIsTerminal,
-            removesUnbalancedStrongMarkers: true
+        self.thoughtStreamingState = StreamingContentState(
+            markdownFormatter: TerminalMarkdownStreamFormatter(
+                isEnabled: standardErrorIsTerminal,
+                removesUnbalancedStrongMarkers: true
+            )
         )
+    }
+
+    private static func defaultCursorTopology(
+        standardOutput: FileHandle?,
+        standardError: FileHandle?,
+        standardOutputIsTerminal: Bool,
+        standardErrorIsTerminal: Bool
+    ) -> CursorTopology {
+        guard standardOutputIsTerminal,
+              standardErrorIsTerminal,
+              let standardOutput,
+              let standardError,
+              TerminalWidth.sharesTerminalCursor(
+                  first: standardOutput.fileDescriptor,
+                  second: standardError.fileDescriptor
+              ) == true else {
+            return .separate
+        }
+        return .shared
     }
 
     // MARK: - Streaming content
 
     func writeThought(_ delta: String) {
-        let normalizedDelta = TerminalChat.normalizedBoldSectionBreak(
+        let normalizedDelta = TerminalChatTextFormatting.normalizedBoldSectionBreak(
             delta,
-            state: &thoughtBoldBreakState
+            state: &thoughtStreamingState.boldBreakState
         )
-        guard !normalizedDelta.isEmpty else {
+        let hasPendingAsterisk = thoughtStreamingState.boldBreakState.pendingAsterisk
+        guard !normalizedDelta.isEmpty || hasPendingAsterisk else {
             return
         }
-        guard isStreamingThoughtOutput
+        guard thoughtStreamingState.isStreaming
+                || hasPendingAsterisk
                 || !normalizedDelta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
 
         interruptActiveToolForInterleavedOutputIfNeeded()
         finishAssistantContentFormatting()
-        if !isStreamingThoughtOutput {
-            isStreamingThoughtOutput = true
+        if !thoughtStreamingState.isStreaming {
+            thoughtStreamingState.isStreaming = true
             let title = standardErrorIsTerminal
                 ? "\u{1B}[90m🤔 Thinking:\u{1B}[0m"
                 : "🤔 Thinking:"
-            writeStreamingChatError("\(title)\n")
+            writeStreamingChat("\(title)\n", to: .standardError)
         }
-        let renderedThought = thoughtMarkdownFormatter.consume(normalizedDelta)
-        let markdown = TerminalChat.renderThoughtMarkdown(
+        let renderedThought = thoughtStreamingState.markdownFormatter.consume(normalizedDelta)
+        let markdown = TerminalChatTextFormatting.renderThoughtMarkdown(
             renderedThought,
             standardErrorIsTerminal: standardErrorIsTerminal
         )
         if !markdown.isEmpty {
-            writeStreamingChatError(markdown, preservesSpacing: true)
+            writeStreamingChat(
+                markdown,
+                to: .standardError,
+                preservesSpacing: true
+            )
         }
     }
 
@@ -204,17 +297,21 @@ actor TerminalChatRenderCoordinator {
         }
         interruptActiveToolForInterleavedOutputIfNeeded()
         finishThoughtOutputIfNeeded()
-        isStreamingAssistantOutput = true
-        let normalizedDelta = TerminalChat.normalizedBoldSectionBreak(
+        assistantStreamingState.isStreaming = true
+        let normalizedDelta = TerminalChatTextFormatting.normalizedBoldSectionBreak(
             delta,
-            state: &assistantBoldBreakState
+            state: &assistantStreamingState.boldBreakState
         )
         guard !normalizedDelta.isEmpty else {
             return
         }
-        let renderedContent = assistantMarkdownFormatter.consume(normalizedDelta)
+        let renderedContent = assistantStreamingState.markdownFormatter.consume(normalizedDelta)
         if !renderedContent.isEmpty {
-            writeStreamingChatOutput(renderedContent, preservesSpacing: true)
+            writeStreamingChat(
+                renderedContent,
+                to: .standardOutput,
+                preservesSpacing: true
+            )
         }
     }
 
@@ -235,48 +332,64 @@ actor TerminalChatRenderCoordinator {
     }
 
     private func finishAssistantContentFormatting() {
-        guard isStreamingAssistantOutput else {
-            assistantBoldBreakState = TerminalChatBoldBreakState()
+        guard let renderedContent = Self.finishStreamingContent(
+            in: &assistantStreamingState
+        ) else {
             return
         }
-        let flushed = TerminalChat.flushBoldSectionBreak(state: &assistantBoldBreakState)
-        var renderedContent = ""
-        if !flushed.isEmpty {
-            renderedContent += assistantMarkdownFormatter.consume(flushed)
-        }
-        renderedContent += assistantMarkdownFormatter.finish()
         if !renderedContent.isEmpty {
-            writeStreamingChatOutput(renderedContent, preservesSpacing: true)
-            if standardOutputIsTerminal, trailingChatNewlineCount == 0 {
-                writeStreamingChatOutput("\n")
-            }
+            writeStreamingChat(
+                renderedContent,
+                to: .standardOutput,
+                preservesSpacing: true
+            )
+        }
+        // `consume` may already have emitted the entire assistant response,
+        // leaving `finish()` empty. A streamed terminal response still needs
+        // to close its physical output row before the next renderer writes.
+        if standardOutputIsTerminal, currentOutputTrailingNewlineCount == 0 {
+            writeStreamingChat("\n", to: .standardOutput)
         }
         flushPendingStreamingWrites()
         synchronizeStandardOutput()
-        isStreamingAssistantOutput = false
     }
 
     private func finishThoughtOutputIfNeeded() {
-        guard isStreamingThoughtOutput else {
-            thoughtBoldBreakState = TerminalChatBoldBreakState()
+        guard let renderedThought = Self.finishStreamingContent(
+            in: &thoughtStreamingState
+        ) else {
             return
         }
-        let flushed = TerminalChat.flushBoldSectionBreak(state: &thoughtBoldBreakState)
-        var renderedThought = ""
-        if !flushed.isEmpty {
-            renderedThought += thoughtMarkdownFormatter.consume(flushed)
-        }
-        renderedThought += thoughtMarkdownFormatter.finish()
-        let markdown = TerminalChat.renderThoughtMarkdown(
+        let markdown = TerminalChatTextFormatting.renderThoughtMarkdown(
             renderedThought,
             standardErrorIsTerminal: standardErrorIsTerminal
         )
         if !markdown.isEmpty {
-            writeStreamingChatError(markdown, preservesSpacing: true)
+            writeStreamingChat(
+                markdown,
+                to: .standardError,
+                preservesSpacing: true
+            )
         }
-        writeStreamingChatError("\n\n")
+        writeStreamingChat("\n\n", to: .standardError)
         flushPendingStreamingWrites()
-        isStreamingThoughtOutput = false
+    }
+
+    private static func finishStreamingContent(
+        in state: inout StreamingContentState
+    ) -> String? {
+        guard state.isStreaming else {
+            state.boldBreakState = TerminalChatBoldBreakState()
+            return nil
+        }
+        let flushed = TerminalChatTextFormatting.flushBoldSectionBreak(state: &state.boldBreakState)
+        var renderedContent = ""
+        if !flushed.isEmpty {
+            renderedContent += state.markdownFormatter.consume(flushed)
+        }
+        renderedContent += state.markdownFormatter.finish()
+        state.isStreaming = false
+        return renderedContent
     }
 
     // MARK: - Messages
@@ -284,7 +397,6 @@ actor TerminalChatRenderCoordinator {
     func writeStartupSummary(_ text: String) {
         interruptActiveToolForInterleavedOutputIfNeeded()
         writeRawChatError(text)
-        isAtStartOfChatLine = text.hasSuffix("\n")
         renderPendingOverviewsIfIdle()
     }
 
@@ -301,13 +413,17 @@ actor TerminalChatRenderCoordinator {
                 return "\(background)\(prefix)\(line)\(clearToEnd)\(reset)"
             }
             .joined(separator: "\n")
-        writeChatError("\n\(renderedLines)\n\n")
+        writeChat("\n\(renderedLines)\n\n", to: .standardError)
         renderPendingOverviewsIfIdle()
     }
 
     func writeOutput(_ text: String, preservesSpacing: Bool = false) {
         interruptActiveToolForInterleavedOutputIfNeeded()
-        writeChatOutput(text, preservesSpacing: preservesSpacing)
+        writeChat(
+            text,
+            to: .standardOutput,
+            preservesSpacing: preservesSpacing
+        )
         renderPendingOverviewsIfIdle()
     }
 
@@ -317,28 +433,34 @@ actor TerminalChatRenderCoordinator {
 
     func writeError(_ text: String, preservesSpacing: Bool = false) {
         interruptActiveToolForInterleavedOutputIfNeeded()
-        writeChatError(text, preservesSpacing: preservesSpacing)
+        writeChat(
+            text,
+            to: .standardError,
+            preservesSpacing: preservesSpacing
+        )
         renderPendingOverviewsIfIdle()
     }
 
     func writeFailureMessage(_ text: String) {
         interruptActiveToolForInterleavedOutputIfNeeded()
-        writeChatError(
-            TerminalChat.failureMessageColorApplied(
+        writeChat(
+            TerminalChatTextFormatting.failureMessageColorApplied(
                 to: text,
                 isEnabled: standardErrorIsTerminal
-            )
+            ),
+            to: .standardError
         )
         renderPendingOverviewsIfIdle()
     }
 
     func writeSystemMessage(_ text: String) {
         interruptActiveToolForInterleavedOutputIfNeeded()
-        writeChatError(
-            TerminalChat.systemMessageColorApplied(
+        writeChat(
+            TerminalChatTextFormatting.systemMessageColorApplied(
                 to: text,
                 isEnabled: standardErrorIsTerminal
-            )
+            ),
+            to: .standardError
         )
         renderPendingOverviewsIfIdle()
     }
@@ -353,22 +475,24 @@ actor TerminalChatRenderCoordinator {
 
     func writeFileChangeSummaryMessage(_ text: String) {
         interruptActiveToolForInterleavedOutputIfNeeded()
-        writeChatError(
-            TerminalChat.fileChangeSummaryColorApplied(
+        writeChat(
+            TerminalChatTextFormatting.fileChangeSummaryColorApplied(
                 to: text,
                 isEnabled: standardErrorIsTerminal
-            )
+            ),
+            to: .standardError
         )
         renderPendingOverviewsIfIdle()
     }
 
     func writeOperationalMessage(_ text: String) {
         interruptActiveToolForInterleavedOutputIfNeeded()
-        writeChatError(
-            TerminalChat.operationalMessageColorApplied(
+        writeChat(
+            TerminalChatTextFormatting.operationalMessageColorApplied(
                 to: text,
                 isEnabled: standardErrorIsTerminal
-            )
+            ),
+            to: .standardError
         )
         renderPendingOverviewsIfIdle()
     }
@@ -381,11 +505,11 @@ actor TerminalChatRenderCoordinator {
         prepareForToolOutput()
         activeToolBlockIsSubAgentTool = DirectSubAgentRuntime
             .isSubAgentToolName(toolCall.name)
-        if toolOutputDetailLevel == .compact {
-            writeCompactToolCallStarted(toolCall)
-        } else {
-            writeDetailedToolCallStarted(toolCall)
-        }
+        renderToolBlock(
+            toolCall,
+            lifecycle: .started,
+            style: toolBlockStyle(for: toolOutputDetailLevel)
+        )
     }
 
     func writeToolCallCompleted(
@@ -395,17 +519,14 @@ actor TerminalChatRenderCoordinator {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
 
-        let activeCompactID: String?
-        if case let .compact(id, _, _) = activeToolBlock {
-            activeCompactID = id
-        } else {
-            activeCompactID = nil
-        }
-        if toolOutputDetailLevel == .compact || activeCompactID == toolCall.id {
-            writeCompactToolCallCompleted(toolCall, result: result)
-        } else {
-            writeDetailedToolCallCompleted(toolCall, result: result)
-        }
+        // A completion redraws in the style of the block it owns, even if the
+        // user toggled details while the tool was running. A stale completion
+        // uses the current preference but never takes ownership from a newer
+        // active block.
+        let style = activeToolBlock.flatMap { block in
+            block.id == toolCall.id ? block.style : nil
+        } ?? toolBlockStyle(for: toolOutputDetailLevel)
+        renderToolBlock(toolCall, lifecycle: .completed(result), style: style)
     }
 
     func toggleToolDetailsOutput() {
@@ -435,124 +556,140 @@ actor TerminalChatRenderCoordinator {
     private func prepareForToolOutput() {
         flushChatOutput()
         if standardErrorIsTerminal {
-            writeChatError("\n\n")
+            writeChat("\n\n", to: .standardError)
         }
     }
 
-    private func writeDetailedToolCallStarted(_ toolCall: DirectAgentToolCall) {
-        let startWidth = columnWidthProvider()
-        let lines = TerminalChat.safelyWrappedDetailedToolLines(
-            TerminalChat.detailedToolCallStartedLines(for: toolCall),
-            contentInsetWidth: TerminalChat.displayWidth(lineInset),
-            columnWidth: startWidth
+    private func renderToolBlock(
+        _ toolCall: DirectAgentToolCall,
+        lifecycle: ToolBlockLifecycle,
+        style: ToolBlockStyle
+    ) {
+        let columnWidth = lifecycle.isCompletion
+            ? freshColumnWidthProvider()
+            : columnWidthProvider()
+        let contentInsetWidth = TerminalChat.displayWidth(lineInset)
+        let lines = toolBlockLines(
+            for: toolCall,
+            lifecycle: lifecycle,
+            style: style,
+            contentInsetWidth: contentInsetWidth,
+            columnWidth: columnWidth
         )
-        activeToolBlock = .detailed(
-            id: toolCall.id,
-            rows: TerminalChat.renderedTerminalRowCount(
-                for: lines,
-                contentInsetWidth: TerminalChat.displayWidth(lineInset),
-                columnWidth: startWidth
-            ),
-            columnWidth: startWidth
+
+        switch lifecycle {
+        case .started:
+            activeToolBlock = ActiveToolBlock(
+                id: toolCall.id,
+                style: style,
+                rows: TerminalChat.renderedTerminalRowCount(
+                    for: lines,
+                    contentInsetWidth: contentInsetWidth,
+                    columnWidth: columnWidth
+                ),
+                columnWidth: columnWidth
+            )
+        case .completed:
+            let activeBlock = activeToolBlock
+            let ownsActiveBlock = activeBlock?.id == toolCall.id
+            let shouldRewriteActiveBlock = activeBlock.map { block in
+                // Safety fuse: if the terminal width changed between tool start
+                // and completion, the saved row count is stale. Emitting
+                // cursor-up / erase sequences based on a stale count can erase
+                // transcript rows or leave orphaned rows. Instead, degrade
+                // fail-safe: skip the destructive clear and append the
+                // completed block.
+                block.id == toolCall.id
+                    && block.style == style
+                    && standardErrorIsTerminal
+                    && block.columnWidth == columnWidth
+            } ?? false
+
+            // Starts transfer the one physical rewrite slot to the newest
+            // block. A completion for an older or otherwise unowned tool is
+            // append-only: it must not erase or relinquish the newer block.
+            if ownsActiveBlock {
+                activeToolBlock = nil
+                activeToolBlockIsSubAgentTool = false
+            }
+
+            if shouldRewriteActiveBlock, let activeBlock {
+                clearOwnedToolRows(activeBlock.rows)
+            }
+        }
+
+        writeToolBlockLines(
+            lines,
+            for: toolCall,
+            lifecycle: lifecycle,
+            style: style
         )
-        writeToolBlock(lines, codeLanguage: TerminalChat.codeLanguageHint(for: toolCall))
     }
 
-    private func writeDetailedToolCallCompleted(
-        _ toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult
-    ) {
-        let outputWidth = columnWidthProvider()
-        let lines = TerminalChat.safelyWrappedDetailedToolLines(
-            TerminalChat.detailedToolCallCompletedLines(
+    private func toolBlockStyle(
+        for detailLevel: ToolOutputDetailLevel
+    ) -> ToolBlockStyle {
+        detailLevel == .compact ? .compact : .detailed
+    }
+
+    private func toolBlockLines(
+        for toolCall: DirectAgentToolCall,
+        lifecycle: ToolBlockLifecycle,
+        style: ToolBlockStyle,
+        contentInsetWidth: Int,
+        columnWidth: Int
+    ) -> [String] {
+        switch (style, lifecycle) {
+        case (.compact, .started):
+            return TerminalChat.compactToolLines(
                 for: toolCall,
-                result: result
-            ),
-            contentInsetWidth: TerminalChat.displayWidth(lineInset),
-            columnWidth: outputWidth
-        )
-        let rewriteRowCount: Int
-        let shouldRewriteActiveBlock: Bool
-        if case let .detailed(id, rows, startWidth) = activeToolBlock {
-            rewriteRowCount = rows
-            // Safety fuse: if the terminal width changed between tool start and
-            // completion, the saved row count is stale. Emitting cursor-up /
-            // erase sequences based on a stale count can erase transcript rows
-            // or leave orphaned rows. Instead, degrade fail-safe: skip the
-            // destructive clear and let the completed block be written in
-            // append-only mode. The stale pending block remains visible — an
-            // accepted cosmetic trade-off that is always preferable to
-            // corrupting the transcript.
-            let widthChanged = startWidth != outputWidth
-            shouldRewriteActiveBlock
-                = id == toolCall.id && standardErrorIsTerminal && !widthChanged
-        } else {
-            rewriteRowCount = 0
-            shouldRewriteActiveBlock = false
+                statusIcon: "⏳",
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            )
+        case let (.compact, .completed(result)):
+            return TerminalChat.compactToolLines(
+                for: toolCall,
+                statusIcon: result.isFailure ? "⚠️" : "✅",
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            )
+        case (.detailed, .started):
+            return TerminalChat.safelyWrappedDetailedToolLines(
+                TerminalChat.detailedToolCallStartedLines(for: toolCall),
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            )
+        case let (.detailed, .completed(result)):
+            return TerminalChat.safelyWrappedDetailedToolLines(
+                TerminalChat.detailedToolCallCompletedLines(
+                    for: toolCall,
+                    result: result
+                ),
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            )
         }
-        activeToolBlock = nil
-        activeToolBlockIsSubAgentTool = false
-
-        if shouldRewriteActiveBlock {
-            clearOwnedToolRows(rewriteRowCount)
-        }
-        writeToolBlock(lines, codeLanguage: TerminalChat.codeLanguageHint(for: toolCall))
-        writeChatError("\n")
     }
 
-    private func writeCompactToolCallStarted(_ toolCall: DirectAgentToolCall) {
-        let startWidth = columnWidthProvider()
-        let lines = TerminalChat.compactToolLines(
-            for: toolCall,
-            statusIcon: "⏳",
-            contentInsetWidth: TerminalChat.displayWidth(lineInset),
-            columnWidth: startWidth
-        )
-        activeToolBlock = .compact(
-            id: toolCall.id,
-            rows: TerminalChat.renderedTerminalRowCount(
-                for: lines,
-                contentInsetWidth: TerminalChat.displayWidth(lineInset),
-                columnWidth: startWidth
-            ),
-            columnWidth: startWidth
-        )
-        writeCompactToolLines(lines, newline: false)
-    }
-
-    private func writeCompactToolCallCompleted(
-        _ toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult
+    private func writeToolBlockLines(
+        _ lines: [String],
+        for toolCall: DirectAgentToolCall,
+        lifecycle: ToolBlockLifecycle,
+        style: ToolBlockStyle
     ) {
-        let icon = result.isFailure ? "⚠️" : "✅"
-        let lines = TerminalChat.compactToolLines(
-            for: toolCall,
-            statusIcon: icon,
-            contentInsetWidth: TerminalChat.displayWidth(lineInset),
-            columnWidth: columnWidthProvider()
-        )
-        let rewriteRowCount: Int
-        let shouldRewriteActiveLine: Bool
-        if case let .compact(id, rows, startWidth) = activeToolBlock {
-            rewriteRowCount = rows
-            // Safety fuse: see ``writeDetailedToolCallCompleted`` for the full
-            // rationale. A width change means the saved row count can no longer
-            // be trusted, so the destructive clear is suppressed and the
-            // completed block is written in append-only mode.
-            let widthChanged = startWidth != columnWidthProvider()
-            shouldRewriteActiveLine
-                = id == toolCall.id && standardErrorIsTerminal && !widthChanged
-        } else {
-            rewriteRowCount = 0
-            shouldRewriteActiveLine = false
+        switch style {
+        case .compact:
+            writeCompactToolLines(lines, newline: lifecycle.isCompletion)
+        case .detailed:
+            writeToolBlock(
+                lines,
+                codeLanguage: TerminalChat.codeLanguageHint(for: toolCall)
+            )
+            if lifecycle.isCompletion {
+                writeChat("\n", to: .standardError)
+            }
         }
-        activeToolBlock = nil
-        activeToolBlockIsSubAgentTool = false
-
-        if shouldRewriteActiveLine {
-            clearOwnedToolRows(rewriteRowCount)
-        }
-        writeCompactToolLines(lines, newline: true)
     }
 
     private func writeCompactToolLines(
@@ -567,7 +704,6 @@ actor TerminalChatRenderCoordinator {
             terminator: terminator
         )
         writeRawChatError(text)
-        isAtStartOfChatLine = terminator.hasSuffix("\n")
     }
 
     private func writeToolBlock(_ lines: [String], codeLanguage: String? = nil) {
@@ -578,7 +714,6 @@ actor TerminalChatRenderCoordinator {
             }
             .joined(separator: "\n")
         writeRawChatError("\(text)\n")
-        isAtStartOfChatLine = true
     }
 
     /// Removes only the rows occupied by the pending tool before redrawing it.
@@ -613,7 +748,7 @@ actor TerminalChatRenderCoordinator {
         }
         activeToolBlock = nil
         activeToolBlockIsSubAgentTool = false
-        writeChatError("\n")
+        writeChat("\n", to: .standardError)
     }
 
     // MARK: - Overview arbitration
@@ -712,8 +847,8 @@ actor TerminalChatRenderCoordinator {
            activeToolBlock != nil,
            activeToolBlockIsSubAgentTool,
            !overviewPublishingSuspended,
-           !isStreamingAssistantOutput,
-           !isStreamingThoughtOutput {
+           !assistantStreamingState.isStreaming,
+           !thoughtStreamingState.isStreaming {
             finishActiveToolOutputBeforeInterleavedMessage()
         }
 
@@ -730,8 +865,8 @@ actor TerminalChatRenderCoordinator {
     private var canRenderOverview: Bool {
         !overviewPublishingSuspended
             && activeToolBlock == nil
-            && !isStreamingAssistantOutput
-            && !isStreamingThoughtOutput
+            && !assistantStreamingState.isStreaming
+            && !thoughtStreamingState.isStreaming
     }
 
     private func renderPendingOverviewsIfIdle() {
@@ -761,7 +896,7 @@ actor TerminalChatRenderCoordinator {
         case let .markdown(markdown):
             renderMarkdownMessage(markdown)
         case let .text(text):
-            writeChatError(text)
+            writeChat(text, to: .standardError)
         }
     }
 
@@ -795,14 +930,16 @@ actor TerminalChatRenderCoordinator {
     func snapshot() -> Snapshot {
         let compact: (String?, Int)
         let detailed: (String?, Int)
-        switch activeToolBlock {
-        case let .compact(id, rows, _):
-            compact = (id, rows)
-            detailed = (nil, 0)
-        case let .detailed(id, rows, _):
-            compact = (nil, 0)
-            detailed = (id, rows)
-        case nil:
+        if let activeBlock = activeToolBlock {
+            switch activeBlock.style {
+            case .compact:
+                compact = (activeBlock.id, activeBlock.rows)
+                detailed = (nil, 0)
+            case .detailed:
+                compact = (nil, 0)
+                detailed = (activeBlock.id, activeBlock.rows)
+            }
+        } else {
             compact = (nil, 0)
             detailed = (nil, 0)
         }
@@ -816,7 +953,7 @@ actor TerminalChatRenderCoordinator {
             deferredSubAgentOverviewRender: pendingOverviews[.subAgents] != nil,
             lastRenderedTaskGraphOverviewSignature: overviewSignatures[.taskGraph],
             lastRenderedSubAgentOverviewSignature: overviewSignatures[.subAgents],
-            isStreamingThoughtOutput: isStreamingThoughtOutput
+            isStreamingThoughtOutput: thoughtStreamingState.isStreaming
         )
     }
 
@@ -847,43 +984,52 @@ actor TerminalChatRenderCoordinator {
             return
         }
         if hasStandardOutputContent, currentOutputTrailingNewlineCount == 0 {
-            writeChatOutput("\n", preservesSpacing: true)
+            writeChat("\n", to: .standardOutput, preservesSpacing: true)
         }
-        writeChatOutput(rendered, preservesSpacing: true)
+        writeChat(rendered, to: .standardOutput, preservesSpacing: true)
         if currentOutputTrailingNewlineCount == 0 {
-            writeChatOutput("\n")
+            writeChat("\n", to: .standardOutput)
         }
         flushChatOutput()
     }
 
     private func writeSystemMessageWithoutInterrupt(_ text: String) {
-        writeChatError(
-            TerminalChat.systemMessageColorApplied(
+        writeChat(
+            TerminalChatTextFormatting.systemMessageColorApplied(
                 to: text,
                 isEnabled: standardErrorIsTerminal
-            )
+            ),
+            to: .standardError
         )
     }
 
-    private func writeChatOutput(_ text: String, preservesSpacing: Bool = false) {
-        let normalizedText = preservesSpacing
-            ? chatOutputSpacingPreserved(text)
-            : chatOutputSpacingNormalized(text)
-        updateStandardOutputState(after: normalizedText)
-        writeDirect(chatLineInsetApplied(to: normalizedText), to: .standardOutput)
-    }
-
-    private func writeStreamingChatOutput(
+    private func writeChat(
         _ text: String,
+        to channel: OutputChannel,
         preservesSpacing: Bool = false
     ) {
         let normalizedText = preservesSpacing
-            ? chatOutputSpacingPreserved(text)
-            : chatOutputSpacingNormalized(text)
-        updateStandardOutputState(after: normalizedText)
+            ? chatSpacingPreserved(text, for: channel)
+            : chatSpacingNormalized(text, for: channel)
+        recordChannelContent(after: normalizedText, for: channel)
+        writeDirect(
+            chatLineInsetApplied(to: normalizedText, for: channel),
+            to: channel
+        )
+    }
+
+    private func writeStreamingChat(
+        _ text: String,
+        to channel: OutputChannel,
+        preservesSpacing: Bool = false
+    ) {
+        let normalizedText = preservesSpacing
+            ? chatSpacingPreserved(text, for: channel)
+            : chatSpacingNormalized(text, for: channel)
+        recordChannelContent(after: normalizedText, for: channel)
         bufferStreamingWrite(
-            chatLineInsetApplied(to: normalizedText),
-            to: .standardOutput
+            chatLineInsetApplied(to: normalizedText, for: channel),
+            to: channel
         )
     }
 
@@ -899,36 +1045,29 @@ actor TerminalChatRenderCoordinator {
         standardOutput?.synchronizeFile()
     }
 
-    private func writeChatError(_ text: String, preservesSpacing: Bool = false) {
-        let normalizedText = preservesSpacing
-            ? chatErrorSpacingPreserved(text)
-            : chatErrorSpacingNormalized(text)
-        updateStandardErrorState(after: normalizedText)
-        writeDirect(chatLineInsetApplied(to: normalizedText), to: .standardError)
-    }
-
-    private func writeStreamingChatError(
-        _ text: String,
-        preservesSpacing: Bool = false
-    ) {
-        let normalizedText = preservesSpacing
-            ? chatErrorSpacingPreserved(text)
-            : chatErrorSpacingNormalized(text)
-        updateStandardErrorState(after: normalizedText)
-        bufferStreamingWrite(
-            chatLineInsetApplied(to: normalizedText),
-            to: .standardError
-        )
-    }
-
     private func writeRawChatError(_ text: String) {
-        let normalizedText = chatErrorSpacingNormalized(text)
-        updateStandardErrorState(after: normalizedText)
+        let normalizedText = chatSpacingNormalized(text, for: .standardError)
+        recordChannelContent(after: normalizedText, for: .standardError)
+        updateChatLineInsetState(after: normalizedText, for: .standardError)
         writeDirect(normalizedText, to: .standardError)
     }
 
-    private var usesSharedTerminalSpacing: Bool {
-        standardOutputIsTerminal && standardErrorIsTerminal
+    private var standardOutputIsTerminal: Bool {
+        channelIsTerminal(.standardOutput)
+    }
+
+    private var standardErrorIsTerminal: Bool {
+        channelIsTerminal(.standardError)
+    }
+
+    private var hasStandardOutputContent: Bool {
+        withChannelState(for: .standardOutput) { $0.hasContent }
+    }
+
+    private var usesSharedTerminalCursor: Bool {
+        cursorTopology == .shared
+            && standardOutputIsTerminal
+            && standardErrorIsTerminal
     }
 
     /// The trailing line state at the terminal currently receiving chat output.
@@ -936,81 +1075,102 @@ actor TerminalChatRenderCoordinator {
     /// to stderr determines the real cursor position before an overview is
     /// written to stdout.
     private var currentOutputTrailingNewlineCount: Int {
-        usesSharedTerminalSpacing
-            ? trailingChatNewlineCount
-            : standardOutputTrailingNewlineCount
+        trailingNewlineCount(for: .standardOutput)
     }
 
-    private func chatOutputSpacingNormalized(_ text: String) -> String {
-        guard !usesSharedTerminalSpacing else {
-            return sharedChatSpacingNormalized(text)
+    private func chatSpacingNormalized(
+        _ text: String,
+        for channel: OutputChannel
+    ) -> String {
+        withCursorState(for: channel) { state in
+            TerminalChatTextFormatting.chatSpacingNormalized(
+                text,
+                state: &state.spacing
+            )
         }
-        return TerminalChat.chatSpacingNormalized(
-            text,
-            trailingNewlineCount: &standardOutputTrailingNewlineCount
-        )
     }
 
-    private func chatErrorSpacingNormalized(_ text: String) -> String {
-        guard !usesSharedTerminalSpacing else {
-            return sharedChatSpacingNormalized(text)
+    private func chatSpacingPreserved(
+        _ text: String,
+        for channel: OutputChannel
+    ) -> String {
+        withCursorState(for: channel) { state in
+            TerminalChatTextFormatting.updateChatSpacingState(
+                afterPreserving: text,
+                state: &state.spacing
+            )
         }
-        return TerminalChat.chatSpacingNormalized(
-            text,
-            trailingNewlineCount: &standardErrorTrailingNewlineCount
-        )
-    }
-
-    private func sharedChatSpacingNormalized(_ text: String) -> String {
-        TerminalChat.chatSpacingNormalized(
-            text,
-            trailingNewlineCount: &trailingChatNewlineCount
-        )
-    }
-
-    private func chatOutputSpacingPreserved(_ text: String) -> String {
-        updateSharedTerminalSpacingIfNeeded(after: text)
         return text
     }
 
-    private func chatErrorSpacingPreserved(_ text: String) -> String {
-        updateSharedTerminalSpacingIfNeeded(after: text)
-        return text
+    private func channelIsTerminal(_ channel: OutputChannel) -> Bool {
+        withChannelState(for: channel) { $0.isTerminal }
     }
 
-    private func updateSharedTerminalSpacingIfNeeded(after text: String) {
-        guard usesSharedTerminalSpacing else {
-            return
+    private func trailingNewlineCount(for channel: OutputChannel) -> Int {
+        withCursorState(for: channel) { $0.spacing.trailingNewlineCount }
+    }
+
+    private func withChannelState<Result>(
+        for channel: OutputChannel,
+        _ operation: (inout ChannelState) -> Result
+    ) -> Result {
+        switch channel {
+        case .standardOutput:
+            return operation(&standardOutputState)
+        case .standardError:
+            return operation(&standardErrorState)
         }
-        TerminalChat.updateTrailingNewlineCount(
-            afterPreserving: text,
-            trailingNewlineCount: &trailingChatNewlineCount
-        )
     }
 
-    private func chatLineInsetApplied(to text: String) -> String {
-        TerminalChat.chatLineInsetApplied(
-            to: text,
-            prefix: lineInset,
-            isAtLineStart: &isAtStartOfChatLine
-        )
+    private func withCursorState<Result>(
+        for channel: OutputChannel,
+        _ operation: (inout CursorState) -> Result
+    ) -> Result {
+        if usesSharedTerminalCursor {
+            return operation(&sharedCursorState)
+        }
+        return withChannelState(for: channel) { state in
+            operation(&state.cursor)
+        }
     }
 
-    private func updateStandardOutputState(after text: String) {
+    private func recordChannelContent(after text: String, for channel: OutputChannel) {
         let info = TerminalANSIText.trailingVisibleNewlineInfo(text)
         guard info.hasVisible else {
             return
         }
-        hasStandardOutputContent = true
-        standardOutputTrailingNewlineCount = info.trailingNewlines
-    }
-
-    private func updateStandardErrorState(after text: String) {
-        let info = TerminalANSIText.trailingVisibleNewlineInfo(text)
-        guard info.hasVisible else {
+        guard channel == .standardOutput else {
             return
         }
-        standardErrorTrailingNewlineCount = info.trailingNewlines
+        withChannelState(for: channel) { state in
+            state.hasContent = true
+        }
+    }
+
+    private func chatLineInsetApplied(
+        to text: String,
+        for channel: OutputChannel
+    ) -> String {
+        withCursorState(for: channel) { state in
+            TerminalChatTextFormatting.chatLineInsetApplied(
+                to: text,
+                prefix: lineInset,
+                state: &state.lineInset
+            )
+        }
+    }
+
+    private func updateChatLineInsetState(
+        after text: String,
+        for channel: OutputChannel
+    ) {
+        withCursorState(for: channel) { state in
+            TerminalChatTextFormatting.updateChatLineInsetState(
+                after: text,
+                state: &state.lineInset
+            )
+        }
     }
 
     /// Returns `true` when enough time has elapsed since the last streaming

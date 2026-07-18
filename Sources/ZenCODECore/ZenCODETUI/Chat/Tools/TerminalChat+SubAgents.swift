@@ -170,10 +170,7 @@ extension TerminalChat {
             return renderSubAgentOverviewLines(lines)
         }
 
-        for (index, snapshot) in snapshots.enumerated() {
-            if index > 0 {
-                lines.append(.regular("", maxWrappedLines: 1))
-            }
+        for snapshot in snapshots {
             lines.append(.regular(renderSubAgentHeader(snapshot)))
             lines.append(.regular(dimText("id: \(snapshot.id)"), maxWrappedLines: 1))
             if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -233,7 +230,7 @@ extension TerminalChat {
         if closedCount > 0 {
             segments.append(dimText("· \(closedCount) closed"))
         }
-        return segments.joined(separator: " ") + "\n"
+        return segments.joined(separator: " ")
     }
 
     private static func renderSubAgentHeader(

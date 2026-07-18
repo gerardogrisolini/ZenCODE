@@ -101,6 +101,38 @@ struct TerminalMarkdownTableCapTests {
     }
 
     @Test
+    func oversizedTableCandidateHeaderIsFlushedBeforeConfirmation() {
+        var formatter = makeFormatter()
+        let hugeHeader = String(repeating: "h", count: 8_500)
+
+        // A candidate is not yet a confirmed table, but it still must not keep
+        // an arbitrarily large header buffered while waiting for a delimiter.
+        // It degrades to the ordinary-line path immediately rather than holding
+        // the input until finish().
+        let rendered = formatter.consume("| \(hugeHeader) | B |\n")
+
+        #expect(!rendered.isEmpty)
+        #expect(rendered.contains("h"))
+        #expect(!rendered.contains(Self.truncationMarker))
+    }
+
+    @Test
+    func oversizedDelimiterTripsTableCapImmediately() {
+        var formatter = makeFormatter()
+        let hugeDelimiter = String(repeating: "-", count: 8_500)
+
+        // Confirmation itself can cross the character cap: header plus a huge
+        // delimiter must emit the explicit degradation in that same consume,
+        // not wait for a subsequent body row or finish().
+        let rendered = formatter.consume(
+            "| A | B |\n| \(hugeDelimiter) | --- |\n"
+        )
+
+        #expect(rendered.contains("┌"))
+        #expect(rendered.contains(Self.truncationMarker))
+    }
+
+    @Test
     func streamingPastCapEmitsBeforeFinishAndStaysBounded() {
         var formatter = makeFormatter()
         var streamed = ""

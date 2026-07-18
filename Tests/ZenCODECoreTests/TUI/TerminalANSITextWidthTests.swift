@@ -44,6 +44,17 @@ struct TerminalANSITextWidthTests {
     }
 
     @Test
+    func symbolPresentationSelectorsControlWidthWithoutChangingDefaultEmoji() {
+        // U+2702 is emoji-capable but text-presentation by default. It becomes
+        // wide only with VS16. Conversely, the default-emoji hourglass becomes
+        // narrow when VS15 explicitly requests text presentation.
+        #expect(TerminalANSIText.visibleWidth("✂") == 1)
+        #expect(TerminalANSIText.visibleWidth("✂\u{FE0F}") == 2)
+        #expect(TerminalANSIText.visibleWidth("⏳") == 2)
+        #expect(TerminalANSIText.visibleWidth("⏳\u{FE0E}") == 1)
+    }
+
+    @Test
     func wideSymbolsCombineWithAsciiCorrectly() {
         // "Read ⏳" = 4 (Read) + 1 (space) + 2 (⏳) = 7.
         #expect(TerminalANSIText.visibleWidth("Read ⏳") == 7)
@@ -196,6 +207,30 @@ struct TerminalANSITextWidthTests {
         #expect(TerminalANSIText.visibleWidth(result) <= 8)
     }
 
+    @Test
+    func truncateClosesOpenOSC8HyperlinkWithSTTerminator() {
+        let opener = "\u{1B}]8;;https://example.com\u{1B}\\"
+        let closure = "\u{1B}]8;;\u{1B}\\"
+        let result = TerminalANSIText.truncate(opener + "abcdef" + closure, to: 4)
+
+        #expect(result == opener + "abc…" + closure)
+        #expect(TerminalANSIText.stripANSI(result) == "abc…")
+        #expect(TerminalANSIText.visibleWidth(result) == 4)
+    }
+
+    @Test
+    func truncateClosesOpenOSC8HyperlinkWithBELTerminatorAndRetainsSGRReset() {
+        let opener = "\u{1B}]8;;https://example.com\u{07}"
+        let closure = "\u{1B}]8;;\u{07}"
+        let red = "\u{1B}[31m"
+        let reset = "\u{1B}[0m"
+        let result = TerminalANSIText.truncate(red + opener + "abcdef" + closure + reset, to: 4)
+
+        #expect(result == red + opener + "abc…" + closure + reset)
+        #expect(TerminalANSIText.stripANSI(result) == "abc…")
+        #expect(TerminalANSIText.visibleWidth(result) == 4)
+    }
+
     // MARK: - Wrap is not regressed by wide graphemes
 
     @Test
@@ -221,5 +256,17 @@ struct TerminalANSITextWidthTests {
         #expect(rows.count == 4)
         #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) <= 8 })
         #expect(rows.joined() == source)
+    }
+
+    @Test
+    func whitespacePreservingWrapFitsHangingIndentBeforeWideContinuationGlyph() {
+        let rows = TerminalANSIText.wrapPreservingWhitespace(
+            "abcde😀x",
+            width: 5,
+            hangingIndent: "    "
+        )
+
+        #expect(rows == ["abcde", "   😀", "    x"])
+        #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) <= 5 })
     }
 }

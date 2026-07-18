@@ -5,14 +5,8 @@
 //  Created by Gerardo Grisolini on 28/05/26.
 //
 
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
 import Foundation
 import Markdown
-import Synchronization
 
 public struct TerminalMarkdownStreamFormatter {
     private static let reset = "\u{1B}[0m"
@@ -55,6 +49,13 @@ public struct TerminalMarkdownStreamFormatter {
     private static let streamingStopChars: Set<Character> = [
         "`", "*", "_", "~", "[", "<", "|"
     ]
+    /// A zero-width non-whitespace prefix used only while parsing an inline
+    /// tail. It prevents the tail from being reinterpreted as a new block when
+    /// its logical line has already streamed prose before it.
+    private static let inlineParsingSentinel = "\u{200B}"
+    /// Keep the whitespace definition used by `trimmingCharacters(in:)` while
+    /// incrementally classifying a line start for safe prose streaming.
+    private static let blockMarkerWhitespace = CharacterSet.whitespaces
     
     /// Multi-line markdown constructs that must be parsed as a whole block
     /// rather than one isolated line at a time. Buffering these lets the
@@ -64,6 +65,22 @@ public struct TerminalMarkdownStreamFormatter {
         case blockQuote
         case tableCandidate
         case table
+    }
+
+    /// Incremental classification of the still-unemitted line start. A line
+    /// can only move from an unresolved marker candidate to either a known
+    /// block marker or a known-safe prose prefix. Once it is known safe, later
+    /// deltas cannot turn that already-observed prefix into a block marker.
+    private enum PendingLineStartState {
+        case leadingWhitespace
+        case hashRun(Int)
+        case dashRun(Int)
+        case plus
+        case digitRun(Int)
+        case orderedListDot
+        case deferredWhitespace
+        case ambiguousBlockMarker
+        case resolved
     }
     
     private let isEnabled: Bool
@@ -96,10 +113,22 @@ public struct TerminalMarkdownStreamFormatter {
     // flushed as new prose, keeping buffering bounded. A following non-table
     // line ends the block normally and resets this flag (see `flushBlock`).
     private var tableTruncated = false
-    /// Number of characters at the start of the current `pendingLine` already
-    /// emitted as plain streaming text. When the line completes (newline), only
-    /// the un-emitted tail is rendered, preventing duplication.
-    private var emittedPendingPrefixCount = 0
+    /// Scalar length of the un-emitted pending tail. Scalar counts do not change
+    /// when a subsequent delta completes a grapheme cluster, unlike
+    /// `String.count`; that makes the buffering limit stable across combining,
+    /// ZWJ, and regional-indicator boundaries.
+    private var pendingLineScalarCount = 0
+    /// Whether part of the current logical line was already written. The
+    /// emitted text is removed from `pendingLine` immediately, so no
+    /// `String.Index` survives an append mutation of that string.
+    private var hasEmittedPendingPrefix = false
+    /// Terminal-column offset of the un-emitted tail, not a character count.
+    /// This accounts for CJK/emoji width and combining marks when an inline tail
+    /// must be wrapped after streamed prose.
+    private var emittedPendingPrefixColumn = 0
+    /// Cached, incremental block-marker classification for the current line.
+    /// It is reset only when that line is completed or force-flushed.
+    private var pendingLineStartState: PendingLineStartState = .leadingWhitespace
     
     public init(
         isEnabled: Bool,
@@ -127,62 +156,55 @@ public struct TerminalMarkdownStreamFormatter {
         guard isEnabled else {
             return text
         }
-        
-        pendingLine += text
+
         var rendered = ""
-        
-        while let newlineIndex = pendingLine.firstIndex(of: "\n") {
-            let line = String(pendingLine[..<newlineIndex])
-            if emittedPendingPrefixCount > 0 {
-                // Part of this line was already streamed as plain text.
-                // Emit only the un-emitted tail to avoid duplication.
-                rendered += completePartiallyEmittedLine(line)
-            } else {
-                rendered += handleCompleteLine(line)
-            }
-            pendingLine.removeSubrange(pendingLine.startIndex...newlineIndex)
-            emittedPendingPrefixCount = 0
+
+        // Search only the newly received text for line boundaries. Looking for
+        // a newline in the whole accumulated pending line on every micro-delta
+        // makes a long no-newline prose response quadratic.
+        var segmentStart = text.startIndex
+        while let newlineIndex = text[segmentStart...].firstIndex(of: "\n") {
+            appendToPendingLine(text[segmentStart..<newlineIndex])
+            rendered += completePendingLine()
+            segmentStart = text.index(after: newlineIndex)
         }
+        appendToPendingLine(text[segmentStart...])
 
         // Incremental streaming: emit the safe prefix of the pending prose
         // line as soon as it arrives, without waiting for the newline. Only
         // active outside code fences and buffered blocks (lists, blockquotes,
         // tables), which have their own streaming/buffering strategies.
-        if !isInCodeFence, blockKind == nil, !pendingLine.isEmpty {
-            let newEmitCount = safeStreamingEmitCount(
-                in: pendingLine,
-                alreadyEmitted: emittedPendingPrefixCount
-            )
-            if newEmitCount > emittedPendingPrefixCount {
-                let emitStart = pendingLine.index(
-                    pendingLine.startIndex,
-                    offsetBy: emittedPendingPrefixCount
-                )
-                let emitEnd = pendingLine.index(
-                    pendingLine.startIndex,
-                    offsetBy: newEmitCount
-                )
-                rendered += String(pendingLine[emitStart..<emitEnd])
-                emittedPendingPrefixCount = newEmitCount
-            }
-        }
-        
-        if pendingLine.count > Self.maxBufferedLineLength {
+        rendered += streamPendingLineIfSafe()
+
+        if pendingLineScalarCount > Self.maxBufferedLineLength {
             if shouldFlushPendingLineForStreaming(pendingLine) {
                 rendered += flushBlock()
-                // The safe prefix was already streamed incrementally; emit
-                // only the un-flushed tail to avoid duplication.
-                if emittedPendingPrefixCount < pendingLine.count {
-                    rendered += String(pendingLine.dropFirst(emittedPendingPrefixCount))
-                }
-                pendingLine = ""
-                emittedPendingPrefixCount = 0
-            } else if pendingLine.count > Self.maxMarkdownBufferedLineLength {
+                // The normal prose tail has not been parsed as a block and can
+                // be emitted directly. Preserve the fact that this logical line
+                // already has output, so the next delta is never reclassified as
+                // a fresh heading/list/quote marker.
+                let tail = pendingLine
+                rendered += tail
+                recordEmittedPendingPrefix(tail)
+                clearPendingTailPreservingLineContext()
+            } else if pendingLineScalarCount > Self.maxMarkdownBufferedLineLength {
                 rendered += flushBlock()
-                let tail = String(pendingLine.dropFirst(emittedPendingPrefixCount))
-                rendered += renderCompleteLine(tail, appendsNewline: false)
-                pendingLine = ""
-                emittedPendingPrefixCount = 0
+                let tail = pendingLine
+                let tailRendered: String
+                if hasEmittedPendingPrefix {
+                    tailRendered = renderInlineFragment(
+                        tail,
+                        startingAtColumn: emittedPendingPrefixColumn
+                    )
+                } else {
+                    tailRendered = renderCompleteLine(
+                        tail,
+                        appendsNewline: false
+                    )
+                }
+                rendered += tailRendered
+                recordEmittedPendingPrefix(tailRendered)
+                clearPendingTailPreservingLineContext()
             }
         }
         
@@ -196,22 +218,140 @@ public struct TerminalMarkdownStreamFormatter {
         defer {
             isInCodeFence = false
             codeFenceLanguage = nil
-            emittedPendingPrefixCount = 0
+            resetPendingLineState()
         }
         var rendered = ""
         if !pendingLine.isEmpty {
-            if emittedPendingPrefixCount > 0 {
+            if hasEmittedPendingPrefix {
                 rendered += completePartiallyEmittedLine(
                     pendingLine,
+                    startingAtColumn: emittedPendingPrefixColumn,
                     appendsNewline: false
                 )
             } else {
                 rendered += handleCompleteLine(pendingLine, appendsNewline: false)
             }
-            pendingLine = ""
         }
         rendered += flushBlock()
         return rendered
+    }
+
+    /// Appends a no-newline input segment and updates all state whose cost must
+    /// be proportional to that segment, never to the complete pending line.
+    private mutating func appendToPendingLine(_ segment: Substring) {
+        guard !segment.isEmpty else {
+            return
+        }
+        pendingLine.append(contentsOf: segment)
+        pendingLineScalarCount += segment.unicodeScalars.count
+        updatePendingLineStartState(with: segment)
+    }
+
+    /// Renders the pending line at a known newline boundary, then clears every
+    /// line-local cache. This keeps consecutive newlines and multiple complete
+    /// lines in one input delta equivalent to the former buffered path.
+    private mutating func completePendingLine() -> String {
+        let rendered: String
+        if hasEmittedPendingPrefix {
+            rendered = completePartiallyEmittedLine(
+                pendingLine,
+                startingAtColumn: emittedPendingPrefixColumn
+            )
+        } else {
+            rendered = handleCompleteLine(pendingLine)
+        }
+        resetPendingLineState()
+        return rendered
+    }
+
+    /// Emits only the newly safe prose range. The emitted source is removed
+    /// immediately, so a later append sees only the un-emitted tail and cannot
+    /// invalidate a stored index into `pendingLine`.
+    private mutating func streamPendingLineIfSafe() -> String {
+        guard !isInCodeFence,
+              blockKind == nil,
+              !pendingLine.isEmpty else {
+            return ""
+        }
+
+        let safeEnd = safeStreamingEmitEnd(in: pendingLine)
+        guard safeEnd > pendingLine.startIndex else {
+            return ""
+        }
+
+        let fragment = String(pendingLine[..<safeEnd])
+        pendingLine.removeSubrange(pendingLine.startIndex..<safeEnd)
+        pendingLineScalarCount = max(
+            0,
+            pendingLineScalarCount - fragment.unicodeScalars.count
+        )
+        recordEmittedPendingPrefix(fragment)
+        return fragment
+    }
+
+    /// Clears the full set of line-local streaming state. It is deliberately
+    /// shared by normal newline handling, safety flushes, and `finish()` so a
+    /// formatter can safely be reused after any of those paths.
+    private mutating func resetPendingLineState() {
+        pendingLine = ""
+        pendingLineScalarCount = 0
+        hasEmittedPendingPrefix = false
+        emittedPendingPrefixColumn = 0
+        pendingLineStartState = .leadingWhitespace
+    }
+
+    /// Drops an already-rendered tail after a safety flush without pretending
+    /// that the following delta begins a new logical line. This is distinct from
+    /// `resetPendingLineState()`, which is only valid at a real newline or end
+    /// of stream.
+    private mutating func clearPendingTailPreservingLineContext() {
+        pendingLine = ""
+        pendingLineScalarCount = 0
+        hasEmittedPendingPrefix = true
+        pendingLineStartState = .resolved
+    }
+
+    /// Records the terminal column after output already emitted for this
+    /// logical line. `TerminalANSIText.visibleWidth` counts visible cells rather
+    /// than Swift `Character`s, so wide CJK/emoji clusters and zero-width
+    /// combining marks get the same treatment as the renderer's wrapper.
+    private mutating func recordEmittedPendingPrefix(_ rendered: String) {
+        guard !rendered.isEmpty else {
+            hasEmittedPendingPrefix = true
+            return
+        }
+        hasEmittedPendingPrefix = true
+        emittedPendingPrefixColumn = endingTerminalColumn(
+            after: rendered,
+            startingAtColumn: emittedPendingPrefixColumn
+        )
+    }
+
+    /// Finds the visual column after `rendered`, honoring any wrapping/newlines
+    /// produced while flushing a long inline fragment.
+    private func endingTerminalColumn(
+        after rendered: String,
+        startingAtColumn column: Int
+    ) -> Int {
+        let physicalLines = rendered.split(
+            separator: "\n",
+            omittingEmptySubsequences: false
+        )
+        guard let finalLine = physicalLines.last else {
+            return column
+        }
+        let startsNewPhysicalLine = physicalLines.count > 1
+        let start = startsNewPhysicalLine ? 0 : column
+        let visible = TerminalANSIText.visibleWidth(String(finalLine))
+        guard renderWidth > 0 else {
+            return start + visible
+        }
+        // Match the one-column reservation used by both wrapping paths. The
+        // streamed prefix is raw terminal text, so reducing the accumulated
+        // column after a full visual row avoids treating a wrapped prefix as an
+        // ever-growing offset for its later inline tail.
+        let contentWidth = max(1, renderWidth - 1)
+        return (start + visible) % contentWidth
     }
     
     /// Routes a complete line either into the pending multi-line block buffer
@@ -246,6 +386,13 @@ public struct TerminalMarkdownStreamFormatter {
             if isTableDelimiterRow(trimmed) {
                 blockKind = .table
                 blockLines.append(line)
+                // The delimiter itself can be the oversized line. Enforce the
+                // table cap at confirmation time rather than waiting for a body
+                // row, otherwise a two-line pathological table remains buffered
+                // indefinitely until another delta arrives.
+                if shouldFlushBufferedBlock() {
+                    return flushBufferedBlockForSafety()
+                }
                 return ""
             }
 
@@ -553,17 +700,15 @@ public struct TerminalMarkdownStreamFormatter {
         // more generous cap: a table is rendered whole or, once the cap is
         // exceeded, explicitly truncated (see `flushTruncatedTable`). We never
         // route a partial table through the generic flush, which would yield an
-        // incoherent AST/layout. A confirmed table (.table) uses the dedicated
-        // table cap; a one-line candidate (.tableCandidate) holds a single
-        // unresolved header line and is never flushed here.
-        if blockKind == .table {
+        // incoherent AST/layout. A confirmed table (.table) and its one-line
+        // candidate (.tableCandidate) both use the dedicated cap: a candidate
+        // can itself contain an arbitrarily long header while it waits for a
+        // delimiter, so exempting it would leave an unbounded hole.
+        if blockKind == .table || blockKind == .tableCandidate {
             if blockLines.count >= Self.maxBufferedTableLineCount {
                 return true
             }
             return blockLines.reduce(0) { $0 + $1.count } >= Self.maxBufferedTableCharacterCount
-        }
-        guard blockKind != .tableCandidate else {
-            return false
         }
         if blockLines.count >= Self.maxBufferedBlockLineCount {
             return true
@@ -821,17 +966,17 @@ public struct TerminalMarkdownStreamFormatter {
     /// would be on a normally-rendered line. The already-emitted prefix is
     /// never re-output.
     private func completePartiallyEmittedLine(
-        _ line: String,
+        _ tail: String,
+        startingAtColumn: Int,
         appendsNewline: Bool = true
     ) -> String {
         let newline = appendsNewline ? "\n" : ""
-        if emittedPendingPrefixCount >= line.count {
+        guard !tail.isEmpty else {
             return newline
         }
-        let tail = String(line.dropFirst(emittedPendingPrefixCount))
         let rendered = renderInlineFragment(
             tail,
-            startingAtColumn: emittedPendingPrefixCount
+            startingAtColumn: startingAtColumn
         )
         return "\(rendered)\(newline)"
     }
@@ -859,11 +1004,27 @@ public struct TerminalMarkdownStreamFormatter {
         guard mayContainMarkdown(in: fragment) else {
             return wrapWithColumnOffset(fragment, startingAtColumn: column)
         }
-        let source = sanitizedMarkdownSource(fragment)
+        // A partial tail starts in the middle of an already-emitted logical
+        // line. Prefixing a zero-width, non-whitespace sentinel keeps leading
+        // `-`, `#`, `>` and similar characters as inline prose rather than
+        // allowing the document parser to create a fresh block. Remove only the
+        // synthetic first occurrence after rendering; user content remains
+        // untouched.
+        let source = Self.inlineParsingSentinel + sanitizedMarkdownSource(fragment)
         var renderer = makeRenderer()
         let document = Document(parsing: source)
+        let rendered = renderer.visit(document)
+        let withoutSentinel: String
+        if let sentinelRange = rendered.range(of: Self.inlineParsingSentinel) {
+            withoutSentinel = rendered.replacingCharacters(
+                in: sentinelRange,
+                with: ""
+            )
+        } else {
+            withoutSentinel = rendered
+        }
         return wrapWithColumnOffset(
-            renderer.visit(document),
+            withoutSentinel,
             startingAtColumn: column
         )
     }
@@ -888,9 +1049,11 @@ public struct TerminalMarkdownStreamFormatter {
         return TerminalANSIText.wrap(text, width: available)
     }
 
-    /// Computes how many characters from the start of `pendingLine` can be
-    /// safely emitted as plain streaming text. Returns a count >=
-    /// `alreadyEmitted`.
+    /// Computes the end of the newly safe pending-line prefix.
+    ///
+    /// Block-marker ambiguity is classified as input arrives and cached in
+    /// `pendingLineStartState`; emitted prose has already been removed from
+    /// `pendingLine`, so the scanner below only walks fresh text.
     ///
     /// The safe prefix ends before:
     /// 1. Any potential block marker at the line start (buffered until the
@@ -899,91 +1062,131 @@ public struct TerminalMarkdownStreamFormatter {
     /// 2. Any character in `streamingStopChars` (`` ` ``, `*`, `_`, `~`, `[`,
     ///    `<`, `|`) that could be the start of an inline element or table
     ///    separator completed by a later delta.
-    private func safeStreamingEmitCount(
-        in line: String,
-        alreadyEmitted: Int
-    ) -> Int {
-        // When nothing has been emitted yet, buffer the line start until block
-        // markers are ruled out. This prevents headings, lists, blockquotes,
-        // code fences, and thematic breaks from being emitted as raw text.
-        if alreadyEmitted == 0 {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || lineStartCouldBeBlockMarker(trimmed) {
-                return 0
-            }
+    private func safeStreamingEmitEnd(in line: String) -> String.Index {
+        guard case .resolved = pendingLineStartState else {
+            return line.startIndex
         }
 
-        var count = alreadyEmitted
-        var index = line.index(line.startIndex, offsetBy: alreadyEmitted)
+        var index = line.startIndex
         while index < line.endIndex {
             if Self.streamingStopChars.contains(line[index]) {
                 break
             }
-            count += 1
             index = line.index(after: index)
         }
-        return count
+        return index
     }
 
-    /// Returns true when the trimmed line prefix could still develop into a
-    /// markdown block marker (heading, list, blockquote, code fence, or
-    /// thematic break). While true the line start is buffered to avoid
-    /// emitting block markers as raw text. Characters that are also inline
-    /// markers (`*`, `` ` ``, `_`, `<`) need no explicit check here because
-    /// `streamingStopChars` already halts emission at them.
-    private func lineStartCouldBeBlockMarker(_ trimmed: String) -> Bool {
-        guard let first = trimmed.first else { return true }
+    /// Feeds only newly appended characters into the block-marker classifier.
+    /// It mirrors the prior full-line block-marker decisions without repeatedly
+    /// trimming/scanning the complete pending line while a marker candidate is
+    /// split across many small deltas.
+    private mutating func updatePendingLineStartState(with segment: Substring) {
+        for character in segment {
+            switch pendingLineStartState {
+            case .ambiguousBlockMarker, .resolved:
+                return
+            default:
+                advancePendingLineStartState(with: character)
+            }
+        }
+    }
 
-        switch first {
-        case ">":
-            // Blockquote: ">" at the start always indicates a blockquote.
-            return true
-        case "#":
-            // Heading: 1-6 '#' chars. Ambiguous while all chars are '#'
-            // (could be followed by a space to form a heading).
-            // 7+ '#' can never be a heading.
-            let hashRun = trimmed.prefix(while: { $0 == "#" }).count
-            if hashRun > 6 { return false }
-            if hashRun == trimmed.count { return true }
-            let afterHashes = trimmed.index(trimmed.startIndex, offsetBy: hashRun)
-            return trimmed[afterHashes] == " " || trimmed[afterHashes] == "\t"
-        case "-":
-            // Could be list "- ", thematic break "---", or plain "-text".
-            let dashRun = trimmed.prefix(while: { $0 == "-" }).count
-            if dashRun == trimmed.count {
-                return true // "-", "--", or "---", all ambiguous until more
+    private mutating func advancePendingLineStartState(with character: Character) {
+        switch pendingLineStartState {
+        case .leadingWhitespace:
+            guard !isBlockMarkerWhitespace(character) else {
+                return
             }
-            let afterDashes = trimmed.index(trimmed.startIndex, offsetBy: dashRun)
-            let nextChar = trimmed[afterDashes]
-            if dashRun >= 3 {
-                // "---" is a thematic break only when the rest of the line is
-                // whitespace. "---option" is plain text: the dash run is too
-                // long for a list marker ("- ") and too short-bodied for a
-                // thematic break, so it should stream immediately instead of
-                // being buffered until the newline.
-                return nextChar.isWhitespace
+            switch character {
+            case ">":
+                pendingLineStartState = .ambiguousBlockMarker
+            case "#":
+                pendingLineStartState = .hashRun(1)
+            case "-":
+                pendingLineStartState = .dashRun(1)
+            case "+":
+                pendingLineStartState = .plus
+            default:
+                pendingLineStartState = character.isNumber
+                    ? .digitRun(1)
+                    : .resolved
             }
-            // dashRun 1-2: "- " could be a list marker; anything else is plain.
-            return nextChar == " " || nextChar == "\t"
-        case "+":
-            // Could be list "+ " or plain "+text".
-            if trimmed.count == 1 { return true } // "+", ambiguous
-            let afterPlus = trimmed.index(after: trimmed.startIndex)
-            return trimmed[afterPlus] == " " || trimmed[afterPlus] == "\t"
-        default:
-            if first.isNumber {
-                // Ordered list: digits + "." + whitespace. Ambiguous while we
-                // only see digits or "digits.". 10+ digits can't be a marker.
-                let digitRun = trimmed.prefix(while: { $0.isNumber }).count
-                if digitRun > 9 { return false }
-                if digitRun == trimmed.count { return true } // all digits
-                let afterDigits = trimmed.index(trimmed.startIndex, offsetBy: digitRun)
-                if trimmed[afterDigits] != "." { return false }
-                let afterDot = trimmed.index(after: afterDigits)
-                if afterDot == trimmed.endIndex { return true } // "12.", ambiguous
-                return trimmed[afterDot] == " " || trimmed[afterDot] == "\t"
+
+        case .hashRun(let count):
+            if character == "#" {
+                pendingLineStartState = count >= 6
+                    ? .resolved
+                    : .hashRun(count + 1)
+            } else if character == " " || character == "\t" {
+                pendingLineStartState = .ambiguousBlockMarker
+            } else if isBlockMarkerWhitespace(character) {
+                pendingLineStartState = .deferredWhitespace
+            } else {
+                pendingLineStartState = .resolved
             }
-            return false
+
+        case .dashRun(let count):
+            if character == "-" {
+                pendingLineStartState = .dashRun(min(3, count + 1))
+            } else if count >= 3 {
+                pendingLineStartState = character.isWhitespace
+                    ? .ambiguousBlockMarker
+                    : .resolved
+            } else if character == " " || character == "\t" {
+                pendingLineStartState = .ambiguousBlockMarker
+            } else if isBlockMarkerWhitespace(character) {
+                pendingLineStartState = .deferredWhitespace
+            } else {
+                pendingLineStartState = .resolved
+            }
+
+        case .plus:
+            if character == " " || character == "\t" {
+                pendingLineStartState = .ambiguousBlockMarker
+            } else if isBlockMarkerWhitespace(character) {
+                pendingLineStartState = .deferredWhitespace
+            } else {
+                pendingLineStartState = .resolved
+            }
+
+        case .digitRun(let count):
+            if character.isNumber {
+                pendingLineStartState = count >= 9
+                    ? .resolved
+                    : .digitRun(count + 1)
+            } else if character == "." {
+                pendingLineStartState = .orderedListDot
+            } else if isBlockMarkerWhitespace(character) {
+                // Trimming removes a trailing whitespace run, so wait until a
+                // later non-whitespace character proves this is not all digits.
+                pendingLineStartState = .deferredWhitespace
+            } else {
+                pendingLineStartState = .resolved
+            }
+
+        case .orderedListDot:
+            if character == " " || character == "\t" {
+                pendingLineStartState = .ambiguousBlockMarker
+            } else if isBlockMarkerWhitespace(character) {
+                pendingLineStartState = .deferredWhitespace
+            } else {
+                pendingLineStartState = .resolved
+            }
+
+        case .deferredWhitespace:
+            if !isBlockMarkerWhitespace(character) {
+                pendingLineStartState = .resolved
+            }
+
+        case .ambiguousBlockMarker, .resolved:
+            return
+        }
+    }
+
+    private func isBlockMarkerWhitespace(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy {
+            Self.blockMarkerWhitespace.contains($0)
         }
     }
 
@@ -1037,17 +1240,18 @@ public struct TerminalMarkdownStreamFormatter {
             return true
         }
         
-        // Single pass over the line looking for inline markers (`, **, __, ~~,
-        // ](), exiting at the first match instead of scanning the string once
-        // per marker.
+        // Single pass over the line looking for inline markers (`, *, _, **,
+        // __, ~~ and ]()), exiting at the first match instead of scanning the
+        // string once per marker. A lone `*`/`_` is passed to the Markdown
+        // parser rather than interpreted here: that preserves parser delimiter
+        // rules for literal punctuation and intraword underscores while enabling
+        // genuine single-delimiter emphasis.
         var previous: Character?
         for character in trimmed {
             switch character {
-            case "`":
+            case "`", "*", "_":
                 return true
-            case "*" where previous == "*",
-                 "_" where previous == "_",
-                 "~" where previous == "~",
+            case "~" where previous == "~",
                  "(" where previous == "]":
                 return true
             default:
@@ -1161,15 +1365,23 @@ public struct TerminalMarkdownStreamFormatter {
     private func strongMarkersOutsideInlineCode(in source: String) -> [StrongMarker] {
         var markers: [StrongMarker] = []
         var index = source.startIndex
-        var isInInlineCode = false
+        // Markdown code spans are delimited by matching runs, not individual
+        // backticks. Toggling for each ` incorrectly exposes strong markers
+        // inside ``...`` spans to the thought sanitizer.
+        var activeBacktickRunLength: Int?
         while index < source.endIndex {
             let character = source[index]
             if character == "`" {
-                isInInlineCode.toggle()
-                index = source.index(after: index)
+                let runLength = backtickRunLength(in: source, from: index)
+                if activeBacktickRunLength == runLength {
+                    activeBacktickRunLength = nil
+                } else if activeBacktickRunLength == nil {
+                    activeBacktickRunLength = runLength
+                }
+                index = source.index(index, offsetBy: runLength)
                 continue
             }
-            if !isInInlineCode,
+            if activeBacktickRunLength == nil,
                source[index...].hasPrefix("**") {
                 let upperBound = source.index(index, offsetBy: 2)
                 markers.append(
@@ -1214,45 +1426,11 @@ public struct TerminalMarkdownStreamFormatter {
     
     // MARK: - Terminal capabilities
     
-    private struct CachedTerminalWidth {
-        var value: Int
-        var timestamp: Date
-    }
-
-    /// Short-lived cache so streaming a long response does not issue one `ioctl`
-    /// per rendered line. The TTL keeps width adaptive to live terminal resizes.
-    private static let terminalWidthCacheTTL: TimeInterval = 0.25
-    private static let terminalWidthCache = Mutex<CachedTerminalWidth?>(nil)
-
     private static func detectTerminalWidth() -> Int {
-        let now = Date()
-        let cached = terminalWidthCache.withLock { cache -> Int? in
-            guard let cache,
-                  now.timeIntervalSince(cache.timestamp) < terminalWidthCacheTTL else {
-                return nil
-            }
-            return cache.value
-        }
-        if let cached {
-            return cached
-        }
-
-        let measured = measureTerminalWidth()
-        terminalWidthCache.withLock { cache in
-            cache = CachedTerminalWidth(value: measured, timestamp: now)
-        }
-        return measured
-    }
-
-    private static func measureTerminalWidth() -> Int {
-        var size = winsize()
-        let descriptors: [Int32] = [1, 2, 0]
-        for descriptor in descriptors {
-            if ioctl(descriptor, TIOCGWINSZ, &size) == 0, size.ws_col > 0 {
-                return Int(size.ws_col)
-            }
-        }
-        return 0
+        TerminalWidth.current(
+            descriptors: [1, 2, 0],
+            fallback: 0
+        )
     }
     
     private static func detectHyperlinkSupport() -> Bool {

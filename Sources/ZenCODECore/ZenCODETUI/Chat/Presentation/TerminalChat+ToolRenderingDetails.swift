@@ -333,10 +333,10 @@ extension TerminalChat {
         guard let summary else {
             return nil
         }
-        if summary.count <= 160 {
-            return summary
-        }
-        return "\(summary.prefix(157))..."
+        // Count-based inline truncation (see `truncatedByCount`): the 160 budget
+        // is a grapheme-cluster count, matching `truncatedInline` rather than the
+        // visible-width `fitDisplayWidth` family.
+        return truncatedByCount(summary, limit: 160)
     }
 
     static func expandedToolSummary(
@@ -385,8 +385,10 @@ extension TerminalChat {
         let characterLimit = expandedSnippetCharacterLimit
         let lineLimit = expandedSnippetLineLimit
         var snippet = text.trimmingCharacters(in: .newlines)
+        var wasTruncated = false
         if snippet.count > characterLimit {
             snippet = String(snippet.prefix(characterLimit))
+            wasTruncated = true
         }
         var lines = snippet
             .split(separator: "\n", omittingEmptySubsequences: false)
@@ -410,7 +412,7 @@ extension TerminalChat {
         var output = visibleLines.isEmpty
             ? ["\(indentation)<empty>"]
             : visibleLines.map { "\(indentation)\($0)" }
-        if lines.count > visibleLines.count || text.count > snippet.count {
+        if lines.count > visibleLines.count || wasTruncated {
             output.append("\(indentation)... truncated")
         }
         return output
@@ -423,8 +425,10 @@ extension TerminalChat {
         let characterLimit = expandedSnippetCharacterLimit
         let lineLimit = expandedSnippetLineLimit
         var snippet = text.trimmingCharacters(in: .newlines)
+        var wasTruncated = false
         if snippet.count > characterLimit {
             snippet = String(snippet.prefix(characterLimit))
+            wasTruncated = true
         }
         let lines = snippet
             .split(separator: "\n", omittingEmptySubsequences: false)
@@ -433,7 +437,7 @@ extension TerminalChat {
         var output = visibleLines.isEmpty
             ? ["\(indentation)<empty>"]
             : visibleLines.map { "\(indentation)\($0)" }
-        if lines.count > visibleLines.count || text.count > snippet.count {
+        if lines.count > visibleLines.count || wasTruncated {
             output.append("\(indentation)... truncated")
         }
         return output

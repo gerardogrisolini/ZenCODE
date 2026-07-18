@@ -36,7 +36,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func fileChangeSummaryColoringHighlightsNonBlankLines() {
-        let rendered = TerminalChat.fileChangeSummaryColorApplied(
+        let rendered = TerminalChatTextFormatting.fileChangeSummaryColorApplied(
             to: "\nChanged files: 1 modified file  +12 -2\n  modified Sources/App.swift  +12 -2\nUse /undo to revert, /changes diff to show patches.\n",
             isEnabled: true
         )
@@ -148,6 +148,62 @@ extension TerminalChatRenderingTests {
 
         #expect(rendered.hasSuffix(" ✅"))
         #expect(!rendered.contains("  ✅"))
+    }
+
+    @Test
+    func compactToolStatusLineHonorsNarrowActualColumnBudget() {
+        let rendered = TerminalChat.compactToolStatusLine(
+            target: "abcdef",
+            statusIcon: "✅",
+            contentInsetWidth: 0,
+            columnWidth: 6
+        )
+
+        // One trailing cell remains deliberately unused for safe in-place
+        // rewrites, so the content budget is five columns rather than six.
+        #expect(rendered == "ab ✅")
+        #expect(TerminalChat.displayWidth(rendered) == 5)
+
+        let statusOnly = TerminalChat.compactToolStatusLine(
+            target: "abcdef",
+            statusIcon: "✅",
+            contentInsetWidth: 0,
+            columnWidth: 3
+        )
+        #expect(statusOnly == "✅")
+        #expect(TerminalChat.displayWidth(statusOnly) == 2)
+    }
+
+    @Test
+    func fitDisplayWidthUsesWidthAwareFallbackWhenEllipsisCannotFit() {
+        #expect(TerminalChat.fitDisplayWidth("abcdef", width: 3) == "abc")
+        #expect(TerminalChat.fitDisplayWidth("😀abcdef", width: 2) == "😀")
+        #expect(TerminalChat.fitDisplayWidth("😀abcdef", width: 1).isEmpty)
+        #expect(TerminalChat.fitDisplayWidth("abcdef", width: 0).isEmpty)
+        #expect(TerminalChat.fitDisplayWidth("abcdef", width: -1).isEmpty)
+    }
+
+    @Test
+    func detailedToolWrappingCapsWideGlyphAfterHangingIndent() {
+        let rows = TerminalChat.safelyWrappedDetailedToolLines(
+            ["    a😀"],
+            contentInsetWidth: 0,
+            columnWidth: 6
+        )
+
+        #expect(rows == ["    a", "   😀"])
+        #expect(rows.allSatisfy { TerminalChat.displayWidth($0) <= 5 })
+    }
+
+    @Test
+    func indentedSnippetsDoNotMarkTrimmedTerminalNewlineAsTruncated() {
+        let normal = TerminalChat.indentedSnippet("line\n")
+        let preservingIndentation = TerminalChat.indentedSnippetPreservingIndentation("  line\n")
+
+        #expect(normal == ["  line"])
+        #expect(preservingIndentation == ["    line"])
+        #expect(!normal.contains("  ... truncated"))
+        #expect(!preservingIndentation.contains("  ... truncated"))
     }
 
     @Test
