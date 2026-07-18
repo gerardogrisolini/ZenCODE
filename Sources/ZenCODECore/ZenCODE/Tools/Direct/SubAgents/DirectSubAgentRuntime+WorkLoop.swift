@@ -91,6 +91,11 @@ extension DirectSubAgentRuntime {
 
         let prompt = agent.pendingPrompts.removeFirst()
         agent.status = .running
+        agent.currentActivity = nil
+        agent.pendingContentBuffer = nil
+        agent.currentToolName = nil
+        agent.currentToolTarget = nil
+        agent.latestContentPreview = nil
         agent.updatedAt = .now
         agents[agentID] = agent
 
@@ -111,55 +116,46 @@ extension DirectSubAgentRuntime {
         }
 
         switch event {
-        case let .status(message):
-            agent.currentThoughtBuffer = nil
-            agent.currentActivity = message.nilIfBlank.map { Self.truncatedActivity($0) }
-        case let .diagnostic(message):
-            agent.currentThoughtBuffer = nil
-            if let message = message.nilIfBlank {
-                agent.currentActivity = Self.truncatedActivity(message)
-            }
-        case let .thought(delta):
-            let currentActivity = agent.currentActivity
-            if let activity = Self.updatedThoughtActivity(
-                currentActivity,
-                thoughtBuffer: &agent.currentThoughtBuffer,
-                appending: delta
-            ) {
-                agent.currentActivity = activity
-            }
+        case .status, .diagnostic:
+            // Backend status and diagnostic events are not model-authored chat
+            // updates. Keeping them out of the overview prevents incidental
+            // transport chatter from republishing the whole sub-agent section.
+            break
+        case .thought:
+            // Reasoning arrives as a high-frequency delta stream. Its contents
+            // are intentionally private here: publish one stable state for the
+            // entire thinking phase so signature-based rendering can dedupe all
+            // subsequent deltas.
+            agent.currentActivity = "🤔 Thinking…"
+            agent.currentToolName = nil
+            agent.currentToolTarget = nil
+            agent.latestContentPreview = nil
         case let .modelLoaded(modelID):
-            agent.currentThoughtBuffer = nil
             agent.modelID = modelID.nilIfBlank ?? agent.modelID
-            if let modelID = modelID.nilIfBlank {
-                agent.currentActivity = "loaded model \(modelID)"
-            }
         case let .modelLoadedDetails(details):
-            agent.currentThoughtBuffer = nil
             agent.modelID = details.modelID.nilIfBlank ?? agent.modelID
             agent.modelRuntime = details.runtime ?? agent.modelRuntime
-            agent.currentActivity = "loaded model \(details.modelID)"
         case let .modelRuntime(runtime):
             agent.modelRuntime = runtime.nilIfBlank ?? agent.modelRuntime
         case let .content(delta):
-            agent.currentThoughtBuffer = nil
-            if let preview = Self.updatedStreamingPreview(
-                agent.latestContentPreview,
-                appending: delta
-            ) {
-                agent.latestContentPreview = preview
-                agent.currentActivity = preview
-            }
+            // Assistant content is also streamed as deltas. Buffer it without
+            // touching snapshot-visible fields; it becomes visible only when a
+            // tool boundary proves that the model's message is complete, or in
+            // `recordCompletion` as the final response.
+            agent.pendingContentBuffer = (agent.pendingContentBuffer ?? "") + delta
         case let .toolCallStarted(toolCall):
-            agent.currentThoughtBuffer = nil
+            agent.currentActivity = Self.takeCompletedContent(
+                from: &agent.pendingContentBuffer
+            )
             agent.currentToolName = toolCall.name
-            agent.currentActivity = "running \(toolCall.name)"
-        case let .toolCallCompleted(toolCall, result):
-            agent.currentThoughtBuffer = nil
-            agent.currentToolName = nil
-            let summary = result.summary.nilIfBlank ?? result.output.nilIfBlank
-            agent.currentActivity = summary.map { "completed \(toolCall.name): \(Self.truncatedActivity($0))" }
-                ?? "completed \(toolCall.name)"
+            agent.currentToolTarget = ToolCallPresentation.displayToolTarget(for: toolCall)
+            agent.latestContentPreview = nil
+        case let .toolCallCompleted(toolCall, _):
+            // Retain the compact tool presentation until the next meaningful
+            // model state. This makes short tool calls observable on the next
+            // periodic refresh without adding a second completion publication.
+            agent.currentToolName = toolCall.name
+            agent.currentToolTarget = ToolCallPresentation.displayToolTarget(for: toolCall)
         case let .sessionSnapshot(snapshot):
             agent.modelID = snapshot.modelID?.nilIfBlank ?? agent.modelID
         case .metrics,
@@ -174,48 +170,11 @@ extension DirectSubAgentRuntime {
         agents[agentID] = agent
     }
 
-    private static func updatedThoughtActivity(
-        _ currentActivity: String?,
-        thoughtBuffer: inout String?,
-        appending delta: String
+    private static func takeCompletedContent(
+        from buffer: inout String?
     ) -> String? {
-        let prefix = "thinking: "
-        if currentActivity?.hasPrefix(prefix) != true {
-            thoughtBuffer = nil
-        }
-        thoughtBuffer = (thoughtBuffer ?? "") + delta
-        guard let thought = thoughtBuffer?.nilIfBlank else {
-            return currentActivity
-        }
-        return prefix + truncatedActivity(thought)
-    }
-
-    private static func updatedStreamingPreview(
-        _ current: String?,
-        appending delta: String
-    ) -> String? {
-        let combined = ((current ?? "") + delta)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !combined.isEmpty else {
-            return current
-        }
-        return truncatedActivity(combined)
-    }
-
-    private static func truncatedActivity(_ text: String) -> String {
-        let normalized = text
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-            .split(whereSeparator: { $0.isWhitespace })
-            .joined(separator: " ")
-        let limit = 180
-        guard normalized.count > limit else {
-            return normalized
-        }
-        // Activity is displayed as a live tail preview in the sub-agent
-        // overview. Keep the newest text so new thinking, content, and tool
-        // updates remain visible after the preview reaches its size limit.
-        return "…" + String(normalized.suffix(limit - 1))
+        defer { buffer = nil }
+        return buffer?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
     }
 
     public func recordTaskAttemptStarted(agentID: String) async -> Bool {
@@ -248,6 +207,9 @@ extension DirectSubAgentRuntime {
               agent.status != .closed else {
             return
         }
+        let finalContent = Self.takeCompletedContent(
+            from: &agent.pendingContentBuffer
+        )
         let trimmedOutput = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
         agent.latestOutput = trimmedOutput
         if let existing = agent.accumulatedOutput?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -260,9 +222,12 @@ extension DirectSubAgentRuntime {
         agent.latestError = nil
         agent.modelID = response.modelID.nilIfBlank ?? agent.modelID
         agent.currentActivity = nil
-        agent.currentThoughtBuffer = nil
         agent.currentToolName = nil
-        agent.latestContentPreview = nil
+        agent.currentToolTarget = nil
+        // `response.text` may contain commentary from every prior tool round.
+        // Preserve it for agent.get/wait, but let the TUI present only the final
+        // completed content block when the backend emitted one.
+        agent.latestContentPreview = finalContent
         agent.status = agent.pendingPrompts.isEmpty ? .idle : .queued
         agent.updatedAt = .now
         let releasedReservation = agent.pendingPrompts.isEmpty
@@ -309,8 +274,9 @@ extension DirectSubAgentRuntime {
             agent.status = .failed
             agent.latestError = error.localizedDescription
             agent.currentActivity = nil
-            agent.currentThoughtBuffer = nil
+            agent.pendingContentBuffer = nil
             agent.currentToolName = nil
+            agent.currentToolTarget = nil
         }
         agent.updatedAt = .now
         let releasedReservation = takeTasklessDelegationReservation(from: &agent)
@@ -339,8 +305,9 @@ extension DirectSubAgentRuntime {
             agent.status = .closed
             agent.latestError = "Cancelled."
             agent.currentActivity = nil
-            agent.currentThoughtBuffer = nil
+            agent.pendingContentBuffer = nil
             agent.currentToolName = nil
+            agent.currentToolTarget = nil
         }
         agent.updatedAt = .now
         let releasedReservation = takeTasklessDelegationReservation(from: &agent)

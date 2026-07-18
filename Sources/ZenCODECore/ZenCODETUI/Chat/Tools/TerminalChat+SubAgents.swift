@@ -13,18 +13,13 @@ extension TerminalChat {
         let indentation: Int
         let maxWrappedLines: Int
         let dimPrefix: Bool
-        /// Dynamic agent activity is most useful at its trailing edge: thought
-        /// and response streams append new text, so the first wrapped rows soon
-        /// become stale.
-        let showsLatestWrappedLines: Bool
 
         static func summary(_ text: String) -> SubAgentOverviewLine {
             SubAgentOverviewLine(
                 text: text,
                 indentation: 3,
                 maxWrappedLines: 3,
-                dimPrefix: true,
-                showsLatestWrappedLines: false
+                dimPrefix: true
             )
         }
 
@@ -36,34 +31,22 @@ extension TerminalChat {
                 text: text,
                 indentation: 3,
                 maxWrappedLines: maxWrappedLines,
-                dimPrefix: false,
-                showsLatestWrappedLines: false
+                dimPrefix: false
             )
         }
 
-        static func latest(
+        /// Complete model messages are emitted only after their delta stream has
+        /// reached a semantic boundary. Do not tail-truncate them: the update is
+        /// published once, with the whole message kept together.
+        static func complete(
             _ text: String,
-            maxWrappedLines: Int = 3
+            indentation: Int = 6
         ) -> SubAgentOverviewLine {
             SubAgentOverviewLine(
                 text: text,
-                indentation: 3,
-                maxWrappedLines: maxWrappedLines,
-                dimPrefix: false,
-                showsLatestWrappedLines: true
-            )
-        }
-
-        static func current(
-            _ text: String,
-            maxWrappedLines: Int = 3
-        ) -> SubAgentOverviewLine {
-            SubAgentOverviewLine(
-                text: text,
-                indentation: 6,
-                maxWrappedLines: maxWrappedLines,
-                dimPrefix: false,
-                showsLatestWrappedLines: true
+                indentation: indentation,
+                maxWrappedLines: .max,
+                dimPrefix: false
             )
         }
     }
@@ -196,10 +179,7 @@ extension TerminalChat {
             if !activityLines.isEmpty {
                 lines.append(contentsOf: activityLines)
             }
-            if let detail = renderSubAgentDetail(
-                snapshot,
-                hasCurrentActivity: !activityLines.isEmpty
-            ) {
+            if let detail = renderSubAgentDetail(snapshot) {
                 lines.append(detail)
             }
         }
@@ -319,62 +299,42 @@ extension TerminalChat {
     ) -> [SubAgentOverviewLine] {
         let currentToolName = snapshot.currentToolName?.nilIfBlank
         let currentActivity = snapshot.currentActivity?.nilIfBlank
-        guard currentToolName != nil || currentActivity != nil else {
-            return []
-        }
+        var lines: [SubAgentOverviewLine] = []
 
-        let label = colorText("▸ current:", code: "\u{1B}[38;5;208m")
-        var lines = [SubAgentOverviewLine.regular(label, maxWrappedLines: 1)]
+        if let currentActivity {
+            if currentActivity == "🤔 Thinking…" {
+                lines.append(.regular(currentActivity, maxWrappedLines: 1))
+            } else {
+                lines.append(.complete("💬 \(inlineText(currentActivity))"))
+            }
+        }
 
         if let currentToolName {
-            lines.append(
-                .current("\(dimText("tool:")) \(inlineText(currentToolName))")
-            )
+            let target = snapshot.currentToolTarget?.nilIfBlank
+            let title = target.map { "\(currentToolName) \($0)" } ?? currentToolName
+            lines.append(.complete("🛠️  \(inlineText(title))"))
         }
 
-        if let currentActivity,
-           !isToolOnlyActivity(currentActivity, currentToolName: currentToolName) {
-            lines.append(
-                .current("\(dimText("activity:")) \(inlineText(currentActivity))")
-            )
+        if lines.isEmpty, snapshot.pending {
+            lines.append(.regular("🤔 Thinking…", maxWrappedLines: 1))
         }
 
         return lines
     }
 
     private static func renderSubAgentDetail(
-        _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
-        hasCurrentActivity: Bool
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
     ) -> SubAgentOverviewLine? {
         if let latestError = snapshot.latestError?.nilIfBlank {
-            let label = colorText("✗ error:", code: "\u{1B}[31m")
-            return .latest("\(label) \(inlineText(latestError))")
+            return .complete("❌ \(inlineText(latestError))", indentation: 3)
         }
 
-        guard let latestOutput = snapshot.latestOutput?.nilIfBlank else {
-            if snapshot.pending && !hasCurrentActivity {
-                let label = colorText("▸ working:", code: "\u{1B}[38;5;208m")
-                return .latest("\(label) \(dimText("pending response"))")
-            }
+        guard !snapshot.pending,
+              let latestOutput = snapshot.latestContentPreview?.nilIfBlank
+                ?? snapshot.latestOutput?.nilIfBlank else {
             return nil
         }
-
-        if snapshot.pending {
-            let label = colorText("▸ working:", code: "\u{1B}[38;5;208m")
-            return .latest("\(label) \(inlineText(latestOutput))")
-        }
-        let label = colorText("✓ result:", code: "\u{1B}[32m")
-        return .latest("\(label) \(inlineText(latestOutput))")
-    }
-
-    private static func isToolOnlyActivity(
-        _ activity: String,
-        currentToolName: String?
-    ) -> Bool {
-        guard let currentToolName else {
-            return false
-        }
-        return inlineText(activity) == "running \(currentToolName)"
+        return .complete("✅ \(inlineText(latestOutput))", indentation: 3)
     }
 
     private static func statusBadge(
@@ -476,14 +436,9 @@ extension TerminalChat {
             let maxWrappedLines = max(1, line.maxWrappedLines)
             if wrapped.count > maxWrappedLines {
                 let ellipsis = AgentOutput.standardErrorIsTerminal ? "\(reset)…" : "…"
-                if line.showsLatestWrappedLines {
-                    wrapped = Array(wrapped.suffix(maxWrappedLines))
-                    wrapped[0] = "\(ellipsis)\(wrapped[0])"
-                } else {
-                    wrapped = Array(wrapped.prefix(maxWrappedLines))
-                    let lastIndex = maxWrappedLines - 1
-                    wrapped[lastIndex] += ellipsis
-                }
+                wrapped = Array(wrapped.prefix(maxWrappedLines))
+                let lastIndex = maxWrappedLines - 1
+                wrapped[lastIndex] += ellipsis
             }
             for wrappedLine in wrapped {
                 output.append("\(linePrefix)\(prefix)\(wrappedLine)")
@@ -492,7 +447,7 @@ extension TerminalChat {
         return "\n\(output.joined(separator: "\n"))\n"
     }
 
-    private static func subAgentOverviewSignature(
+    static func subAgentOverviewSignature(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
     ) -> String {
         snapshots.map { snapshot in
@@ -507,6 +462,8 @@ extension TerminalChat {
                 snapshot.modelRuntime?.nilIfBlank ?? "",
                 snapshot.currentActivity?.nilIfBlank ?? "",
                 snapshot.currentToolName?.nilIfBlank ?? "",
+                snapshot.currentToolTarget?.nilIfBlank ?? "",
+                snapshot.latestContentPreview?.nilIfBlank ?? "",
                 snapshot.latestOutput?.nilIfBlank ?? "",
                 snapshot.latestError?.nilIfBlank ?? ""
             ].joined(separator: "\u{1F}")

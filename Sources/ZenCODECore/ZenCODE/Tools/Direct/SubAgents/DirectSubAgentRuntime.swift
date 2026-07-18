@@ -70,8 +70,9 @@ public actor DirectSubAgentRuntime {
         public var modelID: String? = nil
         public var modelRuntime: String? = nil
         public var currentActivity: String? = nil
-        var currentThoughtBuffer: String? = nil
+        var pendingContentBuffer: String? = nil
         public var currentToolName: String? = nil
+        public var currentToolTarget: String? = nil
         public var latestContentPreview: String? = nil
         public var latestEventAt: Date? = nil
         public var runTask: Task<Void, Never>?
@@ -99,6 +100,7 @@ public actor DirectSubAgentRuntime {
         public let modelRuntime: String?
         public let currentActivity: String?
         public let currentToolName: String?
+        public let currentToolTarget: String?
         public let latestContentPreview: String?
         public let latestEventAt: Date?
         public let latestOutput: String?
@@ -123,6 +125,7 @@ public actor DirectSubAgentRuntime {
             modelRuntime: String? = nil,
             currentActivity: String? = nil,
             currentToolName: String? = nil,
+            currentToolTarget: String? = nil,
             latestContentPreview: String? = nil,
             latestEventAt: Date? = nil,
             latestOutput: String?,
@@ -146,6 +149,7 @@ public actor DirectSubAgentRuntime {
             self.modelRuntime = modelRuntime
             self.currentActivity = currentActivity
             self.currentToolName = currentToolName
+            self.currentToolTarget = currentToolTarget
             self.latestContentPreview = latestContentPreview
             self.latestEventAt = latestEventAt
             self.latestOutput = latestOutput

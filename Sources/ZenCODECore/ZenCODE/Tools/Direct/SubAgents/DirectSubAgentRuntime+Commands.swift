@@ -426,9 +426,12 @@ extension DirectSubAgentRuntime {
         agent.runTask = nil
         agent.status = .idle
         agent.currentActivity = nil
-        agent.currentThoughtBuffer = nil
+        agent.pendingContentBuffer = nil
         agent.currentToolName = nil
-        agent.latestContentPreview = nil
+        agent.currentToolTarget = nil
+        if error != nil {
+            agent.latestContentPreview = nil
+        }
         agent.latestError = error
         agent.updatedAt = .now
         agents[agentID] = agent
@@ -509,6 +512,11 @@ extension DirectSubAgentRuntime {
             agent.pendingPrompts.removeAll()
             agent.status = .closed
             agent.latestError = "Delegated execution interrupted with its root session."
+            agent.currentActivity = nil
+            agent.pendingContentBuffer = nil
+            agent.currentToolName = nil
+            agent.currentToolTarget = nil
+            agent.latestContentPreview = nil
             agent.updatedAt = .now
             let releasedReservation = takeTasklessDelegationReservation(from: &agent)
             agents[id] = agent
@@ -544,6 +552,10 @@ extension DirectSubAgentRuntime {
         agent.pendingPrompts.removeAll()
         agent.status = .closed
         agent.latestError = nil
+        agent.currentActivity = nil
+        agent.pendingContentBuffer = nil
+        agent.currentToolName = nil
+        agent.currentToolTarget = nil
         agent.updatedAt = .now
         let releasedReservation = takeTasklessDelegationReservation(from: &agent)
         agents[id] = agent

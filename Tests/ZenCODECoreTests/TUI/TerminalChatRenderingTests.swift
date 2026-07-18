@@ -2117,6 +2117,7 @@ struct TerminalChatRenderingTests {
             modelRuntime: "remote",
             currentActivity: "reading project files",
             currentToolName: "search.grep",
+            currentToolTarget: "needle",
             latestOutput: nil,
             latestError: nil,
             createdAt: Date(),
@@ -2126,9 +2127,10 @@ struct TerminalChatRenderingTests {
         let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
 
         #expect(rendered.contains("model: gpt-5 · remote"))
-        #expect(rendered.contains("▸ current:"))
-        #expect(rendered.contains("tool: search.grep"))
-        #expect(rendered.contains("activity: reading project files"))
+        #expect(rendered.contains("💬 reading project files"))
+        #expect(rendered.contains("🛠️  search.grep needle"))
+        #expect(!rendered.contains("activity:"))
+        #expect(!rendered.contains("tool:"))
     }
 
     @Test
@@ -2341,13 +2343,86 @@ struct TerminalChatRenderingTests {
 
         let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
 
-        #expect(rendered.contains("▸ current:"))
-        #expect(rendered.contains("activity: reading project files"))
-        #expect(!rendered.contains("tool:"))
+        #expect(rendered.contains("💬 reading project files"))
+        #expect(!rendered.contains("🛠️"))
     }
 
     @Test
-    func subAgentOverviewShowsTheLatestThreeWrappedActivityLines() {
+    func subAgentOverviewShowsOnlyOneStableThinkingLabel() {
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_thinking",
+            name: "researcher",
+            role: "researcher",
+            status: .running,
+            pending: true,
+            currentActivity: "🤔 Thinking…",
+            latestContentPreview: "private reasoning delta that must stay hidden",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+
+        #expect(rendered.components(separatedBy: "🤔 Thinking…").count - 1 == 1)
+        #expect(!rendered.contains("private reasoning delta"))
+        #expect(!rendered.contains("💬"))
+    }
+
+    @Test
+    func subAgentOverviewUsesTheCompactToolNameAndTarget() {
+        let toolCall = DirectAgentToolCall(
+            id: "grep-call",
+            name: "search.grep",
+            argumentsObject: ["pattern": "needle"],
+            argumentsJSON: #"{"pattern":"needle"}"#
+        )
+        let target = ToolCallPresentation.displayToolTarget(for: toolCall)
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_tool",
+            name: "researcher",
+            role: "researcher",
+            status: .running,
+            pending: true,
+            currentToolName: toolCall.name,
+            currentToolTarget: target,
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+
+        #expect(target == "needle")
+        #expect(rendered.contains("🛠️  \(ToolCallPresentation.toolTitle(for: toolCall))"))
+        #expect(!rendered.contains("🤔 Thinking…"))
+    }
+
+    @Test
+    func subAgentOverviewPrintsOnlyTheCompleteFinalContentBlock() {
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_final",
+            name: "researcher",
+            role: "researcher",
+            status: .idle,
+            pending: false,
+            latestContentPreview: "Final answer in one complete block.",
+            latestOutput: "Earlier tool commentary. Final answer in one complete block.",
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+
+        #expect(rendered.contains("✅ Final answer in one complete block."))
+        #expect(!rendered.contains("Earlier tool commentary"))
+    }
+
+    @Test
+    func subAgentOverviewKeepsCompleteActivityAndToolTargetTogether() {
         let staleMarker = "STALE_ACTIVITY_MARKER"
         let latestMarker = "LATEST_ACTIVITY_MARKER"
         let staleToolMarker = "STALE_TOOL_MARKER"
@@ -2368,7 +2443,8 @@ struct TerminalChatRenderingTests {
             status: .running,
             pending: true,
             currentActivity: longActivity,
-            currentToolName: longToolName,
+            currentToolName: "search.grep",
+            currentToolTarget: longToolName,
             latestOutput: nil,
             latestError: nil,
             createdAt: Date(),
@@ -2380,14 +2456,15 @@ struct TerminalChatRenderingTests {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { String($0) }
 
-        #expect(rendered.contains("▸ current:"))
+        #expect(rendered.contains("💬"))
         #expect(rendered.contains(latestMarker))
-        #expect(!rendered.contains(staleMarker))
+        #expect(rendered.contains(staleMarker))
+        #expect(rendered.contains("🛠️  search.grep"))
         #expect(rendered.contains(latestToolMarker))
-        #expect(!rendered.contains(staleToolMarker))
-        #expect(rendered.contains("…"))
+        #expect(rendered.contains(staleToolMarker))
+        #expect(!rendered.contains("…"))
 
-        let currentIndex = visibleLines.firstIndex { $0.contains("▸ current:") }
+        let currentIndex = visibleLines.firstIndex { $0.contains("💬") }
         let idIndex = visibleLines.firstIndex { $0.contains("id: agent_current") }
         #expect(currentIndex != nil)
         #expect(idIndex != nil)
@@ -2414,8 +2491,7 @@ struct TerminalChatRenderingTests {
 
         let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
 
-        #expect(rendered.contains("▸ current:"))
-        #expect(rendered.contains("activity: thinking through the answer"))
+        #expect(rendered.contains("💬 thinking through the answer"))
         #expect(!rendered.contains("preview:"))
         #expect(!rendered.contains("Drafting the final summary"))
     }
@@ -2444,12 +2520,14 @@ struct TerminalChatRenderingTests {
 
         let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
 
+        #expect(rendered.contains("✅"))
         #expect(rendered.contains("ENDMARKER"))
         #expect(!rendered.contains("..."))
+        #expect(!rendered.contains("…"))
     }
 
     @Test
-    func subAgentOverviewCapsWrappedDetailToThreeLines() {
+    func subAgentOverviewRendersCompleteFinalResponseInOneBlock() {
         let staleMarker = "STALE_RESULT_MARKER"
         let latestMarker = "LATEST_RESULT_MARKER"
         let hugeOutput = "\(staleMarker) "
@@ -2472,10 +2550,11 @@ struct TerminalChatRenderingTests {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { String($0) }
 
-        #expect(rendered.contains("…"))
+        #expect(rendered.contains("✅"))
         #expect(rendered.contains(latestMarker))
-        #expect(!rendered.contains(staleMarker))
-        #expect(visibleLines.count <= 12)
+        #expect(rendered.contains(staleMarker))
+        #expect(!rendered.contains("…"))
+        #expect(visibleLines.count > 12)
     }
 
     @Test

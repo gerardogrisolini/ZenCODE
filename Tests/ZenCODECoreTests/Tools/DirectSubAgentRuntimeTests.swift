@@ -201,7 +201,7 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func thoughtDeltasKeepTheLatestCurrentActivityPreview() async throws {
+    func thoughtDeltasKeepOneStableThinkingPresentation() async throws {
         let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend }
@@ -216,23 +216,110 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil
         )
         let agentID = try #require(await runtime.snapshots().first?.id)
+        while await backend.sentPromptCount() == 0 {
+            await Task.yield()
+        }
 
         await runtime.recordEvent(.thought("Considering the "), agentID: agentID)
+        let firstSnapshot = try #require(await runtime.snapshots().first)
+        let firstSignature = TerminalChat.subAgentOverviewSignature([firstSnapshot])
+        #expect(firstSnapshot.currentActivity == "🤔 Thinking…")
+        #expect(firstSnapshot.currentActivity?.contains("Considering") == false)
+
         await runtime.recordEvent(.thought("available evidence"), agentID: agentID)
-
-        let snapshot = try #require(await runtime.snapshots().first)
-        #expect(snapshot.currentActivity == "thinking: Considering the available evidence")
-
         await runtime.recordEvent(
             .thought(String(repeating: "x", count: 200)),
             agentID: agentID
         )
-        let cappedActivity = try #require(await runtime.snapshots().first?.currentActivity)
-        #expect(cappedActivity.hasPrefix("thinking: …"))
         await runtime.recordEvent(.thought("additional delta"), agentID: agentID)
-        let latestActivity = try #require(await runtime.snapshots().first?.currentActivity)
-        #expect(latestActivity != cappedActivity)
-        #expect(latestActivity.contains("additional delta"))
+        let latestSnapshot = try #require(await runtime.snapshots().first)
+
+        #expect(latestSnapshot.currentActivity == "🤔 Thinking…")
+        #expect(
+            TerminalChat.subAgentOverviewSignature([latestSnapshot])
+                == firstSignature
+        )
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func contentDeltasPublishOnceAtTheToolBoundaryUsingCompactTarget() async throws {
+        let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend }
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("tool-worker"),
+                "prompt": .string("Investigate the issue")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-content-tests"),
+            parentAllowedToolNames: nil
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+        while await backend.sentPromptCount() == 0 {
+            await Task.yield()
+        }
+
+        await runtime.recordEvent(.thought("private reasoning"), agentID: agentID)
+        let thinkingSnapshot = try #require(await runtime.snapshots().first)
+        let thinkingSignature = TerminalChat.subAgentOverviewSignature([thinkingSnapshot])
+
+        await runtime.recordEvent(.content("I’ll inspect "), agentID: agentID)
+        await runtime.recordEvent(.content("the matching files."), agentID: agentID)
+        let streamingSnapshot = try #require(await runtime.snapshots().first)
+        #expect(streamingSnapshot.currentActivity == "🤔 Thinking…")
+        #expect(
+            TerminalChat.subAgentOverviewSignature([streamingSnapshot])
+                == thinkingSignature
+        )
+
+        let toolCall = DirectAgentToolCall(
+            id: "grep-call",
+            name: "search.grep",
+            argumentsObject: ["pattern": "needle"],
+            argumentsJSON: #"{"pattern":"needle"}"#
+        )
+        await runtime.recordEvent(.toolCallStarted(toolCall), agentID: agentID)
+        let startedSnapshot = try #require(await runtime.snapshots().first)
+        let startedSignature = TerminalChat.subAgentOverviewSignature([startedSnapshot])
+
+        #expect(startedSnapshot.currentActivity == "I’ll inspect the matching files.")
+        #expect(startedSnapshot.currentToolName == "search.grep")
+        #expect(startedSnapshot.currentToolTarget == "needle")
+        #expect(startedSignature != thinkingSignature)
+
+        await runtime.recordEvent(
+            .toolCallCompleted(
+                toolCall,
+                DirectAgentToolResult(output: "match", summary: "1 match")
+            ),
+            agentID: agentID
+        )
+        let completedSnapshot = try #require(await runtime.snapshots().first)
+        #expect(
+            TerminalChat.subAgentOverviewSignature([completedSnapshot])
+                == startedSignature
+        )
+
+        await runtime.recordEvent(.thought("more private reasoning"), agentID: agentID)
+        await runtime.recordEvent(.content("Final "), agentID: agentID)
+        await runtime.recordEvent(.content("answer."), agentID: agentID)
+        await runtime.recordCompletion(
+            DirectAgentResponse(
+                text: "I’ll inspect the matching files. Final answer.",
+                stopReason: "stop",
+                modelID: "test-model"
+            ),
+            agentID: agentID
+        )
+        let finalSnapshot = try #require(await runtime.snapshots().first)
+        #expect(finalSnapshot.latestContentPreview == "Final answer.")
+        #expect(finalSnapshot.latestOutput == "I’ll inspect the matching files. Final answer.")
+        #expect(finalSnapshot.currentActivity == nil)
+        #expect(finalSnapshot.currentToolName == nil)
 
         await runtime.shutdown()
     }

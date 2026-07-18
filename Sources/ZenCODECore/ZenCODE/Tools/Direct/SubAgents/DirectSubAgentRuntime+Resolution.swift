@@ -140,6 +140,7 @@ extension DirectSubAgentRuntime {
             modelRuntime: agent.modelRuntime,
             currentActivity: agent.currentActivity,
             currentToolName: agent.currentToolName,
+            currentToolTarget: agent.currentToolTarget,
             latestContentPreview: agent.latestContentPreview,
             latestEventAt: agent.latestEventAt,
             latestOutput: agent.latestOutput,
