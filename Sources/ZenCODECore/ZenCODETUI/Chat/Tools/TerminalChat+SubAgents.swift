@@ -154,6 +154,7 @@ extension TerminalChat {
         }
 
         for snapshot in snapshots {
+            lines.append(.regular("", maxWrappedLines: 1))
             lines.append(.regular(renderSubAgentHeader(snapshot)))
             lines.append(.regular(dimText("id: \(snapshot.id)"), maxWrappedLines: 1))
             if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -334,7 +335,7 @@ extension TerminalChat {
                 ?? snapshot.latestOutput?.nilIfBlank else {
             return nil
         }
-        return .complete("✅ \(inlineText(latestOutput))", indentation: 3)
+        return .complete("💬 \(inlineText(latestOutput))", indentation: 3)
     }
 
     private static func statusBadge(
