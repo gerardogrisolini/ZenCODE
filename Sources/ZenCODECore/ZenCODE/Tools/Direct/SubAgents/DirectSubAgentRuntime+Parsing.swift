@@ -157,20 +157,26 @@ extension DirectSubAgentRuntime {
 
     public static func resolvedAllowedToolNames(
         requestedToolNames: Set<String>?,
-        parentAllowedToolNames: Set<String>?
+        parentAllowedToolNames: Set<String>?,
+        profile: AgentProfile? = nil
     ) -> Set<String>? {
-        guard let parentAllowedToolNames else {
+        // A resolved profile owns the child grant, including an intentionally
+        // empty tool set. Only an unresolved profile falls back to the parent.
+        let baseAllowedToolNames = profile.map { $0.allowedToolNames() }
+            ?? parentAllowedToolNames
+
+        guard let baseAllowedToolNames else {
             return requestedToolNames
         }
 
         guard let requestedToolNames else {
-            return parentAllowedToolNames
+            return baseAllowedToolNames
         }
 
         return requestedToolNames.filter {
             DirectToolExecutor.isAllowed(
                 $0,
-                allowedToolNames: parentAllowedToolNames
+                allowedToolNames: baseAllowedToolNames
             )
         }
     }

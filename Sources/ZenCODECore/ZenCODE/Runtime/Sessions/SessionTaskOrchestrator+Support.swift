@@ -186,6 +186,22 @@ extension SessionTaskOrchestrator {
             }
         }
 
+        if graph.source.requiresSubAgentExecution {
+            for task in graph.tasks {
+                guard task.execution.executor == .subAgent,
+                      task.attempts.allSatisfy({ $0.executor == .subAgent }) else {
+                    throw SessionTaskOrchestratorError.taskRequiresSubAgentExecution(task.id)
+                }
+                try validateWorkflowTaskLifecycle(task)
+            }
+            if graph.state == .completed,
+               (graph.tasks.isEmpty || graph.tasks.contains(where: { $0.status != .completed })) {
+                throw SessionTaskOrchestratorError.invalidSnapshot(
+                    "completed workflow graph \(graph.id) contains non-completed tasks"
+                )
+            }
+        }
+
         for task in graph.tasks {
             for dependencyID in task.dependsOn {
                 if dependencyID == task.id {
@@ -201,6 +217,51 @@ extension SessionTaskOrchestrator {
         }
 
         try validateAcyclicDependencies(tasksByID)
+    }
+
+    /// Workflow attempts are an execution fence, not merely historical data.
+    /// Keep these restore-time invariants scoped to workflow graphs so older
+    /// manually managed graph snapshots retain their established compatibility.
+    func validateWorkflowTaskLifecycle(_ task: TaskRecord) throws {
+        let activeAttempts = task.attempts.filter { $0.status.isActive }
+        if task.status == .inProgress {
+            guard let activeAttemptID = task.activeAttemptID,
+                  activeAttempts.count == 1,
+                  activeAttempts[0].id == activeAttemptID else {
+                throw SessionTaskOrchestratorError.invalidSnapshot(
+                    "workflow task \(task.id) in_progress must reference its only queued or running attempt"
+                )
+            }
+        } else {
+            guard task.activeAttemptID == nil else {
+                throw SessionTaskOrchestratorError.invalidSnapshot(
+                    "workflow task \(task.id) has an active attempt outside in_progress"
+                )
+            }
+            guard activeAttempts.isEmpty else {
+                throw SessionTaskOrchestratorError.invalidSnapshot(
+                    "workflow task \(task.id) has an orphaned queued or running attempt"
+                )
+            }
+        }
+
+        switch task.status {
+        case .awaitingValidation, .completed:
+            guard task.attempts.last?.status == .completed else {
+                throw SessionTaskOrchestratorError.invalidSnapshot(
+                    "workflow task \(task.id) requires a preceding completed attempt"
+                )
+            }
+        case .failed:
+            guard let latestAttemptStatus = task.attempts.last?.status,
+                  latestAttemptStatus == .failed || latestAttemptStatus == .completed else {
+                throw SessionTaskOrchestratorError.invalidSnapshot(
+                    "failed workflow task \(task.id) requires a failed attempt or a completed attempt rejected by validation"
+                )
+            }
+        case .pending, .inProgress, .blocked, .cancelled:
+            break
+        }
     }
 
     func validateAcyclicDependencies(_ tasksByID: [String: TaskRecord]) throws {

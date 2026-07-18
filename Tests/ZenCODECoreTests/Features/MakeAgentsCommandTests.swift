@@ -22,6 +22,7 @@ struct MakeAgentsCommandTests {
         #expect(!descriptor.requiresArgument)
         #expect(descriptor.help.contains("current working directory"))
         #expect(descriptor.help.contains("without assuming a project type"))
+        #expect(descriptor.help.contains("new or updated workspace"))
         #expect(TerminalChat.isKnownSlashCommand("/make-agents"))
         #expect(!TerminalChat.isKnownSlashCommand("/make-agents-extra"))
         #expect(!TerminalChat.isAvailableDuringGeneration(for: "/make-agents"))

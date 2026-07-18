@@ -49,7 +49,7 @@ Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, 
 
 ## Agent Profiles
 
-Agent profiles live in `~/.zencode/agents.json` and are managed in setup. The recommended profiles are `Developer`, `Builder`, `Minimal`, `Xcode`, `Planner`, `Reviewer`, and `Reporter`. Each defines tools, skills, instructions, and optional model bindings. A binding owns its model, capability, thinking selection, and optional default status for that profile; it is also used for explicit sub-agent routing.
+Agent profiles live in `~/.zencode/agents.json` and are managed in setup. The recommended profiles are `Developer`, `Builder`, `Minimal`, `Xcode`, `Planner`, `Reviewer`, and `Reporter`. Each defines tools, skills, instructions, and model bindings. Associate at least one binding with every profile intended to receive delegated work: a binding authorizes its profile-and-model pair and supplies its capability and optional thinking selection for routing. A binding-free profile remains supported only through the legacy fallback: a child created without an explicit model inherits the parent session's model and the profile is absent from capability-based delegation routing. See [agents.md](agents.md) for the complete binding behavior.
 
 Switch profiles in the TUI without restarting:
 
@@ -107,9 +107,9 @@ Commands start with `/`:
 - `/plan status` — show plan progress from the graph state.
 - `/plan approve` — activate the plan and start implementation.
 - `/plan clear` — archive the graph and remove the active plan.
-- `/workflow <goal>` — plan and delegate all work to sub-agents. The current agent creates the task graph, delegates every task to the best-matching sub-agent, and stays as coordinator and final reviewer. No separate Planner sub-agent or approval step. Use `/tasks` to monitor progress.
+- `/workflow <goal>` — plan and delegate all work to sub-agents. It creates an active workflow graph up front; every graph task is enforced as a sub-agent execution attempt. It refuses to start while an active `/plan` exists; finish that plan or use `/plan clear` first. The current agent stays as coordinator and final reviewer, retaining its normal tool grant for that work. No separate Planner sub-agent or approval step. Use `/tasks` to monitor progress.
 - `/review [focus]` — delegate review to read-only `Reviewer` sub-agents. See [reviewer.md](reviewer.md).
-- `/make-agents` — ask the model to create or update `AGENTS.md` for the current directory. Requires the `Files` tool group.
+- `/make-agents` — ask the model to create or update `AGENTS.md` for the current directory. Always run it when first opening a new or updated project so its workspace guidance stays current. Requires the `Files` tool group.
 - `/feature` — manage Swift feature packages (Builder profile only). See [builder.md](builder.md).
 
 **`/plan` vs `/workflow`:**
@@ -118,7 +118,7 @@ Commands start with `/`:
 |---|---|---|
 | **Planning** | Delegated to a read-only Planner sub-agent | Done by the current agent directly |
 | **Approval step** | Yes — `/plan approve` activates the graph | No — starts immediately |
-| **Task implementation** | The current agent works freely: directly or by delegating, as it sees fit | Every task is delegated to a sub-agent; the current agent never implements directly |
+| **Task implementation** | The current agent works freely: directly or by delegating, as it sees fit | Every graph task must be claimed by a sub-agent; coordinator task attempts are rejected while its normal tool grant remains unchanged |
 | **Sub-agent selection** | The model decides per task if and when to delegate | The model must assign the best-matching profile to every task |
 | **Role of current agent** | Implementer (can delegate when useful) | Coordinator and final reviewer only |
 | **Monitor progress** | `/plan status` or `/tasks` | `/tasks` |
@@ -143,7 +143,9 @@ Tool groups include: filesystem, shell, text, search, Git, memory, sub-agents, X
 
 `todo.*` is a lightweight checklist for model-local coordination. `tasks.*` operates on the authoritative session task graph owned by `SessionTaskOrchestrator` — a validated DAG with atomic creation, dependency gating, optimistic fencing, and attempt history.
 
-When work has multiple units, dependencies, or concurrent delegation, the coordinator creates a task graph first, then selects runnable work with `tasks.list` and assigns delegated tasks through `agent.create(taskID:)`. Report-agent success completes a task; implementation-agent success moves it to `awaiting_validation` until independently validated.
+When work has multiple units, dependencies, or concurrent delegation, the coordinator creates a task graph first, then selects runnable work with `tasks.list` and assigns delegated tasks through `agent.create(taskID:)`. Report-agent success completes a task; implementation-agent success moves it to `awaiting_validation` until independently validated. Record a successful validation as completion. For negative validation, record `failed` with `tasks.update`, call `tasks.retry` to return the task to `pending`, then use a **new** `agent.create(taskID:)` to claim the new attempt. Do not use `agent.message` to reopen the already completed agent.
+
+`/workflow` uses a distinct graph source. Its tasks must declare `execution.executor: sub_agent`, and the orchestrator rejects coordinator attempts or graph replacement while that workflow is active. This enforces delegation at the task lifecycle boundary rather than by applying a read-only tool policy to the coordinator. A coordinator without `agent.create` may work directly only in a graph that permits coordinator execution; it must never create or directly execute a workflow task.
 
 Checkpoints are written atomically under `~/.zencode/task-graphs/<project>/` and restored by session ID. Active attempts found during restore become `blocked` rather than silently resumed.
 
@@ -201,7 +203,13 @@ Durable context is separated by responsibility:
 - Project `MEMORY.md` — codebase journal with `Timestamp`, `Summary`, `State`, `Next` entries.
 - Global `~/.zencode/MEMORY.md` — lightweight resume index only.
 
-ZenCODE reads `AGENTS.md` from the working directory when present. Startup never creates or rewrites it; use `/make-agents` in chat to ask the model to create or update it.
+ZenCODE reads `AGENTS.md` from the working directory when present. Startup never creates or rewrites it.
+
+> **Keep project guidance current:** Always run `/make-agents` when first
+> opening a new project or a project that has been updated. The command
+> inspects the current workspace and conservatively creates or refreshes its
+> `AGENTS.md`; review the result and commit it with the project. This explicit
+> step is required because startup intentionally does not modify project files.
 
 ## ACP Mode
 
@@ -225,13 +233,14 @@ See [mlx-runtime.md](mlx-runtime.md) and [ds4.md](ds4.md) for runtime-specific s
 
 1. `zen --setup` — configure providers, models, agents.
 2. `cd /path/to/project && zen` — start in the target project.
-3. `/tools` and `/skills` — select tools and skills.
-4. `/plan <goal>` or `/workflow <goal>` — optional planning before editing. `/plan` delegates to a Planner sub-agent with an approval step; `/workflow` plans directly and delegates all implementation to sub-agents.
-5. Implement with the active profile.
-6. `/changes diff` and Git — inspect changes.
-7. `/review` — read-only review before commit.
-8. `/sessions name` — save meaningful checkpoints.
-9. Update project `MEMORY.md` at handoff points.
+3. `/make-agents` — always create or refresh project-level guidance when first opening a new or updated project; review the resulting `AGENTS.md`.
+4. `/tools` and `/skills` — select tools and skills.
+5. `/plan <goal>` or `/workflow <goal>` — optional planning before editing. `/plan` delegates to a Planner sub-agent with an approval step; `/workflow` plans directly and delegates all implementation to sub-agents.
+6. Implement with the active profile.
+7. `/changes diff` and Git — inspect changes.
+8. `/review` — read-only review before commit.
+9. `/sessions name` — save meaningful checkpoints.
+10. Update project `MEMORY.md` at handoff points.
 
 ## Troubleshooting
 

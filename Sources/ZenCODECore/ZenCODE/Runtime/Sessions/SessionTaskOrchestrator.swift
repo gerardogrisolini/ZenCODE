@@ -34,6 +34,7 @@ public enum SessionTaskOrchestratorError: LocalizedError, Equatable {
     case tasklessDelegationRequiresTaskID(String)
     case tasklessDelegationConflict
     case activeGraphBlockedByTasklessDelegation
+    case taskRequiresSubAgentExecution(String)
 
     public var errorDescription: String? {
         switch self {
@@ -93,6 +94,8 @@ public enum SessionTaskOrchestratorError: LocalizedError, Equatable {
             return "Coordinated delegation requires a task graph before more than one taskless sub-agent can run."
         case .activeGraphBlockedByTasklessDelegation:
             return "Cannot activate a task graph while a taskless delegated sub-agent is active. Wait for it to finish or close it first."
+        case let .taskRequiresSubAgentExecution(taskID):
+            return "Task '\(taskID)' belongs to a workflow graph and must be executed by a delegated sub-agent."
         }
     }
 }
@@ -294,6 +297,14 @@ public actor SessionTaskOrchestrator {
         guard sessionState.graphs[graphID] == nil else {
             throw SessionTaskOrchestratorError.graphAlreadyExists(graphID)
         }
+        if makeCurrent,
+           let currentGraphID = sessionState.currentGraphID,
+           currentGraphID != graphID,
+           let currentGraph = sessionState.graphs[currentGraphID],
+           currentGraph.source.requiresSubAgentExecution,
+           !currentGraph.state.isTerminal {
+            throw SessionTaskOrchestratorError.graphNotMutable(currentGraphID)
+        }
 
         let now = Date()
         let records = try makeTaskRecords(definitions, existingTasks: [], now: now)
@@ -344,6 +355,14 @@ public actor SessionTaskOrchestrator {
         let now = Date()
 
         let requestedGraphID = rawGraphID?.nilIfBlank
+        if let currentGraphID = sessionState.currentGraphID,
+           let currentGraph = sessionState.graphs[currentGraphID],
+           currentGraph.source.requiresSubAgentExecution,
+           !currentGraph.state.isTerminal,
+           requestedGraphID != nil,
+           requestedGraphID != currentGraphID {
+            throw SessionTaskOrchestratorError.graphNotMutable(currentGraphID)
+        }
         let graphID: String
         if let requestedGraphID {
             graphID = try normalizedGraphID(requestedGraphID)
@@ -499,6 +518,13 @@ public actor SessionTaskOrchestrator {
             taskID: taskID
         )
         var task = graph.tasks[taskIndex]
+
+        if graph.source.requiresSubAgentExecution,
+           update.status == .inProgress,
+           task.status == .pending,
+           task.activeAttemptID == nil {
+            throw SessionTaskOrchestratorError.taskRequiresSubAgentExecution(task.id)
+        }
 
         if let scope {
             guard scope.taskID == taskID,
@@ -796,11 +822,22 @@ public actor SessionTaskOrchestrator {
         guard graph.state == .draft || graph.state == .active else {
             throw SessionTaskOrchestratorError.graphNotMutable(graphID)
         }
+        if graphID != sessionState.currentGraphID,
+           let currentGraphID = sessionState.currentGraphID,
+           let currentGraph = sessionState.graphs[currentGraphID],
+           currentGraph.source.requiresSubAgentExecution,
+           !currentGraph.state.isTerminal {
+            throw SessionTaskOrchestratorError.graphNotMutable(currentGraphID)
+        }
 
         let now = Date()
         for otherID in sessionState.graphs.keys where otherID != graphID {
             guard let other = sessionState.graphs[otherID],
                   other.state == .active else { continue }
+            guard !other.source.requiresSubAgentExecution
+                || other.state.isTerminal else {
+                throw SessionTaskOrchestratorError.graphNotMutable(otherID)
+            }
             guard !other.tasks.contains(where: { $0.activeAttemptID != nil }) else {
                 throw SessionTaskOrchestratorError.graphNotMutable(otherID)
             }

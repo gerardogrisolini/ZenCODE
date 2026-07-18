@@ -509,6 +509,28 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionWebSocketReadinessRetriesDisconnectedPing() async throws {
+        let pingCount = Mutex(0)
+
+        try await ChatGPTSubscriptionWebSocketPool.waitUntilReady(
+            maximumAttempts: 3,
+            retryDelayNanoseconds: 1,
+            sleep: { _ in },
+            ping: {
+                let count = pingCount.withLock { value in
+                    value += 1
+                    return value
+                }
+                if count < 3 {
+                    throw POSIXError(.ENOTCONN)
+                }
+            }
+        )
+
+        #expect(pingCount.withLock { $0 } == 3)
+    }
+
+    @Test
     func chatGPTSubscriptionWebSocketPoolExpiresAtExactLifetimeBoundary() {
         let openedAt = ContinuousClock.now
         let maximumConnectionAge: Duration = .seconds(10)

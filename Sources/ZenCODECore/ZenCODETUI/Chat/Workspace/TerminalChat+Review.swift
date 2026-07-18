@@ -98,16 +98,11 @@ extension TerminalChat {
       || agent.name.caseInsensitiveCompare(AgentProfileStore.reviewerAgentName) == .orderedSame
   }
 
-  /// Canonical, read-only tool names a Reviewer sub-agent should receive: the
+  /// Canonical, read-only tool names a Reviewer sub-agent may receive: the
   /// profile's own tools intersected with the read-only safety allowlist.
   static func reviewerSubAgentToolNames(for reviewer: AgentProfile) -> [String] {
     let profileTools = reviewer.allowedToolNames()
-    let allowed =
-      profileTools.isEmpty
-      ? reviewerReadOnlyToolNames
-      : profileTools.intersection(reviewerReadOnlyToolNames)
-    let resolved = allowed.isEmpty ? reviewerReadOnlyToolNames : allowed
-    return resolved.sorted()
+    return profileTools.intersection(reviewerReadOnlyToolNames).sorted()
   }
 
   static func reviewDelegationPrompt(

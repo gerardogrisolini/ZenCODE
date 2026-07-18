@@ -12,10 +12,11 @@ import Testing
 @Suite
 struct DirectSubAgentRuntimeTests {
     @Test
-    func agentWithoutExplicitToolsInheritsParentGrant() async throws {
+    func agentWithoutResolvedProfileInheritsParentGrant() async throws {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in backend }
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in nil }
         )
 
         _ = try await runtime.execute(
@@ -53,6 +54,149 @@ struct DirectSubAgentRuntimeTests {
         )
         let restrictedSession = try #require(await backend.createdSessions().last)
         #expect(restrictedSession.allowedToolNames == ["local.readFile", "local.writeFile"])
+
+        _ = try await runtime.execute(
+            rootSessionID: "root",
+            toolCall: DirectAgentToolCall(
+                id: "create-worker-3",
+                name: "agent.create",
+                argumentsObject: [
+                    "name": "worker-3",
+                    "role": "worker",
+                    "toolNames": ["local.readFile", "git.status"]
+                ],
+                argumentsJSON: #"{"name":"worker-3","role":"worker","toolNames":["local.readFile","git.status"]}"#
+            ),
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-inheritance-tests"),
+            allowedToolNames: ["local.readFile", "local.writeFile"]
+        )
+        let narrowedSession = try #require(await backend.createdSessions().last)
+        #expect(narrowedSession.allowedToolNames == ["local.readFile"])
+        await runtime.shutdown()
+    }
+
+    @Test
+    func agentWithResolvedProfileUsesProfileGrantInsteadOfParentGrant() async throws {
+        let developer = AgentProfile(
+            id: "developer-profile",
+            name: "Developer",
+            tools: ["local.readFile", "local.writeFile"]
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in developer }
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("implementation-worker"),
+                "profile": .string("Developer")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
+            parentAllowedToolNames: ["git.status"]
+        )
+
+        let session = try #require(await backend.createdSessions().first)
+        #expect(session.allowedToolNames == ["local.readFile", "local.writeFile"])
+        await runtime.shutdown()
+    }
+
+    @Test
+    func explicitToolsOnlyNarrowResolvedProfileGrant() async throws {
+        let developer = AgentProfile(
+            id: "developer-profile",
+            name: "Developer",
+            tools: ["local.readFile", "local.writeFile"]
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in developer }
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("implementation-worker"),
+                "profile": .string("Developer"),
+                "toolNames": .array([
+                    .string("local.writeFile"),
+                    .string("git.status")
+                ])
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
+            parentAllowedToolNames: ["git.status"]
+        )
+
+        let session = try #require(await backend.createdSessions().first)
+        #expect(session.allowedToolNames == ["local.writeFile"])
+        await runtime.shutdown()
+    }
+
+    @Test
+    func emptyResolvedProfileGrantDoesNotFallBackToParentTools() async throws {
+        let minimal = AgentProfile(
+            id: "minimal-profile",
+            name: "Minimal",
+            tools: []
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in minimal }
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("minimal-worker"),
+                "profile": .string("Minimal")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
+            parentAllowedToolNames: ["local.readFile", "local.writeFile"]
+        )
+
+        let session = try #require(await backend.createdSessions().first)
+        #expect(session.allowedToolNames == [])
+        await runtime.shutdown()
+    }
+
+    @Test
+    func taskBoundAgentKeepsIntrinsicReportingToolsAlongsideProfileGrant() async throws {
+        let reporter = AgentProfile(
+            id: "reporter-profile",
+            name: "Reporter",
+            tools: ["local.readFile"]
+        )
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "report", title: "Report findings")]
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in reporter }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("reporter"),
+                "profile": .string("Reporter"),
+                "taskID": .string("report")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
+            parentAllowedToolNames: ["git.status"],
+            rootSessionID: "root"
+        )
+
+        let session = try #require(await backend.createdSessions().first)
+        #expect(session.allowedToolNames == [
+            "local.readFile", "tasks.list", "tasks.get", "tasks.update"
+        ])
         await runtime.shutdown()
     }
 
@@ -421,7 +565,10 @@ struct DirectSubAgentRuntimeTests {
         #expect(descriptor.description.contains(TaskRecord.agentSelectionPolicy))
         #expect(descriptor.description.contains("Give each sub-agent an explicit role and scope"))
         #expect(descriptor.description.contains(
-            "inherits the parent session's enabled tools unless toolNames narrows them"
+            "A resolved profile grants its configured tools to the sub-agent"
+        ))
+        #expect(descriptor.description.contains(
+            "Only when no profile resolves does the sub-agent inherit the parent session's enabled tools"
         ))
         #expect(descriptor.description.contains("authorized bindings"))
         #expect(descriptor.inputSchema.contains("\"modelID\""))
@@ -649,6 +796,114 @@ struct DirectSubAgentRuntimeTests {
         #expect(agent.taskAttemptID == task.task.attempts[0].id)
         #expect(agent.taskAttemptOrdinal == 1)
         #expect(await backend.didInstallTaskOrchestrator())
+    }
+
+    @Test
+    func workflowAttemptIsFencedAfterValidationFailureUntilRetryCreatesANewAgent() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "implementation",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "implementation complete")
+        let runtime = DirectSubAgentRuntime(contextualBackendFactory: { _ in backend })
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker-1"),
+                "taskID": .string("implementation"),
+                "prompt": .string("Implement the change"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+
+        let firstAgent = try #require(await runtime.snapshots().first)
+        let completed = try await orchestrator.task(
+            sessionID: "root",
+            taskID: "implementation"
+        ).task
+        let firstAttemptID = try #require(completed.attempts.first?.id)
+        #expect(completed.status == .awaitingValidation)
+        #expect(completed.activeAttemptID == nil)
+        #expect(await backend.sentPromptCount() == 1)
+
+        let failedValidation = try await orchestrator.validateTaskResult(
+            sessionID: "root",
+            taskID: "implementation",
+            succeeded: false,
+            failureReason: "focused validation failed"
+        )
+        #expect(failedValidation.task.status == .failed)
+
+        await #expect(throws: SessionTaskOrchestratorError.self) {
+            _ = try await runtime.messageAgents(
+                arguments: [
+                    "id": .string(firstAgent.id),
+                    "message": .string("Try a correction"),
+                ]
+            )
+        }
+
+        try await runtime.queuePrompt("stale correction", for: firstAgent.id)
+        _ = await runtime.waitForAgents(arguments: [
+            "id": .string(firstAgent.id),
+            "timeoutSeconds": .number(5),
+        ])
+        #expect(await backend.sentPromptCount() == 1)
+        #expect(await runtime.snapshots().first?.pending == false)
+
+        _ = try await orchestrator.retryTask(sessionID: "root", taskID: "implementation")
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker-2"),
+                "taskID": .string("implementation"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+
+        let agentsAfterRetry = await runtime.snapshots()
+        let secondAgent = try #require(agentsAfterRetry.first { $0.id != firstAgent.id })
+        let retried = try await orchestrator.task(
+            sessionID: "root",
+            taskID: "implementation"
+        ).task
+        #expect(retried.status == .inProgress)
+        #expect(retried.attempts.count == 2)
+        #expect(retried.activeAttemptID == secondAgent.taskAttemptID)
+        #expect(secondAgent.taskAttemptID != firstAttemptID)
+
+        await #expect(throws: SessionTaskOrchestratorError.self) {
+            _ = try await runtime.messageAgents(
+                arguments: [
+                    "id": .string(firstAgent.id),
+                    "message": .string("Reuse the old attempt"),
+                ]
+            )
+        }
+
+        #expect(await runtime.closeAgent(id: firstAgent.id))
+        let afterClosingOldAgent = try await orchestrator.task(
+            sessionID: "root",
+            taskID: "implementation"
+        ).task
+        #expect(afterClosingOldAgent.status == .inProgress)
+        #expect(afterClosingOldAgent.activeAttemptID == secondAgent.taskAttemptID)
+        await runtime.shutdown()
     }
 
     @Test
@@ -1309,6 +1564,7 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     private var sessions: [CreatedSession] = []
     private let responseText: String
     private let blocksPrompts: Bool
+    private var sentPrompts: [String] = []
     private var installedTaskOrchestrator = false
 
     init(responseText: String = "done", blocksPrompts: Bool = false) {
@@ -1389,10 +1645,11 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
 
     func sendPrompt(
         sessionID _: String,
-        prompt _: String,
+        prompt: String,
         attachments _: [AgentRuntimeAttachment],
         onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
+        sentPrompts.append(prompt)
         if blocksPrompts {
             try await Task.sleep(nanoseconds: 60_000_000_000)
         }
@@ -1417,5 +1674,9 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
 
     func createdSessions() -> [CreatedSession] {
         sessions
+    }
+
+    func sentPromptCount() -> Int {
+        sentPrompts.count
     }
 }

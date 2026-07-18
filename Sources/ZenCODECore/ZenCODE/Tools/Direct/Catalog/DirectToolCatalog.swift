@@ -24,6 +24,10 @@ public struct DirectToolDescriptor: Sendable {
 }
 
 public enum DirectToolCatalog {
+    private static let taskExecutionSchema = #"{"type":"object","properties":{"executor":{"type":"string","enum":["coordinator","sub_agent"]},"profile":{"type":"string"},"role":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}},"tool_names":{"type":"array","items":{"type":"string"}},"fileScopes":{"type":"array","items":{"type":"string"}},"file_scopes":{"type":"array","items":{"type":"string"}}}}"#
+
+    private static let taskDefinitionSchema = #"{"type":"object","properties":{"id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"title":{"type":"string"},"name":{"type":"string"},"details":{"type":"string"},"description":{"type":"string"},"order":{"type":"integer"},"priority":{"type":"string","enum":["low","normal","high"]},"complexity":{"type":"integer","minimum":1,"maximum":10},"dependsOn":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"acceptanceCriteria":{"type":"array","items":{"type":"string"}},"acceptance_criteria":{"type":"array","items":{"type":"string"}},"execution":\#(taskExecutionSchema)}}"#
+
     public static var baseDescriptors: [DirectToolDescriptor] {
 #if canImport(Darwin) || canImport(Glibc)
         coreLocalFileAndTextDescriptors + coreProcessDescriptors + featureDescriptors + memoryDescriptors + todoTaskDescriptors + subAgentDescriptors
@@ -372,8 +376,8 @@ public enum DirectToolCatalog {
         ),
         DirectToolDescriptor(
             name: "tasks.create",
-            description: "Atomically creates one or more tasks in the session task graph. Dependencies must reference tasks in the same graph. Model true prerequisites as edges, leave independent tasks dependency-free, and prefer safe, useful parallelism over list-order sequencing.",
-            inputSchema: #"{"type":"object","properties":{"graphID":{"type":"string"},"graph_id":{"type":"string"},"id":{"type":"string"},"title":{"type":"string"},"name":{"type":"string"},"details":{"type":"string"},"description":{"type":"string"},"order":{"type":"integer"},"priority":{"type":"string","enum":["low","normal","high"]},"complexity":{"type":"integer","minimum":1,"maximum":10,"description":"Task difficulty 1-10. \#(TaskRecord.complexityRubric). Agent selection policy: \#(TaskRecord.agentSelectionPolicy)"},"dependsOn":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"acceptanceCriteria":{"type":"array","items":{"type":"string"}},"acceptance_criteria":{"type":"array","items":{"type":"string"}},"execution":{"type":"object"},"tasks":{"type":"array","items":{"type":"object"}},"items":{"type":"array","items":{"type":"object"}}}}"#
+            description: "Atomically creates one or more tasks in the session task graph. Dependencies must reference tasks in the same graph. Model true prerequisites as edges, leave independent tasks dependency-free, and prefer safe, useful parallelism over list-order sequencing. In a /workflow graph, every task must declare execution.executor as sub_agent and is then claimed atomically through agent.create(taskID:).",
+            inputSchema: #"{"type":"object","properties":{"graphID":{"type":"string"},"graph_id":{"type":"string"},"id":{"type":"string"},"title":{"type":"string"},"name":{"type":"string"},"details":{"type":"string"},"description":{"type":"string"},"order":{"type":"integer"},"priority":{"type":"string","enum":["low","normal","high"]},"complexity":{"type":"integer","minimum":1,"maximum":10,"description":"Task difficulty 1-10. \#(TaskRecord.complexityRubric). Agent selection policy: \#(TaskRecord.agentSelectionPolicy)"},"dependsOn":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"acceptanceCriteria":{"type":"array","items":{"type":"string"}},"acceptance_criteria":{"type":"array","items":{"type":"string"}},"execution":\#(taskExecutionSchema),"tasks":{"type":"array","items":\#(taskDefinitionSchema)},"items":{"type":"array","items":\#(taskDefinitionSchema)}}}"#
         ),
         DirectToolDescriptor(
             name: "tasks.list",
@@ -392,7 +396,7 @@ public enum DirectToolCatalog {
         ),
         DirectToolDescriptor(
             name: "tasks.retry",
-            description: "Retries a failed or blocked task while preserving all prior attempts and outputs.",
+            description: "Retries a failed or blocked task while preserving all prior attempts and outputs. A retried /workflow task must be claimed through a new agent.create(taskID:); do not reopen its completed attempt with agent.message.",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"graphID":{"type":"string"},"graph_id":{"type":"string"},"expectedRevision":{"type":"integer"},"expected_revision":{"type":"integer"}},"required":["id"]}"#
         ),
         DirectToolDescriptor(
@@ -405,7 +409,7 @@ public enum DirectToolCatalog {
     public static let subAgentDescriptors: [DirectToolDescriptor] = [
         DirectToolDescriptor(
             name: "agent.create",
-            description: "Creates up to 8 delegated sub-agents; independent sub-agents run in parallel. For coordinated work, define the session task graph first and pass taskID to atomically claim each runnable task and record a fenced execution attempt. A taskID is required while a task graph is active and for parallel or concurrent delegation when task workflow tools are available. A single self-contained delegation may omit taskID. Agent selection policy: \(TaskRecord.agentSelectionPolicy) Pass profile (or agent) to run the sub-agent with one of the agent profiles from agents.json, matched by name, role, or profile. When a profile has model bindings, pass model/modelID only to select one of that profile's authorized bindings; an unbound model is rejected. Otherwise the sub-agent uses the session's model. Give each sub-agent an explicit role and scope. Each sub-agent inherits the parent session's enabled tools unless toolNames narrows them.",
+            description: "Creates up to 8 delegated sub-agents; independent sub-agents run in parallel. For coordinated work, define the session task graph first and pass taskID to atomically claim each runnable task and record a fenced execution attempt. A taskID is required while a task graph is active and for parallel or concurrent delegation when task workflow tools are available. A single self-contained delegation may omit taskID. Agent selection policy: \(TaskRecord.agentSelectionPolicy) Pass profile (or agent) to run the sub-agent with one of the agent profiles from agents.json, matched by name, role, or profile. When a profile has model bindings, pass model/modelID only to select one of that profile's authorized bindings; an unbound model is rejected. Otherwise the sub-agent uses the session's model. Give each sub-agent an explicit role and scope. A resolved profile grants its configured tools to the sub-agent, and toolNames can only narrow that grant. Only when no profile resolves does the sub-agent inherit the parent session's enabled tools, again narrowed by toolNames. Task-bound children also receive intrinsic tasks.list, tasks.get, and tasks.update tools for attempt reporting.",
             inputSchema: #"{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"model":{"type":"string"},"modelID":{"type":"string"},"model_id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}},"agents":{"type":"array","maxItems":8,"items":{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"model":{"type":"string"},"modelID":{"type":"string"},"model_id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}}}}},"items":{"type":"array","items":{"type":"object"}}}}"#
         ),
         DirectToolDescriptor(
@@ -420,7 +424,7 @@ public enum DirectToolCatalog {
         ),
         DirectToolDescriptor(
             name: "agent.message",
-            description: "Queues a follow-up prompt for one or more delegated sub-agents. Reference an agent by id, name, task_id, or ids.",
+            description: "Queues a follow-up prompt for one or more delegated sub-agents. Reference an agent by id, name, task_id, or ids. Do not use it to reopen a completed /workflow task: record negative validation as failure, call tasks.retry, then use a new agent.create(taskID:).",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"task_id":{"type":"string"},"ids":{"type":"array","items":{"type":"string"}},"message":{"type":"string"},"prompt":{"type":"string"},"input":{"type":"string"}},"required":["message"]}"#
         ),
         DirectToolDescriptor(

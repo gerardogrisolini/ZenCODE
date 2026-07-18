@@ -47,6 +47,17 @@ struct ReviewCommandTests {
     }
 
     @Test
+    func reviewerToolAllowlistDoesNotExpandAnEmptyProfile() {
+        let reviewer = AgentProfile(
+            id: AgentProfileStore.reviewerAgentID.uuidString,
+            name: AgentProfileStore.reviewerAgentName,
+            tools: []
+        )
+
+        #expect(TerminalChat.reviewerSubAgentToolNames(for: reviewer).isEmpty)
+    }
+
+    @Test
     func reviewDelegationPromptUsesOnlySessionChangeSummaryForScope() {
         let summary = TurnFileChangeSummary(entries: [
             TurnFileChangeSummary.Entry(

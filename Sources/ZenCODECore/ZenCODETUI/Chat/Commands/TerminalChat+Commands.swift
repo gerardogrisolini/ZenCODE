@@ -232,7 +232,7 @@ extension TerminalChat {
         TerminalChatCommandDescriptor(
             command: "/make-agents",
             summary: "create/update workspace guidance",
-            help: "/make-agents asks the model to inspect the current working directory and create or update its AGENTS.md without assuming a project type. It requires the Files tool group."
+            help: "/make-agents asks the model to inspect the current working directory and create or update its AGENTS.md without assuming a project type. Run it when first opening a new or updated workspace so project guidance stays current. It requires the Files tool group."
         ),
         TerminalChatCommandDescriptor(
             command: "/skills",

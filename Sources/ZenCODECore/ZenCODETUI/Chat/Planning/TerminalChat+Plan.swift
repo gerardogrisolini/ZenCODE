@@ -510,16 +510,11 @@ extension TerminalChat {
             || agent.name.caseInsensitiveCompare(AgentProfileStore.plannerAgentName) == .orderedSame
     }
 
-    /// Canonical, read-only tool names a Planner sub-agent should receive: the
+    /// Canonical, read-only tool names a Planner sub-agent may receive: the
     /// profile's own tools intersected with the read-only planning allowlist.
     static func plannerSubAgentToolNames(for planner: AgentProfile) -> [String] {
         let profileTools = planner.allowedToolNames()
-        let allowed =
-            profileTools.isEmpty
-            ? plannerReadOnlyToolNames
-            : profileTools.intersection(plannerReadOnlyToolNames)
-        let resolved = allowed.isEmpty ? plannerReadOnlyToolNames : allowed
-        return resolved.sorted()
+        return profileTools.intersection(plannerReadOnlyToolNames).sorted()
     }
 
     static func planDelegationPrompt(

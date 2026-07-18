@@ -36,6 +36,10 @@ extension SessionTaskOrchestrator {
                 throw SessionTaskOrchestratorError.taskNotFound(claim.taskID)
             }
             let task = graph.tasks[index]
+            if graph.source.requiresSubAgentExecution,
+               (task.execution.executor != .subAgent || claim.executor != .subAgent) {
+                throw SessionTaskOrchestratorError.taskRequiresSubAgentExecution(task.id)
+            }
             guard task.activeAttemptID == nil else {
                 throw SessionTaskOrchestratorError.taskAlreadyClaimed(task.id)
             }
@@ -246,11 +250,14 @@ extension SessionTaskOrchestrator {
                 actual: task.revision
             )
         }
+        let validationFailureStatus: TaskStatus = (graph.source.requiresSubAgentExecution || !blocked)
+            ? .failed
+            : .blocked
         guard task.status == .awaitingValidation else {
             throw SessionTaskOrchestratorError.invalidTransition(
                 taskID: taskID,
                 from: task.status,
-                to: succeeded ? .completed : (blocked ? .blocked : .failed)
+                to: succeeded ? .completed : validationFailureStatus
             )
         }
 
@@ -268,7 +275,7 @@ extension SessionTaskOrchestrator {
             result.finishedAt = now
             result.validatedAt = now
         } else {
-            task.status = blocked ? .blocked : .failed
+            task.status = validationFailureStatus
             task.statusReason = failureReason?.nilIfBlank.map(sanitizedPersistedText)
                 ?? "validation failed"
             result.error = task.statusReason
@@ -350,6 +357,17 @@ extension SessionTaskOrchestrator {
             return false
         }
 
+        // A workflow implementation is never terminal until an independent
+        // validator accepts it, regardless of the runtime caller's hint.
+        let completionRequiresValidation = attemptStatus == .completed
+            && (taskStatus == .awaitingValidation || graph.source.requiresSubAgentExecution)
+        let resolvedTaskStatus: TaskStatus = completionRequiresValidation
+            ? .awaitingValidation
+            : taskStatus
+        let resolvedStatusReason: String? = completionRequiresValidation
+            ? statusReason?.nilIfBlank ?? "implementation completed; validation required"
+            : statusReason
+
         let now = Date()
         task.attempts[attemptIndex].status = attemptStatus
         task.attempts[attemptIndex].finishedAt = now
@@ -357,8 +375,8 @@ extension SessionTaskOrchestrator {
             ?? task.attempts[attemptIndex].output
         task.attempts[attemptIndex].error = error?.nilIfBlank
         task.activeAttemptID = nil
-        task.status = taskStatus
-        task.statusReason = statusReason?.nilIfBlank.map(sanitizedPersistedText)
+        task.status = resolvedTaskStatus
+        task.statusReason = resolvedStatusReason?.nilIfBlank.map(sanitizedPersistedText)
 
         var result = task.result ?? TaskResult()
         result.output = output?.nilIfBlank ?? result.output

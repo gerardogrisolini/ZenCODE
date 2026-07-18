@@ -54,6 +54,16 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
 
     static let defaultHeartbeatIntervalNanoseconds: UInt64 = 30 * 1_000_000_000
 
+    /// A newly resumed URLSessionWebSocketTask can report `ENOTCONN` when the
+    /// first application frame races its HTTP upgrade. Probe it with a control
+    /// ping before sending the response payload, retrying briefly on the same
+    /// task while the handshake finishes.
+    static let defaultConnectionReadinessAttempts = 3
+    static let defaultConnectionReadinessRetryDelayNanoseconds: UInt64 =
+        100_000_000
+    static let defaultConnectionReadinessPingTimeoutNanoseconds: UInt64 =
+        10 * 1_000_000_000
+
     /// The server rejects a Responses WebSocket after 60 minutes of absolute
     /// connection lifetime.
     static let serverMaximumConnectionAge: Duration = .seconds(60 * 60)
@@ -507,6 +517,71 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     ) async throws {
         try await awaitPing { completion in
             task.sendPing(pongReceiveHandler: completion)
+        }
+    }
+
+    /// Waits until a just-resumed WebSocket can exchange a control frame. This
+    /// deliberately runs before the first response payload is sent, because
+    /// URLSession otherwise may reject that frame while the upgrade is still
+    /// in progress under a burst of parent/sub-agent connections.
+    func waitUntilReady(_ task: URLSessionWebSocketTask) async throws {
+        try await Self.waitUntilReady {
+            try await Self.sendReadinessPing(to: task)
+        }
+    }
+
+    static func waitUntilReady(
+        maximumAttempts: Int = defaultConnectionReadinessAttempts,
+        retryDelayNanoseconds: UInt64 =
+            defaultConnectionReadinessRetryDelayNanoseconds,
+        sleep: @escaping @Sendable (UInt64) async throws -> Void = { delay in
+            try await Task.sleep(nanoseconds: delay)
+        },
+        ping: @escaping @Sendable () async throws -> Void
+    ) async throws {
+        let attemptLimit = max(maximumAttempts, 1)
+        var attempt = 1
+
+        while true {
+            do {
+                try await ping()
+                return
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                guard attempt < attemptLimit,
+                      ChatGPTSubscriptionResponsesClient
+                          .isRetryableTransportError(error) else {
+                    throw error
+                }
+
+                let multiplier = UInt64(1) << UInt64(min(attempt - 1, 3))
+                try await sleep(retryDelayNanoseconds * multiplier)
+                attempt += 1
+            }
+        }
+    }
+
+    private static func sendReadinessPing(
+        to task: URLSessionWebSocketTask
+    ) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await sendPing(to: task)
+            }
+            group.addTask {
+                try await Task.sleep(
+                    nanoseconds: defaultConnectionReadinessPingTimeoutNanoseconds
+                )
+                throw URLError(.timedOut)
+            }
+
+            defer {
+                group.cancelAll()
+            }
+            guard let _ = try await group.next() else {
+                return
+            }
         }
     }
 

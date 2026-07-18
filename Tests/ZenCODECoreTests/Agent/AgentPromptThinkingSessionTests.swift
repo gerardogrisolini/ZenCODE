@@ -61,6 +61,17 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    func legacyDefaultInstructionsAlsoIncludeTaskOrchestrationPolicy() {
+        let instructions = SystemPromptBuilder.defaultAgentInstructions(
+            memoryToolEnabled: false
+        )
+
+        #expect(instructions.contains("Task workflow policy:"))
+        #expect(instructions.contains("A `/workflow` graph requires every task to be delegated"))
+        #expect(instructions.contains("new agent.create(taskID:)"))
+    }
+
+    @Test
     func responseLanguageSectionSupportsGenericAndLockedPrompts() {
         let genericPrompt = SystemPromptBuilder.responseLanguageSection()
         let lockedPrompt = SystemPromptBuilder.responseLanguageSection(languageName: "Italian")
@@ -114,6 +125,8 @@ extension AgentConfigurationTests {
         #expect(policy.contains("Keep work sequential when concurrency offers no"))
         #expect(policy.contains("taskID to agent.create"))
         #expect(policy.contains("every delegated agent must use taskID"))
+        #expect(policy.contains("A `/workflow` graph requires every task to be delegated"))
+        #expect(policy.contains("normal tool grant remains unchanged"))
         #expect(policy.contains("single self-contained delegation"))
         #expect(policy.contains("Determine the task type and required tools"))
         #expect(policy.contains(
@@ -129,6 +142,26 @@ extension AgentConfigurationTests {
         #expect(SystemPromptBuilder.taskOrchestrationSection(
             allowedToolNames: namespaceTools
         )?.contains("taskID to agent.create") == true)
+
+        let coordinatorOnlyTools: Set<String> = [
+            "tasks.create",
+            "tasks.list",
+            "tasks.update",
+        ]
+        let coordinatorOnlyPolicy = try #require(
+            SystemPromptBuilder.taskOrchestrationSection(
+                allowedToolNames: coordinatorOnlyTools
+            )
+        )
+        #expect(coordinatorOnlyPolicy.contains(
+            "execute runnable graph work directly only in a task graph that permits coordinator execution"
+        ))
+        #expect(coordinatorOnlyPolicy.contains(
+            "Never create or directly execute work in a `/workflow` graph"
+        ))
+        #expect(!coordinatorOnlyPolicy.contains(
+            "Execute runnable graph work directly and record its lifecycle"
+        ))
 
         let singularTaskTools: Set<String> = [
             "task.create",

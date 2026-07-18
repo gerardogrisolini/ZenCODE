@@ -8,6 +8,7 @@ import Foundation
 public enum TaskGraphSource: Codable, Equatable, Sendable {
     case manual
     case plan(planID: String)
+    case workflow
 
     private enum CodingKeys: String, CodingKey {
         case kind
@@ -17,6 +18,7 @@ public enum TaskGraphSource: Codable, Equatable, Sendable {
     private enum Kind: String, Codable {
         case manual
         case plan
+        case workflow
     }
 
     public init(from decoder: Decoder) throws {
@@ -26,6 +28,8 @@ public enum TaskGraphSource: Codable, Equatable, Sendable {
             self = .manual
         case .plan:
             self = .plan(planID: try container.decode(String.self, forKey: .planID))
+        case .workflow:
+            self = .workflow
         }
     }
 
@@ -37,12 +41,20 @@ public enum TaskGraphSource: Codable, Equatable, Sendable {
         case let .plan(planID):
             try container.encode(Kind.plan, forKey: .kind)
             try container.encode(planID, forKey: .planID)
+        case .workflow:
+            try container.encode(Kind.workflow, forKey: .kind)
         }
     }
 
     public var planID: String? {
         guard case let .plan(planID) = self else { return nil }
         return planID
+    }
+
+    /// Workflow graphs are execution-owned by delegated sub-agents. The
+    /// coordinator still owns graph management, but never starts a task attempt.
+    public var requiresSubAgentExecution: Bool {
+        self == .workflow
     }
 }
 

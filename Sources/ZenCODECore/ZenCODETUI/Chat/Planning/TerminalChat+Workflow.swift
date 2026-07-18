@@ -15,6 +15,11 @@ extension TerminalChat {
             return .continueChat
         }
 
+        guard activePlan == nil else {
+            await writeFailureMessage(Self.workflowActivePlanMessage)
+            return .continueChat
+        }
+
         if !isSubAgentToolEnabled {
             await writeFailureMessage(
                 """
@@ -26,10 +31,24 @@ extension TerminalChat {
             return .continueChat
         }
 
+        let graphID = "workflow_\(UUID().uuidString.lowercased())"
+        do {
+            _ = try await sessionRunner.taskOrchestrator.createGraph(
+                sessionID: sessionID,
+                id: graphID,
+                source: .workflow,
+                state: .active,
+                tasks: []
+            )
+        } catch {
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            return .continueChat
+        }
+
         await writeSubmittedPrompt(command)
 
         return .runHiddenPrompt(
-            Self.workflowPrompt(goal: argument),
+            Self.workflowPrompt(goal: argument, graphID: graphID),
             purpose: .workflow(originalGoal: argument)
         )
     }
@@ -38,19 +57,26 @@ extension TerminalChat {
         "ZenCODE: /workflow requires a goal. "
         + "Use /workflow <goal> to describe what should be planned and delegated.\n"
 
-    static func workflowPrompt(goal: String) -> String {
+    static let workflowActivePlanMessage =
+        "ZenCODE: /workflow cannot start while an active plan exists. "
+        + "Finish it or use /plan clear before starting a workflow.\n"
+
+    static func workflowPrompt(goal: String, graphID: String) -> String {
         return """
-        You are the coordinator of a delegated workflow. You plan the work, create the \
-        task graph, delegate every task to the best-matching sub-agent, and act as the \
-        final reviewer. You must not implement tasks yourself — your only direct actions \
-        are workspace inspection (search, read) and task/sub-agent management.
+        You are the coordinator of a delegated workflow. You plan the work, add tasks to \
+        the active task graph, delegate every task to the best-matching sub-agent, and act \
+        as the final reviewer. Every task in this graph must be executed through \
+        agent.create(taskID:); do not start a task attempt directly with tasks.update.
 
         Goal: \(goal)
 
-        Phase 1 — Plan and create the task graph:
+        Active workflow task graph: \(graphID)
+
+        Phase 1 — Plan and define the task graph:
         - Inspect the workspace to understand scope, relevant files, constraints, and risks.
-        - Create tasks with tasks.create. Give each task a clear title, description, \
-        complexity (1-10), and acceptance criteria.
+        - Add all tasks to the active workflow graph with tasks.create. Give each task a \
+        clear title, description, complexity (1-10), acceptance criteria, and \
+        execution.executor set to sub_agent.
         - Design dependencies as a DAG with minimum safe edges:
           - Independent tasks must have empty dependsOn arrays so they can run in parallel.
           - Add a dependency only when one task consumes another's output or decision, \
@@ -78,8 +104,10 @@ extension TerminalChat {
         - Wait for sub-agents with agent.wait — they run in parallel.
         - When sub-agents complete, review their output with tasks.get. Verify results \
         against acceptance criteria and current files.
-        - If work is incomplete or incorrect, use agent.message to request corrections or \
-        tasks.retry to re-run the task with a better profile if needed.
+        - For a task awaiting validation, record successful validation with tasks.update. If \
+        validation is negative, record the task as failed with tasks.update, call tasks.retry, \
+        then start a new attempt with a new agent.create(taskID:) using a suitable profile. Do \
+        not use agent.message to request corrections from an agent after its task completed.
         - Repeat: call tasks.list again to pick up newly unblocked tasks, delegate, wait, \
         and review until all tasks are completed or a real blocker is reached.
 
@@ -90,10 +118,12 @@ extension TerminalChat {
         any remaining concerns or follow-ups.
 
         Rules:
-        - Never implement tasks yourself. Delegate all implementation work.
+        - Every workflow task is delegated through agent.create(taskID:); the task graph \
+        enforces sub-agent execution.
         - Respect dependencies; never claim a task twice.
-        - Use tasks.retry only for explicit retries after failure.
-        - Do not recreate or replace the task graph once it is created.
+        - A negative validation follows failure, tasks.retry, then a new agent.create(taskID:); \
+        never use agent.message to reopen a completed attempt.
+        - Use the active workflow graph \(graphID); do not recreate or replace it.
         - Your final summary must follow the session response language from the system \
         prompt. Do not answer in English merely because this internal prompt is in English.
         """

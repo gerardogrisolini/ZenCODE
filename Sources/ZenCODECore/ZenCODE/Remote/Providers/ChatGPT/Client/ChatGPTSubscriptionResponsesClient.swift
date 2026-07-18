@@ -160,6 +160,9 @@ public struct ChatGPTSubscriptionResponsesClient {
                 guard let text = String(data: payload, encoding: .utf8) else {
                     throw ChatGPTSubscriptionGenerationError.invalidResponse
                 }
+                if !lease.isReused {
+                    try await webSocketPool.waitUntilReady(lease.task)
+                }
                 try await lease.task.send(
                     URLSessionWebSocketTask.Message.string(text)
                 )

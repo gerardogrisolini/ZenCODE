@@ -70,6 +70,9 @@ struct DirectTaskToolAdapterTests {
         )
         #expect(createDescriptor.description.contains("leave independent tasks dependency-free"))
         #expect(createDescriptor.description.contains("safe, useful parallelism"))
+        #expect(createDescriptor.description.contains("execution.executor as sub_agent"))
+        #expect(createDescriptor.inputSchema.contains("\"sub_agent\""))
+        #expect(createDescriptor.schemaObject != nil)
     }
 
     @Test
@@ -102,6 +105,100 @@ struct DirectTaskToolAdapterTests {
         #expect(output.contains("[pending] a: A"))
         #expect(output.contains("[pending] b: B"))
         #expect(output.contains("blocked_by=a"))
+    }
+
+    @Test
+    func workflowTaskCreationRequiresSubAgentExecution() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "workflow-session",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: []
+        )
+        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
+
+        await #expect(throws: SessionTaskOrchestratorError.self) {
+            _ = try await adapter.execute(
+                sessionID: "workflow-session",
+                toolCall: call(
+                    name: "tasks.create",
+                    arguments: ["id": "implementation", "title": "Implement"]
+                )
+            )
+        }
+
+        _ = try await adapter.execute(
+            sessionID: "workflow-session",
+            toolCall: call(
+                name: "tasks.create",
+                arguments: [
+                    "id": "implementation",
+                    "title": "Implement",
+                    "execution": ["executor": "sub_agent"],
+                ]
+            )
+        )
+
+        #expect(try await orchestrator.task(
+            sessionID: "workflow-session",
+            taskID: "implementation"
+        ).task.execution.executor == .subAgent)
+    }
+
+    @Test
+    func workflowValidationFailureIsRetriedThroughTaskAdapterBeforeANewClaim() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "workflow-session",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "implementation",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let first = try #require(try await orchestrator.claimTasks(
+            sessionID: "workflow-session",
+            claims: [TaskClaim(taskID: "implementation", agentID: "worker-1")]
+        ).first)
+        _ = try await orchestrator.completeAttempt(
+            sessionID: "workflow-session",
+            taskID: "implementation",
+            attemptID: first.attemptID,
+            output: "implementation complete",
+            requiresValidation: false
+        )
+        _ = try await orchestrator.validateTaskResult(
+            sessionID: "workflow-session",
+            taskID: "implementation",
+            succeeded: false,
+            failureReason: "validation failed"
+        )
+
+        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
+        _ = try await adapter.execute(
+            sessionID: "workflow-session",
+            toolCall: call(name: "tasks.retry", arguments: ["id": "implementation"])
+        )
+
+        let pending = try await orchestrator.task(
+            sessionID: "workflow-session",
+            taskID: "implementation"
+        ).task
+        #expect(pending.status == .pending)
+        #expect(pending.attempts.count == 1)
+        let second = try #require(try await orchestrator.claimTasks(
+            sessionID: "workflow-session",
+            claims: [TaskClaim(taskID: "implementation", agentID: "worker-2")]
+        ).first)
+        #expect(second.ordinal == 2)
+        #expect(second.attemptID != first.attemptID)
     }
 
     @Test

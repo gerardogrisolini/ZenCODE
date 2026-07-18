@@ -48,6 +48,7 @@ public enum SystemPromptBuilder {
     public static func defaultAgentInstructions(memoryToolEnabled: Bool = true) -> String {
         joined([
             standaloneBaseSection(memoryToolEnabled: memoryToolEnabled),
+            taskOrchestrationSection(allowedToolNames: nil),
             standaloneLanguageSection,
             turnClosingSection(instruction: standaloneTurnClosingInstruction)
         ])
@@ -111,12 +112,21 @@ public enum SystemPromptBuilder {
             runnable tasks together when \
             parallel execution is safe and useful; serialize work that mutates overlapping \
             files or shared state. When a task graph is already active, every delegated agent \
-            must use taskID; do not create taskless agents outside that workflow. You remain \
-            free to execute any task directly yourself.
+            must use taskID; do not create taskless agents outside that workflow. A `/workflow` \
+            graph requires every task to be delegated through agent.create(taskID:); the \
+            coordinator cannot start a task attempt directly, although its normal tool grant \
+            remains unchanged. For other task graphs, you remain free to execute tasks directly. \
+            After a `/workflow` implementation task completes, validate its result. If validation \
+            is negative, record the task as failed, call tasks.retry, then claim the new attempt \
+            with a new agent.create(taskID:); do not use agent.message to reopen a completed \
+            task.
             """
         } else {
             delegationInstruction = """
-            Execute runnable graph work directly and record its lifecycle with tasks.update.
+            When agent.create is unavailable, execute runnable graph work directly only in a \
+            task graph that permits coordinator execution, and record its lifecycle with \
+            tasks.update. Never create or directly execute work in a `/workflow` graph: it \
+            requires a sub-agent claim through agent.create(taskID:).
             """
         }
 

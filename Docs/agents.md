@@ -14,11 +14,25 @@ Each profile carries:
 | `instructions` | System-prompt fragment defining the role and constraints |
 | `tools` | Allowed tool groups and feature packages |
 | `skills` | Optional prompt skills from the app catalog |
-| `modelBindings` | Optional per-profile model defaults and explicit sub-agent routing choices |
+| `modelBindings` | Per-profile model authorizations used for defaults and explicit sub-agent routing; configure at least one for every profile intended for delegated work |
 | `defaultModelBindingID` | Binding used when the main session has no manual model selection, or when a sub-agent caller does not choose a binding explicitly |
 | `symbolName` | SF Symbol shown in the TUI picker (presentational only) |
 
 Select a profile with `/agents <name>` or `--agent <name>` at launch. Switching resets the conversation so the new system prompt and tools apply cleanly.
+
+> **Important:** Associate at least one model binding with every profile that
+> should receive delegated work. A binding authorizes a specific
+> profile-and-model pair and carries the capability and optional thinking
+> configuration used for routing. Bindings are optional only for legacy
+> compatibility: a profile without one remains selectable as the active
+> profile, but is not a candidate in the capability-based delegation roster.
+
+> **Workspace guidance:** Always run [`/make-agents`](zen.md#memory-and-project-context)
+> when first opening a new project or a project that has been updated. It
+> inspects the workspace and conservatively creates or refreshes its
+> project-level `AGENTS.md`, which supplies durable constraints and workflows
+> to later agent sessions. Startup intentionally never performs this update
+> automatically; review and commit the resulting project guidance.
 
 ## Recommended Profiles
 
@@ -32,7 +46,7 @@ Select a profile with `/agents <name>` or `--agent <name>` at launch. Switching 
 | `Reporter` | Code analysis and evidence-based reports | files, search, text, git |
 | `Planner` | Read-only planning | files, search, text, git, memory, web |
 
-Profiles are examples — you can edit, add, or remove them in setup. A `Developer` profile must always exist because runtime fallback paths select it.
+Profiles are examples — you can edit, add, or remove optional profiles in setup. `Developer` and `Builder` must always remain present: runtime fallback paths select `Developer`, while `Builder` owns the `/feature` workflow and its intrinsic feature-management tools.
 
 ## Tool Groups
 
@@ -51,13 +65,36 @@ Lifecycle:
 1. The coordinator calls `agent.create`, passing a `profile` and, when the profile has more than one binding, a `model` or `modelID`.
 2. The runtime resolves the profile and then resolves the requested binding only within that profile's authorized bindings.
 3. The sub-agent inherits the workspace and its profile's tool allowlist.
-4. The coordinator uses `agent.message`, `agent.wait`, `agent.get`, and `agent.close`.
+4. While the child is still active, the coordinator uses `agent.message`, `agent.wait`, `agent.get`, and `agent.close`.
 
-An explicit model without a resolved profile, or a model not associated with that profile, is rejected before the task is claimed. A profile without bindings retains the legacy behavior and inherits the parent session model. Write authority is determined by the sub-agent's effective tool allowlist. By default it inherits the parent session's enabled tools; passing `toolNames` narrows that grant. `/plan` and `/review` explicitly pass read-only allowlists, while delegated coding work receives editing tools only when the parent grant permits them. `/workflow` delegates implementation tasks with the sub-agent's default inherited grant, so the parent profile must include the necessary editing tools.
+For a task-bound implementation agent, completion ends that attempt and normally
+moves the task to `awaiting_validation`. If validation is negative, record the
+failure with `tasks.update`, call `tasks.retry`, then claim the reset task with a
+**new** `agent.create(taskID:)`. Do not use `agent.message` to correct a
+completed workflow task: it cannot revive the prior attempt or make it runnable
+again.
+
+### Binding Behavior
+
+| Profile configuration and request | Result |
+| --- | --- |
+| One or more bindings; no `model` / `modelID` | The profile's default binding selects the child model. |
+| One or more bindings; matching `model` / `modelID` | The runtime uses the explicitly selected, authorized binding. |
+| No bindings; no explicit model | The child is created through the legacy fallback and inherits the parent session's model. The profile is not available to capability-based delegation routing. |
+| No bindings; explicit `model` / `modelID` | Rejected: the profile has no authorized binding for an explicit model. |
+
+The fallback preserves existing manual configurations; it is not equivalent to
+a binding. Associate bindings when a coordinator must deliberately choose a
+profile/model pair, compare capability to task complexity, or apply
+binding-specific thinking settings. An explicit model without a resolved
+profile, or a model not associated with that profile, is also rejected before
+the task is claimed.
+
+Write authority is determined by the sub-agent's effective tool allowlist. When a profile resolves, its configured tools are the child grant and `toolNames` can only narrow that grant. Only when no profile resolves does the child inherit the parent session's enabled tools, again narrowed by `toolNames`. A child bound to a task additionally receives the intrinsic `tasks.list`, `tasks.get`, and `tasks.update` tools needed to report its execution attempt. `/plan` and `/review` explicitly narrow their selected profile to read-only tools. `/workflow` delegates implementation work with the selected sub-agent profile's tools, so that profile must include the necessary editing tools.
 
 ## Capability Routing
 
-The runtime builds a delegation roster containing only profiles with at least one binding that has a model and a capability. Each profile entry includes the first non-empty line of its instructions and lists only its authorized bindings. A binding carries its own `modelID`, optional thinking selection, and `capability` (1–10):
+The runtime builds a delegation roster containing only profiles with at least one binding that has a model and a capability. A binding without a capability does not make its profile eligible for this routing. Each profile entry includes the first non-empty line of its instructions and lists only its authorized bindings. A binding carries its own `modelID`, optional thinking selection, and `capability` (1–10):
 
 ```
 Delegatable agent profiles and authorized model bindings (filter by role and constraints first):
@@ -70,7 +107,7 @@ The model applies this policy in order:
 
 1. Determine the task type and required tools.
 2. Exclude profiles whose stated role or constraints are incompatible. For example, never assign implementation or editing to a read-only planning or review profile.
-3. Do not delegate when the effective child tool grant cannot perform the work. A child inherits the parent grant, and `toolNames` can only narrow it.
+3. Do not delegate when the effective child tool grant cannot perform the work. A resolved profile supplies that grant and `toolNames` can only narrow it; only when no profile resolves does the child inherit the parent grant.
 4. For a compatible profile, choose the lowest-capability **authorized binding** that meets the task complexity.
 5. If none of that profile's bindings meets the complexity, choose its highest-capability binding and explicitly report the capability gap.
 
@@ -80,13 +117,13 @@ The coordinator must never select a profile or binding by capability alone. Capa
 
 Coordinated multi-step work is tracked by the session task graph (`SessionTaskOrchestrator`). The coordinator creates tasks with dependencies, selects runnable work with `tasks.list`, and assigns delegated tasks by passing `taskID` to `agent.create` for atomic claims. A sub-agent joins a graph only at creation time; taskless agents are for single self-contained lookups.
 
-`/workflow <goal>` automates this pattern: the current agent inspects the workspace, creates the task graph with `tasks.create`, delegates every task to the best-matching sub-agent via `agent.create(taskID:)`, and reviews results. Unlike `/plan`, there is no separate Planner sub-agent or approval step — the current agent is the sole planner, coordinator, and final reviewer. See the [zen.md](zen.md) task orchestration section for details.
+`/workflow <goal>` automates this pattern: it creates an active workflow graph, the current agent adds its task definitions with `tasks.create`, delegates every task to the best-matching sub-agent via `agent.create(taskID:)`, and reviews results. Workflow tasks must use `execution.executor: sub_agent`; the orchestrator rejects coordinator task attempts without narrowing the coordinator's normal tool grant. After negative validation, the coordinator records failure, retries the task, and creates a new task-bound agent rather than messaging the completed agent. Unlike `/plan`, there is no separate Planner sub-agent or approval step — the current agent is the sole planner, coordinator, and final reviewer. See the [zen.md](zen.md) task orchestration section for details.
 
 ## Setup Parameters
 
 When configuring a profile, setup asks for each parameter for a specific reason:
 
-- **Model bindings** — one or more models explicitly permitted for the profile. Without a binding, the profile stays selectable with `/agents` but is excluded from dedicated-model delegation routing.
+- **Model bindings** — one or more models explicitly permitted for the profile. Configure them for every delegatable profile: without a binding, the profile stays selectable with `/agents` but uses only the legacy parent-model fallback and is excluded from capability-based delegation routing.
 - **Default binding** — the model used for that profile when a caller does not select one explicitly.
 - **Capability (1–10)** — configured per binding for delegation routing. Leave unset only when that binding should not be offered to the coordinator.
 - **Thinking** — configured per binding and validated against the selected model's supported options.

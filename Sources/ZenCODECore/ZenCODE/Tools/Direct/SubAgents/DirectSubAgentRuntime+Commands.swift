@@ -135,9 +135,12 @@ extension DirectSubAgentRuntime {
 
                 var childAllowedToolNames = Self.resolvedAllowedToolNames(
                     requestedToolNames: payload.allowedToolNames,
-                    parentAllowedToolNames: parentAllowedToolNames
+                    parentAllowedToolNames: parentAllowedToolNames,
+                    profile: item.profile
                 )
                 if payload.taskID != nil, childAllowedToolNames != nil {
+                    // Assigned task attempts need these intrinsic reporting tools
+                    // even when the selected profile does not coordinate tasks.
                     childAllowedToolNames?.formUnion(["tasks.list", "tasks.get", "tasks.update"])
                 }
                 await backend.createSession(
@@ -285,7 +288,7 @@ extension DirectSubAgentRuntime {
         }
 
         let targetIDs = try resolveMessageTargetIDs(arguments: arguments)
-        try validateOpenMessageTargets(targetIDs)
+        try await validateOpenMessageTargets(targetIDs)
         let tasklessAgents = targetIDs.compactMap { agents[$0] }
             .filter { $0.taskID == nil }
         let tasklessAgentsBySession = Dictionary(
@@ -329,7 +332,7 @@ extension DirectSubAgentRuntime {
         }
 
         do {
-            try validateOpenMessageTargets(targetIDs)
+            try await validateOpenMessageTargets(targetIDs)
             for (agentID, reservationID) in reservationIDsByAgentID {
                 guard var agent = agents[agentID] else {
                     throw DirectSubAgentRuntimeError.agentNotFound(agentID)
@@ -362,7 +365,7 @@ extension DirectSubAgentRuntime {
             + Self.renderSnapshots(snapshots(for: targetIDs))
     }
 
-    func validateOpenMessageTargets(_ targetIDs: [String]) throws {
+    func validateOpenMessageTargets(_ targetIDs: [String]) async throws {
         for agentID in targetIDs {
             guard let agent = agents[agentID] else {
                 throw DirectSubAgentRuntimeError.agentNotFound(agentID)
@@ -370,7 +373,72 @@ extension DirectSubAgentRuntime {
             guard agent.status != .closed else {
                 throw DirectSubAgentRuntimeError.agentClosed(agent.name)
             }
+            guard await hasActiveTaskAttempt(agent) else {
+                throw SessionTaskOrchestratorError.permissionDenied(
+                    "A task-bound delegated sub-agent may only receive messages while its "
+                        + "assigned attempt is active. Use tasks.retry and agent.create(taskID:) "
+                        + "to begin a new attempt."
+                )
+            }
         }
+    }
+
+    func hasActiveTaskAttempt(_ agent: AgentRecord) async -> Bool {
+        guard agent.taskID != nil else {
+            return true
+        }
+        guard let taskID = agent.taskID,
+              let attemptID = agent.taskAttemptID,
+              let taskOrchestrator else {
+            return false
+        }
+        guard let scope = await taskOrchestrator.executionScope(for: agent.sessionID),
+              scope.rootSessionID == agent.rootSessionID,
+              scope.taskID == taskID,
+              scope.attemptID == attemptID else {
+            return false
+        }
+
+        // The attempt id alone is not enough: the scope and assignee must
+        // still identify this exact task-bound agent.
+        guard let task = try? await taskOrchestrator.task(
+            sessionID: agent.rootSessionID,
+            taskID: taskID,
+            graphID: scope.graphID
+        ) else {
+            return false
+        }
+        return task.task.activeAttemptID == attemptID
+            && task.task.activeAttempt?.status.isActive == true
+            && task.task.activeAttempt?.agentID == agent.id
+    }
+
+    func finishTaskBoundAttemptWork(
+        for agentID: String,
+        error: String?
+    ) {
+        guard var agent = agents[agentID],
+              agent.taskID != nil,
+              agent.status != .closed else {
+            return
+        }
+        agent.pendingPrompts.removeAll()
+        agent.runTask = nil
+        agent.status = .idle
+        agent.currentActivity = nil
+        agent.currentThoughtBuffer = nil
+        agent.currentToolName = nil
+        agent.latestContentPreview = nil
+        agent.latestError = error
+        agent.updatedAt = .now
+        agents[agentID] = agent
+    }
+
+    func discardInactiveTaskAttemptWork(for agentID: String) {
+        finishTaskBoundAttemptWork(
+            for: agentID,
+            error: "Task attempt is no longer active."
+        )
     }
 
     public func waitForAgents(arguments: [String: JSONValue]) async -> String {

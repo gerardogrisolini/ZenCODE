@@ -44,7 +44,12 @@ extension DirectSubAgentRuntime {
                 return
             }
 
-            await recordTaskAttemptStarted(agentID: agentID)
+            guard await recordTaskAttemptStarted(agentID: agentID) else {
+                // A stale queued message must not revive a finished, failed,
+                // or retried task attempt.
+                discardInactiveTaskAttemptWork(for: agentID)
+                return
+            }
             do {
                 let response = try await work.backend.sendPrompt(
                     sessionID: work.sessionID,
@@ -210,18 +215,26 @@ extension DirectSubAgentRuntime {
         return String(normalized.prefix(limit - 1)) + "…"
     }
 
-    public func recordTaskAttemptStarted(agentID: String) async {
-        guard let agent = agents[agentID],
-              let taskID = agent.taskID,
+    public func recordTaskAttemptStarted(agentID: String) async -> Bool {
+        guard let agent = agents[agentID] else {
+            return false
+        }
+        guard agent.taskID != nil else {
+            return true
+        }
+        guard let taskID = agent.taskID,
               let attemptID = agent.taskAttemptID,
               let taskOrchestrator else {
-            return
+            return false
         }
-        _ = try? await taskOrchestrator.markAttemptRunning(
+        guard await hasActiveTaskAttempt(agent) else {
+            return false
+        }
+        return (try? await taskOrchestrator.markAttemptRunning(
             sessionID: agent.rootSessionID,
             taskID: taskID,
             attemptID: attemptID
-        )
+        )) ?? false
     }
 
     public func recordCompletion(
@@ -262,13 +275,20 @@ extension DirectSubAgentRuntime {
         if let taskID = agent.taskID,
            let attemptID = agent.taskAttemptID,
            let taskOrchestrator {
-            _ = try? await taskOrchestrator.completeAttempt(
+            let didComplete = try? await taskOrchestrator.completeAttempt(
                 sessionID: agent.rootSessionID,
                 taskID: taskID,
                 attemptID: attemptID,
                 output: agent.latestOutput,
                 requiresValidation: false
             )
+            if didComplete == true {
+                finishTaskBoundAttemptWork(for: agentID, error: nil)
+            } else if let currentAgent = agents[agentID] {
+                if !(await hasActiveTaskAttempt(currentAgent)) {
+                    discardInactiveTaskAttemptWork(for: agentID)
+                }
+            }
         }
         await releaseTasklessDelegationReservation(releasedReservation)
     }

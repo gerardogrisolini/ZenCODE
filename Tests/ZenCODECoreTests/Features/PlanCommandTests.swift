@@ -483,6 +483,17 @@ struct PlanCommandTests {
     }
 
     @Test
+    func plannerToolAllowlistDoesNotExpandAnEmptyProfile() {
+        let planner = AgentProfile(
+            id: AgentProfileStore.plannerAgentID.uuidString,
+            name: AgentProfileStore.plannerAgentName,
+            tools: []
+        )
+
+        #expect(TerminalChat.plannerSubAgentToolNames(for: planner).isEmpty)
+    }
+
+    @Test
     func defaultPlannerToolGroupsResolveToReadOnlySubAgentTools() throws {
         let planner = try #require(
             AgentProfileStore.defaultProfiles().first(where: TerminalChat.isPlannerProfile)
