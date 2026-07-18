@@ -45,6 +45,51 @@ private final class CapturedOutput: @unchecked Sendable {
 
 @Suite struct TerminalStatusBarRenderingTests {
 
+    // MARK: - Border appearance
+
+    @Test
+    func standaloneStatusBarUsesRoundedBorderCorners() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 24, columns: 100, modelID: "test-model")
+
+        await bar.renderStatusOverlay()
+
+        let frame = captured.combined
+        #expect(frame.contains("╭"))
+        #expect(frame.contains("╮"))
+        #expect(frame.contains("╰"))
+        #expect(frame.contains("╯"))
+        #expect(!frame.contains("┌"))
+        #expect(!frame.contains("┐"))
+        #expect(!frame.contains("└"))
+        #expect(!frame.contains("┘"))
+    }
+
+    @Test
+    func inputPanelUsesRoundedTopBorderCorners() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 24, columns: 100, modelID: "test-model")
+
+        await bar.updateInputPanel(
+            text: "Prompt",
+            cursorIndex: 6,
+            modeText: "Prompt",
+            helpText: "Enter to send"
+        )
+
+        let frame = captured.combined
+        #expect(frame.contains("╭"))
+        #expect(frame.contains("╮"))
+        #expect(frame.contains("╰"))
+        #expect(frame.contains("╯"))
+        #expect(!frame.contains("┌"))
+        #expect(!frame.contains("┐"))
+        #expect(!frame.contains("└"))
+        #expect(!frame.contains("┘"))
+    }
+
     // MARK: - Render cache
 
     @Test

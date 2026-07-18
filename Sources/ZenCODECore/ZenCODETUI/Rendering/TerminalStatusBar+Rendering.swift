@@ -201,9 +201,9 @@ extension TerminalStatusBar {
             "\u{1B}[\(topRow);\(startColumn)H",
             "\u{1B}[2K",
             orange,
-            "┌",
+            "╭",
             horizontalRule,
-            "┐",
+            "╮",
             reset,
             inputSequence,
             suggestionSequence,
@@ -261,9 +261,9 @@ extension TerminalStatusBar {
             sequence += "\u{1B}[\(max(1, state.row - 2));\(startColumn)H"
             + "\u{1B}[2K"
             + orange
-            + "┌"
+            + "╭"
             + horizontalRule
-            + "┐"
+            + "╮"
             + reset
         }
         sequence += "\u{1B}[\(max(1, state.row - 1));\(startColumn)H"
@@ -281,9 +281,9 @@ extension TerminalStatusBar {
         + "\u{1B}[\(state.row);\(startColumn)H"
         + "\u{1B}[2K"
         + orange
-        + "└"
+        + "╰"
         + horizontalRule
-        + "┘"
+        + "╯"
         + reset
         + "\u{1B}8"
         return sequence
