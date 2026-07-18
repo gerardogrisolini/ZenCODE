@@ -45,9 +45,11 @@ layout are made explicit.
 | `Sources/FeatureMCPBridgeKit` | Generic MCP feature integration, configuration, transports, OAuth, execution, and injectable local-transport policy hooks. It has no Xcode-specific behavior. |
 | `Sources/Features/XcodeTools/Feature` | `XcodeToolsFeature` library target: Xcode MCP configuration, policy, compatibility normalization, workspace selection, discovery, execution, and error mapping. |
 | `Sources/Features/XcodeTools/Executable` | Thin `xcode-tools-feature` executable target that delegates to `XcodeToolsFeatureRunner`. |
+| `Sources/Features/BrowserTools/Feature` | `BrowserToolsFeature` library target: the opt-in Chrome/CDP Browser runtime, URL policy, persistent page handles, semantic observations (accessibility, console, bounded network and performance), controlled snapshot-bound actions/dialog handling, and PNG/PDF Browser artifacts. It denies downloads fail-closed, must not enable Browser in a default agent profile, and must not expose raw CDP/JavaScript evaluation to the model. |
+| `Sources/Features/BrowserTools/Executable` | Thin `browser-tools-feature` executable target that delegates to `BrowserToolsFeatureRunner`; it retains the stable bundled executable name and feature root. |
 | `Sources/LocalToolsSupport` | Reusable local file, search, text, and patch tooling. |
 | `Sources/ZenPackageMetadata` | Internal bundled-feature distribution metadata used for catalog parity; it is not a public product. |
-| `Sources/Features/<Feature>` | A standalone executable feature root. Keep its entry point thin and place implementation in feature-owned support or library targets; Xcode Tools is the library-plus-executable exception described above. |
+| `Sources/Features/<Feature>` | A standalone executable feature root. Keep its entry point thin and place implementation in feature-owned support or library targets; Xcode Tools and Browser Tools use explicit library-plus-executable boundaries. |
 | `Sources/ZenCODECore/ZenCODE` | Runtime domains: `Agent`, `Remote`, `Tools`, `Features`, `Context`, `Memory`, `FileChanges`, `Runtime`, and `Support`; `ZenCODETUI` and ACP remain source areas within this target. |
 | `Sources/ZenCODECore/ZenCODE/Runtime/Sessions` | Neutral session state and persistence, including the authoritative task DAG, attempt fencing, execution scopes, atomic task-graph checkpoints, and the session checkpoint tree (`SessionCheckpointTree`). Workflow-sourced graphs require sub-agent execution attempts, while coordinator tool grants remain independent of that lifecycle constraint. A negative validation persists `failed`; `tasks.retry` returns the task to `pending`, and a new `agent.create(taskID:)` claims its fresh workflow attempt rather than messaging the completed agent. `AgentCoreSessionRunner` owns one orchestrator and injects it into every backend; direct task tools are stateless adapters and TUI/ACP code only projects or restores snapshots. |
 | `Sources/ZenCODECore/ZenCODE/ACP` | ACP protocol adaptation only: JSON-RPC routing, parsing, lifecycle, and event encoding. |
@@ -58,7 +60,7 @@ layout are made explicit.
 | `Sources/MLXServerSetup` | Conditional local MLX settings and model configuration, including Hugging Face discovery and setup; it is not the MLX runtime itself. |
 | `Sources/DS4RuntimeShim` | Conditional C shim compiled only when DS4 support is enabled. |
 | `Sources/zen` | The executable composition root, command-line dispatch, bundled feature wiring, and optional MLX/DS4 adapters. |
-| `Tests` | Unit targets: `ToolCoreTests`, `FeatureKitTests`, `FeatureMCPBridgeKitTests`, `XcodeToolsFeatureTests`, `LocalToolsSupportTests`, `ZenCODECoreTests`, `ZenCODELocalRuntimeTests`, and `ZenCODESetupTests`; conditional targets: `MLXServerCoreTests`/`MLXServerSetupTests` with MLX and `ZenCODEDS4Tests` with DS4. |
+| `Tests` | Unit targets: `ToolCoreTests`, `FeatureKitTests`, `FeatureMCPBridgeKitTests`, `XcodeToolsFeatureTests`, `BrowserToolsFeatureTests`, `LocalToolsSupportTests`, `ZenCODECoreTests`, `ZenCODELocalRuntimeTests`, and `ZenCODESetupTests`; conditional targets: `MLXServerCoreTests`/`MLXServerSetupTests` with MLX and `ZenCODEDS4Tests` with DS4. |
 
 The names of existing targets, products, executables, and feature roots are not
 renamed during the first reorganisation pass. A future target split is allowed
@@ -75,6 +77,7 @@ root:
 ToolCore ──→ FeatureKit ──→ LocalToolsSupport
     └────────────────────→ FeatureMCPBridgeKit
 FeatureKit ──────────────→ FeatureMCPBridgeKit
+FeatureKit ──────────────→ BrowserToolsFeature ──→ browser-tools-feature
 ToolCore / FeatureKit / FeatureMCPBridgeKit ──→ XcodeToolsFeature
 
 ZenPackageMetadata ──┬──→ ZenCODECore ──→ ZenCODESetup
@@ -90,7 +93,9 @@ MLXServerSetup (conditional) / DS4RuntimeShim (conditional) ──┤
                               (only `zen` composes optional MLX/DS4 adapters)
 ```
 
-`FeatureMCPBridgeKit` depends on `FeatureKit` and `ToolCore`;
+`FeatureMCPBridgeKit` depends on `FeatureKit` and `ToolCore`; `BrowserToolsFeature`
+depends on `FeatureKit` and is composed only by the thin `browser-tools-feature`
+executable;
 `XcodeToolsFeature` depends on those generic MCP support targets;
 `LocalToolsSupport` depends on `FeatureKit`; and `ZenCODECore` consumes all
 five support targets plus `ZenPackageMetadata`. `LocalRuntimeSupport` and

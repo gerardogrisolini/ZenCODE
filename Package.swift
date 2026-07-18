@@ -87,7 +87,8 @@ let bundledFeatureTargetDefinitions: [BundledFeatureTargetDefinition] = [
     BundledFeatureTargetDefinition(
         executableName: "browser-tools-feature",
         sourceRelativePath: "Sources/Features/BrowserTools",
-        dependencies: ["FeatureKit"]
+        dependencies: ["BrowserToolsFeature"],
+        executableTargetRelativePath: "Sources/Features/BrowserTools/Executable"
     ),
     BundledFeatureTargetDefinition(
         executableName: "git-tools-feature",
@@ -283,6 +284,11 @@ targets += [
         path: "Sources/Features/XcodeTools/Feature"
     ),
     .target(
+        name: "BrowserToolsFeature",
+        dependencies: ["FeatureKit"],
+        path: "Sources/Features/BrowserTools/Feature"
+    ),
+    .target(
         name: "LocalToolsSupport",
         dependencies: ["FeatureKit"]
     ),
@@ -351,6 +357,14 @@ targets += [
             "FeatureKit",
             "FeatureMCPBridgeKit",
             "ToolCore"
+        ]
+    ),
+    .testTarget(
+        name: "BrowserToolsFeatureTests",
+        dependencies: [
+            "BrowserToolsFeature",
+            "FeatureKit",
+            "ZenCODECore"
         ]
     ),
     .testTarget(

@@ -40,6 +40,50 @@ enum CDPError: LocalizedError {
     }
 }
 
+/// A protocol notification emitted by Chrome. Responses carry an `id`; events
+/// do not, so they must be routed separately from pending command continuations.
+struct CDPEvent: @unchecked Sendable {
+    let method: String
+    let params: [String: Any]
+    let sessionID: String?
+}
+
+/// Limits for a single CDP page session. They are host configuration, never
+/// model-controlled tool arguments, so a page cannot stretch the Browser
+/// process lifetime or memory budget through a prompt-injected call.
+struct CDPSessionConfiguration: Sendable {
+    let commandTimeoutNanoseconds: UInt64
+    let maximumMessageSize: Int
+
+    init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+        let timeoutSeconds = Self.positiveInt(
+            environment["ZENCODE_BROWSER_CDP_COMMAND_TIMEOUT_SECONDS"],
+            fallback: 30,
+            range: 1...120
+        )
+        self.commandTimeoutNanoseconds = UInt64(timeoutSeconds) * 1_000_000_000
+        self.maximumMessageSize = Self.positiveInt(
+            environment["ZENCODE_BROWSER_CDP_MAX_MESSAGE_BYTES"],
+            fallback: 8 * 1024 * 1024,
+            range: 64 * 1024...32 * 1024 * 1024
+        )
+    }
+
+    private static func positiveInt(
+        _ rawValue: String?,
+        fallback: Int,
+        range: ClosedRange<Int>
+    ) -> Int {
+        guard let rawValue,
+              let value = Int(rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+              range.contains(value)
+        else {
+            return fallback
+        }
+        return value
+    }
+}
+
 // MARK: - CDP WebSocket session
 
 /// Manages a single WebSocket connection to a Chrome DevTools Protocol target
@@ -48,20 +92,26 @@ enum CDPError: LocalizedError {
 final class CDPSession: @unchecked Sendable {
     private let webSocket: URLSessionWebSocketTask
     private let session: URLSession
+    private let configuration: CDPSessionConfiguration
     private let lock = NSLock()
     private var nextIDCounter = 1
     private var pending: [Int: CheckedContinuation<[String: Any], Error>] = [:]
+    private var cancelledPendingIDs = Set<Int>()
+    private var eventHandlers: [UUID: @Sendable (CDPEvent) -> Void] = [:]
     private var receiveTask: Task<Void, Never>?
 
     /// Connects to the given page-target WebSocket URL.
-    init(webSocketURL: URL) {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 120
-        self.session = URLSession(configuration: configuration)
+    init(
+        webSocketURL: URL,
+        configuration: CDPSessionConfiguration = .init()
+    ) {
+        let urlConfiguration = URLSessionConfiguration.ephemeral
+        urlConfiguration.timeoutIntervalForRequest = 30
+        urlConfiguration.timeoutIntervalForResource = 120
+        self.session = URLSession(configuration: urlConfiguration)
         self.webSocket = session.webSocketTask(with: webSocketURL)
-        // Allow large page-extraction responses (up to ~4 MiB).
-        self.webSocket.maximumMessageSize = 4 * 1024 * 1024
+        self.configuration = configuration
+        self.webSocket.maximumMessageSize = configuration.maximumMessageSize
     }
 
     deinit {
@@ -79,7 +129,7 @@ final class CDPSession: @unchecked Sendable {
         let task = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                await self.receiveOnce()
+                guard await self.receiveOnce() else { return }
             }
         }
         setReceiveTask(task)
@@ -95,11 +145,32 @@ final class CDPSession: @unchecked Sendable {
         taskToCancel?.cancel()
     }
 
+    /// Registers a handler for asynchronous CDP notifications such as network,
+    /// page lifecycle, console, and dialog events. The token is valid only for
+    /// this WebSocket session and must be removed by its owner.
+    @discardableResult
+    func addEventHandler(
+        _ handler: @escaping @Sendable (CDPEvent) -> Void
+    ) -> UUID {
+        let token = UUID()
+        lock.lock()
+        eventHandlers[token] = handler
+        lock.unlock()
+        return token
+    }
+
+    func removeEventHandler(_ token: UUID) {
+        lock.lock()
+        eventHandlers.removeValue(forKey: token)
+        lock.unlock()
+    }
+
     // MARK: - Command dispatch
 
     /// Sends a CDP command and awaits the matching response.
     /// Honours task cancellation and imposes a 30-second deadline.
     func send(method: String, params: [String: Any]? = nil) async throws -> [String: Any] {
+        try Task.checkCancellation()
         let id = allocateID()
         var message: [String: Any] = ["id": id, "method": method]
         if let params { message["params"] = params }
@@ -108,13 +179,16 @@ final class CDPSession: @unchecked Sendable {
         let text = String(data: data, encoding: .utf8) ?? "{}"
 
         // Register a timeout that will fail the command if no response arrives.
-        let timeoutTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 s
+        let timeoutNanoseconds = configuration.commandTimeoutNanoseconds
+        let timeoutSeconds = timeoutNanoseconds / 1_000_000_000
+        let timeoutTask = Task { [weak self, timeoutNanoseconds, timeoutSeconds] in
+            try? await Task.sleep(nanoseconds: timeoutNanoseconds)
             guard !Task.isCancelled else { return }
             if let leftover = self?.removePending(id: id) {
-                leftover.resume(throwing: CDPError.commandFailed("Command timed out after 30s"))
+                leftover.resume(throwing: CDPError.commandFailed("Command timed out after \(timeoutSeconds)s"))
             }
         }
+        defer { timeoutTask.cancel() }
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[String: Any], Error>) in
@@ -128,8 +202,7 @@ final class CDPSession: @unchecked Sendable {
                 }
             }
         } onCancel: {
-            timeoutTask.cancel()
-            if let removed = removePending(id: id) {
+            if let removed = cancelPending(id: id) {
                 removed.resume(throwing: CancellationError())
             }
         }
@@ -169,6 +242,7 @@ final class CDPSession: @unchecked Sendable {
     func preparePage() async throws {
         _ = try await send(method: "Page.enable")
         _ = try await send(method: "Runtime.enable")
+        try await BrowserDownloadPolicy.apply(to: self)
         // Best-effort: ignore failures from emulation commands.
         _ = try? await send(method: "Emulation.setFocusEmulationEnabled", params: ["enabled": true])
         _ = try? await send(method: "Emulation.setDeviceMetricsOverride", params: [
@@ -269,6 +343,10 @@ final class CDPSession: @unchecked Sendable {
     /// Clicks the Google consent dialog if present, then waits for the page to
     /// settle again. Mirrors the ds4_web consent-click flow.
     func clickGoogleConsentIfNeeded() async throws {
+        let host = try await evalString("location.hostname || ''")
+        guard BrowserGoogleConsentOriginPolicy.allows(host: host) else {
+            return
+        }
         let clicked = try await evalString(Self.googleConsentClickJS)
         guard !clicked.isEmpty else { return }
         try await sleep(milliseconds: 1500)
@@ -306,6 +384,11 @@ final class CDPSession: @unchecked Sendable {
 
     private func registerPending(id: Int, continuation: CheckedContinuation<[String: Any], Error>) {
         lock.lock()
+        if cancelledPendingIDs.remove(id) != nil {
+            lock.unlock()
+            continuation.resume(throwing: CancellationError())
+            return
+        }
         pending[id] = continuation
         lock.unlock()
     }
@@ -314,6 +397,16 @@ final class CDPSession: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return pending.removeValue(forKey: id)
+    }
+
+    private func cancelPending(id: Int) -> CheckedContinuation<[String: Any], Error>? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let continuation = pending.removeValue(forKey: id) {
+            return continuation
+        }
+        cancelledPendingIDs.insert(id)
+        return nil
     }
 
     private func setReceiveTask(_ task: Task<Void, Never>) {
@@ -329,8 +422,8 @@ final class CDPSession: @unchecked Sendable {
     }
 
     /// Processes a single WebSocket message. On transport error, fails all
-    /// pending commands and terminates the loop.
-    private func receiveOnce() async {
+    /// pending commands and asks the receive loop to terminate.
+    private func receiveOnce() async -> Bool {
         do {
             let message = try await webSocket.receive()
             switch message {
@@ -339,38 +432,61 @@ final class CDPSession: @unchecked Sendable {
             case let .string(text):
                 handleMessage(Data(text.utf8))
             @unknown default:
-                return
+                return true
             }
+            return true
         } catch {
             failAll(error)
+            return false
         }
     }
 
-    private func handleMessage(_ data: Data) {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let id = json["id"] as? Int
-        else { return }
-
-        let continuation = removePending(id: id)
-        guard let continuation else { return }
-
-        if let error = json["error"] {
-            let message = (error as? [String: Any])?["message"] as? String
-                ?? String(describing: error)
-            continuation.resume(throwing: CDPError.commandFailed(message))
-        } else {
-            continuation.resume(returning: json)
+    /// Internal for focused protocol tests. Production callers receive events
+    /// through `addEventHandler(_:)`, never through raw CDP objects.
+    func handleMessage(_ data: Data) {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
         }
+
+        if let id = json["id"] as? Int {
+            let continuation = removePending(id: id)
+            guard let continuation else { return }
+
+            if let error = json["error"] {
+                let message = (error as? [String: Any])?["message"] as? String
+                    ?? String(describing: error)
+                continuation.resume(throwing: CDPError.commandFailed(message))
+            } else {
+                continuation.resume(returning: json)
+            }
+            return
+        }
+
+        guard let method = json["method"] as? String else { return }
+        let event = CDPEvent(
+            method: method,
+            params: json["params"] as? [String: Any] ?? [:],
+            sessionID: json["sessionId"] as? String
+        )
+        let handlers = currentEventHandlers()
+        handlers.forEach { $0(event) }
     }
 
     private func failAll(_ error: Error) {
         lock.lock()
         let allPending = pending
         pending.removeAll()
+        cancelledPendingIDs.removeAll()
         lock.unlock()
         for (_, continuation) in allPending {
             continuation.resume(throwing: error)
         }
+    }
+
+    private func currentEventHandlers() -> [@Sendable (CDPEvent) -> Void] {
+        lock.lock()
+        defer { lock.unlock() }
+        return Array(eventHandlers.values)
     }
 
     private func sleep(milliseconds ms: Int) async throws {
