@@ -212,7 +212,10 @@ extension DirectSubAgentRuntime {
         guard normalized.count > limit else {
             return normalized
         }
-        return String(normalized.prefix(limit - 1)) + "…"
+        // Activity is displayed as a live tail preview in the sub-agent
+        // overview. Keep the newest text so new thinking, content, and tool
+        // updates remain visible after the preview reaches its size limit.
+        return "…" + String(normalized.suffix(limit - 1))
     }
 
     public func recordTaskAttemptStarted(agentID: String) async -> Bool {

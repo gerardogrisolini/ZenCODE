@@ -440,13 +440,17 @@ actor TerminalChatRenderCoordinator {
     }
 
     private func writeDetailedToolCallStarted(_ toolCall: DirectAgentToolCall) {
-        let lines = TerminalChat.detailedToolCallStartedLines(for: toolCall)
         let startWidth = columnWidthProvider()
+        let lines = TerminalChat.safelyWrappedDetailedToolLines(
+            TerminalChat.detailedToolCallStartedLines(for: toolCall),
+            contentInsetWidth: TerminalChat.displayWidth(lineInset),
+            columnWidth: startWidth
+        )
         activeToolBlock = .detailed(
             id: toolCall.id,
             rows: TerminalChat.renderedTerminalRowCount(
                 for: lines,
-                contentInsetWidth: lineInset.count,
+                contentInsetWidth: TerminalChat.displayWidth(lineInset),
                 columnWidth: startWidth
             ),
             columnWidth: startWidth
@@ -458,9 +462,14 @@ actor TerminalChatRenderCoordinator {
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) {
-        let lines = TerminalChat.detailedToolCallCompletedLines(
-            for: toolCall,
-            result: result
+        let outputWidth = columnWidthProvider()
+        let lines = TerminalChat.safelyWrappedDetailedToolLines(
+            TerminalChat.detailedToolCallCompletedLines(
+                for: toolCall,
+                result: result
+            ),
+            contentInsetWidth: TerminalChat.displayWidth(lineInset),
+            columnWidth: outputWidth
         )
         let rewriteRowCount: Int
         let shouldRewriteActiveBlock: Bool
@@ -474,7 +483,7 @@ actor TerminalChatRenderCoordinator {
             // append-only mode. The stale pending block remains visible — an
             // accepted cosmetic trade-off that is always preferable to
             // corrupting the transcript.
-            let widthChanged = startWidth != columnWidthProvider()
+            let widthChanged = startWidth != outputWidth
             shouldRewriteActiveBlock
                 = id == toolCall.id && standardErrorIsTerminal && !widthChanged
         } else {
@@ -496,14 +505,14 @@ actor TerminalChatRenderCoordinator {
         let lines = TerminalChat.compactToolLines(
             for: toolCall,
             statusIcon: "⏳",
-            contentInsetWidth: lineInset.count,
+            contentInsetWidth: TerminalChat.displayWidth(lineInset),
             columnWidth: startWidth
         )
         activeToolBlock = .compact(
             id: toolCall.id,
             rows: TerminalChat.renderedTerminalRowCount(
                 for: lines,
-                contentInsetWidth: lineInset.count,
+                contentInsetWidth: TerminalChat.displayWidth(lineInset),
                 columnWidth: startWidth
             ),
             columnWidth: startWidth
@@ -519,7 +528,7 @@ actor TerminalChatRenderCoordinator {
         let lines = TerminalChat.compactToolLines(
             for: toolCall,
             statusIcon: icon,
-            contentInsetWidth: lineInset.count,
+            contentInsetWidth: TerminalChat.displayWidth(lineInset),
             columnWidth: columnWidthProvider()
         )
         let rewriteRowCount: Int

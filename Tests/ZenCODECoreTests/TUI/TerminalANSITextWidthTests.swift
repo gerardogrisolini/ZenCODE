@@ -212,4 +212,14 @@ struct TerminalANSITextWidthTests {
         #expect(wrapped.contains("pending"))
         #expect(wrapped.contains("review"))
     }
+
+    @Test
+    func whitespacePreservingWrapSplitsLongUnbrokenTokens() {
+        let source = String(repeating: "x", count: 25)
+        let rows = TerminalANSIText.wrapPreservingWhitespace(source, width: 8)
+
+        #expect(rows.count == 4)
+        #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) <= 8 })
+        #expect(rows.joined() == source)
+    }
 }

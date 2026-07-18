@@ -13,13 +13,18 @@ extension TerminalChat {
         let indentation: Int
         let maxWrappedLines: Int
         let dimPrefix: Bool
+        /// Dynamic agent activity is most useful at its trailing edge: thought
+        /// and response streams append new text, so the first wrapped rows soon
+        /// become stale.
+        let showsLatestWrappedLines: Bool
 
         static func summary(_ text: String) -> SubAgentOverviewLine {
             SubAgentOverviewLine(
                 text: text,
                 indentation: 3,
                 maxWrappedLines: 3,
-                dimPrefix: true
+                dimPrefix: true,
+                showsLatestWrappedLines: false
             )
         }
 
@@ -31,19 +36,34 @@ extension TerminalChat {
                 text: text,
                 indentation: 3,
                 maxWrappedLines: maxWrappedLines,
-                dimPrefix: false
+                dimPrefix: false,
+                showsLatestWrappedLines: false
+            )
+        }
+
+        static func latest(
+            _ text: String,
+            maxWrappedLines: Int = 3
+        ) -> SubAgentOverviewLine {
+            SubAgentOverviewLine(
+                text: text,
+                indentation: 3,
+                maxWrappedLines: maxWrappedLines,
+                dimPrefix: false,
+                showsLatestWrappedLines: true
             )
         }
 
         static func current(
             _ text: String,
-            maxWrappedLines: Int = 6
+            maxWrappedLines: Int = 3
         ) -> SubAgentOverviewLine {
             SubAgentOverviewLine(
                 text: text,
                 indentation: 6,
                 maxWrappedLines: maxWrappedLines,
-                dimPrefix: false
+                dimPrefix: false,
+                showsLatestWrappedLines: true
             )
         }
     }
@@ -213,7 +233,7 @@ extension TerminalChat {
         if closedCount > 0 {
             segments.append(dimText("· \(closedCount) closed"))
         }
-        return segments.joined(separator: " ")
+        return segments.joined(separator: " ") + "\n"
     }
 
     private static func renderSubAgentHeader(
@@ -311,7 +331,7 @@ extension TerminalChat {
 
         if let currentToolName {
             lines.append(
-                .current("\(dimText("tool:")) \(inlineText(currentToolName))", maxWrappedLines: 2)
+                .current("\(dimText("tool:")) \(inlineText(currentToolName))")
             )
         }
 
@@ -331,23 +351,23 @@ extension TerminalChat {
     ) -> SubAgentOverviewLine? {
         if let latestError = snapshot.latestError?.nilIfBlank {
             let label = colorText("✗ error:", code: "\u{1B}[31m")
-            return .regular("\(label) \(inlineText(latestError))")
+            return .latest("\(label) \(inlineText(latestError))")
         }
 
         guard let latestOutput = snapshot.latestOutput?.nilIfBlank else {
             if snapshot.pending && !hasCurrentActivity {
                 let label = colorText("▸ working:", code: "\u{1B}[38;5;208m")
-                return .regular("\(label) \(dimText("pending response"))")
+                return .latest("\(label) \(dimText("pending response"))")
             }
             return nil
         }
 
         if snapshot.pending {
             let label = colorText("▸ working:", code: "\u{1B}[38;5;208m")
-            return .regular("\(label) \(inlineText(latestOutput))")
+            return .latest("\(label) \(inlineText(latestOutput))")
         }
         let label = colorText("✓ result:", code: "\u{1B}[32m")
-        return .regular("\(label) \(inlineText(latestOutput))")
+        return .latest("\(label) \(inlineText(latestOutput))")
     }
 
     private static func isToolOnlyActivity(
@@ -458,10 +478,15 @@ extension TerminalChat {
                 .components(separatedBy: "\n")
             let maxWrappedLines = max(1, line.maxWrappedLines)
             if wrapped.count > maxWrappedLines {
-                wrapped = Array(wrapped.prefix(maxWrappedLines))
-                let lastIndex = maxWrappedLines - 1
                 let ellipsis = AgentOutput.standardErrorIsTerminal ? "\(reset)…" : "…"
-                wrapped[lastIndex] += ellipsis
+                if line.showsLatestWrappedLines {
+                    wrapped = Array(wrapped.suffix(maxWrappedLines))
+                    wrapped[0] = "\(ellipsis)\(wrapped[0])"
+                } else {
+                    wrapped = Array(wrapped.prefix(maxWrappedLines))
+                    let lastIndex = maxWrappedLines - 1
+                    wrapped[lastIndex] += ellipsis
+                }
             }
             for wrappedLine in wrapped {
                 output.append("\(linePrefix)\(prefix)\(wrappedLine)")

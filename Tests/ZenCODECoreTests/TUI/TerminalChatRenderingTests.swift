@@ -2106,11 +2106,20 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func subAgentOverviewRendersCurrentActivityAcrossMultipleWrappedLines() {
-        let longActivity = String(
-            repeating: "analysing renderer state while checking delegated agent progress ",
-            count: 5
-        ) + "ENDCURRENT"
+    func subAgentOverviewShowsTheLatestThreeWrappedActivityLines() {
+        let staleMarker = "STALE_ACTIVITY_MARKER"
+        let latestMarker = "LATEST_ACTIVITY_MARKER"
+        let staleToolMarker = "STALE_TOOL_MARKER"
+        let latestToolMarker = "LATEST_TOOL_MARKER"
+        let longActivity = "\(staleMarker) "
+            + String(
+                repeating: "analysing renderer state while checking delegated agent progress ",
+                count: 12
+            )
+            + latestMarker
+        let longToolName = "\(staleToolMarker) "
+            + String(repeating: "delegated tool progress ", count: 40)
+            + latestToolMarker
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_current",
             name: "worker",
@@ -2118,6 +2127,7 @@ struct TerminalChatRenderingTests {
             status: .running,
             pending: true,
             currentActivity: longActivity,
+            currentToolName: longToolName,
             latestOutput: nil,
             latestError: nil,
             createdAt: Date(),
@@ -2130,15 +2140,18 @@ struct TerminalChatRenderingTests {
             .map { String($0) }
 
         #expect(rendered.contains("▸ current:"))
-        #expect(rendered.contains("activity:"))
-        #expect(rendered.contains("ENDCURRENT"))
+        #expect(rendered.contains(latestMarker))
+        #expect(!rendered.contains(staleMarker))
+        #expect(rendered.contains(latestToolMarker))
+        #expect(!rendered.contains(staleToolMarker))
+        #expect(rendered.contains("…"))
 
         let currentIndex = visibleLines.firstIndex { $0.contains("▸ current:") }
         let idIndex = visibleLines.firstIndex { $0.contains("id: agent_current") }
         #expect(currentIndex != nil)
         #expect(idIndex != nil)
         if let currentIndex, let idIndex {
-            #expect(idIndex - currentIndex > 2)
+            #expect(currentIndex > idIndex)
         }
     }
 
@@ -2196,7 +2209,11 @@ struct TerminalChatRenderingTests {
 
     @Test
     func subAgentOverviewCapsWrappedDetailToThreeLines() {
-        let hugeOutput = String(repeating: "alpha bravo charlie delta ", count: 60)
+        let staleMarker = "STALE_RESULT_MARKER"
+        let latestMarker = "LATEST_RESULT_MARKER"
+        let hugeOutput = "\(staleMarker) "
+            + String(repeating: "alpha bravo charlie delta ", count: 60)
+            + latestMarker
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_flood",
             name: "worker",
@@ -2215,6 +2232,8 @@ struct TerminalChatRenderingTests {
             .map { String($0) }
 
         #expect(rendered.contains("…"))
+        #expect(rendered.contains(latestMarker))
+        #expect(!rendered.contains(staleMarker))
         #expect(visibleLines.count <= 12)
     }
 

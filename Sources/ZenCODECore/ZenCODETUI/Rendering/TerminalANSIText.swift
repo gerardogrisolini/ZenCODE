@@ -189,6 +189,31 @@ enum TerminalANSIText {
             }
             .joined(separator: "\n")
     }
+
+    /// Reflows text at visible-cell boundaries without collapsing whitespace or
+    /// dropping long unbroken tokens. This is used by in-place terminal blocks,
+    /// where every emitted logical line must have a predictable physical row
+    /// count. Active SGR styles are reset before a wrap and restored on the
+    /// continuation line.
+    static func wrapPreservingWhitespace(
+        _ text: String,
+        width: Int,
+        hangingIndent: String = ""
+    ) -> [String] {
+        guard width > 0 else {
+            return text.components(separatedBy: "\n")
+        }
+
+        return text
+            .components(separatedBy: "\n")
+            .flatMap {
+                wrapSingleLinePreservingWhitespace(
+                    $0,
+                    width: width,
+                    hangingIndent: hangingIndent
+                )
+            }
+    }
     
     private static func wrapSingleLine(
         _ line: String,
@@ -239,6 +264,59 @@ enum TerminalANSIText {
         
         lines.append(current)
         return lines.joined(separator: "\n")
+    }
+
+    private static func wrapSingleLinePreservingWhitespace(
+        _ line: String,
+        width: Int,
+        hangingIndent: String
+    ) -> [String] {
+        guard visibleWidth(line) > width else {
+            return [line]
+        }
+
+        // Never let an indentation consume the entire row. The normal TUI
+        // geometry always has ample width, but retaining this guard keeps the
+        // helper well-defined for narrow deterministic tests too.
+        let continuationIndent = visibleWidth(hangingIndent) < width
+            ? hangingIndent
+            : ""
+        var lines: [String] = []
+        var current = ""
+        var currentWidth = 0
+        var activeStyle = ""
+        var index = line.startIndex
+
+        while index < line.endIndex {
+            let character = line[index]
+            if character.unicodeScalars.first == "\u{1B}" {
+                let end = endOfEscapeSequence(in: line, from: index)
+                let sequence = String(line[index..<end])
+                current += sequence
+                activeStyle = updatedActiveStyle(activeStyle, scanning: sequence)
+                index = end
+                continue
+            }
+
+            let characterWidth = visibleWidth(of: character)
+            if currentWidth > 0, currentWidth + characterWidth > width {
+                if !activeStyle.isEmpty {
+                    current += reset
+                }
+                lines.append(current)
+                current = continuationIndent + activeStyle
+                currentWidth = visibleWidth(continuationIndent)
+            }
+
+            current.append(character)
+            currentWidth += characterWidth
+            index = line.index(after: index)
+        }
+
+        if !current.isEmpty || lines.isEmpty {
+            lines.append(current)
+        }
+        return lines
     }
     
     /// Tracks the SGR sequences that remain active after `fragment` so a wrap

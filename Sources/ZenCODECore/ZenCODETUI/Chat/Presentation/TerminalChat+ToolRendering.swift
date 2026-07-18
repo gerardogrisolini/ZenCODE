@@ -128,6 +128,34 @@ extension TerminalChat {
         }
     }
 
+    /// Reflows detailed tool lines before they are rendered in an in-place
+    /// block. One terminal cell remains unused on every row because a line
+    /// ending in the final column has terminal-dependent auto-wrap behavior;
+    /// that would make the cursor position disagree with the saved row count
+    /// used to redraw the tool on completion.
+    static func safelyWrappedDetailedToolLines(
+        _ lines: [String],
+        contentInsetWidth: Int = 0,
+        columnWidth: Int? = nil
+    ) -> [String] {
+        let resolvedColumns = columnWidth ?? terminalColumnCount()
+        let contentColumns = max(1, resolvedColumns - contentInsetWidth)
+        let safeLineWidth = max(1, contentColumns - 1)
+
+        return lines.flatMap { line in
+            // Code snippets begin with at least two spaces. Keep their leading
+            // indentation on continuations so expanded code styling remains
+            // consistent after a hard wrap.
+            let leadingSpaces = String(line.prefix { $0 == " " })
+            let hangingIndent = line.hasPrefix("  ") ? leadingSpaces : ""
+            return TerminalANSIText.wrapPreservingWhitespace(
+                line,
+                width: safeLineWidth,
+                hangingIndent: hangingIndent
+            )
+        }
+    }
+
     static func compactToolInlineTarget(_ target: String) -> String {
         target
             .split(whereSeparator: \.isWhitespace)

@@ -120,6 +120,69 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func detailedToolRowsReserveTrailingColumnBeforeInPlaceRewrite() async throws {
+        let terminalColumns = 40
+        let longArgument = String(repeating: "x", count: 100)
+        let renderer = makeRenderer(
+            stdinIsTerminal: true,
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { terminalColumns }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "tool-detailed-wrap",
+            name: "local.exec",
+            argumentsObject: ["command": longArgument],
+            argumentsJSON: #"{"command":"placeholder"}"#
+        )
+
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallStarted(toolCall)
+        let started = await renderer.snapshot()
+        let startedEvents = await renderer.capturedWriteEvents()
+        let renderedStart = try #require(startedEvents.last?.text)
+        let renderedRows = renderedStart
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+
+        // The interactive-chat inset occupies two cells. Every expanded row
+        // must leave one further cell unused so an auto-wrap cannot add an
+        // uncounted row next to the reserved status/input overlay.
+        #expect(renderedRows.count == started.activeDetailedToolRenderedRowCount)
+        #expect(
+            renderedRows.allSatisfy {
+                TerminalANSIText.visibleWidth($0) <= terminalColumns - 1
+            }
+        )
+        let renderedLongCharacterCount = TerminalANSIText.stripANSI(renderedStart)
+            .reduce(into: 0) { count, character in
+                if character == "x" {
+                    count += 1
+                }
+            }
+        #expect(renderedLongCharacterCount >= longArgument.count)
+
+        let eventCountBeforeCompletion = startedEvents.count
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+        let completionEvents = Array(
+            (await renderer.capturedWriteEvents()).dropFirst(eventCountBeforeCompletion)
+        )
+        let clearSequence = try #require(completionEvents.first?.text)
+
+        #expect(
+            clearSequence.hasPrefix(
+                "\u{1B}[\(started.activeDetailedToolRenderedRowCount)A\r"
+            )
+        )
+        #expect(
+            clearSequence.components(separatedBy: "\u{1B}[2K").count - 1
+                == started.activeDetailedToolRenderedRowCount
+        )
+    }
+
+    @Test
     func overviewIsDeferredUntilToolNoLongerOwnsRows() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = DirectAgentToolCall(
@@ -693,6 +756,7 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     private func makeRenderer(
+        stdinIsTerminal: Bool = false,
         standardErrorIsTerminal: Bool,
         standardOutputIsTerminal: Bool = false,
         streamingFlushDelay: Duration? = nil,
@@ -704,7 +768,7 @@ struct TerminalChatRenderCoordinatorTests {
         }
     ) -> TerminalChatRenderCoordinator {
         TerminalChatRenderCoordinator(
-            stdinIsTerminal: false,
+            stdinIsTerminal: stdinIsTerminal,
             standardOutput: nil,
             standardError: nil,
             standardOutputIsTerminal: standardOutputIsTerminal,

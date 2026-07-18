@@ -201,7 +201,7 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func thoughtDeltasAccumulateInCurrentActivity() async throws {
+    func thoughtDeltasKeepTheLatestCurrentActivityPreview() async throws {
         let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend }
@@ -228,8 +228,11 @@ struct DirectSubAgentRuntimeTests {
             agentID: agentID
         )
         let cappedActivity = try #require(await runtime.snapshots().first?.currentActivity)
+        #expect(cappedActivity.hasPrefix("thinking: …"))
         await runtime.recordEvent(.thought("additional delta"), agentID: agentID)
-        #expect(await runtime.snapshots().first?.currentActivity == cappedActivity)
+        let latestActivity = try #require(await runtime.snapshots().first?.currentActivity)
+        #expect(latestActivity != cappedActivity)
+        #expect(latestActivity.contains("additional delta"))
 
         await runtime.shutdown()
     }
