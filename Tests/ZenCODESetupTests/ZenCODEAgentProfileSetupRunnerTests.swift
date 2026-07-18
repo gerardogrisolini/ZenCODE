@@ -50,6 +50,38 @@ struct ZenCODEAgentProfileSetupRunnerTests {
     }
 
     @Test
+    func setupProfileReplacementPreservesMultipleBindingsAndDefault() {
+        let original = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            tools: ["shell"],
+            modelBindings: [
+                AgentModelBinding(id: "fast", modelID: "fast-model", capability: 4),
+                AgentModelBinding(
+                    id: "deep",
+                    modelID: "deep-model",
+                    thinkingSelection: .high,
+                    capability: 8
+                )
+            ],
+            defaultModelBindingID: "fast"
+        )
+
+        let updated = ZenCODEAgentProfileSetupRunner.profile(
+            basedOn: original,
+            modelBindings: original.modelBindings,
+            defaultModelBindingID: "deep"
+        )
+
+        #expect(updated.tools == ["shell"])
+        #expect(updated.modelBindings.count == 2)
+        #expect(updated.defaultModelBinding?.id == "deep")
+        #expect(updated.defaultModelBinding?.thinkingSelection == .high)
+        #expect(ZenCODEAgentProfileSetupRunner.agentModelSummary(updated).contains("2 bindings"))
+        #expect(ZenCODEAgentProfileSetupRunner.agentModelSummary(updated).contains("deep-model"))
+    }
+
+    @Test
     func setupDefaultThinkingSelectionKeepsCompatibleExistingValue() {
         let model = setupThinkingModel()
 

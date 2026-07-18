@@ -30,12 +30,13 @@ extension DirectSubAgentRuntime {
         let overviewBatchID = UUID()
         let previousOverviewBatchID = latestOverviewBatchID
 
-        let prepared = payloads.enumerated().map { offset, payload in
-            (
+        let prepared = try payloads.enumerated().map { offset, payload in
+            let profile = profileResolver(payload)
+            return (
                 offset: offset,
-                payload: payload,
+                payload: try Self.resolvingModelBinding(for: payload, profile: profile),
                 id: "agent_\(UUID().uuidString.lowercased())",
-                profile: profileResolver(payload)
+                profile: profile
             )
         }
         let reservationIDs = try await reserveTasklessDelegationReservations(
@@ -101,7 +102,7 @@ extension DirectSubAgentRuntime {
 
                 let receipt = receiptsByAgentID[id]
                 if let receipt, let taskOrchestrator {
-                    if let capability = item.profile?.capability,
+                    if let capability = payload.capability,
                        let taskView = try? await taskOrchestrator.task(
                            sessionID: rootSessionID,
                            taskID: receipt.taskID,
@@ -113,7 +114,8 @@ extension DirectSubAgentRuntime {
                             "Warning: task \"\(receipt.taskID)\" has complexity "
                                 + "\(taskView.task.complexity) but agent \"\(payload.name)\" "
                                 + "uses profile \"\(item.profile?.name ?? "unknown")\" with "
-                                + "capability \(capability)/10, a capability gap of "
+                                + "model \"\(payload.modelID ?? "unknown")\" at capability "
+                                + "\(capability)/10, a capability gap of "
                                 + "\(capabilityGap). Use this profile only when no "
                                 + "role-compatible profile with the required tool access has "
                                 + "sufficient capability; otherwise select the lowest-capability "

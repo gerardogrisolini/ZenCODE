@@ -60,26 +60,11 @@ public actor LocalExecPermissionAuthorizer {
     }
 
     static func commandPermissionIdentity(for command: String) -> String? {
-        // Use the shared parser: the identity is the first authorizable
-        // executable of the first non-skip segment. Harmless built-ins/keywords
-        // are skipped so that e.g. `pwd && rm -rf tmp` yields `rm` rather than
-        // the inert `pwd`.
-        for segment in LocalExecCommandParser.commandSegments(in: command) {
-            switch LocalExecCommandParser.executableIdentity(for: segment) {
-            case .skip:
-                continue
-            case .executable(let name):
-                return name
-            case .unresolved(let raw):
-                return raw
-            }
-        }
-
-        // All segments were skip (e.g. `true`, `cd /tmp`): no identity to
-        // persist. Returning nil keeps the manifest and cache consistent with
-        // `localExecAuthorizationCommands`, which produces no request for
-        // all-skip commands.
-        return nil
+        // Use the shared parser's structured candidates: the identity is the
+        // first authorizable executable. Harmless built-ins/keywords, comments,
+        // and decorative echo/printf are filtered so that e.g. `pwd && rm -rf tmp`
+        // yields `rm` rather than the inert `pwd`.
+        LocalExecCommandParser.authorizationCandidates(in: command).first?.identity
     }
 
     static func persistedCommandPermissionIdentity(for command: String) -> String? {
@@ -105,10 +90,16 @@ public actor LocalExecPermissionAuthorizer {
     }
 
     private func permissionCacheKey(for request: AgentToolAuthorizationRequest) -> String {
-        [
-            request.toolName,
-            Self.persistedCommandPermissionIdentity(for: request.command) ?? request.command
-        ].joined(separator: "\u{1f}")
+        let identity = Self.persistedCommandPermissionIdentity(for: request.command)
+            ?? request.command
+        return Self.permissionCacheKey(toolName: request.toolName, identity: identity)
+    }
+
+    /// Builds a case-insensitive cache key. The persisted manifest matches
+    /// command identities case-insensitively, so the in-memory cache must do
+    /// the same to stay consistent across the dialog, ACP, and Telegram paths.
+    private static func permissionCacheKey(toolName: String, identity: String) -> String {
+        [toolName, identity.lowercased()].joined(separator: "\u{1f}")
     }
 
     private func loadPersistedAllowedCommandsIfNeeded() {
@@ -120,7 +111,9 @@ public actor LocalExecPermissionAuthorizer {
             return
         }
         alwaysAllowedKeys.formUnion(
-            permissions.localExecAllowedCommands.map { "local.exec\u{1f}\($0)" }
+            permissions.localExecAllowedCommands.map {
+                Self.permissionCacheKey(toolName: "local.exec", identity: $0)
+            }
         )
     }
 

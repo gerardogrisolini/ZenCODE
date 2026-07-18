@@ -141,7 +141,7 @@ enum SetupSection: Equatable, Hashable {
         case .agents:
             return "Agents"
         case .agentModels:
-            return "Agent models & capability"
+            return "Agent model bindings"
         case .additionalGroup(_, let title, _):
             return title
         case .finish:
@@ -205,7 +205,15 @@ enum SetupSection: Equatable, Hashable {
         case .agents:
             return ["agents", "agent", "profiles", "agent profiles"]
         case .agentModels:
-            return ["agent models", "agent capability", "models", "capability", "agent models & capability"]
+            return [
+                "agent models",
+                "agent model bindings",
+                "agent bindings",
+                "agent capability",
+                "models",
+                "capability",
+                "agent models & capability"
+            ]
         case .additionalGroup(_, _, let aliases):
             return aliases
         case .finish:

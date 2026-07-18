@@ -22,6 +22,60 @@ public struct AgentProfileManifest: Codable, Sendable {
     }
 }
 
+/// A dedicated model configuration available to an agent profile.
+///
+/// The identifier is stable so a profile can retain an explicit default even
+/// when bindings are reordered. Bindings without a usable model identifier are
+/// ignored when a profile is normalized for persistence.
+public struct AgentModelBinding: Codable, Hashable, Identifiable, Sendable {
+    public let id: String
+    public let modelID: String
+    public let modelProvider: String?
+    public let thinkingSelection: AgentThinkingSelection?
+    public let capability: Int?
+
+    public init(
+        id: String? = nil,
+        modelID: String,
+        modelProvider: String? = nil,
+        thinkingSelection: AgentThinkingSelection? = nil,
+        capability: Int? = nil
+    ) {
+        let normalizedModelID = modelID.nilIfBlank ?? ""
+        self.id = id?.nilIfBlank ?? normalizedModelID
+        self.modelID = normalizedModelID
+        self.modelProvider = modelProvider?.nilIfBlank
+        self.thinkingSelection = thinkingSelection
+        self.capability = capability.map { min(max($0, 1), 10) }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decodeIfPresent(String.self, forKey: .id),
+            modelID: try container.decodeIfPresent(String.self, forKey: .modelID) ?? "",
+            modelProvider: try container.decodeIfPresent(String.self, forKey: .modelProvider),
+            thinkingSelection: try container.decodeIfPresent(
+                AgentThinkingSelection.self,
+                forKey: .thinkingSelection
+            ),
+            capability: try container.decodeIfPresent(Int.self, forKey: .capability)
+        )
+    }
+
+    public var isValid: Bool {
+        modelID.nilIfBlank != nil && id.nilIfBlank != nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case modelID
+        case modelProvider
+        case thinkingSelection
+        case capability
+    }
+}
+
 public struct AgentProfile: Codable, Hashable, Sendable {
     public let id: String
     public let name: String
@@ -29,10 +83,63 @@ public struct AgentProfile: Codable, Hashable, Sendable {
     public let symbolName: String?
     public let tools: [String]
     public let skills: [AgentProfileSkill]
-    public let modelID: String?
-    public let modelProvider: String?
-    public let thinkingSelection: AgentThinkingSelection?
-    public let capability: Int?
+    public let modelBindings: [AgentModelBinding]
+    public let defaultModelBindingID: String?
+
+    /// The binding used by default for this profile.
+    ///
+    /// An invalid or absent persisted default falls back to the first
+    /// normalized binding, whose ordering is stable across saves.
+    public var defaultModelBinding: AgentModelBinding? {
+        guard let defaultModelBindingID else {
+            return modelBindings.first
+        }
+        return modelBindings.first(where: {
+            Self.modelBindingKey($0.id) == Self.modelBindingKey(defaultModelBindingID)
+        }) ?? modelBindings.first
+    }
+
+    /// Returns one of this profile's explicitly authorized model bindings.
+    /// Both the stable binding identifier and the configured model identifier
+    /// are accepted so callers can persist the former while tool payloads can
+    /// use the latter.
+    public func modelBinding(matching reference: String?) -> AgentModelBinding? {
+        guard let reference = reference?.nilIfBlank else {
+            return defaultModelBinding
+        }
+        let key = Self.modelBindingKey(reference)
+        if let binding = modelBindings.first(where: {
+            Self.modelBindingKey($0.id) == key
+        }) {
+            return binding
+        }
+        return modelBindings.first(where: {
+            Self.modelBindingKey($0.modelID) == key
+        })
+    }
+
+    /// Convenience model identifier for the resolved default binding.
+    public var defaultModelID: String? {
+        defaultModelBinding?.modelID
+    }
+
+    // Compatibility accessors for the previous single-model profile shape.
+    // New persistence is always expressed through `modelBindings`.
+    public var modelID: String? {
+        defaultModelBinding?.modelID
+    }
+
+    public var modelProvider: String? {
+        defaultModelBinding?.modelProvider
+    }
+
+    public var thinkingSelection: AgentThinkingSelection? {
+        defaultModelBinding?.thinkingSelection
+    }
+
+    public var capability: Int? {
+        defaultModelBinding?.capability
+    }
 
     public init(
         id: String,
@@ -44,7 +151,10 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         modelID: String? = nil,
         modelProvider: String? = nil,
         thinkingSelection: AgentThinkingSelection? = nil,
-        capability: Int? = nil
+        capability: Int? = nil,
+        modelBindings: [AgentModelBinding] = [],
+        defaultModelBindingID: String? = nil,
+        defaultModelID: String? = nil
     ) {
         self.id = id.nilIfBlank ?? UUID().uuidString
         self.name = name.nilIfBlank ?? AgentProfileStore.developerAgentName
@@ -52,10 +162,30 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         self.symbolName = symbolName?.nilIfBlank
         self.tools = tools
         self.skills = skills
-        self.modelID = modelID?.nilIfBlank
-        self.modelProvider = modelProvider?.nilIfBlank
-        self.thinkingSelection = thinkingSelection
-        self.capability = capability.map { min(max($0, 1), 10) }
+
+        let legacyModelID = modelID?.nilIfBlank
+        let sourceBindings: [AgentModelBinding]
+        if modelBindings.isEmpty, let legacyModelID {
+            sourceBindings = [
+                AgentModelBinding(
+                    id: legacyModelID,
+                    modelID: legacyModelID,
+                    modelProvider: modelProvider,
+                    thinkingSelection: thinkingSelection,
+                    capability: capability
+                )
+            ]
+        } else {
+            sourceBindings = modelBindings
+        }
+
+        let normalizedBindings = Self.normalizedModelBindings(sourceBindings)
+        self.modelBindings = normalizedBindings
+        self.defaultModelBindingID = Self.resolvedDefaultModelBindingID(
+            in: normalizedBindings,
+            preferredBindingID: defaultModelBindingID,
+            preferredModelID: defaultModelID
+        )
     }
 
     public init(from decoder: Decoder) throws {
@@ -66,14 +196,62 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         self.symbolName = try container.decodeIfPresent(String.self, forKey: .symbolName)?.nilIfBlank
         self.tools = try container.decodeIfPresent([String].self, forKey: .tools) ?? []
         self.skills = try container.decodeIfPresent([AgentProfileSkill].self, forKey: .skills) ?? []
-        self.modelID = try container.decodeIfPresent(String.self, forKey: .modelID)?.nilIfBlank
-        self.modelProvider = try container.decodeIfPresent(String.self, forKey: .modelProvider)?.nilIfBlank
-        self.thinkingSelection = try container.decodeIfPresent(
+
+        let legacyModelID = try container.decodeIfPresent(String.self, forKey: .modelID)?.nilIfBlank
+        let legacyModelProvider = try container.decodeIfPresent(
+            String.self,
+            forKey: .modelProvider
+        )?.nilIfBlank
+        let legacyThinkingSelection = try container.decodeIfPresent(
             AgentThinkingSelection.self,
             forKey: .thinkingSelection
         )
-        self.capability = try container.decodeIfPresent(Int.self, forKey: .capability)
-            .map { min(max($0, 1), 10) }
+        let legacyCapability = try container.decodeIfPresent(Int.self, forKey: .capability)
+        let decodedBindings = try container.decodeIfPresent(
+            [AgentModelBinding].self,
+            forKey: .modelBindings
+        )
+        let sourceBindings: [AgentModelBinding]
+        if let decodedBindings {
+            sourceBindings = decodedBindings
+        } else if let legacyModelID {
+            sourceBindings = [
+                AgentModelBinding(
+                    id: legacyModelID,
+                    modelID: legacyModelID,
+                    modelProvider: legacyModelProvider,
+                    thinkingSelection: legacyThinkingSelection,
+                    capability: legacyCapability
+                )
+            ]
+        } else {
+            sourceBindings = []
+        }
+
+        let normalizedBindings = Self.normalizedModelBindings(sourceBindings)
+        self.modelBindings = normalizedBindings
+        self.defaultModelBindingID = Self.resolvedDefaultModelBindingID(
+            in: normalizedBindings,
+            preferredBindingID: try container.decodeIfPresent(
+                String.self,
+                forKey: .defaultModelBindingID
+            ),
+            preferredModelID: try container.decodeIfPresent(String.self, forKey: .defaultModelID)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encodeIfPresent(instructions, forKey: .instructions)
+        try container.encodeIfPresent(symbolName, forKey: .symbolName)
+        try container.encode(tools, forKey: .tools)
+        try container.encode(skills, forKey: .skills)
+        if !modelBindings.isEmpty {
+            try container.encode(modelBindings, forKey: .modelBindings)
+        }
+        try container.encodeIfPresent(defaultModelBindingID, forKey: .defaultModelBindingID)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -87,6 +265,65 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         case modelProvider
         case thinkingSelection
         case capability
+        case modelBindings
+        case defaultModelBindingID
+        case defaultModelID
+    }
+
+    private static func normalizedModelBindings(
+        _ bindings: [AgentModelBinding]
+    ) -> [AgentModelBinding] {
+        let sortedBindings = bindings
+            .filter(\.isValid)
+            .sorted { lhs, rhs in
+                let lhsID = modelBindingKey(lhs.id)
+                let rhsID = modelBindingKey(rhs.id)
+                if lhsID != rhsID {
+                    return lhsID < rhsID
+                }
+
+                let lhsModelID = modelBindingKey(lhs.modelID)
+                let rhsModelID = modelBindingKey(rhs.modelID)
+                if lhsModelID != rhsModelID {
+                    return lhsModelID < rhsModelID
+                }
+                return lhs.modelProvider ?? "" < rhs.modelProvider ?? ""
+            }
+
+        var seenBindingIDs = Set<String>()
+        var seenModelIDs = Set<String>()
+        return sortedBindings.filter { binding in
+            let bindingID = modelBindingKey(binding.id)
+            let modelID = modelBindingKey(binding.modelID)
+            return seenBindingIDs.insert(bindingID).inserted
+                && seenModelIDs.insert(modelID).inserted
+        }
+    }
+
+    private static func resolvedDefaultModelBindingID(
+        in bindings: [AgentModelBinding],
+        preferredBindingID: String?,
+        preferredModelID: String?
+    ) -> String? {
+        if let preferredBindingID,
+           let binding = bindings.first(where: {
+               modelBindingKey($0.id) == modelBindingKey(preferredBindingID)
+           }) {
+            return binding.id
+        }
+
+        if let preferredModelID,
+           let binding = bindings.first(where: {
+               modelBindingKey($0.modelID) == modelBindingKey(preferredModelID)
+           }) {
+            return binding.id
+        }
+
+        return bindings.first?.id
+    }
+
+    private static func modelBindingKey(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     public var displayName: String {
@@ -465,10 +702,8 @@ public enum AgentProfileStore {
             symbolName: agent.symbolName,
             tools: tools,
             skills: agent.skills,
-            modelID: agent.modelID,
-            modelProvider: agent.modelProvider,
-            thinkingSelection: agent.thinkingSelection,
-            capability: agent.capability
+            modelBindings: agent.modelBindings,
+            defaultModelBindingID: agent.defaultModelBindingID
         )
     }
 

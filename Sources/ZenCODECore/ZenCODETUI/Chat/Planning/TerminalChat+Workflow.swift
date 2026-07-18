@@ -63,14 +63,17 @@ extension TerminalChat {
 
         Phase 2 — Delegate all work to sub-agents:
         - Call tasks.list with runnableOnly=true to find tasks ready to execute.
-        - For each runnable task, select the best-matching agent profile:
+        - For each runnable task, select the best-matching agent profile and one of its \
+          authorized model bindings:
           - Determine the task type (investigation, implementation, review, planning) and \
         required tools before comparing capability.
           - Exclude profiles whose role or constraints are incompatible.
-          - Choose the lowest-capability profile that meets the task complexity; if none \
-        meets it, use the highest-capability compatible profile and report the gap.
+          - Within a compatible profile, choose the lowest-capability authorized model binding \
+        that meets the task complexity; if none meets it, use that profile's highest-capability \
+        binding and report the gap.
         - Delegate each task by calling agent.create with its taskID and the selected \
-        profile. Batch independent runnable tasks in a single agent.create call when \
+        profile plus its selected `model` binding. Batch independent runnable tasks in a single \
+        agent.create call when \
         parallel execution is safe and useful.
         - Wait for sub-agents with agent.wait — they run in parallel.
         - When sub-agents complete, review their output with tasks.get. Verify results \

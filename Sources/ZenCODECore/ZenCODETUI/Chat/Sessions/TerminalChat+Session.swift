@@ -165,12 +165,29 @@ extension TerminalChat {
     }
 
     public func currentAgentThinkingSelection() -> AgentThinkingSelection? {
-        Self.effectiveThinkingSelection(
+        let effectiveModelID = currentEffectiveModelID()
+        let selectedBinding: AgentModelBinding?
+        if let model = effectiveModelID.flatMap({ modelID in
+            availableModelManifests().first { $0.matches(modelID) }
+        }) {
+            selectedBinding = selectedAgentModelBinding(for: model)
+        } else {
+            selectedBinding = selectedAgent?.modelBinding(matching: effectiveModelID)
+        }
+
+        // The default binding informs a profile only when the user did not
+        // explicitly choose another model. Its thinking setting must not leak
+        // onto an independent `/models` choice.
+        let effectiveBinding = selectedBinding
+            ?? (manualModelIDOverride == nil
+                ? selectedAgent?.defaultModelBinding
+                : nil)
+        return Self.effectiveThinkingSelection(
             manualThinkingSelectionOverride: manualThinkingSelectionOverride,
-            hostedModel: hostedModelManifest(for: currentEffectiveModelID()),
+            hostedModel: hostedModelManifest(for: effectiveModelID),
             explicitModelID: manualModelIDOverride,
-            agentModelID: selectedAgent?.modelID,
-            agentThinkingSelection: selectedAgent?.thinkingSelection
+            agentModelID: effectiveBinding?.modelID,
+            agentThinkingSelection: effectiveBinding?.thinkingSelection
         )
     }
 

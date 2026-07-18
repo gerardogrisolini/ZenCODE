@@ -15,13 +15,12 @@ import Foundation
 
 extension TerminalChat {
     public func handleMissingInitialModelSelectionIfNeeded() async throws {
-        guard currentEffectiveModelID() == nil,
-              AgentSettingsStore.selectedModelID() == nil else {
+        guard currentEffectiveModelID() == nil else {
             return
         }
 
         let models = AgentModelCatalogPresentation.sorted(
-            availableModelManifests()
+            selectableModelManifests()
         )
         guard !models.isEmpty else {
             throw TerminalChatError.noConfiguredModels
@@ -29,7 +28,9 @@ extension TerminalChat {
 
         if models.count == 1,
            let model = models.first {
-            let thinkingSelection = model.resolvedDefaultThinkingSelection
+            let thinkingSelection = model.thinkingSelection(
+                for: selectedAgentModelBinding(for: model)?.thinkingSelection
+            )
             manualModelIDOverride = model.id
             manualThinkingSelectionOverride = thinkingSelection
             await writeSystemMessage(
@@ -56,7 +57,7 @@ extension TerminalChat {
 
     public func selectModelInteractively() async throws {
         let models = AgentModelCatalogPresentation.sorted(
-            availableModelManifests()
+            selectableModelManifests()
         )
         guard !models.isEmpty else {
             throw TerminalChatError.noConfiguredModels
@@ -78,7 +79,10 @@ extension TerminalChat {
         }
 
         let selectedThinkingSelection = selectedModel.thinkingSelection(
-            for: previousThinkingSelection
+            for: selectedAgentModelBinding(for: selectedModel)?.thinkingSelection
+                ?? (previousEffectiveModelID.map(selectedModel.matches) == true
+                    ? previousThinkingSelection
+                    : nil)
         )
         if configuration.hostedModels == nil {
             try AgentSettingsManifestStore.saveSelectedModel(
@@ -115,7 +119,7 @@ extension TerminalChat {
 
     public func selectThinkingInteractively() async throws {
         let models = AgentModelCatalogPresentation.sorted(
-            availableModelManifests()
+            selectableModelManifests()
         )
         guard !models.isEmpty else {
             throw TerminalChatError.noConfiguredModels
@@ -187,6 +191,29 @@ extension TerminalChat {
 
     public func availableModelManifests() -> [AgentSettingsModelManifest] {
         configuration.hostedModels ?? AgentSettingsStore.availableModels()
+    }
+
+    /// Returns every configured model. Profile bindings provide a default for
+    /// a new session and routing policy for delegated sub-agents; they never
+    /// constrain the user's manual `/models` selection.
+    public func selectableModelManifests() -> [AgentSettingsModelManifest] {
+        availableModelManifests()
+    }
+
+    public func selectedAgentModelBinding(
+        for model: AgentSettingsModelManifest
+    ) -> AgentModelBinding? {
+        guard let selectedAgent else {
+            return nil
+        }
+        return selectedAgent.modelBindings.first { binding in
+            let bindingReferences = [
+                binding.id,
+            ] + Self.modelReferences(for: binding.modelID)
+            return bindingReferences.contains { reference in
+                model.matches(reference)
+            }
+        }
     }
 
 

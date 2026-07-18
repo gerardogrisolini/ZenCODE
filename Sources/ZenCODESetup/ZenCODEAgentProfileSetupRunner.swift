@@ -214,10 +214,8 @@ public enum ZenCODEAgentProfileSetupRunner {
             symbolName: symbolName,
             tools: tools,
             skills: skills,
-            modelID: defaultAgent?.modelID,
-            modelProvider: defaultAgent?.modelProvider,
-            thinkingSelection: defaultAgent?.thinkingSelection,
-            capability: defaultAgent?.capability
+            modelBindings: defaultAgent?.modelBindings ?? [],
+            defaultModelBindingID: defaultAgent?.defaultModelBindingID
         ))
     }
 

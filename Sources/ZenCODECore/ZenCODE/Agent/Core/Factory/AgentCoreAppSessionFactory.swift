@@ -73,6 +73,14 @@ public enum AgentCoreAppSessionFactory {
             selectedAgent: agentConfiguration.selectedAgent
         )
         let effectiveModelID = agentConfiguration.effectiveModelID
+        let selectedBinding: AgentModelBinding?
+        if request.modelID?.nilIfBlank == nil {
+            selectedBinding = agentConfiguration.selectedAgent?.defaultModelBinding
+        } else {
+            selectedBinding = agentConfiguration.selectedAgent?.modelBinding(
+                matching: request.modelID
+            )
+        }
         let systemPrompt = resolvedSystemPrompt(
             providedSystemPrompt: request.systemPrompt,
             cwd: request.workingDirectory.path,
@@ -83,8 +91,8 @@ public enum AgentCoreAppSessionFactory {
         let thinkingSelection = resolvedThinkingSelection(
             request.thinkingSelection,
             explicitModelID: request.modelID,
-            agentModelID: agentConfiguration.selectedAgent?.modelID,
-            agentThinkingSelection: agentConfiguration.selectedAgent?.thinkingSelection
+            agentModelID: selectedBinding?.modelID,
+            agentThinkingSelection: selectedBinding?.thinkingSelection
         )
         let cacheKey = scopedCacheKey(
             request.cacheKey,

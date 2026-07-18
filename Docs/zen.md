@@ -23,7 +23,7 @@ Creates files under `~/.zencode/`:
 
 - `settings.json` — provider/model configuration, selected model, optional Telegram and voice settings.
 - `permissions.json` — persistent runtime approvals.
-- `agents.json` — agent profiles, model overrides, tools, instructions.
+- `agents.json` — agent profiles, authorized model bindings, tools, and instructions.
 - `AGENTS.md` — global operating guidance.
 - `MEMORY.md` — lightweight global resume index.
 - `sessions/` — saved session snapshots grouped by project.
@@ -38,7 +38,7 @@ zen [--setup] [--acp] [--agent NAME] [--model MODEL_ID] [--cwd PATH] [--skills L
 - `--setup`: open setup, then exit.
 - `--acp`: run ACP JSON-RPC over stdio.
 - `--agent NAME`: select an agent profile (default: `Developer`).
-- `--model MODEL_ID`: override the agent-selected model.
+- `--model MODEL_ID`: request a model override for the direct session; delegated sub-agents remain restricted to the selected profile's authorized bindings.
 - `--cwd PATH`: working directory for local tools.
 - `--skills LIST`: initial skill selection by name/number, `all`, or `none`.
 - `--max-tool-rounds N`: maximum model/tool loop rounds per prompt.
@@ -49,7 +49,7 @@ Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, 
 
 ## Agent Profiles
 
-Agent profiles live in `~/.zencode/agents.json` and are managed in setup. The recommended profiles are `Developer`, `Builder`, `Minimal`, `Xcode`, `Planner`, `Reviewer`, and `Reporter`. Each defines tools, skills, model, and instructions.
+Agent profiles live in `~/.zencode/agents.json` and are managed in setup. The recommended profiles are `Developer`, `Builder`, `Minimal`, `Xcode`, `Planner`, `Reviewer`, and `Reporter`. Each defines tools, skills, instructions, and optional model bindings. A binding owns its model, capability, thinking selection, and optional default status for that profile; it is also used for explicit sub-agent routing.
 
 Switch profiles in the TUI without restarting:
 
@@ -59,7 +59,7 @@ Switch profiles in the TUI without restarting:
 /agents 2               # by number
 ```
 
-Switching resets the conversation so the new system prompt and tools apply cleanly. See [agents.md](agents.md) for profile concepts and capability routing.
+Switching resets the conversation so the new system prompt and tools apply cleanly. If the selected profile has bindings, its default is used when no model has been selected explicitly. `/models` always presents every configured model, and a manual selection overrides that default for the active session. See [agents.md](agents.md) for profile concepts and capability routing.
 
 ## Terminal TUI Commands
 
@@ -67,7 +67,7 @@ Commands start with `/`:
 
 **Setup and navigation:**
 - `/help` — show command help.
-- `/models` — show configured models, switch session model.
+- `/models` — show every configured model and choose the model for the current session.
 - `/agents [list|<name>|<number>]` — switch agent profile.
 - `/tools [all|none|tool-name|package-name|number]` — select exposed tool groups.
 - `/skills` — select or install prompt skills.
@@ -132,6 +132,8 @@ Commands start with `/`:
 - `Ctrl+A` — toggle default/full access mode (temporary, never persisted).
 
 Full access bypasses only `local.exec` approval checks. It does not expose disabled tools or bypass OS permissions. The status bar shows a red dot while active.
+
+`local.exec` authorization filters shell noise so that only significant commands trigger an approval prompt. Comments, decorative `echo`/`printf` (without output redirections), harmless built-ins (`true`, `false`, `cd`, `pwd`, …), environment assignments, wrappers (`env`, `command`, …), and control-flow keywords are stripped or skipped. Nested commands inside shell `-c` payloads, `$(...)`/backtick command substitutions, process substitutions `<(...)`/`>(...)`, and unquoted heredoc bodies are recursively extracted and each surfaced for authorization, while `$((...))` arithmetic expansion and quoted heredoc bodies are treated as literal. Wrapper options that consume an operand (`env -u NAME`, `env -C DIR`, `time -o FILE`) are handled so the real executable surfaces, and introspection-only forms (`command -v`) are not authorized as executions. When parsing hits its recursion or candidate limits it fails closed by emitting a conservative fallback candidate. The original command is still executed in full after approval; only the displayed authorization request is cleaned.
 
 ## Tool Selection
 

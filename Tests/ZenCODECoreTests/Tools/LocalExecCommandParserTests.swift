@@ -443,4 +443,452 @@ struct LocalExecCommandParserTests {
             == .unresolved("   ".trimmingCharacters(in: .whitespacesAndNewlines))
         )
     }
+
+    // MARK: - commandSegments: comment handling
+
+    @Test
+    func commentOnlySegmentYieldsNoSegments() {
+        #expect(LocalExecCommandParser.commandSegments(in: "# this is a comment").isEmpty)
+        #expect(LocalExecCommandParser.commandSegments(in: "   # comment").isEmpty)
+    }
+
+    @Test
+    func inlineCommentIsStrippedFromSegment() {
+        #expect(
+            LocalExecCommandParser.commandSegments(in: "swift build # debug build")
+            == ["swift build"]
+        )
+        #expect(
+            LocalExecCommandParser.commandSegments(in: "echo hi # comment\ngit status")
+            == ["echo hi", "git status"]
+        )
+    }
+
+    @Test
+    func hashInsideWordIsNotComment() {
+        #expect(
+            LocalExecCommandParser.commandSegments(in: "echo hi#world")
+            == ["echo hi#world"]
+        )
+    }
+
+    @Test
+    func quotedHashIsNotComment() {
+        #expect(
+            LocalExecCommandParser.commandSegments(in: "echo \"# not comment\"")
+            == ["echo \"# not comment\""]
+        )
+    }
+
+    // MARK: - commandSegments: heredoc body
+
+    @Test
+    func heredocBodyDoesNotProduceSegments() {
+        let command = "cat <<EOF\nnot a command\nnor this\nEOF\necho done"
+        #expect(
+            LocalExecCommandParser.commandSegments(in: command)
+            == ["cat <<EOF", "echo done"]
+        )
+    }
+
+    @Test
+    func quotedHeredocDelimiterBodyDoesNotProduceSegments() {
+        let command = "cat <<'EOF'\nrm -rf /\nEOF"
+        #expect(
+            LocalExecCommandParser.commandSegments(in: command)
+            == ["cat <<'EOF'"]
+        )
+    }
+
+    // MARK: - authorizationCandidates: noise filtered
+
+    @Test
+    func authorizationCandidatesEmptyCommandYieldsNothing() {
+        #expect(LocalExecCommandParser.authorizationCandidates(in: "").isEmpty)
+        #expect(LocalExecCommandParser.authorizationCandidates(in: "   ").isEmpty)
+        #expect(LocalExecCommandParser.authorizationCandidates(in: "\n\n").isEmpty)
+    }
+
+    @Test
+    func authorizationCandidatesCommentOnlyYieldsNothing() {
+        #expect(LocalExecCommandParser.authorizationCandidates(in: "# build comment").isEmpty)
+        #expect(LocalExecCommandParser.authorizationCandidates(in: "# line 1\n# line 2").isEmpty)
+    }
+
+    @Test
+    func authorizationCandidatesDecorativeEchoIsFiltered() {
+        #expect(LocalExecCommandParser.authorizationCandidates(in: "echo hello world").isEmpty)
+        #expect(LocalExecCommandParser.authorizationCandidates(in: "printf 'build step'").isEmpty)
+    }
+
+    @Test
+    func authorizationCandidatesEchoWithRedirectionIsPrompted() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: #"echo "secret" > /tmp/file"#
+        )
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "echo")
+    }
+
+    @Test
+    func authorizationCandidatesBuiltinOnlyYieldsNothing() {
+        #expect(LocalExecCommandParser.authorizationCandidates(in: "true").isEmpty)
+        #expect(LocalExecCommandParser.authorizationCandidates(in: "false").isEmpty)
+        #expect(LocalExecCommandParser.authorizationCandidates(in: "cd /tmp").isEmpty)
+    }
+
+    @Test
+    func authorizationCandidatesAssignmentOnlyYieldsNothing() {
+        #expect(LocalExecCommandParser.authorizationCandidates(in: "FOO=bar").isEmpty)
+        #expect(LocalExecCommandParser.authorizationCandidates(in: "A=1 B=2").isEmpty)
+    }
+
+    @Test
+    func authorizationCandidatesBuiltinWithRedirectionIsPrompted() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: ": > victim.txt")
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == ":")
+    }
+
+    // MARK: - authorizationCandidates: real executables
+
+    @Test
+    func authorizationCandidatesPlainExecutable() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: "swift build")
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "swift")
+        #expect(candidates.first?.invocation == "swift build")
+    }
+
+    @Test
+    func authorizationCandidatesStripsEnvironmentAssignments() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: "FOO=bar swift build")
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "swift")
+        #expect(candidates.first?.invocation == "swift build")
+    }
+
+    @Test
+    func authorizationCandidatesUnwrapsEnvWrapper() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: "env CI=1 swift test")
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "swift")
+        #expect(candidates.first?.invocation == "swift test")
+    }
+
+    @Test
+    func authorizationCandidatesUnwrapsNestedWrappers() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "env CI=1 command swift test"
+        )
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "swift")
+        #expect(candidates.first?.invocation == "swift test")
+    }
+
+    @Test
+    func authorizationCandidatesDeduplicatesByIdentity() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "grep foo | sort | grep bar"
+        )
+        #expect(candidates.count == 2)
+        #expect(candidates[0].identity == "grep")
+        #expect(candidates[1].identity == "sort")
+    }
+
+    @Test
+    func authorizationCandidatesKeepsRedirectionsInInvocation() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: "swift build 2>&1")
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "swift")
+        #expect(candidates.first?.invocation == "swift build 2>&1")
+    }
+
+    // MARK: - authorizationCandidates: shell -c recursion
+
+    @Test
+    func authorizationCandidatesShellDashCExtractsNestedCommands() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "bash -lc 'echo separator; git status'"
+        )
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "git")
+        #expect(candidates.first?.invocation == "git status")
+    }
+
+    @Test
+    func authorizationCandidatesShellDashCWithDecorativeEchoOnly() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: #"sh -c 'echo hi'"#
+        )
+        #expect(candidates.isEmpty)
+    }
+
+    // MARK: - authorizationCandidates: command substitution extraction
+
+    @Test
+    func authorizationCandidatesEchoWithSubstitutionExtractsNested() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: #"echo "$(git rev-parse HEAD)""#
+        )
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "git")
+        #expect(candidates.first?.invocation == "git rev-parse HEAD")
+    }
+
+    // MARK: - authorizationCandidates: composite fixture
+
+    @Test
+    func authorizationCandidatesCompositeFixture() {
+        let command = """
+        # build
+        echo "== Build =="
+        true && env CI=1 command swift test
+        """
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: command)
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "swift")
+        #expect(candidates.first?.invocation == "swift test")
+    }
+
+    @Test
+    func authorizationCandidatesHeredocBodyFiltered() {
+        let command = "cat <<EOF\nrm -rf /\nEOF\necho done"
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: command)
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "cat")
+    }
+
+    // MARK: - authorizationCandidates: conservative fallback
+
+    @Test
+    func authorizationCandidatesUnknownExecutableProducesCandidate() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: "my CustomTool --flag")
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "my")
+    }
+
+    @Test
+    func authorizationCandidatesSudoNotUnwrapped() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: "sudo rm -rf /tmp/x")
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "sudo")
+    }
+
+    @Test
+    func authorizationCandidatesControlFlowSurfacesExecutable() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "if /bin/touch /tmp/x; then true; fi"
+        )
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "/bin/touch")
+    }
+
+    // MARK: - Review fixes: nested substitution extraction (F1)
+
+    @Test
+    func normalExecutableWithNestedSubstitutionExtractsBoth() {
+        // cat "$(rm -rf /tmp/x)" must surface BOTH cat and rm.
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "cat \"$(rm -rf /tmp/x)\""
+        )
+        #expect(candidates.count == 2)
+        #expect(candidates[0].identity == "cat")
+        #expect(candidates[1].identity == "rm")
+        #expect(candidates[1].invocation == "rm -rf /tmp/x")
+    }
+
+    @Test
+    func nestedSubstitutionInAssignmentPrefix() {
+        // FOO=$(rm -rf x) outer: the security-critical requirement is that the
+        // nested `rm` is surfaced for authorization (never silently executed).
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "FOO=$(rm -rf x) make"
+        )
+        let identities = Set(candidates.map(\.identity))
+        #expect(identities.contains("rm"))
+    }
+
+    // MARK: - Review fixes: process substitution extraction (F2)
+
+    @Test
+    func processSubstitutionExtractsNestedCommand() {
+        // diff <(rm -rf /tmp/x) expected must surface diff and rm.
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "diff <(rm -rf /tmp/x) expected"
+        )
+        let identities = Set(candidates.map(\.identity))
+        #expect(identities.contains("diff"))
+        #expect(identities.contains("rm"))
+    }
+
+    @Test
+    func outputProcessSubstitutionExtractsNestedCommand() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "tee >(rm -rf /tmp/x)"
+        )
+        let identities = Set(candidates.map(\.identity))
+        #expect(identities.contains("tee"))
+        #expect(identities.contains("rm"))
+    }
+
+    // MARK: - Review fixes: arithmetic expansion (F5)
+
+    @Test
+    func arithmeticExpansionIsNotCommandSubstitution() {
+        // $((swift)) is arithmetic, not a command; must not surface swift.
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "echo $((1 + 2))"
+        )
+        #expect(candidates.isEmpty)
+    }
+
+    @Test
+    func arithmeticExpansionAlongsideRealCommandSubstitution() {
+        // Mixed: $((...)) is ignored, $(rm) is extracted.
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "cat \"$((1+2))\" \"$(rm x)\""
+        )
+        let identities = Set(candidates.map(\.identity))
+        #expect(identities.contains("cat"))
+        #expect(identities.contains("rm"))
+        #expect(!identities.contains("1"))
+    }
+
+    // MARK: - Review fixes: wrapper option arity (F4)
+
+    @Test
+    func commandDashVIsIntrospectionNotExecution() {
+        // command -v swift looks up swift, does not execute it.
+        #expect(
+            LocalExecCommandParser.executableIdentity(for: "command -v swift") == .skip
+        )
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: "command -v swift").isEmpty
+        )
+    }
+
+    @Test
+    func envUnsetOptionConsumesOperand() {
+        // env -u NAME swift build must surface swift, not NAME.
+        #expect(
+            LocalExecCommandParser.executableIdentity(for: "env -u NAME swift build")
+            == .executable("swift")
+        )
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "env -u NAME swift build"
+        )
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "swift")
+        #expect(candidates.first?.invocation == "swift build")
+    }
+
+    @Test
+    func envChdirOptionConsumesOperand() {
+        #expect(
+            LocalExecCommandParser.executableIdentity(for: "env -C /tmp swift build")
+            == .executable("swift")
+        )
+    }
+
+    // MARK: - Review fixes: for/case headers (F7)
+
+    @Test
+    func forLoopHeaderDoesNotSurfaceLoopVariable() {
+        // `for x in a b` header must not produce a candidate `x`, `a`, or `b`.
+        #expect(
+            LocalExecCommandParser.executableIdentity(for: "for x in a b")
+            == .skip
+        )
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "for x in a b; do rm -rf target; done"
+        )
+        let identities = Set(candidates.map(\.identity))
+        #expect(identities.contains("rm"))
+        #expect(!identities.contains("x"))
+        #expect(!identities.contains("a"))
+    }
+
+    @Test
+    func caseStatementSurfacesBranchCommandNotSubject() {
+        // `case x in x) rm ...` must surface rm, not x.
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "case x in x) rm -rf target;; esac"
+        )
+        let identities = Set(candidates.map(\.identity))
+        #expect(identities.contains("rm"))
+        #expect(!identities.contains("x"))
+    }
+
+    // MARK: - Review fixes: unquoted heredoc expansion (F6)
+
+    @Test
+    func unquotedHeredocBodyExtractsCommandSubstitution() {
+        // An unquoted heredoc delimiter expands $(...) in the body.
+        let command = "cat <<EOF\nvalue=$(rm -rf /tmp/x)\nEOF"
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: command)
+        let identities = Set(candidates.map(\.identity))
+        #expect(identities.contains("cat"))
+        #expect(identities.contains("rm"))
+    }
+
+    @Test
+    func quotedHeredocBodyDoesNotExpand() {
+        // A quoted heredoc delimiter keeps the body literal.
+        let command = "cat <<'EOF'\nvalue=$(rm -rf /tmp/x)\nEOF"
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: command)
+        let identities = Set(candidates.map(\.identity))
+        #expect(identities.contains("cat"))
+        #expect(!identities.contains("rm"))
+    }
+
+    // MARK: - Review fixes: leading redirection preserved (F9)
+
+    @Test
+    func leadingRedirectionPreservedInInvocation() {
+        // > victim.txt echo ok: the redirection must remain visible.
+        let candidates = LocalExecCommandParser.authorizationCandidates(
+            in: "> victim.txt cat file"
+        )
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "cat")
+        #expect(candidates.first?.invocation.contains("victim.txt") == true)
+    }
+
+    // MARK: - Review fixes: privilege wrappers and dynamic builtins
+
+    @Test
+    func doasIsNotUnwrapped() {
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: "doas rm -rf /tmp/x")
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.identity == "doas")
+    }
+
+    @Test
+    func evalSourceTrapRemainPromptWorthy() {
+        // Dynamic builtins are not in the skip list, so they surface.
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: "eval \"$CMD\"").first?.identity == "eval"
+        )
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: "source script.sh").first?.identity == "source"
+        )
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: "trap cleanup EXIT").first?.identity == "trap"
+        )
+    }
+
+    // MARK: - Review fixes: fail-closed limits (F3)
+
+    @Test
+    func deeplyNestedSubstitutionStaysFailClosed() {
+        // Build a command nested deeper than maxCandidateDepth (8). The parser
+        // must still produce at least one candidate (fail-closed), never empty.
+        var command = "rm -rf /tmp/x"
+        for _ in 0..<12 {
+            command = "cat \"$(\(command))\""
+        }
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: command)
+        #expect(!candidates.isEmpty)
+    }
 }

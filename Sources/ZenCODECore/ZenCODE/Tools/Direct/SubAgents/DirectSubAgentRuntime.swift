@@ -163,12 +163,75 @@ public actor DirectSubAgentRuntime {
         public let taskID: String?
         public let prompt: String?
         public let allowedToolNames: Set<String>?
+
+        /// The model reference supplied to `agent.create`, before it is
+        /// checked against the resolved profile. A reference may name either
+        /// a binding id or its model id.
+        public let requestedModelID: String?
+
+        /// The profile-authorized binding selected for this request. This is
+        /// intentionally absent until profile resolution has completed.
+        public let modelBinding: AgentModelBinding?
+
+        /// The actual model selected by the authorized binding. Before
+        /// selection this mirrors the request so profile resolvers can still
+        /// inspect it.
+        public var modelID: String? {
+            modelBinding?.modelID ?? requestedModelID
+        }
+
+        public var thinkingSelection: AgentThinkingSelection? {
+            modelBinding?.thinkingSelection
+        }
+
+        public var capability: Int? {
+            modelBinding?.capability
+        }
+
+        public init(
+            name: String,
+            role: String,
+            profileReference: String? = nil,
+            taskID: String? = nil,
+            prompt: String? = nil,
+            allowedToolNames: Set<String>? = nil,
+            modelID: String? = nil,
+            modelBinding: AgentModelBinding? = nil
+        ) {
+            self.name = name
+            self.role = role
+            self.profileReference = profileReference?.nilIfBlank
+            self.taskID = taskID?.nilIfBlank
+            self.prompt = prompt?.nilIfBlank
+            self.allowedToolNames = allowedToolNames
+            self.requestedModelID = modelID?.nilIfBlank
+            self.modelBinding = modelBinding
+        }
+
+        public func applying(
+            modelBinding: AgentModelBinding?
+        ) -> RequestedAgentPayload {
+            RequestedAgentPayload(
+                name: name,
+                role: role,
+                profileReference: profileReference,
+                taskID: taskID,
+                prompt: prompt,
+                allowedToolNames: allowedToolNames,
+                modelID: requestedModelID,
+                modelBinding: modelBinding
+            )
+        }
     }
 
     public struct BackendContext: Sendable {
         public let requestedName: String
         public let requestedRole: String
         public let profile: AgentProfile?
+        /// The reference originally provided to `agent.create`, if any.
+        public let requestedModelID: String?
+        /// The binding selected and authorized by the resolved profile.
+        public let modelBinding: AgentModelBinding?
         /// Parent session's SwiftFeatureRuntime, propagated so subagents share the
         /// same discovery cache (consent, `--list-tools` results) instead of each
         /// getting a fresh runtime. `nil` for top-level sessions.
@@ -178,11 +241,23 @@ public actor DirectSubAgentRuntime {
             requestedName: String,
             requestedRole: String,
             profile: AgentProfile?,
+            modelBinding: AgentModelBinding? = nil,
+            modelID: String? = nil,
             swiftFeatureRuntime: SwiftFeatureRuntime? = nil
         ) {
             self.requestedName = requestedName
             self.requestedRole = requestedRole
             self.profile = profile
+            self.requestedModelID = modelID?.nilIfBlank
+            if let modelBinding {
+                self.modelBinding = modelBinding
+            } else if modelID?.nilIfBlank == nil {
+                self.modelBinding = profile?.modelBinding(matching: nil)
+            } else {
+                // Do not silently replace an explicit, unmatched model
+                // request with the profile default.
+                self.modelBinding = profile?.modelBinding(matching: modelID)
+            }
             self.swiftFeatureRuntime = swiftFeatureRuntime
         }
 
@@ -195,16 +270,22 @@ public actor DirectSubAgentRuntime {
                 requestedName: requestedName,
                 requestedRole: requestedRole,
                 profile: profile,
+                modelBinding: modelBinding,
+                modelID: requestedModelID,
                 swiftFeatureRuntime: swiftFeatureRuntime
             )
         }
 
         public var modelID: String? {
-            profile?.modelID?.nilIfBlank
+            modelBinding?.modelID.nilIfBlank
         }
 
         public var thinkingSelection: AgentThinkingSelection? {
-            profile?.thinkingSelection
+            modelBinding?.thinkingSelection
+        }
+
+        public var capability: Int? {
+            modelBinding?.capability
         }
     }
 

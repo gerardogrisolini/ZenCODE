@@ -200,6 +200,117 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func createAgentsUsesExplicitModelBindingAuthorizedByProfile() async throws {
+        let developer = AgentProfile(
+            id: "developer-profile",
+            name: "Developer",
+            tools: [],
+            modelBindings: [
+                AgentModelBinding(
+                    id: "balanced",
+                    modelID: "balanced-model",
+                    thinkingSelection: .low,
+                    capability: 5
+                ),
+                AgentModelBinding(
+                    id: "deep",
+                    modelID: "deep-model",
+                    thinkingSelection: .high,
+                    capability: 9
+                )
+            ],
+            defaultModelBindingID: "balanced"
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let recorder = SubAgentFactoryRecorder()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { context in
+                recorder.append(context)
+                return backend
+            },
+            profileResolver: { payload in
+                DirectSubAgentRuntime.agentProfile(matching: payload, in: [developer])
+            }
+        )
+
+        let output = try await runtime.createAgents(
+            arguments: [
+                "name": .string("architecture-pass"),
+                "profile": .string("Developer"),
+                "model": .string("deep")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
+            parentAllowedToolNames: nil
+        )
+
+        let context = try #require(recorder.contexts.first)
+        #expect(context.modelBinding?.id == "deep")
+        #expect(context.modelID == "deep-model")
+        #expect(context.thinkingSelection == .high)
+        #expect(context.capability == 9)
+        #expect(await backend.createdThinkingSelection() == .high)
+        #expect(output.contains("model=deep-model"))
+    }
+
+    @Test
+    func createAgentsRejectsModelOutsideProfileBindings() async throws {
+        let developer = AgentProfile(
+            id: "developer-profile",
+            name: "Developer",
+            tools: [],
+            modelBindings: [
+                AgentModelBinding(modelID: "allowed-model", capability: 5)
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { payload in
+                DirectSubAgentRuntime.agentProfile(matching: payload, in: [developer])
+            }
+        )
+
+        do {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "name": .string("unauthorized"),
+                    "profile": .string("Developer"),
+                    "modelID": .string("other-model")
+                ],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
+                parentAllowedToolNames: nil
+            )
+            Issue.record("Expected an unauthorized model binding to be rejected.")
+        } catch DirectSubAgentRuntimeError.modelNotAllowedForProfile(let modelID, let profile) {
+            #expect(modelID == "other-model")
+            #expect(profile == "Developer")
+        }
+    }
+
+    @Test
+    func createAgentsRejectsExplicitModelWithoutProfile() async throws {
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in nil }
+        )
+
+        do {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "name": .string("unbound"),
+                    "model": .string("other-model")
+                ],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
+                parentAllowedToolNames: nil
+            )
+            Issue.record("Expected an explicit model without a profile to be rejected.")
+        } catch DirectSubAgentRuntimeError.explicitModelRequiresProfile(let modelID) {
+            #expect(modelID == "other-model")
+        }
+    }
+
+    @Test
     func createAgentsWarnsWhenRequestedProfileDoesNotMatch() async throws {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
@@ -260,6 +371,48 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func capabilityAdvisoryUsesTheSelectedBinding() async throws {
+        let developer = AgentProfile(
+            id: "developer-profile",
+            name: "Developer",
+            tools: [],
+            modelBindings: [
+                AgentModelBinding(id: "light", modelID: "light-model", capability: 3),
+                AgentModelBinding(id: "power", modelID: "power-model", capability: 8)
+            ],
+            defaultModelBindingID: "light"
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { payload in
+                DirectSubAgentRuntime.agentProfile(matching: payload, in: [developer])
+            }
+        )
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "default", id: "graph", source: .manual, state: .active,
+            tasks: [TaskDefinition(id: "hard-task", title: "Hard work", complexity: 9)]
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        let output = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "model": .string("power"),
+                "taskID": .string("hard-task")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
+            parentAllowedToolNames: nil
+        )
+
+        #expect(output.contains("model \"power-model\" at capability 8/10"))
+        #expect(output.contains("capability gap of 1"))
+        #expect(!output.contains("capability gap of 6"))
+    }
+
+    @Test
     func agentCreateDescriptorUsesCanonicalEnglishSelectionPolicy() throws {
         let descriptor = try #require(
             DirectToolCatalog.subAgentDescriptors.first { $0.name == "agent.create" }
@@ -270,6 +423,8 @@ struct DirectSubAgentRuntimeTests {
         #expect(descriptor.description.contains(
             "inherits the parent session's enabled tools unless toolNames narrows them"
         ))
+        #expect(descriptor.description.contains("authorized bindings"))
+        #expect(descriptor.inputSchema.contains("\"modelID\""))
     }
 
     @Test

@@ -21,7 +21,10 @@ extension ZenCODEAgentProfileSetupRunner {
         let model = agent.modelID.map { " | model: \($0)" } ?? ""
         let thinking = agent.thinkingSelection.map { " | thinking: \($0.displayTitle)" } ?? ""
         let capability = agent.capability.map { " | capability: \($0)/10" } ?? ""
-        return "\(tools)\(skills)\(model)\(thinking)\(capability)"
+        let bindings = agent.modelBindings.count > 1
+            ? " | bindings: \(agent.modelBindings.count)"
+            : ""
+        return "\(tools)\(skills)\(model)\(thinking)\(capability)\(bindings)"
     }
 
 

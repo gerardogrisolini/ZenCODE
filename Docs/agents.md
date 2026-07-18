@@ -14,9 +14,8 @@ Each profile carries:
 | `instructions` | System-prompt fragment defining the role and constraints |
 | `tools` | Allowed tool groups and feature packages |
 | `skills` | Optional prompt skills from the app catalog |
-| `modelID` / `modelProvider` | Dedicated model bound to the profile |
-| `thinkingSelection` | Extended-reasoning budget (for models that support it) |
-| `capability` | 1–10 ranking for delegation routing |
+| `modelBindings` | Optional per-profile model defaults and explicit sub-agent routing choices |
+| `defaultModelBindingID` | Binding used when the main session has no manual model selection, or when a sub-agent caller does not choose a binding explicitly |
 | `symbolName` | SF Symbol shown in the TUI picker (presentational only) |
 
 Select a profile with `/agents <name>` or `--agent <name>` at launch. Switching resets the conversation so the new system prompt and tools apply cleanly.
@@ -45,25 +44,26 @@ Enabling a package makes it available; `/tools` exposes it in the current sessio
 
 ## Sub-Agents
 
-A sub-agent is a delegated, independently running model session spawned by the coordinator. The coordinator stays in its own profile and directs work.
+A sub-agent is a delegated, independently running model session spawned by the coordinator. The coordinator stays in its own profile and directs work. A profile may authorize one model only, preserving the previous fixed-model behavior, or several model bindings for controlled routing.
 
 Lifecycle:
 
-1. The coordinator calls `agent.create`, optionally passing a `profile`.
-2. The runtime resolves the profile (or falls back to a built-in default) and spawns the sub-agent.
+1. The coordinator calls `agent.create`, passing a `profile` and, when the profile has more than one binding, a `model` or `modelID`.
+2. The runtime resolves the profile and then resolves the requested binding only within that profile's authorized bindings.
 3. The sub-agent inherits the workspace and its profile's tool allowlist.
 4. The coordinator uses `agent.message`, `agent.wait`, `agent.get`, and `agent.close`.
 
-Write authority is determined by the sub-agent's effective tool allowlist. By default it inherits the parent session's enabled tools; passing `toolNames` narrows that grant. `/plan` and `/review` explicitly pass read-only allowlists, while delegated coding work receives editing tools only when the parent grant permits them. `/workflow` delegates implementation tasks with the sub-agent's default inherited grant, so the parent profile must include the necessary editing tools.
+An explicit model without a resolved profile, or a model not associated with that profile, is rejected before the task is claimed. A profile without bindings retains the legacy behavior and inherits the parent session model. Write authority is determined by the sub-agent's effective tool allowlist. By default it inherits the parent session's enabled tools; passing `toolNames` narrows that grant. `/plan` and `/review` explicitly pass read-only allowlists, while delegated coding work receives editing tools only when the parent grant permits them. `/workflow` delegates implementation tasks with the sub-agent's default inherited grant, so the parent profile must include the necessary editing tools.
 
 ## Capability Routing
 
-The runtime builds a delegation roster containing only profiles that have **both** `modelID` and `capability`. Each roster entry includes the first non-empty line of the profile instructions so the model can see its role and constraints. Profiles are ordered by capability, but capability is not the first selection criterion:
+The runtime builds a delegation roster containing only profiles with at least one binding that has a model and a capability. Each profile entry includes the first non-empty line of its instructions and lists only its authorized bindings. A binding carries its own `modelID`, optional thinking selection, and `capability` (1–10):
 
 ```
-Delegatable agent profiles (ordered by capability; filter by role and constraints first):
-- Minimal (capability 3/10): Minimal agent. Use essential tools only, answer briefly, and avoid extra workflow unless asked.
-- Developer (capability 7/10): Developer agent. Implement the user's request with the available tools, keep changes focused, and validate important work before reporting completion.
+Delegatable agent profiles and authorized model bindings (filter by role and constraints first):
+- Developer: Developer agent. Implement the user's request with the available tools, keep changes focused, and validate important work before reporting completion.
+  - gpt-mini [binding: quick] (capability 4/10)
+  - gpt-strong [binding: deep] (capability 8/10, default)
 ```
 
 The model applies this policy in order:
@@ -71,10 +71,10 @@ The model applies this policy in order:
 1. Determine the task type and required tools.
 2. Exclude profiles whose stated role or constraints are incompatible. For example, never assign implementation or editing to a read-only planning or review profile.
 3. Do not delegate when the effective child tool grant cannot perform the work. A child inherits the parent grant, and `toolNames` can only narrow it.
-4. Among compatible profiles, choose the one with the lowest capability greater than or equal to task complexity.
-5. If none meets the complexity, choose the highest-capability compatible profile and explicitly report the capability gap.
+4. For a compatible profile, choose the lowest-capability **authorized binding** that meets the task complexity.
+5. If none of that profile's bindings meets the complexity, choose its highest-capability binding and explicitly report the capability gap.
 
-The model must never select a profile by capability alone. Capability represents model strength rather than role, seniority, or tool authority. The runtime currently advises when complexity exceeds the selected profile's capability; it does not replace the model's explicit profile choice.
+The coordinator must never select a profile or binding by capability alone. Capability represents the effective routing strength of that particular profile–model configuration, not role, seniority, or tool authority. The runtime advises when complexity exceeds the selected binding's capability; it does not replace the coordinator's explicit profile and binding choice.
 
 ## Task Graph Integration
 
@@ -86,9 +86,10 @@ Coordinated multi-step work is tracked by the session task graph (`SessionTaskOr
 
 When configuring a profile, setup asks for each parameter for a specific reason:
 
-- **Model** — a dedicated model makes the profile eligible for delegation. Without one, the profile stays selectable with `/agents` but is excluded from the delegation roster.
-- **Capability (1–10)** — ranks the profile for delegation routing. Leave unset only when the profile should not be delegated to.
-- **Thinking** — extended-reasoning budget for models that support it. Skipped automatically for models without thinking support.
+- **Model bindings** — one or more models explicitly permitted for the profile. Without a binding, the profile stays selectable with `/agents` but is excluded from dedicated-model delegation routing.
+- **Default binding** — the model used for that profile when a caller does not select one explicitly.
+- **Capability (1–10)** — configured per binding for delegation routing. Leave unset only when that binding should not be offered to the coordinator.
+- **Thinking** — configured per binding and validated against the selected model's supported options.
 - **Tools** — restricts what the profile can call. Safety mechanism: `Reviewer` drops `shell`, `Minimal` keeps only essentials.
 - **Skills** — optional reusable prompt fragments from the catalog.
 - **Instructions** — the role definition, edited in a real text editor.
@@ -99,5 +100,12 @@ When configuring a profile, setup asks for each parameter for a specific reason:
 ```bash
 zen setup              # create or edit profiles interactively
 /agents                # select a profile in the TUI
+/models                # choose any configured model for the current session
 /tools                 # expose or hide tool groups per session
 ```
+
+`/models` is intentionally independent from `/agents`: changing profile changes
+role, instructions, tools, and the fallback binding, but never filters the
+available model catalog. A manual model selection takes precedence over the
+profile default for the active session. The binding authorization rule applies only when a coordinator
+creates a sub-agent with an explicit profile and model reference.

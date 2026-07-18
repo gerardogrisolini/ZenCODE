@@ -46,8 +46,44 @@ extension DirectSubAgentRuntime {
         BackendContext(
             requestedName: payload.name,
             requestedRole: payload.role,
-            profile: profile
+            profile: profile,
+            modelBinding: payload.modelBinding,
+            modelID: payload.requestedModelID
         )
+    }
+
+    /// Resolves a requested model exclusively within the selected profile's
+    /// configured bindings. A model reference without a profile is rejected so
+    /// delegation cannot bypass a profile's model policy.
+    public static func resolvingModelBinding(
+        for payload: RequestedAgentPayload,
+        profile: AgentProfile?
+    ) throws -> RequestedAgentPayload {
+        guard let profile else {
+            if let requestedModelID = payload.requestedModelID {
+                throw DirectSubAgentRuntimeError.explicitModelRequiresProfile(requestedModelID)
+            }
+            return payload
+        }
+
+        guard !profile.modelBindings.isEmpty else {
+            if let requestedModelID = payload.requestedModelID {
+                throw DirectSubAgentRuntimeError.modelNotAllowedForProfile(
+                    modelID: requestedModelID,
+                    profile: profile.displayName
+                )
+            }
+            return payload
+        }
+
+        guard let binding = profile.modelBinding(matching: payload.requestedModelID) else {
+            let requestedModelID = payload.requestedModelID ?? "default"
+            throw DirectSubAgentRuntimeError.modelNotAllowedForProfile(
+                modelID: requestedModelID,
+                profile: profile.displayName
+            )
+        }
+        return payload.applying(modelBinding: binding)
     }
 
     public static func requestedAgentPayloads(
@@ -91,7 +127,8 @@ extension DirectSubAgentRuntime {
             )?.nilIfBlank,
             taskID: firstString(["taskID", "task_id"], in: object)?.nilIfBlank,
             prompt: firstString(["prompt", "message", "initialPrompt", "initial_prompt"], in: object)?.nilIfBlank,
-            allowedToolNames: explicitAllowedToolNames(from: object)
+            allowedToolNames: explicitAllowedToolNames(from: object),
+            modelID: firstString(["modelID", "model_id", "model"], in: object)?.nilIfBlank
         )
     }
 

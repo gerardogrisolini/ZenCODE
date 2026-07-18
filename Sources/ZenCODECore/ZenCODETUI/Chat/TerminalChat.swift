@@ -135,18 +135,14 @@ public final class TerminalChat: @unchecked Sendable {
     }
 
     public func currentEffectiveModelID() -> String? {
-        if let hostedModelManifest = hostedModelSelectionManifest() {
-            return AgentSettingsStore.resolvedEffectiveModelID(
-                explicitModelID: manualModelIDOverride,
-                agentModelID: selectedAgent?.modelID,
-                manifest: hostedModelManifest
-            ) ?? configuration.effectiveModelID
-        }
-
-        return Self.effectiveModelID(
+        let manifest = hostedModelSelectionManifest()
+            ?? AgentSettingsManifestStore.load()
+        let resolved = Self.effectiveModelID(
             selectedAgent: selectedAgent,
-            manualModelIDOverride: manualModelIDOverride
-        ) ?? configuration.effectiveModelID
+            manualModelIDOverride: manualModelIDOverride,
+            manifest: manifest
+        )
+        return resolved ?? configuration.effectiveModelID
     }
 
     public static func effectiveModelID(
@@ -154,11 +150,49 @@ public final class TerminalChat: @unchecked Sendable {
         manualModelIDOverride: String?,
         manifest: AgentSettingsManifest? = AgentSettingsManifestStore.load()
     ) -> String? {
-        AgentSettingsStore.resolvedEffectiveModelID(
-            explicitModelID: manualModelIDOverride,
-            agentModelID: selectedAgent?.modelID,
+        if let manualModelIDOverride = manualModelIDOverride?.nilIfBlank {
+            return resolvedConfiguredModelID(
+                matching: manualModelIDOverride,
+                manifest: manifest,
+                preservesUnknownReference: true
+            )
+        }
+
+        if let defaultModelID = selectedAgent?.defaultModelBinding?.modelID {
+            return resolvedConfiguredModelID(
+                matching: defaultModelID,
+                manifest: manifest,
+                preservesUnknownReference: false
+            )
+        }
+
+        return AgentSettingsStore.resolvedEffectiveModelID(
+            explicitModelID: nil,
+            agentModelID: nil,
             manifest: manifest
         )
+    }
+
+    /// Resolves a configured manifest identifier for a profile default or a
+    /// manual selection. A manual reference is retained when it is external to
+    /// the manifest, matching the command-line explicit-model behavior. A
+    /// profile default instead falls through to the global selection when its
+    /// binding no longer names a configured model.
+    private static func resolvedConfiguredModelID(
+        matching modelID: String,
+        manifest: AgentSettingsManifest?,
+        preservesUnknownReference: Bool
+    ) -> String? {
+        guard let manifest else {
+            return modelID
+        }
+        let references = Self.modelReferences(for: modelID)
+        if let model = manifest.models.first(where: { model in
+            references.contains { model.matches($0) }
+        }) {
+            return model.id
+        }
+        return preservesUnknownReference ? modelID : nil
     }
 
     private func hostedModelSelectionManifest() -> AgentSettingsManifest? {
@@ -169,6 +203,34 @@ public final class TerminalChat: @unchecked Sendable {
             models: hostedModels,
             selectedModelID: configuration.effectiveModelID
         )
+    }
+
+    /// Returns the direct identifier plus the model component of an internal
+    /// remote API identifier. The latter intentionally does not require a UUID
+    /// provider segment because hosted transports can use opaque provider IDs.
+    static func modelReferences(for rawModelID: String) -> [String] {
+        let modelID = rawModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !modelID.isEmpty else {
+            return []
+        }
+        var references = [modelID]
+        let prefixes = ["remoteapi:", "remoteapimodel:"]
+        if let prefix = prefixes.first(where: {
+            modelID.lowercased().hasPrefix($0)
+        }) {
+            let remainder = modelID.dropFirst(prefix.count)
+            if let separator = remainder.firstIndex(of: ":") {
+                let modelComponent = String(remainder[remainder.index(after: separator)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !modelComponent.isEmpty {
+                    references.append(modelComponent)
+                }
+            }
+        }
+        var seen = Set<String>()
+        return references.filter { reference in
+            seen.insert(reference.lowercased()).inserted
+        }
     }
 
     public func run() async throws {

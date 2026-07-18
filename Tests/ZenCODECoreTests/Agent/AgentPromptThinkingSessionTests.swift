@@ -117,9 +117,9 @@ extension AgentConfigurationTests {
         #expect(policy.contains("single self-contained delegation"))
         #expect(policy.contains("Determine the task type and required tools"))
         #expect(policy.contains(
-            "the lowest capability that is greater than or equal to task complexity"
+            "lowest-capability binding that is greater than or equal to task complexity"
         ))
-        #expect(policy.contains("Never select a profile by capability alone"))
+        #expect(policy.contains("Never select a profile or model binding by capability alone"))
         #expect(SystemPromptBuilder.taskWorkflowToolsAreAvailable(taskTools))
         #expect(SystemPromptBuilder.taskOrchestrationSection(
             allowedToolNames: ["tasks.create", "tasks.list"]

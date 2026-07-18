@@ -837,11 +837,11 @@ actor TerminalChatRenderCoordinator {
         guard !rendered.isEmpty else {
             return
         }
-        if hasStandardOutputContent, standardOutputTrailingNewlineCount == 0 {
+        if hasStandardOutputContent, currentOutputTrailingNewlineCount == 0 {
             writeChatOutput("\n", preservesSpacing: true)
         }
         writeChatOutput(rendered, preservesSpacing: true)
-        if standardOutputTrailingNewlineCount == 0 {
+        if currentOutputTrailingNewlineCount == 0 {
             writeChatOutput("\n")
         }
         flushChatOutput()
@@ -920,6 +920,16 @@ actor TerminalChatRenderCoordinator {
 
     private var usesSharedTerminalSpacing: Bool {
         standardOutputIsTerminal && standardErrorIsTerminal
+    }
+
+    /// The trailing line state at the terminal currently receiving chat output.
+    /// When stdout and stderr share a terminal, a completed tool block written
+    /// to stderr determines the real cursor position before an overview is
+    /// written to stdout.
+    private var currentOutputTrailingNewlineCount: Int {
+        usesSharedTerminalSpacing
+            ? trailingChatNewlineCount
+            : standardOutputTrailingNewlineCount
     }
 
     private func chatOutputSpacingNormalized(_ text: String) -> String {

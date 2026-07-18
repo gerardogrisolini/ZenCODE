@@ -212,11 +212,12 @@ extension ZenCODESetupRunner {
         guard let agents = try? AgentProfileStore.loadRequired() else {
             return "not configured"
         }
-        let withModel = agents.filter { $0.modelID != nil }
-        guard !withModel.isEmpty else {
-            return "no models assigned"
+        let withBindings = agents.filter { !$0.modelBindings.isEmpty }
+        guard !withBindings.isEmpty else {
+            return "no model bindings assigned"
         }
-        return "\(withModel.count)/\(agents.count) agents with model"
+        let bindingCount = agents.reduce(0) { $0 + $1.modelBindings.count }
+        return "\(withBindings.count)/\(agents.count) agents · \(bindingCount) bindings"
     }
 
     static func providersAndModelsSetupDetail(

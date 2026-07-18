@@ -105,9 +105,10 @@ public enum SystemPromptBuilder {
             delegationInstruction = """
             When you choose to delegate graph work, pass its taskID to agent.create so the \
             assignment and execution attempt are recorded atomically. If you delegate, select \
-            the most suitable agent profile from the delegatable roster: determine the task \
-            type and required tools, then choose the lowest-capability compatible profile that \
-            meets the task complexity. Delegate independent runnable tasks together when \
+            the most suitable agent profile and one of its authorized model bindings from the \
+            delegatable roster: determine the task type and required tools, then choose the \
+            lowest-capability binding that meets the task complexity. Delegate independent \
+            runnable tasks together when \
             parallel execution is safe and useful; serialize work that mutates overlapping \
             files or shared state. When a task graph is already active, every delegated agent \
             must use taskID; do not create taskless agents outside that workflow. You remain \
@@ -159,10 +160,10 @@ public enum SystemPromptBuilder {
         }
     }
 
-    /// Generates a roster of delegatable agent profiles that have a dedicated
-    /// model and capability value, so the model can apply role and tool
-    /// compatibility before matching agent capability to task complexity.
-    /// Agents without a model (and therefore without capability) are excluded.
+    /// Generates a roster of delegatable agent profiles and their explicitly
+    /// authorized model bindings. This keeps role/tool compatibility separate
+    /// from routing capability while never exposing a model outside its
+    /// configured profile association.
     public static func delegatableAgentsSection(
         agents: [AgentProfile],
         allowedToolNames: Set<String>?
@@ -170,26 +171,47 @@ public enum SystemPromptBuilder {
         guard agentDelegationIsAvailable(allowedToolNames) else {
             return nil
         }
-        let roster = agents
-            .filter { $0.modelID != nil && $0.capability != nil }
-            .sorted { ($0.capability ?? 0) < ($1.capability ?? 0) }
+        let roster = agents.compactMap { agent -> (AgentProfile, [AgentModelBinding])? in
+            let bindings = agent.modelBindings
+                .filter { $0.capability != nil }
+                .sorted {
+                    let lhsCapability = $0.capability ?? 0
+                    let rhsCapability = $1.capability ?? 0
+                    if lhsCapability != rhsCapability {
+                        return lhsCapability < rhsCapability
+                    }
+                    return $0.modelID.localizedCaseInsensitiveCompare($1.modelID) == .orderedAscending
+                }
+            return bindings.isEmpty ? nil : (agent, bindings)
+        }
+        .sorted {
+            $0.0.displayName.localizedCaseInsensitiveCompare($1.0.displayName) == .orderedAscending
+        }
         guard !roster.isEmpty else {
             return nil
         }
 
-        let lines = roster.compactMap { agent -> String? in
-            guard let capability = agent.capability else { return nil }
+        let lines = roster.flatMap { agent, bindings -> [String] in
             let roleSummary = delegationRoleSummary(for: agent)
-            return "- \(agent.displayName) (capability \(capability)/10): \(roleSummary)"
+            let bindingLines = bindings.compactMap { binding -> String? in
+                guard let capability = binding.capability else { return nil }
+                let bindingReference = binding.id == binding.modelID
+                    ? binding.modelID
+                    : "\(binding.modelID) [binding: \(binding.id)]"
+                let defaultMarker = binding.id == agent.defaultModelBindingID ? ", default" : ""
+                return "  - \(bindingReference) (capability \(capability)/10\(defaultMarker))"
+            }
+            return ["- \(agent.displayName): \(roleSummary)"] + bindingLines
         }
 
         return """
-        Delegatable agent profiles (ordered by capability; filter by role and constraints first):
+        Delegatable agent profiles and authorized model bindings (filter by role and constraints first):
         \(lines.joined(separator: "\n"))
         Agent selection policy: \(TaskRecord.agentSelectionPolicy)
-        Pass the selected profile name as `profile` or `agent` in agent.create. Give the \
-        sub-agent an explicit role and scope. Its effective tools come from the parent grant; \
-        `toolNames` can only narrow that grant.
+        Pass the selected profile name as `profile` or `agent` and its selected binding id or \
+        model id as `model` or `modelID` in agent.create. Give the sub-agent an explicit role \
+        and scope. Its effective tools come from the parent grant; `toolNames` can only narrow \
+        that grant.
         """
     }
 

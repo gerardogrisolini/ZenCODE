@@ -174,6 +174,56 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func taskGraphOverviewAfterTasksUpdateUsesOnlyOneBlankRowAfterToolCompletion() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            standardOutputIsTerminal: true
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "task-update",
+            name: "tasks.update",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        // Plain streaming prose is intentionally not newline-terminated before
+        // the tool starts, matching the event sequence reported in the TUI.
+        await renderer.writeAssistantContent("Checking the task graph.")
+        await renderer.writeToolCallStarted(toolCall)
+        let deferred = await renderer.renderTaskGraphOverview(
+            signature: "graph:after-update",
+            markdown: "Tasks\n"
+        )
+        #expect(deferred == .deferred)
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Updated", summary: "Updated")
+        )
+        let eventsBeforeOverview = await renderer.capturedWriteEvents()
+
+        let rendered = await renderer.renderTaskGraphOverview(
+            signature: "graph:after-update",
+            markdown: "Tasks\n"
+        )
+        let overviewEvents = Array(
+            (await renderer.capturedWriteEvents()).dropFirst(eventsBeforeOverview.count)
+        )
+        let completedToolText = eventsBeforeOverview
+            .last { $0.channel == .standardError }?
+            .text ?? ""
+        let overviewText = overviewEvents
+            .filter { $0.channel == .standardOutput }
+            .map(\.text)
+            .joined()
+        let boundary = TerminalANSIText.stripANSI(completedToolText + overviewText)
+
+        #expect(rendered == .rendered)
+        #expect(boundary.contains("✅\n\nTasks"))
+        #expect(!boundary.contains("✅\n\n\nTasks"))
+    }
+
+    @Test
     func interleavedFailureDrainsOverviewDeferredByTool() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = DirectAgentToolCall(
@@ -644,6 +694,7 @@ struct TerminalChatRenderCoordinatorTests {
 
     private func makeRenderer(
         standardErrorIsTerminal: Bool,
+        standardOutputIsTerminal: Bool = false,
         streamingFlushDelay: Duration? = nil,
         streamingNow: @Sendable @escaping () -> ContinuousClock.Instant = {
             ContinuousClock().now
@@ -656,7 +707,7 @@ struct TerminalChatRenderCoordinatorTests {
             stdinIsTerminal: false,
             standardOutput: nil,
             standardError: nil,
-            standardOutputIsTerminal: false,
+            standardOutputIsTerminal: standardOutputIsTerminal,
             standardErrorIsTerminal: standardErrorIsTerminal,
             capturesWrites: true,
             streamingFlushDelay: streamingFlushDelay,

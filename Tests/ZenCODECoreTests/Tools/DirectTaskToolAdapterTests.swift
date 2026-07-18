@@ -334,8 +334,8 @@ struct DirectTaskToolAdapterTests {
         )
 
         #expect(output.contains("Hint: 1 previous attempt on this task (complexity 8) did not succeed"))
-        #expect(output.contains("lowest role-compatible profile"))
-        #expect(output.contains("highest-capability compatible profile"))
+        #expect(output.contains("role-compatible profile and its lowest-capability authorized model binding"))
+        #expect(output.contains("profile's highest-capability binding"))
         #expect(output.contains("report the capability gap"))
     }
 

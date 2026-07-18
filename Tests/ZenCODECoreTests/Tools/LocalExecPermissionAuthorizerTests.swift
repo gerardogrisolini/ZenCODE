@@ -38,8 +38,9 @@ struct LocalExecPermissionAuthorizerTests {
     func persistedCommandPermissionIdentityExtractsExecutable() {
         #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentity(for: "swift test --filter ZenCODECoreTests") == "swift")
         // `pwd` is a harmless builtin, so the first authorizable executable is
-        // `echo` (which remains prompt-worthy because redirects can write files).
-        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentity(for: "pwd && echo ok") == "echo")
+        // `git`. Decorative `echo` is filtered.
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentity(for: "pwd && git status") == "git")
+        // `echo` with redirection is NOT decorative and remains prompt-worthy.
         #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentity(for: "\n  echo ok > out.txt  \n") == "echo")
     }
 
@@ -54,17 +55,34 @@ struct LocalExecPermissionAuthorizerTests {
     }
 
     @Test
+    func persistedPermissionMatchesRegardlessOfCase() {
+        // F10: the persisted manifest matches case-insensitively; verify the
+        // identity extraction and manifest membership agree across cases.
+        let permissions = AgentPermissionsManifest(
+            localExecAllowedCommands: ["Swift"]
+        )
+        #expect(permissions.containsLocalExecAllowedCommand("swift"))
+        #expect(permissions.containsLocalExecAllowedCommand("SWIFT"))
+        #expect(
+            LocalExecPermissionAuthorizer.isCommandPersistentlyAllowed(
+                "swift build",
+                permissions: permissions
+            )
+        )
+    }
+
+    @Test
     func persistedAllowedCommandsMatchExecutablesRegardlessOfArguments() {
         let permissions = AgentPermissionsManifest(
             localExecAllowedCommands: [
                 "swift test --filter OldFilter",
-                "pwd && echo ok"
+                "pwd && git status"
             ]
         )
 
         // `swift test --filter OldFilter` normalizes to the `swift` identity.
-        // `pwd && echo ok` skips the harmless `pwd` and normalizes to `echo`.
-        #expect(permissions.localExecAllowedCommands == ["swift", "echo"])
+        // `pwd && git status` skips the harmless `pwd` and normalizes to `git`.
+        #expect(permissions.localExecAllowedCommands == ["swift", "git"])
         #expect(
             LocalExecPermissionAuthorizer.isCommandPersistentlyAllowed(
                 "swift test --filter ZenCODECoreTests",
@@ -73,19 +91,19 @@ struct LocalExecPermissionAuthorizerTests {
         )
         #expect(
             LocalExecPermissionAuthorizer.isCommandPersistentlyAllowed(
-                "pwd && echo ok",
+                "pwd && git status",
                 permissions: permissions
             )
         )
         #expect(
             LocalExecPermissionAuthorizer.isCommandPersistentlyAllowed(
-                "  pwd && echo no  ",
+                "  pwd && git log  ",
                 permissions: permissions
             )
         )
         #expect(
             !LocalExecPermissionAuthorizer.isCommandPersistentlyAllowed(
-                "git status --short",
+                "rm -rf /tmp",
                 permissions: permissions
             )
         )
@@ -142,16 +160,16 @@ struct LocalExecPermissionAuthorizerTests {
             localExecAllowedCommands: [
                 "swift test",
                 "swift build",
-                " pwd && echo ok "
+                " pwd && git status "
             ]
         )
         try AgentPermissionsManifestStore.save(manifest, to: url)
         let decoded = try AgentPermissionsManifestStore.loadRequired(from: url)
 
         // `pwd` is a harmless builtin and is skipped, so the entry normalizes
-        // to its first authorizable executable `echo`.
-        #expect(decoded.localExecAllowedCommands == ["swift", "echo"])
+        // to its first authorizable executable `git`.
+        #expect(decoded.localExecAllowedCommands == ["swift", "git"])
         #expect(decoded.containsLocalExecAllowedCommand("SWIFT"))
-        #expect(decoded.containsLocalExecAllowedCommand("ECHO"))
+        #expect(decoded.containsLocalExecAllowedCommand("GIT"))
     }
 }

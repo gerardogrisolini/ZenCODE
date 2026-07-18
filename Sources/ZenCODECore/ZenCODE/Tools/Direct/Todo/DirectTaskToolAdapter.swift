@@ -135,9 +135,10 @@ public actor DirectTaskToolAdapter {
                 let noun = unsuccessfulAttempts.count == 1 ? "attempt" : "attempts"
                 rendered += "\nHint: \(unsuccessfulAttempts.count) previous \(noun) on this "
                     + "task (complexity \(view.task.complexity)) did not succeed. Re-evaluate "
-                    + "the task type and required tools, then retry with the lowest "
-                    + "role-compatible profile whose capability meets the task complexity. "
-                    + "If none exists, use the highest-capability compatible profile and "
+                    + "the task type and required tools, then retry with a role-compatible "
+                    + "profile and its lowest-capability authorized model binding that meets "
+                    + "the task complexity. If none exists, use that profile's highest-capability "
+                    + "binding and "
                     + "report the capability gap."
             }
             return rendered

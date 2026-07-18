@@ -145,6 +145,145 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    func agentProfileDetailRendersDefaultBindingAndBindingCount() {
+        let agent = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            modelBindings: [
+                AgentModelBinding(
+                    id: "fast",
+                    modelID: "fast-model",
+                    thinkingSelection: .low,
+                    capability: 4
+                ),
+                AgentModelBinding(
+                    id: "deep",
+                    modelID: "deep-model",
+                    thinkingSelection: .high,
+                    capability: 8
+                )
+            ],
+            defaultModelBindingID: "deep"
+        )
+
+        let detail = TerminalChat.agentSelectionDetail(agent)
+
+        #expect(detail.contains("default model: deep-model"))
+        #expect(detail.contains("thinking: High"))
+        #expect(detail.contains("bindings: 2"))
+    }
+
+    @Test
+    func selectedProfileBindingUsesManualModelOverride() {
+        let allowed = AgentSettingsModelManifest(
+            id: "allowed",
+            kind: .remoteAPI,
+            modelID: "allowed-model",
+            providerID: UUID(),
+            provider: AgentRemoteProvider(modelID: "allowed-model")
+        )
+        let blocked = AgentSettingsModelManifest(
+            id: "blocked",
+            kind: .remoteAPI,
+            modelID: "blocked-model",
+            providerID: UUID(),
+            provider: AgentRemoteProvider(modelID: "blocked-model")
+        )
+        let manifest = AgentSettingsManifest(
+            models: [allowed, blocked],
+            selectedModelID: blocked.id
+        )
+        let agent = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            modelBindings: [
+                AgentModelBinding(modelID: allowed.id, capability: 5)
+            ]
+        )
+
+        let resolved = TerminalChat.effectiveModelID(
+            selectedAgent: agent,
+            manualModelIDOverride: blocked.id,
+            manifest: manifest
+        )
+
+        #expect(resolved == blocked.id)
+    }
+
+    @Test
+    func modelPickerListsAllConfiguredModelsForBoundProfile() throws {
+        let allowed = AgentSettingsModelManifest(
+            id: "allowed",
+            kind: .remoteAPI,
+            modelID: "allowed-model",
+            providerID: UUID(),
+            provider: AgentRemoteProvider(modelID: "allowed-model")
+        )
+        let other = AgentSettingsModelManifest(
+            id: "other",
+            kind: .remoteAPI,
+            modelID: "other-model",
+            providerID: UUID(),
+            provider: AgentRemoteProvider(modelID: "other-model")
+        )
+        let agent = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            modelBindings: [
+                AgentModelBinding(modelID: allowed.id, capability: 5)
+            ]
+        )
+        let configuration = try AgentConfiguration(
+            hostedModelID: allowed.id,
+            agentName: agent.name,
+            availableAgents: [agent],
+            availableModels: [allowed, other],
+            cacheAgentProfiles: false,
+            workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
+        )
+        let chat = TerminalChat(configuration: configuration, stdinIsTerminal: false)
+
+        #expect(chat.selectableModelManifests().map(\.id) == [allowed.id, other.id])
+    }
+
+    @Test
+    func selectedProfileBindingRemainsTheDefaultWithoutManualOverride() {
+        let allowed = AgentSettingsModelManifest(
+            id: "allowed",
+            kind: .remoteAPI,
+            modelID: "allowed-model",
+            providerID: UUID(),
+            provider: AgentRemoteProvider(modelID: "allowed-model")
+        )
+        let blocked = AgentSettingsModelManifest(
+            id: "other",
+            kind: .remoteAPI,
+            modelID: "other-model",
+            providerID: UUID(),
+            provider: AgentRemoteProvider(modelID: "other-model")
+        )
+        let manifest = AgentSettingsManifest(
+            models: [allowed, blocked],
+            selectedModelID: blocked.id
+        )
+        let agent = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            modelBindings: [
+                AgentModelBinding(modelID: allowed.id, capability: 5)
+            ]
+        )
+
+        let resolved = TerminalChat.effectiveModelID(
+            selectedAgent: agent,
+            manualModelIDOverride: nil,
+            manifest: manifest
+        )
+
+        #expect(resolved == allowed.id)
+    }
+
+    @Test
     func toolSelectionCatalogListsBundledAndGeneratedFeaturePackagesTogether() throws {
         let items = TerminalChat.toolSelectionItems(
             featureStatuses: [
@@ -315,13 +454,13 @@ struct AgentProfileCapabilityTests {
 
     @Test
     func capabilityClampsToRange() {
-        let clamped = AgentProfile(id: "test", name: "Test", capability: 50)
+        let clamped = AgentProfile(id: "test", name: "Test", modelID: "test", capability: 50)
         #expect(clamped.capability == 10)
 
-        let low = AgentProfile(id: "test", name: "Test", capability: -3)
+        let low = AgentProfile(id: "test", name: "Test", modelID: "test", capability: -3)
         #expect(low.capability == 1)
 
-        let inRange = AgentProfile(id: "test", name: "Test", capability: 7)
+        let inRange = AgentProfile(id: "test", name: "Test", modelID: "test", capability: 7)
         #expect(inRange.capability == 7)
     }
 
@@ -342,6 +481,95 @@ struct AgentProfileCapabilityTests {
         let decoded = try JSONDecoder().decode(AgentProfile.self, from: data)
         #expect(decoded.capability == 8)
         #expect(decoded.modelID == "gpt-4")
+    }
+
+    @Test
+    func modelBindingsKeepCapabilityAndThinkingPerBinding() throws {
+        let profile = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            modelBindings: [
+                AgentModelBinding(
+                    id: "balanced",
+                    modelID: "model-balanced",
+                    modelProvider: "Example",
+                    thinkingSelection: .low,
+                    capability: 5
+                ),
+                AgentModelBinding(
+                    id: "deep",
+                    modelID: "model-deep",
+                    modelProvider: "Example",
+                    thinkingSelection: .high,
+                    capability: 9
+                )
+            ],
+            defaultModelBindingID: "deep"
+        )
+
+        #expect(profile.modelBindings.count == 2)
+        #expect(profile.defaultModelBinding?.id == "deep")
+        #expect(profile.modelID == "model-deep")
+        #expect(profile.thinkingSelection == .high)
+        #expect(profile.capability == 9)
+        #expect(profile.modelBinding(matching: "balanced")?.capability == 5)
+        #expect(profile.modelBinding(matching: "model-balanced")?.thinkingSelection == .low)
+
+        let reloaded = try JSONDecoder().decode(
+            AgentProfile.self,
+            from: JSONEncoder().encode(profile)
+        )
+        #expect(reloaded == profile)
+    }
+
+    @Test
+    func bindingIdentifierTakesPrecedenceOverAnotherBindingsModelIdentifier() {
+        let profile = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            modelBindings: [
+                AgentModelBinding(id: "alpha", modelID: "shared-reference", capability: 4),
+                AgentModelBinding(id: "shared-reference", modelID: "beta", capability: 8)
+            ]
+        )
+
+        let resolved = profile.modelBinding(matching: "shared-reference")
+
+        #expect(resolved?.id == "shared-reference")
+        #expect(resolved?.modelID == "beta")
+    }
+
+    @Test
+    func legacySingleModelDecodesAsOneDefaultBinding() throws {
+        let data = #"""
+        {
+          "id": "legacy",
+          "name": "Legacy",
+          "tools": [],
+          "modelID": "legacy-model",
+          "modelProvider": "Legacy Provider",
+          "thinkingSelection": "high",
+          "capability": 8
+        }
+        """#.data(using: .utf8)!
+
+        let profile = try JSONDecoder().decode(AgentProfile.self, from: data)
+
+        #expect(profile.modelBindings.count == 1)
+        #expect(profile.defaultModelBindingID == "legacy-model")
+        #expect(profile.defaultModelBinding?.modelID == "legacy-model")
+        #expect(profile.defaultModelBinding?.modelProvider == "Legacy Provider")
+        #expect(profile.defaultModelBinding?.thinkingSelection == .high)
+        #expect(profile.defaultModelBinding?.capability == 8)
+    }
+
+    @Test
+    func bindingCapabilityClampsToSharedRange() {
+        let high = AgentModelBinding(modelID: "high", capability: 11)
+        let low = AgentModelBinding(modelID: "low", capability: -2)
+
+        #expect(high.capability == 10)
+        #expect(low.capability == 1)
     }
 }
 
@@ -390,20 +618,29 @@ struct DelegatableAgentsSectionTests {
     }
 
     @Test
-    func sortsRosterByCapability() {
+    func rendersAuthorizedBindingsSortedByCapability() throws {
         let agents = [
-            AgentProfile(id: "1", name: "High", modelID: "opus", capability: 9),
-            AgentProfile(id: "2", name: "Low", modelID: "mini", capability: 2),
-            AgentProfile(id: "3", name: "Mid", modelID: "sonnet", capability: 5),
+            AgentProfile(
+                id: "developer",
+                name: "Developer",
+                modelBindings: [
+                    AgentModelBinding(id: "high", modelID: "opus", capability: 9),
+                    AgentModelBinding(id: "low", modelID: "mini", capability: 2),
+                    AgentModelBinding(id: "mid", modelID: "sonnet", capability: 5)
+                ],
+                defaultModelBindingID: "mid"
+            ),
         ]
         let section = SystemPromptBuilder.delegatableAgentsSection(
             agents: agents,
             allowedToolNames: nil
         )
-        #expect(section != nil)
-        let lines = section?.split(separator: "\n").filter { $0.hasPrefix("- ") }
-        #expect(lines?.first?.contains("Low") == true)
-        #expect(lines?.last?.contains("High") == true)
+        let rendered = try #require(section)
+        let lowIndex = try #require(rendered.range(of: "mini [binding: low] (capability 2/10)"))
+        let midIndex = try #require(rendered.range(of: "sonnet [binding: mid] (capability 5/10, default)"))
+        let highIndex = try #require(rendered.range(of: "opus [binding: high] (capability 9/10)"))
+        #expect(lowIndex.lowerBound < midIndex.lowerBound)
+        #expect(midIndex.lowerBound < highIndex.lowerBound)
     }
 
     @Test
@@ -428,13 +665,15 @@ struct DelegatableAgentsSectionTests {
         ))
 
         #expect(section.contains(
-            "ordered by capability; filter by role and constraints first"
+            "Delegatable agent profiles and authorized model bindings"
         ))
         #expect(section.contains(
-            "Reviewer (capability 9/10): Reviewer agent. Perform read-only code review. Do not edit files."
+            "Reviewer: Reviewer agent. Perform read-only code review. Do not edit files."
         ))
+        #expect(section.contains("review-model (capability 9/10, default)"))
         #expect(!section.contains("Report findings with file and line references."))
         #expect(section.contains(TaskRecord.agentSelectionPolicy))
+        #expect(section.contains("model id as `model` or `modelID`"))
         #expect(section.contains("effective tools come from the parent grant"))
         #expect(section.contains("`toolNames` can only narrow that grant"))
     }

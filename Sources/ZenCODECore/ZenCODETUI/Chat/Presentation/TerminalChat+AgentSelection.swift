@@ -57,16 +57,23 @@ extension TerminalChat {
     }
 
     public func applyAgentSelection(_ agent: AgentProfile) async throws {
+        let previousManualModelIDOverride = manualModelIDOverride
+        let previousManualThinkingSelectionOverride = manualThinkingSelectionOverride
         selectedAgent = agent
         await interactiveReader.setPanelCommandSuggestions(commandSuggestionsForCurrentAgent())
         await applyAgentProfile(agent)
         activeSessionSystemPromptOverride = nil
         activePlan = nil
         resetResponseLanguageLock()
-        manualModelIDOverride = configuration.hostedModels == nil
+        // A model explicitly chosen through `/models` is session state, not a
+        // property of the selected agent. Retain it across profile changes;
+        // only a session without an override falls back to the new profile's
+        // default binding.
+        manualModelIDOverride = previousManualModelIDOverride
+            ?? (configuration.hostedModels == nil ? nil : configuration.modelID)
+        manualThinkingSelectionOverride = previousManualModelIDOverride == nil
             ? nil
-            : configuration.modelID
-        manualThinkingSelectionOverride = nil
+            : previousManualThinkingSelectionOverride
         await ensureWorkspaceAccessIfNeeded()
 
         await sessionRunner.shutdownBackendKeepingExternalTools()
@@ -160,10 +167,14 @@ extension TerminalChat {
     public static func agentSelectionDetail(_ agent: AgentProfile) -> String {
         var parts = [agentPurposeSummary(agent)]
         if let modelID = agent.modelID {
-            parts.append("model: \(modelID)")
+            let prefix = agent.modelBindings.count > 1 ? "default model" : "model"
+            parts.append("\(prefix): \(modelID)")
         }
         if let thinkingSelection = agent.thinkingSelection {
             parts.append("thinking: \(thinkingSelection.displayTitle)")
+        }
+        if agent.modelBindings.count > 1 {
+            parts.append("bindings: \(agent.modelBindings.count)")
         }
         if !agent.skills.isEmpty {
             parts.append("skills: \(agent.skills.count)")
