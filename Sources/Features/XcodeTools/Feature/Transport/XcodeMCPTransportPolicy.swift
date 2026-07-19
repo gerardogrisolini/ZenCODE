@@ -26,7 +26,7 @@ public nonisolated enum XcodeMCPTransportPolicy {
                 )
                 #else
                 _ = processID
-                nil
+                return nil
                 #endif
             },
             errorClassifier: authorizationError(for:)
