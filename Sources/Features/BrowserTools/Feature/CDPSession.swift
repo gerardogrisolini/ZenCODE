@@ -238,20 +238,26 @@ final class CDPSession: @unchecked Sendable {
 
     // MARK: - Page lifecycle helpers
 
-    /// Enables Page and Runtime domains and configures viewport emulation.
-    func preparePage() async throws {
-        _ = try await send(method: "Page.enable")
-        _ = try await send(method: "Runtime.enable")
+    /// Enables Page and Runtime domains and applies the Browser-owned fixed
+    /// viewport selected for this persistent page before an operation touches
+    /// it. The runner resolves the preset from its private, whitelist-checked
+    /// state store; tool input never reaches this method as dimensions/UA.
+    func preparePage(
+        waitForReady: Bool = true,
+        viewportPreset: BrowserViewportPreset = .desktop
+    ) async throws {
+        try await enablePageAndRuntime()
         try await BrowserDownloadPolicy.apply(to: self)
         // Best-effort: ignore failures from emulation commands.
         _ = try? await send(method: "Emulation.setFocusEmulationEnabled", params: ["enabled": true])
-        _ = try? await send(method: "Emulation.setDeviceMetricsOverride", params: [
-            "width": 1365,
-            "height": 900,
-            "deviceScaleFactor": 1,
-            "mobile": false,
-        ])
-        try await waitReady()
+        // Browser historically treated viewport emulation as best-effort so a
+        // Chrome version without an Emulation capability does not break every
+        // read/navigation tool. The explicit browser.viewport tool still
+        // surfaces an error when the requested preset cannot be applied.
+        _ = try? await applyViewportPreset(viewportPreset)
+        if waitForReady {
+            try await waitReady()
+        }
     }
 
     /// Navigates the tab to `url` and waits for the page to become ready.

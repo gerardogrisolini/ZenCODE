@@ -17,6 +17,25 @@ struct BrowserToolsFeatureTests {
     }
 
     @Test
+    func browserLoopbackAuthorizationCoversCurrentAndExplicitLocalPages() {
+        #expect(BrowserToolsRunner.resolvedLoopbackAuthorization(
+            currentPageURL: "http://127.0.0.1:3000/app",
+            explicitlyRequestedDestinationIsLoopback: false,
+            environment: [:]
+        ))
+        #expect(BrowserToolsRunner.resolvedLoopbackAuthorization(
+            currentPageURL: "https://example.com/",
+            explicitlyRequestedDestinationIsLoopback: true,
+            environment: [:]
+        ))
+        #expect(!BrowserToolsRunner.resolvedLoopbackAuthorization(
+            currentPageURL: "https://example.com/",
+            explicitlyRequestedDestinationIsLoopback: false,
+            environment: [:]
+        ))
+    }
+
+    @Test
     func browserURLPolicyRejectsUnsafeAndAmbiguousDestinations() {
         let policy = BrowserURLPolicy(environment: [:])
 
@@ -37,6 +56,64 @@ struct BrowserToolsFeatureTests {
         }
         #expect(throws: BrowserURLPolicyError.restrictedHost("service.local")) {
             try policy.validate("https://service.local")
+        }
+        #expect(throws: BrowserURLPolicyError.restrictedHost("service.local.")) {
+            try policy.validate("https://service.local.")
+        }
+        #expect(throws: BrowserURLPolicyError.restrictedHost("[fe90::1]")) {
+            try policy.validate("http://[fe90::1]")
+        }
+        #expect(throws: BrowserURLPolicyError.restrictedHost("[fec0::1]")) {
+            try policy.validate("http://[fec0::1]")
+        }
+        #expect(throws: BrowserURLPolicyError.restrictedHost("[ff02::1]")) {
+            try policy.validate("http://[ff02::1]")
+        }
+        #expect(throws: BrowserURLPolicyError.restrictedHost("[::ffff:a00:1]")) {
+            try policy.validate("http://[::ffff:a00:1]")
+        }
+    }
+
+    @Test
+    func browserNetworkRequestPolicyRejectsResolvedPrivateDestinations() throws {
+        let resolver = StaticBrowserHostResolver(addressesByHost: [
+            "public.example": ["10.0.0.1"],
+            "mixed.example": ["93.184.216.34", "fd00::1"],
+            "rebound.example": ["127.0.0.1"],
+            "safe.example": ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"],
+            "localhost": ["127.0.0.1", "::1"],
+        ])
+        let policy = BrowserNetworkRequestPolicy(
+            urlPolicy: BrowserURLPolicy(environment: [:]),
+            resolver: resolver
+        )
+
+        #expect(throws: BrowserURLPolicyError.restrictedHost("10.0.0.1")) {
+            try policy.validateRequestURL("https://public.example/app")
+        }
+        #expect(throws: BrowserURLPolicyError.restrictedHost("fd00::1")) {
+            try policy.validateRequestURL("https://mixed.example/app")
+        }
+        #expect(throws: BrowserNetworkGuardError.self) {
+            try policy.validateRequestURL("https://rebound.example/app")
+        }
+        #expect(throws: BrowserNetworkGuardError.self) {
+            try policy.validateRequestURL("ws://localhost:3000/hmr")
+        }
+        try policy.validateRequestURL("https://safe.example/app")
+        try policy.validateRequestURL("about:blank")
+        #expect(throws: BrowserNetworkGuardError.self) {
+            try policy.validateRequestURL("file:///private/file")
+        }
+
+        let localDevelopmentPolicy = BrowserNetworkRequestPolicy(
+            urlPolicy: BrowserURLPolicy(environment: [:]),
+            resolver: resolver,
+            allowsLoopback: true
+        )
+        try localDevelopmentPolicy.validateRequestURL("ws://localhost:3000/hmr")
+        #expect(throws: BrowserNetworkGuardError.self) {
+            try localDevelopmentPolicy.validateRequestURL("https://rebound.example/app")
         }
     }
 
@@ -105,6 +182,98 @@ struct BrowserToolsFeatureTests {
     }
 
     @Test
+    func browserViewportPresetsAreFixedAndUntrustedStoredValuesFailClosed() throws {
+        let desktop = BrowserViewportPreset.desktop.configuration
+        #expect(desktop.width == 1365)
+        #expect(desktop.height == 900)
+        #expect(desktop.deviceScaleFactor == 1)
+        #expect(!desktop.mobile)
+
+        let tablet = BrowserViewportPreset.tablet.configuration
+        #expect(tablet.width == 768)
+        #expect(tablet.height == 1024)
+        #expect(tablet.mobile)
+
+        let mobile = try BrowserViewportPreset.resolve("MOBILE").configuration
+        #expect(mobile.width == 390)
+        #expect(mobile.height == 844)
+        #expect(mobile.deviceScaleFactor == 3)
+        #expect(mobile.mobile)
+        #expect(BrowserViewportPreset.resolveUntrustedMarker("tablet") == .tablet)
+        #expect(BrowserViewportPreset.resolveUntrustedMarker("999x999") == .desktop)
+        #expect(BrowserViewportPreset.resolveUntrustedMarker(nil) == .desktop)
+        #expect(throws: BrowserToolsFeatureError.self) {
+            try BrowserViewportPreset.resolve("custom")
+        }
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BrowserViewportStateTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent("viewport-presets.json")
+        let store = BrowserViewportStateStore(stateURL: stateURL)
+        try store.set(.mobile, for: "page-1")
+        #expect(store.preset(for: "page-1") == .mobile)
+
+        try Data(#"{"presetsByPageID":{"page-1":"not-a-preset"}}"#.utf8)
+            .write(to: stateURL, options: .atomic)
+        #expect(store.preset(for: "page-1") == .desktop)
+        #expect(throws: BrowserToolsFeatureError.self) {
+            try store.set(.desktop, for: "../../not-a-page")
+        }
+    }
+
+    @Test
+    func browserResetScopeAndOriginAreHostControlled() throws {
+        #expect(try BrowserResetScope.resolve(nil) == .origin)
+        #expect(try BrowserResetScope.resolve("PROFILE") == .profile)
+        #expect(throws: BrowserToolsFeatureError.self) {
+            try BrowserResetScope.resolve("all")
+        }
+
+        #expect(BrowserStorageOrigin.resolve("https://example.com/path?x=1") == "https://example.com")
+        #expect(BrowserStorageOrigin.resolve("http://localhost:3000/app") == "http://localhost:3000")
+        #expect(BrowserStorageOrigin.resolve("chrome://settings") == nil)
+        #expect(BrowserStorageOrigin.resolve("about:blank") == nil)
+        #expect(BrowserStorageOrigin.resolve("https://user:secret@example.com") == nil)
+        #expect(BrowserResetStorage.storageTypes == "all")
+        #expect(!BrowserResetStorage.instrumentationResetScript.contains("__zencodeBrowserViewportPreset"))
+    }
+
+    @Test
+    func browserConditionsAreBoundedAndComparedHostSide() throws {
+        let probe = BrowserPageConditionProbe(
+            readyState: "complete",
+            title: "Welcome to ZenCODE",
+            url: "http://localhost:3000/dashboard",
+            bodyText: "Saved successfully"
+        )
+        let title = try #require(
+            try BrowserConditionLiteral.resolve("ZenCODE", for: .titleContains)
+        )
+        let text = try #require(
+            try BrowserConditionLiteral.resolve("success", for: .textContains)
+        )
+
+        #expect(BrowserPageCondition.ready.evaluate(probe: probe, literal: nil).satisfied)
+        #expect(BrowserPageCondition.titleContains.evaluate(probe: probe, literal: title).satisfied)
+        #expect(BrowserPageCondition.textContains.evaluate(probe: probe, literal: text).satisfied)
+        #expect(!BrowserPageCondition.urlContains.evaluate(probe: probe, literal: title).satisfied)
+        #expect(try BrowserConditionLimits.resolveTimeout(nil) == 10)
+        #expect(try BrowserConditionLimits.resolveTimeout(30) == 30)
+        #expect(throws: BrowserToolsFeatureError.self) {
+            try BrowserConditionLimits.resolveTimeout(31)
+        }
+        #expect(throws: BrowserToolsFeatureError.self) {
+            try BrowserConditionLiteral.resolve(
+                String(repeating: "x", count: BrowserConditionLimits.maximumLiteralBytes + 1),
+                for: .textContains
+            )
+        }
+        #expect(!BrowserPageConditionProbeCapture.script.contains("ZenCODE"))
+        #expect(BrowserPageConditionProbeCapture.script.contains("document.body"))
+    }
+
+    @Test
     func browserReadBudgetTruncatesOnUTF8CharacterBoundaries() {
         let content = String(repeating: "é", count: 100)
         let clipped = BrowserContentBudget.clip(content, maximumBytes: 80)
@@ -153,6 +322,32 @@ struct BrowserToolsFeatureTests {
         #expect(events.first?.method == "Network.loadingFailed")
         #expect(events.first?.sessionID == "child")
         #expect(events.first?.params["requestId"] as? String == "42")
+    }
+
+    @Test
+    func fetchRequestDecoderAcceptsOnlyCompleteRequestStageEvents() {
+        let paused = BrowserFetchPausedRequest.decode(CDPEvent(
+            method: "Fetch.requestPaused",
+            params: [
+                "requestId": "fetch-1",
+                "request": ["url": "https://example.com/redirect"],
+            ],
+            sessionID: nil
+        ))
+        #expect(paused == BrowserFetchPausedRequest(
+            requestID: "fetch-1",
+            url: "https://example.com/redirect"
+        ))
+        #expect(BrowserFetchPausedRequest.decode(CDPEvent(
+            method: "Network.requestWillBeSent",
+            params: [:],
+            sessionID: nil
+        )) == nil)
+        #expect(BrowserFetchPausedRequest.decode(CDPEvent(
+            method: "Fetch.requestPaused",
+            params: ["requestId": "missing-url"],
+            sessionID: nil
+        )) == nil)
     }
 
     @Test
@@ -317,6 +512,42 @@ struct BrowserToolsFeatureTests {
     }
 
     @Test
+    func browserOwnedScreenshotsExposeBoundedMetadataAndCompareSafely() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BrowserVisualComparisonTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = BrowserArtifactStore(rootDirectory: root, maximumArtifactCount: 3)
+        let baselineData = browserPNGHeader(width: 320, height: 200, suffix: [1, 2, 3])
+        let candidateData = browserPNGHeader(width: 320, height: 200, suffix: [1, 2, 4])
+        let baseline = try store.storeScreenshotPNG(baselineData, pageID: "baseline")
+        let candidate = try store.storeScreenshotPNG(candidateData, pageID: "candidate")
+
+        #expect(baseline.pixelWidth == 320)
+        #expect(baseline.pixelHeight == 200)
+        #expect(baseline.sha256.count == 64)
+        #expect(baseline.sha256 != candidate.sha256)
+
+        let loadedBaseline = try store.loadOwnedScreenshot(at: baseline.path)
+        let loadedCandidate = try store.loadOwnedScreenshot(at: candidate.path)
+        let comparison = BrowserScreenshotComparison.compare(
+            baseline: loadedBaseline,
+            candidate: loadedCandidate
+        )
+        #expect(comparison.comparedByteCount == baselineData.count)
+        #expect(comparison.changedByteCount == 1)
+        #expect(!comparison.encodedBytesIdentical)
+        #expect(comparison.samePixelDimensions)
+
+        #expect(throws: BrowserArtifactError.self) {
+            try store.loadOwnedScreenshot(at: "/tmp/not-a-browser-artifact.png")
+        }
+        #expect(throws: BrowserArtifactError.self) {
+            try store.loadOwnedScreenshot(at: "relative.png")
+        }
+    }
+
+    @Test
     func pdfArtifactAndPerformanceMetricsUseBoundedSpecialistContracts() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("BrowserToolsPDFTests-\(UUID().uuidString)", isDirectory: true)
@@ -357,10 +588,15 @@ struct BrowserToolsFeatureTests {
             "browser.pages",
             "browser.goto",
             "browser.read",
+            "browser.viewport",
+            "browser.reset_state",
+            "browser.wait",
+            "browser.assert",
             "browser.snapshot",
             "browser.console",
             "browser.network",
             "browser.screenshot",
+            "browser.compare_screenshots",
             "browser.print_pdf",
             "browser.performance",
             "browser.act",
@@ -402,5 +638,32 @@ private final class EventRecorder: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return storage
+    }
+}
+
+private func browserPNGHeader(width: UInt32, height: UInt32, suffix: [UInt8]) -> Data {
+    var bytes: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+    bytes += [0, 0, 0, 13]
+    bytes += [73, 72, 68, 82]
+    for value in [width, height] {
+        bytes += [
+            UInt8((value >> 24) & 0xFF),
+            UInt8((value >> 16) & 0xFF),
+            UInt8((value >> 8) & 0xFF),
+            UInt8(value & 0xFF),
+        ]
+    }
+    bytes += suffix
+    return Data(bytes)
+}
+
+private struct StaticBrowserHostResolver: BrowserHostResolving {
+    let addressesByHost: [String: [String]]
+
+    func resolve(host: String) throws -> [String] {
+        guard let addresses = addressesByHost[host] else {
+            throw BrowserNetworkGuardError.unresolvedHost(host)
+        }
+        return addresses
     }
 }

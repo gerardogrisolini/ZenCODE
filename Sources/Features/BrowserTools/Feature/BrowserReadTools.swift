@@ -153,8 +153,15 @@ struct BrowserNetworkTool: FeatureTool {
             try BrowserURLPolicy(environment: context.environment).validate($0)
         }
         let durationSeconds = try BrowserNetworkCapture.resolvedDuration(input.resolvedDuration)
+        let allowsLoopback = requestedURL.map {
+            BrowserURLPolicy(environment: context.environment).isLoopbackURL($0.absoluteString)
+        }
 
-        return try await BrowserToolsRunner.withPage(pageID: pageID, context: context) { session, tab in
+        return try await BrowserToolsRunner.withPage(
+            pageID: pageID,
+            context: context,
+            allowsLoopback: allowsLoopback
+        ) { session, tab in
             let observer = BrowserNetworkObserver()
             let eventToken = session.addEventHandler { event in
                 observer.consume(event)

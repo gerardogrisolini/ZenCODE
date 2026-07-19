@@ -40,7 +40,7 @@ extension TerminalChat {
         /// published once, with the whole message kept together.
         static func complete(
             _ text: String,
-            indentation: Int = 6
+            indentation: Int = 3
         ) -> SubAgentOverviewLine {
             SubAgentOverviewLine(
                 text: text,

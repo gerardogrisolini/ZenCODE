@@ -1368,6 +1368,40 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func markdownFormatterRestoresFullWidthAfterStreamedInlineMarkdownTail() {
+        let renderWidth = 80
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: renderWidth,
+            supportsHyperlinks: false
+        )
+        // The safe prose prefix is emitted immediately. The following strong
+        // marker makes the remaining text an inline tail that must account for
+        // the prefix only on its first physical row.
+        let prefix = String(repeating: "plain ", count: 10)
+        let tail = "**Browser** lo consente per lo sviluppo locale. Il permesso resta valido per una pagina aperta o navigata esplicitamente su loopback, incluse risorse HMR WebSocket locali."
+
+        let streamedPrefix = formatter.consume(prefix)
+        let renderedTail = formatter.consume(tail + "\n") + formatter.finish()
+        let visibleTailLines = TerminalANSIText.stripANSI(renderedTail)
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+
+        #expect(streamedPrefix == prefix)
+        #expect(!renderedTail.contains("**"))
+        #expect(
+            visibleTailLines.dropFirst().contains {
+                TerminalANSIText.visibleWidth($0) > renderWidth / 2
+            }
+        )
+        #expect(
+            visibleTailLines.allSatisfy {
+                TerminalANSIText.visibleWidth($0) <= renderWidth - 1
+            }
+        )
+    }
+
+    @Test
     func markdownFormatterDoesNotWrapTableBoxDrawing() {
         var formatter = TerminalMarkdownStreamFormatter(
             isEnabled: true,

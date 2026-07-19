@@ -5,6 +5,12 @@
 
 import Foundation
 
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
 /// Validates navigation destinations before they reach Chrome. The Browser
 /// feature remains opt-in, but web content is still untrusted and must not be
 /// able to turn a normal navigation into an accidental private-network probe.
@@ -26,8 +32,8 @@ enum BrowserURLPolicyError: LocalizedError, Equatable, Sendable {
             "Unsupported URL scheme '\(value)'. Only http and https are supported."
         case let .missingHost(value):
             "URL must include a host: \(value)"
-        case let .credentialsNotAllowed(value):
-            "URLs containing embedded credentials are not allowed: \(value)"
+        case .credentialsNotAllowed:
+            "URLs containing embedded credentials are not allowed."
         case let .restrictedHost(host):
             "Navigation to the restricted host '\(host)' is disabled. Set ZENCODE_BROWSER_ALLOW_PRIVATE_NETWORK=1 only when access to a trusted private network is required."
         }
@@ -73,21 +79,77 @@ struct BrowserURLPolicy: Sendable {
             throw BrowserURLPolicyError.missingHost(value)
         }
 
-        let host = rawHost.lowercased()
+        let host = normalizedHost(rawHost)
         guard allowsPrivateNetwork || !isRestricted(host: host) else {
             throw BrowserURLPolicyError.restrictedHost(rawHost)
         }
         return url
     }
 
+    /// Rechecks a numeric address returned by a host resolver. The direct URL
+    /// validation above intentionally remains deterministic/offline for unit
+    /// tests; a network guard calls this method immediately before Chrome is
+    /// allowed to continue an intercepted request.
+    func validateResolvedAddress(_ rawAddress: String) throws {
+        let address = normalizedHost(rawAddress)
+        guard !address.isEmpty else {
+            throw BrowserURLPolicyError.restrictedHost(rawAddress)
+        }
+        guard allowsPrivateNetwork || !isRestricted(host: address) else {
+            throw BrowserURLPolicyError.restrictedHost(rawAddress)
+        }
+    }
+
+    /// Identifies the explicitly local destinations Browser supports for web
+    /// development. A network guard uses this separately from the general URL
+    /// policy so a public document cannot silently pivot into loopback merely
+    /// because local development itself is allowed.
+    func isLoopbackURL(_ rawURL: String) -> Bool {
+        guard let components = URLComponents(string: rawURL),
+              let host = components.host
+        else {
+            return false
+        }
+        return isLoopbackHost(host)
+    }
+
+    func isLoopbackHost(_ rawHost: String) -> Bool {
+        let host = normalizedHost(rawHost)
+        if host == "localhost" || host.hasSuffix(".localhost") {
+            return true
+        }
+        if host == "::1" {
+            return true
+        }
+        if let octets = ipv4Octets(host) {
+            return octets[0] == 127
+        }
+        guard let bytes = ipv6Bytes(host) else {
+            return false
+        }
+        let isIPv4Compatible = bytes[0..<12].allSatisfy { $0 == 0 }
+        let isIPv4Mapped = bytes[0..<10].allSatisfy { $0 == 0 }
+            && bytes[10] == 0xff
+            && bytes[11] == 0xff
+        return (isIPv4Compatible || isIPv4Mapped) && bytes[12] == 127
+    }
+
+    private func normalizedHost(_ host: String) -> String {
+        host
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .lowercased()
+    }
+
     private func isRestricted(host: String) -> Bool {
-        if isLoopback(host: host) {
+        if isLoopbackHost(host) {
             return false
         }
         if host == "localhost" || host.hasSuffix(".localhost") {
             return false
         }
-        if host.hasSuffix(".local") {
+        if host == "local" || host.hasSuffix(".local") {
             return true
         }
         if let octets = ipv4Octets(host) {
@@ -97,16 +159,6 @@ struct BrowserURLPolicy: Sendable {
             return true
         }
         return isRestrictedIPv6(host)
-    }
-
-    private func isLoopback(host: String) -> Bool {
-        if host == "::1" || host == "[::1]" {
-            return true
-        }
-        guard let octets = ipv4Octets(host) else {
-            return false
-        }
-        return octets[0] == 127
     }
 
     private func ipv4Octets(_ host: String) -> [UInt8]? {
@@ -154,20 +206,50 @@ struct BrowserURLPolicy: Sendable {
     }
 
     private func isRestrictedIPv6(_ host: String) -> Bool {
-        let normalized = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
-        guard normalized.contains(":") else {
+        guard host.contains(":"),
+              let bytes = ipv6Bytes(host)
+        else {
             return false
         }
-        if normalized == "::" || normalized.hasPrefix("fe80:") || normalized.hasPrefix("fc") || normalized.hasPrefix("fd") {
+
+        // :: is unspecified; ::1 was handled as loopback above.
+        if bytes.allSatisfy({ $0 == 0 }) {
             return true
         }
-        if let mappedRange = normalized.range(of: "::ffff:"),
-           let octets = ipv4Octets(String(normalized[mappedRange.upperBound...])),
-           isRestrictedIPv4(octets) || octets[0] == 127
-        {
+        // Link-local fe80::/10, legacy site-local fec0::/10, unique-local
+        // fc00::/7, and multicast ff00::/8 are not public destinations.
+        if bytes[0] == 0xfe {
+            let scope = bytes[1] & 0xc0
+            if scope == 0x80 || scope == 0xc0 {
+                return true
+            }
+        }
+        if (bytes[0] & 0xfe) == 0xfc || bytes[0] == 0xff {
             return true
+        }
+
+        // IPv4-compatible and IPv4-mapped literals can encode restricted IPv4
+        // targets without a dotted suffix (for example ::ffff:a00:1).
+        let hasIPv4CompatiblePrefix = bytes[0..<12].allSatisfy { $0 == 0 }
+        let hasIPv4MappedPrefix = bytes[0..<10].allSatisfy { $0 == 0 }
+            && bytes[10] == 0xff
+            && bytes[11] == 0xff
+        if hasIPv4CompatiblePrefix || hasIPv4MappedPrefix {
+            let octets = Array(bytes[12..<16])
+            return isRestrictedIPv4(octets)
         }
         return false
+    }
+
+    private func ipv6Bytes(_ host: String) -> [UInt8]? {
+        var address = in6_addr()
+        let parsed = host.withCString { pointer in
+            inet_pton(AF_INET6, pointer, &address)
+        }
+        guard parsed == 1 else { return nil }
+        return withUnsafeBytes(of: &address) { rawBuffer in
+            Array(rawBuffer.prefix(16))
+        }
     }
 
     private func isAmbiguousNumericHost(_ host: String) -> Bool {

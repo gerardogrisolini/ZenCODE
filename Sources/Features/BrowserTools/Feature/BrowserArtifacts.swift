@@ -5,6 +5,7 @@
 //  Durable, bounded Browser artefacts such as screenshots.
 //
 
+import Crypto
 import Foundation
 
 #if canImport(Darwin)
@@ -15,11 +16,29 @@ import Glibc
 
 enum BrowserArtifactError: LocalizedError {
     case emptyArtifact(String)
+    case invalidPNGArtifact
+    case artifactPathMustBeAbsolute
+    case artifactOutsideOwnedDirectory
+    case artifactIsNotRegularFile
+    case artifactIsNotPNG
+    case artifactTooLarge(Int)
 
     var errorDescription: String? {
         switch self {
         case let .emptyArtifact(kind):
             "Chrome returned an empty \(kind) artifact."
+        case .invalidPNGArtifact:
+            "Browser artifact is not a valid PNG header."
+        case .artifactPathMustBeAbsolute:
+            "Browser screenshot artifact paths must be absolute."
+        case .artifactOutsideOwnedDirectory:
+            "Browser can compare only screenshot artifacts it owns."
+        case .artifactIsNotRegularFile:
+            "Browser screenshot artifact is not a regular file."
+        case .artifactIsNotPNG:
+            "Browser can compare only PNG screenshot artifacts."
+        case let .artifactTooLarge(maximumBytes):
+            "Browser screenshot artifact exceeds the \(maximumBytes)-byte comparison limit."
         }
     }
 }
@@ -28,6 +47,42 @@ struct BrowserArtifact: Codable, Hashable, Sendable {
     let path: String
     let mimeType: String
     let sizeBytes: Int
+    let sha256: String
+    let pixelWidth: Int?
+    let pixelHeight: Int?
+}
+
+struct BrowserPNGDimensions: Codable, Hashable, Sendable {
+    let width: Int
+    let height: Int
+}
+
+/// A bounded PNG-header parser is sufficient for Browser-produced screenshots:
+/// it exposes dimensions without decoding image content or invoking an external
+/// image utility. It intentionally does not claim that arbitrary PNG bytes are
+/// fully decoded or safe to render.
+enum BrowserPNGHeader {
+    private static let signature: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+
+    static func dimensions(in data: Data) -> BrowserPNGDimensions? {
+        let bytes = Array(data.prefix(24))
+        guard bytes.count == 24,
+              Array(bytes[0..<8]) == signature,
+              Array(bytes[12..<16]) == [73, 72, 68, 82]
+        else {
+            return nil
+        }
+        let width = integer(bytes[16..<20])
+        let height = integer(bytes[20..<24])
+        guard width > 0, height > 0 else { return nil }
+        return BrowserPNGDimensions(width: width, height: height)
+    }
+
+    private static func integer(_ bytes: ArraySlice<UInt8>) -> Int {
+        bytes.reduce(0) { partial, byte in
+            (partial << 8) | Int(byte)
+        }
+    }
 }
 
 struct BrowserScreenshotOutput: Codable, Sendable {
@@ -44,11 +99,17 @@ struct BrowserScreenshotOutput: Codable, Sendable {
     }
 }
 
+struct BrowserOwnedScreenshot: Sendable {
+    let artifact: BrowserArtifact
+    let data: Data
+}
+
 /// Owns Browser-produced files only. Tool callers cannot choose a destination,
 /// so a page cannot turn screenshots into arbitrary filesystem writes.
 struct BrowserArtifactStore: Sendable {
     static let defaultMaximumArtifactCount = 50
     static let defaultRetentionAge: TimeInterval = 7 * 24 * 60 * 60
+    static let maximumComparableScreenshotBytes = 20 * 1024 * 1024
 
     let rootDirectory: URL
     let maximumArtifactCount: Int
@@ -114,11 +175,75 @@ struct BrowserArtifactStore: Sendable {
         try setPermissions(0o600, at: destination)
         try pruneRetainedArtifacts(preserving: destination)
 
-        return BrowserArtifact(
+        return makeArtifact(
             path: destination.path,
             mimeType: mimeType,
-            sizeBytes: data.count
+            data: data
         )
+    }
+
+    /// Loads a screenshot only after proving that it remains inside Browser's
+    /// owned artifact directory. The public comparison tool accepts paths from
+    /// the model, so this check is the boundary that prevents arbitrary file
+    /// reads through an otherwise harmless visual-diff request.
+    func loadOwnedScreenshot(
+        at rawPath: String,
+        maximumBytes: Int = BrowserArtifactStore.maximumComparableScreenshotBytes
+    ) throws -> BrowserOwnedScreenshot {
+        guard rawPath.hasPrefix("/") else {
+            throw BrowserArtifactError.artifactPathMustBeAbsolute
+        }
+        let root = rootDirectory
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        let candidate = URL(fileURLWithPath: rawPath)
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        guard candidate.path.hasPrefix(root.path + "/") else {
+            throw BrowserArtifactError.artifactOutsideOwnedDirectory
+        }
+        guard candidate.pathExtension.lowercased() == "png" else {
+            throw BrowserArtifactError.artifactIsNotPNG
+        }
+        let values = try candidate.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true else {
+            throw BrowserArtifactError.artifactIsNotRegularFile
+        }
+        let maximumBytes = max(maximumBytes, 1)
+        guard (values.fileSize ?? 0) <= maximumBytes else {
+            throw BrowserArtifactError.artifactTooLarge(maximumBytes)
+        }
+        let data = try Data(contentsOf: candidate, options: [.mappedIfSafe])
+        guard !data.isEmpty,
+              data.count <= maximumBytes
+        else {
+            throw BrowserArtifactError.artifactTooLarge(maximumBytes)
+        }
+        guard BrowserPNGHeader.dimensions(in: data) != nil else {
+            throw BrowserArtifactError.invalidPNGArtifact
+        }
+        return BrowserOwnedScreenshot(
+            artifact: makeArtifact(path: candidate.path, mimeType: "image/png", data: data),
+            data: data
+        )
+    }
+
+    private func makeArtifact(path: String, mimeType: String, data: Data) -> BrowserArtifact {
+        let dimensions = mimeType == "image/png" ? BrowserPNGHeader.dimensions(in: data) : nil
+        return BrowserArtifact(
+            path: path,
+            mimeType: mimeType,
+            sizeBytes: data.count,
+            sha256: Self.sha256Hex(data),
+            pixelWidth: dimensions?.width,
+            pixelHeight: dimensions?.height
+        )
+    }
+
+    private static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 
     private func prepareDirectory() throws {

@@ -285,7 +285,10 @@ targets += [
     ),
     .target(
         name: "BrowserToolsFeature",
-        dependencies: ["FeatureKit"],
+        dependencies: [
+            "FeatureKit",
+            .product(name: "Crypto", package: "swift-crypto")
+        ],
         path: "Sources/Features/BrowserTools/Feature"
     ),
     .target(

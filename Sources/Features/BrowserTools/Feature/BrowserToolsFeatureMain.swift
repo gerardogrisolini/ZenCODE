@@ -130,19 +130,20 @@ struct BrowserOpenTool: FeatureTool {
             try await browser.ensureRunning()
             let tab = try await browser.createTab()
             do {
-                let session = CDPSession(
-                    webSocketURL: tab.webSocketDebuggerURL,
-                    configuration: CDPSessionConfiguration(environment: context.environment)
-                )
-                session.connect()
-                defer { session.disconnect() }
-
-                try await session.preparePage()
-                try await session.ensureConsoleCapture()
-                if let url = requestedURL {
-                    try await session.navigate(to: url.absoluteString)
+                let allowsLoopback = requestedURL.map {
+                    BrowserURLPolicy(environment: context.environment).isLoopbackURL($0.absoluteString)
+                } ?? false
+                return try await BrowserToolsRunner.withTab(
+                    tab,
+                    context: context,
+                    allowsLoopback: allowsLoopback
+                ) { session, resolvedTab in
+                    try await session.ensureConsoleCapture()
+                    if let url = requestedURL {
+                        try await session.navigate(to: url.absoluteString)
+                    }
+                    return try await session.pageMetadata(pageID: resolvedTab.id)
                 }
-                return try await session.pageMetadata(pageID: tab.id)
             } catch {
                 // A page becomes persistent only after successful setup. Do
                 // not leave a partially initialized target behind on failures
@@ -209,7 +210,13 @@ struct BrowserGotoTool: FeatureTool {
             throw BrowserToolsFeatureError.missingArgument("url")
         }
         let url = try BrowserURLPolicy(environment: context.environment).validate(rawURL)
-        return try await BrowserToolsRunner.withPage(pageID: pageID, context: context) { session, tab in
+        let allowsLoopback = BrowserURLPolicy(environment: context.environment)
+            .isLoopbackURL(url.absoluteString)
+        return try await BrowserToolsRunner.withPage(
+            pageID: pageID,
+            context: context,
+            allowsLoopback: allowsLoopback
+        ) { session, tab in
             try await session.ensureConsoleCapture()
             try await session.navigate(to: url.absoluteString)
             return try await session.pageMetadata(pageID: tab.id)
@@ -287,6 +294,7 @@ struct BrowserClosePageTool: FeatureTool {
         do {
             _ = try await browser.tab(id: pageID)
             await browser.closeTab(id: pageID)
+            BrowserViewportStateStore(environment: context.environment).remove(pageID: pageID)
             return BrowserClosePageOutput(pageID: pageID, closed: true)
         } catch let error as ChromeBrowserError {
             throw BrowserToolsFeatureError.browserError(error.localizedDescription)
@@ -311,16 +319,16 @@ enum BrowserToolsRunner {
             let tab = try await browser.createTab()
 
             do {
-                let session = CDPSession(
-                    webSocketURL: tab.webSocketDebuggerURL,
-                    configuration: CDPSessionConfiguration(environment: context.environment)
-                )
-                session.connect()
-                defer { session.disconnect() }
-
-                try await session.preparePage()
-                try await session.navigate(to: url)
-                let result = try await body(session)
+                let allowsLoopback = BrowserURLPolicy(environment: context.environment)
+                    .isLoopbackURL(url)
+                let result = try await withTab(
+                    tab,
+                    context: context,
+                    allowsLoopback: allowsLoopback
+                ) { session, _ in
+                    try await session.navigate(to: url)
+                    return try await body(session)
+                }
                 await closeTabAfterOperation(browser, id: tab.id)
                 return result
             } catch {
@@ -338,6 +346,10 @@ enum BrowserToolsRunner {
         pageID: String,
         context: FeatureContext,
         preparePage: Bool = true,
+        waitForReady: Bool = true,
+        enforceNetworkPolicy: Bool = true,
+        validateCurrentDocument: Bool = true,
+        allowsLoopback: Bool? = nil,
         body: (CDPSession, CDPTabInfo) async throws -> T
     ) async throws -> T {
         let browser = ChromeBrowserManager(
@@ -346,22 +358,107 @@ enum BrowserToolsRunner {
         do {
             try await browser.ensureRunning()
             let tab = try await browser.tab(id: pageID)
-            let session = CDPSession(
-                    webSocketURL: tab.webSocketDebuggerURL,
-                    configuration: CDPSessionConfiguration(environment: context.environment)
-                )
-            session.connect()
-            defer { session.disconnect() }
-            if preparePage {
-                try await session.preparePage()
-            } else {
-                _ = try await session.send(method: "Page.enable")
-            }
-            return try await body(session, tab)
+            let resolvedAllowsLoopback = resolvedLoopbackAuthorization(
+                currentPageURL: tab.url,
+                explicitlyRequestedDestinationIsLoopback: allowsLoopback,
+                environment: context.environment
+            )
+            return try await withTab(
+                tab,
+                context: context,
+                preparePage: preparePage,
+                waitForReady: waitForReady,
+                enforceNetworkPolicy: enforceNetworkPolicy,
+                validateCurrentDocument: validateCurrentDocument,
+                allowsLoopback: resolvedAllowsLoopback,
+                body: body
+            )
         } catch let error as CDPError {
             throw BrowserToolsFeatureError.browserError(error.localizedDescription)
         } catch let error as ChromeBrowserError {
             throw BrowserToolsFeatureError.browserError(error.localizedDescription)
+        }
+    }
+
+    /// A loopback grant belongs to either the page already being inspected or
+    /// a direct, URL-policy-validated local destination requested by a Browser
+    /// navigation tool. Considering both sides preserves normal local-to-public
+    /// and public-to-local development transitions without accepting a grant
+    /// from page-controlled data.
+    static func resolvedLoopbackAuthorization(
+        currentPageURL: String,
+        explicitlyRequestedDestinationIsLoopback: Bool?,
+        environment: [String: String]
+    ) -> Bool {
+        let policy = BrowserURLPolicy(environment: environment)
+        return policy.isLoopbackURL(currentPageURL)
+            || explicitlyRequestedDestinationIsLoopback == true
+    }
+
+    /// Runs an operation against a tab already resolved by the Browser manager.
+    /// Profile-scoped reset uses this to visit every managed target without
+    /// exposing a target URL, CDP command, or selector in a tool contract.
+    static func withTab<T>(
+        _ tab: CDPTabInfo,
+        context: FeatureContext,
+        preparePage: Bool = true,
+        waitForReady: Bool = true,
+        enforceNetworkPolicy: Bool = true,
+        validateCurrentDocument: Bool = true,
+        allowsLoopback: Bool = false,
+        body: (CDPSession, CDPTabInfo) async throws -> T
+    ) async throws -> T {
+        let session = CDPSession(
+            webSocketURL: tab.webSocketDebuggerURL,
+            configuration: CDPSessionConfiguration(environment: context.environment)
+        )
+        session.connect()
+        defer { session.disconnect() }
+        if preparePage {
+            let viewportPreset = BrowserViewportStateStore(environment: context.environment)
+                .preset(for: tab.id)
+            try await session.preparePage(
+                waitForReady: false,
+                viewportPreset: viewportPreset
+            )
+        } else {
+            try await session.enablePageAndRuntime()
+        }
+
+        let networkGuard: BrowserNetworkGuard?
+        if enforceNetworkPolicy {
+            let guardInstance = BrowserNetworkGuard(
+                session: session,
+                requestPolicy: BrowserNetworkRequestPolicy(
+                    environment: context.environment,
+                    allowsLoopback: allowsLoopback
+                )
+            )
+            try await guardInstance.install()
+            networkGuard = guardInstance
+        } else {
+            networkGuard = nil
+        }
+
+        do {
+            if preparePage, waitForReady {
+                try await session.waitReady()
+            }
+            if validateCurrentDocument, let networkGuard {
+                try await networkGuard.validateCurrentDocument()
+            }
+            let result = try await body(session, tab)
+            if let networkGuard {
+                try await networkGuard.validateCurrentDocument()
+                try networkGuard.throwIfBlocked()
+                await networkGuard.stop()
+            }
+            return result
+        } catch {
+            if let networkGuard {
+                await networkGuard.stop()
+            }
+            throw error
         }
     }
 
@@ -383,10 +480,15 @@ public enum BrowserToolsFeatureRunner {
             AnyFeatureTool(BrowserPagesTool()),
             AnyFeatureTool(BrowserGotoTool()),
             AnyFeatureTool(BrowserReadTool()),
+            AnyFeatureTool(BrowserViewportTool()),
+            AnyFeatureTool(BrowserResetStateTool()),
+            AnyFeatureTool(BrowserWaitTool()),
+            AnyFeatureTool(BrowserAssertTool()),
             AnyFeatureTool(BrowserSnapshotTool()),
             AnyFeatureTool(BrowserConsoleTool()),
             AnyFeatureTool(BrowserNetworkTool()),
             AnyFeatureTool(BrowserScreenshotTool()),
+            AnyFeatureTool(BrowserCompareScreenshotsTool()),
             AnyFeatureTool(BrowserPDFTool()),
             AnyFeatureTool(BrowserPerformanceTool()),
             AnyFeatureTool(BrowserActTool()),

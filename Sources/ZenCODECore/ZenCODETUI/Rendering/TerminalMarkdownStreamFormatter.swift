@@ -1031,11 +1031,9 @@ public struct TerminalMarkdownStreamFormatter {
 
     /// Wraps text accounting for the columns already occupied on the current
     /// visual line by the streamed prefix. The prefix was emitted as plain
-    /// text, so the tail starts at approximately column `column`; we reduce the
-    /// available width accordingly so the first visual line does not overflow
-    /// the terminal. Continuation lines use the same reduced width — a minor
-    /// cosmetic trade-off, since the tail rarely wraps in practice and
-    /// preventing overflow on the first line is the primary concern.
+    /// text, so the tail starts at approximately column `column`; only its
+    /// first visual row has reduced space. Continuation rows start at column
+    /// zero and therefore regain the full safe content width.
     private func wrapWithColumnOffset(
         _ text: String,
         startingAtColumn column: Int
@@ -1045,8 +1043,26 @@ public struct TerminalMarkdownStreamFormatter {
               !text.contains("─") else {
             return text
         }
-        let available = max(8, renderWidth - 1 - column)
-        return TerminalANSIText.wrap(text, width: available)
+        let contentWidth = max(8, renderWidth - 1)
+        let firstLineOffset = min(max(0, column), max(0, contentWidth - 1))
+        guard firstLineOffset > 0 else {
+            return TerminalANSIText.wrap(text, width: contentWidth)
+        }
+
+        // Feed the normal wrapper a synthetic prefix for the already-emitted
+        // cells. It consequently gives the first row only its real remaining
+        // width, then naturally starts every wrapped continuation at column 0
+        // with the full `contentWidth`. The prefix contains plain ASCII spaces,
+        // so it neither affects ANSI style tracking nor grapheme measurement.
+        let syntheticPrefix = String(repeating: " ", count: firstLineOffset)
+        let wrapped = TerminalANSIText.wrap(
+            syntheticPrefix + text,
+            width: contentWidth
+        )
+        guard wrapped.hasPrefix(syntheticPrefix) else {
+            return wrapped
+        }
+        return String(wrapped.dropFirst(syntheticPrefix.count))
     }
 
     /// Computes the end of the newly safe pending-line prefix.

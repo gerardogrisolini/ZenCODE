@@ -618,7 +618,8 @@ struct BrowserDialogTool: FeatureTool {
         return try await BrowserToolsRunner.withPage(
             pageID: pageID,
             context: context,
-            preparePage: false
+            preparePage: false,
+            validateCurrentDocument: false
         ) { session, tab in
             _ = try await session.send(
                 method: "Page.handleJavaScriptDialog",
