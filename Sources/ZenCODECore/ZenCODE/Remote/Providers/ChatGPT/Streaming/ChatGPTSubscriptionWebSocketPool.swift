@@ -643,7 +643,20 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private static func isReusable(
         _ task: URLSessionWebSocketTask
     ) -> Bool {
-        task.closeCode == .invalid
+        guard task.closeCode == .invalid else {
+            return false
+        }
+        // A socket that died without a close frame (connection reset, abrupt
+        // teardown) never updates `closeCode`; its task still transitions to
+        // `.completed`/`.canceling` and must not be handed out again.
+        switch task.state {
+        case .completed, .canceling:
+            return false
+        case .running, .suspended:
+            return true
+        @unknown default:
+            return true
+        }
     }
 
     private func dispose(_ entry: Entry) {
