@@ -92,6 +92,9 @@ actor TerminalChatRenderCoordinator {
         let style: ToolBlockStyle
         let rows: Int
         let columnWidth: Int
+        /// The active scroll-region capacity when this block was written.
+        /// `nil` means no persistent terminal overlay was active.
+        let maximumInPlaceRows: Int?
     }
 
     private struct PendingWrite: Sendable {
@@ -513,7 +516,10 @@ actor TerminalChatRenderCoordinator {
 
     // MARK: - Tool blocks
 
-    func writeToolCallStarted(_ toolCall: DirectAgentToolCall) {
+    func writeToolCallStarted(
+        _ toolCall: DirectAgentToolCall,
+        maximumInPlaceRows: Int? = nil
+    ) {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
         prepareForToolOutput()
@@ -522,13 +528,15 @@ actor TerminalChatRenderCoordinator {
         renderToolBlock(
             toolCall,
             lifecycle: .started,
-            style: toolBlockStyle(for: toolOutputDetailLevel)
+            style: toolBlockStyle(for: toolOutputDetailLevel),
+            maximumInPlaceRows: maximumInPlaceRows
         )
     }
 
     func writeToolCallCompleted(
         _ toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult
+        result: DirectAgentToolResult,
+        maximumInPlaceRows: Int? = nil
     ) {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
@@ -540,7 +548,12 @@ actor TerminalChatRenderCoordinator {
         let style = activeToolBlock.flatMap { block in
             block.id == toolCall.id ? block.style : nil
         } ?? toolBlockStyle(for: toolOutputDetailLevel)
-        renderToolBlock(toolCall, lifecycle: .completed(result), style: style)
+        renderToolBlock(
+            toolCall,
+            lifecycle: .completed(result),
+            style: style,
+            maximumInPlaceRows: maximumInPlaceRows
+        )
     }
 
     func toggleToolDetailsOutput() {
@@ -577,7 +590,8 @@ actor TerminalChatRenderCoordinator {
     private func renderToolBlock(
         _ toolCall: DirectAgentToolCall,
         lifecycle: ToolBlockLifecycle,
-        style: ToolBlockStyle
+        style: ToolBlockStyle,
+        maximumInPlaceRows: Int?
     ) {
         let columnWidth = lifecycle.isCompletion
             ? freshColumnWidthProvider()
@@ -601,7 +615,8 @@ actor TerminalChatRenderCoordinator {
                     contentInsetWidth: contentInsetWidth,
                     columnWidth: columnWidth
                 ),
-                columnWidth: columnWidth
+                columnWidth: columnWidth,
+                maximumInPlaceRows: maximumInPlaceRows
             )
         case .completed:
             let activeBlock = activeToolBlock
@@ -613,10 +628,21 @@ actor TerminalChatRenderCoordinator {
                 // transcript rows or leave orphaned rows. Instead, degrade
                 // fail-safe: skip the destructive clear and append the
                 // completed block.
-                block.id == toolCall.id
+                //
+                // A block that exceeded the scrolling region has already
+                // lost its earliest rows to scrollback. Cursor-up is clamped
+                // at the top of the terminal (not the scrolling margin), so
+                // clearing its original row count would descend through the
+                // reserved input/status overlay. Append its completion instead.
+                let maximumSafeRows = min(
+                    block.maximumInPlaceRows ?? Int.max,
+                    maximumInPlaceRows ?? Int.max
+                )
+                return block.id == toolCall.id
                     && block.style == style
                     && standardErrorIsTerminal
                     && block.columnWidth == columnWidth
+                    && block.rows <= maximumSafeRows
             } ?? false
 
             // Starts transfer the one physical rewrite slot to the newest

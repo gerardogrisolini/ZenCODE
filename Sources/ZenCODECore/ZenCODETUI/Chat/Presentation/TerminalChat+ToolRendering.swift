@@ -7,14 +7,23 @@ import Foundation
 
 extension TerminalChat {
     public func writeToolCallStarted(_ toolCall: DirectAgentToolCall) async {
-        await renderCoordinator.writeToolCallStarted(toolCall)
+        let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
+        await renderCoordinator.writeToolCallStarted(
+            toolCall,
+            maximumInPlaceRows: maximumInPlaceRows
+        )
     }
 
     public func writeToolCallCompleted(
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) async {
-        await renderCoordinator.writeToolCallCompleted(toolCall, result: result)
+        let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
+        await renderCoordinator.writeToolCallCompleted(
+            toolCall,
+            result: result,
+            maximumInPlaceRows: maximumInPlaceRows
+        )
     }
 
     public func toggleToolDetailsOutput() async {

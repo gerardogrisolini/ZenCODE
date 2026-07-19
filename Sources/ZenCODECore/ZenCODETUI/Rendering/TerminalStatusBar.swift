@@ -408,6 +408,19 @@ public actor TerminalStatusBar {
         return reservedBottomRowsLocked(state: &state)
     }
 
+    /// Returns the number of physical rows in the active scrolling region.
+    ///
+    /// A transcript block may be replaced in place only when it fits in this
+    /// region. Once it has scrolled beyond the top margin, a cursor-up/erase
+    /// rewrite cannot distinguish its remaining rows from the transcript and
+    /// could continue into this overlay.
+    func scrollableOutputRowCapacity() -> Int? {
+        guard state.isStarted, state.row > 0, state.columns > 0 else {
+            return nil
+        }
+        return max(0, state.row - reservedBottomRowsLocked(state: &state))
+    }
+
     // MARK: - Test support
 
     /// Configures terminal geometry and optional status fields without rendering,

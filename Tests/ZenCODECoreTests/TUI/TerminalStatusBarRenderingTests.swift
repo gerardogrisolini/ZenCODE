@@ -90,6 +90,27 @@ private final class CapturedOutput: @unchecked Sendable {
         #expect(!frame.contains("┘"))
     }
 
+    @Test
+    func scrollableOutputCapacityExcludesTheActiveOverlayRows() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 24, columns: 100, modelID: "test-model")
+
+        // A standalone status bar reserves its three frame rows.
+        #expect(await bar.scrollableOutputRowCapacity() == 21)
+
+        await bar.updateInputPanel(
+            text: "Prompt",
+            cursorIndex: 6,
+            modeText: "Prompt",
+            helpText: "Enter to send"
+        )
+
+        // The attached input panel adds its three chrome rows, one input row,
+        // and the two status rows: 24 - (3 + 1 + 2) = 18.
+        #expect(await bar.scrollableOutputRowCapacity() == 18)
+    }
+
     // MARK: - Render cache
 
     @Test

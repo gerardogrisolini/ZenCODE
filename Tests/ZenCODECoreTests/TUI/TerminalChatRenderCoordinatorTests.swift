@@ -241,6 +241,51 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func detailedToolBlockBeyondScrollRegionAppendsCompletionWithoutErasingOverlay() async {
+        let scrollableRows = 12
+        let content = (0..<40)
+            .map { "let value\($0) = \($0)" }
+            .joined(separator: "\n")
+        let renderer = makeRenderer(
+            stdinIsTerminal: true,
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "tool-overflowing-scroll-region",
+            name: "local.writeFile",
+            argumentsObject: [
+                "path": "/tmp/project/Sources/App.swift",
+                "content": content
+            ],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallStarted(
+            toolCall,
+            maximumInPlaceRows: scrollableRows
+        )
+        let started = await renderer.snapshot()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Wrote file", summary: "Wrote file"),
+            maximumInPlaceRows: scrollableRows
+        )
+
+        let completionText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventCountBeforeCompletion)
+            .map(\.text)
+            .joined()
+
+        #expect(started.activeDetailedToolRenderedRowCount > scrollableRows)
+        #expect(!containsCursorUpSequence(completionText))
+        #expect(TerminalANSIText.stripANSI(completionText).contains("status: ✅"))
+    }
+
+    @Test
     func overviewIsDeferredUntilToolNoLongerOwnsRows() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = DirectAgentToolCall(
