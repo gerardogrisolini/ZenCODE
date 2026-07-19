@@ -2,7 +2,7 @@
 
 **ZenCODE** is a flexible coding agent for the terminal and ACP. Drive it with cloud providers or your existing ChatGPT and Claude subscriptions.
 
-Keywords: ZenCODE, coding agent, AI coding assistant, ChatGPT subscription coding agent, Claude subscription coding agent, cloud LLM agent, OpenAI-compatible coding agent, OpenRouter coding agent, ACP agent, terminal coding agent for macOS and Linux.
+Keywords: ZenCODE, coding agent, AI coding assistant, cloud LLM agent, OpenAI-compatible coding agent, OpenRouter coding agent, ACP agent, terminal coding agent for macOS and Linux.
 
 ZenCODE is provider-agnostic: bring your own API key for any OpenAI-compatible endpoint (OpenRouter, local servers, and more), or sign in once with your ChatGPT or Claude subscription through the browser.
 

@@ -1622,7 +1622,9 @@ private final class ChatGPTSubscriptionWebSocketPoolHarness: @unchecked Sendable
         state.requests.withLock { $0 }
     }
 
-    func closeCount(for task: URLSessionWebSocketTask) -> Int {
+    func closeCount(
+        for task: any ChatGPTSubscriptionWebSocketTask
+    ) -> Int {
         state.closeCounts.withLock { $0[ObjectIdentifier(task), default: 0] }
     }
 }

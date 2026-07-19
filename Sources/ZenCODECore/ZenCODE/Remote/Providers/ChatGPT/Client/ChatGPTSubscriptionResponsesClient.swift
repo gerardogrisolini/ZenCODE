@@ -16,7 +16,7 @@ public struct ChatGPTSubscriptionResponsesClient {
 
     struct WebSocketLease {
         let sessionID: String
-        let task: URLSessionWebSocketTask
+        let task: any ChatGPTSubscriptionWebSocketTask
         let isCached: Bool
         let isReused: Bool
         /// Fences a late release from changing the ownership of a later lease
@@ -234,7 +234,7 @@ public struct ChatGPTSubscriptionResponsesClient {
     }
 
     static func receiveWebSocketMessage(
-        from task: URLSessionWebSocketTask,
+        from task: any ChatGPTSubscriptionWebSocketTask,
         timeoutNanoseconds: UInt64?
     ) async throws -> URLSessionWebSocketTask.Message {
         guard let timeoutNanoseconds, timeoutNanoseconds > 0 else {

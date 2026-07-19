@@ -11,7 +11,7 @@ import Synchronization
 
 public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private struct Entry {
-        let task: URLSessionWebSocketTask
+        let task: any ChatGPTSubscriptionWebSocketTask
         /// Recorded once when the task is created; reuse and heartbeats never
         /// extend a connection's absolute lifetime.
         let openedAt: ContinuousClock.Instant
@@ -23,7 +23,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
 
     private struct TransientEntry {
         let sessionID: String
-        let task: URLSessionWebSocketTask
+        let task: any ChatGPTSubscriptionWebSocketTask
     }
 
     private struct State {
@@ -48,16 +48,16 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private struct ReleaseResult {
         var heartbeatToCancel: Task<Void, Never>?
         var entryToClose: Entry?
-        var taskToClose: URLSessionWebSocketTask?
+        var taskToClose: (any ChatGPTSubscriptionWebSocketTask)?
         var heartbeatIDToStart: UInt64?
     }
 
     static let defaultHeartbeatIntervalNanoseconds: UInt64 = 30 * 1_000_000_000
 
-    /// A newly resumed URLSessionWebSocketTask can report `ENOTCONN` when the
-    /// first application frame races its HTTP upgrade. Probe it with a control
-    /// ping before sending the response payload, retrying briefly on the same
-    /// task while the handshake finishes.
+    /// A newly resumed WebSocket can report `ENOTCONN` when the first
+    /// application frame races its HTTP upgrade. Probe it with a control ping
+    /// before sending the response payload, retrying briefly on the same task
+    /// while the handshake finishes.
     static let defaultConnectionReadinessAttempts = 3
     static let defaultConnectionReadinessRetryDelayNanoseconds: UInt64 =
         100_000_000
@@ -79,9 +79,13 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private let webSocketTaskFactory: @Sendable (
         URLSession,
         URLRequest
-    ) -> URLSessionWebSocketTask
-    private let resumeWebSocketTask: @Sendable (URLSessionWebSocketTask) -> Void
-    private let closeWebSocketTask: @Sendable (URLSessionWebSocketTask) -> Void
+    ) -> any ChatGPTSubscriptionWebSocketTask
+    private let resumeWebSocketTask: @Sendable (
+        any ChatGPTSubscriptionWebSocketTask
+    ) -> Void
+    private let closeWebSocketTask: @Sendable (
+        any ChatGPTSubscriptionWebSocketTask
+    ) -> Void
     private let state = Mutex(State())
 
     public convenience init() {
@@ -103,16 +107,16 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         webSocketTaskFactory: @escaping @Sendable (
             URLSession,
             URLRequest
-        ) -> URLSessionWebSocketTask = { urlSession, request in
-            urlSession.webSocketTask(with: request)
+        ) -> any ChatGPTSubscriptionWebSocketTask = { _, request in
+            ChatGPTSubscriptionNetworkWebSocketTask(request: request)
         },
         resumeWebSocketTask: @escaping @Sendable (
-            URLSessionWebSocketTask
+            any ChatGPTSubscriptionWebSocketTask
         ) -> Void = { task in
             task.resume()
         },
         closeWebSocketTask: @escaping @Sendable (
-            URLSessionWebSocketTask
+            any ChatGPTSubscriptionWebSocketTask
         ) -> Void = { task in
             task.cancel(with: .normalClosure, reason: nil)
         }
@@ -382,7 +386,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private func makeWebSocketTask(
         request: URLRequest,
         urlSession: URLSession
-    ) -> URLSessionWebSocketTask {
+    ) -> any ChatGPTSubscriptionWebSocketTask {
         let task = webSocketTaskFactory(urlSession, request)
         resumeWebSocketTask(task)
         return task
@@ -390,7 +394,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
 
     private func startHeartbeat(
         sessionID: String,
-        webSocketTask: URLSessionWebSocketTask,
+        webSocketTask: any ChatGPTSubscriptionWebSocketTask,
         heartbeatID: UInt64
     ) {
         let heartbeatTask = makeHeartbeatTask(
@@ -417,7 +421,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
 
     private func makeHeartbeatTask(
         sessionID: String,
-        webSocketTask: URLSessionWebSocketTask,
+        webSocketTask: any ChatGPTSubscriptionWebSocketTask,
         heartbeatID: UInt64
     ) -> Task<Void, Never> {
         let interval = heartbeatIntervalNanoseconds
@@ -492,7 +496,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
 
     private func shouldRetireIdleEntry(
         sessionID: String,
-        webSocketTask: URLSessionWebSocketTask,
+        webSocketTask: any ChatGPTSubscriptionWebSocketTask,
         heartbeatID: UInt64
     ) -> Bool {
         return state.withLock { state in
@@ -513,7 +517,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     }
 
     private static func sendPing(
-        to task: URLSessionWebSocketTask
+        to task: any ChatGPTSubscriptionWebSocketTask
     ) async throws {
         try await awaitPing { completion in
             task.sendPing(pongReceiveHandler: completion)
@@ -524,7 +528,9 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     /// deliberately runs before the first response payload is sent, because
     /// URLSession otherwise may reject that frame while the upgrade is still
     /// in progress under a burst of parent/sub-agent connections.
-    func waitUntilReady(_ task: URLSessionWebSocketTask) async throws {
+    func waitUntilReady(
+        _ task: any ChatGPTSubscriptionWebSocketTask
+    ) async throws {
         try await Self.waitUntilReady {
             try await Self.sendReadinessPing(to: task)
         }
@@ -563,7 +569,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     }
 
     private static func sendReadinessPing(
-        to task: URLSessionWebSocketTask
+        to task: any ChatGPTSubscriptionWebSocketTask
     ) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
@@ -612,7 +618,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
 
     private func discardIdleEntry(
         sessionID: String,
-        webSocketTask: URLSessionWebSocketTask,
+        webSocketTask: any ChatGPTSubscriptionWebSocketTask,
         heartbeatID: UInt64
     ) {
         let entry = state.withLock { state -> Entry? in
@@ -641,7 +647,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     }
 
     private static func isReusable(
-        _ task: URLSessionWebSocketTask
+        _ task: any ChatGPTSubscriptionWebSocketTask
     ) -> Bool {
         guard task.closeCode == .invalid else {
             return false
@@ -665,7 +671,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     }
 
     private func close(
-        _ task: URLSessionWebSocketTask
+        _ task: any ChatGPTSubscriptionWebSocketTask
     ) {
         closeWebSocketTask(task)
     }
