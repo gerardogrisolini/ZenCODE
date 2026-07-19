@@ -167,15 +167,9 @@ extension ZenCODEACPBridge {
         )
     }
 
-    public func refreshSessionStateIfAvailable(
-        sessionID: String,
-        saveRuntimeCache: Bool = false
-    ) async {
+    public func refreshSessionStateIfAvailable(sessionID: String) async {
         guard let snapshot = await sessionRunner.snapshotSession(id: sessionID) else {
             return
-        }
-        if saveRuntimeCache {
-            await sessionRunner.saveSessionRuntimeCache(id: sessionID)
         }
         guard let session = sessions[sessionID] else {
             return

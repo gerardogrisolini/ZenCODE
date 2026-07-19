@@ -47,11 +47,7 @@ struct BundledFeatureCatalogParityTests {
     }
 
     private func dumpedPackageProductNames(at packageRoot: URL) throws -> Set<String> {
-        var environment = ProcessInfo.processInfo.environment
-        environment["ZENCODE_BUILD_LOCAL_MLX"] = "0"
-        environment["ZENCODE_BUILD_DS4"] = "0"
-        environment.removeValue(forKey: "ZENCODE_DS4_ROOT")
-        environment.removeValue(forKey: "DS4_ROOT")
+        let environment = ProcessInfo.processInfo.environment
 
         let scratchPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("zencode-dump-package-\(UUID().uuidString)", isDirectory: true)

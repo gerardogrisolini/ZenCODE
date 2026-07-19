@@ -120,7 +120,7 @@ extension ACPCompatibilityTests {
     @Test
     func newSessionDoesNotDiscoverInternalXcodeWhenACPProvidesXcodeTools() async throws {
         let supportURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mlx-acp-client-xcode-mcp-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("acp-client-xcode-mcp-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: supportURL)
         }
@@ -400,7 +400,7 @@ extension ACPCompatibilityTests {
     @Test
     func installingSameACPProvidedXcodeMCPServerReusesActiveConnection() async throws {
         let supportURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mlx-acp-xcode-mcp-reuse-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("acp-xcode-mcp-reuse-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: supportURL)
         }
@@ -455,7 +455,7 @@ extension ACPCompatibilityTests {
     @Test
     func acpProvidedXcodeMCPServerRegistersThroughCentralRuntime() async throws {
         let supportURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mlx-acp-xcode-mcp-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("acp-xcode-mcp-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: supportURL)
         }

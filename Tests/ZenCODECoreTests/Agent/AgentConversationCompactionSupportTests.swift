@@ -114,7 +114,7 @@ struct AgentConversationCompactionSupportTests {
             AgentRuntimeMessage(role: .system, content: "System prompt"),
             AgentRuntimeMessage(
                 role: .user,
-                content: "Important durable decision: keep mlx-server cache reuse stable."
+                content: "Important durable decision: keep remote-server cache reuse stable."
                     + String(repeating: " context", count: 160)
             ),
             AgentRuntimeMessage(
@@ -157,7 +157,7 @@ struct AgentConversationCompactionSupportTests {
 
         #expect(firstCompaction.wasCompacted)
         #expect(secondCompaction.wasCompacted)
-        #expect(compactedSystemPrompt.contains("keep mlx-server cache reuse stable"))
+        #expect(compactedSystemPrompt.contains("keep remote-server cache reuse stable"))
         #expect(compactedSystemPrompt.components(separatedBy: AgentConversationCompactionSupport.memorySummaryHeader).count == 2)
         #expect(secondCompaction.messages.contains { $0.content == "Continuing from the compacted memory." })
         #expect(secondCompaction.messages.last?.content == "Next request after compaction.")

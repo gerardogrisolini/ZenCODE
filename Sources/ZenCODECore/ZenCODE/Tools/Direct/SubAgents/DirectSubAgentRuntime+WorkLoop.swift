@@ -132,11 +132,6 @@ extension DirectSubAgentRuntime {
             agent.latestContentPreview = nil
         case let .modelLoaded(modelID):
             agent.modelID = modelID.nilIfBlank ?? agent.modelID
-        case let .modelLoadedDetails(details):
-            agent.modelID = details.modelID.nilIfBlank ?? agent.modelID
-            agent.modelRuntime = details.runtime ?? agent.modelRuntime
-        case let .modelRuntime(runtime):
-            agent.modelRuntime = runtime.nilIfBlank ?? agent.modelRuntime
         case let .content(delta):
             // Assistant content is also streamed as deltas. Buffer it without
             // touching snapshot-visible fields; it becomes visible only when a

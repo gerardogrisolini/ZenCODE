@@ -255,27 +255,6 @@ public actor AgentCoreBackend {
         return seedSnapshot(id: sessionID, seed: seed)
     }
 
-    public func saveSessionRuntimeCache(id sessionID: String) async {
-        guard let backend = activeBackend else {
-            return
-        }
-        await backend.saveSessionRuntimeCache(id: sessionID)
-    }
-
-            public func restoreSessionRuntimeCache(id sessionID: String) async {
-        // Resolve the backend lazily: restoring the KV cache happens before
-        // the first prompt (e.g. right after session/new, session/load or
-        // session/resume), so the underlying backend may not exist yet.
-        // resolveBackend seeds the backend with the known sessions.
-        let backend: any AgentRuntimeBackend
-        do {
-            backend = try await resolveBackend(onEvent: { _ in })
-        } catch {
-            return
-        }
-        await backend.restoreSessionRuntimeCache(id: sessionID)
-    }
-
     public func sendPrompt(
         sessionID: String,
         prompt: String,

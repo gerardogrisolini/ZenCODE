@@ -139,7 +139,7 @@ extension RemoteSessionSnapshotTests {
         let client = RemoteGenerationClient(
             configuration: configuration,
             provider: AgentRemoteProvider(
-                name: "Remote mlx-server",
+                name: "Remote remote-server",
                 baseURL: "http://127.0.0.1:8080/v1",
                 modelID: "remote-model",
                 chatEndpoint: .responses

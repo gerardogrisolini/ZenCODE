@@ -174,7 +174,7 @@ extension AgentConfigurationTests {
             isDirectory: true
         )
         let configuration = try AgentConfiguration(
-            hostedModelID: "mlx-community/test",
+            hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: workingDirectory
         )
@@ -333,9 +333,9 @@ extension AgentConfigurationTests {
         let providerID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
         let fallbackTitleModel = AgentSettingsModelManifestFactory.remoteAPIModel(
             title: nil,
-            modelID: "mlx-community/qwen3",
+            modelID: "remote-community/qwen3",
             providerID: providerID,
-            providerName: "mlx-server",
+            providerName: "remote-server",
             baseURL: "http://127.0.0.1:8080/v1",
             chatEndpoint: .responses,
             configuredContextWindowLimit: nil,
@@ -344,9 +344,9 @@ extension AgentConfigurationTests {
         )
         let titledModel = AgentSettingsModelManifestFactory.remoteAPIModel(
             title: "Qwen3 Local",
-            modelID: "mlx-community/qwen3-local",
+            modelID: "remote-community/qwen3-local",
             providerID: providerID,
-            providerName: "mlx-server",
+            providerName: "remote-server",
             baseURL: "http://127.0.0.1:8080/v1",
             chatEndpoint: .responses,
             configuredContextWindowLimit: nil,
@@ -356,12 +356,12 @@ extension AgentConfigurationTests {
 
         let group = try #require(
             AgentModelCatalogPresentation.groupedByProvider([fallbackTitleModel, titledModel])
-                .first { $0.title == "mlx-server" }
+                .first { $0.title == "remote-server" }
         )
 
-        #expect(fallbackTitleModel.displayTitle == "mlx-server - mlx-community/qwen3")
-        #expect(AgentModelCatalogPresentation.modelTitle(for: fallbackTitleModel) == "mlx-community/qwen3")
-        #expect(AgentModelCatalogPresentation.modelTitle(for: fallbackTitleModel, in: group) == "mlx-community/qwen3")
+        #expect(fallbackTitleModel.displayTitle == "remote-server - remote-community/qwen3")
+        #expect(AgentModelCatalogPresentation.modelTitle(for: fallbackTitleModel) == "remote-community/qwen3")
+        #expect(AgentModelCatalogPresentation.modelTitle(for: fallbackTitleModel, in: group) == "remote-community/qwen3")
         #expect(AgentModelCatalogPresentation.modelTitle(for: titledModel, in: group) == "Qwen3 Local")
     }
 }

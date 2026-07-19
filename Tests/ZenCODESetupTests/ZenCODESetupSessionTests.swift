@@ -10,13 +10,37 @@ import Testing
 
 @Suite
 struct ZenCODESetupSessionTests {
-    // Two distinct, equatable manifests used to detect "changed" transitions
-    // without touching the terminal.
-    private static func manifest(commands: [String] = []) -> AgentSettingsManifest {
+    private static func manifest(
+        models: [AgentSettingsModelManifest],
+        commands: [String] = []
+    ) -> AgentSettingsManifest {
         AgentSettingsManifest(
-            models: [],
+            models: models,
             localExecAllowedCommands: commands
         )
+    }
+
+    private static func emptyManifest(commands: [String] = []) -> AgentSettingsManifest {
+        manifest(models: [], commands: commands)
+    }
+
+    private static func remoteManifest(commands: [String] = []) -> AgentSettingsManifest {
+        let providerID = UUID()
+        let modelID = "test-model"
+        let provider = AgentRemoteProvider(
+            id: providerID,
+            name: "Test provider",
+            baseURL: "https://example.invalid/v1",
+            modelID: modelID
+        )
+        let model = AgentSettingsModelManifest(
+            id: "remote:test-model",
+            kind: .remoteAPI,
+            modelID: modelID,
+            providerID: providerID,
+            provider: provider
+        )
+        return manifest(models: [model], commands: commands)
     }
 
     @Test
@@ -29,9 +53,19 @@ struct ZenCODESetupSessionTests {
     }
 
     @Test
-    func quickSetupMarksSettingsChangedAndWrites() {
+    func existingManifestWithoutModelsReportsNoModels() {
+        let empty = Self.emptyManifest(commands: ["ls"])
+        let session = SetupSession(originalManifest: empty)
+
+        #expect(session.manifest == empty)
+        #expect(session.shouldWriteSettings == false)
+        #expect(session.outcome == .noModels)
+    }
+
+    @Test
+    func quickSetupMarksRemoteSettingsChangedAndWrites() {
         var session = SetupSession(originalManifest: nil)
-        let configured = Self.manifest(commands: ["ls"])
+        let configured = Self.remoteManifest(commands: ["ls"])
 
         session.applyQuickSetup(configured)
 
@@ -42,13 +76,10 @@ struct ZenCODESetupSessionTests {
 
     @Test
     func unchangedSectionOnExistingManifestDoesNotForceWrite() {
-        let original = Self.manifest(commands: ["ls"])
+        let original = Self.remoteManifest(commands: ["ls"])
         var session = SetupSession(originalManifest: original)
 
-        session.apply(
-            section: .telegram,
-            result: SetupSectionConfigurationResult(manifest: original)
-        )
+        session.apply(SetupSectionConfigurationResult(manifest: original))
 
         #expect(session.manifest == original)
         // Nothing changed and settings already existed, so no rewrite is forced.
@@ -58,14 +89,14 @@ struct ZenCODESetupSessionTests {
 
     @Test
     func sectionThatMutatesManifestMarksSettingsChanged() {
-        let original = Self.manifest(commands: ["ls"])
+        let original = Self.remoteManifest(commands: ["ls"])
         var session = SetupSession(originalManifest: original)
-        let mutated = Self.manifest(commands: ["ls", "cat"])
-
-        session.apply(
-            section: .telegram,
-            result: SetupSectionConfigurationResult(manifest: mutated)
+        let mutated = Self.manifest(
+            models: original.models,
+            commands: ["ls", "cat"]
         )
+
+        session.apply(SetupSectionConfigurationResult(manifest: mutated))
 
         #expect(session.manifest == mutated)
         #expect(session.shouldWriteSettings)
@@ -73,76 +104,63 @@ struct ZenCODESetupSessionTests {
     }
 
     @Test
-    func loadedManifestWithoutChangesStillWritesWhenNoOriginalExisted() {
-        // Simulates quick setup producing a manifest then a no-op section: the
-        // change flag from quick setup must survive an unchanged section.
+    func quickSetupChangeSurvivesAnUnchangedSection() {
+        // The change flag from quick setup must survive an unchanged section.
         var session = SetupSession(originalManifest: nil)
-        let configured = Self.manifest(commands: ["ls"])
+        let configured = Self.remoteManifest(commands: ["ls"])
         session.applyQuickSetup(configured)
 
-        session.apply(
-            section: .voice,
-            result: SetupSectionConfigurationResult(manifest: configured)
-        )
+        session.apply(SetupSectionConfigurationResult(manifest: configured))
 
         #expect(session.shouldWriteSettings)
+        #expect(session.outcome == .write(manifest: configured, settingsWillBeWritten: true))
     }
 
     @Test
-    func additionalSectionMarksAdditionalRunWithoutForcingChange() {
-        let original = Self.manifest(commands: ["ls"])
+    func clearingAllModelsCannotProduceAWritableOutcome() {
+        let original = Self.remoteManifest(commands: ["ls"])
         var session = SetupSession(originalManifest: original)
-        let additional: SetupSection = .additionalGroup(0, title: "Extra", aliases: [])
+        let empty = Self.emptyManifest(commands: ["ls"])
 
-        session.apply(
-            section: additional,
-            result: SetupSectionConfigurationResult(manifest: original)
-        )
+        session.apply(SetupSectionConfigurationResult(manifest: empty))
 
-        #expect(session.manifest == original)
-        // An additional section that returns the same manifest is not a change.
-        #expect(session.shouldWriteSettings == false)
-        #expect(session.outcome == .write(manifest: original, settingsWillBeWritten: false))
+        #expect(session.manifest == empty)
+        #expect(session.outcome == .noModels)
     }
 
     @Test
-    func removedStandaloneConfigurationResetsManifestAndReportsAdditionalOnly() {
-        let original = Self.manifest(commands: ["ls"])
-        var session = SetupSession(originalManifest: original)
-        let additional: SetupSection = .additionalGroup(0, title: "Extra", aliases: [])
+    func remoteResetIsAvailableWithoutConfiguredModels() {
+        let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
 
-        session.apply(
-            section: additional,
-            result: SetupSectionConfigurationResult(
-                manifest: original,
-                additionalResult: .removedStandaloneConfiguration
-            )
-        )
-
-        #expect(session.manifest == nil)
-        #expect(session.shouldWriteSettings == false)
-        // Additional work ran, so setup completes instead of throwing noModels.
-        #expect(session.outcome == .additionalOnly)
+        #expect(options.contains { $0.section == .resetRemoteConfiguration })
+        #expect(!SetupSection.resetRemoteConfiguration.requiresConfiguredModels)
+        #expect(SetupSection.resetRemoteConfiguration.title == "Reset remote configuration")
     }
 
     @Test
-    func removedStandaloneConfigurationClearsPriorChangeFlag() {
-        // Even if a settings change was recorded earlier, removing a standalone
-        // configuration returns to a clean, model-less state.
-        var session = SetupSession(originalManifest: nil)
-        session.applyQuickSetup(Self.manifest(commands: ["ls"]))
-        let additional: SetupSection = .additionalGroup(0, title: "Extra", aliases: [])
+    func remoteResetRemovesProvidedConfigurationFilesOnce() throws {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? fileManager.removeItem(at: directory)
+        }
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        session.apply(
-            section: additional,
-            result: SetupSectionConfigurationResult(
-                manifest: nil,
-                additionalResult: .removedStandaloneConfiguration
-            )
+        let settingsURL = directory.appendingPathComponent("settings.json")
+        let profilesURL = directory.appendingPathComponent("agents.json")
+        let missingURL = directory.appendingPathComponent("missing.json")
+        try Data("settings".utf8).write(to: settingsURL)
+        try Data("profiles".utf8).write(to: profilesURL)
+
+        let result = try ZenCODESetupRunner.resetRemoteConfiguration(
+            fileManager: fileManager,
+            configurationURLs: [settingsURL, settingsURL, profilesURL, missingURL]
         )
 
-        #expect(session.manifest == nil)
-        #expect(session.shouldWriteSettings == false)
-        #expect(session.outcome == .additionalOnly)
+        #expect(result.removedURLs == [settingsURL.standardizedFileURL, profilesURL.standardizedFileURL])
+        #expect(result.missingURLs == [missingURL.standardizedFileURL])
+        #expect(!fileManager.fileExists(atPath: settingsURL.path))
+        #expect(!fileManager.fileExists(atPath: profilesURL.path))
     }
 }

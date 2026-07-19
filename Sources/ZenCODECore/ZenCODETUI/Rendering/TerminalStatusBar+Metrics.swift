@@ -45,14 +45,6 @@ extension TerminalStatusBar {
             .map(String.init) ?? modelID
     }
     
-    static func runtimeDisplayName(_ runtime: String?) -> String? {
-        guard let runtime = runtime?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !runtime.isEmpty else {
-            return nil
-        }
-        return runtime.uppercased()
-    }
-    
     nonisolated func mergedMetrics(
         current: DirectAgentGenerationMetrics?,
         update: DirectAgentGenerationMetrics

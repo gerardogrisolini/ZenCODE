@@ -491,9 +491,6 @@ public protocol AgentRuntimeBackend: Actor {
     func closeSession(id: String) async
     func shutdown() async
 
-    func saveSessionRuntimeCache(id: String) async
-    func restoreSessionRuntimeCache(id: String) async
-
     func compactSession(
         id: String,
         force: Bool
@@ -539,10 +536,6 @@ extension AgentRuntimeBackend {
     public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
         []
     }
-
-    public func saveSessionRuntimeCache(id _: String) async {}
-
-    public func restoreSessionRuntimeCache(id _: String) async {}
 
     public func compactSession(
         id _: String,

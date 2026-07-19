@@ -218,7 +218,7 @@ struct TelegramTUITests {
     @Test
     func telegramProgressReporterRequiresActiveTelegramSession() throws {
         let configuration = try AgentConfiguration(
-            hostedModelID: "mlx-community/test",
+            hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
         )
@@ -281,7 +281,7 @@ struct TelegramTUITests {
     func telegramPermissionBrokerWaitsForRemoteReply() async throws {
         let broker = TerminalTelegramPermissionBroker()
         let collector = TelegramTestMessageCollector()
-        let command = "mlx-telegram-permission-test-\(UUID().uuidString)"
+        let command = "remote-telegram-permission-test-\(UUID().uuidString)"
         let request = Self.localExecAuthorizationRequest(command: "\(command) --flag")
 
         let authorization = Task {

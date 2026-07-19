@@ -354,9 +354,6 @@ extension TerminalStatusBar {
             }
             fragments.append(model)
         }
-        if let latestModelRuntime = state.latestModelRuntime {
-            fragments.append(latestModelRuntime)
-        }
         if tokensUsed != nil || state.latestContextWindow?.maxTokens != nil {
             let contextText = Self.tokenWindowText(
                 usedTokens: state.latestContextWindow?.usedTokens,

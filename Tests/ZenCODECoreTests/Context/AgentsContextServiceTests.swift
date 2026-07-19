@@ -1,5 +1,5 @@
 //
-//  MLXAgentsContextServiceTests.swift
+//  AgentsContextServiceTests.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 27/05/26.
@@ -10,7 +10,7 @@ import ZenCODECore
 import Testing
 
 @Suite
-struct MLXAgentsContextServiceTests {
+struct AgentsContextServiceTests {
     @Test
     func globalAgentsTemplateFramesAssistantBehavior() {
         let content = AgentsContextService.defaultGlobalAgentsContent
@@ -64,7 +64,7 @@ struct MLXAgentsContextServiceTests {
     func promptSectionFiltersProjectMetaGuidance() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(
-                "mlx-agents-tests-\(UUID().uuidString)",
+                "agents-service-tests-\(UUID().uuidString)",
                 isDirectory: true
             )
         let globalURL = rootURL.appendingPathComponent("global", isDirectory: true)

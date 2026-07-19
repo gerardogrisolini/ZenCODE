@@ -129,7 +129,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
 }
 
 public enum TerminalSessionStore {
-    public static let fileExtension = "mlxsession"
+    public static let fileExtension = "session"
 
     public static func save(
         _ session: TerminalSavedSession,
@@ -165,13 +165,17 @@ public enum TerminalSessionStore {
         fileManager: FileManager = .default,
         supportDirectoryURL: URL? = nil
     ) throws -> TerminalSavedSession {
-        try load(
-            from: sessionFileURL(
-                name: name,
-                workingDirectory: workingDirectory,
-                fileManager: fileManager,
-                supportDirectoryURL: supportDirectoryURL
-            )
+        let directoryURL = sessionsDirectoryURL(
+            for: workingDirectory,
+            fileManager: fileManager,
+            supportDirectoryURL: supportDirectoryURL
+        )
+        try migrateNonCurrentSessionFiles(
+            in: directoryURL,
+            fileManager: fileManager
+        )
+        return try load(
+            from: directoryURL.appendingPathComponent(filename(for: name))
         )
     }
 
@@ -201,6 +205,10 @@ public enum TerminalSessionStore {
             return []
         }
 
+        try migrateNonCurrentSessionFiles(
+            in: directoryURL,
+            fileManager: fileManager
+        )
         let fileURLs = try fileManager.contentsOfDirectory(
             at: directoryURL,
             includingPropertiesForKeys: nil
@@ -300,23 +308,56 @@ public enum TerminalSessionStore {
         workingDirectory.standardizedFileURL.path
     }
 
+    private static func migrateNonCurrentSessionFiles(
+        in directoryURL: URL,
+        fileManager: FileManager
+    ) throws {
+        guard fileManager.fileExists(atPath: directoryURL.path) else {
+            return
+        }
+
+        let fileURLs = try fileManager.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: nil
+        )
+        for sourceURL in fileURLs where sourceURL.pathExtension != fileExtension {
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(
+                atPath: sourceURL.path,
+                isDirectory: &isDirectory
+            ), !isDirectory.boolValue,
+            let session = try? load(from: sourceURL) else {
+                continue
+            }
+
+            let destinationURL = directoryURL.appendingPathComponent(
+                filename(for: session.name)
+            )
+            guard sourceURL.standardizedFileURL != destinationURL.standardizedFileURL,
+                  !fileManager.fileExists(atPath: destinationURL.path) else {
+                continue
+            }
+            try? fileManager.moveItem(at: sourceURL, to: destinationURL)
+        }
+    }
+
     private static func validate(_ session: TerminalSavedSession) throws {
         guard session.version == TerminalSavedSession.currentVersion else {
-            throw MLXTerminalSessionStoreError.unsupportedVersion(session.version)
+            throw TerminalSessionStoreError.unsupportedVersion(session.version)
         }
         guard session.name.nilIfBlank != nil else {
-            throw MLXTerminalSessionStoreError.emptyName
+            throw TerminalSessionStoreError.emptyName
         }
         guard session.sessionID.nilIfBlank != nil else {
-            throw MLXTerminalSessionStoreError.emptySessionID
+            throw TerminalSessionStoreError.emptySessionID
         }
         guard session.workingDirectoryPath.nilIfBlank != nil else {
-            throw MLXTerminalSessionStoreError.emptyWorkingDirectory
+            throw TerminalSessionStoreError.emptyWorkingDirectory
         }
     }
 }
 
-public enum MLXTerminalSessionStoreError: LocalizedError, Equatable {
+public enum TerminalSessionStoreError: LocalizedError, Equatable {
     case emptyName
     case emptySessionID
     case emptyWorkingDirectory

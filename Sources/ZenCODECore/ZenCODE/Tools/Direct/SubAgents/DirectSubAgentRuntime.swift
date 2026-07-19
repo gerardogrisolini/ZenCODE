@@ -72,7 +72,6 @@ public actor DirectSubAgentRuntime {
         public var accumulatedOutput: String?
         public var latestError: String?
         public var modelID: String? = nil
-        public var modelRuntime: String? = nil
         public var currentActivity: String? = nil
         var pendingContentBuffer: String? = nil
         public var currentToolName: String? = nil
@@ -101,7 +100,6 @@ public actor DirectSubAgentRuntime {
         public let status: Status
         public let pending: Bool
         public let modelID: String?
-        public let modelRuntime: String?
         public let currentActivity: String?
         public let currentToolName: String?
         public let currentToolTarget: String?
@@ -127,7 +125,6 @@ public actor DirectSubAgentRuntime {
             status: Status,
             pending: Bool,
             modelID: String? = nil,
-            modelRuntime: String? = nil,
             currentActivity: String? = nil,
             currentToolName: String? = nil,
             currentToolTarget: String? = nil,
@@ -152,7 +149,6 @@ public actor DirectSubAgentRuntime {
             self.status = status
             self.pending = pending
             self.modelID = modelID
-            self.modelRuntime = modelRuntime
             self.currentActivity = currentActivity
             self.currentToolName = currentToolName
             self.currentToolTarget = currentToolTarget

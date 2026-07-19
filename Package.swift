@@ -1,52 +1,6 @@
 // swift-tools-version: 6.3
 
-import Foundation
 import PackageDescription
-
-func environmentPath(_ name: String) -> String? {
-    guard let rawValue = Context.environment[name], !rawValue.isEmpty else {
-        return nil
-    }
-    return URL(fileURLWithPath: rawValue).standardizedFileURL.path
-}
-
-func buildFlag(_ name: String, default defaultValue: Bool) -> Bool {
-    guard let rawValue = Context.environment[name]?.lowercased() else {
-        return defaultValue
-    }
-    switch rawValue {
-    case "1", "true", "yes", "on":
-        return true
-    case "0", "false", "no", "off":
-        return false
-    default:
-        return defaultValue
-    }
-}
-
-let localMLXEnabled: Bool = {
-    #if os(macOS)
-    buildFlag("ZENCODE_BUILD_LOCAL_MLX", default: true)
-    #else
-    false
-    #endif
-}()
-
-let ds4RootPath = environmentPath("ZENCODE_DS4_ROOT") ?? environmentPath("DS4_ROOT")
-let localDS4Enabled = buildFlag("ZENCODE_BUILD_DS4", default: ds4RootPath != nil)
-
-if localDS4Enabled {
-    guard let ds4RootPath else {
-        fatalError("DS4 support requires ZENCODE_DS4_ROOT=/path/to/ds4 or DS4_ROOT=/path/to/ds4.")
-    }
-    guard FileManager.default.fileExists(atPath: "\(ds4RootPath)/ds4.h") else {
-        fatalError("DS4 support requires ds4.h under \(ds4RootPath).")
-    }
-}
-
-let ds4ShimCSettings: [CSetting] = ds4RootPath.map {
-    [.unsafeFlags(["-I", $0])]
-} ?? []
 
 /// Bundled feature products intentionally use the same name for their SwiftPM
 /// target, product, built executable, and installed filename. Keep the
@@ -118,22 +72,7 @@ let bundledFeatureTargetDefinitions: [BundledFeatureTargetDefinition] = [
     )
 ]
 
-var products: [Product] = []
-
-if localMLXEnabled {
-    products += [
-        .library(
-            name: "MLXServerCore",
-            targets: ["MLXServerCore"]
-        ),
-        .library(
-            name: "MLXServerSetup",
-            targets: ["MLXServerSetup"]
-        )
-    ]
-}
-
-products += [
+var products: [Product] = [
     .library(
         name: "ZenCODECore",
         targets: ["ZenCODECore"]
@@ -174,7 +113,6 @@ products += bundledFeatureTargetDefinitions.map {
 
 var zenCODEDependencies: [Target.Dependency] = [
     "ZenCODECore",
-    "LocalRuntimeSupport",
     "ZenCODESetup",
     "ZenPackageMetadata"
 ]
@@ -183,59 +121,11 @@ for feature in bundledFeatureTargetDefinitions {
     zenCODEDependencies.append(.target(name: feature.executableName))
 }
 
-var zenCODESwiftSettings: [SwiftSetting] = [
+let zenCODESwiftSettings: [SwiftSetting] = [
     .define("SWIFTPM_NON_SANDBOX_TUI")
 ]
 
-var zenCODEExclude: [String] = []
-
-if localMLXEnabled {
-    zenCODEDependencies += [
-        "MLXServerCore",
-        "MLXServerSetup",
-        .product(name: "MLXLMCommon", package: "mlx-swift-lm")
-    ]
-    zenCODESwiftSettings.append(.define("ZENCODE_LOCAL_MLX"))
-} else {
-    zenCODEExclude += [
-        "Commands/ZenCODEMLXCommand.swift",
-        "Commands/ZenCODEMLXResetCommands.swift",
-        "LocalMLX"
-    ]
-}
-
-if localDS4Enabled {
-    zenCODEDependencies.append("DS4RuntimeShim")
-    zenCODESwiftSettings.append(.define("ZENCODE_LOCAL_DS4"))
-} else {
-    zenCODEExclude += [
-        "Commands/ZenCODEDS4Command.swift",
-        "LocalDS4",
-        "Setup/ZenCODESetupMenuRunner+DS4.swift"
-    ]
-}
-
 var targets: [Target] = []
-
-if localDS4Enabled {
-    targets.append(
-        .target(
-            name: "DS4RuntimeShim",
-            dependencies: [],
-            cSettings: ds4ShimCSettings
-        )
-    )
-    targets.append(
-        .testTarget(
-            name: "ZenCODEDS4Tests",
-            dependencies: [
-                "zen",
-                "ZenCODECore"
-            ],
-            swiftSettings: [.define("ZENCODE_LOCAL_DS4")]
-        )
-    )
-}
 
 targets += [
     .target(
@@ -296,10 +186,6 @@ targets += [
         dependencies: ["FeatureKit"]
     ),
     .target(
-        name: "LocalRuntimeSupport",
-        dependencies: ["ZenCODECore"]
-    ),
-    .target(
         name: "ZenCODESetup",
         dependencies: ["ZenCODECore"],
         swiftSettings: [
@@ -309,7 +195,6 @@ targets += [
     .executableTarget(
         name: "zen",
         dependencies: zenCODEDependencies,
-        exclude: zenCODEExclude,
         swiftSettings: zenCODESwiftSettings
     ),
     .testTarget(
@@ -322,13 +207,6 @@ targets += [
             "LocalToolsSupport",
             "ZenPackageMetadata",
             .product(name: "Markdown", package: "swift-markdown")
-        ]
-    ),
-    .testTarget(
-        name: "ZenCODELocalRuntimeTests",
-        dependencies: [
-            "LocalRuntimeSupport",
-            "ZenCODECore"
         ]
     ),
     .testTarget(
@@ -387,61 +265,10 @@ targets += bundledFeatureTargetDefinitions.map {
     )
 }
 
-if localMLXEnabled {
-    targets += [
-        .target(
-            name: "MLXServerCore",
-            dependencies: [
-                "ToolCore",
-                "ZenPackageMetadata",
-                .product(name: "HuggingFace", package: "swift-huggingface"),
-                .product(name: "MLX", package: "mlx-swift"),
-                .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
-                .product(name: "MLXLLM", package: "mlx-swift-lm"),
-                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
-                .product(name: "MLXVLM", package: "mlx-swift-lm"),
-                .product(name: "Tokenizers", package: "swift-transformers")
-            ]
-        ),
-        .target(
-            name: "MLXServerSetup",
-            dependencies: [
-                "ZenCODECore",
-                "MLXServerCore",
-                .product(name: "HuggingFace", package: "swift-huggingface")
-            ]
-        ),
-        .testTarget(
-            name: "MLXServerCoreTests",
-            dependencies: [
-                "MLXServerCore",
-                .product(name: "MLXLMCommon", package: "mlx-swift-lm")
-            ]
-        ),
-        .testTarget(
-            name: "MLXServerSetupTests",
-            dependencies: [
-                "MLXServerSetup",
-                "MLXServerCore",
-                .product(name: "HuggingFace", package: "swift-huggingface")
-            ]
-        )
-    ]
-}
-
-var dependencies: [Package.Dependency] = [
+let dependencies: [Package.Dependency] = [
     .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
     .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.8.0")
 ]
-
-if localMLXEnabled {
-    dependencies += [
-        .package(url: "https://github.com/huggingface/swift-huggingface.git", from: "0.9.0"),
-        .package(url: "https://github.com/huggingface/swift-transformers.git", from: "1.3.3"),
-        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMinor(from: "0.31.3")),
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", .upToNextMinor(from: "3.31.4"))
-    ]
-}
 
 let package = Package(
     name: "ZenCODE",

@@ -15,10 +15,10 @@ import Testing
 @Suite(.serialized)
 struct RemoteModelCatalogClientTests {
     @Test
-    func detectsThinkingParametersFromMLXServerModelMetadata() {
+    func detectsThinkingParametersFromRemoteServerModelMetadata() {
         let support = RemoteModelCatalogClient.thinkingSupport(
             fromModelMetadata: [
-                "id": "mlx-community/qwen3-test",
+                "id": "remote-community/qwen3-test",
                 "thinking": [
                     "supports_thinking": true,
                     "supports_reasoning_effort": true,
@@ -28,7 +28,7 @@ struct RemoteModelCatalogClientTests {
                 ]
             ],
             baseURL: "https://api.us-west-2.modal.direct/v1",
-            modelID: "mlx-community/qwen3-test"
+            modelID: "remote-community/qwen3-test"
         )
 
         #expect(support?.supportsThinking == true)
@@ -39,7 +39,7 @@ struct RemoteModelCatalogClientTests {
 
         let manifest = AgentSettingsModelManifestFactory.remoteAPIModel(
             title: "Qwen3 Test",
-            modelID: "mlx-community/qwen3-test",
+            modelID: "remote-community/qwen3-test",
             providerID: UUID(uuidString: "00000000-0000-0000-0000-000000000111")!,
             providerName: "Modal",
             baseURL: "https://api.us-west-2.modal.direct/v1",
@@ -208,7 +208,7 @@ struct RemoteModelCatalogClientTests {
         let provider = AgentRemoteProvider(
             name: "Modal",
             baseURL: "https://api.us-west-2.modal.direct/v1",
-            modelID: "mlx-community/qwen3-test"
+            modelID: "remote-community/qwen3-test"
         )
 
         #expect(provider.requiresAPIKey)

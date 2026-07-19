@@ -66,10 +66,7 @@ public actor ZenCODEACPBridge {
     public func shutdown() async {
         for sessionID in sessions.keys {
             sessions[sessionID]?.activePromptTask?.cancel()
-            await refreshSessionStateIfAvailable(
-                sessionID: sessionID,
-                saveRuntimeCache: true
-            )
+            await refreshSessionStateIfAvailable(sessionID: sessionID)
         }
         sessions.removeAll()
         updateSessionSleepAssertion()

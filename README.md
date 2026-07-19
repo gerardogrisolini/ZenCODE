@@ -1,26 +1,22 @@
 ![ZenCODE](Docs/Images/social-preview.png)
 
-**ZenCODE** is a flexible coding agent for the terminal and ACP. Drive it with cloud providers, your existing ChatGPT and Claude subscriptions, or run fully on-device with Apple MLX and DS4.
+**ZenCODE** is a flexible coding agent for the terminal and ACP. Drive it with cloud providers or your existing ChatGPT and Claude subscriptions.
 
-Keywords: ZenCODE, coding agent, AI coding assistant, ChatGPT subscription coding agent, Claude subscription coding agent, cloud LLM agent, OpenAI-compatible coding agent, OpenRouter coding agent, local LLM coding assistant, Apple MLX, ACP agent, on-device LLM, terminal coding agent for macOS and Linux.
+Keywords: ZenCODE, coding agent, AI coding assistant, ChatGPT subscription coding agent, Claude subscription coding agent, cloud LLM agent, OpenAI-compatible coding agent, OpenRouter coding agent, ACP agent, terminal coding agent for macOS and Linux.
 
-ZenCODE is provider-agnostic: bring your own API key for any OpenAI-compatible endpoint (OpenRouter, local servers, and more), sign in once with your ChatGPT or Claude subscription through the browser, or run completely on-device with the local MLX or DS4 runtimes — no cloud, no API keys, and no data leaving your machine.
+ZenCODE is provider-agnostic: bring your own API key for any OpenAI-compatible endpoint (OpenRouter, local servers, and more), or sign in once with your ChatGPT or Claude subscription through the browser.
 
-## Providers and Runtimes
+## Providers
 
 ZenCODE supports several ways to run the model, all selected through `zen --setup`:
 
 - **Cloud API providers** — bring an API key for any OpenAI-compatible endpoint, including OpenRouter, local servers, and any `/v1`-compatible provider.
 - **ChatGPT Subscription** — sign in with your existing ChatGPT subscription through the browser. No API key required.
 - **Claude Subscription** — sign in with your existing Claude (Anthropic) subscription through the browser. No API key required.
-- **Local MLX runtime** — run fully on-device with Apple MLX (`zen --mlx`), with no HTTP server and no remote provider required.
-- **Local DS4 runtime** — run a local DS4 runtime loaded in-process (`zen --ds4`), with native DSML tool calls and no DS4 webserver.
 
 ## Run
 
 - `zen` runs the standalone terminal and ACP coding agent with configured providers.
-- `zen --mlx` runs the same agent on the local MLX runtime directly.
-- `zen --ds4` runs the same agent on a local DS4 runtime loaded in-process.
 
 ## Install
 
@@ -43,12 +39,9 @@ Xcode or the Apple command line tools.
 curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh | bash
 ```
 
-On Linux, the local MLX runtime is Apple-only and not available, but the local
-DS4 runtime is supported. The Linux build does not pull in MLX/Metal
-dependencies. You can drive the agent through configured remote providers
-(`zen --setup`) or use local DS4 inference (`zen --ds4`) when DS4 support is
-compiled in. The standalone agent, TUI, ACP bridge, and bundled feature
-executables work normally.
+Drive the agent through configured remote providers (`zen --setup`). The
+standalone agent, TUI, ACP bridge, and bundled feature executables work
+normally.
 
 Windows is supported through WSL. Install Ubuntu first, then run the Linux
 installer inside the Ubuntu shell:
@@ -64,27 +57,14 @@ with:
 swift --version
 ```
 
-> Note: `zen --mlx` is unavailable on Linux/WSL because local MLX inference
-> requires Apple Silicon and Metal. Local DS4 inference (`zen --ds4`) is
-> available on Linux when DS4 support is compiled in; see the
-> [DS4 guide](Docs/ds4.md).
-
 ## Quick Start
 
-Choose how ZenCODE runs — a cloud API provider, a ChatGPT or Claude subscription, or a local runtime — during setup, then start the agent:
+Choose how ZenCODE runs — a cloud API provider, or a ChatGPT or Claude subscription — during setup, then start the agent:
 
 ```bash
 zen --setup
 zen
 ```
-
-Prefer fully on-device? Use the local runtimes:
-
-```bash
-zen --mlx
-zen --ds4
-```
-
 
 ## Build From Source
 
@@ -94,12 +74,6 @@ Use a source checkout when developing ZenCODE itself:
 git clone https://github.com/gerardogrisolini/ZenCODE.git
 cd ZenCODE
 swift build -c release --product zen
-```
-
-To compile DS4 support from source, point the build at a local DS4 checkout:
-
-```bash
-ZENCODE_BUILD_DS4=1 ZENCODE_DS4_ROOT=/path/to/ds4 swift build -c release --product zen
 ```
 
 ## TUI Commands
@@ -145,12 +119,8 @@ ZENCODE_BUILD_DS4=1 ZENCODE_DS4_ROOT=/path/to/ds4 swift build -c release --produ
 - `Sources/LocalToolsSupport`: reusable local file, search, text, and patch tooling.
 - `Sources/ZenPackageMetadata`: internal bundled-feature distribution metadata and catalog parity support.
 - `Sources/ZenCODECore`: reusable agent runtime, TUI, tools, skills, ACP, config, memory, sessions, and feature management.
-- `Sources/LocalRuntimeSupport`: internal support for selecting local agent-runtime backends.
 - `Sources/ZenCODESetup`: interactive setup for standalone `zen`.
-- `Sources/zen`: the `zen` composition root and command-line dispatch, with optional MLX and DS4 adapters.
-- `Sources/MLXServerCore`: conditional local MLX runtime, model catalog, loading, generation gate, and disk KV cache.
-- `Sources/MLXServerSetup`: conditional local MLX settings and model configuration workflows, including Hugging Face model discovery and setup.
-- `Sources/DS4RuntimeShim`: conditional C shim used only when DS4 support is enabled.
+- `Sources/zen`: the `zen` composition root and command-line dispatch.
 - `Sources/Features`: bundled Dynamic Swift Feature executables.
 - `Tests`: SwiftPM test targets.
 - `Docs`: detailed guides and feature documentation.
@@ -165,10 +135,6 @@ zen --help
 zen --setup
 zen --cwd /path/to/project
 zen --acp --cwd /path/to/project
-
-zen --mlx --help
-zen --mlx --cwd /path/to/project
-zen --mlx --acp --cwd /path/to/project
 ```
 
 ## More Docs
@@ -176,8 +142,6 @@ zen --mlx --acp --cwd /path/to/project
 - [Architecture and layout contract](Docs/architecture.md)
 - [Why ZenCODE](Docs/why-zen.md)
 - [ZenCODE guide](Docs/zen.md)
-- [Local MLX runtime guide](Docs/mlx-runtime.md)
-- [DS4 direct runtime guide](Docs/ds4.md)
 - [Agents and sub-agents guide](Docs/agents.md)
 - [Builder agent guide](Docs/builder.md)
 - [Planner agent guide](Docs/planner.md)

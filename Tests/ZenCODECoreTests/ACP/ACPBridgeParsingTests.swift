@@ -45,7 +45,7 @@ extension ACPCompatibilityTests {
     @Test
     func acpVerboseLogFileWritesToSupportLogsDirectory() async throws {
         let supportURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mlx-acp-log-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("acp-log-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: supportURL)
         }

@@ -1,5 +1,5 @@
 //
-//  MLXPromptSkillInstallerTests.swift
+//  PromptSkillInstallerTests.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
@@ -10,7 +10,7 @@ import Foundation
 import Testing
 
 @Suite
-struct MLXPromptSkillInstallerTests {
+struct PromptSkillInstallerTests {
     @Test
     func githubSourceParsesRepositoryURL() throws {
         let source = try GitHubSkillSource(
@@ -75,7 +75,7 @@ struct MLXPromptSkillInstallerTests {
     @Test
     func localInstallCopiesSkillDirectoryToDestinationRoot() throws {
         let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mlx-skill-installer-tests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("skill-installer-tests-\(UUID().uuidString)", isDirectory: true)
         let sourceURL = rootURL.appendingPathComponent("Source Skill", isDirectory: true)
         let assetsURL = sourceURL.appendingPathComponent("assets", isDirectory: true)
         let destinationRootURL = rootURL.appendingPathComponent("Installed Skills", isDirectory: true)

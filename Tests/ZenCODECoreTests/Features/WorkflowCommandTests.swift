@@ -77,7 +77,7 @@ struct WorkflowCommandTests {
 
     private func makeTerminal() throws -> TerminalChat {
         let configuration = try AgentConfiguration(
-            hostedModelID: "mlx-community/test",
+            hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: URL(
                 fileURLWithPath: "/tmp/ZenCODE-workflow-command",

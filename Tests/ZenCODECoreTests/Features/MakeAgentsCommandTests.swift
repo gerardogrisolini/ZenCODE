@@ -116,7 +116,7 @@ struct MakeAgentsCommandTests {
 
     private func makeTerminal(workingDirectory: URL) throws -> TerminalChat {
         let configuration = try AgentConfiguration(
-            hostedModelID: "mlx-community/test",
+            hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: workingDirectory
         )

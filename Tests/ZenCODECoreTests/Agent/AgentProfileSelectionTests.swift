@@ -111,13 +111,13 @@ extension AgentConfigurationTests {
                 TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools"),
                 "custom.tool"
             ],
-            modelID: "mlx-community/custom",
+            modelID: "remote-community/custom",
             thinkingSelection: .high
         )
         let customDetail = TerminalChat.agentSelectionDetail(customAgent)
 
         #expect(customDetail.contains("Tools: shell, git, 1 custom"))
-        #expect(customDetail.contains("model: mlx-community/custom"))
+        #expect(customDetail.contains("model: remote-community/custom"))
         #expect(customDetail.contains("thinking: High"))
         #expect(!customDetail.contains("feature:git-tools"))
     }
@@ -128,7 +128,7 @@ extension AgentConfigurationTests {
             id: "custom",
             name: "Custom",
             tools: ["shell"],
-            modelID: "mlx-community/custom",
+            modelID: "remote-community/custom",
             thinkingSelection: .high
         )
         let normalized = AgentProfileStore.normalizedAgentForSave(profile)

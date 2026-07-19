@@ -48,13 +48,13 @@ extension AgentConfigurationTests {
         selectedThinkingSelection: AgentThinkingSelection
     ) -> AgentSettingsManifest {
         let provider = AgentRemoteProvider(
-            name: "mlx-server",
+            name: "remote-server",
             baseURL: "http://127.0.0.1",
-            modelID: "mlx-community/qwen3"
+            modelID: "remote-community/qwen3"
         )
         let model = AgentSettingsModelManifest(
             kind: .remoteAPI,
-            modelID: "mlx-community/qwen3",
+            modelID: "remote-community/qwen3",
             provider: provider,
             thinkingOptions: [.off, .low, .medium, .high],
             defaultThinkingSelection: .medium

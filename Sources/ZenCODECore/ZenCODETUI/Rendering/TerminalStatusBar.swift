@@ -67,7 +67,6 @@ public actor TerminalStatusBar {
         var localExecAccessMode: AgentLocalExecAccessMode = .standard
         var latestModelID: String?
         var latestThinkingSelection: AgentThinkingSelection?
-        var latestModelRuntime: String?
         var latestMetrics: DirectAgentGenerationMetrics?
         var shouldReplaceMetricsOnNextUpdate = false
         var latestContextWindow: DirectAgentContextWindowStatus?
@@ -240,7 +239,6 @@ public actor TerminalStatusBar {
         state.latestContextWindow = nil
         state.latestModelID = nil
         state.latestThinkingSelection = nil
-        state.latestModelRuntime = nil
         state.isProcessing = false
         state.spinnerIndex = 0
         stopSpinnerTaskLocked(state: &state)
@@ -283,7 +281,6 @@ public actor TerminalStatusBar {
         guard state.latestModelID != modelID else {
             return state.isStarted
         }
-        state.latestModelRuntime = nil
         state.latestModelID = modelID
         guard state.isStarted else {
             return false
@@ -298,20 +295,6 @@ public actor TerminalStatusBar {
             return state.isStarted
         }
         state.latestThinkingSelection = thinkingSelection
-        guard state.isStarted else {
-            return false
-        }
-        renderStatusLocked(state: &state)
-        return true
-    }
-
-    @discardableResult
-    public func update(modelRuntime: String?) -> Bool {
-        let displayName = Self.runtimeDisplayName(modelRuntime)
-        guard state.latestModelRuntime != displayName else {
-            return state.isStarted
-        }
-        state.latestModelRuntime = displayName
         guard state.isStarted else {
             return false
         }

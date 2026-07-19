@@ -181,28 +181,6 @@ public struct DirectAgentSubscriptionUsageStatus: Sendable, Equatable {
     }
 }
 
-public struct DirectAgentLoadedModelDetails: Sendable, Equatable {
-    public let modelID: String
-    public let runtime: String?
-    public let generation: String?
-    public let penalties: String?
-    public let kvCache: String?
-
-    public init(
-        modelID: String,
-        runtime: String? = nil,
-        generation: String? = nil,
-        penalties: String? = nil,
-        kvCache: String? = nil
-    ) {
-        self.modelID = modelID
-        self.runtime = runtime?.nilIfBlank
-        self.generation = generation?.nilIfBlank
-        self.penalties = penalties?.nilIfBlank
-        self.kvCache = kvCache?.nilIfBlank
-    }
-}
-
 public struct DirectAgentTurnOutcome: Sendable, Equatable {
     public enum Status: String, Sendable, Equatable {
         case completed
@@ -231,8 +209,6 @@ public enum DirectAgentEvent: Sendable {
     case diagnostic(String)
     case thought(String)
     case modelLoaded(String)
-    case modelLoadedDetails(DirectAgentLoadedModelDetails)
-    case modelRuntime(String)
     case metrics(DirectAgentGenerationMetrics)
     case contextWindow(DirectAgentContextWindowStatus)
     case subscriptionUsage(DirectAgentSubscriptionUsageStatus)
@@ -241,10 +217,4 @@ public enum DirectAgentEvent: Sendable {
     case toolCallCompleted(DirectAgentToolCall, DirectAgentToolResult)
     case sessionSnapshot(AgentRuntimeSessionSnapshot)
     case turnEnded(DirectAgentTurnOutcome)
-}
-
-public struct AgentKVCachePersistencePolicy {
-    public static func terminalDiskCacheKey(workingDirectoryPath: String) -> String {
-        "terminal:\(workingDirectoryPath)"
-    }
 }

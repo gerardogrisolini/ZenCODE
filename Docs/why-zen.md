@@ -4,9 +4,8 @@ Why this project exists and where it differs from other coding agents.
 
 ## Run anywhere
 
-- Drive ZenCODE with any OpenAI-compatible API endpoint (OpenRouter, local servers, any `/v1` provider), sign in with your existing **ChatGPT** or **Claude subscription** through the browser — no API key needed — or run fully on-device with `zen --mlx` / `zen --ds4`.
-- With `zen --mlx`, inference runs in-process on the local MLX runtime: no HTTP server, no remote provider, code never leaves the machine.
-- macOS with cloud, subscriptions, or local MLX/DS4; Linux and Windows (via WSL) with cloud providers, subscriptions, or local DS4 — without pulling Metal dependencies into the build.
+- Drive ZenCODE with any OpenAI-compatible API endpoint (OpenRouter, local servers, any `/v1` provider), or sign in with your existing **ChatGPT** or **Claude subscription** through the browser — no API key needed.
+- macOS, Linux, and Windows (via WSL) with cloud providers or subscriptions.
 
 ## Full control over tools
 
@@ -22,8 +21,8 @@ Why this project exists and where it differs from other coding agents.
 
 ## Performance
 
-- Persistent on-disk KV cache: a resumed conversation does not re-prefill the entire transcript. The session key is derived stably from the system prompt and first message, so even stateless ACP clients reuse the cache.
-- No HTTP overhead locally: the model runs in the same process.
+- Low client overhead: prompt assembly, tool dispatch, and streaming run in a single compiled Swift process, so the only network hop is the request to your chosen provider.
+- Resume without re-work: sessions restore from on-disk snapshots and checkpoint trees, so continuing a conversation reuses the saved transcript and plan instead of rebuilding local state from scratch.
 
 ## Work environment integration
 

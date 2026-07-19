@@ -72,7 +72,7 @@ extension ZenCODEACPBridge {
         let modelID = requestedModelID
             ?? configuration.effectiveModelID
 
-        let sessionID = "swiftmlx-\(UUID().uuidString.lowercased())"
+        let sessionID = "swift-agent-\(UUID().uuidString.lowercased())"
         let cacheKey = (params["sessionKey"] as? String)
             ?? (params["cacheKey"] as? String)
         let workingDirectoryURL = URL(fileURLWithPath: cwd)
@@ -135,16 +135,7 @@ extension ZenCODEACPBridge {
         )
         sessions[sessionID] = sessionState(configuration: configuration)
         updateSessionSleepAssertion()
-        // Stateless clients that reconnect with session/new (instead of
-        // session/load or session/resume) still get KV cache reuse: when the
-        // request already carries transcript history, restore the cache from
-        // disk via the content-derived key. Without history this is equivalent
-        // to a plain createSession.
-        if configuration.history.isEmpty {
-            try await sessionRunner.createSession(configuration: configuration)
-        } else {
-            try await sessionRunner.restoreSession(configuration: configuration)
-        }
+        try await sessionRunner.createSession(configuration: configuration)
 
         await writer.sendResultIfRequest(
             id: id,
@@ -346,10 +337,9 @@ extension ZenCODEACPBridge {
         replayHistory: Bool
     ) async throws {
         // A session_id is optional: stateless clients can resume by resending
-        // their transcript. When omitted we mint an internal session id; the
-        // KV cache is still recovered through the content-derived cache key.
+        // their transcript. When omitted we mint an internal session id.
         let sessionID = Self.sessionID(from: params)
-            ?? "swiftmlx-\(UUID().uuidString.lowercased())"
+            ?? "swift-agent-\(UUID().uuidString.lowercased())"
         if let session = sessions[sessionID] {
             if replayHistory,
                let snapshot = await sessionRunner.snapshotSession(id: sessionID) {

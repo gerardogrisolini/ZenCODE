@@ -230,7 +230,7 @@ extension AgentConfigurationTests {
     @Test
     func hostedConfigurationCanReloadAgentProfilesFromStore() throws {
         let configuration = try AgentConfiguration(
-            hostedModelID: "mlx-community/test",
+            hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
             cacheAgentProfiles: false,
             workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
@@ -244,7 +244,7 @@ extension AgentConfigurationTests {
     func removedDefaultProfileNameIsRejected() {
         #expect(throws: AgentConfigurationError.self) {
             _ = try AgentConfiguration(
-                hostedModelID: "mlx-community/test",
+                hostedModelID: "remote-community/test",
                 agentName: "Default",
                 availableAgents: AgentProfileStore.defaultProfiles(),
                 workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
@@ -255,7 +255,7 @@ extension AgentConfigurationTests {
     @Test
     func toolRoundPolicyCentralizesDefaultAndNormalization() throws {
         let configuration = try AgentConfiguration(
-            hostedModelID: "mlx-community/test",
+            hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
         )
@@ -277,25 +277,25 @@ extension AgentConfigurationTests {
     @Test
     func hostedEffectiveModelUsesHostedManifestInsteadOfCoderSettings() {
         let provider = AgentRemoteProvider(
-            name: "mlx-server",
+            name: "remote-server",
             baseURL: "http://127.0.0.1",
-            modelID: "mlx-community/server-model"
+            modelID: "remote-community/server-model"
         )
         let hostedManifest = AgentSettingsManifest(
             models: [
                 AgentSettingsModelManifest(
                     kind: .remoteAPI,
-                    modelID: "mlx-community/server-model",
+                    modelID: "remote-community/server-model",
                     provider: provider
                 )
             ],
-            selectedModelID: "mlx-community/server-model"
+            selectedModelID: "remote-community/server-model"
         )
         let agent = AgentProfile(
             id: UUID().uuidString,
             name: "Remote default",
             tools: [],
-            modelID: "remoteapi:provider:mlx-community/server-model"
+            modelID: "remoteapi:provider:remote-community/server-model"
         )
 
         let effectiveModelID = TerminalChat.effectiveModelID(
@@ -304,7 +304,7 @@ extension AgentConfigurationTests {
             manifest: hostedManifest
         )
 
-        #expect(effectiveModelID == "mlx-community/server-model")
+        #expect(effectiveModelID == "remote-community/server-model")
     }
 
     @Test
@@ -344,14 +344,14 @@ extension AgentConfigurationTests {
             manualThinkingSelectionOverride: nil,
             hostedModel: nil,
             explicitModelID: nil,
-            agentModelID: "mlx-community/qwen3",
+            agentModelID: "remote-community/qwen3",
             agentThinkingSelection: .low,
             manifest: manifest
         )
         let appSessionThinkingSelection = AgentCoreAppSessionFactory.resolvedThinkingSelection(
             nil,
             explicitModelID: nil,
-            agentModelID: "mlx-community/qwen3",
+            agentModelID: "remote-community/qwen3",
             agentThinkingSelection: .low,
             manifest: manifest
         )
@@ -382,7 +382,7 @@ extension AgentConfigurationTests {
             isDirectory: true
         )
         let configuration = try AgentConfiguration(
-            hostedModelID: "mlx-community/test",
+            hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: workingDirectory
         )
@@ -405,7 +405,7 @@ extension AgentConfigurationTests {
             isDirectory: true
         )
         let configuration = try AgentConfiguration(
-            hostedModelID: "mlx-community/test",
+            hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: workingDirectory
         )
