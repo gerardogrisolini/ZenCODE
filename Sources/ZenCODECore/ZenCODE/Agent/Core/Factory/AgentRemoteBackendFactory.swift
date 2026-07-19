@@ -64,7 +64,6 @@ public enum AgentRemoteBackendFactory {
         }
 
         if provider.isChatGPTSubscriptionProvider {
-#if os(macOS)
             return ChatGPTSubscriptionGenerationClient(
                 configuration: resolvedConfiguration,
                 urlSession: urlSession,
@@ -84,13 +83,9 @@ public enum AgentRemoteBackendFactory {
                     swiftFeatureRuntime: swiftFeatureRuntime
                 )
             )
-#else
-            throw AgentCoreBackendError.missingRemoteProvider
-#endif
         }
 
         if provider.isAnthropicSubscriptionProvider {
-#if os(macOS)
             return AnthropicSubscriptionGenerationClient(
                 configuration: resolvedConfiguration,
                 provider: provider,
@@ -105,9 +100,6 @@ public enum AgentRemoteBackendFactory {
                     swiftFeatureRuntime: swiftFeatureRuntime
                 )
             )
-#else
-            throw AgentCoreBackendError.missingRemoteProvider
-#endif
         }
 
         return RemoteGenerationClient(

@@ -224,18 +224,13 @@ public nonisolated enum CodexAgentModel {
     }
 
     public static var isAuthenticated: Bool {
-#if os(macOS)
         (try? loadCredentials()) != nil
-#else
-        false
-#endif
     }
 
     public static var isReady: Bool {
         isAuthenticated
     }
 
-#if os(macOS)
     public static func loadCredentials() throws -> CodexAgentCredentials {
         if let environmentToken = ProcessInfo.processInfo.environment["CHATGPT_ACCESS_TOKEN"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -312,5 +307,4 @@ public nonisolated enum CodexAgentModel {
         }
         return Data(base64Encoded: base64)
     }
-#endif
 }

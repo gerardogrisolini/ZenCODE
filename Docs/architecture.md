@@ -47,6 +47,13 @@ snapshots, checkpoint trees, task graphs, permissions, feature manifests, and
 the session cache-key formats survive a change of provider, while only transient
 per-request model state is rebuilt.
 
+Subscription authentication and transport remain platform-specific behind the
+same provider contracts. ChatGPT uses the local browser callback and Network
+WebSocket transport on macOS; on Linux it uses the OpenAI device-code flow and
+a small system-libcurl WebSocket bridge. Claude uses its hosted authorization
+code flow on both platforms. These differences must not change provider IDs,
+wire event handling, credential persistence, or backend selection semantics.
+
 ## Target Layout
 
 The established public products remain stable while internal targets and source

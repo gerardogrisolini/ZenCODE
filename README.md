@@ -57,6 +57,11 @@ with:
 swift --version
 ```
 
+`zen --setup` supports both subscription logins on Linux: ChatGPT uses the
+device-code page and Claude asks for the authorization code shown by its hosted
+OAuth flow. ChatGPT generation remains WebSocket-based and uses the system
+libcurl (version 7.86 or newer), avoiding an additional Swift networking stack.
+
 ## Quick Start
 
 Choose how ZenCODE runs — a cloud API provider, or a ChatGPT or Claude subscription — during setup, then start the agent:

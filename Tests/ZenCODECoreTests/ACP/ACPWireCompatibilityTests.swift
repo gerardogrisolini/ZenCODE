@@ -11,6 +11,56 @@ import Testing
 
 extension ACPCompatibilityTests {
     @Test
+    func xcode27ReceivesCompatibilityAuthenticationMethod() {
+        let methods = ZenCODEACPBridge.authenticationMethods(from: [
+            "clientInfo": [
+                "name": "Xcode",
+                "version": "27.0"
+            ] as [String: Any],
+            "clientCapabilities": [
+                "auth": ["terminal": true]
+            ] as [String: Any]
+        ])
+
+        let xcodeWithAuthCapabilityMethods = ZenCODEACPBridge.authenticationMethods(from: [
+            "clientInfo": [
+                "name": "Xcode"
+            ] as [String: Any],
+            "clientCapabilities": [
+                "auth": ["terminal": true]
+            ] as [String: Any]
+        ])
+
+        #expect(methods.count == 1)
+        #expect(xcodeWithAuthCapabilityMethods.count == 1)
+        #expect(methods.first?["id"] as? String == "zencode-xcode-compatibility")
+        #expect(methods.first?["name"] as? String == "Continue with ZenCODE")
+        #expect(methods.first?["type"] as? String == "agent")
+    }
+
+    @Test
+    func compatibilityAuthenticationMethodIsNotAdvertisedToOtherACPClients() {
+        let xcode26Methods = ZenCODEACPBridge.authenticationMethods(from: [
+            "clientInfo": [
+                "name": "Xcode",
+                "version": "26.6"
+            ] as [String: Any]
+        ])
+        let otherClientMethods = ZenCODEACPBridge.authenticationMethods(from: [
+            "clientInfo": [
+                "name": "OtherClient",
+                "version": "27.0"
+            ] as [String: Any],
+            "clientCapabilities": [
+                "auth": ["terminal": true]
+            ] as [String: Any]
+        ])
+
+        #expect(xcode26Methods.isEmpty)
+        #expect(otherClientMethods.isEmpty)
+    }
+
+    @Test
     func resumeSessionRebuildsStateFromClientHistory() async throws {
         let bridge = try makeBridge(
             models: [

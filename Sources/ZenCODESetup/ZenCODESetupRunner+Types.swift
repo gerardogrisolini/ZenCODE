@@ -246,8 +246,6 @@ enum ZenCODESetupError: LocalizedError {
     case invalidChoice(String)
     case noModelsConfigured
     case noRemoteModelsReturned
-    case chatGPTSubscriptionUnsupported
-    case anthropicSubscriptionUnsupported
 
     var errorDescription: String? {
         switch self {
@@ -263,10 +261,6 @@ enum ZenCODESetupError: LocalizedError {
             return "At least one remote provider model is required."
         case .noRemoteModelsReturned:
             return "The server did not return any models from /models."
-        case .chatGPTSubscriptionUnsupported:
-            return "ChatGPT Subscription setup is available on macOS."
-        case .anthropicSubscriptionUnsupported:
-            return "Claude Subscription setup is available on macOS."
         }
     }
 }

@@ -282,7 +282,6 @@ extension ZenCODESetupRunner {
     }
 
     static func ensureChatGPTSubscriptionCredentials() async throws {
-#if os(macOS)
         do {
             _ = try await CodexAgentModel.loadValidCredentials()
             return
@@ -292,6 +291,7 @@ extension ZenCODESetupRunner {
             )
         }
 
+        #if os(macOS)
         let session = try await ChatGPTSubscriptionAuthService.startSignIn()
         AgentOutput.standardError.writeString(
             """
@@ -311,14 +311,28 @@ extension ZenCODESetupRunner {
             throw ChatGPTSubscriptionAuthError.browserOpenFailed
         }
         _ = try await session.waitForCredentials()
+        #else
+        _ = try await ChatGPTSubscriptionAuthService.signInWithDeviceCode {
+            url,
+            code in
+            AgentOutput.standardError.writeString(
+                """
+                Complete ChatGPT login at:
+                \(url.absoluteString)
+
+                Enter this code: \(code)
+
+                Waiting for sign-in...
+
+                """
+            )
+            _ = await ChatGPTSubscriptionAuthService.openAuthorizationURL(url)
+        }
+        #endif
         AgentOutput.standardError.writeString("ChatGPT Subscription connected.\n")
-#else
-        throw ZenCODESetupError.chatGPTSubscriptionUnsupported
-#endif
     }
 
     static func ensureAnthropicSubscriptionCredentials() async throws {
-#if os(macOS)
         do {
             _ = try await AnthropicSubscriptionAuthService.loadValidCredentials()
             return
@@ -341,8 +355,10 @@ extension ZenCODESetupRunner {
         let didOpen = await AnthropicSubscriptionAuthService.openAuthorizationURL(
             session.authorizationURL
         )
-        guard didOpen else {
-            throw AnthropicSubscriptionAuthError.browserOpenFailed
+        if !didOpen {
+            AgentOutput.standardError.writeString(
+                "No browser launcher was found; open the URL above manually.\n"
+            )
         }
 
         let authorizationInput = try promptString(
@@ -354,9 +370,6 @@ extension ZenCODESetupRunner {
 
         _ = try await session.waitForCredentials()
         AgentOutput.standardError.writeString("Claude Subscription connected.\n")
-#else
-        throw ZenCODESetupError.anthropicSubscriptionUnsupported
-#endif
     }
 
     static func readModels(

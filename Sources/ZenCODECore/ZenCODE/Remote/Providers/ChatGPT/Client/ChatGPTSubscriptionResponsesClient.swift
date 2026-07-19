@@ -268,4 +268,174 @@ public struct ChatGPTSubscriptionResponsesClient {
     }
 
 }
+#else
+import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+import ToolCore
+
+/// libcurl WebSocket implementation used on Linux, where
+/// `URLSessionWebSocketTask` is not exposed by FoundationNetworking.
+public struct ChatGPTSubscriptionResponsesClient {
+    public struct StreamCompletion: Sendable {
+        public let responseID: String?
+    }
+
+    public let credentials: CodexAgentCredentials
+    public let baseURL: URL
+    public let urlSession: URLSession
+    public let webSocketPool: ChatGPTSubscriptionWebSocketPool
+
+    static let maxRetries = 3
+    static let baseRetryDelayNanoseconds: UInt64 = 1_000_000_000
+    static let webSocketBetaHeader = "responses_websockets=2026-02-06"
+
+    private struct WebSocketStreamFailure: Error {
+        let underlying: Error
+        let receivedReplayUnsafeEvent: Bool
+        let didSendContinuationPayload: Bool
+    }
+
+    public init(
+        credentials: CodexAgentCredentials,
+        baseURL: URL = URL(string: "https://chatgpt.com/backend-api")!,
+        urlSession: URLSession = .shared,
+        webSocketPool: ChatGPTSubscriptionWebSocketPool = ChatGPTSubscriptionWebSocketPool()
+    ) {
+        self.credentials = credentials
+        self.baseURL = baseURL
+        self.urlSession = urlSession
+        self.webSocketPool = webSocketPool
+    }
+
+    public func streamEvents(
+        input: JSONValue,
+        model: String,
+        instructions: String,
+        reasoningEffort: String?,
+        textVerbosity: String,
+        sessionID: String,
+        cachedWebSocketInput: JSONValue? = nil,
+        previousResponseID: String? = nil,
+        allowsFreshWebSocketContinuation: Bool = false,
+        toolPayloads: JSONValue = .array([]),
+        maxOutputTokens: Int? = nil,
+        onEvent: ([String: Any]) async throws -> Void
+    ) async throws -> StreamCompletion {
+        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
+            input: input,
+            model: model,
+            instructions: instructions,
+            reasoningEffort: reasoningEffort,
+            textVerbosity: textVerbosity,
+            sessionID: sessionID,
+            toolPayloads: toolPayloads,
+            maxOutputTokens: maxOutputTokens
+        )
+
+        var attempt = 0
+        var suppressContinuationReplay = false
+        while true {
+            do {
+                return try await streamEventsOverWebSocket(
+                    body: body,
+                    cachedInput: suppressContinuationReplay ? nil : cachedWebSocketInput,
+                    previousResponseID: suppressContinuationReplay ? nil : previousResponseID,
+                    allowsFreshContinuation: allowsFreshWebSocketContinuation,
+                    sessionID: sessionID,
+                    onEvent: onEvent
+                )
+            } catch let failure as WebSocketStreamFailure {
+                guard Self.shouldRetryWebSocketFailure(
+                    failure.underlying,
+                    receivedReplayUnsafeEvent: failure.receivedReplayUnsafeEvent,
+                    attempt: attempt
+                ) else {
+                    throw failure.underlying
+                }
+                if failure.didSendContinuationPayload {
+                    suppressContinuationReplay = true
+                }
+                try await Self.sleepForRetry(attempt: attempt)
+                attempt += 1
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                guard Self.shouldRetryTransportError(error, attempt: attempt) else {
+                    throw error
+                }
+                try await Self.sleepForRetry(attempt: attempt)
+                attempt += 1
+            }
+        }
+    }
+
+    private func streamEventsOverWebSocket(
+        body: [String: Any],
+        cachedInput: JSONValue?,
+        previousResponseID: String?,
+        allowsFreshContinuation: Bool,
+        sessionID: String,
+        onEvent: ([String: Any]) async throws -> Void
+    ) async throws -> StreamCompletion {
+        var responseID: String?
+        var didReceiveTerminalEvent = false
+        var didReceiveReplayUnsafeEvent = false
+        var didSendContinuationPayload = false
+
+        do {
+            let request = webSocketRequest(sessionID: sessionID)
+            let webSocket = try await ChatGPTSubscriptionCurlWebSocket.connect(
+                request: request
+            )
+            let payloadObject = Self.webSocketRequestPayload(
+                body: body,
+                cachedInput: cachedInput,
+                previousResponseID: previousResponseID,
+                useCachedContinuation: allowsFreshContinuation
+            )
+            didSendContinuationPayload = payloadObject["previous_response_id"] != nil
+            let payload = try JSONValue(jsonObject: payloadObject).jsonData(
+                outputFormatting: [.withoutEscapingSlashes]
+            )
+            guard let text = String(data: payload, encoding: .utf8) else {
+                throw ChatGPTSubscriptionGenerationError.invalidResponse
+            }
+            try await webSocket.send(text: text)
+
+            while !didReceiveTerminalEvent {
+                try Task.checkCancellation()
+                let data = try await webSocket.receive()
+                let objects = try Self.decodedJSONObjectSequence(from: data)
+                for object in objects {
+                    if Self.isReplayUnsafeWebSocketEvent(object) {
+                        didReceiveReplayUnsafeEvent = true
+                    }
+                    if responseID == nil {
+                        responseID = ChatGPTSubscriptionGenerationClient.responseID(
+                            from: object
+                        )
+                    }
+                    try await onEvent(object)
+                    if Self.isTerminalEvent(object) {
+                        didReceiveTerminalEvent = true
+                    }
+                }
+            }
+            return StreamCompletion(responseID: responseID)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            if Self.isCancellationError(error) || Task.isCancelled {
+                throw CancellationError()
+            }
+            throw WebSocketStreamFailure(
+                underlying: error,
+                receivedReplayUnsafeEvent: didReceiveReplayUnsafeEvent,
+                didSendContinuationPayload: didSendContinuationPayload
+            )
+        }
+    }
+}
 #endif

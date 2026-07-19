@@ -12,11 +12,11 @@ import os
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
-
-#if os(macOS)
-import AppKit
+#if canImport(CryptoKit)
 import CryptoKit
-import Network
+#else
+import Crypto
+#endif
 #if canImport(Security)
 import Security
 #endif
@@ -41,7 +41,7 @@ public enum ChatGPTSubscriptionAuthError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .unsupportedPlatform:
-            return "ChatGPT Subscription browser sign-in is available on macOS."
+            return "ChatGPT Subscription sign-in is unavailable on this platform."
         case .callbackServerUnavailable:
             return "Unable to start the local ChatGPT sign-in callback server."
         case .callbackCancelled:
@@ -86,6 +86,7 @@ public enum ChatGPTSubscriptionAuthError: LocalizedError {
     }
 }
 
+#if os(macOS)
 public final class ChatGPTSubscriptionSignInSession: @unchecked Sendable {
     public let authorizationURL: URL
 
@@ -128,6 +129,7 @@ public final class ChatGPTSubscriptionSignInSession: @unchecked Sendable {
         }
     }
 }
+#endif
 
 public enum ChatGPTSubscriptionAuthService {
     private static let clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -143,6 +145,7 @@ public enum ChatGPTSubscriptionAuthService {
     private static let originator = "ZenCODE"
 
     public static func signIn() async throws -> CodexAgentCredentials {
+        #if os(macOS)
         let session = try await startSignIn()
         print("To continue, complete ChatGPT login in your browser.")
         print("If the browser does not open, open this URL:")
@@ -151,6 +154,14 @@ public enum ChatGPTSubscriptionAuthService {
             throw ChatGPTSubscriptionAuthError.browserOpenFailed
         }
         return try await session.waitForCredentials()
+        #else
+        return try await signInWithDeviceCode { url, code in
+            print("Open this URL to connect ChatGPT Subscription:")
+            print(url.absoluteString)
+            print("Enter this code: \(code)")
+            _ = await openAuthorizationURL(url)
+        }
+        #endif
     }
 
     public static func signInWithDeviceCode(
@@ -162,11 +173,10 @@ public enum ChatGPTSubscriptionAuthService {
     }
 
     public static func openAuthorizationURL(_ url: URL) async -> Bool {
-        await MainActor.run {
-            NSWorkspace.shared.open(url)
-        }
+        await SubscriptionBrowserLauncher.open(url)
     }
 
+    #if os(macOS)
     public static func startSignIn() async throws -> ChatGPTSubscriptionSignInSession {
         let flow = try authorizationFlow()
         let callbackServer = await ChatGPTSubscriptionCallbackServer(
@@ -178,6 +188,7 @@ public enum ChatGPTSubscriptionAuthService {
             callbackServer: callbackServer
         )
     }
+    #endif
 
 
     public static func requestDeviceCode() async throws -> ChatGPTSubscriptionDeviceCode {
@@ -425,11 +436,18 @@ public enum ChatGPTSubscriptionAuthService {
     }
 
     private static func randomBase64URLString(byteCount: Int) throws -> String {
+        #if canImport(Security)
         var bytes = [UInt8](repeating: 0, count: byteCount)
         let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         guard status == errSecSuccess else {
             throw ChatGPTSubscriptionAuthError.randomBytesFailed(status)
         }
+        #else
+        var generator = SystemRandomNumberGenerator()
+        let bytes = (0..<byteCount).map { _ in
+            UInt8.random(in: UInt8.min...UInt8.max, using: &generator)
+        }
+        #endif
         return Data(bytes).base64URLEncodedString()
     }
 
@@ -513,4 +531,3 @@ private struct FlexibleInt: Decodable {
         )
     }
 }
-#endif

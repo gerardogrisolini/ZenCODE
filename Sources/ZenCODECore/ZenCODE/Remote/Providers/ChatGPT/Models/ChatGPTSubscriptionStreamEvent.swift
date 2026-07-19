@@ -5,7 +5,6 @@
 //  Created by Gerardo Grisolini on 15/06/26.
 //
 
-#if os(macOS)
 import Foundation
 
 struct ChatGPTSubscriptionToolCallUpdate: Sendable {
@@ -24,4 +23,3 @@ enum ChatGPTSubscriptionStreamEvent: Sendable {
     case contextWindow(DirectAgentContextWindowStatus)
     case completed(stopReason: String?)
 }
-#endif

@@ -137,6 +137,10 @@ targets += [
         dependencies: [
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "Markdown", package: "swift-markdown"),
+            .target(
+                name: "CLibCURLWebSocket",
+                condition: .when(platforms: [.linux])
+            ),
             "FeatureKit",
             "ToolCore",
             "FeatureMCPBridgeKit",
@@ -184,6 +188,13 @@ targets += [
     .target(
         name: "LocalToolsSupport",
         dependencies: ["FeatureKit"]
+    ),
+    .target(
+        name: "CLibCURLWebSocket",
+        path: "Sources/CLibCURLWebSocket",
+        linkerSettings: [
+            .linkedLibrary("curl", .when(platforms: [.linux]))
+        ]
     ),
     .target(
         name: "ZenCODESetup",

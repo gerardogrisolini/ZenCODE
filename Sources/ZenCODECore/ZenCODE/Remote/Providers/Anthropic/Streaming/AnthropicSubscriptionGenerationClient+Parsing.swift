@@ -5,7 +5,6 @@
 //  Created by Gerardo Grisolini on 10/06/26.
 //
 
-#if os(macOS)
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -37,7 +36,7 @@ extension AnthropicSubscriptionGenerationClient {
 
     static func validateHTTPResponse(
         _ response: URLResponse,
-        bytes: URLSession.AsyncBytes
+        bytes: RemoteStreamBytes
     ) async throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             return
@@ -74,7 +73,7 @@ extension AnthropicSubscriptionGenerationClient {
     }
 
     static func collectErrorBody(
-        from bytes: URLSession.AsyncBytes,
+        from bytes: RemoteStreamBytes,
         limit: Int = 64 * 1024
     ) async throws -> String {
         var data = Data()
@@ -257,4 +256,3 @@ extension AnthropicSubscriptionGenerationClient {
         JSONValue(jsonObject: value).intValue
     }
 }
-#endif

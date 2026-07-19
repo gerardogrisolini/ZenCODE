@@ -9,9 +9,9 @@ import Foundation
 @testable import ZenCODECore
 import Testing
 
-#if os(macOS)
 @Suite(.serialized)
 struct SubscriptionAuthFlowTests {
+#if os(macOS)
     @Test
     func chatGPTSignInUsesBrowserOAuthCallback() async throws {
         let session = try await ChatGPTSubscriptionAuthService.startSignIn()
@@ -32,6 +32,7 @@ struct SubscriptionAuthFlowTests {
         #expect(queryItems["codex_cli_simplified_flow"] == "true")
         #expect(queryItems["state"] != nil)
     }
+#endif
 
     @Test
     func chatGPTDeviceCodeResponseAcceptsStringInterval() throws {
@@ -93,4 +94,3 @@ struct SubscriptionAuthFlowTests {
         try session.submitAuthorizationInput("authorization-code#\(state)")
     }
 }
-#endif

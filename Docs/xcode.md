@@ -45,6 +45,8 @@ Then add this environment variable:
 
 Save the agent.
 
+Xcode 27 beta 3 may ask you to authenticate a custom ACP agent even when the agent does not require that step. Choose **Continue with ZenCODE**. This only acknowledges Xcode’s compatibility step; it does not configure or authenticate a model provider.
+
 ## Recommended configuration
 
 Use this final configuration:
@@ -64,3 +66,4 @@ Environment:
 - **The wrong agent profile is selected**: check that `ZENCODE_AGENT_NAME` is exactly `Xcode`.
 - **Xcode tools are unavailable**: keep Xcode open and approve any MCP/automation prompt shown by Xcode.
 - **No model is configured**: run `zen --setup` in Terminal and configure at least one provider/model.
+- **“This provider requires authentication” in Xcode 27 beta 3**: update ZenCODE, select **Continue with ZenCODE**, then retry the session. This is an Xcode ACP compatibility acknowledgment, not provider authentication.

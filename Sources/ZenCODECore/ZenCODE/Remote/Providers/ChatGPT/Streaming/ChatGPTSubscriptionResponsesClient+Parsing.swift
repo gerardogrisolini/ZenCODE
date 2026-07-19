@@ -8,8 +8,8 @@ import Foundation
 import FoundationNetworking
 #endif
 
-#if os(macOS)
 extension ChatGPTSubscriptionResponsesClient {
+#if os(macOS)
     static func collectErrorBody(
         from bytes: URLSession.AsyncBytes,
         limit: Int = 64 * 1024
@@ -24,6 +24,7 @@ extension ChatGPTSubscriptionResponsesClient {
         return String(decoding: data, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
+#endif
 
     static func decodedJSONObjectSequence(from data: Data) throws -> [[String: Any]] {
         if isDoneMarker(data) {
@@ -144,6 +145,7 @@ extension ChatGPTSubscriptionResponsesClient {
         return payload == "[DONE]"
     }
 
+#if os(macOS)
     static func webSocketData(
         from message: URLSessionWebSocketTask.Message
     ) -> Data? {
@@ -156,6 +158,7 @@ extension ChatGPTSubscriptionResponsesClient {
             return nil
         }
     }
+#endif
 
     static func isReplayUnsafeWebSocketEvent(_ object: [String: Any]) -> Bool {
         let normalizedType = (object["type"] as? String)
@@ -214,4 +217,3 @@ extension ChatGPTSubscriptionResponsesClient {
             .lowercased()
     }
 }
-#endif

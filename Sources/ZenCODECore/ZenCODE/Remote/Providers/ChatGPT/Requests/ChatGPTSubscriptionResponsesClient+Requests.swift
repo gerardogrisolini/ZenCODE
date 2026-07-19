@@ -8,8 +8,9 @@ import Foundation
 import FoundationNetworking
 #endif
 
-#if os(macOS)
+#if canImport(Network)
 import Network
+#endif
 
 extension ChatGPTSubscriptionResponsesClient {
     /// Exact server error emitted when a Responses WebSocket reaches its
@@ -186,11 +187,13 @@ extension ChatGPTSubscriptionResponsesClient {
             return true
         }
 
+#if canImport(Network)
         if let networkError = error as? NWError,
            case let .posix(code) = networkError,
            isRetryablePOSIXCode(code) {
             return true
         }
+#endif
 
         let nsError = error as NSError
         if nsError.domain == NSURLErrorDomain,
@@ -367,4 +370,3 @@ extension ChatGPTSubscriptionResponsesClient {
         return payload
     }
 }
-#endif

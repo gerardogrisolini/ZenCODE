@@ -12,6 +12,14 @@ import os
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
+#if canImport(Security)
+import Security
+#endif
 
 public struct AnthropicSubscriptionCredentials: Codable, Equatable, Sendable {
     public let accessToken: String
@@ -36,13 +44,6 @@ public struct AnthropicSubscriptionCredentials: Codable, Equatable, Sendable {
     }
 }
 
-#if os(macOS)
-import AppKit
-import CryptoKit
-#if canImport(Network)
-import Network
-#endif
-
 public enum AnthropicSubscriptionAuthError: LocalizedError {
     case unsupportedPlatform
     case callbackServerUnavailable
@@ -63,7 +64,7 @@ public enum AnthropicSubscriptionAuthError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .unsupportedPlatform:
-            return "Anthropic Subscription browser sign-in is available on macOS."
+            return "Anthropic Subscription sign-in is unavailable on this platform."
         case .callbackServerUnavailable:
             return "Unable to start the local Anthropic sign-in callback server."
         case .callbackCancelled:
@@ -282,11 +283,9 @@ public enum AnthropicSubscriptionAuthService {
     public static func signIn() async throws -> AnthropicSubscriptionCredentials {
         let session = try await startSignIn()
 
-        let didOpen = await openAuthorizationURL(session.authorizationURL)
-        guard didOpen else {
-            throw AnthropicSubscriptionAuthError.browserOpenFailed
-        }
-
+        print("Open this URL to connect Claude Subscription:")
+        print(session.authorizationURL.absoluteString)
+        _ = await openAuthorizationURL(session.authorizationURL)
         print("After authorizing Claude, paste the authorization code shown in the browser.")
         if let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines),
            !input.isEmpty {
@@ -296,9 +295,7 @@ public enum AnthropicSubscriptionAuthService {
     }
 
     public static func openAuthorizationURL(_ url: URL) async -> Bool {
-        await MainActor.run {
-            NSWorkspace.shared.open(url)
-        }
+        await SubscriptionBrowserLauncher.open(url)
     }
 
     public static func startSignIn() async throws -> AnthropicSubscriptionSignInSession {
@@ -485,11 +482,18 @@ public enum AnthropicSubscriptionAuthService {
 
 
     private static func randomBase64URLString(byteCount: Int) throws -> String {
+        #if canImport(Security)
         var bytes = [UInt8](repeating: 0, count: byteCount)
         let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         guard status == errSecSuccess else {
             throw AnthropicSubscriptionAuthError.randomBytesFailed(status)
         }
+        #else
+        var generator = SystemRandomNumberGenerator()
+        let bytes = (0..<byteCount).map { _ in
+            UInt8.random(in: UInt8.min...UInt8.max, using: &generator)
+        }
+        #endif
         return Data(bytes).base64URLEncodedString()
     }
 
@@ -540,4 +544,3 @@ private struct AnthropicSubscriptionAuthorizationResult: Sendable {
     let code: String
     let state: String
 }
-#endif

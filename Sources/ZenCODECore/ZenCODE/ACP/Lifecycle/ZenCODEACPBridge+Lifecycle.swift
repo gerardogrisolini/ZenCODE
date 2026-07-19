@@ -41,9 +41,45 @@ extension ZenCODEACPBridge {
                 "title": "ZenCODE",
                 "version": agentVersion
             ],
-            "authMethods": []
+            "authMethods": Self.authenticationMethods(from: params)
         ]
         await writer.sendResultIfRequest(id: id, result: JSONValue.acpValue(from: result))
+    }
+
+    /// Xcode 27 beta 3 treats every custom ACP agent as requiring authentication.
+    /// This no-op method only acknowledges that client-mandated step; it does not handle provider access.
+    static func authenticationMethods(from params: [String: Any]) -> [[String: Any]] {
+        guard requiresXcodeAuthenticationCompatibilityMethod(from: params) else {
+            return []
+        }
+
+        return [[
+            "id": "zencode-xcode-compatibility",
+            "name": "Continue with ZenCODE",
+            "description": "Continue to the ZenCODE session.",
+            "type": "agent"
+        ]]
+    }
+
+    private static func requiresXcodeAuthenticationCompatibilityMethod(from params: [String: Any]) -> Bool {
+        guard let clientInfo = params["clientInfo"] as? [String: Any] else {
+            return false
+        }
+        let clientName = ((clientInfo["name"] as? String) ?? (clientInfo["title"] as? String))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard clientName == "xcode" else {
+            return false
+        }
+
+        if let version = (clientInfo["version"] as? String)?.nilIfBlank,
+           let majorVersion = Int(version.split(separator: ".", maxSplits: 1).first ?? ""),
+           majorVersion >= 27 {
+            return true
+        }
+
+        let clientCapabilities = params["clientCapabilities"] as? [String: Any]
+        return clientCapabilities?["auth"] != nil
     }
 
     public func preloadModel(id: JSONValue?, params: [String: Any]) async throws {

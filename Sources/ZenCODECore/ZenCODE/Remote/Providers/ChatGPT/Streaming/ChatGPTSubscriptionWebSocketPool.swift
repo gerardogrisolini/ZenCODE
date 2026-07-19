@@ -712,4 +712,18 @@ private final class PingContinuationState: @unchecked Sendable {
         }
     }
 }
+#else
+import Foundation
+
+/// Linux currently owns one libcurl WebSocket per streamed response, so no
+/// cross-response socket state is retained here.
+public final class ChatGPTSubscriptionWebSocketPool: Sendable {
+    public init() {}
+
+    func closeSession(sessionID: String) {
+        _ = sessionID
+    }
+
+    func closeAll() {}
+}
 #endif

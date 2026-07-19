@@ -187,11 +187,7 @@ public nonisolated enum AnthropicSubscriptionModel {
     }
 
     public static var isAuthenticated: Bool {
-#if os(macOS)
         (try? AnthropicSubscriptionAuthService.loadCredentials()) != nil
-#else
-        false
-#endif
     }
 
     public static var isReady: Bool {

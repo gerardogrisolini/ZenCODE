@@ -5,8 +5,10 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
-#if os(macOS)
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 #if canImport(os)
 import os
 #endif
@@ -163,4 +165,3 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         await toolExecutor.interruptSubAgents(rootSessionID: rootSessionID)
     }
 }
-#endif

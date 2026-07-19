@@ -5,7 +5,6 @@
 //  Created by Gerardo Grisolini on 10/06/26.
 //
 
-#if os(macOS)
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -113,7 +112,14 @@ extension AnthropicSubscriptionGenerationClient {
         }
 
         let requestStartedAt = Date()
+#if canImport(FoundationNetworking)
+        let (bytes, response) = try await RemoteFoundationNetworkingStream.open(
+            for: request,
+            configuration: urlSession.configuration
+        )
+#else
         let (bytes, response) = try await urlSession.bytes(for: request)
+#endif
         try await Self.validateHTTPResponse(response, bytes: bytes)
 
         if let subscriptionUsage = Self.subscriptionUsage(fromHTTPResponse: response) {
@@ -134,7 +140,7 @@ extension AnthropicSubscriptionGenerationClient {
             }
         }
 
-        for try await line in bytes.lines {
+        for try await line in RemoteStreamLineSequence(bytes: bytes) {
             try Task.checkCancellation()
             guard let payload = RemoteStreamTransport.ssePayload(from: line),
                   payload != "[DONE]",
@@ -254,4 +260,3 @@ extension AnthropicSubscriptionGenerationClient {
         )
     }
 }
-#endif
