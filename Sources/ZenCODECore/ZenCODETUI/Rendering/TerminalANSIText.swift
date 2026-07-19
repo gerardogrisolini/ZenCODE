@@ -196,25 +196,39 @@ enum TerminalANSIText {
     /// Reflows `text` to `width` visible columns, breaking on spaces and
     /// preserving the active SGR style across wrap boundaries. Continuation
     /// lines are prefixed with `hangingIndent`. Existing newlines are honored
-    /// and wrapped independently.
+    /// and wrapped independently. `startingAtColumn` reserves already-occupied
+    /// cells on only the first physical line without materializing a text
+    /// prefix, so a fragment that begins with a grapheme continuation remains
+    /// intact.
     static func wrap(
         _ text: String,
         width: Int,
-        hangingIndent: String = ""
+        hangingIndent: String = "",
+        startingAtColumn: Int = 0
     ) -> String {
         guard width > 4 else {
             return text
         }
+        let firstLineColumn = min(
+            max(0, startingAtColumn),
+            max(0, width - 1)
+        )
         // OSC 8 hyperlinks embed spaces inside the escape wrapper; wrapping
         // them would corrupt the sequence, so leave such lines untouched.
         let containsHyperlink = text.contains("\u{1B}]8")
         return text
             .components(separatedBy: "\n")
-            .map { line -> String in
+            .enumerated()
+            .map { index, line -> String in
                 if containsHyperlink && line.contains("\u{1B}]8") {
                     return line
                 }
-                return wrapSingleLine(line, width: width, hangingIndent: hangingIndent)
+                return wrapSingleLine(
+                    line,
+                    width: width,
+                    hangingIndent: hangingIndent,
+                    startingAtColumn: index == 0 ? firstLineColumn : 0
+                )
             }
             .joined(separator: "\n")
     }
@@ -247,9 +261,10 @@ enum TerminalANSIText {
     private static func wrapSingleLine(
         _ line: String,
         width: Int,
-        hangingIndent: String
+        hangingIndent: String,
+        startingAtColumn: Int
     ) -> String {
-        guard visibleWidth(line) > width else {
+        guard startingAtColumn + visibleWidth(line) > width else {
             return line
         }
         
@@ -262,7 +277,7 @@ enum TerminalANSIText {
         
         var lines: [String] = []
         var current = leadingWhitespace
-        var currentWidth = leadingWhitespace.count
+        var currentWidth = startingAtColumn + leadingWhitespace.count
         var active = ""
         var lineHasWord = false
         

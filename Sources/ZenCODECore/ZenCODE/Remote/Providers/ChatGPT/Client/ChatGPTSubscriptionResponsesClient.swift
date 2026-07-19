@@ -16,7 +16,7 @@ public struct ChatGPTSubscriptionResponsesClient {
 
     struct WebSocketLease {
         let sessionID: String
-        let task: URLSessionWebSocketTask
+        let task: any ChatGPTSubscriptionWebSocketTask
         let isCached: Bool
         let isReused: Bool
         /// Fences a late release from changing the ownership of a later lease
@@ -36,6 +36,12 @@ public struct ChatGPTSubscriptionResponsesClient {
     private struct WebSocketStreamFailure: Error {
         let underlying: Error
         let receivedReplayUnsafeEvent: Bool
+        /// True when the request frame carrying `previous_response_id` may have
+        /// reached the server before the failure. A retry must then replay the
+        /// full conversation: the server may have consumed or invalidated that
+        /// continuation state, and re-sending it yields an invalid-response_id
+        /// rejection.
+        let didSendContinuationPayload: Bool
     }
 
     public let credentials: CodexAgentCredentials
@@ -87,12 +93,13 @@ public struct ChatGPTSubscriptionResponsesClient {
         )
 
         var attempt = 0
+        var suppressContinuationReplay = false
         while true {
             do {
                 return try await streamEventsOverWebSocket(
                     body: body,
-                    cachedInput: cachedWebSocketInput,
-                    previousResponseID: previousResponseID,
+                    cachedInput: suppressContinuationReplay ? nil : cachedWebSocketInput,
+                    previousResponseID: suppressContinuationReplay ? nil : previousResponseID,
                     allowsFreshContinuation: allowsFreshWebSocketContinuation,
                     sessionID: sessionID,
                     onEvent: onEvent
@@ -104,6 +111,13 @@ public struct ChatGPTSubscriptionResponsesClient {
                     attempt: attempt
                 ) else {
                     throw failure.underlying
+                }
+                if failure.didSendContinuationPayload {
+                    // The failed attempt may have consumed the previous
+                    // response state server-side. `body` always carries the
+                    // full conversation input, so later attempts fall back to
+                    // a complete replay instead of a stale previous_response_id.
+                    suppressContinuationReplay = true
                 }
                 try await Self.sleepForRetry(attempt: attempt)
                 attempt += 1
@@ -137,6 +151,7 @@ public struct ChatGPTSubscriptionResponsesClient {
         var responseID: String?
         var didReceiveTerminalEvent = false
         var didReceiveReplayUnsafeEvent = false
+        var didSendContinuationPayload = false
 
         defer {
             webSocketPool.release(
@@ -147,22 +162,30 @@ public struct ChatGPTSubscriptionResponsesClient {
 
         do {
             try await withTaskCancellationHandler {
+                let payloadObject = Self.webSocketRequestPayload(
+                    body: body,
+                    cachedInput: cachedInput,
+                    previousResponseID: previousResponseID,
+                    useCachedContinuation: lease.isReused || allowsFreshContinuation
+                )
+                let includesContinuation =
+                    payloadObject["previous_response_id"] != nil
                 let payload = try JSONValue(
-                    jsonObject: Self.webSocketRequestPayload(
-                        body: body,
-                        cachedInput: cachedInput,
-                        previousResponseID: previousResponseID,
-                        useCachedContinuation: lease.isReused || allowsFreshContinuation
-                    )
+                    jsonObject: payloadObject
                 ).jsonData(
                     outputFormatting: [.withoutEscapingSlashes]
                 )
                 guard let text = String(data: payload, encoding: .utf8) else {
                     throw ChatGPTSubscriptionGenerationError.invalidResponse
                 }
-                if !lease.isReused {
-                    try await webSocketPool.waitUntilReady(lease.task)
-                }
+                // Probe reused sockets too: a pooled connection can die
+                // between heartbeats, and a cheap control ping surfaces that
+                // as a retryable failure before the payload is committed.
+                try await webSocketPool.waitUntilReady(lease.task)
+                // Conservatively record the continuation as sent before the
+                // frame goes out: a mid-send failure may still have delivered
+                // it to the server.
+                didSendContinuationPayload = includesContinuation
                 try await lease.task.send(
                     URLSessionWebSocketTask.Message.string(text)
                 )
@@ -204,13 +227,14 @@ public struct ChatGPTSubscriptionResponsesClient {
             }
             throw WebSocketStreamFailure(
                 underlying: error,
-                receivedReplayUnsafeEvent: didReceiveReplayUnsafeEvent
+                receivedReplayUnsafeEvent: didReceiveReplayUnsafeEvent,
+                didSendContinuationPayload: didSendContinuationPayload
             )
         }
     }
 
     static func receiveWebSocketMessage(
-        from task: URLSessionWebSocketTask,
+        from task: any ChatGPTSubscriptionWebSocketTask,
         timeoutNanoseconds: UInt64?
     ) async throws -> URLSessionWebSocketTask.Message {
         guard let timeoutNanoseconds, timeoutNanoseconds > 0 else {

@@ -105,7 +105,7 @@ public struct PromptSkill: Identifiable, Hashable, Sendable {
     }
 }
 
-public enum MLXPromptSkillError: LocalizedError {
+public enum PromptSkillError: LocalizedError {
     case unreadableFile(URL)
     case invalidFrontMatter(String)
     case emptySkillBody(String)

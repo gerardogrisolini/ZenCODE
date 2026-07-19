@@ -367,15 +367,6 @@ extension TerminalChat {
             case let .modelLoaded(modelID):
                 _ = await self.statusBar.update(modelID: modelID)
                 self.printedModelID = self.loadedModelDisplayTitle(modelID)
-            case let .modelLoadedDetails(details):
-                if emitStatus {
-                    await self.printLoadedModelDetails(details)
-                } else {
-                    _ = await self.statusBar.update(modelID: details.modelID)
-                    _ = await self.statusBar.update(modelRuntime: details.runtime)
-                }
-            case let .modelRuntime(runtime):
-                _ = await self.statusBar.update(modelRuntime: runtime)
             case .diagnostic,
                  .thought,
                  .metrics,
@@ -404,46 +395,17 @@ extension TerminalChat {
         printedModelID = displayTitle
         await refreshStatusBarThinkingSelection()
         _ = await statusBar.update(modelID: modelID)
-        await printLoadedModelDetails(
-            DirectAgentLoadedModelDetails(modelID: modelID)
-        )
-    }
-
-    public func printLoadedModelDetails(_ details: DirectAgentLoadedModelDetails) async {
-        let modelID = details.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !modelID.isEmpty else {
-            return
-        }
-
-        let displayTitle = loadedModelDisplayTitle(modelID)
-        printedModelID = displayTitle
-        await refreshStatusBarThinkingSelection()
-        _ = await statusBar.update(modelID: modelID)
-        _ = await statusBar.update(modelRuntime: details.runtime)
-        let runtimeLabel = details.runtime?.lowercased().hasPrefix("ds4") == true ? "DS4" : "MLX"
-        let loadedModelHeading = "ZenCODE \(runtimeLabel) loaded model"
+        let loadedModelHeading = "ZenCODE loaded model"
 
         guard configuration.verboseLogging else {
             await writeOperationalMessage("\(loadedModelHeading): \(displayTitle)\n")
             return
         }
 
-        var lines = [
+        let lines = [
             "\(loadedModelHeading):",
             "  model: \(modelID)"
         ]
-        if let runtime = details.runtime {
-            lines.append("  runtime: \(runtime)")
-        }
-        if let generation = details.generation {
-            lines.append("  generation: \(generation)")
-        }
-        if let penalties = details.penalties {
-            lines.append("  penalties: \(penalties)")
-        }
-        if let kvCache = details.kvCache {
-            lines.append("  kv_cache: \(kvCache)")
-        }
         await writeOperationalMessage(lines.joined(separator: "\n") + "\n")
     }
 

@@ -1,5 +1,5 @@
 //
-//  MLXTerminalSessionStoreTests.swift
+//  TerminalSessionStoreTests.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
@@ -10,7 +10,7 @@ import Foundation
 import Testing
 
 @Suite(.serialized)
-struct MLXTerminalSessionStoreTests {
+struct TerminalSessionStoreTests {
     @Test
     func savesBinarySessionForProject() throws {
         let supportDirectory = temporaryDirectory()
@@ -121,7 +121,7 @@ struct MLXTerminalSessionStoreTests {
     func rejectsVersionThreeSnapshot() throws {
         let supportDirectory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: supportDirectory) }
-        let fileURL = supportDirectory.appendingPathComponent("v3.mlxsession")
+        let fileURL = supportDirectory.appendingPathComponent("v3.session")
         try FileManager.default.createDirectory(
             at: supportDirectory,
             withIntermediateDirectories: true
@@ -259,6 +259,100 @@ struct MLXTerminalSessionStoreTests {
         )
 
         #expect(listedSessions.map(\.name) == ["first"])
+    }
+
+    @Test
+    func migratesValidSessionFileWithNonCurrentName() throws {
+        let supportDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+        let projectURL = supportDirectory
+            .appendingPathComponent("Project", isDirectory: true)
+        let session = sampleSession(
+            name: "migrated session",
+            workingDirectory: projectURL
+        )
+        let directoryURL = TerminalSessionStore.sessionsDirectoryURL(
+            for: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        let sourceURL = directoryURL.appendingPathComponent("stored-record")
+        let destinationURL = TerminalSessionStore.sessionFileURL(
+            name: session.name,
+            workingDirectory: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        try FileManager.default.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true
+        )
+        try PropertyListEncoder().encode(session).write(to: sourceURL)
+
+        let sessions = try TerminalSessionStore.savedSessions(
+            for: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+
+        #expect(sessions == [session])
+        #expect(!FileManager.default.fileExists(atPath: sourceURL.path))
+        #expect(FileManager.default.fileExists(atPath: destinationURL.path))
+        #expect(try TerminalSessionStore.load(from: destinationURL) == session)
+    }
+
+    @Test
+    func keepsExistingCurrentSessionWhenMigratingWouldOverwriteIt() throws {
+        let supportDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+        let projectURL = supportDirectory
+            .appendingPathComponent("Project", isDirectory: true)
+        let currentSession = sampleSession(
+            name: "shared session",
+            workingDirectory: projectURL
+        )
+        let candidateSession = TerminalSavedSession(
+            name: currentSession.name,
+            sessionID: "other-session",
+            cacheKey: currentSession.cacheKey,
+            workingDirectoryPath: currentSession.workingDirectoryPath,
+            createdAt: currentSession.createdAt,
+            savedAt: currentSession.savedAt.addingTimeInterval(1),
+            modelID: currentSession.modelID,
+            agentID: currentSession.agentID,
+            agentName: currentSession.agentName,
+            selectedTools: currentSession.selectedTools,
+            selectedSkillIDs: currentSession.selectedSkillIDs,
+            thinkingSelection: currentSession.thinkingSelection,
+            contextWindow: currentSession.contextWindow,
+            systemPrompt: currentSession.systemPrompt,
+            history: currentSession.history,
+            transcriptHistory: currentSession.transcriptHistory,
+            activePlan: currentSession.activePlan,
+            taskGraph: currentSession.taskGraph,
+            checkpointTree: currentSession.checkpointTree
+        )
+        _ = try TerminalSessionStore.save(
+            currentSession,
+            supportDirectoryURL: supportDirectory
+        )
+        let directoryURL = TerminalSessionStore.sessionsDirectoryURL(
+            for: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        let sourceURL = directoryURL.appendingPathComponent("alternate-record")
+        try PropertyListEncoder().encode(candidateSession).write(to: sourceURL)
+
+        let sessions = try TerminalSessionStore.savedSessions(
+            for: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        let destinationURL = TerminalSessionStore.sessionFileURL(
+            name: currentSession.name,
+            workingDirectory: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+
+        #expect(sessions == [currentSession])
+        #expect(try TerminalSessionStore.load(from: destinationURL) == currentSession)
+        #expect(FileManager.default.fileExists(atPath: sourceURL.path))
     }
 
     @Test
@@ -503,7 +597,7 @@ struct MLXTerminalSessionStoreTests {
     private func temporaryDirectory() -> URL {
         URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(
-                "mlx-terminal-session-tests-\(UUID().uuidString)",
+                "terminal-session-tests-\(UUID().uuidString)",
                 isDirectory: true
             )
             .standardizedFileURL

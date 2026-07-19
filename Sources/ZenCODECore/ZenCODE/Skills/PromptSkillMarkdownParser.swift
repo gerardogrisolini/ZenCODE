@@ -26,7 +26,7 @@ public enum PromptSkillMarkdownParser {
 
         guard let markdownData = try? Data(contentsOf: url),
               let markdown = String(data: markdownData, encoding: .utf8) else {
-            throw MLXPromptSkillError.unreadableFile(url)
+            throw PromptSkillError.unreadableFile(url)
         }
 
         return try parse(
@@ -51,7 +51,7 @@ public enum PromptSkillMarkdownParser {
         let promptBody = split.body.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !promptBody.isEmpty else {
-            throw MLXPromptSkillError.emptySkillBody(sourceFilename)
+            throw PromptSkillError.emptySkillBody(sourceFilename)
         }
 
         let explicitTitle =
@@ -108,7 +108,7 @@ public enum PromptSkillMarkdownParser {
         guard let closingIndex = lines.dropFirst().firstIndex(where: {
             $0.trimmingCharacters(in: .whitespacesAndNewlines) == "---"
         }) else {
-            throw MLXPromptSkillError.invalidFrontMatter(sourceFilename)
+            throw PromptSkillError.invalidFrontMatter(sourceFilename)
         }
 
         let frontMatterLines = Array(lines[1..<closingIndex])

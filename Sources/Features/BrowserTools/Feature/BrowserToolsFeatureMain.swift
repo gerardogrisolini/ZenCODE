@@ -30,7 +30,7 @@ enum BrowserToolsFeatureError: LocalizedError {
 // MARK: - browser.google_search
 
 /// Searches Google using a real Chrome browser and returns the visible results
-/// as markdown. Mirrors `ds4_web_google_search`.
+/// as markdown.
 struct BrowserGoogleSearchTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let query: String?

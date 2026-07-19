@@ -137,7 +137,6 @@ extension DirectSubAgentRuntime {
             status: agent.status,
             pending: agent.status.isPending || !agent.pendingPrompts.isEmpty,
             modelID: agent.modelID,
-            modelRuntime: agent.modelRuntime,
             currentActivity: agent.currentActivity,
             currentToolName: agent.currentToolName,
             currentToolTarget: agent.currentToolTarget,

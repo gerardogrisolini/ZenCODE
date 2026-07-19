@@ -1,5 +1,5 @@
 //
-//  MLXMemoryService.swift
+//  MemoryService.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -9,7 +9,7 @@ import Foundation
 
 public final class MemoryService {
     public static let filename = "MEMORY.md"
-    public static let entriesDidChangeNotification = Notification.Name("MLXMemoryEntriesDidChange")
+    public static let entriesDidChangeNotification = Notification.Name("MemoryEntriesDidChange")
     public static let defaultProjectMemoryContent: String = """
     # MEMORY.md
 

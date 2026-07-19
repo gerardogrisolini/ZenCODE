@@ -144,18 +144,6 @@ extension ZenCODEACPBridge {
                                 ]
                             ]))
                         }
-                    case let .modelLoadedDetails(details):
-                        if !appMode {
-                            await sendPromptUpdate(JSONValue.acpValue(from: [
-                                "sessionUpdate": "agent_thought_chunk",
-                                "content": [
-                                    "type": "text",
-                                    "text": "Loaded model: \(details.modelID)"
-                                ]
-                            ]))
-                        }
-                    case .modelRuntime:
-                        break
                     case .metrics:
                         break
                     case let .contextWindow(status):
@@ -264,10 +252,7 @@ extension ZenCODEACPBridge {
             throw ACPError.invalidParams("session/close requires params.sessionId.")
         }
         sessions[sessionID]?.activePromptTask?.cancel()
-        await refreshSessionStateIfAvailable(
-            sessionID: sessionID,
-            saveRuntimeCache: true
-        )
+        await refreshSessionStateIfAvailable(sessionID: sessionID)
         sessions.removeValue(forKey: sessionID)
         updateSessionSleepAssertion()
         await sessionRunner.closeSession(id: sessionID)

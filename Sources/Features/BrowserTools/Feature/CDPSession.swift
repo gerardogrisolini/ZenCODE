@@ -3,7 +3,6 @@
 //  BrowserTools
 //
 //  Chrome DevTools Protocol WebSocket client.
-//  Ports the CDP communication and page-extraction logic from ds4_web.c.
 //
 
 import Foundation
@@ -272,7 +271,7 @@ final class CDPSession: @unchecked Sendable {
     }
 
     /// Polls `document.readyState` until the page reports *complete* or
-    /// *interactive*. Bounded to the same iteration count as ds4_web.
+    /// *interactive*. Uses a bounded polling budget.
     /// Throws if the page does not become ready within the polling budget.
     func waitReady() async throws {
         for _ in 0..<80 {
@@ -347,7 +346,7 @@ final class CDPSession: @unchecked Sendable {
     }
 
     /// Clicks the Google consent dialog if present, then waits for the page to
-    /// settle again. Mirrors the ds4_web consent-click flow.
+    /// settle again.
     func clickGoogleConsentIfNeeded() async throws {
         let host = try await evalString("location.hostname || ''")
         guard BrowserGoogleConsentOriginPolicy.allows(host: host) else {
@@ -501,7 +500,6 @@ final class CDPSession: @unchecked Sendable {
 }
 
 // MARK: - JavaScript extraction scripts
-// Ported verbatim from ds4_web.c to preserve extraction fidelity.
 
 extension CDPSession {
     /// Clicks "Accept all" / "I agree" consent buttons (multi-language).

@@ -99,7 +99,8 @@ extension TerminalChat {
         workingDirectory: URL
     ) -> String {
         let stem = TerminalSessionStore.filenameStem(for: name)
-        return "\(AgentKVCachePersistencePolicy.terminalDiskCacheKey(workingDirectoryPath: workingDirectory.path)):session:\(stem)"
+        let projectKey = TerminalSessionStore.projectKey(for: workingDirectory)
+        return "terminal:\(projectKey):session:\(stem)"
     }
 
     public static func savedSessionTimestamp(_ date: Date) -> String {

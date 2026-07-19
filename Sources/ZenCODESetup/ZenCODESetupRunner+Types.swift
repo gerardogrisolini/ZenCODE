@@ -22,7 +22,6 @@ enum SetupSectionCategory {
 
 struct SetupSectionConfigurationResult {
     var manifest: AgentSettingsManifest?
-    var additionalResult: ZenCODESetupAdditionalSectionResult = .unchanged
 }
 
 /// Pure, terminal-free state machine for a setup run.
@@ -36,7 +35,6 @@ struct SetupSession {
     private(set) var originalManifest: AgentSettingsManifest?
     private(set) var manifest: AgentSettingsManifest?
     private(set) var didChangeSettings = false
-    private(set) var didRunAdditionalSection = false
 
     /// The terminal outcome of a completed setup run.
     enum Outcome: Equatable {
@@ -44,10 +42,7 @@ struct SetupSession {
         /// `settingsWillBeWritten` is false the existing settings.json is kept
         /// as-is (required files are still ensured).
         case write(manifest: AgentSettingsManifest, settingsWillBeWritten: Bool)
-        /// No manifest, but an additional section ran to completion (e.g. a
-        /// standalone runtime was configured/removed). Setup is considered done.
-        case additionalOnly
-        /// No manifest and nothing meaningful happened: setup cannot complete.
+        /// No usable remote model is configured, so setup cannot complete.
         case noModels
     }
 
@@ -63,30 +58,13 @@ struct SetupSession {
         didChangeSettings = true
     }
 
-    /// Folds the result of a configured section into the session state,
-    /// preserving the original branch semantics:
-    /// - a removed standalone configuration resets the manifest and change flag;
-    /// - an additional section only marks that additional work ran;
-    /// - a section that mutated the manifest marks a settings change;
-    /// - an unchanged section leaves the flags untouched.
-    mutating func apply(
-        section: SetupSection,
-        result: SetupSectionConfigurationResult
-    ) {
+    /// Folds the result of a configured section into the session state. A
+    /// changed manifest is persisted only after it contains at least one model.
+    mutating func apply(_ result: SetupSectionConfigurationResult) {
         let previousManifest = manifest
-        if result.additionalResult == .removedStandaloneConfiguration {
-            manifest = nil
-            originalManifest = nil
-            didChangeSettings = false
-            didRunAdditionalSection = true
-        } else if section.isAdditional {
-            manifest = result.manifest
-            didRunAdditionalSection = true
-        } else if result.manifest != previousManifest {
-            manifest = result.manifest
+        manifest = result.manifest
+        if manifest != previousManifest {
             didChangeSettings = true
-        } else {
-            manifest = result.manifest
         }
     }
 
@@ -101,8 +79,8 @@ struct SetupSession {
     }
 
     var outcome: Outcome {
-        guard let manifest else {
-            return didRunAdditionalSection ? .additionalOnly : .noModels
+        guard let manifest, !manifest.models.isEmpty else {
+            return .noModels
         }
         return .write(manifest: manifest, settingsWillBeWritten: shouldWriteSettings)
     }
@@ -118,7 +96,7 @@ enum SetupSection: Equatable, Hashable {
     case features
     case agents
     case agentModels
-    case additionalGroup(Int, title: String, aliases: Set<String>)
+    case resetRemoteConfiguration
     case finish
     case cancel
 
@@ -135,15 +113,15 @@ enum SetupSection: Equatable, Hashable {
         case .telegram:
             return "Telegram remote control"
         case .voice:
-            return "Local voice tools"
+            return "Voice tools"
         case .features:
             return "Features"
         case .agents:
             return "Agents"
         case .agentModels:
             return "Agent model bindings"
-        case .additionalGroup(_, let title, _):
-            return title
+        case .resetRemoteConfiguration:
+            return "Reset remote configuration"
         case .finish:
             return "Finish setup"
         case .cancel:
@@ -157,7 +135,7 @@ enum SetupSection: Equatable, Hashable {
             return .required
         case .defaultModelSettings, .agents, .agentModels:
             return .recommended
-        case .telegram, .voice, .features, .additionalGroup:
+        case .telegram, .voice, .features, .resetRemoteConfiguration:
             return .optional
         case .defaultModel, .defaultThinking:
             return .recommended
@@ -168,18 +146,11 @@ enum SetupSection: Equatable, Hashable {
 
     var requiresConfiguredModels: Bool {
         switch self {
-        case .providersAndModels, .agents, .features, .additionalGroup, .finish, .cancel:
+        case .providersAndModels, .agents, .features, .resetRemoteConfiguration, .finish, .cancel:
             return false
         case .defaultModelSettings, .defaultModel, .defaultThinking, .telegram, .voice, .agentModels:
             return true
         }
-    }
-
-    var isAdditional: Bool {
-        if case .additionalGroup = self {
-            return true
-        }
-        return false
     }
 
     func matches(_ value: String) -> Bool {
@@ -199,7 +170,7 @@ enum SetupSection: Equatable, Hashable {
         case .telegram:
             return ["telegram", "remote control", "bot"]
         case .voice:
-            return ["voice", "local voice", "voice tools", "speech"]
+            return ["voice", "voice tools", "speech"]
         case .features:
             return ["features", "feature", "tools", "swift features", "enable features", "disable features"]
         case .agents:
@@ -214,8 +185,8 @@ enum SetupSection: Equatable, Hashable {
                 "capability",
                 "agent models & capability"
             ]
-        case .additionalGroup(_, _, let aliases):
-            return aliases
+        case .resetRemoteConfiguration:
+            return ["reset", "reset remote configuration", "reset configuration"]
         case .finish:
             return ["finish", "done", "exit", "quit", "end", "stop"]
         case .cancel:
@@ -281,7 +252,7 @@ enum ZenCODESetupError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .nonInteractiveTerminal:
-            return "Setup requires an interactive terminal."
+            return "Remote provider setup requires an interactive terminal."
         case .cancelled:
             return "Setup cancelled."
         case let .emptyRequiredValue(label):
@@ -289,7 +260,7 @@ enum ZenCODESetupError: LocalizedError {
         case let .invalidChoice(value):
             return "Invalid setup choice: \(value)"
         case .noModelsConfigured:
-            return "At least one provider model is required."
+            return "At least one remote provider model is required."
         case .noRemoteModelsReturned:
             return "The server did not return any models from /models."
         case .chatGPTSubscriptionUnsupported:

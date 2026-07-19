@@ -1,5 +1,5 @@
 //
-//  MLXMemoryServiceTests.swift
+//  MemoryServiceTests.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 27/05/26.
@@ -10,7 +10,7 @@ import ZenCODECore
 import Testing
 
 @Suite
-struct MLXMemoryServiceTests {
+struct MemoryServiceTests {
     @Test
     func memoryTemplatesDescribeProjectResponsibilities() {
         #expect(MemoryService.defaultProjectMemoryContent.contains("Durable project journal"))
@@ -30,7 +30,7 @@ struct MLXMemoryServiceTests {
     @Test
     func templateGuidanceBulletsAreNotParsedAsMemoryEntries() throws {
         let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mlx-memory-tests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
         let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
@@ -62,7 +62,7 @@ struct MLXMemoryServiceTests {
     @Test
     func projectWritesUseProjectMemoryTemplate() throws {
         let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mlx-memory-tests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
         let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
@@ -75,7 +75,7 @@ struct MLXMemoryServiceTests {
         let service = MemoryService()
 
         try service.writeEntry(
-            content: "Summary: use direct ZenCODE runtime inside mlx-server.",
+            content: "Summary: use direct ZenCODE runtime inside remote-server.",
             scope: .project,
             workspaceRootURL: workspaceURL
         )
@@ -86,7 +86,7 @@ struct MLXMemoryServiceTests {
         )
 
         #expect(projectContent.contains("Durable project journal"))
-        #expect(projectContent.contains("Summary: use direct ZenCODE runtime inside mlx-server."))
+        #expect(projectContent.contains("Summary: use direct ZenCODE runtime inside remote-server."))
         #expect(
             service.readEntries(
                 scope: .project,
@@ -99,7 +99,7 @@ struct MLXMemoryServiceTests {
     @Test
     func projectJournalWritesPreserveMultilineEntries() throws {
         let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mlx-memory-tests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
         let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
@@ -148,7 +148,7 @@ struct MLXMemoryServiceTests {
     @Test
     func memoryWriteAddsProjectTimestampWhenMissing() throws {
         let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mlx-memory-tests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
         let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
         let timeZone = TimeZone(identifier: "Europe/Rome")!
         let date = DateComponents(
@@ -202,7 +202,7 @@ struct MLXMemoryServiceTests {
     @Test
     func savedSessionsIndexKeepsLatestSessionPerProject() throws {
         let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mlx-memory-tests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
         let storeDirectoryURL = rootURL.appendingPathComponent("store", isDirectory: true)
         let firstProjectURL = rootURL.appendingPathComponent("first", isDirectory: true)
         let secondProjectURL = rootURL.appendingPathComponent("second", isDirectory: true)
@@ -244,7 +244,7 @@ struct MLXMemoryServiceTests {
     @Test
     func memorySearchReturnsProjectEntries() throws {
         let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mlx-memory-tests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
         let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)

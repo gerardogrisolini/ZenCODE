@@ -187,7 +187,7 @@ struct PlanCommandTests {
     @Test
     func barePlanCommandStopsBeforeDelegatingToPlanner() async throws {
         let configuration = try AgentConfiguration(
-            hostedModelID: "mlx-community/test",
+            hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: URL(
                 fileURLWithPath: "/tmp/ZenCODE-plan-command",
@@ -215,7 +215,7 @@ struct PlanCommandTests {
     @Test
     func planCommandWithGoalRunsHiddenDelegationPrompt() async throws {
         let configuration = try AgentConfiguration(
-            hostedModelID: "mlx-community/test",
+            hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: URL(
                 fileURLWithPath: "/tmp/ZenCODE-plan-command",
@@ -281,8 +281,8 @@ struct PlanCommandTests {
         #expect(purpose == .normal)
         #expect(prompt.contains("Implement the active approved plan now"))
         #expect(prompt.contains("First consolidated plan"))
-        #expect(prompt.contains("parallel execution has a real benefit"))
-        #expect(prompt.contains("mutable file or resource scopes do not overlap"))
+        #expect(prompt.contains("Complete every task in the graph"))
+        #expect(prompt.contains("Do not recreate or replace the approved plan"))
 
         #expect(terminal.recordPlanIfNeeded(
             responseText: "Second consolidated plan",
@@ -950,7 +950,7 @@ struct PlanCommandTests {
 
     private func makeTerminal() throws -> TerminalChat {
         let configuration = try AgentConfiguration(
-            hostedModelID: "mlx-community/test",
+            hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: URL(
                 fileURLWithPath: "/tmp/ZenCODE-plan-command",

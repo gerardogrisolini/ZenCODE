@@ -6,7 +6,6 @@ The `Builder` profile creates and manages reusable Dynamic Swift Features. Use i
 
 ```bash
 zen --agent Builder          # launch directly
-zen --mlx --agent Builder    # fully local MLX runtime
 /agents Builder              # switch inside an existing TUI session
 ```
 

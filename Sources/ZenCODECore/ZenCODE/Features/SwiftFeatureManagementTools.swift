@@ -368,15 +368,15 @@ extension SwiftFeatureRuntime {
             )
             try Self.validateMCPBridgeToolPrefix(toolPrefix)
             let packagePath = arguments
-                .string("mlxServerPackagePath", "mlx_server_package_path", "dependencyPath", "dependency_path")?
-                .nilIfBlank ?? Self.defaultMLXServerPackagePath(fileManager: fileManager)
+                .string("dependencyPath", "dependency_path")?
+                .nilIfBlank ?? Self.defaultPackagePath(fileManager: fileManager)
             let serviceName = arguments
                 .string("serviceName", "service_name")?
                 .nilIfBlank ?? displayName
             try Self.mcpBridgePackageManifestContents(
                 productName: productName,
                 targetName: targetName,
-                mlxServerPackagePath: packagePath
+                packagePath: packagePath
             ).write(to: packageURL, atomically: true, encoding: .utf8)
             try Self.mcpBridgeMainContents(
                 serviceName: serviceName,

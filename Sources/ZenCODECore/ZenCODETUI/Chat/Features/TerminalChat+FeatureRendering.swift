@@ -516,16 +516,10 @@ extension TerminalChat {
     }
 
     static func featureLookupKeys(_ status: SwiftFeatureStatus) -> Set<String> {
-        var keys: Set<String> = [
+        let keys: Set<String> = [
             normalizedFeatureLookupKey(status.id),
             normalizedFeatureLookupKey(featureDisplayName(status))
         ]
-        if status.id.hasPrefix("mlx-"), status.id.hasSuffix("-tools") {
-            let shortID = status.id
-                .dropFirst("mlx-".count)
-                .dropLast("-tools".count)
-            keys.insert(normalizedFeatureLookupKey(String(shortID)))
-        }
         return keys.filter { !$0.isEmpty }
     }
 

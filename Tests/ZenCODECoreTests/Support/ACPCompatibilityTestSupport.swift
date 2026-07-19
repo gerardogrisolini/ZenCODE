@@ -69,7 +69,7 @@ extension ACPCompatibilityTests {
         defaultThinkingSelection: AgentThinkingSelection
     ) -> AgentSettingsModelManifest {
         let provider = AgentRemoteProvider(
-            name: "mlx-server",
+            name: "remote-server",
             baseURL: "http://127.0.0.1",
             modelID: "local/thinking-model"
         )
@@ -238,120 +238,5 @@ actor CapturingACPBackend: AgentRuntimeBackend {
 
     func createdSystemPrompt() -> String? {
         systemPrompt
-    }
-}
-
-actor RuntimeCacheRecordingACPBackend: AgentRuntimeBackend {
-    private var savedIDs: [String] = []
-    private var restoredIDs: [String] = []
-    private var snapshots: [String: AgentRuntimeSessionSnapshot] = [:]
-
-    func createSession(
-        id: String,
-        cwd: String,
-        systemPrompt: String?,
-        history: [AgentRuntimeMessage],
-        cacheKey: String?,
-        allowedToolNames: Set<String>?,
-        thinkingSelection: AgentThinkingSelection?,
-        preserveThinking: Bool
-    ) {
-        snapshots[id] = AgentRuntimeSessionSnapshot(
-            sessionID: id,
-            modelID: "test-model",
-            workingDirectoryPath: cwd,
-            systemPrompt: systemPrompt,
-            cacheKey: cacheKey,
-            history: history,
-            allowedToolNames: allowedToolNames,
-            thinkingSelection: thinkingSelection,
-            preserveThinking: preserveThinking
-        )
-    }
-
-    func createSessionIfNeeded(
-        id: String,
-        cwd: String,
-        systemPrompt: String?,
-        history: [AgentRuntimeMessage],
-        cacheKey: String?,
-        allowedToolNames: Set<String>?,
-        thinkingSelection: AgentThinkingSelection?,
-        preserveThinking: Bool
-    ) {
-        guard snapshots[id] == nil else {
-            return
-        }
-        createSession(
-            id: id,
-            cwd: cwd,
-            systemPrompt: systemPrompt,
-            history: history,
-            cacheKey: cacheKey,
-            allowedToolNames: allowedToolNames,
-            thinkingSelection: thinkingSelection,
-            preserveThinking: preserveThinking
-        )
-    }
-
-    func updateSessionOptions(
-        id _: String,
-        systemPrompt _: String?,
-        allowedToolNames _: Set<String>?,
-        thinkingSelection _: AgentThinkingSelection?,
-        preserveThinking _: Bool
-    ) {}
-
-    func closeSession(id: String) {
-        snapshots.removeValue(forKey: id)
-    }
-
-    func shutdown() async {}
-
-    func saveSessionRuntimeCache(id: String) async {
-        savedIDs.append(id)
-    }
-
-    func restoreSessionRuntimeCache(id: String) async {
-        restoredIDs.append(id)
-    }
-
-    func preloadModel(
-        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
-    ) async throws -> String {
-        "test-model"
-    }
-
-    func activeToolDescriptors() async -> [DirectToolDescriptor] {
-        []
-    }
-
-    func sendPrompt(
-        sessionID _: String,
-        prompt _: String,
-        attachments _: [AgentRuntimeAttachment],
-        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
-    ) async throws -> DirectAgentResponse {
-        DirectAgentResponse(text: "", stopReason: "end_turn", modelID: "test-model")
-    }
-
-    func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? {
-        snapshots[id]
-    }
-
-    func saveCount() -> Int {
-        savedIDs.count
-    }
-
-    func restoreCount() -> Int {
-        restoredIDs.count
-    }
-
-    func savedSessionIDs() -> [String] {
-        savedIDs
-    }
-
-    func restoredSessionIDs() -> [String] {
-        restoredIDs
     }
 }

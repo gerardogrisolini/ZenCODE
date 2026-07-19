@@ -248,11 +248,7 @@ extension TerminalChat {
         guard let modelID = snapshot.modelID?.nilIfBlank else {
             return nil
         }
-        var text = modelTitleResolver(modelID)
-        if let runtime = snapshot.modelRuntime?.nilIfBlank {
-            text += " · \(runtime)"
-        }
-        return "\(dimText("model:")) \(inlineText(text))"
+        return "\(dimText("model:")) \(inlineText(modelTitleResolver(modelID)))"
     }
 
     /// Builds the model title resolver used by the instance overview renderer.
@@ -527,7 +523,6 @@ extension TerminalChat {
                 snapshot.status.rawValue,
                 snapshot.pending ? "pending" : "idle",
                 snapshot.modelID?.nilIfBlank ?? "",
-                snapshot.modelRuntime?.nilIfBlank ?? "",
                 snapshot.currentActivity?.nilIfBlank ?? "",
                 snapshot.currentToolName?.nilIfBlank ?? "",
                 snapshot.currentToolTarget?.nilIfBlank ?? "",

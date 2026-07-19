@@ -419,7 +419,7 @@ extension SwiftFeatureRuntimeTests {
     @Test
     func directToolExecutorUsesExistingMCPXcodeDescriptorsWithoutFeatureDiscovery() async throws {
         let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mlx-xcode-mcp-descriptor-reuse-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("xcode-mcp-descriptor-reuse-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
         }

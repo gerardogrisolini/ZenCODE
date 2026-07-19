@@ -1,5 +1,5 @@
 //
-//  MLXAppStorageDirectoryTests.swift
+//  AppStorageDirectoryTests.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
@@ -10,9 +10,9 @@ import Foundation
 import Testing
 
 @Suite(.serialized)
-struct MLXAppStorageDirectoryTests {
+struct AppStorageDirectoryTests {
     @Test
-    func coderSupportFilesDefaultToHomeMlxCoderDirectory() {
+    func coderSupportFilesDefaultToHomeZenCodeDirectory() {
         AppStorageDirectory.configureSupportDirectoryURL(nil)
         AgentSettingsManifestStore.resetDefaultCacheForTesting()
         defer {

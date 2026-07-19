@@ -8,96 +8,8 @@
 import Foundation
 import ZenCODECore
 
-public enum ZenCODESetupAdditionalSectionResult {
-    case unchanged
-    case removedStandaloneConfiguration
-}
-
-public enum ZenCODESetupQuickActionResult: Equatable {
-    case unchanged
-    case configuredStandaloneRuntime(usageHint: String, hasUsableModel: Bool)
-}
-
-public struct ZenCODESetupQuickAction {
-    let title: String
-    let detail: String?
-    private let action: () async throws -> ZenCODESetupQuickActionResult
-
-    public init(
-        title: String,
-        detail: String? = nil,
-        action: @escaping () async throws -> ZenCODESetupQuickActionResult
-    ) {
-        self.title = title
-        self.detail = detail
-        self.action = action
-    }
-
-    func run() async throws -> ZenCODESetupQuickActionResult {
-        try await action()
-    }
-}
-
-public struct ZenCODESetupAdditionalSection {
-    let title: String
-    let detail: String?
-    let aliases: Set<String>
-    private let action: () async throws -> ZenCODESetupAdditionalSectionResult
-
-    public init(
-        title: String,
-        detail: String? = nil,
-        aliases: Set<String> = [],
-        action: @escaping () async throws -> ZenCODESetupAdditionalSectionResult
-    ) {
-        self.title = title
-        self.detail = detail
-        self.aliases = aliases
-        self.action = action
-    }
-
-    func run() async throws -> ZenCODESetupAdditionalSectionResult {
-        try await action()
-    }
-}
-
-public struct ZenCODESetupAdditionalSectionGroup {
-    let title: String
-    let detail: String?
-    let aliases: Set<String>
-    let placement: ZenCODESetupAdditionalSectionGroupPlacement
-    let prefersBackDefault: Bool
-    let sections: [ZenCODESetupAdditionalSection]
-
-    public init(
-        title: String,
-        detail: String? = nil,
-        aliases: Set<String> = [],
-        placement: ZenCODESetupAdditionalSectionGroupPlacement = .afterAgents,
-        prefersBackDefault: Bool = false,
-        sections: [ZenCODESetupAdditionalSection]
-    ) {
-        self.title = title
-        self.detail = detail
-        self.aliases = aliases
-        self.placement = placement
-        self.prefersBackDefault = prefersBackDefault
-        self.sections = sections
-    }
-}
-
-public enum ZenCODESetupAdditionalSectionGroupPlacement {
-    case afterAgents
-    case afterVoice
-}
-
 public enum ZenCODESetupRunner {
-    public static func run(
-        arguments: [String],
-        additionalSectionGroups: [ZenCODESetupAdditionalSectionGroup] = [],
-        quickActions: [ZenCODESetupQuickAction] = []
-    ) async throws {
-        _ = arguments
+    public static func run() async throws {
         guard TerminalRawInput.supportsInteractiveInput() else {
             throw ZenCODESetupError.nonInteractiveTerminal
         }
@@ -111,7 +23,7 @@ public enum ZenCODESetupRunner {
             """
         )
 
-                let settingsURL = AgentSettingsManifestStore.settingsURL()
+        let settingsURL = AgentSettingsManifestStore.settingsURL()
         var manifest: AgentSettingsManifest?
         if FileManager.default.fileExists(atPath: settingsURL.path) {
             let resolution = try SetupConfigurationResolver.resolve {
@@ -129,18 +41,21 @@ public enum ZenCODESetupRunner {
 
         if manifest == nil {
             AgentOutput.standardError.writeString(
-                "No valid settings.json found. Quick setup can configure local MLX, remote providers, or both.\n\n"
+                "No valid settings.json found. Quick setup configures remote providers.\n\n"
+            )
+        } else if manifest?.models.isEmpty == true {
+            AgentOutput.standardError.writeString(
+                "settings.json does not contain a remote provider model. Setup must configure one.\n\n"
             )
         }
 
         var session = SetupSession(originalManifest: manifest)
         var shouldOpenSetupMenu = true
 
-                if session.manifest == nil,
+        if session.manifest?.models.isEmpty != false,
            try promptQuickSetupMode() {
             let quickManifest = try await runQuickSetup(
-                currentManifest: session.manifest,
-                quickActions: quickActions
+                currentManifest: session.manifest
             )
             session.applyQuickSetup(quickManifest)
             shouldOpenSetupMenu = false
@@ -148,8 +63,7 @@ public enum ZenCODESetupRunner {
 
         while shouldOpenSetupMenu {
             let section = try promptSetupSection(
-                currentManifest: session.manifest,
-                additionalSectionGroups: additionalSectionGroups
+                currentManifest: session.manifest
             )
             if section == .finish {
                 break
@@ -158,19 +72,23 @@ public enum ZenCODESetupRunner {
                 AgentOutput.standardError.writeString("Setup changes were not saved.\n")
                 return
             }
+            if section == .resetRemoteConfiguration {
+                guard try confirmRemoteConfigurationReset() else {
+                    continue
+                }
+                try resetRemoteConfiguration()
+                printCompletion()
+                return
+            }
 
             let result = try await configureSetupSection(
                 section,
-                currentManifest: session.manifest,
-                additionalSectionGroups: additionalSectionGroups
+                currentManifest: session.manifest
             )
-            session.apply(section: section, result: result)
+            session.apply(result)
         }
 
         switch session.outcome {
-        case .additionalOnly:
-            printCompletion()
-            return
         case .noModels:
             throw ZenCODESetupError.noModelsConfigured
         case let .write(finalManifest, shouldWriteSettings):
@@ -196,7 +114,7 @@ public enum ZenCODESetupRunner {
             TerminalCheckboxMenuItem(
                 value: true,
                 title: "Quick setup",
-                detail: "recommended path to start coding"
+                detail: "recommended path to configure a remote provider"
             ),
             TerminalCheckboxMenuItem(
                 value: false,
@@ -211,115 +129,44 @@ public enum ZenCODESetupRunner {
         )
     }
 
-
-        static func runQuickSetup(
-        currentManifest existingManifest: AgentSettingsManifest?,
-        quickActions: [ZenCODESetupQuickAction]
+    static func runQuickSetup(
+        currentManifest existingManifest: AgentSettingsManifest?
     ) async throws -> AgentSettingsManifest {
         AgentOutput.standardError.writeString(
             """
 
-            Quick setup configures the essentials automatically.
+            Quick setup configures a remote provider and its default model.
             Advanced options like Telegram and voice can be enabled later from zen --setup.
 
             """
         )
 
-        let quickActionResults = try await runQuickSetupActions(quickActions)
-        let configuredStandaloneRuntime = quickActionResults.contains { result in
-            if case .configuredStandaloneRuntime = result {
-                return true
-            }
-            return false
-        }
-
-        let shouldConfigureRemoteProviders: Bool
-        if configuredStandaloneRuntime {
-            shouldConfigureRemoteProviders = try promptYesNo(
-                "Configure a remote provider now?",
-                defaultValue: false,
-                help: "Choose No for a local-only setup. You can add remote providers later with zen --setup."
-            )
-        } else {
-            shouldConfigureRemoteProviders = true
-        }
-
-        let manifest: AgentSettingsManifest
-        if shouldConfigureRemoteProviders {
-            var configuredManifest = try await configureProvidersAndModels(existingManifest: existingManifest)
-            configuredManifest = try configureDefaultModel(in: configuredManifest)
-            manifest = configuredManifest
-        } else {
-            manifest = localOnlyManifest(preservingOptionalSettingsFrom: existingManifest)
-        }
-
+        var manifest = try await configureProvidersAndModels(existingManifest: existingManifest)
+        manifest = try configureDefaultModel(in: manifest)
         try ZenCODEAgentProfileSetupRunner.configureInteractively()
-        printQuickActionResults(quickActionResults)
         return manifest
     }
 
-
-    static func runQuickSetupActions(
-        _ quickActions: [ZenCODESetupQuickAction]
-    ) async throws -> [ZenCODESetupQuickActionResult] {
-        var results: [ZenCODESetupQuickActionResult] = []
-        for action in quickActions {
-            let detail = action.detail.map { " (\($0))" } ?? ""
-            guard try promptYesNo(
-                "Configure \(action.title)\(detail) now?",
-                defaultValue: true
-            ) else {
-                continue
-            }
-            results.append(try await action.run())
-        }
-        return results
-    }
-
-    static func localOnlyManifest(
-        preservingOptionalSettingsFrom existingManifest: AgentSettingsManifest?
-    ) -> AgentSettingsManifest {
-        AgentSettingsManifest(
-            version: existingManifest?.version ?? AgentSettingsManifest.currentVersion,
-            models: [],
-            telegram: existingManifest?.telegram,
-            voice: existingManifest?.voice,
-            localExecAllowedCommands: existingManifest?.localExecAllowedCommands ?? [],
-            chatGPTSubscriptionCredentials: existingManifest?.chatGPTSubscriptionCredentials,
-            anthropicSubscriptionCredentials: existingManifest?.anthropicSubscriptionCredentials
-        )
-    }
-
-    static func printQuickActionResults(_ results: [ZenCODESetupQuickActionResult]) {
-        let hints = results.compactMap { result -> String? in
-            guard case let .configuredStandaloneRuntime(usageHint, _) = result else {
-                return nil
-            }
-            return usageHint
-        }
-        guard !hints.isEmpty else {
-            return
-        }
-        AgentOutput.standardError.writeString("\n")
-        for hint in hints {
-            AgentOutput.standardError.writeString("\(hint)\n")
-        }
-    }
-
-        static func requireExistingManifest(
+    static func requireExistingManifest(
         _ manifest: AgentSettingsManifest?
     ) throws -> AgentSettingsManifest {
-        guard let manifest else {
+        guard let manifest, !manifest.models.isEmpty else {
             throw ZenCODESetupError.noModelsConfigured
         }
         return manifest
     }
 
+    static func confirmRemoteConfigurationReset() throws -> Bool {
+        try promptYesNo(
+            "Reset remote configuration?",
+            defaultValue: false,
+            help: "This removes provider settings, profiles, permissions, saved sessions, and global ZenCODE context."
+        )
+    }
 
     static func configureSetupSection(
         _ section: SetupSection,
-        currentManifest manifest: AgentSettingsManifest?,
-        additionalSectionGroups: [ZenCODESetupAdditionalSectionGroup]
+        currentManifest manifest: AgentSettingsManifest?
     ) async throws -> SetupSectionConfigurationResult {
         switch section {
         case .providersAndModels:
@@ -334,8 +181,7 @@ public enum ZenCODESetupRunner {
             }
             return try await configureSetupSection(
                 nestedSection,
-                currentManifest: manifest,
-                additionalSectionGroups: additionalSectionGroups
+                currentManifest: manifest
             )
         case .defaultModel:
             return SetupSectionConfigurationResult(
@@ -358,29 +204,13 @@ public enum ZenCODESetupRunner {
             return SetupSectionConfigurationResult(manifest: manifest)
         case .agents:
             try ZenCODEAgentProfileSetupRunner.configureInteractively()
-            return SetupSectionConfigurationResult(
-                manifest: try requireExistingManifest(manifest)
-            )
+            return SetupSectionConfigurationResult(manifest: manifest)
         case .agentModels:
             try ZenCODEAgentProfileSetupRunner.configureAgentModels()
             return SetupSectionConfigurationResult(
                 manifest: try requireExistingManifest(manifest)
             )
-        case .additionalGroup(let index, _, _):
-            guard additionalSectionGroups.indices.contains(index) else {
-                throw ZenCODESetupError.invalidChoice(String(index + 1))
-            }
-            guard let additionalSection = try promptAdditionalSetupSection(
-                in: additionalSectionGroups[index]
-            ) else {
-                return SetupSectionConfigurationResult(manifest: manifest)
-            }
-            let result = try await additionalSection.run()
-            return SetupSectionConfigurationResult(
-                manifest: manifest,
-                additionalResult: result
-            )
-        case .finish, .cancel:
+        case .resetRemoteConfiguration, .finish, .cancel:
             return SetupSectionConfigurationResult(manifest: manifest)
         }
     }

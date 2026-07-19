@@ -1,17 +1,15 @@
 # ZenCODE Guide
 
-`ZenCODE` is the autonomous coding agent runtime in this repository. It runs as a standalone terminal agent, as an ACP stdio agent, with cloud providers or your ChatGPT/Claude subscription, or fully on-device through `zen --mlx`.
+`ZenCODE` is the autonomous coding agent runtime in this repository. It runs as a standalone terminal agent, as an ACP stdio agent, with cloud providers or your ChatGPT/Claude subscription.
 
 ## Modes
 
 ```bash
 zen          # standalone chat TUI
 zen --acp    # ACP over stdio for compatible clients
-zen --mlx    # direct local MLX runtime (no HTTP)
-zen --ds4    # direct local DS4 runtime
 ```
 
-Standalone `zen` uses providers/models from `~/.zencode/settings.json`. `zen --mlx` uses the local `~/.zencode/mlx/models.json` catalog and the MLX runtime directly. `zen --ds4` uses a local DS4 runtime loaded in-process.
+Standalone `zen` uses providers/models from `~/.zencode/settings.json`.
 
 ## First Setup
 
@@ -192,7 +190,7 @@ To split a conversation into a separate file, restore to the desired point and t
 
 ### Session Format
 
-Version 4 snapshots embed the checkpoint tree alongside the task graph and active plan. Sessions saved before v4 are not loadable. MLX sessions save the runtime snapshot; remote sessions save the local transcript with replay metadata. Subscription sessions persist continuation metadata for efficient resume.
+Version 4 snapshots embed the checkpoint tree alongside the task graph and active plan. Sessions saved before v4 are not loadable. Remote sessions save the local transcript with replay metadata. Subscription sessions persist continuation metadata for efficient resume.
 
 ## Memory and Project Context
 
@@ -219,16 +217,6 @@ zen --acp --cwd /path/to/project
 
 stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, and tool exposure. `--agent`, `--model`, `--cwd`, `--skills`, and token environment variables still apply.
 
-## Direct Local Runtimes
-
-```bash
-zen --mlx --cwd /path/to/project                    # local MLX
-zen --ds4 --cwd /path/to/project                    # local DS4
-zen --mlx --model qwen3-mlx --agent Developer       # explicit model and profile
-```
-
-See [mlx-runtime.md](mlx-runtime.md) and [ds4.md](ds4.md) for runtime-specific setup and configuration.
-
 ## Recommended Workflow
 
 1. `zen --setup` — configure providers, models, agents.
@@ -245,7 +233,7 @@ See [mlx-runtime.md](mlx-runtime.md) and [ds4.md](ds4.md) for runtime-specific s
 ## Troubleshooting
 
 - **Setup starts automatically**: required `~/.zencode` files are missing; complete `--setup`.
-- **Model not found**: run `/models` or check `settings.json`; in MLX mode check `~/.zencode/mlx/models.json`.
+- **Model not found**: run `/models` or check `settings.json`.
 - **No tools available**: use `/tools`, switch profile, or check ACP client tool exposure.
 - **`/make-agents` needs Files**: enable `Files` with `/tools` or switch profile.
 - **`/feature` unavailable**: switch to `/agents Builder`.

@@ -62,7 +62,7 @@ extension SwiftFeatureRuntime {
         }
     }
 
-    static func defaultMLXServerPackagePath(fileManager: FileManager) -> String {
+    static func defaultPackagePath(fileManager: FileManager) -> String {
         let sourceURL = PackageRootResolver.packageRoot(
             forSourceFilePath: #filePath,
             fileManager: fileManager
@@ -193,7 +193,7 @@ extension SwiftFeatureRuntime {
     static func mcpBridgePackageManifestContents(
         productName: String,
         targetName: String,
-        mlxServerPackagePath: String
+        packagePath: String
     ) -> String {
         """
         // swift-tools-version: \(generatedSwiftToolsVersion)
@@ -212,7 +212,7 @@ extension SwiftFeatureRuntime {
                 )
             ],
             dependencies: [
-                .package(path: \(swiftStringLiteral(mlxServerPackagePath)))
+                .package(path: \(swiftStringLiteral(packagePath)))
             ],
             targets: [
                 .executableTarget(

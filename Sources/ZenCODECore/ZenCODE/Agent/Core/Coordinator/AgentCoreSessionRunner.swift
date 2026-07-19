@@ -105,7 +105,7 @@ public actor AgentCoreSessionRunner {
         let task = Task(priority: .userInitiated) {
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated],
-                reason: "MLX agent model load"
+                reason: "Agent model load"
             )
             defer {
                 ProcessInfo.processInfo.endActivity(activity)
@@ -344,23 +344,12 @@ public actor AgentCoreSessionRunner {
         return result
     }
 
-    public func saveSessionRuntimeCache(id sessionID: String) async {
-        await backend?.saveSessionRuntimeCache(id: sessionID)
-    }
-
-    public func restoreSessionRuntimeCache(id sessionID: String) async {
-        await backend?.restoreSessionRuntimeCache(id: sessionID)
-    }
-
-    /// Shared session-restore entry point: creates the runtime session and
-    /// rehydrates its KV cache from disk for the same session identity. Both
-    /// the TUI saved-session loader and the ACP session/load and
-    /// session/resume flows use this so cache loading stays unified.
+    /// Shared session-restore entry point used by persisted TUI and ACP
+    /// sessions to recreate their runtime state from the saved configuration.
     public func restoreSession(
         configuration: AgentCoreSessionConfiguration
     ) async throws {
         try await createSession(configuration: configuration)
-        await restoreSessionRuntimeCache(id: configuration.sessionID)
     }
 
 
@@ -381,7 +370,7 @@ public actor AgentCoreSessionRunner {
         let task = Task(priority: .userInitiated) {
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .latencyCritical],
-                reason: "MLX agent generation"
+                reason: "Agent generation"
             )
             defer {
                 ProcessInfo.processInfo.endActivity(activity)
@@ -506,8 +495,8 @@ public actor AgentCoreSessionRunner {
 
     /// Shuts down the model backend and all session state while keeping the
     /// connected external MCP servers (for example the already-authorized
-    /// Xcode connection) alive. Use this for in-process resets such as model
-    /// or agent switching, where tearing down MCP connections would force the
+    /// Xcode connection) alive. Use this for backend resets such as model or
+    /// agent switching, where tearing down MCP connections would force the
     /// user to grant external-tool consents again.
     public func shutdownBackendKeepingExternalTools() async {
         promptTaskRegistry.cancelAllTasks()

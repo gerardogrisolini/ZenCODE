@@ -1049,20 +1049,16 @@ public struct TerminalMarkdownStreamFormatter {
             return TerminalANSIText.wrap(text, width: contentWidth)
         }
 
-        // Feed the normal wrapper a synthetic prefix for the already-emitted
-        // cells. It consequently gives the first row only its real remaining
-        // width, then naturally starts every wrapped continuation at column 0
-        // with the full `contentWidth`. The prefix contains plain ASCII spaces,
-        // so it neither affects ANSI style tracking nor grapheme measurement.
-        let syntheticPrefix = String(repeating: " ", count: firstLineOffset)
-        let wrapped = TerminalANSIText.wrap(
-            syntheticPrefix + text,
-            width: contentWidth
+        // Keep the occupied cells as layout state rather than materializing
+        // them as spaces. A new delta can begin with a combining mark or ZWJ
+        // that completes the final grapheme already written by the prefix;
+        // concatenating synthetic spaces would make that continuation attach to
+        // a space and prevent us from removing the prefix safely.
+        return TerminalANSIText.wrap(
+            text,
+            width: contentWidth,
+            startingAtColumn: firstLineOffset
         )
-        guard wrapped.hasPrefix(syntheticPrefix) else {
-            return wrapped
-        }
-        return String(wrapped.dropFirst(syntheticPrefix.count))
     }
 
     /// Computes the end of the newly safe pending-line prefix.

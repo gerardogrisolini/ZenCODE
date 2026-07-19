@@ -752,7 +752,7 @@ struct DirectSubAgentRuntimeTests {
     @Test
     func applyingSubAgentBackendContextPreservesModelWhenLockedToSession() {
         let parentConfig = AgentRuntimeConfiguration(
-            modelID: "local-mlx-model",
+            modelID: "local-model",
             bearerToken: nil,
             workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
             maxToolRounds: 4,
@@ -771,7 +771,7 @@ struct DirectSubAgentRuntimeTests {
             profile: profile
         )
         let result = parentConfig.applyingSubAgentBackendContext(context)
-        #expect(result.modelID == "local-mlx-model")
+        #expect(result.modelID == "local-model")
     }
 
     @Test

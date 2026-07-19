@@ -72,6 +72,7 @@ extension ChatGPTSubscriptionGenerationClient {
         var accumulatedText = ""
         var generationStats: [RemoteGenerationStats] = []
         var didRetryAfterContextLimit = false
+        var streamInterruptionRetries = 0
 
 
         for round in 0..<configuration.maxToolRounds {
@@ -175,6 +176,24 @@ extension ChatGPTSubscriptionGenerationClient {
                         sessions[sessionID] = session
                         await onEvent(
                             .diagnostic(Self.continuationReplayFallbackDiagnostic())
+                        )
+                        continue
+                    }
+                    if streamInterruptionRetries < Self.maxStreamInterruptionRetries,
+                       Self.isRetryableStreamInterruption(error) {
+                        // A transport failure that the streaming client could
+                        // not retry safely (for example the socket closed after
+                        // output already streamed). Content deltas are buffered
+                        // until the terminal event, so replaying the turn over a
+                        // fresh connection does not duplicate assistant output.
+                        streamInterruptionRetries += 1
+                        resetContinuationAndTransport(
+                            session: &session,
+                            sessionIdentity: sessionIdentity
+                        )
+                        sessions[sessionID] = session
+                        await onEvent(
+                            .diagnostic(Self.streamInterruptionRetryDiagnostic())
                         )
                         continue
                     }
@@ -308,6 +327,20 @@ extension ChatGPTSubscriptionGenerationClient {
             + "full conversation replay."
     }
 
+    static let maxStreamInterruptionRetries = 1
+
+    static func streamInterruptionRetryDiagnostic() -> String {
+        "ChatGPT Subscription lost the WebSocket stream mid-turn; retrying "
+            + "this turn on a fresh connection with a full conversation replay."
+    }
+
+    static func isRetryableStreamInterruption(_ error: Error) -> Bool {
+        guard !ChatGPTSubscriptionResponsesClient.isCancellationError(error) else {
+            return false
+        }
+        return ChatGPTSubscriptionResponsesClient.isRetryableTransportError(error)
+    }
+
     static func continuationUnavailableError(
         from error: Error
     ) -> ChatGPTSubscriptionGenerationError? {
@@ -338,7 +371,9 @@ extension ChatGPTSubscriptionGenerationClient {
             .lowercased()
         guard normalized.contains("previous_response_id")
                 || normalized.contains("previous response")
-                || normalized.contains("response id") else {
+                || normalized.contains("response id")
+                || normalized.contains("response_id")
+                || normalized.contains("response with id") else {
             return false
         }
 

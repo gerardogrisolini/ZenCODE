@@ -10,15 +10,11 @@ import ZenCODECore
 
 extension ZenCODESetupRunner {
     static func promptSetupSection(
-        currentManifest manifest: AgentSettingsManifest?,
-        additionalSectionGroups: [ZenCODESetupAdditionalSectionGroup]
+        currentManifest manifest: AgentSettingsManifest?
     ) throws -> SetupSection {
         let modelsConfigured = manifest?.models.isEmpty == false
         while true {
-            let options = setupSectionOptions(
-                currentManifest: manifest,
-                additionalSectionGroups: additionalSectionGroups
-            )
+            let options = setupSectionOptions(currentManifest: manifest)
             let defaultSection: SetupSection = modelsConfigured ? .finish : .providersAndModels
             let defaultIndex = options.firstIndex { $0.section == defaultSection } ?? 0
 
@@ -111,25 +107,15 @@ extension ZenCODESetupRunner {
             return setupStatusMarker(manifest?.voice?.isConfigured == true, optional: true)
         case .features:
             return setupStatusMarker(featuresAreEnabled(), optional: true)
-        case .defaultModel, .defaultThinking, .additionalGroup, .finish, .cancel:
+        case .defaultModel, .defaultThinking, .resetRemoteConfiguration, .finish, .cancel:
             return nil
         }
     }
 
     static func setupSectionOptions(
-        currentManifest manifest: AgentSettingsManifest?,
-        additionalSectionGroups: [ZenCODESetupAdditionalSectionGroup]
+        currentManifest manifest: AgentSettingsManifest?
     ) -> [SetupSectionOption] {
-        let groupsAfterAgents = additionalSectionGroupOptions(
-            additionalSectionGroups,
-            placement: .afterAgents
-        )
-        let groupsAfterVoice = additionalSectionGroupOptions(
-            additionalSectionGroups,
-            placement: .afterVoice
-        )
-
-        var options = [
+        [
             SetupSectionOption(
                 section: .providersAndModels,
                 detail: providersAndModelsSetupDetail(manifest)
@@ -145,30 +131,26 @@ extension ZenCODESetupRunner {
             SetupSectionOption(
                 section: .agentModels,
                 detail: agentModelsSetupDetail()
-            )
+            ),
+            SetupSectionOption(
+                section: .telegram,
+                detail: manifest?.telegram?.isEnabled == true ? "enabled" : "disabled"
+            ),
+            SetupSectionOption(
+                section: .voice,
+                detail: manifest?.voice?.isConfigured == true ? "enabled" : "disabled"
+            ),
+            SetupSectionOption(
+                section: .features,
+                detail: featuresSetupDetail()
+            ),
+            SetupSectionOption(
+                section: .resetRemoteConfiguration,
+                detail: "remove provider settings and ZenCODE support files"
+            ),
+            SetupSectionOption(section: .finish, detail: "save and exit"),
+            SetupSectionOption(section: .cancel, detail: "discard changes")
         ]
-
-        options.append(contentsOf: groupsAfterAgents)
-        options.append(
-            contentsOf: [
-                SetupSectionOption(
-                    section: .telegram,
-                    detail: manifest?.telegram?.isEnabled == true ? "enabled" : "disabled"
-                ),
-                SetupSectionOption(
-                    section: .voice,
-                    detail: manifest?.voice?.isConfigured == true ? "enabled" : "disabled"
-                ),
-                SetupSectionOption(
-                    section: .features,
-                    detail: featuresSetupDetail()
-                )
-            ]
-        )
-        options.append(contentsOf: groupsAfterVoice)
-        options.append(SetupSectionOption(section: .finish, detail: "save and exit"))
-        options.append(SetupSectionOption(section: .cancel, detail: "discard changes"))
-        return options
     }
 
     static func setupStatusMarker(_ isReady: Bool, optional: Bool = false) -> String {
@@ -176,25 +158,6 @@ extension ZenCODESetupRunner {
             return "[✓]"
         }
         return optional ? "[-]" : "[!]"
-    }
-
-    static func additionalSectionGroupOptions(
-        _ groups: [ZenCODESetupAdditionalSectionGroup],
-        placement: ZenCODESetupAdditionalSectionGroupPlacement
-    ) -> [SetupSectionOption] {
-        groups.enumerated().compactMap { index, group in
-            guard group.placement == placement else {
-                return nil
-            }
-            return SetupSectionOption(
-                section: .additionalGroup(
-                    index,
-                    title: group.title,
-                    aliases: group.aliases
-                ),
-                detail: group.detail
-            )
-        }
     }
 
     static func agentsSetupDetail() -> String {
@@ -323,41 +286,6 @@ extension ZenCODESetupRunner {
             return nil
         }
         return options[choice].section
-    }
-
-    static func promptAdditionalSetupSection(
-        in group: ZenCODESetupAdditionalSectionGroup
-    ) throws -> ZenCODESetupAdditionalSection? {
-        guard !group.sections.isEmpty else {
-            return nil
-        }
-
-        let backValue = group.sections.count
-        var items = group.sections.enumerated().map { index, section in
-            TerminalCheckboxMenuItem(
-                value: index,
-                title: section.title,
-                detail: section.detail
-            )
-        }
-        items.append(
-            TerminalCheckboxMenuItem(
-                value: backValue,
-                title: "Back",
-                detail: "return to the previous menu",
-                groupTitle: " "
-            )
-        )
-
-        let selected = group.prefersBackDefault ? backValue : 0
-        guard let choice = TerminalCheckboxMenu.selectOne(
-            title: group.title,
-            items: items,
-            selected: selected
-        ), group.sections.indices.contains(choice) else {
-            return nil
-        }
-        return group.sections[choice]
     }
 
 }

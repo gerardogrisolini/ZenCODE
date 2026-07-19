@@ -77,8 +77,6 @@ actor AgentCorePromptTurnRecorder {
         case .status,
              .diagnostic,
              .modelLoaded,
-             .modelLoadedDetails,
-             .modelRuntime,
              .metrics,
              .contextWindow,
              .subscriptionUsage,

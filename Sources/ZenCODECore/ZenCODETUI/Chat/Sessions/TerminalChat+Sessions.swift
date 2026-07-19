@@ -227,7 +227,6 @@ extension TerminalChat {
 
         do {
             _ = try TerminalSessionStore.save(savedSession)
-            await sessionRunner.saveSessionRuntimeCache(id: savedSession.sessionID)
             recordSavedSessionIndex(savedSession)
             activeSavedSessionName = savedSession.name
             activeCheckpointTree = savedSession.checkpointTree

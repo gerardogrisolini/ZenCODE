@@ -516,9 +516,6 @@ public enum TerminalToolSelectionCatalog {
             return displayName
         }
         var name = status.id
-        if name.hasPrefix("mlx-") {
-            name.removeFirst("mlx-".count)
-        }
         if name.hasSuffix("-tools") {
             name.removeLast("-tools".count)
         }

@@ -194,8 +194,11 @@ extension ChatGPTSubscriptionResponsesClient {
             return true
         }
 
-        return nsError.localizedDescription
+        let localizedDescription = nsError.localizedDescription
+        return localizedDescription
             .localizedCaseInsensitiveContains("socket is not connected")
+            || localizedDescription
+            .localizedCaseInsensitiveContains("socket is closed")
     }
 
     static func isWebSocketConnectionLimitError(_ error: Error) -> Bool {

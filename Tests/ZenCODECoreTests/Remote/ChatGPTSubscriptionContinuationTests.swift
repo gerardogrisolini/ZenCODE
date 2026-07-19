@@ -120,6 +120,12 @@ extension RemoteSessionSnapshotTests {
             ),
             ChatGPTSubscriptionGenerationError.responseFailed(
                 "Unsupported parameter: previous_response_id"
+            ),
+            ChatGPTSubscriptionGenerationError.responseFailed(
+                "Invalid response_id provided."
+            ),
+            ChatGPTSubscriptionGenerationError.responseFailed(
+                "Response with id 'resp_missing' has expired."
             )
         ]
 
@@ -156,6 +162,60 @@ extension RemoteSessionSnapshotTests {
             ChatGPTSubscriptionGenerationClient.continuationUnavailableError(
                 from: error
             ) == nil
+        )
+    }
+
+    @Test
+    func chatGPTSubscriptionClosedSocketErrorsAreRetryableTransportFailures() {
+        let closedSocketError = NSError(
+            domain: NSPOSIXErrorDomain,
+            code: Int(POSIXErrorCode.ENOTCONN.rawValue),
+            userInfo: [NSLocalizedDescriptionKey: "Socket is not connected"]
+        )
+        let closedMessageError = NSError(
+            domain: "NWErrorDomain",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Socket is closed"]
+        )
+
+        #expect(
+            ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
+                closedSocketError
+            )
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
+                closedMessageError
+            )
+        )
+    }
+
+    @Test
+    func chatGPTSubscriptionStreamInterruptionRetryMatchesOnlyTransportFailures() {
+        let transportError = URLError(.networkConnectionLost)
+        let cancellation = CancellationError()
+        let applicationError = ChatGPTSubscriptionGenerationError.responseFailed(
+            "The model produced an invalid tool call."
+        )
+
+        #expect(
+            ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
+                transportError
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
+                cancellation
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
+                applicationError
+            )
+        )
+        #expect(
+            ChatGPTSubscriptionGenerationClient.streamInterruptionRetryDiagnostic()
+                .contains("full conversation replay")
         )
     }
 
@@ -1562,7 +1622,9 @@ private final class ChatGPTSubscriptionWebSocketPoolHarness: @unchecked Sendable
         state.requests.withLock { $0 }
     }
 
-    func closeCount(for task: URLSessionWebSocketTask) -> Int {
+    func closeCount(
+        for task: any ChatGPTSubscriptionWebSocketTask
+    ) -> Int {
         state.closeCounts.withLock { $0[ObjectIdentifier(task), default: 0] }
     }
 }

@@ -545,13 +545,13 @@ struct TerminalChatRenderingTests {
     func statusBarModelFragmentIncludesThinkingSelection() {
         #expect(
             TerminalStatusBar.modelStatusFragment(
-                modelID: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
+                modelID: "remote-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
                 thinkingSelection: .high
             ) == "Qwen3-Coder-30B-A3B-Instruct-4bit · High"
         )
         #expect(
             TerminalStatusBar.modelStatusFragment(
-                modelID: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
+                modelID: "remote-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
                 thinkingSelection: nil
             ) == "Qwen3-Coder-30B-A3B-Instruct-4bit"
         )
@@ -586,10 +586,9 @@ struct TerminalChatRenderingTests {
 
         var fullAccessState = defaultState
         fullAccessState.localExecAccessMode = .fullAccess
-        fullAccessState.latestModelRuntime = "local"
         let fullAccessText = statusBar.statusTextLocked(state: &fullAccessState)
         let redDot = "\u{1B}[31m●\u{1B}[0m"
-        #expect(fullAccessText == "test-model · local · \(redDot)")
+        #expect(fullAccessText == "test-model · \(redDot)")
         #expect(!fullAccessText.contains("mode full access"))
     }
 
@@ -2052,7 +2051,7 @@ struct TerminalChatRenderingTests {
             role: "swift-scan",
             status: .closed,
             pending: false,
-            latestOutput: "Trovati 3 file `.swift`: 1. `./Tests/ZenCODECoreTests/AgentCoreSessionRunnerTests.swift` 2. `./Tests/ZenCODECoreTests/MLXMemoryServiceTests.swift` 3. `./Tests/ZenCODECoreTests/VeryLongFileNameThatShouldWrapInsideTheBox.swift`",
+            latestOutput: "Trovati 3 file `.swift`: 1. `./Tests/ZenCODECoreTests/AgentCoreSessionRunnerTests.swift` 2. `./Tests/ZenCODECoreTests/MemoryServiceTests.swift` 3. `./Tests/ZenCODECoreTests/VeryLongFileNameThatShouldWrapInsideTheBox.swift`",
             latestError: nil,
             createdAt: Date(),
             updatedAt: Date()
@@ -2150,7 +2149,6 @@ struct TerminalChatRenderingTests {
             status: .running,
             pending: true,
             modelID: "gpt-5",
-            modelRuntime: "remote",
             currentActivity: "reading project files",
             currentToolName: "search.grep",
             currentToolTarget: "needle",
@@ -2162,7 +2160,7 @@ struct TerminalChatRenderingTests {
 
         let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
 
-        #expect(rendered.contains("model: gpt-5 · remote"))
+        #expect(rendered.contains("model: gpt-5"))
         #expect(rendered.contains("💬 reading project files"))
         #expect(rendered.contains("🛠️  search.grep needle"))
         #expect(!rendered.contains("activity:"))
@@ -2180,7 +2178,6 @@ struct TerminalChatRenderingTests {
             status: .running,
             pending: true,
             modelID: "gpt-5",
-            modelRuntime: "remote",
             latestOutput: nil,
             latestError: nil,
             createdAt: Date(),
@@ -2231,7 +2228,6 @@ struct TerminalChatRenderingTests {
             status: .running,
             pending: true,
             modelID: "gpt-5",
-            modelRuntime: "remote",
             latestOutput: nil,
             latestError: nil,
             createdAt: Date(),
@@ -2245,7 +2241,7 @@ struct TerminalChatRenderingTests {
             TerminalChat.renderSubAgentOverview([snapshot], modelTitleResolver: resolver)
         )
 
-        #expect(rendered.contains("model: GPT-5 Turbo · remote"))
+        #expect(rendered.contains("model: GPT-5 Turbo"))
         #expect(!rendered.contains("model: gpt-5"))
     }
 
@@ -2259,7 +2255,6 @@ struct TerminalChatRenderingTests {
             status: .running,
             pending: true,
             modelID: rawModelID,
-            modelRuntime: "remote",
             latestOutput: nil,
             latestError: nil,
             createdAt: Date(),
@@ -2273,7 +2268,7 @@ struct TerminalChatRenderingTests {
             TerminalChat.renderSubAgentOverview([snapshot], modelTitleResolver: resolver)
         )
 
-        #expect(rendered.contains("model: glm-5.2 · remote"))
+        #expect(rendered.contains("model: glm-5.2"))
         #expect(!rendered.contains("remoteapi:"))
         #expect(!rendered.contains("d3eea8e9"))
     }
@@ -2291,8 +2286,8 @@ struct TerminalChatRenderingTests {
     func resolvedSubAgentModelTitleLeavesUnrelatedIDsUnchanged() {
         #expect(TerminalChat.resolvedSubAgentModelTitle(for: "gpt-5") == "gpt-5")
         #expect(
-            TerminalChat.resolvedSubAgentModelTitle(for: "remoteapi:provider:mlx-community/model")
-                == "remoteapi:provider:mlx-community/model"
+            TerminalChat.resolvedSubAgentModelTitle(for: "remoteapi:provider:remote-community/model")
+                == "remoteapi:provider:remote-community/model"
         )
     }
 
@@ -2664,7 +2659,7 @@ struct TerminalChatRenderingTests {
         sessionRunner: AgentCoreSessionRunner? = nil
     ) throws -> TerminalChat {
         let configuration = try AgentConfiguration(
-            hostedModelID: "mlx-community/test",
+            hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-tool-rendering", isDirectory: true)
         )

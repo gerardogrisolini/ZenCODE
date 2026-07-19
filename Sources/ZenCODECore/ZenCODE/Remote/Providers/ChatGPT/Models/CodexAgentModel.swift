@@ -96,42 +96,42 @@ public nonisolated enum CodexAgentModel {
             modelID: "gpt-5.6-sol",
             title: "GPT-5.6 Sol",
             subtitle: "Latest frontier agentic coding model",
-            contextWindowTokenLimit: effectiveContextWindowTokenLimit(372_000),
+            contextWindowTokenLimit: 372_000,
             thinkingSupport: solThinkingSupport
         ),
         ModelOption(
             modelID: "gpt-5.6-terra",
             title: "GPT-5.6 Terra",
             subtitle: "Balanced agentic coding model for everyday work",
-            contextWindowTokenLimit: effectiveContextWindowTokenLimit(372_000),
+            contextWindowTokenLimit: 372_000,
             thinkingSupport: terraThinkingSupport
         ),
         ModelOption(
             modelID: "gpt-5.6-luna",
             title: "GPT-5.6 Luna",
             subtitle: "Fast and affordable agentic coding model",
-            contextWindowTokenLimit: effectiveContextWindowTokenLimit(372_000),
+            contextWindowTokenLimit: 372_000,
             thinkingSupport: maxThinkingSupport
         ),
         ModelOption(
             modelID: "gpt-5.5",
             title: "GPT-5.5",
             subtitle: "Frontier model for complex coding, research, and real-world work",
-            contextWindowTokenLimit: effectiveContextWindowTokenLimit(272_000),
+            contextWindowTokenLimit: 272_000,
             thinkingSupport: standardThinkingSupport
         ),
         ModelOption(
             modelID: "gpt-5.4",
             title: "GPT-5.4",
             subtitle: "Strong model for everyday coding",
-            contextWindowTokenLimit: effectiveContextWindowTokenLimit(272_000),
+            contextWindowTokenLimit: 272_000,
             thinkingSupport: standardThinkingSupport
         ),
         ModelOption(
             modelID: "gpt-5.4-mini",
             title: "GPT-5.4 Mini",
             subtitle: "Small, fast, and cost-efficient model for simpler coding tasks",
-            contextWindowTokenLimit: effectiveContextWindowTokenLimit(272_000),
+            contextWindowTokenLimit: 272_000,
             thinkingSupport: standardThinkingSupport
         )
     ]
@@ -206,10 +206,6 @@ public nonisolated enum CodexAgentModel {
 
     public static func contextWindowTokenLimit(forLLMID value: String?) -> Int? {
         option(forLLMID: value).contextWindowTokenLimit
-    }
-
-    private static func effectiveContextWindowTokenLimit(_ contextWindow: Int) -> Int {
-        contextWindow * 95 / 100
     }
 
     private static func normalizedModelID(_ value: String) -> String {

@@ -110,10 +110,6 @@ extension TerminalChat {
                         await self.writeThought(message)
                     case let .modelLoaded(modelID):
                         await self.printModelIfNeeded(modelID)
-                    case let .modelLoadedDetails(details):
-                        await self.printLoadedModelDetails(details)
-                    case let .modelRuntime(runtime):
-                        _ = await self.statusBar.update(modelRuntime: runtime)
                     case let .metrics(metrics):
                         self.didReceiveMetricsForCurrentPrompt = true
                         await self.writeMetricsStatus(metrics)
