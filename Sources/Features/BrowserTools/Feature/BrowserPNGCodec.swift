@@ -724,6 +724,10 @@ private struct DeflateBitReader {
     private(set) var byteOffset = 0
     private var bitOffset: UInt8 = 0
 
+    init(bytes: [UInt8]) {
+        self.bytes = bytes
+    }
+
     var isAtEnd: Bool {
         byteOffset == bytes.count && bitOffset == 0
     }
