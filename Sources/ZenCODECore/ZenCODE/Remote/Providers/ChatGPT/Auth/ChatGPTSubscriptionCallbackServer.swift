@@ -4,7 +4,9 @@
 //
 
 import Foundation
+#if os(macOS)
 import Network
+#endif
 #if canImport(os)
 import os
 #endif
