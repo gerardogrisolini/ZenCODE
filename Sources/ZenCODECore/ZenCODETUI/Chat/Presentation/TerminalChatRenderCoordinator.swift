@@ -43,6 +43,15 @@ actor TerminalChatRenderCoordinator {
         let text: String
     }
 
+    /// One completed sub-agent response waiting to be presented. `token` is a
+    /// stable identity for that completion, allowing the overview metadata to
+    /// be refreshed without printing the same model-authored response again.
+    struct SubAgentMarkdownResponse: Sendable, Equatable {
+        let token: String
+        let heading: String
+        let markdown: String
+    }
+
     struct Snapshot: Sendable, Equatable {
         let toolOutputDetailLevel: ToolOutputDetailLevel
         let activeCompactToolCallID: String?
@@ -116,7 +125,7 @@ actor TerminalChatRenderCoordinator {
 
     private enum OverviewContent: Sendable {
         case markdown(String)
-        case text(String)
+        case subAgents(text: String, responses: [SubAgentMarkdownResponse])
     }
 
     private struct PendingOverview: Sendable {
@@ -125,6 +134,7 @@ actor TerminalChatRenderCoordinator {
         let revision: Int?
         let force: Bool
         let rememberSignature: Bool
+        let rememberedSignature: String
         let content: OverviewContent
         let sequence: UInt64
     }
@@ -177,6 +187,10 @@ actor TerminalChatRenderCoordinator {
     private var overviewRevisions: [OverviewKind: Int] = [:]
     private var overviewPublicationCounters: [OverviewKind: Int] = [:]
     private var overviewPublishingSuspended = false
+    /// Completion tokens are retained independently from overview signatures:
+    /// a status or tool update may legitimately republish the section, while a
+    /// completed response is transient and must be emitted exactly once.
+    private var consumedSubAgentResponseTokens = Set<String>()
 
     init(
         stdinIsTerminal: Bool,
@@ -794,22 +808,37 @@ actor TerminalChatRenderCoordinator {
     func renderSubAgentOverview(
         signature: String,
         text: String,
+        responses: [SubAgentMarkdownResponse] = [],
         force: Bool,
         rememberSignature: Bool
     ) -> OverviewRenderResult {
-        renderOverview(
+        let pendingResponseTokens = responses.compactMap { response in
+            consumedSubAgentResponseTokens.contains(response.token)
+                ? nil
+                : response.token
+        }
+        let publicationSignature: String
+        if pendingResponseTokens.isEmpty {
+            publicationSignature = signature
+        } else {
+            publicationSignature = ([signature] + pendingResponseTokens)
+                .joined(separator: "\u{1D}")
+        }
+        return renderOverview(
             kind: .subAgents,
-            signature: signature,
+            signature: publicationSignature,
+            rememberedSignature: signature,
             revision: nil,
             force: force,
             rememberSignature: rememberSignature,
-            content: .text(text)
+            content: .subAgents(text: text, responses: responses)
         )
     }
 
     private func renderOverview(
         kind: OverviewKind,
         signature: String,
+        rememberedSignature: String? = nil,
         revision: Int?,
         force: Bool,
         rememberSignature: Bool,
@@ -831,6 +860,7 @@ actor TerminalChatRenderCoordinator {
             revision: revision,
             force: force,
             rememberSignature: rememberSignature,
+            rememberedSignature: rememberedSignature ?? signature,
             content: content,
             sequence: nextOverviewSequence
         )
@@ -890,13 +920,19 @@ actor TerminalChatRenderCoordinator {
 
     private func renderOverviewNow(_ overview: PendingOverview) {
         if overview.rememberSignature {
-            overviewSignatures[overview.kind] = overview.signature
+            overviewSignatures[overview.kind] = overview.rememberedSignature
         }
         switch overview.content {
         case let .markdown(markdown):
             renderMarkdownMessage(markdown)
-        case let .text(text):
+        case let .subAgents(text, responses):
             writeChat(text, to: .standardError)
+            for response in responses
+            where !consumedSubAgentResponseTokens.contains(response.token) {
+                writeChat(response.heading, to: .standardError)
+                renderMarkdownMessage(response.markdown, to: .standardError)
+                consumedSubAgentResponseTokens.insert(response.token)
+            }
         }
     }
 
@@ -972,23 +1008,29 @@ actor TerminalChatRenderCoordinator {
 
     // MARK: - Low-level output
 
-    private func renderMarkdownMessage(_ markdown: String) {
+    private func renderMarkdownMessage(
+        _ markdown: String,
+        to channel: OutputChannel = .standardOutput
+    ) {
         guard !markdown.isEmpty else {
             return
         }
         var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: standardOutputIsTerminal
+            isEnabled: channelIsTerminal(channel)
         )
         let rendered = formatter.consume(markdown) + formatter.finish()
         guard !rendered.isEmpty else {
             return
         }
-        if hasStandardOutputContent, currentOutputTrailingNewlineCount == 0 {
-            writeChat("\n", to: .standardOutput, preservesSpacing: true)
+        let hasPriorContent = channel == .standardOutput
+            ? hasStandardOutputContent
+            : true
+        if hasPriorContent, trailingNewlineCount(for: channel) == 0 {
+            writeChat("\n", to: channel, preservesSpacing: true)
         }
-        writeChat(rendered, to: .standardOutput, preservesSpacing: true)
-        if currentOutputTrailingNewlineCount == 0 {
-            writeChat("\n", to: .standardOutput)
+        writeChat(rendered, to: channel, preservesSpacing: true)
+        if trailingNewlineCount(for: channel) == 0 {
+            writeChat("\n", to: channel)
         }
         flushChatOutput()
     }

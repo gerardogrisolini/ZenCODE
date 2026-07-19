@@ -65,6 +65,10 @@ public actor DirectSubAgentRuntime {
         public var status: Status
         public var pendingPrompts: [String]
         public var latestOutput: String?
+        /// Monotonic identity of the latest completed response for transient
+        /// presentation. Unlike `updatedAt`, this does not change when the agent
+        /// is merely closed or otherwise receives a metadata-only update.
+        public var latestOutputRevision: UInt64 = 0
         public var accumulatedOutput: String?
         public var latestError: String?
         public var modelID: String? = nil
@@ -104,6 +108,7 @@ public actor DirectSubAgentRuntime {
         public let latestContentPreview: String?
         public let latestEventAt: Date?
         public let latestOutput: String?
+        public let latestOutputRevision: UInt64
         public let accumulatedOutput: String?
         public let latestError: String?
         public let createdAt: Date
@@ -129,6 +134,7 @@ public actor DirectSubAgentRuntime {
             latestContentPreview: String? = nil,
             latestEventAt: Date? = nil,
             latestOutput: String?,
+            latestOutputRevision: UInt64 = 0,
             accumulatedOutput: String? = nil,
             latestError: String?,
             createdAt: Date,
@@ -153,6 +159,7 @@ public actor DirectSubAgentRuntime {
             self.latestContentPreview = latestContentPreview
             self.latestEventAt = latestEventAt
             self.latestOutput = latestOutput
+            self.latestOutputRevision = latestOutputRevision
             self.accumulatedOutput = accumulatedOutput
             self.latestError = latestError
             self.createdAt = createdAt

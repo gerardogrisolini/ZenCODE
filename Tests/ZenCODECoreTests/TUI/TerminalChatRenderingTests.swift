@@ -2099,9 +2099,11 @@ struct TerminalChatRenderingTests {
         if let summaryIndex, let firstHeaderIndex,
            let firstIDIndex, let secondHeaderIndex,
            let secondIDIndex, let thirdHeaderIndex {
-            #expect(firstHeaderIndex == summaryIndex + 1)
-            #expect(secondHeaderIndex == firstIDIndex + 1)
-            #expect(thirdHeaderIndex == secondIDIndex + 1)
+            // Each agent block is intentionally preceded by one visually blank
+            // separator line.
+            #expect(firstHeaderIndex == summaryIndex + 2)
+            #expect(secondHeaderIndex == firstIDIndex + 2)
+            #expect(thirdHeaderIndex == secondIDIndex + 2)
         }
     }
 
@@ -2419,6 +2421,61 @@ struct TerminalChatRenderingTests {
 
         #expect(rendered.contains("✅ Final answer in one complete block."))
         #expect(!rendered.contains("Earlier tool commentary"))
+    }
+
+    @Test
+    func subAgentResponseIdentityTracksCompletionRatherThanMetadataUpdates() throws {
+        let createdAt = Date(timeIntervalSince1970: 10)
+        let firstCompletion = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent-response-token",
+            name: "reviewer",
+            role: "reviewer",
+            status: .idle,
+            pending: false,
+            latestOutput: "**Done**",
+            latestOutputRevision: 1,
+            latestError: nil,
+            createdAt: createdAt,
+            updatedAt: Date(timeIntervalSince1970: 20)
+        )
+        let closedAfterCompletion = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent-response-token",
+            name: "reviewer",
+            role: "reviewer",
+            status: .closed,
+            pending: false,
+            latestOutput: "**Done**",
+            latestOutputRevision: 1,
+            latestError: nil,
+            createdAt: createdAt,
+            updatedAt: Date(timeIntervalSince1970: 30)
+        )
+        let repeatedContentInNewCompletion = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent-response-token",
+            name: "reviewer",
+            role: "reviewer",
+            status: .idle,
+            pending: false,
+            latestOutput: "**Done**",
+            latestOutputRevision: 2,
+            latestError: nil,
+            createdAt: createdAt,
+            updatedAt: Date(timeIntervalSince1970: 40)
+        )
+
+        let first = try #require(
+            TerminalChat.subAgentMarkdownResponses([firstCompletion]).first
+        )
+        let closed = try #require(
+            TerminalChat.subAgentMarkdownResponses([closedAfterCompletion]).first
+        )
+        let repeated = try #require(
+            TerminalChat.subAgentMarkdownResponses([repeatedContentInNewCompletion]).first
+        )
+
+        #expect(first.markdown == "**Done**")
+        #expect(first.token == closed.token)
+        #expect(first.token != repeated.token)
     }
 
     @Test

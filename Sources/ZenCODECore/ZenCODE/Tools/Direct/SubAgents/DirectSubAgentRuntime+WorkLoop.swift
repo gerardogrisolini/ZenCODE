@@ -212,6 +212,7 @@ extension DirectSubAgentRuntime {
         )
         let trimmedOutput = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
         agent.latestOutput = trimmedOutput
+        agent.latestOutputRevision &+= 1
         if let existing = agent.accumulatedOutput?.trimmingCharacters(in: .whitespacesAndNewlines),
            !existing.isEmpty,
            !trimmedOutput.isEmpty {

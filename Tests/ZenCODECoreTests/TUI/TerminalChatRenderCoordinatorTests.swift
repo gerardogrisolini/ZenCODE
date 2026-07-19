@@ -549,6 +549,97 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func completedSubAgentResponseUsesMarkdownAndRendersOnlyOnce() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let response = TerminalChatRenderCoordinator.SubAgentMarkdownResponse(
+            token: "agent-1:completion-1",
+            heading: "   ✅ Response from reviewer:\n",
+            markdown: "**Finished** with `code`.\n\n- first\n- second"
+        )
+
+        let first = await renderer.renderSubAgentOverview(
+            signature: "agents:completed",
+            text: "Agents completed.\n",
+            responses: [response],
+            force: false,
+            rememberSignature: true
+        )
+        let duplicate = await renderer.renderSubAgentOverview(
+            signature: "agents:completed",
+            text: "Agents completed.\n",
+            responses: [response],
+            force: false,
+            rememberSignature: true
+        )
+        let refreshed = await renderer.renderSubAgentOverview(
+            signature: "agents:refreshed",
+            text: "Agents refreshed.\n",
+            responses: [response],
+            force: false,
+            rememberSignature: true
+        )
+
+        let events = await renderer.capturedWriteEvents()
+        let stdout = events
+            .filter { $0.channel == .standardOutput }
+            .map(\.text)
+            .joined()
+        let stderr = events
+            .filter { $0.channel == .standardError }
+            .map(\.text)
+            .joined()
+        let snapshot = await renderer.snapshot()
+
+        #expect(first == .rendered)
+        #expect(duplicate == .unchanged)
+        #expect(refreshed == .rendered)
+        #expect(stdout.isEmpty)
+        #expect(stderr.components(separatedBy: "Finished").count - 1 == 1)
+        #expect(stderr.contains("\u{1B}[1mFinished\u{1B}[0m"))
+        #expect(stderr.contains("\u{1B}[38;5;180mcode\u{1B}[0m"))
+        #expect(!stderr.contains("**Finished**"))
+        #expect(stderr.components(separatedBy: "Response from reviewer").count - 1 == 1)
+        #expect(stderr.contains("Agents refreshed."))
+        #expect(snapshot.lastRenderedSubAgentOverviewSignature == "agents:refreshed")
+    }
+
+    @Test
+    func deferredSubAgentResponseIsConsumedOnlyAfterItRenders() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: false)
+        let response = TerminalChatRenderCoordinator.SubAgentMarkdownResponse(
+            token: "agent-2:completion-1",
+            heading: "   ✅ Response from planner:\n",
+            markdown: "Deferred answer"
+        )
+        await renderer.setOverviewPublishingSuspended(true)
+
+        let deferred = await renderer.renderSubAgentOverview(
+            signature: "agents:deferred",
+            text: "Agents deferred.\n",
+            responses: [response],
+            force: false,
+            rememberSignature: true
+        )
+        #expect(deferred == .deferred)
+        #expect(await renderer.capturedWriteEvents().isEmpty)
+
+        await renderer.setOverviewPublishingSuspended(false)
+        let refreshed = await renderer.renderSubAgentOverview(
+            signature: "agents:after-deferred",
+            text: "Agents refreshed.\n",
+            responses: [response],
+            force: false,
+            rememberSignature: true
+        )
+        let combined = await renderer.capturedWriteEvents().map(\.text).joined()
+
+        #expect(refreshed == .rendered)
+        #expect(combined.components(separatedBy: "Deferred answer").count - 1 == 1)
+        #expect(combined.components(separatedBy: "Response from planner").count - 1 == 1)
+        #expect(combined.contains("Agents refreshed."))
+    }
+
+    @Test
     func thoughtFragmentsAreBufferedUntilTheStreamIsFlushed() async {
         let renderer = makeRenderer(standardErrorIsTerminal: false)
 

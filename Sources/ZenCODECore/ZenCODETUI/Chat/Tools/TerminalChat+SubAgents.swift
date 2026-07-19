@@ -132,11 +132,14 @@ extension TerminalChat {
         let resolver = subAgentModelTitleResolver()
         let overview = Self.renderSubAgentOverview(
             snapshots,
-            modelTitleResolver: resolver
+            modelTitleResolver: resolver,
+            includesFinalResponses: false
         ) + "\n\n"
+        let responses = Self.subAgentMarkdownResponses(snapshots)
         _ = await renderCoordinator.renderSubAgentOverview(
             signature: signature,
             text: overview,
+            responses: responses,
             force: force,
             rememberSignature: rememberSignature
         )
@@ -145,6 +148,18 @@ extension TerminalChat {
     public static func renderSubAgentOverview(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
         modelTitleResolver: (String) -> String = { $0 }
+    ) -> String {
+        renderSubAgentOverview(
+            snapshots,
+            modelTitleResolver: modelTitleResolver,
+            includesFinalResponses: true
+        )
+    }
+
+    private static func renderSubAgentOverview(
+        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
+        modelTitleResolver: (String) -> String,
+        includesFinalResponses: Bool
     ) -> String {
         var lines = [SubAgentOverviewLine.summary(renderSubAgentSummary(snapshots))]
 
@@ -180,7 +195,10 @@ extension TerminalChat {
             if !activityLines.isEmpty {
                 lines.append(contentsOf: activityLines)
             }
-            if let detail = renderSubAgentDetail(snapshot) {
+            if let detail = renderSubAgentDetail(
+                snapshot,
+                includesFinalResponse: includesFinalResponses
+            ) {
                 lines.append(detail)
             }
         }
@@ -324,18 +342,65 @@ extension TerminalChat {
     }
 
     private static func renderSubAgentDetail(
-        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
+        includesFinalResponse: Bool
     ) -> SubAgentOverviewLine? {
         if let latestError = snapshot.latestError?.nilIfBlank {
             return .complete("❌ \(inlineText(latestError))", indentation: 3)
         }
 
-        guard !snapshot.pending,
+        guard includesFinalResponse,
+              !snapshot.pending,
               let latestOutput = snapshot.latestContentPreview?.nilIfBlank
                 ?? snapshot.latestOutput?.nilIfBlank else {
             return nil
         }
-        return .complete("💬 \(inlineText(latestOutput))", indentation: 3)
+        return .complete("✅ \(inlineText(latestOutput))", indentation: 3)
+    }
+
+    /// Extracts completed model responses from the snapshot presentation. The
+    /// surrounding overview remains pre-rendered terminal text, while each
+    /// response stays as source Markdown so the coordinator can format it with
+    /// the same renderer used for normal assistant messages.
+    static func subAgentMarkdownResponses(
+        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
+    ) -> [TerminalChatRenderCoordinator.SubAgentMarkdownResponse] {
+        snapshots.compactMap { snapshot in
+            guard !snapshot.pending,
+                  snapshot.latestError?.nilIfBlank == nil,
+                  let output = snapshot.latestContentPreview?.nilIfBlank
+                    ?? snapshot.latestOutput?.nilIfBlank else {
+                return nil
+            }
+            let name = snapshot.name.nilIfBlank ?? snapshot.id
+            return TerminalChatRenderCoordinator.SubAgentMarkdownResponse(
+                token: subAgentResponseToken(snapshot: snapshot, output: output),
+                heading: "   ✅ Response from \(inlineText(name)):\n",
+                markdown: output
+            )
+        }
+    }
+
+    /// Produces a compact deterministic identity for one completion. Runtime
+    /// snapshots carry a monotonic completion revision, so metadata-only changes
+    /// (for example closing an agent) cannot make an old response appear new.
+    /// The digest is a fallback for manually constructed legacy snapshots.
+    private static func subAgentResponseToken(
+        snapshot: DirectSubAgentRuntime.AgentSnapshot,
+        output: String
+    ) -> String {
+        if snapshot.latestOutputRevision > 0 {
+            return [snapshot.id, String(snapshot.latestOutputRevision)]
+                .joined(separator: "\u{1F}")
+        }
+
+        var digest: UInt64 = 14_695_981_039_346_656_037
+        for byte in output.utf8 {
+            digest ^= UInt64(byte)
+            digest &*= 1_099_511_628_211
+        }
+        return [snapshot.id, String(digest, radix: 16)]
+            .joined(separator: "\u{1F}")
     }
 
     private static func statusBadge(
@@ -452,7 +517,9 @@ extension TerminalChat {
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
     ) -> String {
         snapshots.map { snapshot in
-            [
+            let hasResponse = snapshot.latestContentPreview?.nilIfBlank != nil
+                || snapshot.latestOutput?.nilIfBlank != nil
+            return [
                 snapshot.id,
                 snapshot.name,
                 snapshot.role,
@@ -464,8 +531,7 @@ extension TerminalChat {
                 snapshot.currentActivity?.nilIfBlank ?? "",
                 snapshot.currentToolName?.nilIfBlank ?? "",
                 snapshot.currentToolTarget?.nilIfBlank ?? "",
-                snapshot.latestContentPreview?.nilIfBlank ?? "",
-                snapshot.latestOutput?.nilIfBlank ?? "",
+                hasResponse ? "response" : "",
                 snapshot.latestError?.nilIfBlank ?? ""
             ].joined(separator: "\u{1F}")
         }

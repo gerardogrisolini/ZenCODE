@@ -318,6 +318,7 @@ struct DirectSubAgentRuntimeTests {
         let finalSnapshot = try #require(await runtime.snapshots().first)
         #expect(finalSnapshot.latestContentPreview == "Final answer.")
         #expect(finalSnapshot.latestOutput == "I’ll inspect the matching files. Final answer.")
+        #expect(finalSnapshot.latestOutputRevision == 1)
         #expect(finalSnapshot.currentActivity == nil)
         #expect(finalSnapshot.currentToolName == nil)
 
