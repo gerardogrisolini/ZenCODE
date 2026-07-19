@@ -196,9 +196,17 @@ extension ChatGPTSubscriptionResponsesClient {
 #endif
 
         let nsError = error as NSError
-        if nsError.domain == NSURLErrorDomain,
-           isRetryableURLCode(URLError.Code(rawValue: nsError.code)) {
-            return true
+        if nsError.domain == NSURLErrorDomain {
+#if canImport(FoundationNetworking)
+            if let code = URLError.Code(rawValue: nsError.code),
+               isRetryableURLCode(code) {
+                return true
+            }
+#else
+            if isRetryableURLCode(URLError.Code(rawValue: nsError.code)) {
+                return true
+            }
+#endif
         }
         if nsError.domain == NSPOSIXErrorDomain,
            isRetryablePOSIXCode(POSIXErrorCode(rawValue: Int32(nsError.code))) {

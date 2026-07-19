@@ -9,7 +9,6 @@
 //  diverges.
 //
 
-#if os(macOS)
 import Foundation
 
 enum SubscriptionCompactionSupport {
@@ -111,4 +110,3 @@ enum SubscriptionCompactionSupport {
             || normalizedMessage.contains("exceeded maximum")
     }
 }
-#endif
