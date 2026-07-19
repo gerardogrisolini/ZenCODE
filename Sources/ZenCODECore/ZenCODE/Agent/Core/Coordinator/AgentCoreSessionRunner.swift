@@ -103,6 +103,7 @@ public actor AgentCoreSessionRunner {
     ) -> AsyncThrowingStream<DirectAgentEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<DirectAgentEvent, Error>.makeStream()
         let task = Task(priority: .userInitiated) {
+            #if os(macOS)
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated],
                 reason: "Agent model load"
@@ -110,6 +111,7 @@ public actor AgentCoreSessionRunner {
             defer {
                 ProcessInfo.processInfo.endActivity(activity)
             }
+            #endif
             do {
                 _ = try await preloadModel(configuration: configuration) { event in
                     continuation.yield(event)
@@ -368,6 +370,7 @@ public actor AgentCoreSessionRunner {
         let promptID = UUID()
         let outcomeTracker = AgentCorePromptOutcomeTracker()
         let task = Task(priority: .userInitiated) {
+            #if os(macOS)
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .latencyCritical],
                 reason: "Agent generation"
@@ -375,6 +378,7 @@ public actor AgentCoreSessionRunner {
             defer {
                 ProcessInfo.processInfo.endActivity(activity)
             }
+            #endif
             do {
                 _ = try await sendPrompt(
                     configuration: configuration,

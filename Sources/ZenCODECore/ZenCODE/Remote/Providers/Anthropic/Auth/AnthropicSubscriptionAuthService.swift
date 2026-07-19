@@ -13,13 +13,6 @@ import os
 import FoundationNetworking
 #endif
 
-#if os(macOS)
-import AppKit
-import CryptoKit
-#if canImport(Network)
-import Network
-#endif
-
 public struct AnthropicSubscriptionCredentials: Codable, Equatable, Sendable {
     public let accessToken: String
     public let refreshToken: String
@@ -42,6 +35,13 @@ public struct AnthropicSubscriptionCredentials: Codable, Equatable, Sendable {
         expiresAt.timeIntervalSinceNow <= 60
     }
 }
+
+#if os(macOS)
+import AppKit
+import CryptoKit
+#if canImport(Network)
+import Network
+#endif
 
 public enum AnthropicSubscriptionAuthError: LocalizedError {
     case unsupportedPlatform
