@@ -174,3 +174,46 @@ private final class RemoteFoundationNetworkingStreamDelegate:
 #else
 public typealias RemoteStreamBytes = URLSession.AsyncBytes
 #endif
+
+struct RemoteStreamLineSequence: AsyncSequence {
+    typealias Element = String
+
+    let bytes: RemoteStreamBytes
+
+    func makeAsyncIterator() -> AsyncIterator {
+        AsyncIterator(byteIterator: bytes.makeAsyncIterator())
+    }
+
+    struct AsyncIterator: AsyncIteratorProtocol {
+        var byteIterator: RemoteStreamBytes.AsyncIterator
+        var bufferedBytes: [UInt8] = []
+        var reachedEnd = false
+
+        mutating func next() async throws -> String? {
+            guard !reachedEnd else {
+                return nil
+            }
+
+            while let byte = try await byteIterator.next() {
+                if byte == 0x0A {
+                    if bufferedBytes.last == 0x0D {
+                        bufferedBytes.removeLast()
+                    }
+                    let line = String(decoding: bufferedBytes, as: UTF8.self)
+                    bufferedBytes.removeAll(keepingCapacity: true)
+                    return line
+                }
+                bufferedBytes.append(byte)
+            }
+
+            reachedEnd = true
+            guard !bufferedBytes.isEmpty else {
+                return nil
+            }
+            if bufferedBytes.last == 0x0D {
+                bufferedBytes.removeLast()
+            }
+            return String(decoding: bufferedBytes, as: UTF8.self)
+        }
+    }
+}

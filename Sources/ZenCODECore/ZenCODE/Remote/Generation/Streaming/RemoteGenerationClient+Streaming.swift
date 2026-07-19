@@ -272,7 +272,7 @@ extension RemoteGenerationClient {
         try await RemoteStreamTransport.validateHTTPResponse(response, bytes: bytes)
 
         var accumulator = RemoteStreamAccumulator()
-        for try await line in bytes.lines {
+        for try await line in RemoteStreamLineSequence(bytes: bytes) {
             try Task.checkCancellation()
             guard let payload = RemoteStreamTransport.ssePayload(from: line) else {
                 continue
