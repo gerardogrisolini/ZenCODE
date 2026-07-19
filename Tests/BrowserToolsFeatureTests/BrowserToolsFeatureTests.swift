@@ -429,6 +429,171 @@ struct BrowserToolsFeatureTests {
     }
 
     @Test
+    func browserInspectProjectionRedactsSensitiveDOMAndAllowsOnlyFixedCSS() throws {
+        #expect(try BrowserDOMInspection.parseFrontendNodeID([
+            "result": ["nodeIds": [77]],
+        ]) == 77)
+        #expect(throws: CDPError.self) {
+            try BrowserDOMInspection.parseFrontendNodeID([
+                "result": ["nodeIds": [0]],
+            ])
+        }
+
+        let node = try BrowserDOMInspection.parseDOMNode([
+            "result": [
+                "node": [
+                    "nodeId": 77,
+                    "localName": "INPUT",
+                    "attributes": [
+                        "type", "password",
+                        "value", "do-not-expose-this",
+                        "class", "credential-field",
+                        "href", "https://user:password@example.com/path?token=secret&mode=debug#fragment",
+                        "src", "javascript:alert('secret')",
+                        "data-token", "must-not-appear",
+                        "style", "background-image:url(https://example.com/secret.png)",
+                    ],
+                ],
+            ],
+        ])
+
+        #expect(node.frontendNodeID == 77)
+        #expect(node.element.tagName == "input")
+        #expect(node.element.attributes["class"] == "credential-field")
+        #expect(node.element.attributes["value"] == nil)
+        #expect(node.element.attributes["data-token"] == nil)
+        #expect(node.element.attributes["style"] == nil)
+        let href = try #require(node.element.attributes["href"])
+        #expect(!href.contains("user:password"))
+        #expect(!href.contains("secret"))
+        #expect(!href.contains("#fragment"))
+        #expect(node.element.attributes["src"] == "[redacted]")
+
+        let style = try BrowserDOMInspection.parseComputedStyle([
+            "result": [
+                "computedStyle": [
+                    ["name": "display", "value": "flex"],
+                    ["name": "COLOR", "value": "rgb(1, 2, 3)"],
+                    ["name": "background-image", "value": "url(https://example.com/private.png)"],
+                    ["name": "content", "value": "secret generated text"],
+                    ["name": "--page-controlled", "value": "secret custom property"],
+                ],
+            ],
+        ])
+        #expect(style.values == ["color": "rgb(1, 2, 3)", "display": "flex"])
+
+        let box = BrowserDOMInspection.parseBoxModel([
+            "result": [
+                "model": [
+                    "content": [0, 0, 10, 0, 10, 20, 0, 20],
+                    "padding": [0, 0, 12, 0, 12, 22, 0, 22],
+                    "border": [0, 0, 14, 0, 14, 24, 0, 24],
+                    "margin": [0, 0, 16, 0, 16, 26, 0, 26],
+                    "width": 10,
+                    "height": 20,
+                ],
+            ],
+        ])
+        #expect(box?.content == [0, 0, 10, 0, 10, 20, 0, 20])
+        #expect(box?.width == 10)
+        #expect(box?.height == 20)
+    }
+
+    @Test
+    func browserInspectOutputIsStrictlyBoundedAndReportsTruncation() throws {
+        let styleValues = Dictionary(uniqueKeysWithValues: BrowserDOMInspection
+            .allowedComputedStyleProperties
+            .map { ($0, String(repeating: "x", count: 512)) })
+        let selection = BrowserDOMInspection.Selection(
+            element: BrowserInspectableElement(
+                tagName: "div",
+                attributes: [
+                    "class": String(repeating: "a", count: 512),
+                    "title": String(repeating: "b", count: 512),
+                ]
+            ),
+            boxModel: BrowserInspectionBoxModel(
+                content: [0, 0, 10, 0, 10, 10, 0, 10],
+                padding: [0, 0, 10, 0, 10, 10, 0, 10],
+                border: [0, 0, 10, 0, 10, 10, 0, 10],
+                margin: [0, 0, 10, 0, 10, 10, 0, 10],
+                width: 10,
+                height: 10
+            ),
+            computedStyle: styleValues,
+            truncated: false
+        )
+        let output = BrowserInspectOutput(
+            page: BrowserPage(
+                pageID: "page-1",
+                title: String(repeating: "t", count: 8_000),
+                url: "https://example.com/?token=secret"
+            ),
+            snapshotID: "snapshot-1",
+            ref: "ax-1",
+            inspection: selection
+        )
+
+        #expect(output.truncated)
+        #expect(!output.page.url.contains("secret"))
+        let encodedOutput = try JSONEncoder().encode(output)
+        #expect(encodedOutput.count <= BrowserDOMInspection.maximumOutputBytes)
+    }
+
+    @Test
+    func browserInspectAndExtendedActionContractsUseClosedEnums() throws {
+        #expect(try BrowserActionKind.resolve("hover") == .hover)
+        #expect(try BrowserActionKind.resolve("DOUBLE_CLICK") == .doubleClick)
+        #expect(try BrowserActionKind.resolve("scroll_into_view") == .scrollIntoView)
+        #expect(try BrowserActionKind.resolve("select_option") == .selectOption)
+        #expect(try BrowserActionKind.resolve("check") == .check)
+        #expect(try BrowserActionKind.resolve("uncheck") == .uncheck)
+        #expect(throws: BrowserToolsFeatureError.self) {
+            try BrowserActionKind.resolve("evaluate")
+        }
+
+        let actionSchema = try schemaObject(BrowserActTool.inputSchema)
+        let actionProperties = try #require(actionSchema["properties"] as? [String: Any])
+        let action = try #require(actionProperties["action"] as? [String: Any])
+        let actionValues = try #require(action["enum"] as? [String])
+        let expectedActionValues: Set<String> = [
+            "click", "fill", "press", "hover", "double_click", "scroll_into_view", "select_option", "check", "uncheck",
+        ]
+        #expect(Set(actionValues) == expectedActionValues)
+
+        let inspectSchema = try schemaObject(BrowserInspectTool.inputSchema)
+        let required = try #require(inspectSchema["required"] as? [String])
+        let expectedRequired: Set<String> = ["pageId", "snapshotId", "ref"]
+        #expect(Set(required) == expectedRequired)
+        let inspectProperties = try #require(inspectSchema["properties"] as? [String: Any])
+        #expect(inspectProperties["selector"] == nil)
+        #expect(inspectProperties["javascript"] == nil)
+        #expect(inspectProperties["cdp"] == nil)
+    }
+
+    @Test
+    func browserInspectRejectsMissingSnapshotBoundArgumentsBeforeOpeningChrome() async {
+        let tool = AnyFeatureTool(BrowserInspectTool())
+        let context = FeatureContext(environment: [:])
+
+        await #expect(throws: BrowserToolsFeatureError.self) {
+            try await tool.invoke(inputData: Data("{}".utf8), context: context)
+        }
+        await #expect(throws: BrowserToolsFeatureError.self) {
+            try await tool.invoke(
+                inputData: Data(#"{"pageId":"page-1"}"#.utf8),
+                context: context
+            )
+        }
+        await #expect(throws: BrowserToolsFeatureError.self) {
+            try await tool.invoke(
+                inputData: Data(#"{"pageId":"page-1","snapshotId":"snapshot-1"}"#.utf8),
+                context: context
+            )
+        }
+    }
+
+    @Test
     func consoleSelectionAppliesSeverityAndHostSideBound() throws {
         let entries = [
             BrowserConsoleEntry(level: "info", text: "started", timestamp: 1),
@@ -548,6 +713,126 @@ struct BrowserToolsFeatureTests {
     }
 
     @Test
+    func browserVisualDiffComparesRealPNGPixelsAndStoresOwnedDiffArtifact() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BrowserVisualPixelDiffTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let environment = ["HOME": home.path]
+        let store = BrowserArtifactStore(environment: environment, maximumArtifactCount: 8)
+        let baselineData = browserVisualDiffBaselinePNG()
+        let candidateData = browserVisualDiffCandidatePNG()
+
+        // These are complete PNG fixtures (signature, CRC-checked chunks and
+        // zlib-compressed scanlines), not header-shaped test doubles.
+        let decodedBaseline = try BrowserPNGCodec.decode(baselineData)
+        #expect(decodedBaseline.width == 3)
+        #expect(decodedBaseline.height == 2)
+        #expect(decodedBaseline.rgba == [
+            10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255,
+            100, 110, 120, 255, 130, 140, 150, 255, 160, 170, 180, 255,
+        ])
+
+        let baseline = try store.storeScreenshotPNG(baselineData, pageID: "baseline")
+        let candidate = try store.storeScreenshotPNG(candidateData, pageID: "candidate")
+        let input = try JSONDecoder().decode(
+            BrowserCompareScreenshotsTool.Input.self,
+            from: Data(
+                """
+                {
+                  "baselinePath":"\(baseline.path)",
+                  "candidatePath":"\(candidate.path)",
+                  "thresholdPercent":34
+                }
+                """.utf8
+            )
+        )
+        let output = try await BrowserCompareScreenshotsTool().run(
+            input,
+            context: FeatureContext(environment: environment)
+        )
+
+        // Existing byte metadata remains available alongside the pixel result.
+        #expect(!output.comparison.encodedBytesIdentical)
+        #expect(output.comparison.samePixelDimensions)
+        let pixelComparison = try #require(output.pixelComparison)
+        let diffArtifact = try #require(output.diffArtifact)
+        #expect(pixelComparison.comparedPixelCount == 6)
+        #expect(pixelComparison.differentPixelCount == 2)
+        #expect(pixelComparison.differentPixelPercentage == 100.0 / 3.0)
+        #expect(pixelComparison.boundingBox == BrowserScreenshotDiffBoundingBox(
+            x: 1,
+            y: 0,
+            width: 2,
+            height: 2
+        ))
+        #expect(pixelComparison.thresholdPercent == 34)
+        #expect(pixelComparison.withinThreshold)
+        #expect(diffArtifact.path.hasPrefix(store.rootDirectory.path + "/"))
+        #expect(diffArtifact.path.hasSuffix(".png"))
+
+        let ownedDiff = try store.loadOwnedScreenshot(at: diffArtifact.path)
+        let decodedDiff = try BrowserPNGCodec.decode(ownedDiff.data)
+        #expect(decodedDiff.width == 3)
+        #expect(decodedDiff.height == 2)
+        // Changed pixels are opaque red, including the candidate pixel whose
+        // source alpha differs; unchanged pixels retain a dimmed reference.
+        #expect(Array(decodedDiff.rgba[4..<8]) == [255, 0, 0, 255])
+        #expect(Array(decodedDiff.rgba[20..<24]) == [255, 0, 0, 255])
+        #expect(Array(decodedDiff.rgba[0..<4]) == [2, 5, 7, 255])
+
+        let loadedBaseline = try store.loadOwnedScreenshot(at: baseline.path)
+        let loadedCandidate = try store.loadOwnedScreenshot(at: candidate.path)
+        let strictComparison = try BrowserScreenshotComparison.comparePixels(
+            baseline: loadedBaseline,
+            candidate: loadedCandidate,
+            thresholdPercent: 33
+        )
+        #expect(!strictComparison.comparison.withinThreshold)
+
+        let small = try store.storeScreenshotPNG(browserVisualDiffSmallPNG(), pageID: "small")
+        let loadedSmall = try store.loadOwnedScreenshot(at: small.path)
+        #expect(throws: BrowserVisualComparisonError.self) {
+            try BrowserScreenshotComparison.comparePixels(
+                baseline: loadedBaseline,
+                candidate: loadedSmall,
+                thresholdPercent: 0
+            )
+        }
+        #expect(throws: BrowserVisualComparisonError.self) {
+            try BrowserVisualComparisonLimits.resolveThresholdPercent(-0.01)
+        }
+        #expect(throws: BrowserVisualComparisonError.self) {
+            try BrowserVisualComparisonLimits.resolveThresholdPercent(100.01)
+        }
+
+        var corruptBytes = [UInt8](baselineData)
+        corruptBytes[20] ^= 0x01
+        #expect(throws: BrowserPNGCodecError.self) {
+            try BrowserPNGCodec.decode(Data(corruptBytes))
+        }
+    }
+
+    @Test
+    func browserPNGCodecDecodesIndependentlyFilteredRealPNG() throws {
+        let image = try BrowserPNGCodec.decode(browserVisualDiffFilteredPNG())
+        #expect(image.width == 3)
+        #expect(image.height == 5)
+        #expect(image.rgba == [
+            1, 2, 3, 255, 38, 13, 56, 255, 75, 24, 109, 255,
+            20, 45, 10, 238, 57, 56, 63, 238, 94, 67, 116, 238,
+            39, 88, 17, 221, 76, 99, 70, 221, 113, 110, 123, 221,
+            58, 131, 24, 204, 95, 142, 77, 204, 132, 153, 130, 204,
+            77, 174, 31, 187, 114, 185, 84, 187, 151, 196, 137, 187,
+        ])
+
+        let rgbImage = try BrowserPNGCodec.decode(browserVisualDiffRGBPNG())
+        #expect(rgbImage.width == 2)
+        #expect(rgbImage.height == 1)
+        #expect(rgbImage.rgba == [12, 34, 56, 255, 78, 90, 123, 255])
+    }
+
+    @Test
     func pdfArtifactAndPerformanceMetricsUseBoundedSpecialistContracts() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("BrowserToolsPDFTests-\(UUID().uuidString)", isDirectory: true)
@@ -593,6 +878,9 @@ struct BrowserToolsFeatureTests {
             "browser.wait",
             "browser.assert",
             "browser.snapshot",
+            "browser.inspect",
+            "browser.wait_element",
+            "browser.assert_element",
             "browser.console",
             "browser.network",
             "browser.screenshot",
@@ -614,13 +902,20 @@ struct BrowserToolsFeatureTests {
     }
 
     @Test
-    func bundledRuntimeCatalogExposesEveryFeatureTool() {
-        let feature = SwiftFeatureRuntime.bundledFeatureDefinitions()
-            .first(where: { $0.id == "browser-tools" })
-        let runtimeNames = Set(feature?.tools.map(\.name) ?? [])
+    func bundledRuntimeCatalogExposesEveryFeatureToolWithValidSchemas() throws {
+        let feature = try #require(
+            SwiftFeatureRuntime.bundledFeatureDefinitions()
+                .first(where: { $0.id == "browser-tools" })
+        )
+        let runtimeNames = Set(feature.tools.map(\.name))
         let featureNames = Set(BrowserToolsFeatureRunner.tools().map(\.descriptor.name))
 
         #expect(runtimeNames == featureNames)
+        for descriptor in feature.tools {
+            let schemaData = try #require(descriptor.inputSchema.data(using: .utf8))
+            let schema = try JSONSerialization.jsonObject(with: schemaData)
+            #expect(schema is [String: Any])
+        }
     }
 }
 
@@ -655,6 +950,41 @@ private func browserPNGHeader(width: UInt32, height: UInt32, suffix: [UInt8]) ->
     }
     bytes += suffix
     return Data(bytes)
+}
+
+private func schemaObject(_ schema: String) throws -> [String: Any] {
+    let object = try JSONSerialization.jsonObject(with: Data(schema.utf8))
+    guard let dictionary = object as? [String: Any] else {
+        throw NSError(
+            domain: "BrowserToolsFeatureTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Feature schema is not a JSON object"]
+        )
+    }
+    return dictionary
+}
+
+/// Complete, independently precomputed PNG fixtures. Their IDAT chunks use
+/// normal zlib compression rather than the BrowserPNGCodec encoder so decoder
+/// coverage does not depend on round-tripping through the implementation.
+private func browserVisualDiffBaselinePNG() -> Data {
+    Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAYAAACddGYaAAAAI0lEQVR4nGPgEpH7r2Fk898tIOo/Q0pexf+mnmn/F6za8h8AhFkMqbs7RigAAAAASUVORK5CYII=")!
+}
+
+private func browserVisualDiffCandidatePNG() -> Data {
+    Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAYAAACddGYaAAAAIklEQVR4nGPgEpH7z8jE/N8tIOo/Q0pexf+mnmn/OTnYGwBzEAm0JbLgngAAAABJRU5ErkJggg==")!
+}
+
+private func browserVisualDiffSmallPNG() -> Data {
+    Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgZGL+DwABFAEG1rmmRQAAAABJRU5ErkJggg==")!
+}
+
+private func browserVisualDiffFilteredPNG() -> Data {
+    Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAMAAAAFCAYAAACAcVaiAAAAOElEQVR4nGNgZGL+r8Zr8d9bIvc/o4gu1ztVblMGEGYS1mZ/D8PM6uECcTLScj9AmAUsys3OAMIAD0IO7Hch3toAAAAASUVORK5CYII=")!
+}
+
+private func browserVisualDiffRGBPNG() -> Data {
+    Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGPgUbLwi6oGAAPyAYrtNuu8AAAAAElFTkSuQmCC")!
 }
 
 private struct StaticBrowserHostResolver: BrowserHostResolving {

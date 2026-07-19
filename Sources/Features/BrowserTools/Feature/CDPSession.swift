@@ -92,6 +92,9 @@ final class CDPSession: @unchecked Sendable {
     private let webSocket: URLSessionWebSocketTask
     private let session: URLSession
     private let configuration: CDPSessionConfiguration
+    /// Durable Browser-owned state is injected from the runner so one-shot
+    /// feature invocations use the same private Chrome profile as their page.
+    let snapshotStateStore: BrowserSnapshotStateStore
     private let lock = NSLock()
     private var nextIDCounter = 1
     private var pending: [Int: CheckedContinuation<[String: Any], Error>] = [:]
@@ -102,7 +105,8 @@ final class CDPSession: @unchecked Sendable {
     /// Connects to the given page-target WebSocket URL.
     init(
         webSocketURL: URL,
-        configuration: CDPSessionConfiguration = .init()
+        configuration: CDPSessionConfiguration = .init(),
+        snapshotStateStore: BrowserSnapshotStateStore = .init()
     ) {
         let urlConfiguration = URLSessionConfiguration.ephemeral
         urlConfiguration.timeoutIntervalForRequest = 30
@@ -110,6 +114,7 @@ final class CDPSession: @unchecked Sendable {
         self.session = URLSession(configuration: urlConfiguration)
         self.webSocket = session.webSocketTask(with: webSocketURL)
         self.configuration = configuration
+        self.snapshotStateStore = snapshotStateStore
         self.webSocket.maximumMessageSize = configuration.maximumMessageSize
     }
 

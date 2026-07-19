@@ -53,15 +53,22 @@ struct BrowserSnapshotTool: FeatureTool {
             throw BrowserToolsFeatureError.missingArgument("pageId")
         }
         return try await BrowserToolsRunner.withPage(pageID: pageID, context: context) { session, tab in
+            // Capture the Browser-owned main-frame identity on both sides of
+            // the AX and metadata reads. A snapshot that raced a navigation is
+            // never entered in the host-side authorization store.
+            let document = try await session.currentDocumentIdentity()
             let snapshot = try await session.accessibilitySnapshot(
                 interactiveOnly: input.resolvesInteractiveOnly
             )
+            let page = try await session.pageMetadata(pageID: tab.id)
+            try await session.validateCurrentDocument(matches: document)
             let snapshotID = UUID().uuidString.lowercased()
             try await session.recordSnapshotState(
+                pageID: tab.id,
                 snapshotID: snapshotID,
-                allowedRefs: snapshot.nodes.map(\.ref)
+                allowedRefs: snapshot.nodes.map(\.ref),
+                document: document
             )
-            let page = try await session.pageMetadata(pageID: tab.id)
             return BrowserSnapshotOutput(
                 page: page,
                 snapshotID: snapshotID,
@@ -122,6 +129,22 @@ struct BrowserNetworkTool: FeatureTool {
         let url: String?
         let durationSeconds: Int?
         let duration_seconds: Int?
+        let resourceType: String?
+        let resource_type: String?
+        let resourceTypes: [String]?
+        let resource_types: [String]?
+        let status: Int?
+        let statusCode: Int?
+        let status_code: Int?
+        let urlContains: String?
+        let url_contains: String?
+        let urlSubstring: String?
+        let url_substring: String?
+        let limit: Int?
+        let includeHeaders: Bool?
+        let include_headers: Bool?
+        let includeBody: Bool?
+        let include_body: Bool?
 
         var resolvedPageID: String? {
             BrowserPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
@@ -130,10 +153,37 @@ struct BrowserNetworkTool: FeatureTool {
         var resolvedDuration: Int? {
             durationSeconds ?? duration_seconds
         }
+
+        var resolvedResourceTypes: [String] {
+            var resolved = resourceTypes ?? resource_types ?? []
+            if let resourceType = resourceType?.nilIfBlank ?? resource_type?.nilIfBlank {
+                resolved.append(resourceType)
+            }
+            return resolved
+        }
+
+        var resolvedStatus: Int? {
+            status ?? statusCode ?? status_code
+        }
+
+        var resolvedURLContains: String? {
+            urlContains?.nilIfBlank
+                ?? url_contains?.nilIfBlank
+                ?? urlSubstring?.nilIfBlank
+                ?? url_substring?.nilIfBlank
+        }
+
+        var resolvesHeaders: Bool {
+            includeHeaders ?? include_headers ?? false
+        }
+
+        var resolvesBody: Bool {
+            includeBody ?? include_body ?? false
+        }
     }
 
     static let name = "browser.network"
-    static let description = "Observes a persistent Browser page's CDP network events for a bounded interval. Optionally navigates the page to an HTTP or HTTPS URL first; Browser URL policy applies to that direct navigation."
+    static let description = "Observes a persistent Browser page's CDP network events for a bounded interval. It supports bounded resource-type, status, URL-substring, and result-limit filters plus timing, cache, initiator, redirect, MIME, and size diagnostics. Optional headers use a fixed safe allowlist that omits raw Authorization and Cookie headers. Optional response-body previews are best-effort, textual, and host-bounded; recognized sensitive fields are redacted, but generic body content is not guaranteed to be secret-free. Non-goal: raw CDP payloads, binary or streaming bodies, and persistent traffic recording. Optionally navigates to an HTTP or HTTPS URL first; Browser URL policy applies to that direct navigation."
     static let inputSchema = buildInputSchema(
         [
             .string("pageId", description: "pageId returned by browser.open or browser.pages."),
@@ -141,6 +191,20 @@ struct BrowserNetworkTool: FeatureTool {
             .string("url", description: "Optional HTTP or HTTPS URL to navigate before observing."),
             .number("durationSeconds", description: "Observation duration in whole seconds (1 through 30; defaults to 3)."),
             .number("duration_seconds", description: "Snake-case alias for durationSeconds."),
+            .string("resourceType", enumValues: BrowserNetworkFilters.supportedResourceTypes, description: "Optional exact Chrome resource type filter."),
+            .string("resource_type", enumValues: BrowserNetworkFilters.supportedResourceTypes, description: "Snake-case alias for resourceType."),
+            .array("resourceTypes", of: .string(enumValues: BrowserNetworkFilters.supportedResourceTypes, description: nil), description: "Optional resource-type filters (at most 10)."),
+            .array("resource_types", of: .string(enumValues: BrowserNetworkFilters.supportedResourceTypes, description: nil), description: "Snake-case alias for resourceTypes."),
+            .number("status", description: "Optional exact HTTP status filter (100 through 599)."),
+            .number("statusCode", description: "Alias for status."),
+            .number("status_code", description: "Snake-case alias for status."),
+            .string("urlContains", description: "Optional case-insensitive substring matched against redacted URLs (at most 256 UTF-8 bytes)."),
+            .string("url_contains", description: "Snake-case alias for urlContains."),
+            .number("limit", description: "Maximum matching entries to return (1 through 200; defaults to 200)."),
+            .boolean("includeHeaders", description: "Opt in to a bounded, redacted safe allowlist of request and response headers; raw Authorization and Cookie headers are omitted. Defaults to false."),
+            .boolean("include_headers", description: "Snake-case alias for includeHeaders."),
+            .boolean("includeBody", description: "Opt in to best-effort bounded previews of completed textual final response bodies. Recognized sensitive fields are redacted, but generic body content is not guaranteed to be secret-free; binary content, oversized responses, and unavailable bodies are omitted. Defaults to false."),
+            .boolean("include_body", description: "Snake-case alias for includeBody."),
         ],
         required: ["pageId"]
     )
@@ -153,6 +217,14 @@ struct BrowserNetworkTool: FeatureTool {
             try BrowserURLPolicy(environment: context.environment).validate($0)
         }
         let durationSeconds = try BrowserNetworkCapture.resolvedDuration(input.resolvedDuration)
+        let filters = try BrowserNetworkFilters(
+            resourceTypes: input.resolvedResourceTypes,
+            status: input.resolvedStatus,
+            urlContains: input.resolvedURLContains
+        )
+        let limit = try BrowserNetworkCapture.resolvedLimit(input.limit)
+        let capturesHeaders = input.resolvesHeaders
+        let capturesBodies = input.resolvesBody
         let allowsLoopback = requestedURL.map {
             BrowserURLPolicy(environment: context.environment).isLoopbackURL($0.absoluteString)
         }
@@ -162,7 +234,10 @@ struct BrowserNetworkTool: FeatureTool {
             context: context,
             allowsLoopback: allowsLoopback
         ) { session, tab in
-            let observer = BrowserNetworkObserver()
+            let observer = BrowserNetworkObserver(
+                capturesHeaders: capturesHeaders,
+                capturesBodies: capturesBodies
+            )
             let eventToken = session.addEventHandler { event in
                 observer.consume(event)
             }
@@ -170,14 +245,30 @@ struct BrowserNetworkTool: FeatureTool {
 
             var networkEnabled = false
             do {
-                _ = try await session.send(method: "Network.enable")
+                if capturesBodies {
+                    _ = try await session.send(
+                        method: "Network.enable",
+                        params: BrowserNetworkBodyCapture.networkEnableParameters
+                    )
+                } else {
+                    _ = try await session.send(method: "Network.enable")
+                }
                 networkEnabled = true
+                let observationStartedAt = Date()
                 if let requestedURL {
                     try await session.navigate(to: requestedURL.absoluteString)
                 }
                 try await Task.sleep(
                     nanoseconds: UInt64(durationSeconds) * 1_000_000_000
                 )
+                let observedDurationMilliseconds = max(
+                    0,
+                    Date().timeIntervalSince(observationStartedAt) * 1_000
+                )
+                var observation = observer.snapshot(filters: filters, limit: limit)
+                if capturesBodies {
+                    observation = await observation.capturingBodies(from: session)
+                }
                 if networkEnabled {
                     _ = try? await session.send(method: "Network.disable")
                     networkEnabled = false
@@ -185,8 +276,9 @@ struct BrowserNetworkTool: FeatureTool {
                 let page = try await session.pageMetadata(pageID: tab.id)
                 return BrowserNetworkOutput(
                     page: page,
-                    observation: observer.snapshot(),
-                    durationSeconds: durationSeconds
+                    observation: observation,
+                    durationSeconds: durationSeconds,
+                    observedDurationMilliseconds: observedDurationMilliseconds
                 )
             } catch {
                 if networkEnabled {

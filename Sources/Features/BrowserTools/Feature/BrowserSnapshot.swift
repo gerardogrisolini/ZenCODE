@@ -77,6 +77,9 @@ struct BrowserSnapshotOutput: Codable, Sendable {
 /// prevents raw CDP objects from becoming part of the tool contract.
 enum BrowserAccessibilitySnapshot {
     static let maximumSnapshotBytes = 30_000
+    /// Authorization state is retained host-side, so the number of opaque refs
+    /// is independently bounded as well as the encoded output size.
+    static let maximumSnapshotRefCount = BrowserSnapshotAuthorizationLimits.maximumRefsPerSnapshot
     private static let maximumFieldBytes = 1_000
 
     private static let interactiveRoles: Set<String> = [
@@ -107,21 +110,19 @@ enum BrowserAccessibilitySnapshot {
         }
 
         let candidates = rawNodes.compactMap(makeNode)
-        var targets: [String: BrowserAccessibilityTarget] = [:]
-        for candidate in candidates {
-            if let target = candidate.target {
-                targets[target.ref] = target
-            }
-        }
-
         let displayed = candidates.filter { candidate in
             !interactiveOnly || candidate.node.interactive
         }
         var selected: [BrowserAccessibilityNode] = []
+        var targets: [String: BrowserAccessibilityTarget] = [:]
         var usedBytes = 0
         var truncated = false
 
         for candidate in displayed {
+            guard selected.count < maximumSnapshotRefCount else {
+                truncated = true
+                break
+            }
             let encodedBytes = (try? JSONEncoder().encode(candidate.node).count) ?? maximumSnapshotBytes
             guard usedBytes + encodedBytes <= maximumSnapshotBytes else {
                 truncated = true
@@ -129,6 +130,9 @@ enum BrowserAccessibilitySnapshot {
             }
             selected.append(candidate.node)
             usedBytes += encodedBytes
+            if let target = candidate.target {
+                targets[target.ref] = target
+            }
         }
 
         return BrowserAccessibilitySnapshotResult(
@@ -142,7 +146,9 @@ enum BrowserAccessibilitySnapshot {
     private static func makeNode(_ raw: [String: Any]) -> ParsedNode? {
         guard raw["ignored"] as? Bool != true,
               let nodeID = stringValue(raw["nodeId"]),
-              !nodeID.isEmpty
+              !nodeID.isEmpty,
+              nodeID.lengthOfBytes(using: .utf8)
+                <= BrowserSnapshotAuthorizationLimits.maximumRefBytes - 3
         else {
             return nil
         }
@@ -255,47 +261,89 @@ extension CDPSession {
         return try BrowserAccessibilitySnapshot.parse(response, interactiveOnly: interactiveOnly)
     }
 
-    /// Persists only the snapshot nonce and its returned opaque refs in the
-    /// page. Navigation discards this state, making old model references fail
-    /// closed without a Browser daemon or disk-backed element registry.
-    func recordSnapshotState(
-        snapshotID: String,
-        allowedRefs: [String]
-    ) async throws {
-        let payload: [String: Any] = [
-            "id": snapshotID,
-            "refs": allowedRefs,
-        ]
-        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-        guard let literal = String(data: data, encoding: .utf8) else {
-            throw CDPError.invalidResponse("Unable to encode Browser snapshot state")
-        }
-        _ = try await evalString(
-            "(() => { globalThis.__zencodeBrowserSnapshot = \(literal); return 'stored'; })()"
-        )
+    /// Reads the identity of the current main-frame document from CDP. This is
+    /// Browser-owned protocol state, not data written into the page's main
+    /// world, and includes both the frame and loader identity.
+    func currentDocumentIdentity() async throws -> BrowserDocumentIdentity {
+        let response = try await send(method: "Page.getFrameTree")
+        return try BrowserDocumentIdentity.parse(response)
     }
 
-    func validateSnapshotState(snapshotID: String, ref: String?) async throws {
-        var payload: [String: Any] = ["id": snapshotID]
-        if let ref { payload["ref"] = ref }
-        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-        guard let literal = String(data: data, encoding: .utf8) else {
-            throw CDPError.invalidResponse("Unable to encode Browser snapshot validation")
-        }
-        let result = try await evalString(
-            """
-            (() => {
-              const expected = \(literal);
-              const current = globalThis.__zencodeBrowserSnapshot;
-              const sameSnapshot = current && current.id === expected.id;
-              const refAllowed = !expected.ref || (Array.isArray(current?.refs) && current.refs.includes(expected.ref));
-              return sameSnapshot && refAllowed ? 'valid' : 'stale';
-            })()
-            """
-        )
-        guard result == "valid" else {
+    /// Fails closed when an intervening navigation replaced the document that
+    /// supplied a snapshot or read result.
+    func validateCurrentDocument(
+        matches expectedDocument: BrowserDocumentIdentity
+    ) async throws {
+        guard try await currentDocumentIdentity() == expectedDocument else {
             throw BrowserInteractionError.staleSnapshot
         }
+    }
+
+    /// Persists the nonce and returned opaque refs in Browser's bounded,
+    /// locked host-side state. The caller supplies a document identity that
+    /// it checked around the snapshot read; a future invocation must observe
+    /// exactly the same main frame and loader before the refs are usable.
+    func recordSnapshotState(
+        pageID: String,
+        snapshotID: String,
+        allowedRefs: [String],
+        document: BrowserDocumentIdentity
+    ) async throws {
+        guard try snapshotStateStore.record(
+            pageID: pageID,
+            snapshotID: snapshotID,
+            allowedRefs: allowedRefs,
+            document: document
+        ) else {
+            throw CDPError.invalidResponse("Browser snapshot authorization exceeded its host-side limits")
+        }
+    }
+
+    /// Checks the current CDP document and the locked host-side authorization
+    /// state in sequence. Callers use this before and after every target resolution
+    /// or read; mutating input actions intentionally call it only *before*
+    /// dispatch so a navigation caused by that action remains valid output.
+    func validateSnapshotState(
+        _ authorization: BrowserSnapshotAuthorization
+    ) async throws {
+        let document = try await currentDocumentIdentity()
+        guard try snapshotStateStore.isAuthorized(
+            pageID: authorization.pageID,
+            snapshotID: authorization.snapshotID,
+            ref: authorization.ref,
+            document: document
+        ) else {
+            throw BrowserInteractionError.staleSnapshot
+        }
+    }
+
+    /// Wraps a read-only CDP command with document authorization checks. This
+    /// avoids treating a result from a post-navigation document as if it still
+    /// belonged to the snapshot that selected the target.
+    func snapshotBoundRead(
+        _ authorization: BrowserSnapshotAuthorization,
+        method: String,
+        params: [String: Any]? = nil
+    ) async throws -> [String: Any] {
+        try await validateSnapshotState(authorization)
+        let response = try await send(method: method, params: params)
+        try await validateSnapshotState(authorization)
+        return response
+    }
+
+    /// Resolves a backend node only after the snapshot is authorized and
+    /// verifies the document again after the AX-tree read. It is shared by
+    /// inspect, act, and element condition tools.
+    func resolveSnapshotTarget(
+        _ authorization: BrowserSnapshotAuthorization
+    ) async throws -> BrowserAccessibilityTarget {
+        guard let ref = authorization.ref else {
+            throw BrowserInteractionError.staleSnapshot
+        }
+        try await validateSnapshotState(authorization)
+        let target = try await accessibilityTarget(for: ref)
+        try await validateSnapshotState(authorization)
+        return target
     }
 
     func accessibilityTarget(for ref: String) async throws -> BrowserAccessibilityTarget {

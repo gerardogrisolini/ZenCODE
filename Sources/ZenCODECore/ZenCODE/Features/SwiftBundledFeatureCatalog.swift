@@ -172,14 +172,29 @@ enum SwiftBundledFeatureCatalog {
                 inputSchema: #"{"type":"object","properties":{"pageId":{"type":"string"},"page_id":{"type":"string"},"interactiveOnly":{"type":"boolean"},"interactive_only":{"type":"boolean"}},"required":["pageId"]}"#
             ),
             ToolDescriptor(
+                name: "browser.inspect",
+                description: "Inspects one ref from the current browser.snapshot using a bounded, redacted DOM and computed-CSS projection. Browser never accepts selectors, JavaScript, or raw CDP commands.",
+                inputSchema: #"{"type":"object","properties":{"pageId":{"type":"string"},"page_id":{"type":"string"},"snapshotId":{"type":"string"},"snapshot_id":{"type":"string"},"ref":{"type":"string"}},"required":["pageId","snapshotId","ref"]}"#
+            ),
+            ToolDescriptor(
+                name: "browser.wait_element",
+                description: "Waits up to a bounded timeout for one fixed condition on an element authorized by pageId, snapshotId, and ref. Conditions are host-side enums; Browser never accepts selectors, JavaScript, or CDP methods.",
+                inputSchema: #"{"type":"object","properties":{"pageId":{"type":"string"},"page_id":{"type":"string"},"snapshotId":{"type":"string"},"snapshot_id":{"type":"string"},"ref":{"type":"string"},"condition":{"type":"string","enum":["present","absent","visible","hidden","enabled","disabled","checked","unchecked","text_contains","value_equals"]},"value":{"type":"string"},"timeoutSeconds":{"type":"number"},"timeout_seconds":{"type":"number"}},"required":["pageId","snapshotId","ref","condition"]}"#
+            ),
+            ToolDescriptor(
+                name: "browser.assert_element",
+                description: "Evaluates one fixed condition on an element authorized by pageId, snapshotId, and ref, returning a structured pass/fail result. Browser never accepts selectors, JavaScript, or CDP methods.",
+                inputSchema: #"{"type":"object","properties":{"pageId":{"type":"string"},"page_id":{"type":"string"},"snapshotId":{"type":"string"},"snapshot_id":{"type":"string"},"ref":{"type":"string"},"condition":{"type":"string","enum":["present","absent","visible","hidden","enabled","disabled","checked","unchecked","text_contains","value_equals"]},"value":{"type":"string"}},"required":["pageId","snapshotId","ref","condition"]}"#
+            ),
+            ToolDescriptor(
                 name: "browser.console",
                 description: "Reads a bounded console ring buffer from a persistent Browser page. Console text is untrusted page data and capture begins when Browser instrumentation is installed.",
                 inputSchema: #"{"type":"object","properties":{"pageId":{"type":"string"},"page_id":{"type":"string"},"level":{"type":"string","enum":["all","warn","error"]},"limit":{"type":"number"}},"required":["pageId"]}"#
             ),
             ToolDescriptor(
                 name: "browser.network",
-                description: "Observes a persistent Browser page's CDP network events for a bounded interval. It can navigate first to a policy-validated HTTP or HTTPS URL.",
-                inputSchema: #"{"type":"object","properties":{"pageId":{"type":"string"},"page_id":{"type":"string"},"url":{"type":"string"},"durationSeconds":{"type":"number"},"duration_seconds":{"type":"number"}},"required":["pageId"]}"#
+                description: "Observes a persistent Browser page's CDP network events for a bounded interval. It supports bounded resource-type, status, URL-substring, and result-limit filters plus timing, cache, initiator, redirect, MIME, and size diagnostics. Optional headers use a fixed safe allowlist that omits raw Authorization and Cookie headers. Optional response-body previews are best-effort, textual, and host-bounded; recognized sensitive fields are redacted, but generic body content is not guaranteed to be secret-free. Non-goal: raw CDP payloads, binary or streaming bodies, and persistent traffic recording. Optionally navigates to an HTTP or HTTPS URL first; Browser URL policy applies to that direct navigation.",
+                inputSchema: #"{"type":"object","properties":{"pageId":{"type":"string"},"page_id":{"type":"string"},"url":{"type":"string"},"durationSeconds":{"type":"number"},"duration_seconds":{"type":"number"},"resourceType":{"type":"string","enum":["Document","Stylesheet","Image","Media","Font","Script","TextTrack","XHR","Fetch","Prefetch","EventSource","WebSocket","Manifest","SignedExchange","Ping","CSPViolationReport","Preflight","Other"]},"resource_type":{"type":"string","enum":["Document","Stylesheet","Image","Media","Font","Script","TextTrack","XHR","Fetch","Prefetch","EventSource","WebSocket","Manifest","SignedExchange","Ping","CSPViolationReport","Preflight","Other"]},"resourceTypes":{"type":"array","items":{"type":"string","enum":["Document","Stylesheet","Image","Media","Font","Script","TextTrack","XHR","Fetch","Prefetch","EventSource","WebSocket","Manifest","SignedExchange","Ping","CSPViolationReport","Preflight","Other"]}},"resource_types":{"type":"array","items":{"type":"string","enum":["Document","Stylesheet","Image","Media","Font","Script","TextTrack","XHR","Fetch","Prefetch","EventSource","WebSocket","Manifest","SignedExchange","Ping","CSPViolationReport","Preflight","Other"]}},"status":{"type":"number"},"statusCode":{"type":"number"},"status_code":{"type":"number"},"urlContains":{"type":"string"},"url_contains":{"type":"string"},"limit":{"type":"number"},"includeHeaders":{"type":"boolean"},"include_headers":{"type":"boolean"},"includeBody":{"type":"boolean"},"include_body":{"type":"boolean"}},"required":["pageId"]}"#
             ),
             ToolDescriptor(
                 name: "browser.screenshot",
@@ -188,8 +203,8 @@ enum SwiftBundledFeatureCatalog {
             ),
             ToolDescriptor(
                 name: "browser.compare_screenshots",
-                description: "Compares two PNG screenshots previously produced by Browser. Both paths must be Browser-owned artifact paths; Browser returns bounded metadata and deterministic encoded-byte differences, never image bytes.",
-                inputSchema: #"{"type":"object","properties":{"baselinePath":{"type":"string"},"baseline_path":{"type":"string"},"candidatePath":{"type":"string"},"candidate_path":{"type":"string"}},"required":["baselinePath","candidatePath"]}"#
+                description: "Compares two Browser-owned PNG screenshots and always returns deterministic encoded-byte metadata. When both images have compatible dimensions and a supported bounded format, it also returns decoded RGBA pixel-difference metadata and a Browser-owned PNG diff artifact; otherwise it returns a structured unavailability reason. Image bytes are never embedded in the model transcript.",
+                inputSchema: #"{"type":"object","properties":{"baselinePath":{"type":"string"},"baseline_path":{"type":"string"},"candidatePath":{"type":"string"},"candidate_path":{"type":"string"},"thresholdPercent":{"type":"number"},"threshold_percent":{"type":"number"}},"required":["baselinePath","candidatePath"]}"#
             ),
             ToolDescriptor(
                 name: "browser.print_pdf",
@@ -203,8 +218,8 @@ enum SwiftBundledFeatureCatalog {
             ),
             ToolDescriptor(
                 name: "browser.act",
-                description: "Performs one constrained semantic action on a ref returned by the current browser.snapshot: click, fill, or a supported key press. Password-like and file inputs are never filled. Actions can have external side effects.",
-                inputSchema: #"{"type":"object","properties":{"pageId":{"type":"string"},"page_id":{"type":"string"},"snapshotId":{"type":"string"},"snapshot_id":{"type":"string"},"action":{"type":"string","enum":["click","fill","press"]},"ref":{"type":"string"},"value":{"type":"string"},"key":{"type":"string"}},"required":["pageId","snapshotId","action"]}"#
+                description: "Performs one constrained semantic action on a ref returned by the current browser.snapshot: click, fill, press, hover, double_click, scroll_into_view, select_option, check, or uncheck. Password-like and file inputs are never filled. Actions can have external side effects.",
+                inputSchema: #"{"type":"object","properties":{"pageId":{"type":"string"},"page_id":{"type":"string"},"snapshotId":{"type":"string"},"snapshot_id":{"type":"string"},"action":{"type":"string","enum":["click","fill","press","hover","double_click","scroll_into_view","select_option","check","uncheck"]},"ref":{"type":"string"},"value":{"type":"string"},"key":{"type":"string"}},"required":["pageId","snapshotId","action"]}"#
             ),
             ToolDescriptor(
                 name: "browser.dialog",

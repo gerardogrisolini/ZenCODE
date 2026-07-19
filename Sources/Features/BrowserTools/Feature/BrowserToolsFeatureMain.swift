@@ -295,6 +295,7 @@ struct BrowserClosePageTool: FeatureTool {
             _ = try await browser.tab(id: pageID)
             await browser.closeTab(id: pageID)
             BrowserViewportStateStore(environment: context.environment).remove(pageID: pageID)
+            try? BrowserSnapshotStateStore(environment: context.environment).remove(pageID: pageID)
             return BrowserClosePageOutput(pageID: pageID, closed: true)
         } catch let error as ChromeBrowserError {
             throw BrowserToolsFeatureError.browserError(error.localizedDescription)
@@ -410,7 +411,8 @@ enum BrowserToolsRunner {
     ) async throws -> T {
         let session = CDPSession(
             webSocketURL: tab.webSocketDebuggerURL,
-            configuration: CDPSessionConfiguration(environment: context.environment)
+            configuration: CDPSessionConfiguration(environment: context.environment),
+            snapshotStateStore: BrowserSnapshotStateStore(environment: context.environment)
         )
         session.connect()
         defer { session.disconnect() }
@@ -485,6 +487,9 @@ public enum BrowserToolsFeatureRunner {
             AnyFeatureTool(BrowserWaitTool()),
             AnyFeatureTool(BrowserAssertTool()),
             AnyFeatureTool(BrowserSnapshotTool()),
+            AnyFeatureTool(BrowserInspectTool()),
+            AnyFeatureTool(BrowserWaitElementTool()),
+            AnyFeatureTool(BrowserAssertElementTool()),
             AnyFeatureTool(BrowserConsoleTool()),
             AnyFeatureTool(BrowserNetworkTool()),
             AnyFeatureTool(BrowserScreenshotTool()),

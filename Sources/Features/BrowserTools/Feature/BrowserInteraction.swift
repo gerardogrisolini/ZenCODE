@@ -21,6 +21,11 @@ enum BrowserInteractionError: LocalizedError, Equatable {
     case fileInputNotSupported
     case inputIsDisabled
     case inputValueTooLarge
+    case unsupportedSelectTarget(String)
+    case optionNotFound(String)
+    case unsupportedCheckTarget(String)
+    case targetIsDisabled
+    case unableToSetCheckedState(String)
     case unsupportedKey(String)
 
     var errorDescription: String? {
@@ -41,6 +46,16 @@ enum BrowserInteractionError: LocalizedError, Equatable {
             "Browser cannot fill a disabled or read-only control."
         case .inputValueTooLarge:
             "Browser fill values are limited to 16,000 UTF-8 bytes."
+        case let .unsupportedSelectTarget(ref):
+            "Browser element '\(ref)' is not a selectable HTML select control."
+        case let .optionNotFound(ref):
+            "Browser element '\(ref)' does not contain an option with that value. Take a fresh browser.snapshot and inspect the control before selecting."
+        case let .unsupportedCheckTarget(ref):
+            "Browser element '\(ref)' is not a checkbox or radio control that Browser can set."
+        case .targetIsDisabled:
+            "Browser cannot change a disabled control."
+        case let .unableToSetCheckedState(ref):
+            "Browser element '\(ref)' did not reach the requested checked state. Take a fresh browser.snapshot before retrying."
         case let .unsupportedKey(key):
             "Unsupported Browser key '\(key)'. Use a navigation or editing key such as Enter, Tab, Escape, ArrowDown, Backspace, or Delete."
         }
@@ -51,6 +66,12 @@ enum BrowserActionKind: String, Codable, Sendable {
     case click
     case fill
     case press
+    case hover
+    case doubleClick = "double_click"
+    case scrollIntoView = "scroll_into_view"
+    case selectOption = "select_option"
+    case check
+    case uncheck
 
     static func resolve(_ rawValue: String?) throws -> Self {
         guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -60,7 +81,7 @@ enum BrowserActionKind: String, Codable, Sendable {
         }
         guard let action = Self(rawValue: rawValue.lowercased()) else {
             throw BrowserToolsFeatureError.browserError(
-                "Unsupported Browser action '\(rawValue)'. Use click, fill, or press."
+                "Unsupported Browser action '\(rawValue)'. Use click, fill, press, hover, double_click, scroll_into_view, select_option, check, or uncheck."
             )
         }
         return action
@@ -247,45 +268,86 @@ struct BrowserDOMElementInfo {
 }
 
 extension CDPSession {
-    func click(target: BrowserAccessibilityTarget) async throws {
+    func click(
+        target: BrowserAccessibilityTarget,
+        authorization: BrowserSnapshotAuthorization
+    ) async throws {
         guard target.interactive else {
             throw BrowserInteractionError.targetIsNotInteractive(target.ref)
         }
-        try await prepareActionTarget(target)
-        let response = try await send(
-            method: "DOM.getBoxModel",
-            params: ["backendNodeId": target.backendDOMNodeID]
-        )
-        guard let result = response["result"] as? [String: Any],
-              let model = result["model"] as? [String: Any],
-              let content = model["content"] as? [Any],
-              let point = boxCenter(content)
-        else {
-            throw BrowserInteractionError.targetNoLongerAvailable(target.ref)
-        }
+        let point = try await interactionPoint(for: target, authorization: authorization)
+        // Intentionally pre-dispatch only: a click can navigate the document
+        // as its expected side effect.
+        try await validateSnapshotState(authorization)
+        try await dispatchMouseClick(at: point, clickCount: 1)
+    }
 
-        let commonParams: [String: Any] = [
-            "x": point.x,
-            "y": point.y,
-            "button": "left",
-            "clickCount": 1,
-        ]
+    func doubleClick(
+        target: BrowserAccessibilityTarget,
+        authorization: BrowserSnapshotAuthorization
+    ) async throws {
+        guard target.interactive else {
+            throw BrowserInteractionError.targetIsNotInteractive(target.ref)
+        }
+        let point = try await interactionPoint(for: target, authorization: authorization)
+        // Chrome recognizes a double click from the ordinary first click and
+        // the second clickCount=2 sequence. This preserves page click handlers
+        // while remaining a fixed CDP input sequence.
+        // Do not insert a validation between input events: the first event can
+        // legitimately navigate as part of this requested action.
+        try await validateSnapshotState(authorization)
+        try await dispatchMouseClick(at: point, clickCount: 1)
+        try await dispatchMouseClick(at: point, clickCount: 2)
+    }
+
+    func hover(
+        target: BrowserAccessibilityTarget,
+        authorization: BrowserSnapshotAuthorization
+    ) async throws {
+        guard target.interactive else {
+            throw BrowserInteractionError.targetIsNotInteractive(target.ref)
+        }
+        let point = try await interactionPoint(for: target, authorization: authorization)
+        try await validateSnapshotState(authorization)
         _ = try await send(
             method: "Input.dispatchMouseEvent",
-            params: commonParams.merging(["type": "mousePressed"]) { _, new in new }
-        )
-        _ = try await send(
-            method: "Input.dispatchMouseEvent",
-            params: commonParams.merging(["type": "mouseReleased"]) { _, new in new }
+            params: [
+                "type": "mouseMoved",
+                "x": point.x,
+                "y": point.y,
+                "button": "none",
+            ]
         )
     }
 
-    func fill(target: BrowserAccessibilityTarget, value: String) async throws {
+    func scrollIntoView(
+        target: BrowserAccessibilityTarget,
+        authorization: BrowserSnapshotAuthorization
+    ) async throws {
+        try await validateSnapshotState(authorization)
+        _ = try await send(method: "DOM.enable")
+        do {
+            // This is the requested action itself; never reject a navigation
+            // after it solely because the old snapshot no longer matches.
+            _ = try await send(
+                method: "DOM.scrollIntoViewIfNeeded",
+                params: ["backendNodeId": target.backendDOMNodeID]
+            )
+        } catch {
+            throw BrowserInteractionError.targetNoLongerAvailable(target.ref)
+        }
+    }
+
+    func fill(
+        target: BrowserAccessibilityTarget,
+        value: String,
+        authorization: BrowserSnapshotAuthorization
+    ) async throws {
         guard value.lengthOfBytes(using: .utf8) <= 16_000 else {
             throw BrowserInteractionError.inputValueTooLarge
         }
-        try await prepareActionTarget(target)
-        let element = try await elementInfo(for: target)
+        try await prepareActionTarget(target, authorization: authorization)
+        let element = try await elementInfo(for: target, authorization: authorization)
         if element.isPasswordLike {
             throw BrowserInteractionError.sensitiveInputRequiresUser
         }
@@ -296,7 +358,7 @@ extension CDPSession {
             throw BrowserInteractionError.unsupportedFillTarget(target.ref)
         }
 
-        let result = try await withResolvedDOMObject(target) { objectID in
+        let result = try await withResolvedDOMObject(target, authorization: authorization) { objectID in
             try await callFunctionReturningString(
                 objectID: objectID,
                 functionDeclaration: Self.fillFunction,
@@ -317,9 +379,71 @@ extension CDPSession {
         }
     }
 
-    func focus(target: BrowserAccessibilityTarget) async throws {
-        try await prepareActionTarget(target)
-        let result = try await withResolvedDOMObject(target) { objectID in
+    func selectOption(
+        target: BrowserAccessibilityTarget,
+        value: String,
+        authorization: BrowserSnapshotAuthorization
+    ) async throws {
+        guard target.interactive else {
+            throw BrowserInteractionError.targetIsNotInteractive(target.ref)
+        }
+        guard value.lengthOfBytes(using: .utf8) <= 16_000 else {
+            throw BrowserInteractionError.inputValueTooLarge
+        }
+        try await prepareActionTarget(target, authorization: authorization)
+        let result = try await withResolvedDOMObject(target, authorization: authorization) { objectID in
+            try await callFunctionReturningString(
+                objectID: objectID,
+                functionDeclaration: Self.selectOptionFunction,
+                arguments: [["value": value]]
+            )
+        }
+        switch result {
+        case "selected":
+            return
+        case "disabled":
+            throw BrowserInteractionError.targetIsDisabled
+        case "option-not-found":
+            throw BrowserInteractionError.optionNotFound(target.ref)
+        default:
+            throw BrowserInteractionError.unsupportedSelectTarget(target.ref)
+        }
+    }
+
+    func setChecked(
+        target: BrowserAccessibilityTarget,
+        checked: Bool,
+        authorization: BrowserSnapshotAuthorization
+    ) async throws {
+        guard target.interactive else {
+            throw BrowserInteractionError.targetIsNotInteractive(target.ref)
+        }
+        try await prepareActionTarget(target, authorization: authorization)
+        let result = try await withResolvedDOMObject(target, authorization: authorization) { objectID in
+            try await callFunctionReturningString(
+                objectID: objectID,
+                functionDeclaration: Self.setCheckedFunction,
+                arguments: [["value": checked]]
+            )
+        }
+        switch result {
+        case "checked", "unchecked":
+            return
+        case "disabled":
+            throw BrowserInteractionError.targetIsDisabled
+        case "unsupported":
+            throw BrowserInteractionError.unsupportedCheckTarget(target.ref)
+        default:
+            throw BrowserInteractionError.unableToSetCheckedState(target.ref)
+        }
+    }
+
+    func focus(
+        target: BrowserAccessibilityTarget,
+        authorization: BrowserSnapshotAuthorization
+    ) async throws {
+        try await prepareActionTarget(target, authorization: authorization)
+        let result = try await withResolvedDOMObject(target, authorization: authorization) { objectID in
             try await callFunctionReturningString(
                 objectID: objectID,
                 functionDeclaration: Self.focusFunction
@@ -347,7 +471,11 @@ extension CDPSession {
         )
     }
 
-    private func prepareActionTarget(_ target: BrowserAccessibilityTarget) async throws {
+    private func prepareActionTarget(
+        _ target: BrowserAccessibilityTarget,
+        authorization: BrowserSnapshotAuthorization
+    ) async throws {
+        try await validateSnapshotState(authorization)
         _ = try await send(method: "DOM.enable")
         _ = try? await send(
             method: "DOM.scrollIntoViewIfNeeded",
@@ -355,8 +483,52 @@ extension CDPSession {
         )
     }
 
-    private func elementInfo(for target: BrowserAccessibilityTarget) async throws -> BrowserDOMElementInfo {
-        let response = try await send(
+    private func interactionPoint(
+        for target: BrowserAccessibilityTarget,
+        authorization: BrowserSnapshotAuthorization
+    ) async throws -> (x: Double, y: Double) {
+        try await prepareActionTarget(target, authorization: authorization)
+        let response = try await snapshotBoundRead(
+            authorization,
+            method: "DOM.getBoxModel",
+            params: ["backendNodeId": target.backendDOMNodeID]
+        )
+        guard let result = response["result"] as? [String: Any],
+              let model = result["model"] as? [String: Any],
+              let content = model["content"] as? [Any],
+              let point = boxCenter(content)
+        else {
+            throw BrowserInteractionError.targetNoLongerAvailable(target.ref)
+        }
+        return point
+    }
+
+    private func dispatchMouseClick(
+        at point: (x: Double, y: Double),
+        clickCount: Int
+    ) async throws {
+        let commonParams: [String: Any] = [
+            "x": point.x,
+            "y": point.y,
+            "button": "left",
+            "clickCount": clickCount,
+        ]
+        _ = try await send(
+            method: "Input.dispatchMouseEvent",
+            params: commonParams.merging(["type": "mousePressed"]) { _, new in new }
+        )
+        _ = try await send(
+            method: "Input.dispatchMouseEvent",
+            params: commonParams.merging(["type": "mouseReleased"]) { _, new in new }
+        )
+    }
+
+    private func elementInfo(
+        for target: BrowserAccessibilityTarget,
+        authorization: BrowserSnapshotAuthorization
+    ) async throws -> BrowserDOMElementInfo {
+        let response = try await snapshotBoundRead(
+            authorization,
             method: "DOM.describeNode",
             params: ["backendNodeId": target.backendDOMNodeID]
         )
@@ -376,9 +548,11 @@ extension CDPSession {
 
     private func withResolvedDOMObject<T>(
         _ target: BrowserAccessibilityTarget,
+        authorization: BrowserSnapshotAuthorization,
         body: (String) async throws -> T
     ) async throws -> T {
-        let response = try await send(
+        let response = try await snapshotBoundRead(
+            authorization,
             method: "DOM.resolveNode",
             params: ["backendNodeId": target.backendDOMNodeID]
         )
@@ -391,6 +565,10 @@ extension CDPSession {
         }
 
         do {
+            // `body` performs the mutation through Runtime.callFunctionOn.
+            // Validate at the last possible point, but never afterward: a
+            // page navigation can be the valid result of this action.
+            try await validateSnapshotState(authorization)
             let output = try await body(objectID)
             _ = try? await send(method: "Runtime.releaseObject", params: ["objectId": objectID])
             return output
@@ -472,6 +650,51 @@ extension CDPSession {
       return 'filled';
     }
     """#
+
+    /// Fixed host-side function: the caller can supply only an option value,
+    /// never a selector or executable source. Multiple selects retain their
+    /// existing selected options and add the requested exact-value option.
+    static let selectOptionFunction = #"""
+    function (value) {
+      const element = this;
+      if (!(element instanceof HTMLSelectElement)) return 'unsupported';
+      if (element.disabled) return 'disabled';
+      const option = Array.from(element.options).find(candidate => candidate.value === value);
+      if (!option) return 'option-not-found';
+      const disabledGroup = option.parentElement instanceof HTMLOptGroupElement
+        && option.parentElement.disabled;
+      if (option.disabled || disabledGroup) return 'disabled';
+      element.focus({ preventScroll: true });
+      if (element.multiple) {
+        option.selected = true;
+      } else {
+        element.value = value;
+      }
+      if (!option.selected) return 'option-not-found';
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+      return 'selected';
+    }
+    """#
+
+    /// Fixed host-side function for native checkbox/radio controls. Calling
+    /// the native `click()` only when state differs preserves normal page event
+    /// handlers and makes check/uncheck idempotent. Browsers do not support a
+    /// user-like uncheck operation for radio buttons, so that request fails
+    /// closed as unsupported.
+    private static let setCheckedFunction = #"""
+    function (checked) {
+      const element = this;
+      if (!(element instanceof HTMLInputElement)) return 'unsupported';
+      const type = (element.type || '').toLowerCase();
+      if (type !== 'checkbox' && type !== 'radio') return 'unsupported';
+      if (element.disabled) return 'disabled';
+      if (!checked && type === 'radio') return 'unsupported';
+      if (element.checked !== checked) element.click();
+      if (element.checked !== checked) return 'failed';
+      return checked ? 'checked' : 'unchecked';
+    }
+    """#
 }
 
 // MARK: - Public tools
@@ -512,16 +735,16 @@ struct BrowserActTool: FeatureTool {
     }
 
     static let name = "browser.act"
-    static let description = "Performs one constrained semantic action on a ref returned by the current browser.snapshot: click, fill, or a supported key press. Password-like and file inputs are never filled. Actions can have external side effects."
+    static let description = "Performs one constrained semantic action on a ref returned by the current browser.snapshot: click, fill, press, hover, double_click, scroll_into_view, select_option, check, or uncheck. Password-like and file inputs are never filled. Actions can have external side effects."
     static let inputSchema = buildInputSchema(
         [
             .string("pageId", description: "pageId returned by browser.open or browser.pages."),
             .string("page_id", description: "Snake-case alias for pageId."),
             .string("snapshotId", description: "snapshotId returned by the most recent browser.snapshot for this page."),
             .string("snapshot_id", description: "Snake-case alias for snapshotId."),
-            .string("action", enumValues: ["click", "fill", "press"], description: "Constrained semantic action."),
-            .string("ref", description: "Opaque element ref from that snapshot. Required for click and fill; optional for press."),
-            .string("value", description: "Value for fill. Never use this for passwords or secrets."),
+            .string("action", enumValues: ["click", "fill", "press", "hover", "double_click", "scroll_into_view", "select_option", "check", "uncheck"], description: "Constrained semantic action."),
+            .string("ref", description: "Opaque element ref from that snapshot. Required for every action except press."),
+            .string("value", description: "Value for fill or exact option value for select_option. Never use this for passwords or secrets."),
             .string("key", description: "Supported key for press, such as Enter, Tab, Escape, ArrowDown, Backspace, or Delete."),
         ],
         required: ["pageId", "snapshotId", "action"]
@@ -538,7 +761,12 @@ struct BrowserActTool: FeatureTool {
         let ref = input.resolvedRef
 
         return try await BrowserToolsRunner.withPage(pageID: pageID, context: context) { session, tab in
-            try await session.validateSnapshotState(snapshotID: snapshotID, ref: ref)
+            let authorization = BrowserSnapshotAuthorization(
+                pageID: tab.id,
+                snapshotID: snapshotID,
+                ref: ref
+            )
+            try await session.validateSnapshotState(authorization)
             let observer = BrowserDialogObserver()
             let token = session.addEventHandler { event in
                 observer.consume(event)
@@ -547,26 +775,68 @@ struct BrowserActTool: FeatureTool {
 
             switch action {
             case .click:
-                guard let ref else {
+                guard ref != nil else {
                     throw BrowserToolsFeatureError.missingArgument("ref")
                 }
-                let target = try await session.accessibilityTarget(for: ref)
-                try await session.click(target: target)
+                let target = try await session.resolveSnapshotTarget(authorization)
+                try await session.click(target: target, authorization: authorization)
             case .fill:
-                guard let ref else {
+                guard ref != nil else {
                     throw BrowserToolsFeatureError.missingArgument("ref")
                 }
                 guard let value = input.value else {
                     throw BrowserToolsFeatureError.missingArgument("value")
                 }
-                let target = try await session.accessibilityTarget(for: ref)
-                try await session.fill(target: target, value: value)
+                let target = try await session.resolveSnapshotTarget(authorization)
+                try await session.fill(target: target, value: value, authorization: authorization)
             case .press:
-                if let ref {
-                    let target = try await session.accessibilityTarget(for: ref)
-                    try await session.focus(target: target)
+                if ref != nil {
+                    let target = try await session.resolveSnapshotTarget(authorization)
+                    try await session.focus(target: target, authorization: authorization)
                 }
+                // Keyboard input can navigate too, so only validate before
+                // dispatch and never after the action.
+                try await session.validateSnapshotState(authorization)
                 try await session.press(BrowserKeyStroke.resolve(input.key))
+            case .hover:
+                guard ref != nil else {
+                    throw BrowserToolsFeatureError.missingArgument("ref")
+                }
+                let target = try await session.resolveSnapshotTarget(authorization)
+                try await session.hover(target: target, authorization: authorization)
+            case .doubleClick:
+                guard ref != nil else {
+                    throw BrowserToolsFeatureError.missingArgument("ref")
+                }
+                let target = try await session.resolveSnapshotTarget(authorization)
+                try await session.doubleClick(target: target, authorization: authorization)
+            case .scrollIntoView:
+                guard ref != nil else {
+                    throw BrowserToolsFeatureError.missingArgument("ref")
+                }
+                let target = try await session.resolveSnapshotTarget(authorization)
+                try await session.scrollIntoView(target: target, authorization: authorization)
+            case .selectOption:
+                guard ref != nil else {
+                    throw BrowserToolsFeatureError.missingArgument("ref")
+                }
+                guard let value = input.value else {
+                    throw BrowserToolsFeatureError.missingArgument("value")
+                }
+                let target = try await session.resolveSnapshotTarget(authorization)
+                try await session.selectOption(target: target, value: value, authorization: authorization)
+            case .check:
+                guard ref != nil else {
+                    throw BrowserToolsFeatureError.missingArgument("ref")
+                }
+                let target = try await session.resolveSnapshotTarget(authorization)
+                try await session.setChecked(target: target, checked: true, authorization: authorization)
+            case .uncheck:
+                guard ref != nil else {
+                    throw BrowserToolsFeatureError.missingArgument("ref")
+                }
+                let target = try await session.resolveSnapshotTarget(authorization)
+                try await session.setChecked(target: target, checked: false, authorization: authorization)
             }
 
             try await Task.sleep(nanoseconds: 150_000_000)

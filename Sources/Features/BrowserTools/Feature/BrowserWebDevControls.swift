@@ -326,12 +326,11 @@ enum BrowserResetStorage {
     /// CDP's fixed `all` storage type is deliberately not model-configurable.
     static let storageTypes = "all"
 
-    /// Snapshot refs and the console ring buffer are Browser's only persistent
-    /// in-page instrumentation state. Viewport configuration is host-owned in
-    /// Browser's private profile and is unaffected by a page-state reset.
+    /// The console ring buffer is the only persistent in-page instrumentation
+    /// state. Snapshot authorization is Browser-owned host state, and viewport
+    /// configuration remains in Browser's private profile.
     static let instrumentationResetScript = #"""
     (() => {
-      try { delete globalThis.__zencodeBrowserSnapshot; } catch (_) {}
       try {
         if (Array.isArray(globalThis.__zencodeConsole)) {
           globalThis.__zencodeConsole.length = 0;
@@ -427,6 +426,7 @@ struct BrowserResetStateTool: FeatureTool {
             // resolved.
             let origin = try await session.requiredBrowserStorageOrigin()
             try await session.clearBrowserStorage(for: origin)
+            try session.snapshotStateStore.remove(pageID: tab.id)
             try await session.resetBrowserInstrumentation()
             try await session.reloadIgnoringCache()
             let page = (try? await session.pageMetadata(pageID: tab.id)) ?? BrowserPage(tab: tab)
@@ -461,9 +461,10 @@ struct BrowserResetStateTool: FeatureTool {
                     context: context,
                     preparePage: false,
                     enforceNetworkPolicy: false
-                ) { session, _ in
+                ) { session, managedTab in
                     try await session.enablePageAndRuntime()
                     let origin = try await session.browserStorageOrigin()
+                    try session.snapshotStateStore.remove(pageID: managedTab.id)
                     try await session.resetBrowserInstrumentation()
                     return BrowserProfileResetPageState(origin: origin)
                 }
