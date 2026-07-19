@@ -12,6 +12,8 @@ import Synchronization
 import Testing
 
 #if os(macOS)
+import Network
+
 extension RemoteSessionSnapshotTests {
     @Test
     func chatGPTSubscriptionContinuationKeepsFullInputForBaseRequest() throws {
@@ -167,6 +169,7 @@ extension RemoteSessionSnapshotTests {
 
     @Test
     func chatGPTSubscriptionClosedSocketErrorsAreRetryableTransportFailures() {
+        let abortedNetworkSocket = NWError.posix(.ECONNABORTED)
         let closedSocketError = NSError(
             domain: NSPOSIXErrorDomain,
             code: Int(POSIXErrorCode.ENOTCONN.rawValue),
@@ -178,6 +181,11 @@ extension RemoteSessionSnapshotTests {
             userInfo: [NSLocalizedDescriptionKey: "Socket is closed"]
         )
 
+        #expect(
+            ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
+                abortedNetworkSocket
+            )
+        )
         #expect(
             ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
                 closedSocketError

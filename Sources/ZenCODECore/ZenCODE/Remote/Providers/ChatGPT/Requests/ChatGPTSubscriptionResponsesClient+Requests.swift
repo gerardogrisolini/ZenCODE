@@ -9,6 +9,8 @@ import FoundationNetworking
 #endif
 
 #if os(macOS)
+import Network
+
 extension ChatGPTSubscriptionResponsesClient {
     /// Exact server error emitted when a Responses WebSocket reaches its
     /// 60-minute connection limit. This is intentionally not a substring
@@ -181,6 +183,12 @@ extension ChatGPTSubscriptionResponsesClient {
 
         if let posixError = error as? POSIXError,
            isRetryablePOSIXCode(posixError.code) {
+            return true
+        }
+
+        if let networkError = error as? NWError,
+           case let .posix(code) = networkError,
+           isRetryablePOSIXCode(code) {
             return true
         }
 
