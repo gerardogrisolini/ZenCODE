@@ -12,7 +12,9 @@ import Darwin
 import Glibc
 #endif
 import Foundation
+#if canImport(XcodeToolsFeature)
 import XcodeToolsFeature
+#endif
 
 extension TerminalChat {
     public func createCurrentSession(

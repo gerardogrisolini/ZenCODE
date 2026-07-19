@@ -66,7 +66,7 @@ struct SubscriptionAuthFlowTests {
         #expect(components.scheme == "https")
         #expect(components.host == "claude.ai")
         #expect(components.path == "/oauth/authorize")
-        #expect(queryItems["redirect_uri"] == "https://console.anthropic.com/oauth/code/callback")
+        #expect(queryItems["redirect_uri"] == "https://platform.claude.com/oauth/code/callback")
         #expect(queryItems["code_challenge_method"] == "S256")
         #expect(queryItems["state"] != nil)
     }
@@ -92,5 +92,32 @@ struct SubscriptionAuthFlowTests {
         let state = try #require(components.queryItems?.first(where: { $0.name == "state" })?.value)
 
         try session.submitAuthorizationInput("authorization-code#\(state)")
+    }
+
+    @Test
+    func anthropicManualCodeAcceptsCallbackURLWithFragmentParameters() async throws {
+        let session = try await AnthropicSubscriptionAuthService.startSignIn()
+        let components = try #require(URLComponents(url: session.authorizationURL, resolvingAgainstBaseURL: false))
+        let state = try #require(components.queryItems?.first(where: { $0.name == "state" })?.value)
+
+        try session.submitAuthorizationInput(
+            "https://platform.claude.com/oauth/code/callback#code=authorization-code&state=\(state)"
+        )
+    }
+
+    @Test
+    func anthropicManualCodeRejectsCallbackFragmentWithWrongState() async throws {
+        let session = try await AnthropicSubscriptionAuthService.startSignIn()
+
+        do {
+            try session.submitAuthorizationInput(
+                "https://platform.claude.com/oauth/code/callback#code=authorization-code&state=wrong-state"
+            )
+            Issue.record("Expected callback fragment with the wrong state to be rejected")
+        } catch AnthropicSubscriptionAuthError.stateMismatch {
+            // Expected: fragment callbacks retain the same CSRF validation as query callbacks.
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
     }
 }

@@ -6,7 +6,9 @@
 //
 
 import Foundation
+#if canImport(XcodeToolsFeature)
 import XcodeToolsFeature
+#endif
 
 public actor DirectMCPToolRuntime {
     public struct XcodeDiscovery: Sendable {

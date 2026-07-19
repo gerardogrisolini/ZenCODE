@@ -118,7 +118,14 @@ var zenCODEDependencies: [Target.Dependency] = [
 ]
 
 for feature in bundledFeatureTargetDefinitions {
-    zenCODEDependencies.append(.target(name: feature.executableName))
+    zenCODEDependencies.append(
+        .target(
+            name: feature.executableName,
+            condition: feature.executableName == "xcode-tools-feature"
+                ? .when(platforms: [.macOS])
+                : nil
+        )
+    )
 }
 
 let zenCODESwiftSettings: [SwiftSetting] = [
@@ -144,7 +151,10 @@ targets += [
             "FeatureKit",
             "ToolCore",
             "FeatureMCPBridgeKit",
-            "XcodeToolsFeature",
+            .target(
+                name: "XcodeToolsFeature",
+                condition: .when(platforms: [.macOS])
+            ),
             "LocalToolsSupport",
             "ZenPackageMetadata"
         ],

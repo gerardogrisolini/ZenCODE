@@ -4,7 +4,9 @@
 //
 
 import Foundation
+#if canImport(XcodeToolsFeature)
 import XcodeToolsFeature
+#endif
 
 extension DirectMCPToolRuntime {
     func discoverFamilyIfNeeded(

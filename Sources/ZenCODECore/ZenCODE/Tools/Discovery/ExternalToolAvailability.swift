@@ -7,7 +7,9 @@
 
 import FeatureMCPBridgeKit
 import Foundation
+#if canImport(XcodeToolsFeature)
 import XcodeToolsFeature
+#endif
 
 public enum ExternalToolAvailability {
     public static func resolvedAllowedToolNames(

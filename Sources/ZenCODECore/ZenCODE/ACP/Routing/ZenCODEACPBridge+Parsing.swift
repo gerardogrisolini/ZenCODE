@@ -12,7 +12,9 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+#if canImport(XcodeToolsFeature)
 import XcodeToolsFeature
+#endif
 
 extension ZenCODEACPBridge {
     public struct ACPMCPServerDefinition: Sendable {

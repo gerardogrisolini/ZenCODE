@@ -159,6 +159,14 @@ public final class AnthropicSubscriptionSignInSession: @unchecked Sendable {
             return try authorizationResult(from: components, requireState: false)
         }
 
+        if let url = URL(string: value),
+           let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let fragment = components.fragment,
+           let fragmentComponents = authorizationComponents(from: fragment),
+           fragmentComponents.queryItems?.contains(where: { $0.name == "code" }) == true {
+            return try authorizationResult(from: fragmentComponents, requireState: true)
+        }
+
         if value.contains("#") {
             let parts = value.split(separator: "#", maxSplits: 1).map(String.init)
             if parts.count == 2 {
@@ -179,13 +187,26 @@ public final class AnthropicSubscriptionSignInSession: @unchecked Sendable {
 
         if value.contains("code=") {
             let query = value.hasPrefix("?") ? String(value.dropFirst()) : value
-            if let components = URLComponents(string: "https://console.anthropic.com/oauth/code/callback?\(query)"),
+            if let components = URLComponents(string: "https://platform.claude.com/oauth/code/callback?\(query)"),
                components.queryItems?.contains(where: { $0.name == "code" }) == true {
                 return try authorizationResult(from: components, requireState: false)
             }
         }
 
         throw AnthropicSubscriptionAuthError.missingOAuthState
+    }
+
+    private func authorizationComponents(from value: String) -> URLComponents? {
+        let parameters = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingPrefix("?")
+            .trimmingPrefix("#")
+        guard !parameters.isEmpty else {
+            return nil
+        }
+        return URLComponents(
+            string: "https://platform.claude.com/oauth/code/callback?\(parameters)"
+        )
     }
 
     private func authorizationResult(
@@ -273,11 +294,11 @@ public enum AnthropicSubscriptionAuthService {
 
     private static let authorizeURL = URL(string: "https://claude.ai/oauth/authorize")!
     private static let tokenURLs = [
-        URL(string: "https://console.anthropic.com/v1/oauth/token")!,
-        URL(string: "https://platform.claude.com/v1/oauth/token")!
+        URL(string: "https://platform.claude.com/v1/oauth/token")!,
+        URL(string: "https://console.anthropic.com/v1/oauth/token")!
     ]
 
-    private static let redirectURI = "https://console.anthropic.com/oauth/code/callback"
+    private static let redirectURI = "https://platform.claude.com/oauth/code/callback"
     private static let scope = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 
     public static func signIn() async throws -> AnthropicSubscriptionCredentials {

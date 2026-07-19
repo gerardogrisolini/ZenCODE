@@ -13,7 +13,9 @@ import Glibc
 import Dispatch
 import FeatureMCPBridgeKit
 import Foundation
+#if canImport(XcodeToolsFeature)
 import XcodeToolsFeature
+#endif
 
 public actor ZenCODEACPBridge {
     public struct SessionState {

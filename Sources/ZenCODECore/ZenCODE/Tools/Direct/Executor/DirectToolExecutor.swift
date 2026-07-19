@@ -6,7 +6,9 @@
 //
 
 import Foundation
+#if canImport(XcodeToolsFeature)
 import XcodeToolsFeature
+#endif
 
 public actor DirectToolExecutor {
     public static let defaultModelOutputLimit = 12_000
