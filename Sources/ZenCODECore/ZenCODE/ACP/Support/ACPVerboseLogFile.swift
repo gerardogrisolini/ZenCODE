@@ -32,7 +32,7 @@ public actor ACPVerboseLogFile {
             let filename = "acp-\(filenameTimestamp())-\(ProcessInfo.processInfo.processIdentifier).log"
             let url = directoryURL.appendingPathComponent(filename)
             if !fileManager.fileExists(atPath: url.path) {
-                fileManager.createFile(atPath: url.path, contents: nil)
+                _ = fileManager.createFile(atPath: url.path, contents: nil)
             }
             let handle = try FileHandle(forWritingTo: url)
             handle.seekToEndOfFile()

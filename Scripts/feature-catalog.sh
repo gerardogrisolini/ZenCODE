@@ -24,7 +24,7 @@ zencode_select_feature_products() {
                 "web-tools-feature"
                 "browser-tools-feature"
                 "git-tools-feature"
-                "xcode-tools-feature"
+                "swift-tools-feature"
                 "figma-tools-feature"
                 "jira-tools-feature"
             )

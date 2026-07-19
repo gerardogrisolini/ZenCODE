@@ -26,7 +26,8 @@ migration says otherwise:
 platform conditions, products, and build flags. `ZenBundledFeatureCatalog` is the runtime
 bundled-feature distribution catalog authority; parity checks reconcile its
 records with the manifest and installer catalogs. On Linux,
-`swift-tools-feature` is omitted from installation, not from the SwiftPM
+`swift-tools-feature` remains part of the installer product set, while
+`xcode-tools-feature` is omitted from installation, not from the SwiftPM
 product set.
 
 The task control plane follows the same compatibility rule: `SessionTaskOrchestrator` is the sole mutable owner, task checkpoint schema 1 is written atomically per project/session, and saved-session v4 embeds the checkpoint tree (`SessionCheckpointTree`) alongside the current graph. Sessions saved before v4 are not loadable. Backend replacement may rebuild transient model state but must not discard the graph; only a logical session reset deletes its checkpoint.

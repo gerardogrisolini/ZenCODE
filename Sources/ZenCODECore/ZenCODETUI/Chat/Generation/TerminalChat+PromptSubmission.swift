@@ -177,9 +177,6 @@ extension TerminalChat {
             didRefreshGitStatusDuringCurrentPrompt = false
             await statusBar.beginRequest()
             await statusBar.setProcessing(true)
-            defer {
-                await statusBar.setProcessing(false)
-            }
             let promptTask = Task {
                 try await generateResponse(attempt: attempt)
             }
@@ -212,5 +209,6 @@ extension TerminalChat {
             await finishPromptResult(.failure(failure))
             await refreshStatusBarGitStatusSummaryAfterPromptIfNeeded()
         }
+        await statusBar.setProcessing(false)
     }
 }

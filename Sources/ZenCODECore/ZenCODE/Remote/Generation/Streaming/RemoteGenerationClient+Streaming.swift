@@ -296,11 +296,18 @@ extension RemoteGenerationClient {
     /// replayed by issuing the streaming POST again, regardless of provider.
     private func openStream(
         for request: URLRequest
-    ) async throws -> (bytes: URLSession.AsyncBytes, response: URLResponse) {
+    ) async throws -> (bytes: RemoteStreamBytes, response: URLResponse) {
         var attempt = 0
         while true {
             do {
+                #if canImport(FoundationNetworking)
+                return try await RemoteFoundationNetworkingStream.open(
+                    for: request,
+                    configuration: urlSession.configuration
+                )
+                #else
                 return try await urlSession.bytes(for: request)
+                #endif
             } catch {
                 guard RemoteStreamTransport.shouldRetryStreamOpening(
                     error: error,

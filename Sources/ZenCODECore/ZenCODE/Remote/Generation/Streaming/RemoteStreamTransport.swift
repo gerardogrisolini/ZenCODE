@@ -107,7 +107,7 @@ public enum RemoteStreamTransport {
 
     public static func validateHTTPResponse(
         _ response: URLResponse,
-        bytes: URLSession.AsyncBytes,
+        bytes: RemoteStreamBytes,
         bodyLimit: Int = 64 * 1024
     ) async throws {
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -128,7 +128,7 @@ public enum RemoteStreamTransport {
     // MARK: - Error body
 
     public static func collectErrorBody(
-        from bytes: URLSession.AsyncBytes,
+        from bytes: RemoteStreamBytes,
         limit: Int = 64 * 1024
     ) async throws -> String {
         var data = Data()

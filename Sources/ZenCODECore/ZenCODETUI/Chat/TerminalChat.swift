@@ -267,18 +267,23 @@ public final class TerminalChat: @unchecked Sendable {
 
         let statusBarStarted = await statusBar.start()
         await refreshStatusBarGitStatusSummary()
-        defer {
-            _ = await telegramControlService.stop()
-            await statusBar.stop()
-        }
+        do {
+            if stdinIsTerminal, statusBarStarted {
+                try await runInteractivePanelLoop()
+            } else {
+                try await runBlockingInputLoop(initialInputLine: initialInputLine)
+            }
 
-        if stdinIsTerminal, statusBarStarted {
-            try await runInteractivePanelLoop()
-        } else {
-            try await runBlockingInputLoop(initialInputLine: initialInputLine)
+            await sessionRunner.closeSession(id: sessionID)
+        } catch {
+            await stopTerminalServices()
+            throw error
         }
-
-        await sessionRunner.closeSession(id: sessionID)
+        await stopTerminalServices()
     }
 
+    private func stopTerminalServices() async {
+        _ = await telegramControlService.stop()
+        await statusBar.stop()
+    }
 }

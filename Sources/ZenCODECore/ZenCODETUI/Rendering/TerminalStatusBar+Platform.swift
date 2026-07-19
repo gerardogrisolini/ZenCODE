@@ -122,7 +122,7 @@ extension TerminalStatusBar {
         fileDescriptor: Int32
     ) -> (rows: Int, columns: Int)? {
         var size = winsize()
-        if ioctl(fileDescriptor, TIOCGWINSZ, &size) == 0,
+        if ioctl(fileDescriptor, UInt(TIOCGWINSZ), &size) == 0,
            size.ws_row > 0,
            size.ws_col > 0 {
             return (Int(size.ws_row), Int(size.ws_col))

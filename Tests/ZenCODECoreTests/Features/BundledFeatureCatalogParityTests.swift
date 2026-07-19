@@ -35,6 +35,14 @@ struct BundledFeatureCatalogParityTests {
     }
 
     @Test
+    func linuxDistributionIncludesSwiftToolsAndOmitsXcodeTools() {
+        let linuxProducts = Set(ZenBundledFeatureCatalog.linuxInstallerProductNames)
+
+        #expect(linuxProducts.contains("swift-tools-feature"))
+        #expect(!linuxProducts.contains("xcode-tools-feature"))
+    }
+
+    @Test
     func installerCatalogMatchesDistributionPlatformSets() throws {
         let packageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
         let catalogURL = packageRoot.appendingPathComponent("Scripts/feature-catalog.sh")

@@ -63,15 +63,16 @@ public enum ZenBundledFeatureCatalog {
             id: "swift-tools",
             productName: "swift-tools-feature",
             sourceRelativePath: "Sources/Features/SwiftTools",
-            // Preserve the existing Linux installer product set. The SwiftPM
-            // product remains available to source-package users on Linux.
-            isInstalledOnLinux: false
+            isInstalledOnLinux: true
         ),
         ZenBundledFeatureMetadata(
             id: "xcode-tools",
             productName: "xcode-tools-feature",
             sourceRelativePath: "Sources/Features/XcodeTools",
-            isInstalledOnLinux: true
+            // Xcode's MCP service is only available on macOS. Keep the SwiftPM
+            // product portable for shared runtime compatibility, but do not
+            // distribute its executable through the Linux installer.
+            isInstalledOnLinux: false
         ),
         ZenBundledFeatureMetadata(
             id: "figma-tools",

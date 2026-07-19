@@ -25,7 +25,9 @@ public typealias MCPClient = FeatureMCPBridgeKit.MCPClient
 public typealias MCPClientError = FeatureMCPBridgeKit.MCPClientError
 public typealias MCPErrorResponse = FeatureMCPBridgeKit.MCPErrorResponse
 public typealias MCPHTTPAuthentication = FeatureMCPBridgeKit.MCPHTTPAuthentication
+#if os(macOS)
 public typealias MCPHTTPTransportClient = FeatureMCPBridgeKit.MCPHTTPTransportClient
+#endif
 public typealias MCPIncomingMessage = FeatureMCPBridgeKit.MCPIncomingMessage
 public typealias MCPListToolsResult = FeatureMCPBridgeKit.MCPListToolsResult
 public typealias MCPMessageID = FeatureMCPBridgeKit.MCPMessageID

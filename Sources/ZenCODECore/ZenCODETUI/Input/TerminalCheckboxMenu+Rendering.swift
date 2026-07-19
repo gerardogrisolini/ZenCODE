@@ -207,7 +207,7 @@ extension TerminalCheckboxMenu {
 
     static func terminalGeometry() -> (rows: Int, columns: Int) {
         var size = winsize()
-        if ioctl(AgentOutput.standardError.fileDescriptor, TIOCGWINSZ, &size) == 0,
+        if ioctl(AgentOutput.standardError.fileDescriptor, UInt(TIOCGWINSZ), &size) == 0,
            size.ws_row > 0,
            size.ws_col > 0 {
             return (Int(size.ws_row), Int(size.ws_col))

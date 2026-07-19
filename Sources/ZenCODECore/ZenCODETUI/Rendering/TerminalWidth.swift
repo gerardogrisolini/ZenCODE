@@ -98,7 +98,7 @@ enum TerminalWidth {
     private static func measure(descriptors: [Int32]) -> Int? {
         var size = winsize()
         for descriptor in descriptors {
-            if ioctl(descriptor, TIOCGWINSZ, &size) == 0, size.ws_col > 0 {
+            if ioctl(descriptor, UInt(TIOCGWINSZ), &size) == 0, size.ws_col > 0 {
                 return Int(size.ws_col)
             }
         }

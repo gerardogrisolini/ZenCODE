@@ -205,6 +205,11 @@ echo "Installing to ${INSTALL_DIR}..."
 $SUDO mkdir -p "$INSTALL_DIR"
 $SUDO mkdir -p "$FEATURES_DIR"
 
+# Remove the obsolete executable from installations created by older releases.
+# Xcode's MCP service is unavailable on Linux, so retaining this bundled feature
+# would make runtime discovery expose an unusable tool provider.
+$SUDO rm -f "${FEATURES_DIR}/xcode-tools-feature"
+
 $SUDO cp "${BIN_PATH}/zen" "${INSTALL_DIR}/zen"
 $SUDO chmod +x "${INSTALL_DIR}/zen"
 
