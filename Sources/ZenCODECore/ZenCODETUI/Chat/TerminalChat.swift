@@ -79,6 +79,10 @@ public final class TerminalChat: @unchecked Sendable {
     /// Interval between automatic sub-agent overview refreshes. Exposed as a
     /// mutable instance property so tests can shorten it.
     var subAgentOverviewRefreshInterval = Duration.seconds(2)
+    /// Keys of sub-agent completions already reflected in the statusbar git
+    /// summary (agent ID + status + output revision). A sub-agent re-run via
+    /// `agent.message` produces a new revision and triggers a fresh refresh.
+    var reflectedSubAgentCompletionKeys = Set<String>()
     /// Test hook invoked at the start of each refresh tick. When set, the tick
     /// awaits this closure before rendering, allowing tests to deterministically
     /// gate tick timing. Captured at `start` time; `nil` in production.

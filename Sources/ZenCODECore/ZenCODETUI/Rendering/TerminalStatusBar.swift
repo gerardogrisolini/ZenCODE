@@ -55,6 +55,10 @@ public actor TerminalStatusBar {
         var row = 0
         var columns = 0
         var isProcessing = false
+        /// Instant when the current request started; drives the live elapsed-time
+        /// fragment while processing. Updated display piggybacks on the spinner
+        /// tick, so it adds no extra render traffic.
+        var processingStartInstant: ContinuousClock.Instant?
         var spinnerIndex = 0
         var spinnerTask: Task<Void, Never>?
         var spinnerGeneration = 0
@@ -240,6 +244,7 @@ public actor TerminalStatusBar {
         state.latestModelID = nil
         state.latestThinkingSelection = nil
         state.isProcessing = false
+        state.processingStartInstant = nil
         state.spinnerIndex = 0
         stopSpinnerTaskLocked(state: &state)
         guard state.isStarted else {
@@ -255,8 +260,10 @@ public actor TerminalStatusBar {
         state.isProcessing = isProcessing
         state.spinnerIndex = 0
         if isProcessing {
+            state.processingStartInstant = ContinuousClock.now
             startSpinnerTaskLocked(state: &state)
         } else {
+            state.processingStartInstant = nil
             stopSpinnerTaskLocked(state: &state)
         }
         guard state.isStarted else {

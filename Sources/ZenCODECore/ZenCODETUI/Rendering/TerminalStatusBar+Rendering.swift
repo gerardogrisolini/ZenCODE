@@ -362,7 +362,15 @@ extension TerminalStatusBar {
             )
             fragments.append(contextText)
         }
-        if let duration = state.latestMetrics?.responseDurationSeconds {
+        if state.isProcessing, let startInstant = state.processingStartInstant {
+            // Live elapsed time while the request is running. Whole seconds keep
+            // the fragment stable between ticks so only the spinner-driven
+            // redraws (already happening) carry the once-per-second change.
+            let elapsedSeconds = Double(
+                startInstant.duration(to: ContinuousClock.now).components.seconds
+            )
+            fragments.append(Self.durationText(elapsedSeconds))
+        } else if let duration = state.latestMetrics?.responseDurationSeconds {
             fragments.append(Self.durationText(duration))
         }
         if let latestMetrics = state.latestMetrics,
