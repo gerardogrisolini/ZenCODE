@@ -12,19 +12,28 @@ import NIOWebSocket
 /// Actor-isolated WebSocket connection returned by `RemoteTransportCore`.
 ///
 /// All access to NIO's inbound stream and outbound writer remains inside the
-/// `executeThenClose` scope that owns the channel. Public operations are queued
-/// by this actor and serviced serially by that scoped task.
+/// `executeThenClose` scope that owns the channel. Public operations are
+/// queued by this actor and serviced by two scoped loops: one drains write
+/// requests, the other drains read requests. Keeping the loops independent is
+/// required for correctness: a caller must be able to send a frame while
+/// another caller is already parked on `receive()`, otherwise a
+/// request/response protocol over an idle connection deadlocks.
 public actor RemoteWebSocketConnection {
-    private enum Request {
+    private enum WriteRequest {
         case send(RemoteWebSocketFrame, CheckedContinuation<Void, any Error>)
-        case receive(CheckedContinuation<RemoteWebSocketFrame?, any Error>)
         case close(UInt16, String?, CheckedContinuation<Void, any Error>)
     }
 
+    private typealias ReadRequest = CheckedContinuation<
+        RemoteWebSocketFrame?, any Error
+    >
+
     private let allocator: ByteBufferAllocator
     private let lease: RemoteChannelLease
-    private var pendingRequests: [Request] = []
-    private var requestWaiter: CheckedContinuation<Request, Never>?
+    private var pendingWrites: [WriteRequest] = []
+    private var pendingReads: [ReadRequest] = []
+    private var writeWaiter: CheckedContinuation<WriteRequest?, Never>?
+    private var readWaiter: CheckedContinuation<ReadRequest?, Never>?
     private var isReceiving = false
     private var didSendClose = false
     private var isClosed = false
@@ -46,7 +55,7 @@ public actor RemoteWebSocketConnection {
         }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                enqueue(.send(frame, continuation))
+                enqueueWrite(.send(frame, continuation))
             }
         } onCancel: {
             lease.close()
@@ -65,7 +74,7 @@ public actor RemoteWebSocketConnection {
         do {
             return try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { continuation in
-                    enqueue(.receive(continuation))
+                    enqueueRead(continuation)
                 }
             } onCancel: {
                 lease.close()
@@ -88,22 +97,41 @@ public actor RemoteWebSocketConnection {
         }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                enqueue(.close(code, reason, continuation))
+                enqueueWrite(.close(code, reason, continuation))
             }
         } onCancel: {
             lease.close()
         }
     }
 
-    /// Runs inside `NIOAsyncChannel.executeThenClose`. Keeping the iterator as
-    /// a local value avoids sending a non-Sendable iterator across actor tasks.
+    /// Runs inside `NIOAsyncChannel.executeThenClose`. The read and write
+    /// loops run as sibling child tasks so a queued send is written even while
+    /// a receive is awaiting the next inbound frame. Both loops terminate
+    /// through `finish`, which resumes their queue waiters with `nil`.
     func run(
         inbound: NIOAsyncChannelInboundStream<WebSocketFrame>,
         outbound: NIOAsyncChannelOutboundWriter<WebSocketFrame>
     ) async throws {
-        var iterator = inbound.makeAsyncIterator()
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await self.serviceWrites(outbound: outbound)
+            }
+            group.addTask {
+                try await self.serviceReads(
+                    inbound: inbound,
+                    outbound: outbound
+                )
+            }
+            defer { group.cancelAll() }
+            try await group.waitForAll()
+        }
+    }
+
+    private func serviceWrites(
+        outbound: NIOAsyncChannelOutboundWriter<WebSocketFrame>
+    ) async throws {
         do {
-            while let request = await nextRequest() {
+            while let request = await nextWriteRequest() {
                 switch request {
                 case let .send(frame, continuation):
                     do {
@@ -115,31 +143,6 @@ public actor RemoteWebSocketConnection {
                         }
                         continuation.resume()
                     } catch {
-                        continuation.resume(throwing: error)
-                        throw error
-                    }
-
-                case let .receive(continuation):
-                    do {
-                        guard let rawFrame = try await iterator.next() else {
-                            isReceiving = false
-                            finish()
-                            continuation.resume(returning: nil)
-                            continue
-                        }
-                        let frame = try await Self.decode(
-                            rawFrame,
-                            outbound: outbound,
-                            allocator: allocator,
-                            didSendClose: didSendClose
-                        )
-                        isReceiving = false
-                        continuation.resume(returning: frame)
-                        if case .close = frame {
-                            finish()
-                        }
-                    } catch {
-                        isReceiving = false
                         continuation.resume(throwing: error)
                         throw error
                     }
@@ -167,28 +170,100 @@ public actor RemoteWebSocketConnection {
         }
     }
 
+    /// Keeping the iterator as a local value avoids sending a non-Sendable
+    /// iterator across actor tasks.
+    private func serviceReads(
+        inbound: NIOAsyncChannelInboundStream<WebSocketFrame>,
+        outbound: NIOAsyncChannelOutboundWriter<WebSocketFrame>
+    ) async throws {
+        var iterator = inbound.makeAsyncIterator()
+        do {
+            while let continuation = await nextReadRequest() {
+                do {
+                    guard let rawFrame = try await iterator.next() else {
+                        isReceiving = false
+                        finish()
+                        continuation.resume(returning: nil)
+                        continue
+                    }
+                    let frame = try await Self.decode(
+                        rawFrame,
+                        outbound: outbound,
+                        allocator: allocator,
+                        didSendClose: didSendClose
+                    )
+                    isReceiving = false
+                    continuation.resume(returning: frame)
+                    if case .close = frame {
+                        finish()
+                    }
+                } catch {
+                    isReceiving = false
+                    continuation.resume(throwing: error)
+                    throw error
+                }
+            }
+        } catch {
+            finish(throwing: error)
+            throw error
+        }
+    }
+
     func fail(_ error: any Error) {
         finish(throwing: error)
     }
 
-    private func enqueue(_ request: Request) {
-        if let requestWaiter {
-            self.requestWaiter = nil
-            requestWaiter.resume(returning: request)
+    private func enqueueWrite(_ request: WriteRequest) {
+        guard !isClosed else {
+            switch request {
+            case let .send(_, continuation), let .close(_, _, continuation):
+                continuation.resume(throwing: RemoteTransportError.closed)
+            }
+            return
+        }
+        if let writeWaiter {
+            self.writeWaiter = nil
+            writeWaiter.resume(returning: request)
         } else {
-            pendingRequests.append(request)
+            pendingWrites.append(request)
         }
     }
 
-    private func nextRequest() async -> Request? {
+    private func enqueueRead(_ continuation: ReadRequest) {
+        guard !isClosed else {
+            isReceiving = false
+            continuation.resume(returning: nil)
+            return
+        }
+        if let readWaiter {
+            self.readWaiter = nil
+            readWaiter.resume(returning: continuation)
+        } else {
+            pendingReads.append(continuation)
+        }
+    }
+
+    private func nextWriteRequest() async -> WriteRequest? {
         guard !isClosed else {
             return nil
         }
-        if !pendingRequests.isEmpty {
-            return pendingRequests.removeFirst()
+        if !pendingWrites.isEmpty {
+            return pendingWrites.removeFirst()
         }
         return await withCheckedContinuation { continuation in
-            requestWaiter = continuation
+            writeWaiter = continuation
+        }
+    }
+
+    private func nextReadRequest() async -> ReadRequest? {
+        guard !isClosed else {
+            return nil
+        }
+        if !pendingReads.isEmpty {
+            return pendingReads.removeFirst()
+        }
+        return await withCheckedContinuation { continuation in
+            readWaiter = continuation
         }
     }
 
@@ -200,20 +275,30 @@ public actor RemoteWebSocketConnection {
         lease.close()
 
         let terminalError = error ?? RemoteTransportError.closed
-        for request in pendingRequests {
+        for request in pendingWrites {
             switch request {
             case let .send(_, continuation), let .close(_, _, continuation):
                 continuation.resume(throwing: terminalError)
-            case let .receive(continuation):
-                isReceiving = false
-                if error == nil {
-                    continuation.resume(returning: nil)
-                } else {
-                    continuation.resume(throwing: terminalError)
-                }
             }
         }
-        pendingRequests.removeAll()
+        pendingWrites.removeAll()
+        for continuation in pendingReads {
+            isReceiving = false
+            if error == nil {
+                continuation.resume(returning: nil)
+            } else {
+                continuation.resume(throwing: terminalError)
+            }
+        }
+        pendingReads.removeAll()
+        if let writeWaiter {
+            self.writeWaiter = nil
+            writeWaiter.resume(returning: nil)
+        }
+        if let readWaiter {
+            self.readWaiter = nil
+            readWaiter.resume(returning: nil)
+        }
     }
 
     private static func decode(

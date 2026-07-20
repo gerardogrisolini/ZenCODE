@@ -196,6 +196,60 @@ struct RemoteTransportCoreTests {
         try await transport.shutdown()
         await server.shutdown()
     }
+
+    @Test("WebSocket send completes while a receive is already parked")
+    func webSocketSendProceedsWhileReceiveIsPending() async throws {
+        let server = try await LocalWebSocketTestServer.start()
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+
+        do {
+            let socket = try await transport.connectWebSocket(
+                RemoteWebSocketRequest(
+                    url: server.url(path: "/frames"),
+                    headers: [RemoteHTTPHeader(name: "x-transport-test", value: "websocket")]
+                )
+            )
+
+            // Mirror the ChatGPT driver: a reader parks on receive() first,
+            // then a ping is sent on an otherwise idle connection. The ping
+            // frame must be written while the receive is still awaiting.
+            let received = try await withThrowingTaskGroup(
+                of: RemoteWebSocketFrame?.self
+            ) { group in
+                group.addTask {
+                    try await socket.receive()
+                }
+                group.addTask {
+                    // Give the receive a moment to park on the inbound stream.
+                    try await Task.sleep(for: .milliseconds(100))
+                    let pingPayload = Data("readiness".utf8)
+                    try await socket.send(.ping(pingPayload))
+                    return nil
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(5))
+                    throw RemoteTransportError.timeout
+                }
+                defer { group.cancelAll() }
+                while let frame = try await group.next() {
+                    if frame != nil {
+                        return frame
+                    }
+                }
+                return nil
+            }
+            #expect(received == .pong(Data("readiness".utf8)))
+
+            try await socket.close()
+        } catch {
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            throw error
+        }
+
+        try await transport.shutdown()
+        await server.shutdown()
+    }
 }
 
 private extension RemoteTransportCore {
