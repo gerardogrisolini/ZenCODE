@@ -59,8 +59,8 @@ swift --version
 
 `zen --setup` supports both subscription logins on Linux: ChatGPT uses the
 device-code page and Claude asks for the authorization code shown by its hosted
-OAuth flow. ChatGPT generation remains WebSocket-based and uses the system
-libcurl (version 7.86 or newer), avoiding an additional Swift networking stack.
+OAuth flow. ChatGPT generation remains WebSocket-based and, together with
+HTTP/SSE generation, uses the shared cross-platform SwiftNIO transport.
 
 ## Quick Start
 

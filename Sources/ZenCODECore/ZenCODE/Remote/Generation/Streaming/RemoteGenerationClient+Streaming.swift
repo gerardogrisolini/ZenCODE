@@ -2,15 +2,10 @@
 //  RemoteGenerationClient+Streaming.swift
 //  ZenCODE
 //
-//  Orchestrates remote chat-completions and responses streaming. The transport,
-//  accumulator, and per-endpoint parsers have been extracted into their own
-//  types so that this file stays focused on payload construction and wiring.
+//  Created by Gerardo Grisolini on 20/07/26.
 //
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 extension RemoteGenerationClient {
 
@@ -255,11 +250,12 @@ extension RemoteGenerationClient {
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void,
         eventParser: @escaping ([String: Any]) -> [ParsedRemoteStreamEvent]
     ) async throws -> RemoteStreamResult {
-        let request = try RemoteStreamTransport.buildStreamRequest(
+        let request = try RemoteStreamTransport.buildHTTPStreamingRequest(
             path: path,
             body: body,
             provider: provider,
-            apiKey: apiKey
+            apiKey: apiKey,
+            endpointBaseURLOverride: streamEndpointBaseURLOverride
         )
 
         if !configuration.appMode {
@@ -268,15 +264,13 @@ extension RemoteGenerationClient {
             ))
         }
         let requestStartedAt = Date()
-        let (bytes, response) = try await openStream(for: request)
-        try await RemoteStreamTransport.validateHTTPResponse(response, bytes: bytes)
+        let response = try await openStream(for: request)
+        try await RemoteStreamTransport.validateHTTPResponse(response)
 
         var accumulator = RemoteStreamAccumulator()
-        for try await line in RemoteStreamLineSequence(bytes: bytes) {
+        for try await event in response.body.sseEvents() {
             try Task.checkCancellation()
-            guard let payload = RemoteStreamTransport.ssePayload(from: line) else {
-                continue
-            }
+            let payload = event.data.trimmingCharacters(in: .whitespacesAndNewlines)
             if payload == "[DONE]" {
                 break
             }
@@ -291,23 +285,19 @@ extension RemoteGenerationClient {
         return try accumulator.result(requestStartedAt: requestStartedAt)
     }
 
-    /// Retries only while opening the TLS connection. Once a response has been
-    /// received, failures propagate so partial text or tool calls are never
-    /// replayed by issuing the streaming POST again, regardless of provider.
+    /// Retries only while opening the transport before its response head. Once
+    /// `RemoteTransportCore` returns a head, failures propagate from the body
+    /// so partial text or tool calls are never replayed by issuing the
+    /// streaming POST again.
     private func openStream(
-        for request: URLRequest
-    ) async throws -> (bytes: RemoteStreamBytes, response: URLResponse) {
+        for request: RemoteHTTPStreamingRequest
+    ) async throws -> RemoteHTTPStreamingResponse {
         var attempt = 0
         while true {
             do {
-                #if canImport(FoundationNetworking)
-                return try await RemoteFoundationNetworkingStream.open(
-                    for: request,
-                    configuration: urlSession.configuration
-                )
-                #else
-                return try await urlSession.bytes(for: request)
-                #endif
+                // `openHTTPStream` resolves only after the response head, so
+                // the retry loop cannot observe a post-head/body failure.
+                return try await transport.openHTTPStream(request)
             } catch {
                 guard RemoteStreamTransport.shouldRetryStreamOpening(
                     error: error,

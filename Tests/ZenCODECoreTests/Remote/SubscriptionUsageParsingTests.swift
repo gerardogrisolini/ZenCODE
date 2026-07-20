@@ -9,7 +9,6 @@ import Foundation
 @testable import ZenCODECore
 import Testing
 
-#if os(macOS)
 @Suite
 struct SubscriptionUsageParsingTests {
     @Test
@@ -128,22 +127,15 @@ struct SubscriptionUsageParsingTests {
 
     @Test
     func chatGPTParsesUsageFromCodexResponseHeaders() throws {
-        let response = try #require(
-            HTTPURLResponse(
-                url: URL(string: "https://chatgpt.com/backend-api/codex/responses")!,
-                statusCode: 200,
-                httpVersion: nil,
-                headerFields: [
-                    "x-codex-primary-used-percent": "4.0",
-                    "x-codex-primary-window-minutes": "300",
-                    "x-codex-secondary-used-percent": "1.0",
-                    "x-codex-secondary-window-minutes": "10080"
-                ]
-            )
-        )
+        let headers = RemoteHTTPHeaders([
+            RemoteHTTPHeader(name: "x-codex-primary-used-percent", value: "4.0"),
+            RemoteHTTPHeader(name: "x-codex-primary-window-minutes", value: "300"),
+            RemoteHTTPHeader(name: "x-codex-secondary-used-percent", value: "1.0"),
+            RemoteHTTPHeader(name: "x-codex-secondary-window-minutes", value: "10080")
+        ])
 
         let usage = try #require(
-            ChatGPTSubscriptionGenerationClient.subscriptionUsage(fromHTTPResponse: response)
+            ChatGPTSubscriptionGenerationClient.subscriptionUsage(fromHeaders: headers)
         )
         #expect(usage.provider == "ChatGPT")
         #expect(usage.dailyUsedPercent == 4.0)
@@ -152,35 +144,29 @@ struct SubscriptionUsageParsingTests {
 
     @Test
     func chatGPTReturnsNilWithoutCodexUsageHeaders() throws {
-        let response = try #require(
-            HTTPURLResponse(
-                url: URL(string: "https://chatgpt.com/backend-api/codex/responses")!,
-                statusCode: 200,
-                httpVersion: nil,
-                headerFields: ["content-type": "text/event-stream"]
-            )
-        )
+        let headers = RemoteHTTPHeaders([
+            RemoteHTTPHeader(name: "content-type", value: "text/event-stream")
+        ])
         #expect(
-            ChatGPTSubscriptionGenerationClient.subscriptionUsage(fromHTTPResponse: response) == nil
+            ChatGPTSubscriptionGenerationClient.subscriptionUsage(fromHeaders: headers) == nil
         )
     }
 
     @Test
     func anthropicParsesUtilizationHeadersAsPercentages() throws {
-        let response = try #require(
-            HTTPURLResponse(
-                url: URL(string: "https://api.anthropic.com/v1/messages")!,
-                statusCode: 200,
-                httpVersion: nil,
-                headerFields: [
-                    "anthropic-ratelimit-unified-5h-utilization": "0.25",
-                    "anthropic-ratelimit-unified-7d-utilization": "0.6"
-                ]
+        let headers = RemoteHTTPHeaders([
+            RemoteHTTPHeader(
+                name: "anthropic-ratelimit-unified-5h-utilization",
+                value: "0.25"
+            ),
+            RemoteHTTPHeader(
+                name: "anthropic-ratelimit-unified-7d-utilization",
+                value: "0.6"
             )
-        )
+        ])
 
         let usage = try #require(
-            AnthropicSubscriptionGenerationClient.subscriptionUsage(fromHTTPResponse: response)
+            AnthropicSubscriptionGenerationClient.subscriptionUsage(fromHeaders: headers)
         )
         #expect(usage.provider == "Anthropic")
         #expect(usage.dailyUsedPercent == 25.0)
@@ -189,15 +175,10 @@ struct SubscriptionUsageParsingTests {
 
     @Test
     func anthropicReturnsNilWithoutUsageHeaders() throws {
-        let response = try #require(
-            HTTPURLResponse(
-                url: URL(string: "https://api.anthropic.com/v1/messages")!,
-                statusCode: 200,
-                httpVersion: nil,
-                headerFields: ["content-type": "application/json"]
-            )
-        )
-        #expect(AnthropicSubscriptionGenerationClient.subscriptionUsage(fromHTTPResponse: response) == nil)
+        let headers = RemoteHTTPHeaders([
+            RemoteHTTPHeader(name: "content-type", value: "application/json")
+        ])
+        #expect(AnthropicSubscriptionGenerationClient.subscriptionUsage(fromHeaders: headers) == nil)
     }
 
     @Test
@@ -242,20 +223,19 @@ struct SubscriptionUsageParsingTests {
         components.minute = 0
         let now = Calendar.current.date(from: components)!
 
-        let response = try #require(
-            HTTPURLResponse(
-                url: URL(string: "https://api.anthropic.com/v1/messages")!,
-                statusCode: 429,
-                httpVersion: nil,
-                headerFields: [
-                    "anthropic-ratelimit-unified-5h-reset": "3600",
-                    "anthropic-ratelimit-unified-7d-reset": "86400"
-                ]
+        let headers = RemoteHTTPHeaders([
+            RemoteHTTPHeader(
+                name: "anthropic-ratelimit-unified-5h-reset",
+                value: "3600"
+            ),
+            RemoteHTTPHeader(
+                name: "anthropic-ratelimit-unified-7d-reset",
+                value: "86400"
             )
-        )
+        ])
         let message = try #require(
             AnthropicSubscriptionGenerationClient.limitReachedMessage(
-                fromHTTPResponse: response,
+                fromHeaders: headers,
                 now: now
             )
         )
@@ -273,19 +253,11 @@ struct SubscriptionUsageParsingTests {
         components.minute = 30
         let now = Calendar.current.date(from: components)!
 
-        let response = try #require(
-            HTTPURLResponse(
-                url: URL(string: "https://chatgpt.com/backend-api/codex/responses")!,
-                statusCode: 429,
-                httpVersion: nil,
-                headerFields: [:]
-            )
-        )
         let output = "{\"error\":{\"message\":\"Usage limit reached\",\"resets_in_seconds\":1800}}"
         let enriched = ChatGPTSubscriptionResponsesClient.enrichedLimitOutput(
             status: 429,
             output: output,
-            response: response,
+            headers: RemoteHTTPHeaders(),
             now: now
         )
         #expect(enriched.contains("ChatGPT"))
@@ -295,21 +267,12 @@ struct SubscriptionUsageParsingTests {
 
     @Test
     func chatGPTLeavesNonLimitOutputUnchanged() throws {
-        let response = try #require(
-            HTTPURLResponse(
-                url: URL(string: "https://chatgpt.com/backend-api/codex/responses")!,
-                statusCode: 500,
-                httpVersion: nil,
-                headerFields: [:]
-            )
-        )
         let output = "{\"error\":{\"message\":\"Internal error\"}}"
         let enriched = ChatGPTSubscriptionResponsesClient.enrichedLimitOutput(
             status: 500,
             output: output,
-            response: response
+            headers: RemoteHTTPHeaders()
         )
         #expect(enriched == output)
     }
 }
-#endif

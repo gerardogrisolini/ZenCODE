@@ -144,10 +144,15 @@ targets += [
         dependencies: [
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "Markdown", package: "swift-markdown"),
-            .target(
-                name: "CLibCURLWebSocket",
-                condition: .when(platforms: [.linux])
-            ),
+            // The remote-generation substrate owns HTTP/SSE and WebSocket
+            // transport directly on SwiftNIO. Keep this deliberately narrower
+            // than AsyncHTTPClient/WebSocketKit: no HTTP/2, tracing, or Apple-
+            // only transport-services graph is needed by the shared Core API.
+            .product(name: "NIOCore", package: "swift-nio"),
+            .product(name: "NIOHTTP1", package: "swift-nio"),
+            .product(name: "NIOPosix", package: "swift-nio"),
+            .product(name: "NIOWebSocket", package: "swift-nio"),
+            .product(name: "NIOSSL", package: "swift-nio-ssl"),
             "FeatureKit",
             "ToolCore",
             "FeatureMCPBridgeKit",
@@ -200,13 +205,6 @@ targets += [
         dependencies: ["FeatureKit"]
     ),
     .target(
-        name: "CLibCURLWebSocket",
-        path: "Sources/CLibCURLWebSocket",
-        linkerSettings: [
-            .linkedLibrary("curl", .when(platforms: [.linux]))
-        ]
-    ),
-    .target(
         name: "ZenCODESetup",
         dependencies: ["ZenCODECore"],
         swiftSettings: [
@@ -227,7 +225,13 @@ targets += [
             "FeatureKit",
             "LocalToolsSupport",
             "ZenPackageMetadata",
-            .product(name: "Markdown", package: "swift-markdown")
+            .product(name: "Markdown", package: "swift-markdown"),
+            // Local deterministic transport tests host small NIO HTTP and
+            // WebSocket servers; production dependencies remain Core-only.
+            .product(name: "NIOCore", package: "swift-nio"),
+            .product(name: "NIOHTTP1", package: "swift-nio"),
+            .product(name: "NIOPosix", package: "swift-nio"),
+            .product(name: "NIOWebSocket", package: "swift-nio")
         ]
     ),
     .testTarget(
@@ -288,7 +292,9 @@ targets += bundledFeatureTargetDefinitions.map {
 
 let dependencies: [Package.Dependency] = [
     .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
-    .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.8.0")
+    .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.8.0"),
+    .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0"),
+    .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.37.0")
 ]
 
 let package = Package(

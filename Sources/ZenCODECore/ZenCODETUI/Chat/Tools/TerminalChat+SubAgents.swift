@@ -125,6 +125,7 @@ extension TerminalChat {
         rememberSignature: Bool = true
     ) async {
         let snapshots = await sessionRunner.subAgentSnapshots()
+        await refreshStatusBarGitStatusSummaryForCompletedSubAgents(snapshots)
         guard force || !snapshots.isEmpty else {
             return
         }

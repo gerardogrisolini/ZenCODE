@@ -49,7 +49,7 @@ extension ChatGPTSubscriptionGenerationClient {
         session.chatGPTSessionID = chatGPTSessionID
         sessions[sessionID] = session
 
-                        let client = ChatGPTSubscriptionResponsesClient(
+        let client = ChatGPTSubscriptionResponsesClient(
             credentials: credentials,
             urlSession: urlSession,
             webSocketPool: webSocketPool
@@ -107,15 +107,8 @@ extension ChatGPTSubscriptionGenerationClient {
                 )
                 let hasContinuationReplay = requestPayload.previousResponseID?.nilIfBlank != nil
                     && requestPayload.cachedWebSocketInput != nil
-                #if os(Linux)
-                // Linux can continue non-persisted response state only while
-                // reusing the libcurl WebSocket retained by its session pool.
-                // The transport decides this after acquiring the connection.
-                let usesFreshContinuationReplay = false
-                #else
                 let usesFreshContinuationReplay = session.continuation?.allowsFreshTransport == true
                     && hasContinuationReplay
-                #endif
                 let instructions = requestPayload.instructions?.nilIfBlank
                     ?? "You are a helpful coding assistant."
                 let toolPayloads = toolCatalog.responsesToolPayloads
@@ -265,16 +258,11 @@ extension ChatGPTSubscriptionGenerationClient {
                     to: &session.messages
                 )
                 if let responseID = streamResult.latestResponseID?.nilIfBlank {
-                    #if os(Linux)
-                    let allowsFreshTransport = false
-                    #else
-                    let allowsFreshTransport = true
-                    #endif
                     session.continuation = ChatGPTSubscriptionContinuationState(
                         responseID: responseID,
                         messageCount: session.messages.count,
                         instructions: instructions,
-                        allowsFreshTransport: allowsFreshTransport
+                        allowsFreshTransport: true
                     )
                 } else {
                     session.continuation = nil

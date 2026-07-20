@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
     public struct AgentSession {
@@ -40,28 +37,38 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
 
     public let configuration: AgentRuntimeConfiguration
     public let provider: AgentRemoteProvider
-    public let urlSession: URLSession
+    /// Historical session value retained for source compatibility. It does not
+    /// participate in message streaming I/O.
+    public let urlSession: RemoteProviderSession
+    /// Shared NIO HTTP/SSE transport for Anthropic message generation.
+    public let transport: RemoteTransportCore
+    let ownsTransport: Bool
     public let toolExecutor: DirectToolExecutor
     public var sessions: [String: AgentSession] = [:]
+    let messagesEndpointURLOverride: URL?
 
     public init(
         configuration: AgentRuntimeConfiguration,
         provider: AgentRemoteProvider,
-        urlSession: URLSession? = nil,
+        /// Historical injection retained for source compatibility. Anthropic
+        /// message generation always uses `transport`.
+        urlSession: RemoteProviderSession? = nil,
+        transport: RemoteTransportCore? = nil,
+        /// A controlled final messages endpoint override for deterministic
+        /// loopback tests and embedding boundaries.
+        messagesEndpointURLOverride: URL? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
         subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
     ) {
         self.configuration = configuration
         self.provider = provider
-        if let urlSession {
-            self.urlSession = urlSession
-        } else {
-            let sessionConfiguration = URLSessionConfiguration.ephemeral
-            sessionConfiguration.timeoutIntervalForRequest = 900
-            sessionConfiguration.timeoutIntervalForResource = 900
-            self.urlSession = URLSession(configuration: sessionConfiguration)
-        }
+        self.urlSession = urlSession
+            ?? RemoteProviderSessionCompatibility.generationSession()
+        let resolvedTransport = transport ?? RemoteTransportCore()
+        self.transport = resolvedTransport
+        ownsTransport = transport == nil
+        self.messagesEndpointURLOverride = messagesEndpointURLOverride
         self.toolExecutor = DirectToolExecutor(
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,

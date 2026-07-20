@@ -2,15 +2,10 @@
 //  RemoteStreamTransport.swift
 //  ZenCODE
 //
-//  HTTP/SSE transport utilities for remote streaming. All methods are static —
-//  no mutable state is carried, so they are safe to call from actor-isolated
-//  and concurrent contexts alike.
+//  Created by Gerardo Grisolini on 20/07/26.
 //
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 /// Stateless HTTP/SSE transport helpers for remote generation streaming.
 public enum RemoteStreamTransport {
@@ -21,8 +16,8 @@ public enum RemoteStreamTransport {
     /// which makes concurrent `decode` calls safe.
     public static let sharedStreamJSONDecoder = JSONDecoder()
 
-    /// Retrying only a failed TLS negotiation keeps the POST replay boundary
-    /// deliberately narrower than a general transport-error allowlist.
+    /// Retrying only a transient failure before the response head keeps the
+    /// POST replay boundary deliberately narrower than a body-error allowlist.
     static let maximumStreamOpeningRetries = 2
     static let streamOpeningRetryBaseDelayNanoseconds: UInt64 = 500_000_000
 
@@ -48,23 +43,55 @@ public enum RemoteStreamTransport {
 
     // MARK: - HTTP request
 
-    public static func buildStreamRequest(
+    /// Builds the production NIO request from the shared wire components. The
+    /// header array deliberately keeps order and duplicate field names.
+    public static func buildHTTPStreamingRequest(
         path: String,
         body: [String: Any],
         provider: AgentRemoteProvider,
-        apiKey: String?
-    ) throws -> URLRequest {
-        var request = URLRequest(url: try endpointURL(path: path, baseURL: provider.baseURL))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        if let apiKey {
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        }
-        request.httpBody = try JSONValue(jsonObject: body).jsonData(
-            outputFormatting: [.withoutEscapingSlashes]
+        apiKey: String?,
+        endpointBaseURLOverride: URL? = nil
+    ) throws -> RemoteHTTPStreamingRequest {
+        let components = try streamRequestComponents(
+            path: path,
+            body: body,
+            provider: provider,
+            apiKey: apiKey,
+            endpointBaseURLOverride: endpointBaseURLOverride
         )
-        return request
+        return RemoteHTTPStreamingRequest(
+            url: components.url,
+            method: "POST",
+            headers: components.headers,
+            body: components.body,
+            timeout: .seconds(900)
+        )
+    }
+
+    static func streamRequestComponents(
+        path: String,
+        body: [String: Any],
+        provider: AgentRemoteProvider,
+        apiKey: String?,
+        endpointBaseURLOverride: URL? = nil
+    ) throws -> StreamRequestComponents {
+        let baseURL = endpointBaseURLOverride?.absoluteString ?? provider.baseURL
+        var headers = [
+            RemoteHTTPHeader(name: "Content-Type", value: "application/json"),
+            RemoteHTTPHeader(name: "Accept", value: "text/event-stream")
+        ]
+        if let apiKey {
+            headers.append(
+                RemoteHTTPHeader(name: "Authorization", value: "Bearer \(apiKey)")
+            )
+        }
+        return StreamRequestComponents(
+            url: try endpointURL(path: path, baseURL: baseURL),
+            headers: headers,
+            body: try JSONValue(jsonObject: body).jsonData(
+                outputFormatting: [.withoutEscapingSlashes]
+            )
+        )
     }
 
     static func shouldRetryStreamOpening(
@@ -75,7 +102,18 @@ public enum RemoteStreamTransport {
               attempt < maximumStreamOpeningRetries else {
             return false
         }
-        return urlErrorCode(from: error) == .secureConnectionFailed
+        guard let transportError = error as? RemoteTransportError else {
+            return false
+        }
+        switch transportError {
+        case .tlsFailure, .connectionFailure, .closed:
+            // `RemoteTransportCore.openHTTPStream` returns only after the
+            // response head. Therefore these errors are still in the bounded
+            // opening window and are the only safe point for this retry loop.
+            return true
+        default:
+            return false
+        }
     }
 
     static func streamOpeningRetryDelayNanoseconds(attempt: Int) -> UInt64 {
@@ -83,60 +121,41 @@ public enum RemoteStreamTransport {
         return streamOpeningRetryBaseDelayNanoseconds << exponent
     }
 
-    private static func urlErrorCode(from error: Error) -> URLError.Code? {
-        if let urlError = error as? URLError {
-            return urlError.code
-        }
-        let nsError = error as NSError
-        guard nsError.domain == NSURLErrorDomain else {
-            return nil
-        }
-        return URLError.Code(rawValue: nsError.code)
-    }
-
     // MARK: - Response validation
 
-    public static func validateHTTPResponse(_ response: URLResponse) throws {
-        guard let httpResponse = response as? HTTPURLResponse else {
-            return
-        }
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            throw RemoteGenerationClientError.httpStatus(httpResponse.statusCode)
-        }
-    }
-
     public static func validateHTTPResponse(
-        _ response: URLResponse,
-        bytes: RemoteStreamBytes,
+        _ response: RemoteHTTPStreamingResponse,
         bodyLimit: Int = 64 * 1024
     ) async throws {
-        guard let httpResponse = response as? HTTPURLResponse else {
+        guard !(200..<300).contains(response.status) else {
             return
         }
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            let output = try await collectErrorBody(from: bytes, limit: bodyLimit)
-            if let message = responseErrorMessage(from: output)?.nilIfBlank {
-                throw RemoteGenerationClientError.remoteFailure(message)
-            }
-            if let output = output.nilIfBlank {
-                throw RemoteGenerationClientError.remoteFailure(output)
-            }
-            throw RemoteGenerationClientError.httpStatus(httpResponse.statusCode)
+        let output = try await collectErrorBody(
+            from: response.body,
+            limit: bodyLimit
+        )
+        if let message = responseErrorMessage(from: output)?.nilIfBlank {
+            throw RemoteGenerationClientError.remoteFailure(message)
         }
+        if let output = output.nilIfBlank {
+            throw RemoteGenerationClientError.remoteFailure(output)
+        }
+        throw RemoteGenerationClientError.httpStatus(response.status)
     }
 
     // MARK: - Error body
 
     public static func collectErrorBody(
-        from bytes: RemoteStreamBytes,
+        from body: RemoteHTTPBody,
         limit: Int = 64 * 1024
     ) async throws -> String {
         var data = Data()
-        for try await byte in bytes {
+        for try await chunk in body {
             if data.count >= limit {
                 break
             }
-            data.append(byte)
+            let remaining = limit - data.count
+            data.append(contentsOf: chunk.prefix(remaining))
         }
         return String(decoding: data, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -180,7 +199,12 @@ public enum RemoteStreamTransport {
             }
             return output.nilIfBlank
         }
-        return responseErrorMessage(from: object.mapValues(\.jsonObject))
+        // Keep this typed as a dictionary so overload resolution uses the
+        // envelope-aware variant below rather than the generic `Any?` helper.
+        // The generic variant intentionally only describes an error object;
+        // this root response can instead carry that object under `error`.
+        let nativeObject: [String: Any] = object.mapValues { $0.jsonObject }
+        return responseErrorMessage(from: nativeObject)
     }
 
     public static func responseErrorMessage(from object: [String: Any]) -> String? {
@@ -230,5 +254,11 @@ public enum RemoteStreamTransport {
         let sample = names.prefix(8).joined(separator: ",")
         let suffix = names.count > 8 ? ",..." : ""
         return "Remote tools exposed: \(names.count)[\(sample)\(suffix)]"
+    }
+
+    struct StreamRequestComponents {
+        let url: URL
+        let headers: [RemoteHTTPHeader]
+        let body: Data
     }
 }

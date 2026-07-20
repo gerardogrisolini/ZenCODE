@@ -21,7 +21,7 @@ extension RemoteSessionSnapshotTests {
         data: {"type":"response.completed","response":{"output":[]}}
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -33,7 +33,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .responses
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
         let capturedEvents = CapturedDirectAgentEvents()
 
@@ -62,7 +63,7 @@ extension RemoteSessionSnapshotTests {
         data: {"type":"response.completed","response":{"output":[{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"summary"}],"encrypted_content":"new-encrypted"}]}}
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -74,7 +75,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .responses
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
 
         let result = try await client.streamResponses(
@@ -85,7 +87,7 @@ extension RemoteSessionSnapshotTests {
             onEvent: { _ in }
         )
 
-        let request = try #require(RemoteRequestCapturingURLProtocol.capturedRequests().first)
+        let request = try #require(fixture.capturedRequests().first)
         let body = try request.jsonObject()
         let include = try #require(body["include"] as? [String])
         #expect(include.contains("reasoning.encrypted_content"))
@@ -119,7 +121,7 @@ extension RemoteSessionSnapshotTests {
         data: {"type":"response.completed","response":{"output":[]}}
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         var configuration = remoteStreamingConfiguration()
@@ -149,7 +151,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .responses
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
 
         let result = try await client.streamResponses(
@@ -159,7 +162,7 @@ extension RemoteSessionSnapshotTests {
             thinkingSelection: nil,
             onEvent: { _ in }
         )
-        let request = try #require(RemoteRequestCapturingURLProtocol.capturedRequests().first)
+        let request = try #require(fixture.capturedRequests().first)
         let body = try request.jsonObject()
         let text = try #require(body["text"] as? [String: Any])
         let format = try #require(text["format"] as? [String: Any])
@@ -187,7 +190,7 @@ extension RemoteSessionSnapshotTests {
         data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"A"}]},{"type":"message","content":[{"type":"output_text","text":"B"}]}]}}
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -199,7 +202,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .responses
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
         let capturedEvents = CapturedDirectAgentEvents()
 
@@ -225,7 +229,7 @@ extension RemoteSessionSnapshotTests {
         data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -237,7 +241,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .responses
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
 
         let result = try await client.streamResponses(
@@ -263,7 +268,7 @@ extension RemoteSessionSnapshotTests {
         data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -275,7 +280,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .responses
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
 
         let result = try await client.streamResponses(
@@ -292,7 +298,7 @@ extension RemoteSessionSnapshotTests {
 
     @Test
     func streamResponsesRejectsToolOutputWithoutCallID() async throws {
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data("".utf8)
         )
         let client = RemoteGenerationClient(
@@ -304,7 +310,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .responses
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
 
         do {
@@ -337,7 +344,7 @@ extension RemoteSessionSnapshotTests {
         data: {"type":"response.completed","response":{"output":[]}}
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -349,7 +356,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .responses
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
 
         let result = try await client.streamResponses(
@@ -386,7 +394,7 @@ extension RemoteSessionSnapshotTests {
         data: {"type":"response.completed","response":{"output":[]}}
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -398,7 +406,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .responses
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
 
         let result = try await client.streamResponses(
@@ -435,7 +444,7 @@ extension RemoteSessionSnapshotTests {
         data: [DONE]
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -447,7 +456,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .chatCompletions
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
         let capturedEvents = CapturedDirectAgentEvents()
 
@@ -474,7 +484,7 @@ extension RemoteSessionSnapshotTests {
         data: [DONE]
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         var configuration = remoteStreamingConfiguration()
@@ -503,7 +513,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .chatCompletions
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
 
         _ = try await client.streamChatCompletions(
@@ -513,7 +524,7 @@ extension RemoteSessionSnapshotTests {
             thinkingSelection: nil,
             onEvent: { _ in }
         )
-        let request = try #require(RemoteRequestCapturingURLProtocol.capturedRequests().first)
+        let request = try #require(fixture.capturedRequests().first)
         let body = try request.jsonObject()
         let responseFormat = try #require(body["response_format"] as? [String: Any])
         let jsonSchema = try #require(responseFormat["json_schema"] as? [String: Any])
@@ -573,7 +584,7 @@ extension RemoteSessionSnapshotTests {
         data: [DONE]
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -585,7 +596,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .chatCompletions
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
 
         _ = try await client.streamChatCompletions(
@@ -595,7 +607,7 @@ extension RemoteSessionSnapshotTests {
             thinkingSelection: nil,
             onEvent: { _ in }
         )
-        let request = try #require(RemoteRequestCapturingURLProtocol.capturedRequests().first)
+        let request = try #require(fixture.capturedRequests().first)
         let body = try request.jsonObject()
 
         #expect(body["session_id"] == nil)
@@ -603,16 +615,16 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func streamChatCompletionsRetriesTransientTLSFailureBeforeResponse() async throws {
+    func streamChatCompletionsRetriesTransientOpeningFailureBeforeHead() async throws {
         let response = """
         data: {"choices":[{"delta":{"content":"recovered"},"finish_reason":"stop"}]}
 
         data: [DONE]
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8),
-            failuresBeforeResponse: [.secureConnectionFailed]
+            failuresBeforeHead: 1
         )
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
@@ -623,7 +635,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .chatCompletions
             ),
             apiKey: "test-key",
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
         let capturedEvents = CapturedDirectAgentEvents()
 
@@ -636,7 +649,7 @@ extension RemoteSessionSnapshotTests {
                 capturedEvents.append(event)
             }
         )
-        let requests = RemoteRequestCapturingURLProtocol.capturedRequests()
+        let requests = fixture.capturedRequests()
 
         #expect(result.text == "recovered")
         #expect(capturedEvents.contentText() == "recovered")
@@ -645,14 +658,14 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func streamChatCompletionsDoesNotRetryTLSFailureAfterResponseBegins() async {
-        let response = """
-        data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}
-
-        """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+    func streamChatCompletionsDoesNotRetryFailureAfterResponseHead() async throws {
+        // Keep the event separator explicit: a multiline Swift literal drops
+        // its final blank line, which would turn this into an incomplete SSE
+        // event rather than the post-head truncation we need to regress.
+        let response = "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n"
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8),
-            failureAfterResponse: .secureConnectionFailed
+            closeAfterHead: true
         )
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
@@ -663,7 +676,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .chatCompletions
             ),
             apiKey: "test-key",
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
         let capturedEvents = CapturedDirectAgentEvents()
 
@@ -677,46 +691,43 @@ extension RemoteSessionSnapshotTests {
                     capturedEvents.append(event)
                 }
             )
-            Issue.record("Expected the TLS stream failure to propagate")
+            Issue.record("Expected the post-head stream failure to propagate")
         } catch {
-            #expect((error as? URLError)?.code == .secureConnectionFailed)
+            #expect(error is RemoteTransportError)
         }
 
-        #expect(RemoteRequestCapturingURLProtocol.capturedRequests().count == 1)
+        #expect(fixture.capturedRequests().count == 1)
         #expect(capturedEvents.contentText() == "partial")
     }
 
     @Test
-    func tlsRetryPolicyIsErrorAndAttemptSpecific() {
+    func openingRetryPolicyIsNIOErrorAndAttemptSpecific() {
         #expect(RemoteStreamTransport.shouldRetryStreamOpening(
-            error: URLError(.secureConnectionFailed),
+            error: RemoteTransportError.tlsFailure("handshake failed"),
             attempt: 0
         ))
         #expect(RemoteStreamTransport.shouldRetryStreamOpening(
-            error: NSError(
-                domain: NSURLErrorDomain,
-                code: URLError.secureConnectionFailed.rawValue
-            ),
+            error: RemoteTransportError.connectionFailure("connection reset"),
             attempt: 1
         ))
-        #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
-            error: URLError(.serverCertificateUntrusted),
+        #expect(RemoteStreamTransport.shouldRetryStreamOpening(
+            error: RemoteTransportError.closed,
             attempt: 0
         ))
         #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
-            error: URLError(.timedOut),
+            error: RemoteTransportError.timeout,
             attempt: 0
         ))
         #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
-            error: URLError(.cancelled),
+            error: CancellationError(),
             attempt: 0
         ))
         #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
-            error: URLError(.secureConnectionFailed),
+            error: RemoteTransportError.tlsFailure("handshake failed"),
             attempt: RemoteStreamTransport.maximumStreamOpeningRetries
         ))
         #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
-            error: URLError(.secureConnectionFailed),
+            error: RemoteTransportError.tlsFailure("handshake failed"),
             attempt: -1
         ))
     }
@@ -729,7 +740,7 @@ extension RemoteSessionSnapshotTests {
         data: {"type":"response.completed","response":{"output":[]}}
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -741,7 +752,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .responses
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
 
         _ = try await client.streamResponses(
@@ -751,7 +763,7 @@ extension RemoteSessionSnapshotTests {
             thinkingSelection: nil,
             onEvent: { _ in }
         )
-        let request = try #require(RemoteRequestCapturingURLProtocol.capturedRequests().first)
+        let request = try #require(fixture.capturedRequests().first)
         let body = try request.jsonObject()
 
         #expect(body["session_id"] as? String == "session-openrouter-cache")
@@ -766,7 +778,7 @@ extension RemoteSessionSnapshotTests {
         data: [DONE]
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -778,7 +790,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .chatCompletions
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
 
         _ = try await client.streamChatCompletions(
@@ -788,7 +801,7 @@ extension RemoteSessionSnapshotTests {
             thinkingSelection: nil,
             onEvent: { _ in }
         )
-        let request = try #require(RemoteRequestCapturingURLProtocol.capturedRequests().first)
+        let request = try #require(fixture.capturedRequests().first)
         let body = try request.jsonObject()
 
         #expect(body["session_id"] as? String == "session-openrouter-chat-cache")
@@ -803,7 +816,7 @@ extension RemoteSessionSnapshotTests {
         data: [DONE]
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -815,7 +828,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .chatCompletions
             ),
             apiKey: nil,
-            urlSession: urlSession,
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL,
             mcpRuntime: await borrowedXcodeMCPRuntime()
         )
 
@@ -826,12 +840,67 @@ extension RemoteSessionSnapshotTests {
             thinkingSelection: .high,
             onEvent: { _ in }
         )
-        let request = try #require(RemoteRequestCapturingURLProtocol.capturedRequests().first)
+        let request = try #require(fixture.capturedRequests().first)
         let body = try request.jsonObject()
         let chatTemplateKwargs = try #require(body["chat_template_kwargs"] as? [String: Any])
 
         #expect(chatTemplateKwargs["thinking"] as? Bool == true)
         #expect(chatTemplateKwargs["enable_thinking"] as? Bool == true)
         #expect(chatTemplateKwargs["reasoning_effort"] as? String == "high")
+    }
+}
+
+
+extension RemoteSessionSnapshotTests {
+    @Test
+    func responseErrorMessageExtractsNestedJSONErrorMessage() {
+        #expect(
+            RemoteStreamTransport.responseErrorMessage(
+                from: #"{"error":{"message":"capacity exhausted"}}"#
+            ) == "capacity exhausted"
+        )
+    }
+
+    @Test
+    func streamChatCompletionsSurfacesNIONon2xxErrorBodyWithoutReplay() async throws {
+        let fixture = try await RemoteNIOStreamingFixture.start(
+            responseBody: Data(#"{"error":{"message":"capacity exhausted"}}"#.utf8),
+            responseStatus: 429,
+            responseHeaders: [
+                RemoteHTTPHeader(name: "content-type", value: "application/json"),
+                RemoteHTTPHeader(name: "x-request-id", value: "req_openai_nio")
+            ]
+        )
+        let client = RemoteGenerationClient(
+            configuration: remoteStreamingConfiguration(),
+            provider: AgentRemoteProvider(
+                name: "OpenAI",
+                baseURL: "https://api.openai.com/v1",
+                modelID: "unit-model",
+                chatEndpoint: .chatCompletions
+            ),
+            apiKey: "test-key",
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
+        )
+
+        do {
+            _ = try await client.streamChatCompletions(
+                messages: [["role": "user", "content": "hi"]],
+                sessionID: "session-nio-429",
+                allowedToolNames: [],
+                thinkingSelection: nil,
+                onEvent: { _ in }
+            )
+            Issue.record("Expected the OpenAI-compatible 429 response to fail.")
+        } catch let error as RemoteGenerationClientError {
+            guard case let .remoteFailure(message) = error else {
+                Issue.record("Unexpected provider error: \(error)")
+                return
+            }
+            #expect(message == "capacity exhausted")
+        }
+
+        #expect(fixture.capturedRequests().count == 1)
     }
 }

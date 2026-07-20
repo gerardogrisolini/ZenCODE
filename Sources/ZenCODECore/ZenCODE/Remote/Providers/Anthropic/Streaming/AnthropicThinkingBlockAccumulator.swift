@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 /// Accumulates the signed `thinking` / `redacted_thinking` content blocks that
 /// Anthropic streams alongside text and tool calls. Re-sending these blocks (with

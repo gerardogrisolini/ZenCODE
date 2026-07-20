@@ -17,6 +17,39 @@ extension TerminalChat {
         await refreshStatusBarGitStatusSummary()
     }
 
+    /// Refreshes the statusbar git summary when a delegated sub-agent reaches a
+    /// terminal state, so files modified by the sub-agent become visible without
+    /// waiting for a coordinator-side file-mutation tool call. Each completion
+    /// is keyed by agent ID, status, and output revision and triggers exactly
+    /// one refresh; unchanged snapshots add no work to the render path.
+    func refreshStatusBarGitStatusSummaryForCompletedSubAgents(
+        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
+    ) async {
+        var didObserveNewCompletion = false
+        for snapshot in snapshots where !snapshot.pending {
+            let isTerminal: Bool
+            switch snapshot.status {
+            case .idle:
+                isTerminal = snapshot.latestOutput?.nilIfBlank != nil
+            case .failed, .closed:
+                isTerminal = true
+            case .queued, .running:
+                isTerminal = false
+            }
+            guard isTerminal else {
+                continue
+            }
+            let key = "\(snapshot.id)#\(snapshot.status.rawValue)#\(snapshot.latestOutputRevision)"
+            if reflectedSubAgentCompletionKeys.insert(key).inserted {
+                didObserveNewCompletion = true
+            }
+        }
+        guard didObserveNewCompletion else {
+            return
+        }
+        await refreshStatusBarGitStatusSummaryForFileMutation()
+    }
+
     func refreshStatusBarGitStatusSummaryAfterPromptIfNeeded() async {
         guard !didRefreshGitStatusDuringCurrentPrompt else {
             return

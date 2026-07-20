@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 extension AnthropicSubscriptionGenerationClient {
     public func createSession(
@@ -104,6 +101,9 @@ extension AnthropicSubscriptionGenerationClient {
     public func shutdown() async {
         sessions.removeAll()
         await toolExecutor.shutdown()
+        if ownsTransport {
+            try? await transport.shutdown()
+        }
     }
 
     public func preloadModel(

@@ -2,15 +2,10 @@
 //  ChatGPTSubscriptionResponsesClient+Requests.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 20/07/26.
+//
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
-
-#if canImport(Network)
-import Network
-#endif
 
 extension ChatGPTSubscriptionResponsesClient {
     /// Exact server error emitted when a Responses WebSocket reaches its
@@ -22,49 +17,67 @@ extension ChatGPTSubscriptionResponsesClient {
     func request(
         for body: [String: Any],
         sessionID: String
-    ) throws -> URLRequest {
-        var request = URLRequest(url: Self.codexResponsesURL(baseURL: baseURL))
-        request.httpMethod = "POST"
-        request.httpBody = try JSONValue(jsonObject: body).jsonData(
-            outputFormatting: [.withoutEscapingSlashes]
+    ) throws -> RemoteHTTPStreamingRequest {
+        RemoteHTTPStreamingRequest(
+            url: Self.codexResponsesURL(baseURL: baseURL),
+            method: "POST",
+            headers: [
+                RemoteHTTPHeader(
+                    name: "Authorization",
+                    value: "Bearer \(credentials.accessToken)"
+                ),
+                RemoteHTTPHeader(
+                    name: "chatgpt-account-id",
+                    value: credentials.accountID
+                ),
+                RemoteHTTPHeader(name: "originator", value: "ZenCODE"),
+                RemoteHTTPHeader(
+                    name: "OpenAI-Beta",
+                    value: "responses=experimental"
+                ),
+                RemoteHTTPHeader(name: "Accept", value: "text/event-stream"),
+                RemoteHTTPHeader(
+                    name: "Content-Type",
+                    value: "application/json"
+                ),
+                RemoteHTTPHeader(name: "session_id", value: sessionID),
+                RemoteHTTPHeader(
+                    name: "x-client-request-id",
+                    value: sessionID
+                )
+            ],
+            body: try JSONValue(jsonObject: body).jsonData(
+                outputFormatting: [.withoutEscapingSlashes]
+            ),
+            timeout: .seconds(600)
         )
-        request.timeoutInterval = 600
-        request.setValue(
-            "Bearer \(credentials.accessToken)",
-            forHTTPHeaderField: "Authorization"
-        )
-        request.setValue(
-            credentials.accountID,
-            forHTTPHeaderField: "chatgpt-account-id"
-        )
-        request.setValue("ZenCODE", forHTTPHeaderField: "originator")
-        request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(sessionID, forHTTPHeaderField: "session_id")
-        request.setValue(sessionID, forHTTPHeaderField: "x-client-request-id")
-        return request
     }
 
-    func webSocketRequest(sessionID: String) -> URLRequest {
-        var request = URLRequest(url: Self.codexWebSocketURL(baseURL: baseURL))
-        request.timeoutInterval = 600
-        request.setValue(
-            "Bearer \(credentials.accessToken)",
-            forHTTPHeaderField: "Authorization"
+    func webSocketRequest(sessionID: String) -> RemoteWebSocketRequest {
+        RemoteWebSocketRequest(
+            url: Self.codexWebSocketURL(baseURL: baseURL),
+            headers: [
+                RemoteHTTPHeader(
+                    name: "Authorization",
+                    value: "Bearer \(credentials.accessToken)"
+                ),
+                RemoteHTTPHeader(
+                    name: "chatgpt-account-id",
+                    value: credentials.accountID
+                ),
+                RemoteHTTPHeader(name: "originator", value: "ZenCODE"),
+                RemoteHTTPHeader(
+                    name: "OpenAI-Beta",
+                    value: Self.webSocketBetaHeader
+                ),
+                RemoteHTTPHeader(name: "session-id", value: sessionID),
+                RemoteHTTPHeader(
+                    name: "x-client-request-id",
+                    value: sessionID
+                )
+            ],
+            timeout: .seconds(600)
         )
-        request.setValue(
-            credentials.accountID,
-            forHTTPHeaderField: "chatgpt-account-id"
-        )
-        request.setValue("ZenCODE", forHTTPHeaderField: "originator")
-        request.setValue(
-            Self.webSocketBetaHeader,
-            forHTTPHeaderField: "OpenAI-Beta"
-        )
-        request.setValue(sessionID, forHTTPHeaderField: "session-id")
-        request.setValue(sessionID, forHTTPHeaderField: "x-client-request-id")
-        return request
     }
 
     /// Prepends a "subscription resumes at <time>" message to the error output
@@ -73,7 +86,7 @@ extension ChatGPTSubscriptionResponsesClient {
     static func enrichedLimitOutput(
         status: Int,
         output: String,
-        response: HTTPURLResponse,
+        headers: RemoteHTTPHeaders = RemoteHTTPHeaders(),
         now: Date = Date()
     ) -> String {
         guard status == 429 || isUsageLimitOutput(output) else {
@@ -81,7 +94,7 @@ extension ChatGPTSubscriptionResponsesClient {
         }
         guard let resetDate = limitResetDate(
             output: output,
-            response: response,
+            headers: headers,
             now: now
         ) else {
             return output
@@ -104,7 +117,7 @@ extension ChatGPTSubscriptionResponsesClient {
 
     static func limitResetDate(
         output: String,
-        response: HTTPURLResponse,
+        headers: RemoteHTTPHeaders,
         now: Date = Date()
     ) -> Date? {
         if let seconds = resetSeconds(fromOutput: output),
@@ -114,7 +127,7 @@ extension ChatGPTSubscriptionResponsesClient {
            ) {
             return date
         }
-        if let retryAfter = response.value(forHTTPHeaderField: "retry-after")?
+        if let retryAfter = headers.firstValue(for: "retry-after")?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !retryAfter.isEmpty,
            let date = SubscriptionLimitResetFormatter.resetDate(
@@ -177,8 +190,27 @@ extension ChatGPTSubscriptionResponsesClient {
             return true
         }
 
-        if let urlError = error as? URLError,
-           isRetryableURLCode(urlError.code) {
+        if let error = error as? RemoteTransportError {
+            switch error {
+            case .timeout, .closed, .connectionFailure:
+                return true
+            case .invalidURL,
+                 .unsupportedScheme,
+                 .invalidHTTPMethod,
+                 .invalidHeader,
+                 .invalidWebSocketFrameSize,
+                 .shutdown,
+                 .upgradeRejected,
+                 .bodyAlreadyConsumed,
+                 .concurrentBodyRead,
+                 .concurrentWebSocketReceive,
+                 .protocolViolation,
+                 .tlsFailure:
+                return false
+            }
+        }
+
+        if RemoteProviderSessionCompatibility.isRetryableLegacyNetworkError(error) {
             return true
         }
 
@@ -187,27 +219,7 @@ extension ChatGPTSubscriptionResponsesClient {
             return true
         }
 
-#if canImport(Network)
-        if let networkError = error as? NWError,
-           case let .posix(code) = networkError,
-           isRetryablePOSIXCode(code) {
-            return true
-        }
-#endif
-
         let nsError = error as NSError
-        if nsError.domain == NSURLErrorDomain {
-#if canImport(FoundationNetworking)
-            if let code = URLError.Code(rawValue: nsError.code),
-               isRetryableURLCode(code) {
-                return true
-            }
-#else
-            if isRetryableURLCode(URLError.Code(rawValue: nsError.code)) {
-                return true
-            }
-#endif
-        }
         if nsError.domain == NSPOSIXErrorDomain,
            isRetryablePOSIXCode(POSIXErrorCode(rawValue: Int32(nsError.code))) {
             return true
@@ -270,24 +282,7 @@ extension ChatGPTSubscriptionResponsesClient {
            case .cancelled = error {
             return true
         }
-        let nsError = error as NSError
-        return nsError.domain == NSURLErrorDomain
-            && nsError.code == URLError.cancelled.rawValue
-    }
-
-    static func isRetryableURLCode(_ code: URLError.Code) -> Bool {
-        switch code {
-        case .timedOut,
-             .cannotFindHost,
-             .cannotConnectToHost,
-             .networkConnectionLost,
-             .dnsLookupFailed,
-             .notConnectedToInternet,
-             .resourceUnavailable:
-            return true
-        default:
-            return false
-        }
+        return RemoteProviderSessionCompatibility.isLegacyCancellationError(error)
     }
 
     static func isRetryablePOSIXCode(_ code: POSIXErrorCode?) -> Bool {

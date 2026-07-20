@@ -47,12 +47,32 @@ snapshots, checkpoint trees, task graphs, permissions, feature manifests, and
 the session cache-key formats survive a change of provider, while only transient
 per-request model state is rebuilt.
 
-Subscription authentication and transport remain platform-specific behind the
-same provider contracts. ChatGPT uses the local browser callback and Network
-WebSocket transport on macOS; on Linux it uses the OpenAI device-code flow and
-a small system-libcurl WebSocket bridge. Claude uses its hosted authorization
-code flow on both platforms. These differences must not change provider IDs,
-wire event handling, credential persistence, or backend selection semantics.
+Remote generation has one cross-platform transport stack. HTTP/1.1, incremental
+SSE, and ChatGPT Responses WebSockets under `Remote/Generation`, the ChatGPT
+client/task/pool, and Anthropic messages are expressed as `RemoteHTTP*` /
+`RemoteWebSocket*` values and executed only by `RemoteTransportCore` on
+SwiftNIO. Those paths must not select an implementation through platform
+conditions, Foundation networking, Network, or libcurl. The `CLibCURLWebSocket`
+target and its adapter are retired; no system curl linker dependency remains.
+
+`RemoteTransportCore()` borrows the process-wide NIO event-loop group. A client
+that constructs its own transport closes it during `shutdown()`; an explicitly
+injected transport remains owned by its embedding composition root. The ChatGPT
+pool follows the same rule: `closeAll()` is reusable, while its terminal
+`shutdown()` closes its default owned transport. Historical `urlSession`
+initializer labels and properties remain typed compatibility values for source
+consumers, but are never consulted for generation I/O. The compatibility facade
+is deliberately isolated from the transport engine; it preserves API inspection
+and injection without restoring a second networking path.
+
+Authentication remains intentionally separate from generation transport.
+ChatGPT uses the macOS local-browser callback (including its callback listener)
+and the non-macOS device-code flow; its OAuth exchanges retain their
+provider-specific behavior. Anthropic retains its hosted authorization-code
+flow and OAuth exchange behavior. These Auth/Callback-only differences may use
+platform APIs where required, but must not change provider IDs, wire event
+handling, credential persistence, backend selection semantics, or the common
+generation transport.
 
 ## Target Layout
 

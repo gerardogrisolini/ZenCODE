@@ -6,13 +6,9 @@
 //
 
 import Foundation
-import os
 import Synchronization
 @testable import ZenCODECore
 import Testing
-
-#if os(macOS)
-import Network
 
 extension RemoteSessionSnapshotTests {
     @Test
@@ -169,7 +165,7 @@ extension RemoteSessionSnapshotTests {
 
     @Test
     func chatGPTSubscriptionClosedSocketErrorsAreRetryableTransportFailures() {
-        let abortedNetworkSocket = NWError.posix(.ECONNABORTED)
+        let abortedSocket = POSIXError(.ECONNABORTED)
         let closedSocketError = NSError(
             domain: NSPOSIXErrorDomain,
             code: Int(POSIXErrorCode.ENOTCONN.rawValue),
@@ -183,7 +179,7 @@ extension RemoteSessionSnapshotTests {
 
         #expect(
             ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
-                abortedNetworkSocket
+                abortedSocket
             )
         )
         #expect(
@@ -537,16 +533,15 @@ extension RemoteSessionSnapshotTests {
         let request = client.webSocketRequest(sessionID: "session-chatgpt")
 
         #expect(
-            request.value(forHTTPHeaderField: "session-id")
-                == "session-chatgpt"
+            request.headerValue(for: "session-id") == "session-chatgpt"
         )
-        #expect(request.value(forHTTPHeaderField: "session_id") == nil)
+        #expect(request.headerValue(for: "session_id") == nil)
         #expect(
-            request.value(forHTTPHeaderField: "OpenAI-Beta")
+            request.headerValue(for: "OpenAI-Beta")
                 == "responses_websockets=2026-02-06"
         )
         #expect(
-            request.value(forHTTPHeaderField: "x-client-request-id")
+            request.headerValue(for: "x-client-request-id")
                 == "session-chatgpt"
         )
     }
@@ -634,16 +629,14 @@ extension RemoteSessionSnapshotTests {
         let oldRequest = harness.request(authorization: "Bearer stale")
         let firstLease = harness.pool.acquire(
             sessionID: "session-age-boundary",
-            request: oldRequest,
-            urlSession: harness.urlSession
+            request: oldRequest
         )
         harness.pool.release(firstLease, keepAlive: true)
 
         harness.advance(by: .seconds(9))
         let underBoundaryLease = harness.pool.acquire(
             sessionID: "session-age-boundary",
-            request: harness.request(authorization: "Bearer ignored"),
-            urlSession: harness.urlSession
+            request: harness.request(authorization: "Bearer ignored")
         )
         #expect(underBoundaryLease.isReused)
         #expect(underBoundaryLease.task === firstLease.task)
@@ -653,8 +646,7 @@ extension RemoteSessionSnapshotTests {
         let currentRequest = harness.request(authorization: "Bearer current")
         let renewedLease = harness.pool.acquire(
             sessionID: "session-age-boundary",
-            request: currentRequest,
-            urlSession: harness.urlSession
+            request: currentRequest
         )
 
         #expect(!renewedLease.isReused)
@@ -662,8 +654,8 @@ extension RemoteSessionSnapshotTests {
         #expect(harness.closeCount(for: firstLease.task) == 1)
         #expect(harness.createdRequests().count == 2)
         #expect(
-            harness.createdRequests().last?.value(
-                forHTTPHeaderField: "Authorization"
+            harness.createdRequests().last?.headerValue(
+                for: "Authorization"
             ) == "Bearer current"
         )
 
@@ -678,8 +670,7 @@ extension RemoteSessionSnapshotTests {
         )
         let firstLease = harness.pool.acquire(
             sessionID: "session-release-expiry",
-            request: harness.request(),
-            urlSession: harness.urlSession
+            request: harness.request()
         )
 
         // A machine suspension or delayed scheduler callback is represented by
@@ -690,8 +681,7 @@ extension RemoteSessionSnapshotTests {
         #expect(harness.closeCount(for: firstLease.task) == 1)
         let renewedLease = harness.pool.acquire(
             sessionID: "session-release-expiry",
-            request: harness.request(),
-            urlSession: harness.urlSession
+            request: harness.request()
         )
         #expect(!renewedLease.isReused)
         #expect(renewedLease.task !== firstLease.task)
@@ -706,29 +696,25 @@ extension RemoteSessionSnapshotTests {
         )
         let firstSessionLease = harness.pool.acquire(
             sessionID: "session-old",
-            request: harness.request(),
-            urlSession: harness.urlSession
+            request: harness.request()
         )
         harness.pool.release(firstSessionLease, keepAlive: true)
 
         harness.advance(by: .seconds(5))
         let secondSessionLease = harness.pool.acquire(
             sessionID: "session-young",
-            request: harness.request(),
-            urlSession: harness.urlSession
+            request: harness.request()
         )
         harness.pool.release(secondSessionLease, keepAlive: true)
 
         harness.advance(by: .seconds(5))
         let renewedFirstSessionLease = harness.pool.acquire(
             sessionID: "session-old",
-            request: harness.request(),
-            urlSession: harness.urlSession
+            request: harness.request()
         )
         let reusedSecondSessionLease = harness.pool.acquire(
             sessionID: "session-young",
-            request: harness.request(),
-            urlSession: harness.urlSession
+            request: harness.request()
         )
 
         #expect(!renewedFirstSessionLease.isReused)
@@ -747,15 +733,13 @@ extension RemoteSessionSnapshotTests {
         )
         let activeLease = harness.pool.acquire(
             sessionID: "session-active-expiry",
-            request: harness.request(),
-            urlSession: harness.urlSession
+            request: harness.request()
         )
         harness.advance(by: .seconds(10))
 
         let concurrentLease = harness.pool.acquire(
             sessionID: "session-active-expiry",
-            request: harness.request(),
-            urlSession: harness.urlSession
+            request: harness.request()
         )
 
         #expect(!concurrentLease.isCached)
@@ -776,21 +760,18 @@ extension RemoteSessionSnapshotTests {
         )
         let firstLease = harness.pool.acquire(
             sessionID: "session-late-release",
-            request: harness.request(),
-            urlSession: harness.urlSession
+            request: harness.request()
         )
         harness.pool.release(firstLease, keepAlive: true)
 
         let activeReusedLease = harness.pool.acquire(
             sessionID: "session-late-release",
-            request: harness.request(),
-            urlSession: harness.urlSession
+            request: harness.request()
         )
         harness.pool.release(firstLease, keepAlive: true)
         let concurrentLease = harness.pool.acquire(
             sessionID: "session-late-release",
-            request: harness.request(),
-            urlSession: harness.urlSession
+            request: harness.request()
         )
 
         #expect(activeReusedLease.isReused)
@@ -880,59 +861,6 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionPingIgnoresDuplicateCallback() async throws {
-        struct LatePingFailure: Error {}
-
-        try await ChatGPTSubscriptionWebSocketPool.awaitPing { completion in
-            completion(nil)
-            completion(LatePingFailure())
-        }
-    }
-
-    @Test
-    func chatGPTSubscriptionPingCancellationStopsWaitingForCallback() async {
-        let (started, startContinuation) = AsyncStream<Void>.makeStream()
-        let task = Task {
-            try await ChatGPTSubscriptionWebSocketPool.awaitPing { _ in
-                startContinuation.yield()
-                startContinuation.finish()
-            }
-        }
-        defer {
-            task.cancel()
-            startContinuation.finish()
-        }
-
-        let didStart = await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                var iterator = started.makeAsyncIterator()
-                return await iterator.next() != nil
-            }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                return false
-            }
-            let result = await group.next() ?? false
-            group.cancelAll()
-            return result
-        }
-        guard didStart else {
-            Issue.record("The ping continuation did not start.")
-            return
-        }
-
-        task.cancel()
-        do {
-            try await task.value
-            Issue.record("A cancelled ping unexpectedly completed.")
-        } catch is CancellationError {
-            // Expected: cancellation resumes a ping whose callback never arrives.
-        } catch {
-            Issue.record("Expected CancellationError, got \(error).")
-        }
-    }
-
-    @Test
     func chatGPTSubscriptionTreatsDisconnectedSocketAsRetryableTransportError() {
         let posixError = POSIXError(.ENOTCONN)
         let nsPosixError = NSError(
@@ -949,6 +877,21 @@ extension RemoteSessionSnapshotTests {
         )
 
         #expect(ChatGPTSubscriptionResponsesClient.isRetryableTransportError(posixError))
+        #expect(
+            ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
+                RemoteTransportError.closed
+            )
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
+                RemoteTransportError.timeout
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
+                RemoteTransportError.tlsFailure("test")
+            )
+        )
         #expect(ChatGPTSubscriptionResponsesClient.isRetryableTransportError(nsPosixError))
         #expect(ChatGPTSubscriptionResponsesClient.isRetryableTransportError(localizedSocketError))
         #expect(!ChatGPTSubscriptionResponsesClient.isRetryableTransportError(URLError(.badServerResponse)))
@@ -1079,6 +1022,146 @@ extension RemoteSessionSnapshotTests {
                 attempt: 0
             )
         )
+    }
+
+    @Test
+    func chatGPTSubscriptionNIOClientRetriesSentContinuationAsFullReplay() async throws {
+        let firstTask = ChatGPTSubscriptionTestWebSocketTask(
+            sendOutcomes: [.failure(RemoteTransportError.closed)]
+        )
+        let secondTask = ChatGPTSubscriptionTestWebSocketTask(
+            receiveOutcomes: [
+                .success(
+                    .text(
+                        #"{"type":"response.completed","response":{"id":"resp_fresh","status":"completed"}}"#
+                    )
+                )
+            ]
+        )
+        let pendingTasks = Mutex([firstTask, secondTask])
+        let factoryCount = Mutex(0)
+        let pool = ChatGPTSubscriptionWebSocketPool(
+            heartbeatIntervalNanoseconds: UInt64.max,
+            webSocketTaskFactory: { _ in
+                factoryCount.withLock { $0 += 1 }
+                return pendingTasks.withLock { $0.removeFirst() }
+            }
+        )
+        defer { pool.closeAll() }
+        let client = ChatGPTSubscriptionResponsesClient(
+            credentials: chatGPTSubscriptionTestCredentials(),
+            baseURL: URL(string: "https://example.invalid/backend-api")!,
+            webSocketPool: pool,
+            retrySleep: { _ in }
+        )
+        let cachedInput = JSONValue.acpValue(from: [
+            ["role": "user", "content": "cached turn"] as [String: Any]
+        ])
+
+        let completion = try await client.streamEvents(
+            input: .array([]),
+            model: "gpt-5.5",
+            instructions: "System prompt",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "retry-continuation",
+            cachedWebSocketInput: cachedInput,
+            previousResponseID: "resp_previous",
+            allowsFreshWebSocketContinuation: true
+        ) { _ in }
+
+        let firstPayload = try #require(firstTask.sentMessages.first?.jsonObject)
+        let secondPayload = try #require(secondTask.sentMessages.first?.jsonObject)
+        #expect(completion.responseID == "resp_fresh")
+        #expect(factoryCount.withLock { $0 } == 2)
+        #expect(firstPayload["previous_response_id"] as? String == "resp_previous")
+        #expect(secondPayload["previous_response_id"] == nil)
+        #expect((secondPayload["input"] as? [Any])?.isEmpty == true)
+    }
+
+    @Test
+    func chatGPTSubscriptionNIOClientDoesNotReplayAfterUnsafeStreamEvent() async {
+        let task = ChatGPTSubscriptionTestWebSocketTask(
+            receiveOutcomes: [
+                .success(
+                    .text(
+                        #"{"type":"response.output_text.delta","delta":"partial"}"#
+                    )
+                ),
+                .failure(RemoteTransportError.closed)
+            ]
+        )
+        let factoryCount = Mutex(0)
+        let pool = ChatGPTSubscriptionWebSocketPool(
+            heartbeatIntervalNanoseconds: UInt64.max,
+            webSocketTaskFactory: { _ in
+                factoryCount.withLock { $0 += 1 }
+                return task
+            }
+        )
+        defer { pool.closeAll() }
+        let client = ChatGPTSubscriptionResponsesClient(
+            credentials: chatGPTSubscriptionTestCredentials(),
+            baseURL: URL(string: "https://example.invalid/backend-api")!,
+            webSocketPool: pool,
+            retrySleep: { _ in }
+        )
+
+        do {
+            _ = try await client.streamEvents(
+                input: .array([]),
+                model: "gpt-5.5",
+                instructions: "System prompt",
+                reasoningEffort: nil,
+                textVerbosity: "medium",
+                sessionID: "unsafe-event"
+            ) { _ in }
+            Issue.record("A replay-unsafe stream unexpectedly retried.")
+        } catch let error as RemoteTransportError {
+            #expect(error == .closed)
+        } catch {
+            Issue.record("Expected RemoteTransportError.closed, got \(error).")
+        }
+
+        #expect(factoryCount.withLock { $0 } == 1)
+    }
+
+    @Test
+    func chatGPTSubscriptionNIOClientCancellationClosesActiveLease() async {
+        let task = ChatGPTSubscriptionTestWebSocketTask()
+        let pool = ChatGPTSubscriptionWebSocketPool(
+            heartbeatIntervalNanoseconds: UInt64.max,
+            webSocketTaskFactory: { _ in task }
+        )
+        defer { pool.closeAll() }
+        let client = ChatGPTSubscriptionResponsesClient(
+            credentials: chatGPTSubscriptionTestCredentials(),
+            baseURL: URL(string: "https://example.invalid/backend-api")!,
+            webSocketPool: pool,
+            retrySleep: { _ in }
+        )
+        let streamTask = Task {
+            try await client.streamEvents(
+                input: .array([]),
+                model: "gpt-5.5",
+                instructions: "System prompt",
+                reasoningEffort: nil,
+                textVerbosity: "medium",
+                sessionID: "cancel-active-lease"
+            ) { _ in }
+        }
+
+        await task.waitForSend()
+        streamTask.cancel()
+        do {
+            _ = try await streamTask.value
+            Issue.record("A cancelled WebSocket stream unexpectedly completed.")
+        } catch is CancellationError {
+            // Expected: cancellation closes the NIO adapter and releases lease.
+        } catch {
+            Issue.record("Expected CancellationError, got \(error).")
+        }
+        #expect(task.cancelCount > 0)
     }
 
     @Test
@@ -1331,7 +1414,7 @@ extension RemoteSessionSnapshotTests {
         data: {"type":"response.completed","response":{"output":[]}}
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -1343,7 +1426,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .responses
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
         let capturedEvents = CapturedDirectAgentEvents()
 
@@ -1373,7 +1457,7 @@ extension RemoteSessionSnapshotTests {
         data: {"type":"response.completed","response":{"output":[]}}
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -1385,7 +1469,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .responses
             ),
             apiKey: nil,
-            urlSession: urlSession
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
         )
         let capturedEvents = CapturedDirectAgentEvents()
 
@@ -1575,16 +1660,13 @@ extension RemoteSessionSnapshotTests {
 }
 
 private final class ChatGPTSubscriptionWebSocketPoolHarness: @unchecked Sendable {
-    let urlSession: URLSession
     let pool: ChatGPTSubscriptionWebSocketPool
 
     private let state: ChatGPTSubscriptionWebSocketPoolHarnessState
 
     init(maximumConnectionAge: Duration) {
-        let urlSession = URLSession(configuration: .ephemeral)
         let state = ChatGPTSubscriptionWebSocketPoolHarnessState()
 
-        self.urlSession = urlSession
         self.state = state
         self.pool = ChatGPTSubscriptionWebSocketPool(
             heartbeatIntervalNanoseconds: UInt64.max,
@@ -1592,32 +1674,37 @@ private final class ChatGPTSubscriptionWebSocketPoolHarness: @unchecked Sendable
             monotonicClock: {
                 state.clock.withLock { $0 }
             },
-            webSocketTaskFactory: { urlSession, request in
+            webSocketTaskFactory: { request in
                 state.requests.withLock { $0.append(request) }
-                return urlSession.webSocketTask(with: request)
+                return ChatGPTSubscriptionTestWebSocketTask()
             },
-            resumeWebSocketTask: { _ in },
             closeWebSocketTask: { task in
                 state.closeCounts.withLock {
                     $0[ObjectIdentifier(task), default: 0] += 1
                 }
+                task.cancel(
+                    with: ChatGPTSubscriptionWebSocketCloseCode.normalClosure,
+                    reason: nil
+                )
             }
         )
     }
 
     deinit {
         pool.closeAll()
-        urlSession.invalidateAndCancel()
     }
 
-    func request(authorization: String? = nil) -> URLRequest {
-        var request = URLRequest(
-            url: URL(string: "wss://example.invalid/responses")!
-        )
+    func request(authorization: String? = nil) -> RemoteWebSocketRequest {
+        var headers: [RemoteHTTPHeader] = []
         if let authorization {
-            request.setValue(authorization, forHTTPHeaderField: "Authorization")
+            headers.append(
+                RemoteHTTPHeader(name: "Authorization", value: authorization)
+            )
         }
-        return request
+        return RemoteWebSocketRequest(
+            url: URL(string: "wss://example.invalid/responses")!,
+            headers: headers
+        )
     }
 
     func advance(by duration: Duration) {
@@ -1626,7 +1713,7 @@ private final class ChatGPTSubscriptionWebSocketPoolHarness: @unchecked Sendable
         }
     }
 
-    func createdRequests() -> [URLRequest] {
+    func createdRequests() -> [RemoteWebSocketRequest] {
         state.requests.withLock { $0 }
     }
 
@@ -1639,7 +1726,203 @@ private final class ChatGPTSubscriptionWebSocketPoolHarness: @unchecked Sendable
 
 private final class ChatGPTSubscriptionWebSocketPoolHarnessState: @unchecked Sendable {
     let clock = Mutex(ContinuousClock.now)
-    let requests = Mutex<[URLRequest]>([])
+    let requests = Mutex<[RemoteWebSocketRequest]>([])
     let closeCounts = Mutex<[ObjectIdentifier: Int]>([:])
 }
-#endif
+
+/// Deterministic adapter double shared by all ChatGPT WebSocket tests. It has
+/// no Foundation/WebKit/Network dependency, so exactly the same tests compile
+/// on macOS and Linux.
+private final class ChatGPTSubscriptionTestWebSocketTask:
+    ChatGPTSubscriptionWebSocketTask,
+    @unchecked Sendable
+{
+    private struct State {
+        var taskState: ChatGPTSubscriptionWebSocketTaskState = .suspended
+        var closeCode: UInt16?
+        var sendOutcomes: [Result<Void, Error>]
+        var receiveOutcomes: [
+            Result<ChatGPTSubscriptionWebSocketMessage, Error>
+        ]
+        var pingOutcomes: [Result<Void, Error>]
+        var receiveWaiter: CheckedContinuation<
+            ChatGPTSubscriptionWebSocketMessage,
+            Error
+        >?
+        var sendWaiter: CheckedContinuation<Void, Never>?
+        var sentMessages: [ChatGPTSubscriptionWebSocketMessage] = []
+        var cancelCount = 0
+        var resumeCount = 0
+    }
+
+    private let stateStorage: Mutex<State>
+
+    init(
+        sendOutcomes: [Result<Void, Error>] = [],
+        receiveOutcomes: [Result<ChatGPTSubscriptionWebSocketMessage, Error>] = [],
+        pingOutcomes: [Result<Void, Error>] = []
+    ) {
+        stateStorage = Mutex(
+            State(
+                sendOutcomes: sendOutcomes,
+                receiveOutcomes: receiveOutcomes,
+                pingOutcomes: pingOutcomes
+            )
+        )
+    }
+
+    var closeCode: UInt16? {
+        stateStorage.withLock(\.closeCode)
+    }
+
+    var state: ChatGPTSubscriptionWebSocketTaskState {
+        stateStorage.withLock(\.taskState)
+    }
+
+    var sentMessages: [ChatGPTSubscriptionWebSocketMessage] {
+        stateStorage.withLock(\.sentMessages)
+    }
+
+    var cancelCount: Int {
+        stateStorage.withLock(\.cancelCount)
+    }
+
+    func resume() {
+        stateStorage.withLock { state in
+            state.resumeCount += 1
+            guard state.taskState == .suspended else {
+                return
+            }
+            state.taskState = .running
+        }
+    }
+
+    func send(_ message: ChatGPTSubscriptionWebSocketMessage) async throws {
+        let outcome = stateStorage.withLock { state -> (
+            Result<Void, Error>,
+            CheckedContinuation<Void, Never>?
+        ) in
+            state.sentMessages.append(message)
+            let result = state.sendOutcomes.isEmpty
+                ? Result<Void, Error>.success(())
+                : state.sendOutcomes.removeFirst()
+            let waiter = state.sendWaiter
+            state.sendWaiter = nil
+            return (result, waiter)
+        }
+        outcome.1?.resume()
+        try outcome.0.get()
+    }
+
+    func receive() async throws -> ChatGPTSubscriptionWebSocketMessage {
+        if let result = stateStorage.withLock({ state in
+            state.receiveOutcomes.isEmpty ? nil : state.receiveOutcomes.removeFirst()
+        }) {
+            return try result.get()
+        }
+
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<
+                    ChatGPTSubscriptionWebSocketMessage,
+                    Error
+                >) in
+                let result = stateStorage.withLock {
+                    state -> Result<ChatGPTSubscriptionWebSocketMessage, Error>? in
+                    if !state.receiveOutcomes.isEmpty {
+                        return state.receiveOutcomes.removeFirst()
+                    }
+                    if state.taskState == .canceling || state.taskState == .completed {
+                        return .failure(CancellationError())
+                    }
+                    state.receiveWaiter = continuation
+                    return nil
+                }
+                if let result {
+                    continuation.resume(with: result)
+                }
+            }
+        } onCancel: {
+            cancel(
+                with: ChatGPTSubscriptionWebSocketCloseCode.goingAway,
+                reason: nil
+            )
+        }
+    }
+
+    func sendPing() async throws {
+        let result = stateStorage.withLock { state -> Result<Void, Error> in
+            guard !state.pingOutcomes.isEmpty else {
+                return .success(())
+            }
+            return state.pingOutcomes.removeFirst()
+        }
+        try result.get()
+    }
+
+    func cancel(with closeCode: UInt16?, reason _: Data?) {
+        let waiter = stateStorage.withLock {
+            state -> CheckedContinuation<ChatGPTSubscriptionWebSocketMessage, Error>? in
+            state.cancelCount += 1
+            state.closeCode = closeCode
+            state.taskState = .canceling
+            let waiter = state.receiveWaiter
+            state.receiveWaiter = nil
+            return waiter
+        }
+        waiter?.resume(throwing: CancellationError())
+    }
+
+    func enqueueReceive(
+        _ result: Result<ChatGPTSubscriptionWebSocketMessage, Error>
+    ) {
+        let waiter = stateStorage.withLock {
+            state -> CheckedContinuation<ChatGPTSubscriptionWebSocketMessage, Error>? in
+            if let waiter = state.receiveWaiter {
+                state.receiveWaiter = nil
+                return waiter
+            }
+            state.receiveOutcomes.append(result)
+            return nil
+        }
+        waiter?.resume(with: result)
+    }
+
+    func waitForSend() async {
+        if !stateStorage.withLock(\.sentMessages).isEmpty {
+            return
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let shouldResume = stateStorage.withLock { state -> Bool in
+                if !state.sentMessages.isEmpty {
+                    return true
+                }
+                state.sendWaiter = continuation
+                return false
+            }
+            if shouldResume {
+                continuation.resume()
+            }
+        }
+    }
+}
+
+private extension RemoteWebSocketRequest {
+    func headerValue(for name: String) -> String? {
+        headers.first {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }?.value
+    }
+}
+
+private extension ChatGPTSubscriptionWebSocketMessage {
+    var jsonObject: [String: Any]? {
+        guard case let .text(text) = self,
+              let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data)
+                as? [String: Any] else {
+            return nil
+        }
+        return object
+    }
+}

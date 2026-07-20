@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 extension AnthropicSubscriptionGenerationClient {
     func streamAnthropicMessages(
@@ -87,24 +84,39 @@ extension AnthropicSubscriptionGenerationClient {
             modelLLMID: modelLLMID
         )
 
-        var request = URLRequest(url: Self.apiBaseURL.appendingPathComponent("messages"))
-        request.httpMethod = "POST"
-        request.timeoutInterval = 900
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue(
-            Self.oauthBetaHeader(forModelID: modelID),
-            forHTTPHeaderField: "anthropic-beta"
-        )
-        request.setValue("true", forHTTPHeaderField: "anthropic-dangerous-direct-browser-access")
-        request.setValue("Bearer \(credentials.accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("claude-cli/\(Self.claudeCodeVersion)", forHTTPHeaderField: "User-Agent")
-        request.setValue("cli", forHTTPHeaderField: "x-app")
-        request.httpBody = try JSONValue(
+        let requestBody = try JSONValue(
             jsonObject: AnthropicSubscriptionRequestBuilder.sanitizedPayload(body)
         ).jsonData(
             outputFormatting: [.withoutEscapingSlashes]
+        )
+        let request = RemoteHTTPStreamingRequest(
+            url: messagesEndpointURLOverride
+                ?? Self.apiBaseURL.appendingPathComponent("messages"),
+            method: "POST",
+            headers: [
+                RemoteHTTPHeader(name: "Content-Type", value: "application/json"),
+                RemoteHTTPHeader(name: "Accept", value: "application/json"),
+                RemoteHTTPHeader(name: "anthropic-version", value: "2023-06-01"),
+                RemoteHTTPHeader(
+                    name: "anthropic-beta",
+                    value: Self.oauthBetaHeader(forModelID: modelID)
+                ),
+                RemoteHTTPHeader(
+                    name: "anthropic-dangerous-direct-browser-access",
+                    value: "true"
+                ),
+                RemoteHTTPHeader(
+                    name: "Authorization",
+                    value: "Bearer \(credentials.accessToken)"
+                ),
+                RemoteHTTPHeader(
+                    name: "User-Agent",
+                    value: "claude-cli/\(Self.claudeCodeVersion)"
+                ),
+                RemoteHTTPHeader(name: "x-app", value: "cli")
+            ],
+            body: requestBody,
+            timeout: .seconds(900)
         )
 
         if !configuration.appMode {
@@ -112,17 +124,15 @@ extension AnthropicSubscriptionGenerationClient {
         }
 
         let requestStartedAt = Date()
-#if canImport(FoundationNetworking)
-        let (bytes, response) = try await RemoteFoundationNetworkingStream.open(
-            for: request,
-            configuration: urlSession.configuration
-        )
-#else
-        let (bytes, response) = try await urlSession.bytes(for: request)
-#endif
-        try await Self.validateHTTPResponse(response, bytes: bytes)
+        // Deliberately no retry here. Unlike the OpenAI-compatible path,
+        // Anthropic subscription messages historically never replayed a
+        // request. An OAuth POST can be accepted by the service even if a
+        // response head is lost, so adding a pre-head replay would risk
+        // duplicate generation/tool transactions without an idempotency key.
+        let response = try await transport.openHTTPStream(request)
+        try await Self.validateHTTPResponse(response)
 
-        if let subscriptionUsage = Self.subscriptionUsage(fromHTTPResponse: response) {
+        if let subscriptionUsage = Self.subscriptionUsage(fromHeaders: response.headers) {
             await onEvent(.subscriptionUsage(subscriptionUsage))
         }
 
@@ -140,10 +150,10 @@ extension AnthropicSubscriptionGenerationClient {
             }
         }
 
-        for try await line in RemoteStreamLineSequence(bytes: bytes) {
+        for try await event in response.body.sseEvents() {
             try Task.checkCancellation()
-            guard let payload = RemoteStreamTransport.ssePayload(from: line),
-                  payload != "[DONE]",
+            let payload = event.data.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard payload != "[DONE]",
                   let object = RemoteStreamTransport.jsonObject(from: payload) else {
                 continue
             }
