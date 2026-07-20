@@ -61,7 +61,7 @@ public struct ChatGPTSubscriptionResponsesClient {
         baseURL: URL = URL(string: "https://chatgpt.com/backend-api")!,
         /// Historical injection retained for source compatibility. WebSocket
         /// I/O is NIO-only.
-        urlSession: RemoteProviderSession = .shared,
+        urlSession: RemoteProviderSession? = nil,
         webSocketPool: ChatGPTSubscriptionWebSocketPool =
             ChatGPTSubscriptionWebSocketPool()
     ) {
@@ -79,13 +79,14 @@ public struct ChatGPTSubscriptionResponsesClient {
     init(
         credentials: CodexAgentCredentials,
         baseURL: URL,
-        urlSession: RemoteProviderSession = .shared,
+        urlSession: RemoteProviderSession? = nil,
         webSocketPool: ChatGPTSubscriptionWebSocketPool,
         retrySleep: @escaping @Sendable (Int) async throws -> Void
     ) {
         self.credentials = credentials
         self.baseURL = baseURL
         self.urlSession = urlSession
+            ?? RemoteProviderSessionCompatibility.generationSession()
         self.webSocketPool = webSocketPool
         self.retrySleep = retrySleep
     }
