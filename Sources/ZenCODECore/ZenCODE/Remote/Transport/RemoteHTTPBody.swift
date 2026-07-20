@@ -60,21 +60,56 @@ public struct RemoteHTTPBody: AsyncSequence, Sendable {
     }
 }
 
+/// The response metadata is deliberately Sendable because it crosses from the
+/// scoped NIO channel task back to the transport caller.
+struct RemoteHTTPResponseHead: Sendable {
+    let status: Int
+    let headers: [RemoteHTTPHeader]
+}
+
+/// Allows cancellation and the scoped channel task to race to complete a read
+/// without ever resuming its checked continuation twice.
+private final class RemoteHTTPReadContinuation<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, any Error>?
+
+    init(_ continuation: CheckedContinuation<Value, any Error>) {
+        self.continuation = continuation
+    }
+
+    func resume(returning value: Value) {
+        lock.lock()
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(returning: value)
+    }
+
+    func resume(throwing error: any Error) {
+        lock.lock()
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(throwing: error)
+    }
+}
+
 actor RemoteHTTPBodyStorage {
-    private var iterator: NIOAsyncChannelInboundStream<
-        HTTPClientResponsePart
-    >.AsyncIterator
+    private enum ReadRequest {
+        case head(RemoteHTTPReadContinuation<RemoteHTTPResponseHead>)
+        case chunk(RemoteHTTPReadContinuation<Data?>)
+    }
+
     private let lease: RemoteChannelLease
+    private var pendingRequests: [ReadRequest] = []
+    private var requestWaiter: CheckedContinuation<ReadRequest, Never>?
     private var returnedHead = false
     private var bodyConsumerID: UUID?
     private var isReading = false
     private var isFinished = false
+    private var activeChunk: RemoteHTTPReadContinuation<Data?>?
 
-    init(
-        inbound: NIOAsyncChannelInboundStream<HTTPClientResponsePart>,
-        lease: RemoteChannelLease
-    ) {
-        iterator = inbound.makeAsyncIterator()
+    init(lease: RemoteChannelLease) {
         self.lease = lease
     }
 
@@ -82,34 +117,26 @@ actor RemoteHTTPBodyStorage {
         lease.close()
     }
 
-    func receiveHead() async throws -> HTTPResponseHead {
+    func receiveHead() async throws -> RemoteHTTPResponseHead {
         try await withTaskCancellationHandler {
             guard !returnedHead else {
                 throw RemoteTransportError.protocolViolation(
                     "HTTP response head requested more than once"
                 )
             }
-            while let part = try await nextPart() {
-                switch part {
-                case let .head(head):
-                    returnedHead = true
-                    return head
-                case .body, .end:
-                    finish()
-                    throw RemoteTransportError.protocolViolation(
-                        "HTTP body arrived before its response head"
-                    )
-                }
+            guard !isFinished else {
+                throw RemoteTransportError.closed
             }
-            finish()
-            throw RemoteTransportError.closed
+            return try await withCheckedThrowingContinuation { continuation in
+                enqueue(.head(RemoteHTTPReadContinuation(continuation)))
+            }
         } onCancel: {
             lease.close()
         }
     }
 
     func nextChunk(for identifier: UUID) async throws -> Data? {
-        return try await withTaskCancellationHandler(operation: { () async throws -> Data? in
+        try await withTaskCancellationHandler(operation: {
             guard returnedHead else {
                 throw RemoteTransportError.protocolViolation(
                     "HTTP body was read before the response head"
@@ -121,60 +148,172 @@ actor RemoteHTTPBodyStorage {
             if let bodyConsumerID, bodyConsumerID != identifier {
                 throw RemoteTransportError.bodyAlreadyConsumed
             }
+            guard !isReading else {
+                throw RemoteTransportError.concurrentBodyRead
+            }
             bodyConsumerID = identifier
+            isReading = true
 
             do {
-                while let part = try await nextPart() {
-                    switch part {
-                    case .head:
-                        finish()
-                        throw RemoteTransportError.protocolViolation(
-                            "HTTP response emitted more than one response head"
-                        )
-                    case let .body(buffer):
-                        return Data(buffer.readableBytesView)
-                    case .end:
-                        finish()
-                        return nil
-                    }
+                let chunk: Data? = try await withCheckedThrowingContinuation {
+                    continuation in
+                    let read = RemoteHTTPReadContinuation(continuation)
+                    activeChunk = read
+                    enqueue(.chunk(read))
                 }
-                finish()
-                return nil
+                isReading = false
+                activeChunk = nil
+                return chunk
             } catch {
-                finish()
+                isReading = false
+                activeChunk = nil
                 throw remoteTransportMappedError(error)
             }
         }, onCancel: {
             lease.close()
+            Task { await self.cancelActiveRead() }
         })
     }
 
-    /// `NIOAsyncChannel` exposes a non-Sendable iterator. This actor keeps the
-    /// iterator isolated and rejects overlapping calls while it is suspended,
-    /// preserving the underlying unicast/backpressure contract.
-    private func nextPart() async throws -> HTTPClientResponsePart? {
-        guard !isReading else {
-            throw RemoteTransportError.concurrentBodyRead
-        }
-        isReading = true
-        var localIterator = iterator
+    /// Runs inside `NIOAsyncChannel.executeThenClose`. The NIO iterator remains
+    /// a task-local value for its entire lifetime, while callers request exactly
+    /// one body chunk at a time through this actor.
+    nonisolated func run(
+        inbound: NIOAsyncChannelInboundStream<HTTPClientResponsePart>
+    ) async throws {
+        var iterator = inbound.makeAsyncIterator()
         do {
-            let part = try await localIterator.next()
-            iterator = localIterator
-            isReading = false
-            return part
+            while let request = await self.nextRequest() {
+                switch request {
+                case let .head(continuation):
+                    var receivedHead = false
+                    while let part = try await iterator.next() {
+                        switch part {
+                        case let .head(head):
+                            receivedHead = true
+                            await self.completeHead(
+                                RemoteHTTPResponseHead(
+                                    status: Int(head.status.code),
+                                    headers: head.headers.map {
+                                        RemoteHTTPHeader(name: $0.name, value: $0.value)
+                                    }
+                                ),
+                                continuation: continuation
+                            )
+                            break
+                        case .body, .end:
+                            let error = RemoteTransportError.protocolViolation(
+                                "HTTP body arrived before its response head"
+                            )
+                            continuation.resume(throwing: error)
+                            throw error
+                        }
+                        if receivedHead {
+                            break
+                        }
+                    }
+                    guard receivedHead else {
+                        let error = RemoteTransportError.closed
+                        continuation.resume(throwing: error)
+                        throw error
+                    }
+                case let .chunk(continuation):
+                    var returnedChunk = false
+                    while let part = try await iterator.next() {
+                        switch part {
+                        case .head:
+                            let error = RemoteTransportError.protocolViolation(
+                                "HTTP response emitted more than one response head"
+                            )
+                            continuation.resume(throwing: error)
+                            throw error
+                        case let .body(buffer):
+                            continuation.resume(
+                                returning: Data(buffer.readableBytesView)
+                            )
+                            returnedChunk = true
+                        case .end:
+                            await self.finish()
+                            continuation.resume(returning: nil)
+                            returnedChunk = true
+                        }
+                        if returnedChunk {
+                            break
+                        }
+                    }
+                    if !returnedChunk {
+                        await self.finish()
+                        continuation.resume(returning: nil)
+                    }
+                }
+            }
         } catch {
-            iterator = localIterator
-            isReading = false
+            await self.finish(throwing: error)
             throw error
         }
     }
 
-    private func finish() {
+    func fail(_ error: any Error) {
+        finish(throwing: error)
+    }
+
+    private func cancelActiveRead() {
+        activeChunk?.resume(throwing: CancellationError())
+    }
+
+    private func completeHead(
+        _ head: RemoteHTTPResponseHead,
+        continuation: RemoteHTTPReadContinuation<RemoteHTTPResponseHead>
+    ) {
+        returnedHead = true
+        continuation.resume(returning: head)
+    }
+
+    private func enqueue(_ request: ReadRequest) {
+        if let requestWaiter {
+            self.requestWaiter = nil
+            requestWaiter.resume(returning: request)
+        } else {
+            pendingRequests.append(request)
+        }
+    }
+
+    private func nextRequest() async -> ReadRequest? {
+        guard !isFinished else {
+            return nil
+        }
+        if !pendingRequests.isEmpty {
+            return pendingRequests.removeFirst()
+        }
+        return await withCheckedContinuation { continuation in
+            requestWaiter = continuation
+        }
+    }
+
+    private func finish(throwing error: (any Error)? = nil) {
         guard !isFinished else {
             return
         }
         isFinished = true
         lease.close()
+
+        let terminalError = error ?? RemoteTransportError.closed
+        for request in pendingRequests {
+            switch request {
+            case let .head(continuation):
+                continuation.resume(throwing: terminalError)
+            case let .chunk(continuation):
+                if error == nil {
+                    continuation.resume(returning: nil)
+                } else {
+                    continuation.resume(throwing: terminalError)
+                }
+            }
+        }
+        pendingRequests.removeAll()
+    }
+
+    private func finish() {
+        finish(throwing: nil)
     }
 }

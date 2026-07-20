@@ -112,23 +112,31 @@ public final class RemoteTransportCore: Sendable {
                 pendingConnection.attach(channel)
 
                 do {
-                    try await writeHTTP(
-                        request,
-                        endpoint: endpoint,
-                        to: asyncChannel
-                    )
-                    let bodyStorage = RemoteHTTPBodyStorage(
-                        inbound: asyncChannel.inbound,
-                        lease: lease
-                    )
+                    let bodyStorage = RemoteHTTPBodyStorage(lease: lease)
+                    Task { [weak bodyStorage] in
+                        guard let bodyStorage else {
+                            return
+                        }
+                        do {
+                            try await asyncChannel.executeThenClose(
+                                isolation: bodyStorage
+                            ) { inbound, outbound in
+                                try await self.writeHTTP(
+                                    request,
+                                    endpoint: endpoint,
+                                    outbound: outbound,
+                                    allocator: channel.allocator
+                                )
+                                try await bodyStorage.run(inbound: inbound)
+                            }
+                        } catch {
+                            await bodyStorage.fail(error)
+                        }
+                    }
                     let head = try await bodyStorage.receiveHead()
                     return RemoteHTTPStreamingResponse(
-                        status: Int(head.status.code),
-                        headers: RemoteHTTPHeaders(
-                            head.headers.map {
-                                RemoteHTTPHeader(name: $0.name, value: $0.value)
-                            }
-                        ),
+                        status: head.status,
+                        headers: RemoteHTTPHeaders(head.headers),
                         body: RemoteHTTPBody(storage: bodyStorage)
                     )
                 } catch {
@@ -246,12 +254,28 @@ public final class RemoteTransportCore: Sendable {
                 pendingConnection.attach(channel)
                 do {
                     let asyncChannel = try await upgradeState.wait()
-                    return RemoteWebSocketConnection(
-                        inbound: asyncChannel.inbound,
-                        outbound: asyncChannel.outbound,
+                    let connection = RemoteWebSocketConnection(
                         allocator: channel.allocator,
                         lease: lease
                     )
+                    Task { [weak connection] in
+                        guard let connection else {
+                            return
+                        }
+                        do {
+                            try await asyncChannel.executeThenClose(
+                                isolation: connection
+                            ) { inbound, outbound in
+                                try await connection.run(
+                                    inbound: inbound,
+                                    outbound: outbound
+                                )
+                            }
+                        } catch {
+                            await connection.fail(error)
+                        }
+                    }
+                    return connection
                 } catch {
                     lease.close()
                     throw error
@@ -307,7 +331,8 @@ public final class RemoteTransportCore: Sendable {
     private func writeHTTP(
         _ request: RemoteHTTPStreamingRequest,
         endpoint: RemoteTransportEndpoint,
-        to channel: NIOAsyncChannel<HTTPClientResponsePart, HTTPClientRequestPart>
+        outbound: NIOAsyncChannelOutboundWriter<HTTPClientRequestPart>,
+        allocator: ByteBufferAllocator
     ) async throws {
         let method = request.method.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !method.isEmpty,
@@ -335,13 +360,13 @@ public final class RemoteTransportCore: Sendable {
             uri: endpoint.requestTarget,
             headers: headers
         )
-        try await channel.outbound.write(.head(head))
+        try await outbound.write(.head(head))
         if let body = request.body {
-            var buffer = channel.channel.allocator.buffer(capacity: body.count)
+            var buffer = allocator.buffer(capacity: body.count)
             buffer.writeBytes(body)
-            try await channel.outbound.write(.body(.byteBuffer(buffer)))
+            try await outbound.write(.body(.byteBuffer(buffer)))
         }
-        try await channel.outbound.write(.end(nil))
+        try await outbound.write(.end(nil))
     }
 
     private static func makeTLSHandler(

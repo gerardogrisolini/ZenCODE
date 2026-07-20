@@ -11,28 +11,25 @@ import NIOWebSocket
 
 /// Actor-isolated WebSocket connection returned by `RemoteTransportCore`.
 ///
-/// The actor owns the unicast inbound iterator and serializes receives. Writes
-/// use NIO's async writer, which waits for socket writability. Incoming pings
-/// remain observable and receive an RFC 6455 pong automatically.
+/// All access to NIO's inbound stream and outbound writer remains inside the
+/// `executeThenClose` scope that owns the channel. Public operations are queued
+/// by this actor and serviced serially by that scoped task.
 public actor RemoteWebSocketConnection {
-    private var iterator: NIOAsyncChannelInboundStream<
-        WebSocketFrame
-    >.AsyncIterator
-    private let outbound: NIOAsyncChannelOutboundWriter<WebSocketFrame>
+    private enum Request {
+        case send(RemoteWebSocketFrame, CheckedContinuation<Void, any Error>)
+        case receive(CheckedContinuation<RemoteWebSocketFrame?, any Error>)
+        case close(UInt16, String?, CheckedContinuation<Void, any Error>)
+    }
+
     private let allocator: ByteBufferAllocator
     private let lease: RemoteChannelLease
+    private var pendingRequests: [Request] = []
+    private var requestWaiter: CheckedContinuation<Request, Never>?
     private var isReceiving = false
     private var didSendClose = false
     private var isClosed = false
 
-    init(
-        inbound: NIOAsyncChannelInboundStream<WebSocketFrame>,
-        outbound: NIOAsyncChannelOutboundWriter<WebSocketFrame>,
-        allocator: ByteBufferAllocator,
-        lease: RemoteChannelLease
-    ) {
-        iterator = inbound.makeAsyncIterator()
-        self.outbound = outbound
+    init(allocator: ByteBufferAllocator, lease: RemoteChannelLease) {
         self.allocator = allocator
         self.lease = lease
     }
@@ -44,19 +41,12 @@ public actor RemoteWebSocketConnection {
     /// Sends one WebSocket frame. Client frames are always masked as required
     /// by RFC 6455, including control frames.
     public func send(_ frame: RemoteWebSocketFrame) async throws {
+        guard !isClosed else {
+            throw RemoteTransportError.closed
+        }
         try await withTaskCancellationHandler {
-            guard !isClosed else {
-                throw RemoteTransportError.closed
-            }
-            let rawFrame = try makeRawFrame(frame)
-            do {
-                try await outbound.write(rawFrame)
-                if case .close = frame {
-                    didSendClose = true
-                }
-            } catch {
-                lease.close()
-                throw remoteTransportMappedError(error)
+            try await withCheckedThrowingContinuation { continuation in
+                enqueue(.send(frame, continuation))
             }
         } onCancel: {
             lease.close()
@@ -65,28 +55,24 @@ public actor RemoteWebSocketConnection {
 
     /// Receives one frame, or `nil` after a clean peer/channel closure.
     public func receive() async throws -> RemoteWebSocketFrame? {
-        try await withTaskCancellationHandler {
-            guard !isClosed else {
-                return nil
-            }
-            do {
-                guard let rawFrame = try await nextRawFrame() else {
-                    isClosed = true
-                    lease.close()
-                    return nil
+        guard !isClosed else {
+            return nil
+        }
+        guard !isReceiving else {
+            throw RemoteTransportError.concurrentWebSocketReceive
+        }
+        isReceiving = true
+        do {
+            return try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    enqueue(.receive(continuation))
                 }
-                let frame = try await decode(rawFrame)
-                if case .close = frame {
-                    isClosed = true
-                    lease.close()
-                }
-                return frame
-            } catch {
+            } onCancel: {
                 lease.close()
-                throw remoteTransportMappedError(error)
             }
-        } onCancel: {
-            lease.close()
+        } catch {
+            isReceiving = false
+            throw remoteTransportMappedError(error)
         }
     }
 
@@ -100,39 +86,141 @@ public actor RemoteWebSocketConnection {
         guard !isClosed else {
             return
         }
-        do {
-            try await outbound.write(
-                try makeRawFrame(.close(code: code, reason: reason))
-            )
-        } catch {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                enqueue(.close(code, reason, continuation))
+            }
+        } onCancel: {
             lease.close()
-            throw remoteTransportMappedError(error)
         }
-        didSendClose = true
-        isClosed = true
-        lease.close()
     }
 
-    private func nextRawFrame() async throws -> WebSocketFrame? {
-        guard !isReceiving else {
-            throw RemoteTransportError.concurrentWebSocketReceive
-        }
-        isReceiving = true
-        var localIterator = iterator
+    /// Runs inside `NIOAsyncChannel.executeThenClose`. Keeping the iterator as
+    /// a local value avoids sending a non-Sendable iterator across actor tasks.
+    func run(
+        inbound: NIOAsyncChannelInboundStream<WebSocketFrame>,
+        outbound: NIOAsyncChannelOutboundWriter<WebSocketFrame>
+    ) async throws {
+        var iterator = inbound.makeAsyncIterator()
         do {
-            let frame = try await localIterator.next()
-            iterator = localIterator
-            isReceiving = false
-            return frame
+            while let request = await nextRequest() {
+                switch request {
+                case let .send(frame, continuation):
+                    do {
+                        try await outbound.write(
+                            try Self.makeRawFrame(frame, allocator: allocator)
+                        )
+                        if case .close = frame {
+                            didSendClose = true
+                        }
+                        continuation.resume()
+                    } catch {
+                        continuation.resume(throwing: error)
+                        throw error
+                    }
+
+                case let .receive(continuation):
+                    do {
+                        guard let rawFrame = try await iterator.next() else {
+                            isReceiving = false
+                            finish()
+                            continuation.resume(returning: nil)
+                            continue
+                        }
+                        let frame = try await Self.decode(
+                            rawFrame,
+                            outbound: outbound,
+                            allocator: allocator,
+                            didSendClose: didSendClose
+                        )
+                        isReceiving = false
+                        continuation.resume(returning: frame)
+                        if case .close = frame {
+                            finish()
+                        }
+                    } catch {
+                        isReceiving = false
+                        continuation.resume(throwing: error)
+                        throw error
+                    }
+
+                case let .close(code, reason, continuation):
+                    do {
+                        try await outbound.write(
+                            try Self.makeRawFrame(
+                                .close(code: code, reason: reason),
+                                allocator: allocator
+                            )
+                        )
+                        didSendClose = true
+                        continuation.resume()
+                        finish()
+                    } catch {
+                        continuation.resume(throwing: error)
+                        throw error
+                    }
+                }
+            }
         } catch {
-            iterator = localIterator
-            isReceiving = false
+            finish(throwing: error)
             throw error
         }
     }
 
-    private func decode(
-        _ rawFrame: WebSocketFrame
+    func fail(_ error: any Error) {
+        finish(throwing: error)
+    }
+
+    private func enqueue(_ request: Request) {
+        if let requestWaiter {
+            self.requestWaiter = nil
+            requestWaiter.resume(returning: request)
+        } else {
+            pendingRequests.append(request)
+        }
+    }
+
+    private func nextRequest() async -> Request? {
+        guard !isClosed else {
+            return nil
+        }
+        if !pendingRequests.isEmpty {
+            return pendingRequests.removeFirst()
+        }
+        return await withCheckedContinuation { continuation in
+            requestWaiter = continuation
+        }
+    }
+
+    private func finish(throwing error: (any Error)? = nil) {
+        guard !isClosed else {
+            return
+        }
+        isClosed = true
+        lease.close()
+
+        let terminalError = error ?? RemoteTransportError.closed
+        for request in pendingRequests {
+            switch request {
+            case let .send(_, continuation), let .close(_, _, continuation):
+                continuation.resume(throwing: terminalError)
+            case let .receive(continuation):
+                isReceiving = false
+                if error == nil {
+                    continuation.resume(returning: nil)
+                } else {
+                    continuation.resume(throwing: terminalError)
+                }
+            }
+        }
+        pendingRequests.removeAll()
+    }
+
+    private static func decode(
+        _ rawFrame: WebSocketFrame,
+        outbound: NIOAsyncChannelOutboundWriter<WebSocketFrame>,
+        allocator: ByteBufferAllocator,
+        didSendClose: Bool
     ) async throws -> RemoteWebSocketFrame {
         var buffer = rawFrame.data
         if let maskKey = rawFrame.maskKey {
@@ -160,7 +248,9 @@ public actor RemoteWebSocketConnection {
             }
             // RFC 6455 requires a prompt pong with the same payload. Do not hide
             // the ping from callers: heartbeat/pooling code may still observe it.
-            try await outbound.write(try makeRawFrame(.pong(payload)))
+            try await outbound.write(
+                try makeRawFrame(.pong(payload), allocator: allocator)
+            )
             return .ping(payload)
         case .pong:
             return .pong(payload)
@@ -170,7 +260,8 @@ public actor RemoteWebSocketConnection {
             if !didSendClose {
                 try? await outbound.write(
                     try makeRawFrame(
-                        .close(code: close.code ?? 1000, reason: close.reason)
+                        .close(code: close.code ?? 1000, reason: close.reason),
+                        allocator: allocator
                     )
                 )
             }
@@ -182,8 +273,9 @@ public actor RemoteWebSocketConnection {
         }
     }
 
-    private func makeRawFrame(
-        _ frame: RemoteWebSocketFrame
+    private static func makeRawFrame(
+        _ frame: RemoteWebSocketFrame,
+        allocator: ByteBufferAllocator
     ) throws -> WebSocketFrame {
         let opcode: WebSocketOpcode
         let final: Bool
@@ -247,7 +339,7 @@ public actor RemoteWebSocketConnection {
         )
     }
 
-    private func parseClose(_ payload: Data) -> (
+    private static func parseClose(_ payload: Data) -> (
         code: UInt16?,
         reason: String?
     ) {
