@@ -714,16 +714,151 @@ private final class PingContinuationState: @unchecked Sendable {
 }
 #else
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+import Synchronization
 
-/// Linux currently owns one libcurl WebSocket per streamed response, so no
-/// cross-response socket state is retained here.
+/// Keeps the libcurl WebSocket associated with a ChatGPT session alive between
+/// response rounds. ChatGPT's non-persisted `previous_response_id` state is
+/// scoped to that connection, so opening a new socket for every tool round
+/// forces a full conversation replay and defeats prompt-cache reuse.
 public final class ChatGPTSubscriptionWebSocketPool: Sendable {
-    public init() {}
-
-    func closeSession(sessionID: String) {
-        _ = sessionID
+    struct Lease: @unchecked Sendable {
+        let sessionID: String
+        let socket: ChatGPTSubscriptionCurlWebSocket
+        let leaseID: UInt64
+        let isCached: Bool
+        let isReused: Bool
     }
 
-    func closeAll() {}
+    private struct Entry: @unchecked Sendable {
+        let socket: ChatGPTSubscriptionCurlWebSocket
+        var activeLeaseID: UInt64?
+    }
+
+    private struct State: @unchecked Sendable {
+        var entries: [String: Entry] = [:]
+        var sessionGenerations: [String: UInt64] = [:]
+        var closeAllGeneration: UInt64 = 0
+        var nextLeaseID: UInt64 = 0
+
+        mutating func makeLeaseID() -> UInt64 {
+            nextLeaseID &+= 1
+            return nextLeaseID
+        }
+
+        mutating func advanceGeneration(for sessionID: String) {
+            sessionGenerations[sessionID, default: 0] &+= 1
+        }
+    }
+
+    private struct ConnectionReservation: Sendable {
+        let leaseID: UInt64
+        let sessionGeneration: UInt64
+        let closeAllGeneration: UInt64
+        let mayCache: Bool
+    }
+
+    private enum Acquisition: Sendable {
+        case lease(Lease)
+        case reservation(ConnectionReservation)
+    }
+
+    private let state = Mutex(State())
+
+    public init() {}
+
+    func acquire(
+        sessionID: String,
+        request: URLRequest
+    ) async throws -> Lease {
+        let acquisition = state.withLock { state -> Acquisition in
+            let leaseID = state.makeLeaseID()
+            if var entry = state.entries[sessionID],
+               entry.activeLeaseID == nil {
+                entry.activeLeaseID = leaseID
+                state.entries[sessionID] = entry
+                return .lease(
+                    Lease(
+                        sessionID: sessionID,
+                        socket: entry.socket,
+                        leaseID: leaseID,
+                        isCached: true,
+                        isReused: true
+                    )
+                )
+            }
+            return .reservation(
+                ConnectionReservation(
+                    leaseID: leaseID,
+                    sessionGeneration: state.sessionGenerations[sessionID, default: 0],
+                    closeAllGeneration: state.closeAllGeneration,
+                    mayCache: state.entries[sessionID] == nil
+                )
+            )
+        }
+
+        switch acquisition {
+        case let .lease(lease):
+            return lease
+        case let .reservation(reservation):
+            let socket = try await ChatGPTSubscriptionCurlWebSocket.connect(
+                request: request
+            )
+            return state.withLock { state in
+                let canCache = reservation.mayCache
+                    && state.entries[sessionID] == nil
+                    && state.sessionGenerations[sessionID, default: 0]
+                        == reservation.sessionGeneration
+                    && state.closeAllGeneration == reservation.closeAllGeneration
+                if canCache {
+                    state.entries[sessionID] = Entry(
+                        socket: socket,
+                        activeLeaseID: reservation.leaseID
+                    )
+                }
+                return Lease(
+                    sessionID: sessionID,
+                    socket: socket,
+                    leaseID: reservation.leaseID,
+                    isCached: canCache,
+                    isReused: false
+                )
+            }
+        }
+    }
+
+    func release(_ lease: Lease, keepAlive: Bool) {
+        state.withLock { state in
+            guard lease.isCached,
+                  var entry = state.entries[lease.sessionID],
+                  entry.socket === lease.socket,
+                  entry.activeLeaseID == lease.leaseID else {
+                return
+            }
+            if keepAlive {
+                entry.activeLeaseID = nil
+                state.entries[lease.sessionID] = entry
+            } else {
+                state.entries.removeValue(forKey: lease.sessionID)
+                state.advanceGeneration(for: lease.sessionID)
+            }
+        }
+    }
+
+    public func closeSession(sessionID: String) {
+        state.withLock { state in
+            state.entries.removeValue(forKey: sessionID)
+            state.advanceGeneration(for: sessionID)
+        }
+    }
+
+    public func closeAll() {
+        state.withLock { state in
+            state.entries.removeAll()
+            state.closeAllGeneration &+= 1
+        }
+    }
 }
 #endif

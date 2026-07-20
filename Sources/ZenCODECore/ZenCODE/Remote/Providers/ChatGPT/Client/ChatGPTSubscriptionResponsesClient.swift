@@ -375,7 +375,7 @@ public struct ChatGPTSubscriptionResponsesClient {
         body: [String: Any],
         cachedInput: JSONValue?,
         previousResponseID: String?,
-        allowsFreshContinuation: Bool,
+        allowsFreshContinuation _: Bool,
         sessionID: String,
         onEvent: ([String: Any]) async throws -> Void
     ) async throws -> StreamCompletion {
@@ -384,16 +384,25 @@ public struct ChatGPTSubscriptionResponsesClient {
         var didReceiveReplayUnsafeEvent = false
         var didSendContinuationPayload = false
 
-        do {
-            let request = webSocketRequest(sessionID: sessionID)
-            let webSocket = try await ChatGPTSubscriptionCurlWebSocket.connect(
-                request: request
+        let request = webSocketRequest(sessionID: sessionID)
+        let lease = try await webSocketPool.acquire(
+            sessionID: sessionID,
+            request: request
+        )
+        var keepConnection = false
+        defer {
+            webSocketPool.release(
+                lease,
+                keepAlive: keepConnection && didReceiveTerminalEvent
             )
+        }
+
+        do {
             let payloadObject = Self.webSocketRequestPayload(
                 body: body,
                 cachedInput: cachedInput,
                 previousResponseID: previousResponseID,
-                useCachedContinuation: allowsFreshContinuation
+                useCachedContinuation: lease.isReused
             )
             didSendContinuationPayload = payloadObject["previous_response_id"] != nil
             let payload = try JSONValue(jsonObject: payloadObject).jsonData(
@@ -402,11 +411,11 @@ public struct ChatGPTSubscriptionResponsesClient {
             guard let text = String(data: payload, encoding: .utf8) else {
                 throw ChatGPTSubscriptionGenerationError.invalidResponse
             }
-            try await webSocket.send(text: text)
+            try await lease.socket.send(text: text)
 
             while !didReceiveTerminalEvent {
                 try Task.checkCancellation()
-                let data = try await webSocket.receive()
+                let data = try await lease.socket.receive()
                 let objects = try Self.decodedJSONObjectSequence(from: data)
                 for object in objects {
                     if Self.isReplayUnsafeWebSocketEvent(object) {
@@ -423,6 +432,7 @@ public struct ChatGPTSubscriptionResponsesClient {
                     }
                 }
             }
+            keepConnection = true
             return StreamCompletion(responseID: responseID)
         } catch is CancellationError {
             throw CancellationError()

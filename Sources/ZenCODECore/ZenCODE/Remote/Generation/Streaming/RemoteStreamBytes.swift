@@ -14,52 +14,199 @@ public typealias RemoteStreamBytes = AsyncThrowingStream<UInt8, Error>
 /// Supplies the streaming API that FoundationNetworking does not expose as
 /// `URLSession.bytes(for:)` on Linux.
 enum RemoteFoundationNetworkingStream {
+    private static let registry = RemoteFoundationNetworkingStreamRegistry()
+
     static func open(
         for request: URLRequest,
         configuration: URLSessionConfiguration
     ) async throws -> (bytes: RemoteStreamBytes, response: URLResponse) {
         let pair = RemoteStreamBytes.makeStream()
-        let delegate = RemoteFoundationNetworkingStreamDelegate(
+        let session = registry.session(for: configuration)
+        return try await session.open(
+            request: request,
             stream: pair.stream,
             streamContinuation: pair.continuation
         )
-        pair.continuation.onTermination = { @Sendable [weak delegate] _ in
-            delegate?.cancel()
-        }
-        let response = try await delegate.start(
-            request: request,
-            configuration: configuration
-        )
-        return (pair.stream, response)
     }
 }
 
-private final class RemoteFoundationNetworkingStreamDelegate:
+/// `swift-corelibs-foundation` currently crashes while destroying short-lived
+/// HTTPS `URLSession` instances because libcurl can invoke `_MultiHandle`
+/// callbacks from inside its deinitializer. Keep one session alive for each
+/// effective configuration and multiplex its data tasks instead of creating a
+/// session for every streamed response.
+private final class RemoteFoundationNetworkingStreamRegistry:
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var sessions:
+        [ConfigurationKey: RemoteFoundationNetworkingStreamSession] = [:]
+
+    func session(
+        for configuration: URLSessionConfiguration
+    ) -> RemoteFoundationNetworkingStreamSession {
+        let key = ConfigurationKey(configuration)
+        lock.lock()
+        defer { lock.unlock() }
+        if let session = sessions[key] {
+            return session
+        }
+        let session = RemoteFoundationNetworkingStreamSession(
+            configuration: configuration
+        )
+        sessions[key] = session
+        return session
+    }
+
+    private struct ConfigurationKey: Hashable {
+        let value: String
+
+        init(_ configuration: URLSessionConfiguration) {
+            let headers = (configuration.httpAdditionalHeaders ?? [:])
+                .map { "\($0.key)=\($0.value)" }
+                .sorted()
+                .joined(separator: "\n")
+            let proxies = (configuration.connectionProxyDictionary ?? [:])
+                .map { "\($0.key)=\($0.value)" }
+                .sorted()
+                .joined(separator: "\n")
+            let protocolClasses = (configuration.protocolClasses ?? [])
+                .map { NSStringFromClass($0) }
+                .sorted()
+                .joined(separator: "\n")
+            value = [
+                String(configuration.timeoutIntervalForRequest),
+                String(configuration.timeoutIntervalForResource),
+                String(describing: configuration.requestCachePolicy),
+                String(configuration.httpMaximumConnectionsPerHost),
+                String(configuration.allowsCellularAccess),
+                String(configuration.httpShouldSetCookies),
+                headers,
+                proxies,
+                protocolClasses
+            ].joined(separator: "\0")
+        }
+    }
+}
+
+private final class RemoteFoundationNetworkingStreamSession:
     NSObject,
     URLSessionDataDelegate,
     @unchecked Sendable
 {
-    private let stream: RemoteStreamBytes
-    private let streamContinuation: RemoteStreamBytes.Continuation
     private let lock = NSLock()
-    private var responseContinuation: CheckedContinuation<URLResponse, Error>?
-    private var session: URLSession?
-    private var dataTask: URLSessionDataTask?
-    private var didComplete = false
+    private let sessionConfiguration: URLSessionConfiguration
+    private var requests: [Int: RequestState] = [:]
+    private lazy var session = URLSession(
+        configuration: sessionConfiguration,
+        delegate: self,
+        delegateQueue: nil
+    )
 
-    init(
-        stream: RemoteStreamBytes,
-        streamContinuation: RemoteStreamBytes.Continuation
-    ) {
-        self.stream = stream
-        self.streamContinuation = streamContinuation
+    init(configuration: URLSessionConfiguration) {
+        sessionConfiguration = configuration
     }
 
-    func start(
+    func open(
         request: URLRequest,
-        configuration: URLSessionConfiguration
-    ) async throws -> URLResponse {
-        try await withTaskCancellationHandler {
+        stream: RemoteStreamBytes,
+        streamContinuation: RemoteStreamBytes.Continuation
+    ) async throws -> (bytes: RemoteStreamBytes, response: URLResponse) {
+        let dataTask = session.dataTask(with: request)
+        let requestState = RequestState(
+            dataTask: dataTask,
+            streamContinuation: streamContinuation
+        )
+        let taskIdentifier = dataTask.taskIdentifier
+        store(requestState, for: taskIdentifier)
+
+        streamContinuation.onTermination = { @Sendable [weak self] _ in
+            self?.cancel(taskIdentifier: taskIdentifier)
+        }
+
+        let response = try await withTaskCancellationHandler {
+            try await requestState.waitForResponse()
+        } onCancel: {
+            self.cancel(taskIdentifier: taskIdentifier)
+        }
+        return (stream, response)
+    }
+
+    private func store(_ requestState: RequestState, for taskIdentifier: Int) {
+        lock.lock()
+        requests[taskIdentifier] = requestState
+        lock.unlock()
+    }
+
+    private func requestState(for taskIdentifier: Int) -> RequestState? {
+        lock.lock()
+        let requestState = requests[taskIdentifier]
+        lock.unlock()
+        return requestState
+    }
+
+    private func removeRequestState(for taskIdentifier: Int) -> RequestState? {
+        lock.lock()
+        let requestState = requests.removeValue(forKey: taskIdentifier)
+        lock.unlock()
+        return requestState
+    }
+
+    private func cancel(taskIdentifier: Int) {
+        removeRequestState(for: taskIdentifier)?.cancel()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping @Sendable (
+            URLSession.ResponseDisposition
+        ) -> Void
+    ) {
+        guard let requestState = requestState(
+            for: dataTask.taskIdentifier
+        ) else {
+            completionHandler(.cancel)
+            return
+        }
+        completionHandler(
+            requestState.receive(response: response) ? .allow : .cancel
+        )
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive data: Data
+    ) {
+        requestState(for: dataTask.taskIdentifier)?.receive(data: data)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        removeRequestState(for: task.taskIdentifier)?.complete(error: error)
+    }
+
+    private final class RequestState: @unchecked Sendable {
+        private let lock = NSLock()
+        private let dataTask: URLSessionDataTask
+        private let streamContinuation: RemoteStreamBytes.Continuation
+        private var responseContinuation: CheckedContinuation<URLResponse, Error>?
+        private var didComplete = false
+
+        init(
+            dataTask: URLSessionDataTask,
+            streamContinuation: RemoteStreamBytes.Continuation
+        ) {
+            self.dataTask = dataTask
+            self.streamContinuation = streamContinuation
+        }
+
+        func waitForResponse() async throws -> URLResponse {
             try await withCheckedThrowingContinuation { continuation in
                 lock.lock()
                 guard !didComplete, !Task.isCancelled else {
@@ -68,107 +215,70 @@ private final class RemoteFoundationNetworkingStreamDelegate:
                     return
                 }
                 responseContinuation = continuation
-                let session = URLSession(
-                    configuration: configuration,
-                    delegate: self,
-                    delegateQueue: nil
-                )
-                self.session = session
-                let dataTask = session.dataTask(with: request)
-                self.dataTask = dataTask
                 lock.unlock()
                 dataTask.resume()
             }
-        } onCancel: {
-            self.cancel()
         }
-    }
 
-    func cancel() {
-        lock.lock()
-        guard !didComplete else {
+        func receive(response: URLResponse) -> Bool {
+            lock.lock()
+            guard !didComplete else {
+                lock.unlock()
+                return false
+            }
+            let responseContinuation = responseContinuation
+            self.responseContinuation = nil
             lock.unlock()
-            return
+
+            responseContinuation?.resume(returning: response)
+            return true
         }
-        didComplete = true
-        let responseContinuation = responseContinuation
-        self.responseContinuation = nil
-        let dataTask = dataTask
-        self.dataTask = nil
-        let session = session
-        self.session = nil
-        lock.unlock()
 
-        responseContinuation?.resume(throwing: CancellationError())
-        streamContinuation.finish(throwing: CancellationError())
-        dataTask?.cancel()
-        session?.invalidateAndCancel()
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        dataTask: URLSessionDataTask,
-        didReceive response: URLResponse,
-        completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
-    ) {
-        lock.lock()
-        guard !didComplete else {
+        func receive(data: Data) {
+            lock.lock()
+            let shouldYield = !didComplete
             lock.unlock()
-            completionHandler(.cancel)
-            return
+            guard shouldYield else {
+                return
+            }
+            for byte in data {
+                streamContinuation.yield(byte)
+            }
         }
-        let responseContinuation = responseContinuation
-        self.responseContinuation = nil
-        lock.unlock()
 
-        responseContinuation?.resume(returning: response)
-        completionHandler(.allow)
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        dataTask: URLSessionDataTask,
-        didReceive data: Data
-    ) {
-        lock.lock()
-        let shouldYield = !didComplete
-        lock.unlock()
-        guard shouldYield else {
-            return
+        func cancel() {
+            finish(error: CancellationError(), cancelTask: true)
         }
-        for byte in data {
-            streamContinuation.yield(byte)
-        }
-    }
 
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didCompleteWithError error: Error?
-    ) {
-        lock.lock()
-        guard !didComplete else {
+        func complete(error: Error?) {
+            finish(error: error, cancelTask: false)
+        }
+
+        private func finish(error: Error?, cancelTask: Bool) {
+            lock.lock()
+            guard !didComplete else {
+                lock.unlock()
+                return
+            }
+            didComplete = true
+            let responseContinuation = responseContinuation
+            self.responseContinuation = nil
             lock.unlock()
-            return
-        }
-        didComplete = true
-        let responseContinuation = responseContinuation
-        self.responseContinuation = nil
-        self.dataTask = nil
-        self.session = nil
-        lock.unlock()
 
-        if let error {
-            responseContinuation?.resume(throwing: error)
-            streamContinuation.finish(throwing: error)
-        } else if let responseContinuation {
-            let error = URLError(.badServerResponse)
-            responseContinuation.resume(throwing: error)
-            streamContinuation.finish(throwing: error)
-        } else {
-            streamContinuation.finish()
+            if cancelTask {
+                dataTask.cancel()
+            }
+            if let error {
+                responseContinuation?.resume(throwing: error)
+                streamContinuation.finish(throwing: error)
+            } else if let responseContinuation {
+                let responseError = URLError(.badServerResponse)
+                responseContinuation.resume(throwing: responseError)
+                streamContinuation.finish(throwing: responseError)
+            } else {
+                streamContinuation.finish()
+            }
         }
-        session.finishTasksAndInvalidate()
     }
 }
 #else
