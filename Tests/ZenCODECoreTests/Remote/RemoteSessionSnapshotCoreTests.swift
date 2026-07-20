@@ -177,7 +177,7 @@ extension RemoteSessionSnapshotTests {
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let configuration = AgentRuntimeConfiguration(
@@ -198,7 +198,8 @@ extension RemoteSessionSnapshotTests {
                 modelID: "claude-haiku-4-5",
                 chatEndpoint: .responses
             ),
-            urlSession: urlSession
+            transport: fixture.transport,
+            messagesEndpointURLOverride: fixture.messagesURL
         )
         await client.updateToolProviders([
             AgentToolProvider(
@@ -235,7 +236,7 @@ extension RemoteSessionSnapshotTests {
             onEvent: { _ in }
         )
 
-        let requests = RemoteRequestCapturingURLProtocol.capturedRequests()
+        let requests = fixture.capturedRequests()
         let request = try #require(requests.first)
         let body = try request.jsonObject()
         let systemBlocks = try #require(body["system"] as? [[String: Any]])
@@ -359,7 +360,7 @@ extension RemoteSessionSnapshotTests {
         data: {"type":"response.completed","response":{"output":[]}}
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -371,7 +372,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .responses
             ),
             apiKey: nil,
-            urlSession: urlSession,
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL,
             mcpRuntime: await borrowedXcodeMCPRuntime()
         )
 
@@ -382,7 +384,7 @@ extension RemoteSessionSnapshotTests {
             thinkingSelection: nil,
             onEvent: { _ in }
         )
-        let request = try #require(RemoteRequestCapturingURLProtocol.capturedRequests().first)
+        let request = try #require(fixture.capturedRequests().first)
         let body = try request.jsonObject()
         let toolNames = Set(
             ((body["tools"] as? [[String: Any]]) ?? []).compactMap {
@@ -412,7 +414,7 @@ extension RemoteSessionSnapshotTests {
         data: [DONE]
 
         """
-        let urlSession = RemoteRequestCapturingURLProtocol.urlSession(
+        let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
         let client = RemoteGenerationClient(
@@ -424,7 +426,8 @@ extension RemoteSessionSnapshotTests {
                 chatEndpoint: .chatCompletions
             ),
             apiKey: nil,
-            urlSession: urlSession,
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL,
             mcpRuntime: await borrowedXcodeMCPRuntime()
         )
 
@@ -435,7 +438,7 @@ extension RemoteSessionSnapshotTests {
             thinkingSelection: nil,
             onEvent: { _ in }
         )
-        let request = try #require(RemoteRequestCapturingURLProtocol.capturedRequests().first)
+        let request = try #require(fixture.capturedRequests().first)
         let body = try request.jsonObject()
         let toolNames = Set(
             ((body["tools"] as? [[String: Any]]) ?? []).compactMap {

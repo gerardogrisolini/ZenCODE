@@ -6,12 +6,31 @@
 //
 
 import Foundation
-import os
 @testable import ZenCODECore
 import Testing
 
-#if os(macOS)
 extension RemoteSessionSnapshotTests {
+    @Test
+    func chatGPTSubscriptionSSERequestUsesSharedNIOTransportValue() throws {
+        let client = ChatGPTSubscriptionResponsesClient(
+            credentials: chatGPTSubscriptionTestCredentials()
+        )
+        let request = try client.request(
+            for: ["model": "gpt-5.5"],
+            sessionID: "sse-nio-session"
+        )
+
+        #expect(request.method == "POST")
+        #expect(request.timeout == .seconds(600))
+        #expect(request.headers.first {
+            $0.name.caseInsensitiveCompare("Accept") == .orderedSame
+        }?.value == "text/event-stream")
+        #expect(request.headers.first {
+            $0.name.caseInsensitiveCompare("session_id") == .orderedSame
+        }?.value == "sse-nio-session")
+        #expect(request.body != nil)
+    }
+
     @Test
     func chatGPTSubscriptionWebSocketPayloadKeepsCachedContinuationWireSafe() throws {
         let catalog = remoteXcodeToolCatalog()
@@ -320,4 +339,3 @@ extension RemoteSessionSnapshotTests {
         #expect(!ChatGPTSubscriptionGenerationClient.isContextLimitError(rateLimitError))
     }
 }
-#endif

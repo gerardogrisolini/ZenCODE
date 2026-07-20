@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 #if canImport(os)
 import os
 #endif
@@ -307,12 +304,12 @@ extension ChatGPTSubscriptionGenerationClient {
         return Int(remaining.rounded())
     }
 
-    /// Parses subscription usage from the Codex `x-codex-*` response headers,
-    /// reusing the shared `rate_limits` parsing path.
+    /// Parses subscription usage from the Codex `x-codex-*` headers, reusing
+    /// the shared `rate_limits` parsing path.
     static func subscriptionUsage(
-        fromHTTPResponse response: URLResponse
+        fromHeaders headers: RemoteHTTPHeaders
     ) -> DirectAgentSubscriptionUsageStatus? {
-        guard let rateLimits = rateLimitsObject(fromHTTPResponse: response) else {
+        guard let rateLimits = rateLimitsObject(fromHeaders: headers) else {
             return nil
         }
         return subscriptionUsage(from: ["rate_limits": rateLimits])
@@ -322,20 +319,16 @@ extension ChatGPTSubscriptionGenerationClient {
     /// Codex `x-codex-*` response headers so it can flow through the same
     /// parsing path used for the inline `codex.rate_limits` streaming event.
     static func rateLimitsObject(
-        fromHTTPResponse response: URLResponse
+        fromHeaders headers: RemoteHTTPHeaders
     ) -> [String: Any]? {
-        guard let httpResponse = response as? HTTPURLResponse else {
-            return nil
-        }
-
         let primary = rateLimitWindow(
-            in: httpResponse,
+            in: headers,
             usedPercentKey: "x-codex-primary-used-percent",
             windowMinutesKey: "x-codex-primary-window-minutes",
             resetAtKey: "x-codex-primary-reset-at"
         )
         let secondary = rateLimitWindow(
-            in: httpResponse,
+            in: headers,
             usedPercentKey: "x-codex-secondary-used-percent",
             windowMinutesKey: "x-codex-secondary-window-minutes",
             resetAtKey: "x-codex-secondary-reset-at"
@@ -355,30 +348,30 @@ extension ChatGPTSubscriptionGenerationClient {
     }
 
     private static func rateLimitWindow(
-        in response: HTTPURLResponse,
+        in headers: RemoteHTTPHeaders,
         usedPercentKey: String,
         windowMinutesKey: String,
         resetAtKey: String
     ) -> [String: Any]? {
-        guard let usedPercent = headerDouble(in: response, keys: [usedPercentKey]) else {
+        guard let usedPercent = headerDouble(in: headers, keys: [usedPercentKey]) else {
             return nil
         }
         var window: [String: Any] = ["used_percent": usedPercent]
-        if let windowMinutes = headerInt(in: response, keys: [windowMinutesKey]) {
+        if let windowMinutes = headerInt(in: headers, keys: [windowMinutesKey]) {
             window["window_minutes"] = windowMinutes
         }
-        if let resetAt = headerDouble(in: response, keys: [resetAtKey]) {
+        if let resetAt = headerDouble(in: headers, keys: [resetAtKey]) {
             window["reset_at"] = resetAt
         }
         return window
     }
 
     private static func headerDouble(
-        in response: HTTPURLResponse,
+        in headers: RemoteHTTPHeaders,
         keys: [String]
     ) -> Double? {
         for key in keys {
-            guard let raw = response.value(forHTTPHeaderField: key)?
+            guard let raw = headers.firstValue(for: key)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
                   !raw.isEmpty else {
                 continue
@@ -393,11 +386,11 @@ extension ChatGPTSubscriptionGenerationClient {
     }
 
     private static func headerInt(
-        in response: HTTPURLResponse,
+        in headers: RemoteHTTPHeaders,
         keys: [String]
     ) -> Int? {
         for key in keys {
-            guard let raw = response.value(forHTTPHeaderField: key)?
+            guard let raw = headers.firstValue(for: key)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
                   !raw.isEmpty else {
                 continue

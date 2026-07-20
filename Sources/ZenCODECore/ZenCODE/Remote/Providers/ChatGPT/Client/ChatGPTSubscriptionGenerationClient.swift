@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 #if canImport(os)
 import os
 #endif
@@ -115,33 +112,33 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
     static let compactionReserveTokenCount = 20_000
 
     let configuration: AgentRuntimeConfiguration
-    let urlSession: URLSession
+    /// Historical session value retained for source compatibility. It does not
+    /// select or execute the WebSocket transport.
+    let urlSession: RemoteProviderSession
     let toolExecutor: DirectToolExecutor
     let webSocketPool: ChatGPTSubscriptionWebSocketPool
+    let ownsWebSocketPool: Bool
     let connectionScopeID: String?
     var sessions: [String: AgentSession] = [:]
     var sessionIDsByIdentity = ChatGPTSubscriptionGenerationClient.loadStoredSessionIDs()
 
     public init(
         configuration: AgentRuntimeConfiguration,
-        urlSession: URLSession? = nil,
+        /// Historical injection retained while Responses streaming uses only
+        /// the shared NIO transport selected by its WebSocket pool.
+        urlSession: RemoteProviderSession? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
-        webSocketPool: ChatGPTSubscriptionWebSocketPool = ChatGPTSubscriptionWebSocketPool(),
+        webSocketPool: ChatGPTSubscriptionWebSocketPool? = nil,
         connectionScopeID: String? = nil,
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
         subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
     ) {
         self.configuration = configuration
-        self.webSocketPool = webSocketPool
+        self.urlSession = urlSession
+            ?? RemoteProviderSessionCompatibility.generationSession()
+        self.webSocketPool = webSocketPool ?? ChatGPTSubscriptionWebSocketPool()
+        ownsWebSocketPool = webSocketPool == nil
         self.connectionScopeID = connectionScopeID?.nilIfBlank
-        if let urlSession {
-            self.urlSession = urlSession
-        } else {
-            let sessionConfiguration = URLSessionConfiguration.ephemeral
-            sessionConfiguration.timeoutIntervalForRequest = 900
-            sessionConfiguration.timeoutIntervalForResource = 900
-            self.urlSession = URLSession(configuration: sessionConfiguration)
-        }
         self.toolExecutor = DirectToolExecutor(
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,

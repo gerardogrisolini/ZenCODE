@@ -108,8 +108,15 @@ extension ChatGPTSubscriptionGenerationClient {
     }
 
     public func shutdown() async {
+        let sessionIDs = sessions.values.compactMap(\.chatGPTSessionID)
         sessions.removeAll()
-        webSocketPool.closeAll()
+        if ownsWebSocketPool {
+            await webSocketPool.shutdown()
+        } else {
+            for sessionID in sessionIDs {
+                webSocketPool.closeSession(sessionID: sessionID)
+            }
+        }
         await toolExecutor.shutdown()
     }
 

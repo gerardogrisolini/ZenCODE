@@ -2,10 +2,9 @@
 //  ChatGPTSubscriptionResponsesClient.swift
 //  ZenCODE
 //
-//  Created by Gerardo Grisolini on 15/06/26.
+//  Created by Gerardo Grisolini on 20/07/26.
 //
 
-#if os(macOS)
 import Foundation
 import ToolCore
 
@@ -46,9 +45,11 @@ public struct ChatGPTSubscriptionResponsesClient {
 
     public let credentials: CodexAgentCredentials
     public let baseURL: URL
-    public let urlSession: URLSession
-        public let webSocketPool: ChatGPTSubscriptionWebSocketPool
-
+    /// Historical session value retained for source compatibility. It does not
+    /// select or execute WebSocket I/O.
+    public let urlSession: RemoteProviderSession
+    public let webSocketPool: ChatGPTSubscriptionWebSocketPool
+    private let retrySleep: @Sendable (Int) async throws -> Void
 
     static let maxRetries = 3
     static let baseRetryDelayNanoseconds: UInt64 = 1_000_000_000
@@ -58,13 +59,35 @@ public struct ChatGPTSubscriptionResponsesClient {
     public init(
         credentials: CodexAgentCredentials,
         baseURL: URL = URL(string: "https://chatgpt.com/backend-api")!,
-                urlSession: URLSession = .shared,
-        webSocketPool: ChatGPTSubscriptionWebSocketPool = ChatGPTSubscriptionWebSocketPool()
+        /// Historical injection retained for source compatibility. WebSocket
+        /// I/O is NIO-only.
+        urlSession: RemoteProviderSession = .shared,
+        webSocketPool: ChatGPTSubscriptionWebSocketPool =
+            ChatGPTSubscriptionWebSocketPool()
+    ) {
+        self.init(
+            credentials: credentials,
+            baseURL: baseURL,
+            urlSession: urlSession,
+            webSocketPool: webSocketPool,
+            retrySleep: { attempt in
+                try await Self.sleepForRetry(attempt: attempt)
+            }
+        )
+    }
+
+    init(
+        credentials: CodexAgentCredentials,
+        baseURL: URL,
+        urlSession: RemoteProviderSession = .shared,
+        webSocketPool: ChatGPTSubscriptionWebSocketPool,
+        retrySleep: @escaping @Sendable (Int) async throws -> Void
     ) {
         self.credentials = credentials
         self.baseURL = baseURL
         self.urlSession = urlSession
         self.webSocketPool = webSocketPool
+        self.retrySleep = retrySleep
     }
 
     public func streamEvents(
@@ -119,7 +142,7 @@ public struct ChatGPTSubscriptionResponsesClient {
                     // a complete replay instead of a stale previous_response_id.
                     suppressContinuationReplay = true
                 }
-                try await Self.sleepForRetry(attempt: attempt)
+                try await retrySleep(attempt)
                 attempt += 1
             } catch is CancellationError {
                 throw CancellationError()
@@ -127,7 +150,7 @@ public struct ChatGPTSubscriptionResponsesClient {
                 guard Self.shouldRetryTransportError(error, attempt: attempt) else {
                     throw error
                 }
-                try await Self.sleepForRetry(attempt: attempt)
+                try await retrySleep(attempt)
                 attempt += 1
             }
         }
@@ -144,8 +167,7 @@ public struct ChatGPTSubscriptionResponsesClient {
         let request = webSocketRequest(sessionID: sessionID)
         let lease = webSocketPool.acquire(
             sessionID: sessionID,
-            request: request,
-            urlSession: urlSession
+            request: request
         )
         var keepConnection = false
         var responseID: String?
@@ -178,17 +200,16 @@ public struct ChatGPTSubscriptionResponsesClient {
                 guard let text = String(data: payload, encoding: .utf8) else {
                     throw ChatGPTSubscriptionGenerationError.invalidResponse
                 }
-                // Probe reused sockets too: a pooled connection can die
-                // between heartbeats, and a cheap control ping surfaces that
-                // as a retryable failure before the payload is committed.
+
+                // Probe fresh and reused sockets: a pooled connection can die
+                // between heartbeats, and this exposes it before the payload is
+                // committed. The task awaits a matching pong, not just a write.
                 try await webSocketPool.waitUntilReady(lease.task)
-                // Conservatively record the continuation as sent before the
-                // frame goes out: a mid-send failure may still have delivered
-                // it to the server.
+
+                // Conservatively record continuation delivery before the frame
+                // goes out: a mid-send failure may still have delivered it.
                 didSendContinuationPayload = includesContinuation
-                try await lease.task.send(
-                    URLSessionWebSocketTask.Message.string(text)
-                )
+                try await lease.task.send(.text(text))
 
                 while !didReceiveTerminalEvent {
                     try Task.checkCancellation()
@@ -205,7 +226,9 @@ public struct ChatGPTSubscriptionResponsesClient {
                             didReceiveReplayUnsafeEvent = true
                         }
                         if responseID == nil {
-                            responseID = ChatGPTSubscriptionGenerationClient.responseID(from: object)
+                            responseID = ChatGPTSubscriptionGenerationClient.responseID(
+                                from: object
+                            )
                         }
                         try await onEvent(object)
                         if Self.isTerminalEvent(object) {
@@ -214,7 +237,10 @@ public struct ChatGPTSubscriptionResponsesClient {
                     }
                 }
             } onCancel: {
-                lease.task.cancel(with: .goingAway, reason: nil)
+                lease.task.cancel(
+                    with: ChatGPTSubscriptionWebSocketCloseCode.goingAway,
+                    reason: nil
+                )
             }
 
             keepConnection = true
@@ -236,19 +262,22 @@ public struct ChatGPTSubscriptionResponsesClient {
     static func receiveWebSocketMessage(
         from task: any ChatGPTSubscriptionWebSocketTask,
         timeoutNanoseconds: UInt64?
-    ) async throws -> URLSessionWebSocketTask.Message {
+    ) async throws -> ChatGPTSubscriptionWebSocketMessage {
         guard let timeoutNanoseconds, timeoutNanoseconds > 0 else {
             return try await task.receive()
         }
         return try await withThrowingTaskGroup(
-            of: URLSessionWebSocketTask.Message.self
+            of: ChatGPTSubscriptionWebSocketMessage.self
         ) { group in
             group.addTask {
                 try await task.receive()
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: timeoutNanoseconds)
-                task.cancel(with: .normalClosure, reason: nil)
+                task.cancel(
+                    with: ChatGPTSubscriptionWebSocketCloseCode.normalClosure,
+                    reason: nil
+                )
                 throw WebSocketIdleTimeoutError(
                     timeoutNanoseconds: timeoutNanoseconds
                 )
@@ -267,185 +296,14 @@ public struct ChatGPTSubscriptionResponsesClient {
         }
     }
 
-}
-#else
-import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
-import ToolCore
-
-/// libcurl WebSocket implementation used on Linux, where
-/// `URLSessionWebSocketTask` is not exposed by FoundationNetworking.
-public struct ChatGPTSubscriptionResponsesClient {
-    public struct StreamCompletion: Sendable {
-        public let responseID: String?
-    }
-
-    public let credentials: CodexAgentCredentials
-    public let baseURL: URL
-    public let urlSession: URLSession
-    public let webSocketPool: ChatGPTSubscriptionWebSocketPool
-
-    static let maxRetries = 3
-    static let baseRetryDelayNanoseconds: UInt64 = 1_000_000_000
-    static let webSocketBetaHeader = "responses_websockets=2026-02-06"
-
-    private struct WebSocketStreamFailure: Error {
-        let underlying: Error
-        let receivedReplayUnsafeEvent: Bool
-        let didSendContinuationPayload: Bool
-    }
-
-    public init(
-        credentials: CodexAgentCredentials,
-        baseURL: URL = URL(string: "https://chatgpt.com/backend-api")!,
-        urlSession: URLSession = .shared,
-        webSocketPool: ChatGPTSubscriptionWebSocketPool = ChatGPTSubscriptionWebSocketPool()
-    ) {
-        self.credentials = credentials
-        self.baseURL = baseURL
-        self.urlSession = urlSession
-        self.webSocketPool = webSocketPool
-    }
-
-    public func streamEvents(
-        input: JSONValue,
-        model: String,
-        instructions: String,
-        reasoningEffort: String?,
-        textVerbosity: String,
-        sessionID: String,
-        cachedWebSocketInput: JSONValue? = nil,
-        previousResponseID: String? = nil,
-        allowsFreshWebSocketContinuation: Bool = false,
-        toolPayloads: JSONValue = .array([]),
-        maxOutputTokens: Int? = nil,
-        onEvent: ([String: Any]) async throws -> Void
-    ) async throws -> StreamCompletion {
-        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
-            input: input,
-            model: model,
-            instructions: instructions,
-            reasoningEffort: reasoningEffort,
-            textVerbosity: textVerbosity,
-            sessionID: sessionID,
-            toolPayloads: toolPayloads,
-            maxOutputTokens: maxOutputTokens
-        )
-
-        var attempt = 0
-        var suppressContinuationReplay = false
-        while true {
-            do {
-                return try await streamEventsOverWebSocket(
-                    body: body,
-                    cachedInput: suppressContinuationReplay ? nil : cachedWebSocketInput,
-                    previousResponseID: suppressContinuationReplay ? nil : previousResponseID,
-                    allowsFreshContinuation: allowsFreshWebSocketContinuation,
-                    sessionID: sessionID,
-                    onEvent: onEvent
-                )
-            } catch let failure as WebSocketStreamFailure {
-                guard Self.shouldRetryWebSocketFailure(
-                    failure.underlying,
-                    receivedReplayUnsafeEvent: failure.receivedReplayUnsafeEvent,
-                    attempt: attempt
-                ) else {
-                    throw failure.underlying
-                }
-                if failure.didSendContinuationPayload {
-                    suppressContinuationReplay = true
-                }
-                try await Self.sleepForRetry(attempt: attempt)
-                attempt += 1
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                guard Self.shouldRetryTransportError(error, attempt: attempt) else {
-                    throw error
-                }
-                try await Self.sleepForRetry(attempt: attempt)
-                attempt += 1
-            }
-        }
-    }
-
-    private func streamEventsOverWebSocket(
-        body: [String: Any],
-        cachedInput: JSONValue?,
-        previousResponseID: String?,
-        allowsFreshContinuation _: Bool,
-        sessionID: String,
-        onEvent: ([String: Any]) async throws -> Void
-    ) async throws -> StreamCompletion {
-        var responseID: String?
-        var didReceiveTerminalEvent = false
-        var didReceiveReplayUnsafeEvent = false
-        var didSendContinuationPayload = false
-
-        let request = webSocketRequest(sessionID: sessionID)
-        let lease = try await webSocketPool.acquire(
-            sessionID: sessionID,
-            request: request
-        )
-        var keepConnection = false
-        defer {
-            webSocketPool.release(
-                lease,
-                keepAlive: keepConnection && didReceiveTerminalEvent
-            )
-        }
-
-        do {
-            let payloadObject = Self.webSocketRequestPayload(
-                body: body,
-                cachedInput: cachedInput,
-                previousResponseID: previousResponseID,
-                useCachedContinuation: lease.isReused
-            )
-            didSendContinuationPayload = payloadObject["previous_response_id"] != nil
-            let payload = try JSONValue(jsonObject: payloadObject).jsonData(
-                outputFormatting: [.withoutEscapingSlashes]
-            )
-            guard let text = String(data: payload, encoding: .utf8) else {
-                throw ChatGPTSubscriptionGenerationError.invalidResponse
-            }
-            try await lease.socket.send(text: text)
-
-            while !didReceiveTerminalEvent {
-                try Task.checkCancellation()
-                let data = try await lease.socket.receive()
-                let objects = try Self.decodedJSONObjectSequence(from: data)
-                for object in objects {
-                    if Self.isReplayUnsafeWebSocketEvent(object) {
-                        didReceiveReplayUnsafeEvent = true
-                    }
-                    if responseID == nil {
-                        responseID = ChatGPTSubscriptionGenerationClient.responseID(
-                            from: object
-                        )
-                    }
-                    try await onEvent(object)
-                    if Self.isTerminalEvent(object) {
-                        didReceiveTerminalEvent = true
-                    }
-                }
-            }
-            keepConnection = true
-            return StreamCompletion(responseID: responseID)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            if Self.isCancellationError(error) || Task.isCancelled {
-                throw CancellationError()
-            }
-            throw WebSocketStreamFailure(
-                underlying: error,
-                receivedReplayUnsafeEvent: didReceiveReplayUnsafeEvent,
-                didSendContinuationPayload: didSendContinuationPayload
-            )
+    static func webSocketData(
+        from message: ChatGPTSubscriptionWebSocketMessage
+    ) -> Data? {
+        switch message {
+        case let .binary(data):
+            return data
+        case let .text(text):
+            return Data(text.utf8)
         }
     }
 }
-#endif

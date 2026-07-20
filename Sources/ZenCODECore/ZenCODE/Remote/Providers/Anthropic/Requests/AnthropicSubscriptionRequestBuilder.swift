@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 public enum AnthropicSubscriptionRequestBuilder {
     public static func estimatedContextTokenCount(

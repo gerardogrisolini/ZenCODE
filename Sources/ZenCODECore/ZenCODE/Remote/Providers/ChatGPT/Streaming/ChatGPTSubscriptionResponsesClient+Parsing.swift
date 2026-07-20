@@ -2,30 +2,12 @@
 //  ChatGPTSubscriptionResponsesClient+Parsing.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 20/07/26.
+//
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 extension ChatGPTSubscriptionResponsesClient {
-#if os(macOS)
-    static func collectErrorBody(
-        from bytes: URLSession.AsyncBytes,
-        limit: Int = 64 * 1024
-    ) async throws -> String {
-        var data = Data()
-        for try await byte in bytes {
-            if data.count >= limit {
-                break
-            }
-            data.append(byte)
-        }
-        return String(decoding: data, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-#endif
-
     static func decodedJSONObjectSequence(from data: Data) throws -> [[String: Any]] {
         if isDoneMarker(data) {
             return []
@@ -144,21 +126,6 @@ extension ChatGPTSubscriptionResponsesClient {
         }
         return payload == "[DONE]"
     }
-
-#if os(macOS)
-    static func webSocketData(
-        from message: URLSessionWebSocketTask.Message
-    ) -> Data? {
-        switch message {
-        case let .data(data):
-            return data
-        case let .string(text):
-            return text.data(using: .utf8)
-        @unknown default:
-            return nil
-        }
-    }
-#endif
 
     static func isReplayUnsafeWebSocketEvent(_ object: [String: Any]) -> Bool {
         let normalizedType = (object["type"] as? String)

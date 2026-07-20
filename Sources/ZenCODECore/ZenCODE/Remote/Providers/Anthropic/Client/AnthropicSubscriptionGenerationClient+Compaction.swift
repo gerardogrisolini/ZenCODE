@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 extension AnthropicSubscriptionGenerationClient {
     func compactSessionForContextLimitRetry(

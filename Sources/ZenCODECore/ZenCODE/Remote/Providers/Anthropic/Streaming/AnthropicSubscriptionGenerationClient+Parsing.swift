@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 extension AnthropicSubscriptionGenerationClient {
     static func contentBlockText(from object: [String: Any]) -> String? {
@@ -35,30 +32,26 @@ extension AnthropicSubscriptionGenerationClient {
     }
 
     static func validateHTTPResponse(
-        _ response: URLResponse,
-        bytes: RemoteStreamBytes
+        _ response: RemoteHTTPStreamingResponse
     ) async throws {
-        guard let httpResponse = response as? HTTPURLResponse else {
-            return
-        }
-        guard !(200..<300).contains(httpResponse.statusCode) else {
+        guard !(200..<300).contains(response.status) else {
             return
         }
 
-        let body = try await collectErrorBody(from: bytes)
+        let body = try await collectErrorBody(from: response.body)
         var details: [String] = []
-        if httpResponse.statusCode == 429,
-           let resumeMessage = limitReachedMessage(fromHTTPResponse: httpResponse) {
+        if response.status == 429,
+           let resumeMessage = limitReachedMessage(fromHeaders: response.headers) {
             details.append(resumeMessage)
         }
         if let message = errorMessage(fromJSONString: body)?.nilIfBlank {
             details.append(message)
         }
-        if let retryAfter = httpResponse.value(forHTTPHeaderField: "retry-after")?.nilIfBlank {
+        if let retryAfter = response.headers.firstValue(for: "retry-after")?.nilIfBlank {
             details.append("retry-after=\(retryAfter)")
         }
-        if let requestID = httpResponse.value(forHTTPHeaderField: "request-id")?.nilIfBlank
-            ?? httpResponse.value(forHTTPHeaderField: "x-request-id")?.nilIfBlank {
+        if let requestID = response.headers.firstValue(for: "request-id")?.nilIfBlank
+            ?? response.headers.firstValue(for: "x-request-id")?.nilIfBlank {
             details.append("request-id=\(requestID)")
         }
         let bodyDetail = body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -68,20 +61,21 @@ extension AnthropicSubscriptionGenerationClient {
 
         let suffix = details.isEmpty ? "" : ": \(details.joined(separator: "; "))"
         throw RemoteGenerationClientError.remoteFailure(
-            "Anthropic Subscription returned HTTP \(httpResponse.statusCode)\(suffix)"
+            "Anthropic Subscription returned HTTP \(response.status)\(suffix)"
         )
     }
 
     static func collectErrorBody(
-        from bytes: RemoteStreamBytes,
+        from body: RemoteHTTPBody,
         limit: Int = 64 * 1024
     ) async throws -> String {
         var data = Data()
-        for try await byte in bytes {
+        for try await chunk in body {
             if data.count >= limit {
                 break
             }
-            data.append(byte)
+            let remaining = limit - data.count
+            data.append(contentsOf: chunk.prefix(remaining))
         }
         return String(decoding: data, as: UTF8.self)
     }
@@ -114,31 +108,28 @@ extension AnthropicSubscriptionGenerationClient {
     /// Extracts subscription usage from the `anthropic-ratelimit-unified-*` response headers.
     /// The 5h window maps to the daily usage and the 7d window maps to the weekly usage.
     static func subscriptionUsage(
-        fromHTTPResponse response: URLResponse
+        fromHeaders headers: RemoteHTTPHeaders
     ) -> DirectAgentSubscriptionUsageStatus? {
-        guard let httpResponse = response as? HTTPURLResponse else {
-            return nil
-        }
         let dailyUsedPercent = headerDouble(
-            in: httpResponse,
+            in: headers,
             keys: [
                 "anthropic-ratelimit-unified-5h-utilization",
                 "anthropic-ratelimit-unified-5h-used-percent"
             ]
         )
         let weeklyUsedPercent = headerDouble(
-            in: httpResponse,
+            in: headers,
             keys: [
                 "anthropic-ratelimit-unified-7d-utilization",
                 "anthropic-ratelimit-unified-7d-used-percent"
             ]
         )
         let dailyResetsInSeconds = headerResetSeconds(
-            in: httpResponse,
+            in: headers,
             keys: ["anthropic-ratelimit-unified-5h-reset"]
         )
         let weeklyResetsInSeconds = headerResetSeconds(
-            in: httpResponse,
+            in: headers,
             keys: ["anthropic-ratelimit-unified-7d-reset"]
         )
         guard dailyUsedPercent != nil || weeklyUsedPercent != nil else {
@@ -154,11 +145,11 @@ extension AnthropicSubscriptionGenerationClient {
     }
 
     private static func headerDouble(
-        in response: HTTPURLResponse,
+        in headers: RemoteHTTPHeaders,
         keys: [String]
     ) -> Double? {
         for key in keys {
-            guard let raw = response.value(forHTTPHeaderField: key)?
+            guard let raw = headers.firstValue(for: key)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
                   !raw.isEmpty else {
                 continue
@@ -175,11 +166,11 @@ extension AnthropicSubscriptionGenerationClient {
     /// Builds the "subscription resumes at <time>" message for a 429 response,
     /// using the soonest reset hint available across the rate-limit headers.
     static func limitReachedMessage(
-        fromHTTPResponse response: HTTPURLResponse,
+        fromHeaders headers: RemoteHTTPHeaders,
         now: Date = Date()
     ) -> String? {
         var resetDates: [Date] = []
-        if let retryAfter = response.value(forHTTPHeaderField: "retry-after")?
+        if let retryAfter = headers.firstValue(for: "retry-after")?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !retryAfter.isEmpty,
            let date = SubscriptionLimitResetFormatter.resetDate(
@@ -193,7 +184,7 @@ extension AnthropicSubscriptionGenerationClient {
             "anthropic-ratelimit-unified-7d-reset",
             "anthropic-ratelimit-unified-reset"
         ] {
-            guard let raw = response.value(forHTTPHeaderField: key)?
+            guard let raw = headers.firstValue(for: key)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
                   !raw.isEmpty else {
                 continue
@@ -219,11 +210,11 @@ extension AnthropicSubscriptionGenerationClient {
     }
 
     private static func headerResetSeconds(
-        in response: HTTPURLResponse,
+        in headers: RemoteHTTPHeaders,
         keys: [String]
     ) -> Int? {
         for key in keys {
-            guard let raw = response.value(forHTTPHeaderField: key)?
+            guard let raw = headers.firstValue(for: key)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
                   !raw.isEmpty else {
                 continue

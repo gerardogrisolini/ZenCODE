@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 public actor RemoteGenerationClient: AgentRuntimeBackend {
     public struct AgentSession {
@@ -25,16 +22,31 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
     public let configuration: AgentRuntimeConfiguration
     public let provider: AgentRemoteProvider
     public let apiKey: String?
-    public let urlSession: URLSession
+    /// Historical session value retained for source compatibility. It does not
+    /// participate in HTTP or SSE I/O.
+    public let urlSession: RemoteProviderSession
+    /// The shared HTTP/SSE engine. Its lifetime is owned by the composition
+    /// root when an explicitly-owned instance is injected; the default borrows
+    /// the process-wide NIO event-loop group.
+    public let transport: RemoteTransportCore
+    private let ownsTransport: Bool
     public let toolExecutor: DirectToolExecutor
     public var sessions: [String: AgentSession] = [:]
     public var didEmitLoadedModel = false
+    let streamEndpointBaseURLOverride: URL?
 
     public init(
         configuration: AgentRuntimeConfiguration,
         provider: AgentRemoteProvider,
         apiKey: String?,
-        urlSession: URLSession? = nil,
+        /// Historical injection retained for source compatibility. HTTP/SSE
+        /// generation is always performed by `transport`.
+        urlSession: RemoteProviderSession? = nil,
+        transport: RemoteTransportCore? = nil,
+        /// A controlled endpoint base override for deterministic embeddings
+        /// and loopback tests. Provider capability decisions continue to use
+        /// `provider.baseURL`, so the request payload remains provider-accurate.
+        streamEndpointBaseURLOverride: URL? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
         subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
@@ -42,14 +54,12 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         self.configuration = configuration
         self.provider = provider
         self.apiKey = apiKey?.nilIfBlank
-        if let urlSession {
-            self.urlSession = urlSession
-        } else {
-            let sessionConfiguration = URLSessionConfiguration.ephemeral
-            sessionConfiguration.timeoutIntervalForRequest = 900
-            sessionConfiguration.timeoutIntervalForResource = 900
-            self.urlSession = URLSession(configuration: sessionConfiguration)
-        }
+        self.urlSession = urlSession
+            ?? RemoteProviderSessionCompatibility.generationSession()
+        let resolvedTransport = transport ?? RemoteTransportCore()
+        self.transport = resolvedTransport
+        ownsTransport = transport == nil
+        self.streamEndpointBaseURLOverride = streamEndpointBaseURLOverride
         self.toolExecutor = DirectToolExecutor(
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
@@ -167,6 +177,9 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
     public func shutdown() async {
         sessions.removeAll()
         await toolExecutor.shutdown()
+        if ownsTransport {
+            try? await transport.shutdown()
+        }
     }
 
     public func preloadModel(

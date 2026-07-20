@@ -2,13 +2,15 @@
 //  ChatGPTSubscriptionWebSocketPool.swift
 //  ZenCODE
 //
-//  Created by Gerardo Grisolini on 15/06/26.
+//  Created by Gerardo Grisolini on 20/07/26.
 //
 
-#if os(macOS)
 import Foundation
 import Synchronization
 
+/// Keeps the ChatGPT Responses WebSocket associated with a session between
+/// rounds. All platforms use the same NIO adapter; no OS-specific socket path
+/// participates in acquisition, reuse, heartbeats, or fencing.
 public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private struct Entry {
         let task: any ChatGPTSubscriptionWebSocketTask
@@ -54,10 +56,9 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
 
     static let defaultHeartbeatIntervalNanoseconds: UInt64 = 30 * 1_000_000_000
 
-    /// A newly resumed WebSocket can report `ENOTCONN` when the first
-    /// application frame races its HTTP upgrade. Probe it with a control ping
-    /// before sending the response payload, retrying briefly on the same task
-    /// while the handshake finishes.
+    /// A newly started WebSocket can report a transient connection failure if
+    /// the first application frame races the HTTP upgrade. A control ping makes
+    /// the readiness boundary explicit before a Responses payload is committed.
     static let defaultConnectionReadinessAttempts = 3
     static let defaultConnectionReadinessRetryDelayNanoseconds: UInt64 =
         100_000_000
@@ -69,7 +70,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     static let serverMaximumConnectionAge: Duration = .seconds(60 * 60)
 
     /// Retire an idle connection before the server's 60-minute limit so the
-    /// next acquire builds a fresh request with current credentials.
+    /// next acquire builds a fresh upgrade request with current credentials.
     static let defaultMaximumConnectionAge: Duration = .seconds(55 * 60)
 
     private let heartbeatIntervalNanoseconds: UInt64
@@ -77,24 +78,27 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private let monotonicClock: @Sendable () -> ContinuousClock.Instant
     private let heartbeatSleep: @Sendable (UInt64) async throws -> Void
     private let webSocketTaskFactory: @Sendable (
-        URLSession,
-        URLRequest
+        RemoteWebSocketRequest
     ) -> any ChatGPTSubscriptionWebSocketTask
-    private let resumeWebSocketTask: @Sendable (
-        any ChatGPTSubscriptionWebSocketTask
-    ) -> Void
     private let closeWebSocketTask: @Sendable (
         any ChatGPTSubscriptionWebSocketTask
     ) -> Void
+    /// Non-nil only when this pool constructed the NIO transport itself. An
+    /// injected transport remains owned by its embedding composition root.
+    private let ownedTransport: RemoteTransportCore?
     private let state = Mutex(State())
 
     public convenience init() {
-        self.init(heartbeatIntervalNanoseconds: Self.defaultHeartbeatIntervalNanoseconds)
+        self.init(
+            transport: nil,
+            heartbeatIntervalNanoseconds: Self.defaultHeartbeatIntervalNanoseconds
+        )
     }
 
-    /// Internal injection points keep lifetime tests deterministic while the
-    /// public pool API remains configuration-free.
+    /// Internal injection points keep lifetime, fencing, and retry tests fully
+    /// deterministic while production always constructs the NIO adapter.
     init(
+        transport: RemoteTransportCore? = nil,
         heartbeatIntervalNanoseconds: UInt64,
         maximumConnectionAge: Duration =
             ChatGPTSubscriptionWebSocketPool.defaultMaximumConnectionAge,
@@ -104,29 +108,30 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         heartbeatSleep: @escaping @Sendable (UInt64) async throws -> Void = {
             try await Task.sleep(nanoseconds: $0)
         },
-        webSocketTaskFactory: @escaping @Sendable (
-            URLSession,
-            URLRequest
-        ) -> any ChatGPTSubscriptionWebSocketTask = { _, request in
-            ChatGPTSubscriptionNetworkWebSocketTask(request: request)
-        },
-        resumeWebSocketTask: @escaping @Sendable (
-            any ChatGPTSubscriptionWebSocketTask
-        ) -> Void = { task in
-            task.resume()
-        },
+        webSocketTaskFactory: (@Sendable (
+            RemoteWebSocketRequest
+        ) -> any ChatGPTSubscriptionWebSocketTask)? = nil,
         closeWebSocketTask: @escaping @Sendable (
             any ChatGPTSubscriptionWebSocketTask
         ) -> Void = { task in
-            task.cancel(with: .normalClosure, reason: nil)
+            task.cancel(
+                with: ChatGPTSubscriptionWebSocketCloseCode.normalClosure,
+                reason: nil
+            )
         }
     ) {
+        let resolvedTransport = transport ?? RemoteTransportCore()
         self.heartbeatIntervalNanoseconds = max(heartbeatIntervalNanoseconds, 1)
         self.maximumConnectionAge = max(maximumConnectionAge, .zero)
         self.monotonicClock = monotonicClock
         self.heartbeatSleep = heartbeatSleep
-        self.webSocketTaskFactory = webSocketTaskFactory
-        self.resumeWebSocketTask = resumeWebSocketTask
+        ownedTransport = transport == nil ? resolvedTransport : nil
+        self.webSocketTaskFactory = webSocketTaskFactory ?? { request in
+            ChatGPTSubscriptionNIOWebSocketTask(
+                transport: resolvedTransport,
+                request: request
+            )
+        }
         self.closeWebSocketTask = closeWebSocketTask
     }
 
@@ -161,8 +166,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
 
     func acquire(
         sessionID: String,
-        request: URLRequest,
-        urlSession: URLSession
+        request: RemoteWebSocketRequest
     ) -> ChatGPTSubscriptionResponsesClient.WebSocketLease {
         reapInvalidOrExpiredIdleEntries()
         let result = state.withLock { state -> AcquireResult in
@@ -198,11 +202,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                 if !existing.isBusy {
                     let entryToClose = state.entries.removeValue(forKey: sessionID)
                     let leaseID = state.makeToken()
-                    let entry = makeEntry(
-                        request: request,
-                        urlSession: urlSession,
-                        leaseID: leaseID
-                    )
+                    let entry = makeEntry(request: request, leaseID: leaseID)
                     state.entries[sessionID] = entry
                     return AcquireResult(
                         lease: ChatGPTSubscriptionResponsesClient.WebSocketLease(
@@ -218,9 +218,9 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                 }
 
                 // Do not evict an active response, even if its connection has
-                // crossed the lifetime threshold. It will retire on release.
+                // crossed the lifetime threshold. It retires on its own release.
                 let leaseID = state.makeToken()
-                let task = makeWebSocketTask(request: request, urlSession: urlSession)
+                let task = makeWebSocketTask(request: request)
                 state.transientEntries[leaseID] = TransientEntry(
                     sessionID: sessionID,
                     task: task
@@ -239,11 +239,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
             }
 
             let leaseID = state.makeToken()
-            let entry = makeEntry(
-                request: request,
-                urlSession: urlSession,
-                leaseID: leaseID
-            )
+            let entry = makeEntry(request: request, leaseID: leaseID)
             state.entries[sessionID] = entry
             return AcquireResult(
                 lease: ChatGPTSubscriptionResponsesClient.WebSocketLease(
@@ -281,6 +277,8 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                 return ReleaseResult(taskToClose: transient.task)
             }
 
+            // Lease fencing prevents an old deferred release from changing a
+            // later owner's state after the same cached task was reused.
             guard var entry = state.entries[lease.sessionID],
                   entry.task === lease.task,
                   entry.isBusy,
@@ -366,13 +364,22 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         }
     }
 
+    /// Terminal lifecycle operation for a pool that owns its default NIO
+    /// transport. `closeAll()` remains reusable; after `shutdown()` the pool
+    /// must not be used to acquire another connection.
+    public func shutdown() async {
+        closeAll()
+        if let ownedTransport {
+            try? await ownedTransport.shutdown()
+        }
+    }
+
     private func makeEntry(
-        request: URLRequest,
-        urlSession: URLSession,
+        request: RemoteWebSocketRequest,
         leaseID: UInt64
     ) -> Entry {
         let openedAt = monotonicClock()
-        let task = makeWebSocketTask(request: request, urlSession: urlSession)
+        let task = makeWebSocketTask(request: request)
         return Entry(
             task: task,
             openedAt: openedAt,
@@ -384,11 +391,10 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     }
 
     private func makeWebSocketTask(
-        request: URLRequest,
-        urlSession: URLSession
+        request: RemoteWebSocketRequest
     ) -> any ChatGPTSubscriptionWebSocketTask {
-        let task = webSocketTaskFactory(urlSession, request)
-        resumeWebSocketTask(task)
+        let task = webSocketTaskFactory(request)
+        task.resume()
         return task
     }
 
@@ -499,7 +505,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         webSocketTask: any ChatGPTSubscriptionWebSocketTask,
         heartbeatID: UInt64
     ) -> Bool {
-        return state.withLock { state in
+        state.withLock { state in
             let now = monotonicClock()
             guard let entry = state.entries[sessionID],
                   entry.task === webSocketTask,
@@ -519,15 +525,12 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private static func sendPing(
         to task: any ChatGPTSubscriptionWebSocketTask
     ) async throws {
-        try await awaitPing { completion in
-            task.sendPing(pongReceiveHandler: completion)
-        }
+        try await task.sendPing()
     }
 
-    /// Waits until a just-resumed WebSocket can exchange a control frame. This
-    /// deliberately runs before the first response payload is sent, because
-    /// URLSession otherwise may reject that frame while the upgrade is still
-    /// in progress under a burst of parent/sub-agent connections.
+    /// Runs before every response payload, including a reused pooled socket.
+    /// Retrying only retryable connection errors avoids hiding application-level
+    /// upgrade or protocol failures.
     func waitUntilReady(
         _ task: any ChatGPTSubscriptionWebSocketTask
     ) async throws {
@@ -579,7 +582,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                 try await Task.sleep(
                     nanoseconds: defaultConnectionReadinessPingTimeoutNanoseconds
                 )
-                throw URLError(.timedOut)
+                throw RemoteTransportError.timeout
             }
 
             defer {
@@ -588,31 +591,6 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
             guard let _ = try await group.next() else {
                 return
             }
-        }
-    }
-
-    static func awaitPing(
-        _ send: (@escaping @Sendable (Error?) -> Void) -> Void
-    ) async throws {
-        let state = PingContinuationState()
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation {
-                (continuation: CheckedContinuation<Void, Error>) in
-                state.set(continuation)
-                if Task.isCancelled {
-                    state.resume(throwing: CancellationError())
-                    return
-                }
-                send { error in
-                    if let error {
-                        state.resume(throwing: error)
-                    } else {
-                        state.resume()
-                    }
-                }
-            }
-        } onCancel: {
-            state.resume(throwing: CancellationError())
         }
     }
 
@@ -649,18 +627,15 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private static func isReusable(
         _ task: any ChatGPTSubscriptionWebSocketTask
     ) -> Bool {
-        guard task.closeCode == .invalid else {
+        guard task.closeCode == nil else {
             return false
         }
-        // A socket that died without a close frame (connection reset, abrupt
-        // teardown) never updates `closeCode`; its task still transitions to
-        // `.completed`/`.canceling` and must not be handed out again.
+        // A peer reset can lack a close frame, so lifecycle state is as
+        // important as the close code when deciding whether to hand it out.
         switch task.state {
         case .completed, .canceling:
             return false
         case .running, .suspended:
-            return true
-        @unknown default:
             return true
         }
     }
@@ -670,195 +645,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         close(entry.task)
     }
 
-    private func close(
-        _ task: any ChatGPTSubscriptionWebSocketTask
-    ) {
+    private func close(_ task: any ChatGPTSubscriptionWebSocketTask) {
         closeWebSocketTask(task)
     }
 }
-
-private final class PingContinuationState: @unchecked Sendable {
-    private let resumed = Atomic(false)
-    private let continuation = Mutex<CheckedContinuation<Void, Error>?>(nil)
-
-    func set(_ continuation: CheckedContinuation<Void, Error>) {
-        self.continuation.withLock { $0 = continuation }
-    }
-
-    func resume() {
-        resume(with: .success(()))
-    }
-
-    func resume(throwing error: Error) {
-        resume(with: .failure(error))
-    }
-
-    private func resume(with result: Result<Void, Error>) {
-        let continuation = continuation.withLock { $0 }
-        guard let continuation,
-              resumed.compareExchange(
-                  expected: false,
-                  desired: true,
-                  ordering: .relaxed
-              ).exchanged else {
-            return
-        }
-        self.continuation.withLock { $0 = nil }
-        switch result {
-        case .success:
-            continuation.resume()
-        case let .failure(error):
-            continuation.resume(throwing: error)
-        }
-    }
-}
-#else
-import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
-import Synchronization
-
-/// Keeps the libcurl WebSocket associated with a ChatGPT session alive between
-/// response rounds. ChatGPT's non-persisted `previous_response_id` state is
-/// scoped to that connection, so opening a new socket for every tool round
-/// forces a full conversation replay and defeats prompt-cache reuse.
-public final class ChatGPTSubscriptionWebSocketPool: Sendable {
-    struct Lease: @unchecked Sendable {
-        let sessionID: String
-        let socket: ChatGPTSubscriptionCurlWebSocket
-        let leaseID: UInt64
-        let isCached: Bool
-        let isReused: Bool
-    }
-
-    private struct Entry: @unchecked Sendable {
-        let socket: ChatGPTSubscriptionCurlWebSocket
-        var activeLeaseID: UInt64?
-    }
-
-    private struct State: @unchecked Sendable {
-        var entries: [String: Entry] = [:]
-        var sessionGenerations: [String: UInt64] = [:]
-        var closeAllGeneration: UInt64 = 0
-        var nextLeaseID: UInt64 = 0
-
-        mutating func makeLeaseID() -> UInt64 {
-            nextLeaseID &+= 1
-            return nextLeaseID
-        }
-
-        mutating func advanceGeneration(for sessionID: String) {
-            sessionGenerations[sessionID, default: 0] &+= 1
-        }
-    }
-
-    private struct ConnectionReservation: Sendable {
-        let leaseID: UInt64
-        let sessionGeneration: UInt64
-        let closeAllGeneration: UInt64
-        let mayCache: Bool
-    }
-
-    private enum Acquisition: Sendable {
-        case lease(Lease)
-        case reservation(ConnectionReservation)
-    }
-
-    private let state = Mutex(State())
-
-    public init() {}
-
-    func acquire(
-        sessionID: String,
-        request: URLRequest
-    ) async throws -> Lease {
-        let acquisition = state.withLock { state -> Acquisition in
-            let leaseID = state.makeLeaseID()
-            if var entry = state.entries[sessionID],
-               entry.activeLeaseID == nil {
-                entry.activeLeaseID = leaseID
-                state.entries[sessionID] = entry
-                return .lease(
-                    Lease(
-                        sessionID: sessionID,
-                        socket: entry.socket,
-                        leaseID: leaseID,
-                        isCached: true,
-                        isReused: true
-                    )
-                )
-            }
-            return .reservation(
-                ConnectionReservation(
-                    leaseID: leaseID,
-                    sessionGeneration: state.sessionGenerations[sessionID, default: 0],
-                    closeAllGeneration: state.closeAllGeneration,
-                    mayCache: state.entries[sessionID] == nil
-                )
-            )
-        }
-
-        switch acquisition {
-        case let .lease(lease):
-            return lease
-        case let .reservation(reservation):
-            let socket = try await ChatGPTSubscriptionCurlWebSocket.connect(
-                request: request
-            )
-            return state.withLock { state in
-                let canCache = reservation.mayCache
-                    && state.entries[sessionID] == nil
-                    && state.sessionGenerations[sessionID, default: 0]
-                        == reservation.sessionGeneration
-                    && state.closeAllGeneration == reservation.closeAllGeneration
-                if canCache {
-                    state.entries[sessionID] = Entry(
-                        socket: socket,
-                        activeLeaseID: reservation.leaseID
-                    )
-                }
-                return Lease(
-                    sessionID: sessionID,
-                    socket: socket,
-                    leaseID: reservation.leaseID,
-                    isCached: canCache,
-                    isReused: false
-                )
-            }
-        }
-    }
-
-    func release(_ lease: Lease, keepAlive: Bool) {
-        state.withLock { state in
-            guard lease.isCached,
-                  var entry = state.entries[lease.sessionID],
-                  entry.socket === lease.socket,
-                  entry.activeLeaseID == lease.leaseID else {
-                return
-            }
-            if keepAlive {
-                entry.activeLeaseID = nil
-                state.entries[lease.sessionID] = entry
-            } else {
-                state.entries.removeValue(forKey: lease.sessionID)
-                state.advanceGeneration(for: lease.sessionID)
-            }
-        }
-    }
-
-    public func closeSession(sessionID: String) {
-        state.withLock { state in
-            state.entries.removeValue(forKey: sessionID)
-            state.advanceGeneration(for: sessionID)
-        }
-    }
-
-    public func closeAll() {
-        state.withLock { state in
-            state.entries.removeAll()
-            state.closeAllGeneration &+= 1
-        }
-    }
-}
-#endif

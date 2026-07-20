@@ -34,8 +34,7 @@ struct OpenRouterPromptCacheIntegrationTests {
                 toolAuthorizationHandler: nil
             ),
             provider: provider,
-            apiKey: apiKey,
-            urlSession: Self.liveURLSession()
+            apiKey: apiKey
         )
         let events = LivePromptCacheEvents()
         let sessionID = "live-openrouter-cache-\(UUID().uuidString.lowercased())"
@@ -192,12 +191,6 @@ struct OpenRouterPromptCacheIntegrationTests {
         return apiKey
     }
 
-    private static func liveURLSession() -> URLSession {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 180
-        configuration.timeoutIntervalForResource = 240
-        return URLSession(configuration: configuration)
-    }
 }
 
 private actor LivePromptCacheEvents {
