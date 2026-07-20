@@ -156,7 +156,11 @@ extension TerminalChat {
             case .telegramEnabled:
                 return telegramEnabled
             case .voiceEnabled:
+                #if canImport(AVFoundation)
                 return voiceEnabled
+                #else
+                return false
+                #endif
             }
         }
     }

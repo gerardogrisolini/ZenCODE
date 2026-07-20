@@ -115,7 +115,7 @@ extension ZenCODESetupRunner {
     static func setupSectionOptions(
         currentManifest manifest: AgentSettingsManifest?
     ) -> [SetupSectionOption] {
-        [
+        let options: [SetupSectionOption] = [
             SetupSectionOption(
                 section: .providersAndModels,
                 detail: providersAndModelsSetupDetail(manifest)
@@ -151,6 +151,11 @@ extension ZenCODESetupRunner {
             SetupSectionOption(section: .finish, detail: "save and exit"),
             SetupSectionOption(section: .cancel, detail: "discard changes")
         ]
+        #if !canImport(AVFoundation)
+        return options.filter { $0.section != .voice }
+        #else
+        return options
+        #endif
     }
 
     static func setupStatusMarker(_ isReady: Bool, optional: Bool = false) -> String {

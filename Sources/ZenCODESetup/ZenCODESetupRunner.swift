@@ -132,11 +132,16 @@ public enum ZenCODESetupRunner {
     static func runQuickSetup(
         currentManifest existingManifest: AgentSettingsManifest?
     ) async throws -> AgentSettingsManifest {
+        #if canImport(AVFoundation)
+        let voiceHint = " and voice"
+        #else
+        let voiceHint = ""
+        #endif
         AgentOutput.standardError.writeString(
             """
 
             Quick setup configures a remote provider and its default model.
-            Advanced options like Telegram and voice can be enabled later from zen --setup.
+            Advanced options like Telegram\(voiceHint) can be enabled later from zen --setup.
 
             """
         )

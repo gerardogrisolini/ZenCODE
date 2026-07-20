@@ -89,7 +89,12 @@ extension ZenCODESetupRunner {
             .flatMap { $0.thinkingSelection(for: manifest.selectedThinkingSelection)?.displayTitle }
             ?? "default"
         let telegramStatus = manifest.telegram?.isEnabled == true ? "enabled" : "disabled"
+        #if canImport(AVFoundation)
         let voiceStatus = manifest.voice?.isConfigured == true ? "enabled" : "disabled"
+        let voiceSummary = "\n  Local voice tools: \(voiceStatus)"
+        #else
+        let voiceSummary = ""
+        #endif
         let agentsDetail = agentsSetupDetail()
 
         AgentOutput.standardError.writeString(
@@ -101,8 +106,7 @@ extension ZenCODESetupRunner {
               Default model: \(selectedModelTitle)
               Default thinking: \(thinkingTitle)
               Agents: \(agentsDetail)
-              Telegram remote control: \(telegramStatus)
-              Local voice tools: \(voiceStatus)
+              Telegram remote control: \(telegramStatus)\(voiceSummary)
 
             Files:
               settings.json: \(settingsWillBeWritten ? "will be updated" : "unchanged")
