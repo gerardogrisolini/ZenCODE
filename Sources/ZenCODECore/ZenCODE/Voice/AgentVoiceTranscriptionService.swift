@@ -120,11 +120,18 @@ public actor AgentVoiceTranscriptionService {
             request.requiresOnDeviceRecognition = true
         }
 
+        // SFSpeechRecognizer holds only a weak reference to the recognition task.
+        // If the task is not retained it is deallocated (and cancelled) as soon as
+        // this closure returns, producing an empty final transcript. Retain it in a
+        // holder captured by the result handler, then clear it on completion to break
+        // the resulting retain cycle.
         return try await withCheckedThrowingContinuation { continuation in
             let resumeState = ResumeGuard()
-            recognizer.recognitionTask(with: request) { result, error in
+            let holder = RecognitionTaskHolder()
+            holder.task = recognizer.recognitionTask(with: request) { result, error in
                 if let error {
                     if resumeState.consume() {
+                        holder.task = nil
                         continuation.resume(throwing: AgentVoiceTranscriptionError.recognitionFailed(
                             error.localizedDescription
                         ))
@@ -135,6 +142,7 @@ public actor AgentVoiceTranscriptionService {
                     return
                 }
                 if resumeState.consume() {
+                    holder.task = nil
                     continuation.resume(returning: result.bestTranscription.formattedString)
                 }
             }
@@ -178,6 +186,13 @@ private final class ResumeGuard: Sendable {
         }
     }
 }
+
+#if canImport(Speech)
+/// Strongly retains a speech recognition task for the duration of recognition.
+private final class RecognitionTaskHolder: @unchecked Sendable {
+    var task: SFSpeechRecognitionTask?
+}
+#endif
 
 public enum AgentVoiceTranscriptionError: LocalizedError, Sendable, Equatable {
     case missingConfiguration
