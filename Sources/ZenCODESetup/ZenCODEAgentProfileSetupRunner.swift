@@ -126,8 +126,8 @@ public enum ZenCODEAgentProfileSetupRunner {
     }
 
     static func preparedAgentsForSave(_ agents: [AgentProfile]) -> [AgentProfile] {
-                AgentProfileStore.normalizedAgentsForSave(
-            ensureRequiredDefaultAgents(
+        AgentProfileStore.normalizedAgentsForSave(
+            ensureDeveloperAgent(
                 in: uniqueAgents(agents)
             )
         )
@@ -154,11 +154,16 @@ public enum ZenCODEAgentProfileSetupRunner {
                     value: 1,
                     title: "Add agent",
                     detail: "create a custom agent"
+                ),
+                TerminalCheckboxMenuItem(
+                    value: 2,
+                    title: "Delete configured agents",
+                    detail: "select agents to delete"
                 )
             ]
             items.append(contentsOf: agents.enumerated().map { index, agent in
                 TerminalCheckboxMenuItem(
-                    value: index + 2,
+                    value: index + 3,
                     title: agent.displayName,
                     detail: agentSummary(agent),
                     groupTitle: "Edit"
@@ -177,7 +182,16 @@ public enum ZenCODEAgentProfileSetupRunner {
                 agents.append(try readAgent(defaultAgent: nil))
                 continue
             }
-            let index = choice - 2
+            if choice == 2 {
+                let deletedAgentIndexes = promptAgentIndexes(agents)
+                if !deletedAgentIndexes.isEmpty {
+                    agents = agents.enumerated()
+                        .filter { !deletedAgentIndexes.contains($0.offset) }
+                        .map(\.element)
+                }
+                continue
+            }
+            let index = choice - 3
             guard agents.indices.contains(index) else {
                 continue
             }
@@ -185,6 +199,25 @@ public enum ZenCODEAgentProfileSetupRunner {
         }
     }
 
+    static func promptAgentIndexes(_ agents: [AgentProfile]) -> Set<Int> {
+        ZenCODESetupRunner.promptSelectionIndexes(
+            title: "Delete configured agents",
+            items: agentDeletionItems(agents)
+        )
+    }
+
+    static func agentDeletionItems(_ agents: [AgentProfile]) -> [TerminalCheckboxMenuItem<Int>] {
+        agents.enumerated().compactMap { index, agent in
+            guard !isRequiredDeveloperAgent(agent) else {
+                return nil
+            }
+            return TerminalCheckboxMenuItem(
+                value: index,
+                title: agent.displayName,
+                detail: agentSummary(agent)
+            )
+        }
+    }
 
     private static func readAgent(defaultAgent: AgentProfile?) throws -> AgentProfile {
         let name = try promptString(

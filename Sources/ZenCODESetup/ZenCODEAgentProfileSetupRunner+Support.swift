@@ -41,40 +41,17 @@ extension ZenCODEAgentProfileSetupRunner {
         return result
     }
 
-        static func ensureRequiredDefaultAgents(in agents: [AgentProfile]) -> [AgentProfile] {
-        var result = agents
-        let defaults = AgentProfileStore.defaultProfiles()
-        for defaultAgent in defaults where requiredDefaultAgentNames.contains(agentSetupNameKey(defaultAgent.name)) {
-            guard !containsAgent(named: defaultAgent.name, in: result) else {
-                continue
-            }
-            result.insert(defaultAgent, at: requiredDefaultAgentInsertIndex(for: defaultAgent, in: result))
+    static func ensureDeveloperAgent(in agents: [AgentProfile]) -> [AgentProfile] {
+        guard !containsAgent(named: AgentProfileStore.developerAgentName, in: agents),
+              let developer = AgentProfileStore.defaultProfiles().first(where: isRequiredDeveloperAgent)
+        else {
+            return agents
         }
-        return result
+        return [developer] + agents
     }
 
-    static var requiredDefaultAgentNames: Set<String> {
-                Set([
-            AgentProfileStore.developerAgentName,
-            AgentProfileStore.builderAgentName,
-            "Minimal",
-            AgentProfileStore.xcodeAgentName,
-            AgentProfileStore.reviewerAgentName,
-            AgentProfileStore.reporterAgentName,
-            AgentProfileStore.plannerAgentName
-        ].map(agentSetupNameKey))
-    }
-
-    static func requiredDefaultAgentInsertIndex(
-        for defaultAgent: AgentProfile,
-        in agents: [AgentProfile]
-    ) -> Int {
-        let preferredOrder = AgentProfileStore.defaultProfiles().map { agentSetupNameKey($0.name) }
-        let defaultAgentOrder = preferredOrder.firstIndex(of: agentSetupNameKey(defaultAgent.name)) ?? 0
-        return agents.firstIndex { agent in
-            let agentOrder = preferredOrder.firstIndex(of: agentSetupNameKey(agent.name)) ?? Int.max
-            return agentOrder > defaultAgentOrder
-        } ?? agents.count
+    static func isRequiredDeveloperAgent(_ agent: AgentProfile) -> Bool {
+        agentSetupNameKey(agent.name) == agentSetupNameKey(AgentProfileStore.developerAgentName)
     }
 
     static func containsAgent(named name: String, in agents: [AgentProfile]) -> Bool {

@@ -13,13 +13,8 @@ import Testing
 @Suite
 struct ZenCODEAgentProfileSetupRunnerTests {
     @Test
-    func setupPreparationPreservesCustomAgentsAndAddsRequiredDefaults() throws {
+    func setupPreparationPreservesCustomAgentsAndRestoresOnlyDeveloper() throws {
         let existingAgents = [
-            AgentProfile(
-                id: AgentProfileStore.developerAgentID.uuidString,
-                name: AgentProfileStore.developerAgentName,
-                tools: AgentProfileStore.developerToolNames
-            ),
             AgentProfile(
                 id: "11111111-1111-1111-1111-111111111111",
                 name: "Custom",
@@ -29,14 +24,12 @@ struct ZenCODEAgentProfileSetupRunnerTests {
 
         let prepared = ZenCODEAgentProfileSetupRunner.preparedAgentsForSave(existingAgents)
         let names = Set(prepared.map(\.name))
-        let minimal = try #require(prepared.first { $0.name == "Minimal" })
-        let reporter = try #require(prepared.first { $0.name == AgentProfileStore.reporterAgentName })
-        let planner = try #require(prepared.first { $0.name == AgentProfileStore.plannerAgentName })
+        let developer = try #require(
+            prepared.first { $0.name == AgentProfileStore.developerAgentName }
+        )
 
-        #expect(names == ["Developer", "Custom", "Minimal", "Builder", "Reviewer", "Reporter", "Planner"])
-        #expect(minimal.tools == AgentProfileStore.minimalToolNames)
-        #expect(reporter.tools == AgentProfileStore.reporterToolNames)
-        #expect(planner.tools == AgentProfileStore.plannerToolNames)
+        #expect(names == ["Developer", "Custom"])
+        #expect(developer.tools == AgentProfileStore.developerToolNames)
     }
 
     @Test
@@ -45,6 +38,27 @@ struct ZenCODEAgentProfileSetupRunnerTests {
             ZenCODEAgentProfileSetupRunner.recommendedAgentCount
                 == AgentProfileStore.defaultProfiles().count
         )
+    }
+
+    @Test
+    func setupAgentDeletionItemsUseTheStandardMultiSelectionLayout() {
+        let developer = AgentProfile(
+            id: AgentProfileStore.developerAgentID.uuidString,
+            name: AgentProfileStore.developerAgentName,
+            tools: AgentProfileStore.developerToolNames
+        )
+        let custom = AgentProfile(
+            id: "11111111-1111-1111-1111-111111111111",
+            name: "Custom",
+            tools: AgentProfileStore.developerToolNames
+        )
+
+        let items = ZenCODEAgentProfileSetupRunner.agentDeletionItems([developer, custom])
+
+        #expect(items.map(\.value) == [1])
+        #expect(items.map(\.title) == ["Custom"])
+        #expect(items.map(\.detail) == [ZenCODEAgentProfileSetupRunner.agentSummary(custom)])
+        #expect(items.allSatisfy { $0.groupTitle == nil })
     }
 
     @Test
