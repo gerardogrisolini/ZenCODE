@@ -168,7 +168,7 @@ zen --skills "review,swift"
 
 ### Checkpoint Trees
 
-Every session stores its conversation as a **tree of checkpoint entries** alongside the flat message history. Each entry (message, checkpoint marker, branch summary, model change) is linked to its parent via an entry ID, so you can branch from any point and explore alternatives without losing the original path.
+Every saved session stores its conversation as a **tree of entries** alongside the flat message history. The initial history is a linear tree: every message is an entry, even if you never create a manual checkpoint. A manual checkpoint is only a labelled marker that makes an important position easier to find. Entries are linked to their parent via an entry ID, so you can branch from any point and explore alternatives without losing the original path.
 
 ```text
 /sessions tree                   # show the checkpoint tree (with entry IDs)
@@ -182,11 +182,18 @@ Every session stores its conversation as a **tree of checkpoint entries** alongs
 
 The tree is visualised as a flat outline: single-child chains stay at the same indentation level, branch connectors (`├─`/`└─`) appear only where the tree actually forks, and `← active` marks the current position.
 
-**In-place branching** with `/sessions restore` navigates the active session to an earlier checkpoint. Messages you send after restore form a new branch in the tree. The original path is preserved and visible in `/sessions tree`. Run it without an argument to choose the restore point from an interactive picker with the active leaf preselected.
+**In-place branching** with `/sessions restore` navigates the active session to an earlier entry. It does not require a manually labelled checkpoint: `/sessions restore` without an argument opens an interactive picker containing all entries in the saved session, including ordinary message entries. Messages you send after restoring form a new branch in the tree. The original path is preserved and remains visible in `/sessions tree`; selecting the current active entry simply leaves the conversation at its current position.
 
-To split a conversation into a separate file, restore to the desired point and then `/sessions save <new-name>`: the new snapshot keeps the full checkpoint tree while the original session file stays unchanged.
+Restore changes the active runtime session, but it does **not** immediately overwrite the saved session on disk. After inspecting or continuing from the restored point, run `/sessions save` to persist the new active position and branch. Until then, the previously saved snapshot remains unchanged. Restore reloads the saved snapshot associated with the active session, so save first if the current conversation contains messages or other state that must not be discarded:
 
-> Checkpoints created with `/sessions checkpoint` are in-memory until you run `/sessions save`. Run `/sessions save` before `/sessions restore` to persist them.
+```text
+/sessions save                   # preserve the current state first
+/sessions restore                # choose a previous entry and branch
+```
+
+To split a conversation into a separate file, restore to the desired point and then `/sessions <new-name>`: the new snapshot keeps the full checkpoint tree while the original session file stays unchanged.
+
+> Checkpoints created with `/sessions checkpoint` are in-memory until you run `/sessions save`. Run `/sessions save` before `/sessions restore` if you want a newly created manual checkpoint to be available after reloading the saved session.
 
 ### Session Format
 
