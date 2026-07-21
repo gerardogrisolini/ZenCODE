@@ -42,11 +42,9 @@ extension TerminalChat {
             lines.insert("Agent: \(selectedAgent.displayName)", at: 1)
         }
 
-        let selectedSkills = Self.renderSelectedSkills(selectedPromptSkills())
+        let activeSkills = Self.renderActiveSkills(selectedPromptSkills())
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !selectedSkillIDs.isEmpty {
-            lines.append(selectedSkills)
-        }
+        lines.append(activeSkills)
 
         let commands = "Commands: \(visibleCommandNamesForCurrentAgent().joined(separator: ", "))"
 
@@ -133,6 +131,17 @@ extension TerminalChat {
             .map(\.title)
             .joined(separator: ", ")
         return "Selected skills: \(renderedSkills)\n"
+    }
+
+    public static func renderActiveSkills(_ skills: [PromptSkill]) -> String {
+        guard !skills.isEmpty else {
+            return "Active skills: none\n"
+        }
+
+        let renderedSkills = skills
+            .map(\.title)
+            .joined(separator: ", ")
+        return "Active skills: \(renderedSkills)\n"
     }
 
     public static func renderToolSelectionUsage() -> String {
