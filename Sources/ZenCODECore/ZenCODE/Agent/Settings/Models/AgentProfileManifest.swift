@@ -636,15 +636,6 @@ public enum AgentProfileStore {
                 tools: minimalToolNames
             ),
             AgentProfile(
-                id: xcodeAgentID.uuidString,
-                name: xcodeAgentName,
-                instructions: """
-                Xcode agent. Use ACP from Xcode, prefer Xcode-native tools for Apple project navigation, editing, diagnostics, builds, tests, previews, and device verification.
-                """,
-                symbolName: "hammer.circle",
-                tools: xcodeToolNames
-            ),
-            AgentProfile(
                 id: reviewerAgentID.uuidString,
                 name: reviewerAgentName,
                 instructions: """

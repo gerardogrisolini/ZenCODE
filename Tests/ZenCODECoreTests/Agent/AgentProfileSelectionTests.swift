@@ -27,11 +27,11 @@ extension AgentConfigurationTests {
         let developerProfile = try #require(profiles["Developer"])
         let minimalProfile = try #require(profiles["Minimal"])
         let builderProfile = try #require(profiles["Builder"])
-        let xcodeProfile = try #require(profiles["Xcode"])
         let reviewerProfile = try #require(profiles["Reviewer"])
         let reporterProfile = try #require(profiles["Reporter"])
         let plannerProfile = try #require(profiles["Planner"])
-        #expect(profiles.count == 7)
+        #expect(profiles.count == 6)
+        #expect(profiles["Xcode"] == nil)
         #expect(reviewerProfile.tools == AgentProfileStore.reviewerToolNames)
         #expect(reviewerProfile.instructions?.contains("Reviewer agent") == true)
         #expect(!reviewerProfile.tools.contains("sub-agents"))
@@ -58,7 +58,7 @@ extension AgentConfigurationTests {
             !TerminalToolSelectionCatalog.selectionKeys(for: $0, items: toolSelectionItems).isEmpty
         })
 
-        for profile in profiles.values where profile.name != "Xcode" && profile.name != "Planner" {
+        for profile in profiles.values where profile.name != "Planner" {
             #expect(!profile.tools.contains(xcodeKey))
             #expect(!profile.tools.contains(figmaKey))
             #expect(profile.tools.contains("files"))
@@ -83,9 +83,6 @@ extension AgentConfigurationTests {
         #expect(!minimalProfile.tools.contains("sub-agents"))
         #expect(minimalProfile.tools == AgentProfileStore.minimalToolNames)
         #expect(minimalProfile.instructions?.contains("Minimal agent") == true)
-        #expect(xcodeProfile.tools == AgentProfileStore.xcodeToolNames)
-        #expect(xcodeProfile.tools == ["shell", "memory", webKey])
-        #expect(xcodeProfile.instructions?.contains("Xcode agent") == true)
     }
 
     @Test
@@ -97,11 +94,11 @@ extension AgentConfigurationTests {
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Developer"])).contains("General software development"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Minimal"])).contains("Minimal tools"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Builder"])).contains("Create, build"))
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Xcode"])).contains("ACP agent for Xcode"))
+        #expect(profiles["Xcode"] == nil)
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reviewer"])).contains("Read-only reviewer"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reporter"])).contains("evidence-based reports"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Planner"])).contains("Read-only planner"))
-        #expect(profiles.count == 7)
+        #expect(profiles.count == 6)
 
         let customAgent = AgentProfile(
             id: "custom",
