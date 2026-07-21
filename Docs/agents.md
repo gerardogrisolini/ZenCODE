@@ -41,7 +41,6 @@ Select a profile with `/agents <name>` or `--agent <name>` at launch. Switching 
 | `Developer` | General development and coordination | coding + web + sub-agents |
 | `Builder` | Swift feature packages | coding + web |
 | `Minimal` | Essential tools, brief replies | shell, files, text |
-| `Xcode` | Xcode-native via ACP | shell, memory, web |
 | `Reviewer` | Read-only code review | coding without shell |
 | `Reporter` | Code analysis and evidence-based reports | files, search, text, git |
 | `Planner` | Read-only planning | files, search, text, git, memory, web |
@@ -84,13 +83,25 @@ again.
 | No bindings; explicit `model` / `modelID` | Rejected: the profile has no authorized binding for an explicit model. |
 
 The fallback preserves existing manual configurations; it is not equivalent to
-a binding. Associate bindings when a coordinator must deliberately choose a
-profile/model pair, compare capability to task complexity, or apply
-binding-specific thinking settings. An explicit model without a resolved
-profile, or a model not associated with that profile, is also rejected before
-the task is claimed.
+a binding. Associate bindings when a coordinator must deliberately:
 
-Write authority is determined by the sub-agent's effective tool allowlist. When a profile resolves, its configured tools are the child grant and `toolNames` can only narrow that grant. Only when no profile resolves does the child inherit the parent session's enabled tools, again narrowed by `toolNames`. A child bound to a task additionally receives the intrinsic `tasks.list`, `tasks.get`, and `tasks.update` tools needed to report its execution attempt. `/plan` and `/review` explicitly narrow their selected profile to read-only tools. `/workflow` delegates implementation work with the selected sub-agent profile's tools, so that profile must include the necessary editing tools.
+- choose a profile/model pair,
+- compare capability to task complexity, or
+- apply binding-specific thinking settings.
+
+An explicit model without a resolved profile, or a model not associated with
+that profile, is also rejected before the task is claimed.
+
+Write authority is determined by the sub-agent's **effective tool allowlist**, resolved as follows:
+
+- **When a profile resolves,** its configured tools are the child grant, and `toolNames` can only narrow that grant.
+- **When no profile resolves,** the child inherits the parent session's enabled tools, again narrowed by `toolNames`.
+- **A child bound to a task** additionally receives the intrinsic `tasks.list`, `tasks.get`, and `tasks.update` tools needed to report its execution attempt.
+
+Command-specific behavior builds on these rules:
+
+- `/plan` and `/review` explicitly narrow their selected profile to read-only tools.
+- `/workflow` delegates implementation work with the selected sub-agent profile's tools, so that profile must include the necessary editing tools.
 
 ## Capability Routing
 
@@ -117,7 +128,14 @@ The coordinator must never select a profile or binding by capability alone. Capa
 
 Coordinated multi-step work is tracked by the session task graph (`SessionTaskOrchestrator`). The coordinator creates tasks with dependencies, selects runnable work with `tasks.list`, and assigns delegated tasks by passing `taskID` to `agent.create` for atomic claims. A sub-agent joins a graph only at creation time; taskless agents are for single self-contained lookups.
 
-`/workflow <goal>` automates this pattern: it creates an active workflow graph, the current agent adds its task definitions with `tasks.create`, delegates every task to the best-matching sub-agent via `agent.create(taskID:)`, and reviews results. Workflow tasks must use `execution.executor: sub_agent`; the orchestrator rejects coordinator task attempts without narrowing the coordinator's normal tool grant. After negative validation, the coordinator records failure, retries the task, and creates a new task-bound agent rather than messaging the completed agent. Unlike `/plan`, there is no separate Planner sub-agent or approval step — the current agent is the sole planner, coordinator, and final reviewer. See the [zen.md](zen.md) task orchestration section for details.
+`/workflow <goal>` automates this pattern:
+
+1. It creates an active workflow graph.
+2. The current agent adds its task definitions with `tasks.create`.
+3. It delegates every task to the best-matching sub-agent via `agent.create(taskID:)`.
+4. It reviews the results.
+
+Workflow tasks must use `execution.executor: sub_agent`; the orchestrator rejects coordinator task attempts without narrowing the coordinator's normal tool grant. After negative validation, the coordinator records failure, retries the task, and creates a new task-bound agent rather than messaging the completed agent. Unlike `/plan`, there is no separate Planner sub-agent or approval step — the current agent is the sole planner, coordinator, and final reviewer. See the [zen.md](zen.md) task orchestration section for details.
 
 ## Setup Parameters
 
