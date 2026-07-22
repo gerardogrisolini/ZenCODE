@@ -78,6 +78,8 @@ struct DirectToolDestructiveGatingTests {
             allowedToolNames: nil
         )
 
+        #expect(result.status == .permissionDenied)
+        #expect(result.isPermissionDenied)
         #expect(result.output.contains("Operation cancelled."))
         #expect(result.output.contains("local.delete"))
         #expect(FileManager.default.fileExists(atPath: fileURL.path))

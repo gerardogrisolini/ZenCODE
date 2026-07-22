@@ -15,11 +15,14 @@ public actor DirectToolExecutor {
 
     public enum DirectToolExecutorError: LocalizedError {
         case toolNotAllowed(String)
+        case authorizationDenied(String)
 
         public var errorDescription: String? {
             switch self {
             case let .toolNotAllowed(toolName):
                 return "The tool '\(toolName)' is not enabled for this agent session."
+            case let .authorizationDenied(output):
+                return output
             }
         }
     }
@@ -248,6 +251,15 @@ public actor DirectToolExecutor {
                 modelOutput: modelOutput(from: output, toolName: toolCall.name)
             )
         } catch {
+            if let executorError = error as? DirectToolExecutorError,
+               case let .authorizationDenied(denialOutput) = executorError {
+                return DirectAgentToolResult(
+                    output: truncated(denialOutput),
+                    summary: summary(from: denialOutput),
+                    modelOutput: modelOutput(from: denialOutput, toolName: toolCall.name),
+                    status: .permissionDenied
+                )
+            }
             let output = "Tool error: \(error.localizedDescription)"
             return DirectAgentToolResult(
                 output: output,
@@ -268,6 +280,10 @@ public actor DirectToolExecutor {
         }
         if let executorError = error as? DirectToolExecutorError,
            case .toolNotAllowed = executorError {
+            return true
+        }
+        if let executorError = error as? DirectToolExecutorError,
+           case .authorizationDenied = executorError {
             return true
         }
         if let mcpError = error as? MCPClientError,

@@ -53,6 +53,36 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func compactPermissionDeniedCompletionUsesWarningInsteadOfSuccessIcon() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let toolCall = DirectAgentToolCall(
+            id: "denied-local-exec",
+            name: "local.exec",
+            argumentsObject: ["command": "whoami"],
+            argumentsJSON: #"{"command":"whoami"}"#
+        )
+
+        await renderer.writeToolCallStarted(toolCall)
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(
+                output: "Command execution cancelled.",
+                summary: "Command execution cancelled.",
+                status: .permissionDenied
+            )
+        )
+
+        let completionText = await renderer.capturedWriteEvents()
+            .dropFirst(eventCountBeforeCompletion)
+            .map(\.text)
+            .joined()
+
+        #expect(completionText.contains("⚠️"))
+        #expect(!completionText.contains("✅"))
+    }
+
+    @Test
     func compactCompletionKeepsActiveStyleWhenDetailLevelChanges() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = DirectAgentToolCall(

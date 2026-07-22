@@ -35,7 +35,7 @@ extension DirectToolExecutor {
             toolCall: toolCall,
             workingDirectory: workingDirectory
         ) {
-            return deniedOutput
+            throw DirectToolExecutorError.authorizationDenied(deniedOutput)
         }
         if let output = try await executeCoreLocalFileOrTextTool(
             toolCall: toolCall,
@@ -148,7 +148,7 @@ extension DirectToolExecutor {
             command: command,
             cwd: cwd
         ) {
-            return deniedOutput
+            throw DirectToolExecutorError.authorizationDenied(deniedOutput)
         }
         // Clamp so a mistyped timeout can neither block the session for hours
         // nor drop below one second. Background jobs manage their own lifetime.

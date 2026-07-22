@@ -238,6 +238,31 @@ struct DirectToolExecutorLocalIOTests {
     }
 
     @Test
+    func deniedLocalExecReportsPermissionDeniedStatus() async {
+        let executor = DirectToolExecutor(
+            authorizationHandler: { _ in false },
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+        )
+
+        let result = await executor.execute(
+            sessionID: "session",
+            toolCall: DirectAgentToolCall(
+                id: "denied-local-exec",
+                name: "local.exec",
+                argumentsObject: ["command": "whoami"],
+                argumentsJSON: #"{"command":"whoami"}"#
+            ),
+            workingDirectory: URL(fileURLWithPath: "/tmp")
+        )
+
+        #expect(result.status == .permissionDenied)
+        #expect(result.isPermissionDenied)
+        #expect(result.output.contains("Command execution cancelled."))
+        #expect(result.output.contains("no shell command was run"))
+    }
+
+    @Test
     func localExecSkipsHarmlessBuiltinsEndToEnd() async {
         let recorder = LocalExecAuthorizationRecorder(decisions: [true, true])
         let executor = DirectToolExecutor(
