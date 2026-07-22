@@ -17,6 +17,16 @@ public actor LocalExecPermissionAuthorizer {
     private var alwaysAllowedKeys = Set<String>()
     private var didLoadPersistedAllowedCommands = false
 
+    /// Injected single-key reader for consent prompts. When nil, the default
+    /// terminal reader is used. The TUI sets this to route consent through its
+    /// shared interactive reader (avoiding a second terminal input device),
+    /// and tests set it for deterministic loop/EOF coverage.
+    var consentReader: ConsentKeyReader?
+
+    func setConsentReader(_ reader: ConsentKeyReader?) {
+        consentReader = reader
+    }
+
     /// Tool names this authorizer gates: shell commands plus the destructive
     /// direct tools. Everything else is pre-approved by tool selection.
     public static let gatedToolNames: Set<String> =
@@ -29,9 +39,9 @@ public actor LocalExecPermissionAuthorizer {
             return true
         }
 
-        #if !os(macOS)
-        return true
-        #else
+        // Consent is presented on the terminal for every platform. SSH sessions
+        // (including into a remote macOS host) expose a pseudo-tty, so the
+        // prompt reaches the operator on all platforms.
         loadPersistedAllowedCommandsIfNeeded()
         let cacheKey = permissionCacheKey(for: request)
         if alwaysAllowedKeys.contains(cacheKey) {
@@ -56,7 +66,6 @@ public actor LocalExecPermissionAuthorizer {
         case .deny:
             return false
         }
-        #endif
     }
 
     static func commandPermissionIdentity(for command: String) -> String? {

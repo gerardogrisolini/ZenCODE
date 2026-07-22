@@ -17,6 +17,39 @@ extension TerminalChat {
         await statusBar.update(localExecAccessMode: accessMode)
     }
 
+    /// Routes consent prompts through the terminal's single interactive reader.
+    /// The live input panel is suspended around each read so its loop cannot
+    /// consume or contend for the operator's keystroke (no second terminal
+    /// input device), then resumed. Reading runs off the cooperative executor
+    /// so the authorizer actor is not blocked while the operator decides.
+    func configureConsentReader(eventQueue: TerminalChatEventQueue) async {
+        await permissionAuthorizer.setConsentReader({ [interactiveReader, statusBar, weak self] prompt in
+            await interactiveReader.stopPanelInput(clearPanel: false)
+            let answer = await Self.readConsentKeyOffActor(
+                reader: interactiveReader,
+                prompt: prompt
+            )
+            let suggestions = self?.commandSuggestionsForCurrentAgent() ?? []
+            _ = await interactiveReader.startPanelInput(
+                statusBar: statusBar,
+                commandSuggestions: suggestions,
+                onEvent: { event in eventQueue.send(.input(event)) }
+            )
+            return answer
+        })
+    }
+
+    static func readConsentKeyOffActor(
+        reader: TerminalInteractiveLineReader,
+        prompt: String
+    ) async -> String? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: reader.readSingleKey(prompt: prompt))
+            }
+        }
+    }
+
     func runBlockingInputLoop(initialInputLine: String?) async throws {
         var pendingInputLine = initialInputLine
         while true {
@@ -140,6 +173,8 @@ extension TerminalChat {
         }
 
         await synchronizeLocalExecAccessModeStatusBar()
+
+        await configureConsentReader(eventQueue: eventQueue)
 
         guard await startPanelInput() else {
             await statusBar.stop()

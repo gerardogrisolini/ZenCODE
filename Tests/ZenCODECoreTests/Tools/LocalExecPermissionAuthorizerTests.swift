@@ -121,6 +121,146 @@ struct LocalExecPermissionAuthorizerTests {
     }
 
     @Test
+    func terminalPermissionDecisionMapsSingleKeyAnswers() {
+        // Empty (Enter) defaults to run-once, matching the prior macOS dialog.
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: "") == .allowOnce)
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: "r") == .allowOnce)
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: "R") == .allowOnce)
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: "a") == .allowAlways)
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: "A") == .allowAlways)
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: "c") == .deny)
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: "C") == .deny)
+        // Unrecognized keys yield no decision so the prompt re-asks.
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: "x") == nil)
+        // Whitespace is not a valid choice: only a genuine Enter (empty input)
+        // defaults to run-once, so spaces/tabs re-prompt rather than authorize.
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: " ") == nil)
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: "\t") == nil)
+        // Multi-character/word answers are unrecognized and re-prompt.
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: "run") == nil)
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: "yes") == nil)
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: "no") == nil)
+        // A valid key with surrounding whitespace still maps correctly.
+        #expect(LocalExecPermissionAuthorizer.permissionDecision(forTerminalAnswer: " R\r\n") == .allowOnce)
+    }
+
+    @Test
+    func terminalPromptIncludesCommandAndDirectory() {
+        let request = AgentToolAuthorizationRequest(
+            sessionID: "session",
+            toolCallID: "call",
+            toolName: "local.exec",
+            title: "Run swift tests",
+            kind: "shell",
+            command: "swift test --filter One",
+            workingDirectory: "/tmp/project"
+        )
+        let prompt = LocalExecPermissionAuthorizer.terminalPrompt(for: request)
+        #expect(prompt.contains(request.title))
+        #expect(prompt.contains("/tmp/project"))
+        #expect(prompt.contains("swift test --filter One"))
+        #expect(prompt.contains("[R]un once / [A]lways / [C]ancel"))
+    }
+
+    @Test
+    func nonInteractiveConsentMessageIsActionable() {
+        let request = AgentToolAuthorizationRequest(
+            sessionID: "session",
+            toolCallID: "call",
+            toolName: "local.exec",
+            title: "Run swift tests",
+            kind: "shell",
+            command: "swift test --filter One",
+            workingDirectory: "/tmp/project"
+        )
+        let message = LocalExecPermissionAuthorizer.nonInteractiveConsentMessage(for: request)
+        // Explains why and stays fail-closed.
+        #expect(message.contains("no interactive terminal"))
+        #expect(message.contains("blocked by design"))
+        // Names the command so the operator knows what was blocked.
+        #expect(message.contains("swift test --filter One"))
+        // Offers a concrete remediation.
+        #expect(message.contains("[A]lways"))
+    }
+
+    @Test
+    func sanitizedForTerminalStripsControlSequences() {
+        // A crafted command carrying ESC/CSI, carriage return, and bell must not
+        // be able to clear, overwrite, or beep-spoof the consent prompt.
+        let cleaned = LocalExecPermissionAuthorizer.sanitizedForTerminal(
+            "\u{1B}[31mrm\rfinal\u{0007}"
+        )
+        #expect(!cleaned.contains("\u{1B}"))
+        #expect(!cleaned.contains("\r"))
+        #expect(!cleaned.contains("\u{0007}"))
+        #expect(cleaned.contains("rm"))
+        #expect(cleaned.contains("final"))
+        // Newlines and tabs are preserved for readability.
+        #expect(
+            LocalExecPermissionAuthorizer.sanitizedForTerminal("a\nb\tc").contains("\n")
+        )
+    }
+
+    @Test
+    func alwaysChoiceHintExplainsScope() {
+        #expect(
+            LocalExecPermissionAuthorizer.alwaysChoiceHint(forToolName: "local.exec")
+                .contains("across sessions")
+        )
+        #expect(
+            LocalExecPermissionAuthorizer.alwaysChoiceHint(forToolName: "local.delete")
+                .contains("session only")
+        )
+    }
+
+    @Test
+    func presentDialogRetriesUntilRecognizedKeyThenDecides() async {
+        let authorizer = LocalExecPermissionAuthorizer()
+        let recorder = FakeConsentReader(answers: ["x", "a"])
+        await authorizer.setConsentReader({ prompt in await recorder.next(prompt: prompt) })
+        let decision = await authorizer.presentDialog(for: Self.consentRequest())
+        // The unrecognized first key is ignored, the second decides.
+        #expect(decision == .allowAlways)
+        // Both attempts consumed, and the retry used the retry prompt.
+        let prompts = await recorder.recordedPrompts()
+        #expect(prompts.count == 2)
+        #expect(prompts.last == LocalExecPermissionAuthorizer.terminalRetryPrompt())
+    }
+
+    @Test
+    func presentDialogReturnsNilOnImmediateEOF() async {
+        let authorizer = LocalExecPermissionAuthorizer()
+        let recorder = FakeConsentReader(answers: [nil])
+        await authorizer.setConsentReader({ prompt in await recorder.next(prompt: prompt) })
+        let decision = await authorizer.presentDialog(for: Self.consentRequest())
+        // EOF yields no consent (fail-closed at the dialog layer).
+        #expect(decision == nil)
+        let count = await recorder.recordedPrompts().count
+        #expect(count == 1)
+    }
+
+    @Test
+    func presentDialogDeniesOnCancelKey() async {
+        let authorizer = LocalExecPermissionAuthorizer()
+        let recorder = FakeConsentReader(answers: ["c"])
+        await authorizer.setConsentReader({ prompt in await recorder.next(prompt: prompt) })
+        let decision = await authorizer.presentDialog(for: Self.consentRequest())
+        #expect(decision == .deny)
+    }
+
+    private static func consentRequest() -> AgentToolAuthorizationRequest {
+        AgentToolAuthorizationRequest(
+            sessionID: "session",
+            toolCallID: "call",
+            toolName: "local.exec",
+            title: "Run swift tests",
+            kind: "shell",
+            command: "swift test --filter One",
+            workingDirectory: "/tmp/project"
+        )
+    }
+
+    @Test
     func settingsManifestDecodesButDoesNotEncodeLegacyLocalExecPermissions() throws {
         let manifest = AgentSettingsManifest(
             models: [],
@@ -171,5 +311,30 @@ struct LocalExecPermissionAuthorizerTests {
         #expect(decoded.localExecAllowedCommands == ["swift", "git"])
         #expect(decoded.containsLocalExecAllowedCommand("SWIFT"))
         #expect(decoded.containsLocalExecAllowedCommand("GIT"))
+    }
+}
+
+/// Deterministic consent reader for `presentDialog` loop/EOF coverage. Returns
+/// the queued answers in order (nil models EOF) and records every prompt seen.
+private actor FakeConsentReader {
+    private let answers: [String?]
+    private var index = 0
+    private var prompts: [String] = []
+
+    init(answers: [String?]) {
+        self.answers = answers
+    }
+
+    func next(prompt: String) -> String? {
+        prompts.append(prompt)
+        guard index < answers.count else {
+            return nil
+        }
+        defer { index += 1 }
+        return answers[index]
+    }
+
+    func recordedPrompts() -> [String] {
+        prompts
     }
 }
