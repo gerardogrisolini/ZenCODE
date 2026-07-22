@@ -7,7 +7,9 @@ set -euo pipefail
 # Builds ZenCODE and its bundled feature executables from source and installs
 # them. Intended for native Linux and for Windows via WSL (Ubuntu). When
 # launched outside a repository checkout, for example with curl | bash, the
-# installer uses a temporary source checkout and removes it before exiting.
+# installer uses a temporary source checkout and removes it before exiting. If
+# Swift is unavailable, it bootstraps the latest stable toolchain with Swiftly
+# before resolving the checkout or starting a build.
 #
 # Environment overrides:
 #   INSTALL_DIR    Directory for the ZenCODE binary (default: /usr/local/bin)
@@ -46,11 +48,145 @@ Environment overrides:
   BUILD_CONFIG   SwiftPM configuration: release or debug (default: release)
   ZENCODE_INSTALLER_REF
                  Git ref used by the URL installer (default: main)
+Swift:
+  Reuses Swift already on PATH. If absent, installs the latest stable Swift
+  toolchain with Swiftly using the official Linux installation flow.
 Flags:
   --debug          Build with the debug configuration
   --prefix DIR     Install the binary into DIR (sets INSTALL_DIR)
   -h, --help       Show this help and exit
 EOF
+}
+
+swiftly_home_dir() {
+    if [ -n "${SWIFTLY_HOME_DIR:-}" ]; then
+        printf '%s\n' "$SWIFTLY_HOME_DIR"
+    elif [ -n "${XDG_DATA_HOME:-}" ]; then
+        printf '%s/swiftly\n' "${XDG_DATA_HOME%/}"
+    elif [ -n "${HOME:-}" ]; then
+        printf '%s/.local/share/swiftly\n' "${HOME%/}"
+    else
+        echo "Error: HOME, XDG_DATA_HOME, or SWIFTLY_HOME_DIR must be set to install Swift." >&2
+        return 1
+    fi
+}
+
+bootstrap_swiftly() (
+    SWIFTLY_TMP_ROOT=""
+    local swiftly_archive=""
+    local swiftly_binary=""
+    local architecture=""
+
+    if ! command -v curl &>/dev/null; then
+        echo "Error: curl is required to download Swiftly when Swift is not installed." >&2
+        echo "See https://www.swift.org/install/linux/ for manual installation instructions." >&2
+        exit 1
+    fi
+    if ! command -v tar &>/dev/null; then
+        echo "Error: tar is required to extract Swiftly when Swift is not installed." >&2
+        echo "See https://www.swift.org/install/linux/ for manual installation instructions." >&2
+        exit 1
+    fi
+    if ! command -v mktemp &>/dev/null; then
+        echo "Error: mktemp is required to create temporary files for the Swift installation." >&2
+        echo "See https://www.swift.org/install/linux/ for manual installation instructions." >&2
+        exit 1
+    fi
+
+    if ! SWIFTLY_TMP_ROOT="$(mktemp -d "${INSTALLER_TMPDIR%/}/zencode-swiftly.XXXXXX")"; then
+        echo "Error: could not create a temporary directory for the Swift installation under ${INSTALLER_TMPDIR}." >&2
+        echo "Set TMPDIR or ZENCODE_INSTALLER_TMPDIR to a writable directory and retry." >&2
+        exit 1
+    fi
+
+    # This variable outlives function-local scope; the trap itself is scoped to
+    # the subshell, so it cannot replace bootstrap_checkout's trap.
+    trap 'rm -rf "$SWIFTLY_TMP_ROOT" || true' EXIT
+
+    if ! architecture="$(uname -m)" || [ -z "$architecture" ]; then
+        echo "Error: could not determine the system architecture for the Swiftly download." >&2
+        echo "See https://www.swift.org/install/linux/ for manual installation instructions." >&2
+        exit 1
+    fi
+
+    swiftly_archive="${SWIFTLY_TMP_ROOT}/swiftly-${architecture}.tar.gz"
+    swiftly_binary="${SWIFTLY_TMP_ROOT}/swiftly"
+
+    echo "Swift was not found; installing the latest stable Swift toolchain with Swiftly..."
+    if ! curl --fail --location --silent --show-error \
+        --output "$swiftly_archive" \
+        "https://download.swift.org/swiftly/linux/swiftly-${architecture}.tar.gz"; then
+        echo "Error: failed to download Swiftly for architecture ${architecture} from download.swift.org." >&2
+        echo "Check your network connection; this architecture may not be supported. See https://www.swift.org/install/linux/." >&2
+        exit 1
+    fi
+    if ! tar -xzf "$swiftly_archive" -C "$SWIFTLY_TMP_ROOT"; then
+        echo "Error: failed to extract the Swiftly archive." >&2
+        echo "See https://www.swift.org/install/linux/ for manual installation instructions." >&2
+        exit 1
+    fi
+    if [ ! -x "$swiftly_binary" ]; then
+        echo "Error: the Swiftly archive did not contain an executable named 'swiftly'." >&2
+        echo "See https://www.swift.org/install/linux/ for manual installation instructions." >&2
+        exit 1
+    fi
+
+    # Avoid prompting or consuming the rest of a curl | bash input stream.
+    if ! "$swiftly_binary" init --quiet-shell-followup --assume-yes < /dev/null; then
+        echo "Error: Swiftly could not initialize the Swift toolchain." >&2
+        echo "See https://www.swift.org/install/linux/ for platform requirements and manual instructions." >&2
+        exit 1
+    fi
+)
+
+ensure_swift_toolchain() {
+    local swiftly_home=""
+    local swiftly_env=""
+
+    if command -v swift &>/dev/null; then
+        return 0
+    fi
+
+    if ! bootstrap_swiftly; then
+        return 1
+    fi
+
+    if ! swiftly_home="$(swiftly_home_dir)"; then
+        return 1
+    fi
+    swiftly_env="${swiftly_home}/env.sh"
+    if [ ! -f "$swiftly_env" ]; then
+        echo "Error: Swiftly did not create ${swiftly_env}." >&2
+        echo "See https://www.swift.org/install/linux/ for manual installation instructions." >&2
+        return 1
+    fi
+
+    # shellcheck disable=SC1090
+    if ! source "$swiftly_env"; then
+        echo "Error: could not load the Swiftly environment from ${swiftly_env}." >&2
+        return 1
+    fi
+    hash -r
+
+    if ! command -v swiftly &>/dev/null; then
+        echo "Error: Swiftly was initialized but is not available after loading ${swiftly_env}." >&2
+        return 1
+    fi
+    if ! command -v swift &>/dev/null; then
+        echo "Swiftly is configured but no Swift toolchain is active; installing latest..."
+        if ! swiftly install latest --use --assume-yes < /dev/null; then
+            echo "Error: Swiftly could not install the latest Swift toolchain." >&2
+            echo "See https://www.swift.org/install/linux/ for platform requirements and manual instructions." >&2
+            return 1
+        fi
+        hash -r
+    fi
+
+    if ! command -v swift &>/dev/null; then
+        echo "Error: Swiftly completed but 'swift' is still unavailable." >&2
+        echo "See https://www.swift.org/install/linux/ for platform requirements and manual instructions." >&2
+        return 1
+    fi
 }
 
 resolve_package_dir() {
@@ -135,14 +271,16 @@ if [ "$(uname -s)" != "Linux" ]; then
     exit 1
 fi
 
-if ! command -v swift &>/dev/null; then
-    echo "Error: the Swift toolchain is required but 'swift' was not found." >&2
-    echo "Install Swift for Linux from https://www.swift.org/install/linux/" >&2
+if ! ensure_swift_toolchain; then
     exit 1
 fi
 
 echo "Swift toolchain:"
-swift --version
+if ! swift --version; then
+    echo "Error: Swift is installed but could not run successfully." >&2
+    echo "See https://www.swift.org/install/linux/ for platform requirements and manual instructions." >&2
+    exit 1
+fi
 echo ""
 
 # Resolve the package root (the directory that contains Package.swift) -------

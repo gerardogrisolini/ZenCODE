@@ -50,12 +50,9 @@ installer inside the Ubuntu shell:
 wsl --install -d Ubuntu
 ```
 
-Install Swift for Linux first: <https://www.swift.org/install/linux/>. Verify it
-with:
-
-```bash
-swift --version
-```
+The installer reuses a Swift toolchain already available on `PATH`. If Swift is
+missing, it automatically installs the latest stable toolchain with Swiftly,
+following the [official Linux installation instructions](https://www.swift.org/install/linux/).
 
 `zen --setup` supports both subscription logins on Linux: ChatGPT uses the
 device-code page and Claude asks for the authorization code shown by its hosted
