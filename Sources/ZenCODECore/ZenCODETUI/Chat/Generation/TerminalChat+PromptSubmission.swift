@@ -91,6 +91,21 @@ extension TerminalChat {
                 await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
             }
             return .continueChat
+        case "/bindings":
+            do {
+                await writeSystemMessage(
+                    Self.renderAgentModelBindings(
+                        agents: try availableAgents(),
+                        selectedAgent: selectedAgent
+                    )
+                )
+            } catch {
+                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            }
+            return .continueChat
+        case let command where command.hasPrefix("/bindings "):
+            await writeFailureMessage("ZenCODE: /bindings does not accept arguments.\n")
+            return .continueChat
         case let command where command == "/tools" || command.hasPrefix("/tools "):
             await handleToolsCommand(command)
             return .continueChat

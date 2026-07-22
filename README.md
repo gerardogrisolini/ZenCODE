@@ -87,6 +87,7 @@ swift build -c release --product zen
 /help        Show available commands
 /models      Select a model
 /agents      Select an agent profile
+/bindings    Show agent model bindings
 /tools       Select tool groups
 /skills      Select or install prompt skills
 /sessions    Manage sessions and checkpoint trees:

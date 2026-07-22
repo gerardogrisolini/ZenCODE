@@ -223,6 +223,11 @@ extension TerminalChat {
             help: "/agents selects an agent profile and resets the session."
         ),
         TerminalChatCommandDescriptor(
+            command: "/bindings",
+            summary: "show agent model bindings",
+            help: "/bindings shows every model authorized for each agent, including defaults, capability, and thinking settings."
+        ),
+        TerminalChatCommandDescriptor(
             command: "/tools",
             summary: "select tool groups",
             help: "/tools selects which tool groups are available to the model."

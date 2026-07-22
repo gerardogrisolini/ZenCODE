@@ -91,6 +91,8 @@ struct ZenCODEAgentProfileSetupRunnerTests {
         #expect(updated.defaultModelBinding?.thinkingSelection == .high)
         #expect(ZenCODEAgentProfileSetupRunner.agentModelSummary(updated).contains("2 bindings"))
         #expect(ZenCODEAgentProfileSetupRunner.agentModelSummary(updated).contains("deep-model"))
+        #expect(ZenCODEAgentProfileSetupRunner.agentModelSummary(updated).contains("fast-model"))
+        #expect(ZenCODEAgentProfileSetupRunner.agentModelSummary(updated).contains("[default] deep-model"))
     }
 
     @Test

@@ -9,7 +9,7 @@ import ZenCODECore
 extension ZenCODEAgentProfileSetupRunner {
     static func printAgents(_ agents: [AgentProfile]) {
         for (index, agent) in agents.enumerated() {
-                    AgentOutput.standardError.writeString(
+            AgentOutput.standardError.writeString(
                 "  \(index + 1). \(agent.displayName) [\(agentSummary(agent))]\n"
             )
         }
@@ -18,13 +18,8 @@ extension ZenCODEAgentProfileSetupRunner {
     static func agentSummary(_ agent: AgentProfile) -> String {
         let tools = agent.tools.isEmpty ? "no tools" : agent.tools.joined(separator: ", ")
         let skills = agent.skills.isEmpty ? "" : " | skills: \(skillList(agent.skills))"
-        let model = agent.modelID.map { " | model: \($0)" } ?? ""
-        let thinking = agent.thinkingSelection.map { " | thinking: \($0.displayTitle)" } ?? ""
-        let capability = agent.capability.map { " | capability: \($0)/10" } ?? ""
-        let bindings = agent.modelBindings.count > 1
-            ? " | bindings: \(agent.modelBindings.count)"
-            : ""
-        return "\(tools)\(skills)\(model)\(thinking)\(capability)\(bindings)"
+        let bindings = agent.modelBindings.isEmpty ? "" : " | \(agentModelSummary(agent))"
+        return "\(tools)\(skills)\(bindings)"
     }
 
 

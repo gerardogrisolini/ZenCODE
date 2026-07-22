@@ -338,10 +338,9 @@ extension ZenCODEAgentProfileSetupRunner {
 
     private static func printAgentModelSummary(_ agents: [AgentProfile]) {
         AgentOutput.standardError.writeString("\n")
-        for (index, agent) in agents.enumerated() {
-            AgentOutput.standardError.writeString(
-                "  \(index + 1). \(agent.displayName) [\(agentModelSummary(agent))]\n"
-            )
+        for agent in agents {
+            let lines = TerminalChat.renderAgentModelBindings(for: agent, selectedAgent: nil)
+            AgentOutput.standardError.writeString(lines.joined(separator: "\n") + "\n")
         }
         AgentOutput.standardError.writeString("\n")
     }
@@ -350,10 +349,12 @@ extension ZenCODEAgentProfileSetupRunner {
         guard !agent.modelBindings.isEmpty else {
             return "no dedicated model bindings"
         }
-        let defaultText = agent.defaultModelBinding.map {
-            "default: \(bindingDisplayTitle($0))"
-        } ?? "no default"
-        return "\(agent.modelBindings.count) binding\(agent.modelBindings.count == 1 ? "" : "s") | \(defaultText)"
+        let defaultBindingID = agent.defaultModelBinding?.id
+        let models = agent.modelBindings.map { binding in
+            let marker = binding.id == defaultBindingID ? "[default] " : ""
+            return "\(marker)\(bindingDisplayTitle(binding))"
+        }
+        return "\(agent.modelBindings.count) binding\(agent.modelBindings.count == 1 ? "" : "s") | models: \(models.joined(separator: ", "))"
     }
 
     static func bindingDisplayTitle(_ binding: AgentModelBinding) -> String {
@@ -373,6 +374,6 @@ extension ZenCODEAgentProfileSetupRunner {
         if binding.id == agent.defaultModelBindingID {
             values.append("default")
         }
-        return values.joined(separator: " | ")
+        return values.joined(separator: " · ")
     }
 }

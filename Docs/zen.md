@@ -57,7 +57,7 @@ Switch profiles in the TUI without restarting:
 /agents 2               # by number
 ```
 
-Switching resets the conversation so the new system prompt and tools apply cleanly. If the selected profile has bindings, its default is used when no model has been selected explicitly. `/models` always presents every configured model, and a manual selection overrides that default for the active session. See [agents.md](agents.md) for profile concepts and capability routing.
+Switching resets the conversation so the new system prompt and tools apply cleanly. If the selected profile has bindings, its default is used when no model has been selected explicitly. `/models` always presents every configured model, and a manual selection overrides that default for the active session. Use `/bindings` to inspect the configured bindings for every profile, including the selected profile, defaults, capability, and thinking settings. See [agents.md](agents.md) for profile concepts and capability routing.
 
 ## Terminal TUI Commands
 
@@ -67,6 +67,7 @@ Commands start with `/`:
 - `/help` — show command help.
 - `/models` — show every configured model and choose the model for the current session.
 - `/agents [list|<name>|<number>]` — switch agent profile.
+- `/bindings` — show every agent profile's model bindings, including defaults, capability, and thinking settings. Does not accept arguments.
 - `/tools [all|none|tool-name|package-name|number]` — select exposed tool groups.
 - `/skills` — select or install prompt skills.
 - `/exit` — close the session.

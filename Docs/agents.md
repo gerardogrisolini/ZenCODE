@@ -20,6 +20,8 @@ Each profile carries:
 
 Select a profile with `/agents <name>` or `--agent <name>` at launch. Switching resets the conversation so the new system prompt and tools apply cleanly.
 
+Use `/bindings` in the TUI to inspect the model bindings for every configured profile. It marks the selected profile and each default binding, and shows the provider/model, capability, and thinking settings. Profiles with no bindings are shown as having no dedicated model bindings.
+
 > **Important:** Associate at least one model binding with every profile that
 > should receive delegated work. A binding authorizes a specific
 > profile-and-model pair and carries the capability and optional thinking
@@ -156,6 +158,7 @@ When configuring a profile, setup asks for each parameter for a specific reason:
 zen setup              # create or edit profiles interactively
 /agents                # select a profile in the TUI
 /models                # choose any configured model for the current session
+/bindings              # inspect model bindings for every configured profile
 /tools                 # expose or hide tool groups per session
 ```
 

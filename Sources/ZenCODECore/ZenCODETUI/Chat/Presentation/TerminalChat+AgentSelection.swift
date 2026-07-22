@@ -182,6 +182,61 @@ extension TerminalChat {
         return parts.joined(separator: " · ")
     }
 
+    public static func renderAgentModelBindings(
+        agents: [AgentProfile],
+        selectedAgent: AgentProfile?
+    ) -> String {
+        guard !agents.isEmpty else {
+            return "No agent model bindings configured.\n"
+        }
+
+        var lines = ["Agent model bindings:"]
+        for agent in agents {
+            lines.append(contentsOf: Self.renderAgentModelBindings(for: agent, selectedAgent: selectedAgent))
+        }
+        lines.append("")
+        return lines.joined(separator: "\n")
+    }
+
+    /// Returns the display lines for a single agent's model bindings, using the
+    /// shared layout produced by the `/bindings` command and the setup summary.
+    public static func renderAgentModelBindings(
+        for agent: AgentProfile,
+        selectedAgent: AgentProfile?
+    ) -> [String] {
+        let selectedMarker = agent == selectedAgent ? " *" : ""
+        var lines = ["  \(agent.displayName)\(selectedMarker)"]
+        guard !agent.modelBindings.isEmpty else {
+            lines.append("    (no dedicated model bindings)")
+            return lines
+        }
+
+        let defaultBindingID = agent.defaultModelBinding?.id
+        for binding in agent.modelBindings {
+            lines.append(renderModelBindingLine(binding, defaultBindingID: defaultBindingID))
+        }
+        return lines
+    }
+
+    /// Returns a single binding line using the shared `/bindings` formatting:
+    /// `    [default] Provider / modelID · capability: N/10 · thinking: X`.
+    public static func renderModelBindingLine(
+        _ binding: AgentModelBinding,
+        defaultBindingID: String?
+    ) -> String {
+        let marker = binding.id == defaultBindingID ? "[default]" : "-"
+        var details = [binding.modelProvider.map {
+            "\($0) / \(binding.modelID)"
+        } ?? binding.modelID]
+        if let capability = binding.capability {
+            details.append("capability: \(capability)/10")
+        }
+        if let thinkingSelection = binding.thinkingSelection {
+            details.append("thinking: \(thinkingSelection.displayTitle)")
+        }
+        return "    \(marker) \(details.joined(separator: " · "))"
+    }
+
     private static func agentPurposeSummary(_ agent: AgentProfile) -> String {
         switch agent.id.lowercased() {
         case AgentProfileStore.developerAgentID.uuidString.lowercased():
