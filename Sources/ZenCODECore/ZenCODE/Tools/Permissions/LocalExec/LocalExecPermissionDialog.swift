@@ -75,13 +75,6 @@ extension LocalExecPermissionAuthorizer {
 
         Command:
         \(request.command)
-
-        To proceed:
-        - pre-authorize this command by running ZenCODE interactively and \
-        choosing [A]lways (local.exec identities are remembered across \
-        sessions), or
-        - start ZenCODE from an interactive terminal.
-
         """
     }
 
@@ -89,36 +82,24 @@ extension LocalExecPermissionAuthorizer {
         let title = Self.sanitizedForTerminal(request.title)
         let directory = Self.sanitizedForTerminal(request.workingDirectory)
         let command = Self.sanitizedForTerminal(request.command)
-        let alwaysHint = Self.alwaysChoiceHint(forToolName: request.toolName)
         return """
         \n\(title)
-
-        A local tool wants to run a command with access to the workspace.
 
         Directory:
         \(directory)
 
         Command:
         \(command)
-
+        
         If you continue, the command may read or modify files, run scripts, \
         and launch other local processes.
-        \(alwaysHint)
-        [R]un once / [A]lways / [C]ancel (R/a/c):
+
+        [R]un once / [A]lways / [C]ancel (r/a/c):
         """
     }
 
-    /// Explains the differing scope of the [A]lways choice so the operator is
-    /// not misled into thinking only the exact command is approved.
-    static func alwaysChoiceHint(forToolName toolName: String) -> String {
-        if toolName == "local.exec" {
-            return "[A]lways remembers the command's executable (e.g. `swift`) across sessions."
-        }
-        return "[A]lways applies to this ZenCODE session only."
-    }
-
     static func terminalRetryPrompt() -> String {
-        "Please choose [R]un once / [A]lways / [C]ancel (R/a/c):"
+        "Please choose [R]un once / [A]lways / [C]ancel (r/a/c):"
     }
 
     /// Maps a single-key terminal answer to a permission decision. A genuine
