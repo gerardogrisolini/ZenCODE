@@ -94,12 +94,27 @@ extension LocalExecPermissionAuthorizer {
         If you continue, the command may read or modify files, run scripts, \
         and launch other local processes.
 
-        [R]un once / [A]lways / [C]ancel (r/a/c):
+        \(Self.colorChoiceLine("[R]un once / [A]lways / [C]ancel (r/a/c):"))
         """
     }
 
     static func terminalRetryPrompt() -> String {
-        "Please choose [R]un once / [A]lways / [C]ancel (r/a/c):"
+        Self.colorChoiceLine("Please choose [R]un once / [A]lways / [C]ancel (r/a/c):")
+    }
+
+    /// Accent-colors the run/always/cancel choice line so the consent decision
+    /// stands out, mirroring the cyan accent used for `/undo`. Color is applied
+    /// only when standard error is an interactive terminal — the same gate the
+    /// rest of the TUI uses — so pipes and captured output keep the plain,
+    /// log-readable text. The whole line is colored as one unit so the option
+    /// text stays contiguous.
+    static func colorChoiceLine(_ line: String) -> String {
+        guard AgentOutput.standardErrorIsTerminal else {
+            return line
+        }
+        let accent = "\u{1B}[1;38;5;81m"
+        let reset = "\u{1B}[0m"
+        return "\(accent)\(line)\(reset)"
     }
 
     /// Maps a single-key terminal answer to a permission decision. A genuine
