@@ -104,25 +104,152 @@ extension LocalExecPermissionAuthorizer {
     }
 
     static func terminalPrompt(for request: AgentToolAuthorizationRequest) -> String {
-        let title = Self.sanitizedForTerminal(request.title)
-        let directory = Self.sanitizedForTerminal(request.workingDirectory)
-        let command = Self.sanitizedForTerminal(request.command)
-        return """
-        \n\(title)
+        let useColor = AgentOutput.standardErrorIsTerminal
 
-        Directory:
-        \(directory)
+        let directory = Self.abbreviatedHomePath(
+            Self.singleLined(Self.sanitizedForTerminal(request.workingDirectory))
+        )
+        let command = Self.singleLined(Self.sanitizedForTerminal(request.command))
+        let hint = Self.compactAlwaysHint(forToolName: request.toolName)
 
-        Command:
-        \(command)
-        
-        If you continue, the command may read or modify files, run scripts, \
-        and launch other local processes.
+        let title = Self.singleLined(Self.sanitizedForTerminal(request.title))
+        let commandLine = Self.commandLine(command: command, colored: useColor)
+        let directoryPlain = "⊙ \(directory)"
 
-        \(Self.alwaysChoiceHint(forToolName: request.toolName))
+        // Each card row carries both its plain text (for box-width math) and its
+        // ANSI-rendered form, so padding never counts invisible escape bytes.
+        // The request title leads the body (what is being authorized); the
+        // generic "Authorization" label is the card title in the top border.
+        let innerLines: [(plain: String, rendered: String)] = [
+            (title, Self.wrap(title, code: Self.ansiOrangeBold, colored: useColor)),
+            (commandLine.plain, commandLine.rendered),
+            (directoryPlain, Self.wrap(directoryPlain, code: Self.ansiDim, colored: useColor)),
+            (hint, Self.wrap(hint, code: Self.ansiDim, colored: useColor))
+        ]
 
-        \(Self.colorChoiceLine("[R]un once / [A]lways / [C]ancel (r/a/c): "))
-        """
+        // The run/always/cancel options are the card footer, set off from the
+        // command details by a divider rule and colored with the original cyan
+        // accent so the decision reads as part of the box (matching the retry
+        // prompt). The `(r/a/c):` prompt is the last text emitted (no trailing
+        // newline) so the single-key reader echoes the operator's answer inline,
+        // right after the colon.
+        let options = "[R]un once / [A]lways / [C]ancel"
+        let footer: (plain: String, rendered: String) = (
+            options,
+            Self.wrap(options, code: Self.ansiCyanBold, colored: useColor)
+        )
+        let box = Self.renderConsentBox(
+            title: "Authorization",
+            innerLines: innerLines,
+            footer: footer,
+            colored: useColor
+        )
+        let suffix = Self.wrap("(r/a/c): ", code: Self.ansiCyanBold, colored: useColor)
+        return "\n\(box)\n  \(suffix)"
+    }
+
+    /// Orange ANSI accents reused across the consent card. Kept private so the
+    /// dialog owns its palette without leaking terminal styling elsewhere.
+    private static let ansiOrange = "\u{1B}[38;5;208m"
+    private static let ansiOrangeBold = "\u{1B}[1;38;5;208m"
+    private static let ansiCyanBold = "\u{1B}[1;38;5;81m"
+    private static let ansiDim = "\u{1B}[38;5;244m"
+    private static let ansiReset = "\u{1B}[0m"
+
+    private static func wrap(_ text: String, code: String, colored: Bool) -> String {
+        colored ? "\(code)\(text)\(Self.ansiReset)" : text
+    }
+
+    /// Compact one-line summary of the "Always" scope so the card stays tight.
+    /// The longer explanation still lives in `alwaysChoiceHint` for the headless
+    /// (non-interactive) message; the substrings here keep the prompt tests green.
+    private static func compactAlwaysHint(forToolName toolName: String) -> String {
+        toolName == "local.exec"
+            ? "always · remembered across sessions"
+            : "always · this session only"
+    }
+
+    /// Collapses newlines, tabs, and repeated whitespace so every card row is a
+    /// single visual line — the box renderer assumes exactly one line per row.
+    private static func singleLined(_ text: String) -> String {
+        text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+
+    /// Replaces the user's home-directory prefix with `~` so paths stay short.
+    private static func abbreviatedHomePath(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        guard !home.isEmpty else { return path }
+        if path == home { return "~" }
+        if path.hasPrefix(home + "/") {
+            return "~" + String(path.dropFirst(home.count))
+        }
+        return path
+    }
+
+    /// Splits the command into its executable token (bold cyan, so the operator
+    /// can spot what would actually run) and the remaining arguments. Falls back
+    /// to the whole string when the command is a single token.
+    private static func commandLine(
+        command: String,
+        colored: Bool
+    ) -> (plain: String, rendered: String) {
+        let marker = "❯ "
+        guard !command.isEmpty else {
+            return (marker, marker)
+        }
+        guard let boundary = command.firstIndex(where: { $0.isWhitespace }) else {
+            return (
+                marker + command,
+                marker + Self.wrap(command, code: Self.ansiCyanBold, colored: colored)
+            )
+        }
+        let executable = String(command[..<boundary])
+        let rest = String(command[boundary...])
+        let rendered = Self.wrap(marker, code: Self.ansiOrange, colored: colored)
+            + Self.wrap(executable, code: Self.ansiCyanBold, colored: colored)
+            + rest
+        return (marker + executable + rest, rendered)
+    }
+
+    /// Builds the orange-bordered card around the consent information. Width is
+    /// content-driven (not full terminal) because the prompt is printed once and
+    /// never redrawn frame by frame. The `title` is drawn inside the top border
+    /// so it reads as the card heading rather than a body row. When a `footer`
+    /// is supplied it is drawn as the last row, preceded by a divider rule that
+    /// separates the choice options from the command details above.
+    private static func renderConsentBox(
+        title: String,
+        innerLines: [(plain: String, rendered: String)],
+        footer: (plain: String, rendered: String)?,
+        colored: Bool
+    ) -> String {
+        var rowWidths = innerLines.map(\.plain.count)
+        if let footer { rowWidths.append(footer.plain.count) }
+        let innerWidth = max(28, rowWidths.max() ?? 0)
+        let rule = String(repeating: "─", count: innerWidth + 2)
+        let border = { Self.wrap($0, code: Self.ansiOrange, colored: colored) }
+
+        // Top border embeds the title (`╭─ Title ────╮`), padded to the content
+        // width so the title is the card heading, not a body row.
+        let titleSegment = " \(title) "
+        let titleSuffix = String(
+            repeating: "─",
+            count: max(0, innerWidth + 2 - (1 + titleSegment.count))
+        )
+        var rows: [String] = [border("╭─\(titleSegment)\(titleSuffix)╮")]
+        for line in innerLines {
+            let padding = String(repeating: " ", count: max(0, innerWidth - line.plain.count))
+            let body = " \(line.rendered)\(padding) "
+            rows.append(border("│") + body + border("│"))
+        }
+        if let footer {
+            rows.append(border("├\(rule)┤"))
+            let padding = String(repeating: " ", count: max(0, innerWidth - footer.plain.count))
+            let body = " \(footer.rendered)\(padding) "
+            rows.append(border("│") + body + border("│"))
+        }
+        rows.append(border("╰\(rule)╯"))
+        return rows.joined(separator: "\n")
     }
 
     /// Explains the scope of the "Always" choice so the consent dialog makes
@@ -154,7 +281,7 @@ extension LocalExecPermissionAuthorizer {
         guard AgentOutput.standardErrorIsTerminal else {
             return line
         }
-        let accent = "\u{1B}[1;38;5;81m"
+        let accent = Self.ansiCyanBold
         let reset = "\u{1B}[0m"
         return "\(accent)\(line)\(reset)"
     }
