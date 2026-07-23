@@ -30,7 +30,7 @@ extension TerminalChat {
                 prompt: prompt
             )
             let suggestions = self?.commandSuggestionsForCurrentAgent() ?? []
-            _ = await interactiveReader.startPanelInput(
+            _ = await interactiveReader.resumePanelInput(
                 statusBar: statusBar,
                 commandSuggestions: suggestions,
                 onEvent: { event in eventQueue.send(.input(event)) }
@@ -43,10 +43,20 @@ extension TerminalChat {
         reader: TerminalInteractiveLineReader,
         prompt: String
     ) async -> String? {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                continuation.resume(returning: reader.readSingleKey(prompt: prompt))
+        let cancellation = ConsentReadCancellationFlag()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global().async {
+                    continuation.resume(
+                        returning: reader.readSingleKey(
+                            prompt: prompt,
+                            shouldCancel: cancellation.isCancelled
+                        )
+                    )
+                }
             }
+        } onCancel: {
+            cancellation.cancel()
         }
     }
 

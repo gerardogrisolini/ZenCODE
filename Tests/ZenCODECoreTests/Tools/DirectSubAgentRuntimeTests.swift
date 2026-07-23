@@ -1439,6 +1439,7 @@ struct DirectSubAgentRuntimeTests {
         let task = try await orchestrator.task(sessionID: "root", taskID: "task-a")
         #expect(task.task.status == .completed)
         #expect(task.task.result?.output == "implementation complete")
+        await runtime.shutdown()
     }
 
     @Test

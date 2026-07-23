@@ -14,13 +14,27 @@ public actor MCPClient {
     public let httpTransport: MCPHTTPTransportClient?
     public var process: Process?
     public var inputHandle: FileHandle?
+    /// Parent-owned read ends of the local bridge pipes. They are closed after
+    /// their detached non-blocking readers have joined, including when a bridge
+    /// exits badly or leaves a descendant holding its write end open.
+    public var outputHandle: FileHandle?
+    public var errorHandle: FileHandle?
     public var readLoopTask: Task<Void, Never>?
     public var errorLoopTask: Task<Void, Never>?
     var diagnosticMonitorProcess: Process?
     var diagnosticMonitorTask: Task<Void, Never>?
+    var diagnosticMonitorOutputHandle: FileHandle?
+    var diagnosticMonitorConnectionID: UUID?
     public var buffer = Data()
     public var stderrBuffer = Data()
     public var terminalBridgeError: MCPClientError?
+    /// Readers are bound to one local bridge generation. This prevents a
+    /// callback that was already in flight during teardown from mutating a
+    /// subsequent connection.
+    var activeConnectionID: UUID?
+    /// The generation whose process exited and whose non-blocking readers are
+    /// draining their final bytes before the exit is classified.
+    var terminatingConnectionID: UUID?
     public var nextRequestID = 1
     public var pendingResponses: [Int: CheckedContinuation<JSONValue, Error>] = [:]
     public let isDebugLoggingEnabled = false

@@ -61,6 +61,7 @@ fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
 .swiftpm
-Package.resolved
+# Package.resolved is intentionally tracked: the committed lockfile pins exact
+# dependency revisions so CI and release builds are reproducible. Do not ignore it.
 AGENTS.md
 MEMORY.md

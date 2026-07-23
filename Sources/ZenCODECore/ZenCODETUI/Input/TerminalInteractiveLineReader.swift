@@ -39,6 +39,12 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
         case unknown
     }
 
+    enum KeyReadResult: Equatable {
+        case key(Key)
+        case timedOut
+        case endOfInput
+    }
+
     static let escapeSequenceInitialTimeout: Int32 = 120
     static let escapeSequenceContinuationTimeout: Int32 = 60
     static let bracketedPasteByteTimeout: Int32 = 2000
@@ -48,7 +54,7 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
     var history: [String] = []
     var historyIndex: Int?
     var draftBeforeHistory: [Character] = []
-    let rawInput = TerminalRawInput()
+    let rawInput: TerminalRawInput
     let panelLock = Mutex(())
     var panelTask: Task<Void, Never>?
     var panelStatusBar: TerminalStatusBar?
@@ -61,7 +67,13 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
     var panelCommandSuggestionIndex = 0
     var panelRenderRevision: UInt64 = 0
 
-    public init() {}
+    public init() {
+        rawInput = TerminalRawInput()
+    }
+
+    init(rawInput: TerminalRawInput) {
+        self.rawInput = rawInput
+    }
 
     func withPanelLock<T: Sendable>(
         _ body: @Sendable () throws -> T
@@ -72,11 +84,38 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
     }
 
     public func readSingleKey(prompt: String) -> String? {
+        readSingleKeyInternal(prompt: prompt, shouldCancel: nil)
+    }
+
+    func readSingleKey(
+        prompt: String,
+        shouldCancel: @escaping @Sendable () -> Bool
+    ) -> String? {
+        readSingleKeyInternal(prompt: prompt, shouldCancel: shouldCancel)
+    }
+
+    private func readSingleKeyInternal(
+        prompt: String,
+        shouldCancel: (@Sendable () -> Bool)?
+    ) -> String? {
         AgentOutput.standardError.writeString(prompt)
 
         return rawInput.withRawTerminal {
             while true {
-                guard let key = readKey() else {
+                if shouldCancel?() == true {
+                    AgentOutput.standardError.writeString("\n")
+                    return nil
+                }
+                let readResult = readKeyResult(
+                    pollTimeoutMilliseconds: shouldCancel == nil ? nil : 100
+                )
+                let key: Key
+                switch readResult {
+                case let .key(value):
+                    key = value
+                case .timedOut:
+                    continue
+                case .endOfInput:
                     AgentOutput.standardError.writeString("\n")
                     return nil
                 }

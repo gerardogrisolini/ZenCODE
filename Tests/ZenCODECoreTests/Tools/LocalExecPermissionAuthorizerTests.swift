@@ -35,6 +35,107 @@ struct LocalExecPermissionAuthorizerTests {
     }
 
     @Test
+    func commandPermissionIdentitiesRetainEveryExecutableInOneRequest() {
+        #expect(
+            LocalExecPermissionAuthorizer.commandPermissionIdentities(
+                for: "swift build 2>&1 | tail -n 20 || true"
+            ) == ["swift", "tail"]
+        )
+        #expect(
+            LocalExecPermissionAuthorizer.commandPermissionIdentities(
+                for: "cat \"$(rm -rf /tmp/x)\""
+            ) == ["cat", "rm"]
+        )
+    }
+
+    @Test
+    func tooManyCommandsFallbackIsExactAndNeverPersisted() {
+        let prefix = (0..<64).map { "tool\($0)" }
+        let firstCommand = (prefix + ["tailA"]).joined(separator: "; ")
+        let secondCommand = (prefix + ["taila"]).joined(separator: "; ")
+
+        let identities = LocalExecPermissionAuthorizer
+            .persistedCommandPermissionIdentities(for: firstCommand)
+        #expect(identities.last == LocalExecCommandParser.tooManyCommandsIdentity)
+
+        let permissions = AgentPermissionsManifest()
+            .appendingLocalExecAllowedCommandIdentities(identities)
+        #expect(
+            !permissions.containsLocalExecAllowedCommand(
+                LocalExecCommandParser.tooManyCommandsIdentity
+            )
+        )
+        #expect(
+            !LocalExecPermissionAuthorizer.isCommandPersistentlyAllowed(
+                firstCommand,
+                permissions: permissions
+            )
+        )
+
+        let firstCacheIdentities = LocalExecPermissionAuthorizer
+            .localExecPermissionCacheIdentities(for: firstCommand)
+        let secondCacheIdentities = LocalExecPermissionAuthorizer
+            .localExecPermissionCacheIdentities(for: secondCommand)
+        #expect(firstCacheIdentities.last != secondCacheIdentities.last)
+        let firstFallbackKey = LocalExecPermissionAuthorizer.permissionCacheKey(
+            toolName: "local.exec",
+            identity: firstCacheIdentities.last ?? ""
+        )
+        let secondFallbackKey = LocalExecPermissionAuthorizer.permissionCacheKey(
+            toolName: "local.exec",
+            identity: secondCacheIdentities.last ?? ""
+        )
+        #expect(firstFallbackKey != secondFallbackKey)
+    }
+
+    @Test
+    func analysisDepthFallbackIsExactAndNeverPersisted() {
+        func deeplyNested(_ leaf: String) -> String {
+            var command = leaf
+            for _ in 0..<12 {
+                command = "cat \"$(\(command))\""
+            }
+            return command
+        }
+
+        let firstCommand = deeplyNested("touch /tmp/Marker")
+        let secondCommand = deeplyNested("touch /tmp/marker")
+        let identities = LocalExecPermissionAuthorizer
+            .persistedCommandPermissionIdentities(for: firstCommand)
+        #expect(identities.contains(LocalExecCommandParser.analysisDepthLimitIdentity))
+
+        let permissions = AgentPermissionsManifest()
+            .appendingLocalExecAllowedCommandIdentities(identities)
+        #expect(
+            !permissions.containsLocalExecAllowedCommand(
+                LocalExecCommandParser.analysisDepthLimitIdentity
+            )
+        )
+        #expect(
+            !LocalExecPermissionAuthorizer.isCommandPersistentlyAllowed(
+                firstCommand,
+                permissions: permissions
+            )
+        )
+
+        let firstCacheIdentity = LocalExecPermissionAuthorizer
+            .localExecPermissionCacheIdentities(for: firstCommand)
+            .first { $0.hasPrefix(LocalExecCommandParser.analysisDepthLimitIdentity) } ?? ""
+        let secondCacheIdentity = LocalExecPermissionAuthorizer
+            .localExecPermissionCacheIdentities(for: secondCommand)
+            .first { $0.hasPrefix(LocalExecCommandParser.analysisDepthLimitIdentity) } ?? ""
+        #expect(
+            LocalExecPermissionAuthorizer.permissionCacheKey(
+                toolName: "local.exec",
+                identity: firstCacheIdentity
+            ) != LocalExecPermissionAuthorizer.permissionCacheKey(
+                toolName: "local.exec",
+                identity: secondCacheIdentity
+            )
+        )
+    }
+
+    @Test
     func persistedCommandPermissionIdentityExtractsExecutable() {
         #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentity(for: "swift test --filter ZenCODECoreTests") == "swift")
         // `pwd` is a harmless builtin, so the first authorizable executable is
@@ -107,6 +208,22 @@ struct LocalExecPermissionAuthorizerTests {
                 permissions: permissions
             )
         )
+
+        let pipelinePermissions = AgentPermissionsManifest(
+            localExecAllowedCommands: ["swift", "tail"]
+        )
+        #expect(
+            LocalExecPermissionAuthorizer.isCommandPersistentlyAllowed(
+                "swift build | tail -n 20",
+                permissions: pipelinePermissions
+            )
+        )
+        #expect(
+            !LocalExecPermissionAuthorizer.isCommandPersistentlyAllowed(
+                "swift build | tail -n 20",
+                permissions: AgentPermissionsManifest(localExecAllowedCommands: ["swift"])
+            )
+        )
     }
 
     @Test
@@ -160,6 +277,35 @@ struct LocalExecPermissionAuthorizerTests {
         #expect(prompt.contains("/tmp/project"))
         #expect(prompt.contains("swift test --filter One"))
         #expect(prompt.contains("[R]un once / [A]lways / [C]ancel"))
+    }
+
+    @Test
+    func terminalPromptIncludesAlwaysScopeHint() {
+        // local.exec: the executable identity is authorized across sessions.
+        let shellRequest = AgentToolAuthorizationRequest(
+            sessionID: "session",
+            toolCallID: "call",
+            toolName: "local.exec",
+            title: "Run swift tests",
+            kind: "shell",
+            command: "swift test --filter One",
+            workingDirectory: "/tmp/project"
+        )
+        let shellPrompt = LocalExecPermissionAuthorizer.terminalPrompt(for: shellRequest)
+        #expect(shellPrompt.contains("across sessions"))
+
+        // Destructive tool: "Always" applies to this session only.
+        let deleteRequest = AgentToolAuthorizationRequest(
+            sessionID: "session",
+            toolCallID: "call",
+            toolName: "local.delete",
+            title: "Delete file",
+            kind: "destructive",
+            command: "rm -rf /tmp/scratch",
+            workingDirectory: "/tmp/project"
+        )
+        let deletePrompt = LocalExecPermissionAuthorizer.terminalPrompt(for: deleteRequest)
+        #expect(deletePrompt.contains("session only"))
     }
 
     @Test
@@ -248,6 +394,88 @@ struct LocalExecPermissionAuthorizerTests {
         #expect(decision == .deny)
     }
 
+    @Test
+    func concurrentAuthorizationDialogsUseOnlyOneTerminalReaderAtATime() async {
+        let authorizer = LocalExecPermissionAuthorizer()
+        let reader = BlockingConsentReader()
+        await authorizer.setConsentReader({ prompt in
+            await reader.next(prompt: prompt)
+        })
+
+        let first = Task {
+            await authorizer.authorize(
+                Self.destructiveConsentRequest(toolCallID: "first", command: "delete one")
+            )
+        }
+        await reader.waitUntilFirstInvocation()
+
+        let second = Task {
+            await authorizer.authorize(
+                Self.destructiveConsentRequest(toolCallID: "second", command: "delete two")
+            )
+        }
+
+        // Give the second task ample opportunity to enter the re-entrant actor.
+        // Without the explicit dialog queue it starts a second TTY read here.
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        #expect(await reader.recordedInvocationCount() == 1)
+
+        await reader.releaseFirstInvocation()
+        #expect(await first.value)
+        #expect(await second.value)
+        #expect(await reader.recordedInvocationCount() == 2)
+    }
+
+    @Test
+    func cancellingQueuedAuthorizationDoesNotLeaveDialogBlocked() async {
+        let authorizer = LocalExecPermissionAuthorizer()
+        let reader = BlockingConsentReader()
+        await authorizer.setConsentReader({ prompt in
+            await reader.next(prompt: prompt)
+        })
+
+        let first = Task {
+            await authorizer.authorize(
+                Self.destructiveConsentRequest(toolCallID: "first", command: "delete one")
+            )
+        }
+        await reader.waitUntilFirstInvocation()
+
+        let queued = Task {
+            await authorizer.authorize(
+                Self.destructiveConsentRequest(toolCallID: "queued", command: "delete queued")
+            )
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        queued.cancel()
+
+        #expect(await queued.value == false)
+        #expect(await reader.recordedInvocationCount() == 1)
+
+        await reader.releaseFirstInvocation()
+        #expect(await first.value)
+    }
+
+    @Test
+    func cancellingActiveAuthorizationCannotApproveAfterReaderReturns() async {
+        let authorizer = LocalExecPermissionAuthorizer()
+        let reader = BlockingConsentReader()
+        await authorizer.setConsentReader({ prompt in
+            await reader.next(prompt: prompt)
+        })
+
+        let authorization = Task {
+            await authorizer.authorize(
+                Self.destructiveConsentRequest(toolCallID: "active", command: "delete active")
+            )
+        }
+        await reader.waitUntilFirstInvocation()
+        authorization.cancel()
+        await reader.releaseFirstInvocation()
+
+        #expect(await authorization.value == false)
+    }
+
     private static func consentRequest() -> AgentToolAuthorizationRequest {
         AgentToolAuthorizationRequest(
             sessionID: "session",
@@ -256,6 +484,21 @@ struct LocalExecPermissionAuthorizerTests {
             title: "Run swift tests",
             kind: "shell",
             command: "swift test --filter One",
+            workingDirectory: "/tmp/project"
+        )
+    }
+
+    private static func destructiveConsentRequest(
+        toolCallID: String,
+        command: String
+    ) -> AgentToolAuthorizationRequest {
+        AgentToolAuthorizationRequest(
+            sessionID: "session",
+            toolCallID: toolCallID,
+            toolName: "local.delete",
+            title: "Delete test file",
+            kind: "destructive",
+            command: command,
             workingDirectory: "/tmp/project"
         )
     }
@@ -312,6 +555,18 @@ struct LocalExecPermissionAuthorizerTests {
         #expect(decoded.containsLocalExecAllowedCommand("SWIFT"))
         #expect(decoded.containsLocalExecAllowedCommand("GIT"))
     }
+
+    @Test
+    func permissionsManifestSeparatesCommandsFromParsedIdentities() {
+        let parsedCommands = AgentPermissionsManifest(
+            localExecAllowedCommands: ["swift build | tail -n 20"]
+        )
+        #expect(parsedCommands.localExecAllowedCommands == ["swift", "tail"])
+
+        let parsedIdentities = AgentPermissionsManifest()
+            .appendingLocalExecAllowedCommandIdentities(["true", "./My Tool", "TRUE"])
+        #expect(parsedIdentities.localExecAllowedCommands == ["true", "./My Tool"])
+    }
 }
 
 /// Deterministic consent reader for `presentDialog` loop/EOF coverage. Returns
@@ -336,5 +591,44 @@ private actor FakeConsentReader {
 
     func recordedPrompts() -> [String] {
         prompts
+    }
+}
+
+/// Holds the first read open so a second concurrent authorization has time to
+/// attempt another read. A correct authorizer queues that second request.
+private actor BlockingConsentReader {
+    private var invocationCount = 0
+    private var firstInvocationContinuation: CheckedContinuation<Void, Never>?
+    private var firstInvocationWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func next(prompt _: String) async -> String? {
+        invocationCount += 1
+        if invocationCount == 1 {
+            let waiters = firstInvocationWaiters
+            firstInvocationWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+            await withCheckedContinuation { continuation in
+                firstInvocationContinuation = continuation
+            }
+        }
+        return "r"
+    }
+
+    func waitUntilFirstInvocation() async {
+        guard invocationCount == 0 else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            firstInvocationWaiters.append(continuation)
+        }
+    }
+
+    func releaseFirstInvocation() {
+        firstInvocationContinuation?.resume()
+        firstInvocationContinuation = nil
+    }
+
+    func recordedInvocationCount() -> Int {
+        invocationCount
     }
 }

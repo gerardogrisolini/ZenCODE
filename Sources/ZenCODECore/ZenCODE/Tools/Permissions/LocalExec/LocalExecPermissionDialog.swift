@@ -5,12 +5,25 @@
 
 import Dispatch
 import Foundation
+import Synchronization
 
 /// Reads a single consent answer for a given prompt. Abstracted so the
 /// terminal authorizer can present consent without owning the terminal reader,
 /// letting the TUI route consent through its existing (single) interactive
 /// reader and tests supply deterministic answers.
 typealias ConsentKeyReader = @Sendable (String) async -> String?
+
+final class ConsentReadCancellationFlag: Sendable {
+    private let state = Mutex(false)
+
+    func cancel() {
+        state.withLock { $0 = true }
+    }
+
+    func isCancelled() -> Bool {
+        state.withLock { $0 }
+    }
+}
 
 extension LocalExecPermissionAuthorizer {
     /// Presents consent on the terminal itself, so the same flow works on
@@ -58,23 +71,35 @@ extension LocalExecPermissionAuthorizer {
         guard TerminalRawInput.supportsInteractiveInput() else {
             return nil
         }
-        return await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                continuation.resume(
-                    returning: TerminalInteractiveLineReader().readSingleKey(prompt: prompt)
-                )
+        let cancellation = ConsentReadCancellationFlag()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global().async {
+                    continuation.resume(
+                        returning: TerminalInteractiveLineReader().readSingleKey(
+                            prompt: prompt,
+                            shouldCancel: cancellation.isCancelled
+                        )
+                    )
+                }
             }
+        } onCancel: {
+            cancellation.cancel()
         }
     }
 
     static func nonInteractiveConsentMessage(for request: AgentToolAuthorizationRequest) -> String {
-        """
+        let hint = Self.alwaysChoiceHint(forToolName: request.toolName)
+        return """
         \nPermission required but no interactive terminal is available (this \
         happens in CI, pipes, or background sessions).
         The command was blocked by design (fail-closed) and was not run.
 
         Command:
         \(request.command)
+
+        To pre-approve it, run in an interactive session and choose \
+        [A]lways. \(hint)
         """
     }
 
@@ -94,12 +119,29 @@ extension LocalExecPermissionAuthorizer {
         If you continue, the command may read or modify files, run scripts, \
         and launch other local processes.
 
-        \(Self.colorChoiceLine("[R]un once / [A]lways / [C]ancel (r/a/c):"))
+        \(Self.alwaysChoiceHint(forToolName: request.toolName))
+
+        \(Self.colorChoiceLine("[R]un once / [A]lways / [C]ancel (r/a/c): "))
         """
     }
 
+    /// Explains the scope of the "Always" choice so the consent dialog makes
+    /// the authorization duration unambiguous:
+    /// - `local.exec`: every executable identity in the request is remembered
+    ///   across sessions (persisted to the permissions manifest), so future
+    ///   commands ask only when they introduce an unapproved identity.
+    /// - Destructive direct tools (delete, push, restore, …): "Always" grants
+    ///   the tool for the current session/process only; it is never persisted.
+    static func alwaysChoiceHint(forToolName toolName: String) -> String {
+        if toolName == "local.exec" {
+            "Always: remember every executable identity in this request across sessions."
+        } else {
+            "Always: allow this tool for this session only."
+        }
+    }
+
     static func terminalRetryPrompt() -> String {
-        Self.colorChoiceLine("Please choose [R]un once / [A]lways / [C]ancel (r/a/c):")
+        Self.colorChoiceLine("Please choose [R]un once / [A]lways / [C]ancel (r/a/c): ")
     }
 
     /// Accent-colors the run/always/cancel choice line so the consent decision

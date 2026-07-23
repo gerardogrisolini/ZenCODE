@@ -19,7 +19,9 @@ struct ZenCODEMain {
             do {
                 try await ZenCODESetupRunner.run()
             } catch {
-                AgentOutput.standardError.writeString("ZenCODE: \(error.localizedDescription)\n")
+                AgentOutput.standardError.writeString(
+                    "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"
+                )
                 Foundation.exit(1)
             }
             return
@@ -28,6 +30,13 @@ struct ZenCODEMain {
         if arguments.dropFirst().contains(where: { $0 == "--help" || $0 == "-h" }) {
             AgentOutput.standardOutput.writeString(ZenCODEStandaloneHelp.text)
             return
+        }
+
+        if ZenCODEDoctorRunner.shouldRun(arguments: arguments) {
+            // Non-interactive diagnostics: print a redacted report and exit.
+            // Never start setup and never mutate configuration.
+            let exitCode = ZenCODEDoctorRunner.run()
+            Foundation.exit(exitCode)
         }
 
         if let option = ZenCODESetupMenuRunner.movedSetupOption(in: arguments) {
@@ -41,7 +50,9 @@ struct ZenCODEMain {
             do {
                 try await ZenCODESetupRunner.run()
             } catch {
-                AgentOutput.standardError.writeString("ZenCODE: \(error.localizedDescription)\n")
+                AgentOutput.standardError.writeString(
+                    "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"
+                )
                 Foundation.exit(1)
             }
         }
@@ -61,11 +72,12 @@ struct ZenCODEMain {
 
 private enum ZenCODEStandaloneHelp {
     static var text: String {
-        let usage = "zen [--setup] [--acp]"
+        let usage = "zen [--setup] [--doctor] [--acp]"
         let setupDetail = "remote providers, models, agents"
         let options = """
           --acp                  ACP JSON-RPC over stdio for compatible clients.
           --setup                Open setup for \(setupDetail).
+          --doctor               Print a redacted diagnostic report (environment, configuration, permissions) and exit. Non-interactive; never starts setup or reveals secrets.
         """
 
         return AgentConfiguration.helpText

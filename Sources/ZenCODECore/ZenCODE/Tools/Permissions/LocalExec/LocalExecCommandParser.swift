@@ -52,16 +52,59 @@ enum LocalExecCommandParser {
         var quote = Quote.none
         var isEscaping = false
         var inBacktick = false
+        // Shell compound expressions can legally contain unquoted `|`, `||`,
+        // `&&`, and newlines that are operators inside the expression rather
+        // than command separators. Keep those regions opaque while segmenting.
+        var doubleBracketDepth = 0
+        var arithmeticCommandDepth = 0
+        var casePatternContexts: [CasePatternContext] = []
         // Depth of opaque substitution contexts: $( ), <( ), >( ).
         // A plain grouping `( ... )` is NOT opaque: its inner separators still
         // split (e.g. `(cd x && make)` yields segments).
         var substitutionDepth = 0
+        // Records the command-substitution depth at which each `${...}` opened.
+        // A `}` inside a nested `$()` must not close an outer parameter expansion.
+        var parameterExpansionSubstitutionDepths: [Int] = []
         var index = 0
+
+        func currentCasePatternState() -> CasePatternState? {
+            casePatternContexts.last?.state
+        }
+
+        func ensureCasePatternContext(for segment: String) {
+            guard Self.segmentContainsCaseHeader(segment),
+                  currentCasePatternState() != .awaitingPatternEnd else {
+                return
+            }
+            casePatternContexts.append(
+                CasePatternContext(state: .awaitingPatternEnd)
+            )
+        }
+
+        func setCurrentCasePatternState(_ state: CasePatternState) {
+            guard !casePatternContexts.isEmpty else {
+                casePatternContexts.append(CasePatternContext(state: state))
+                return
+            }
+            let contextIndex = casePatternContexts.count - 1
+            casePatternContexts[contextIndex].state = state
+            if state == .awaitingPatternEnd {
+                casePatternContexts[contextIndex].patternBracketDepth = 0
+                casePatternContexts[contextIndex].patternBracketHasMember = false
+            }
+        }
 
         func appendCurrentSegment() {
             let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 segments.append(trimmed)
+                if Self.segmentContainsCaseTerminator(trimmed) {
+                    if !casePatternContexts.isEmpty {
+                        casePatternContexts.removeLast()
+                    }
+                } else {
+                    ensureCasePatternContext(for: trimmed)
+                }
             }
             current = ""
         }
@@ -101,6 +144,15 @@ enum LocalExecCommandParser {
                         isEscaping = true
                     }
                 } else {
+                    if let contextIndex = casePatternContexts.indices.last,
+                       casePatternContexts[contextIndex].state == .awaitingPatternEnd,
+                       casePatternContexts[contextIndex].patternBracketDepth == 1,
+                       character != "[",
+                       character != "]",
+                       !((character == "!" || character == "^")
+                           && !casePatternContexts[contextIndex].patternBracketHasMember) {
+                        casePatternContexts[contextIndex].patternBracketHasMember = true
+                    }
                     switch character {
                     case "\\":
                         current.append(character)
@@ -114,14 +166,85 @@ enum LocalExecCommandParser {
                     case "`":
                         current.append(character)
                         inBacktick = true
+                    case "[":
+                        ensureCasePatternContext(for: current)
+                        if let contextIndex = casePatternContexts.indices.last,
+                           casePatternContexts[contextIndex].state == .awaitingPatternEnd,
+                           substitutionDepth == 0,
+                           parameterExpansionSubstitutionDepths.isEmpty,
+                           arithmeticCommandDepth == 0,
+                           doubleBracketDepth == 0 {
+                            if casePatternContexts[contextIndex].patternBracketDepth == 0 {
+                                casePatternContexts[contextIndex].patternBracketDepth = 1
+                                casePatternContexts[contextIndex].patternBracketHasMember = false
+                            } else if index + 1 < characters.count,
+                                      characters[index + 1] == ":"
+                                        || characters[index + 1] == "."
+                                        || characters[index + 1] == "=" {
+                                casePatternContexts[contextIndex].patternBracketDepth += 1
+                                casePatternContexts[contextIndex].patternBracketHasMember = true
+                            } else if casePatternContexts[contextIndex].patternBracketDepth == 1 {
+                                casePatternContexts[contextIndex].patternBracketHasMember = true
+                            }
+                            current.append(character)
+                        } else if substitutionDepth == 0,
+                           arithmeticCommandDepth == 0,
+                           doubleBracketDepth == 0,
+                           index + 1 < characters.count,
+                           characters[index + 1] == "[",
+                           Self.isCompoundCommandBoundary(current.last),
+                           Self.isCompoundCommandBoundary(
+                               index + 2 < characters.count ? characters[index + 2] : nil
+                           ) {
+                            current.append("[[")
+                            doubleBracketDepth = 1
+                            index += 1
+                        } else {
+                            current.append(character)
+                        }
+                    case "]":
+                        current.append(character)
+                        if let contextIndex = casePatternContexts.indices.last,
+                           casePatternContexts[contextIndex].state == .awaitingPatternEnd,
+                           substitutionDepth == 0,
+                           parameterExpansionSubstitutionDepths.isEmpty,
+                           arithmeticCommandDepth == 0,
+                           doubleBracketDepth == 0,
+                           casePatternContexts[contextIndex].patternBracketDepth > 0 {
+                            if casePatternContexts[contextIndex].patternBracketDepth > 1 {
+                                casePatternContexts[contextIndex].patternBracketDepth -= 1
+                            } else if casePatternContexts[contextIndex].patternBracketHasMember {
+                                casePatternContexts[contextIndex].patternBracketDepth = 0
+                            } else {
+                                // `]` in the first member position is literal.
+                                casePatternContexts[contextIndex].patternBracketHasMember = true
+                            }
+                        } else if substitutionDepth == 0,
+                           doubleBracketDepth > 0,
+                           index + 1 < characters.count,
+                           characters[index + 1] == "]" {
+                            current.append("]")
+                            doubleBracketDepth -= 1
+                            index += 1
+                        }
                     case "$":
                         // `$( ... )` opens an opaque substitution context.
                         if index + 1 < characters.count, characters[index + 1] == "(" {
                             current.append("$(")
                             substitutionDepth += 1
                             index += 1
+                        } else if index + 1 < characters.count,
+                                  characters[index + 1] == "{" {
+                            current.append("${")
+                            parameterExpansionSubstitutionDepths.append(substitutionDepth)
+                            index += 1
                         } else {
                             current.append(character)
+                        }
+                    case "}":
+                        current.append(character)
+                        if parameterExpansionSubstitutionDepths.last == substitutionDepth {
+                            parameterExpansionSubstitutionDepths.removeLast()
                         }
                     case "<", ">":
                         // Process substitution: `<(...)` or `>(...)`.
@@ -138,28 +261,84 @@ enum LocalExecCommandParser {
                         // Nested `(` inside a substitution increments depth.
                         // Outside a substitution, plain grouping parentheses
                         // do not open an opaque context.
-                        current.append(character)
                         if substitutionDepth > 0 {
+                            current.append(character)
                             substitutionDepth += 1
+                        } else if arithmeticCommandDepth > 0 {
+                            current.append(character)
+                            arithmeticCommandDepth += 1
+                        } else if doubleBracketDepth == 0,
+                                  index + 1 < characters.count,
+                                  characters[index + 1] == "(",
+                                  Self.isCompoundCommandBoundary(current.last) {
+                            current.append("((")
+                            arithmeticCommandDepth = 2
+                            index += 1
+                        } else {
+                            current.append(character)
                         }
                     case ")":
+                        let currentContainsCaseHeader = Self
+                            .segmentContainsCaseHeader(current)
+                        if currentContainsCaseHeader {
+                            ensureCasePatternContext(for: current)
+                        }
+                        let closesCasePattern = substitutionDepth == 0
+                            && parameterExpansionSubstitutionDepths.isEmpty
+                            && arithmeticCommandDepth == 0
+                            && doubleBracketDepth == 0
+                            && (casePatternContexts.last?.patternBracketDepth ?? 0) == 0
+                            && (currentCasePatternState() == .awaitingPatternEnd
+                                || currentContainsCaseHeader)
                         current.append(character)
                         if substitutionDepth > 0 {
                             substitutionDepth -= 1
                             if substitutionDepth < 0 { substitutionDepth = 0 }
+                        } else if arithmeticCommandDepth > 0 {
+                            arithmeticCommandDepth -= 1
+                        }
+                        if closesCasePattern {
+                            if currentContainsCaseHeader {
+                                // Keep the `case` header as a harmless segment;
+                                // the identity parser knows how to skip it.
+                                appendCurrentSegment()
+                            } else {
+                                // Later branch patterns are syntax, not
+                                // commands, but may contain command
+                                // substitutions. Wrap them in a synthetic case
+                                // header so identity parsing skips the pattern
+                                // while nested extraction still sees its input.
+                                current = "case _ in \(current)"
+                                appendCurrentSegment()
+                            }
+                            setCurrentCasePatternState(.inBranchBody)
                         }
                     default:
-                        if substitutionDepth > 0 {
-                            // Inside a substitution: never split.
+                        if substitutionDepth > 0
+                            || !parameterExpansionSubstitutionDepths.isEmpty
+                            || doubleBracketDepth > 0
+                            || arithmeticCommandDepth > 0 {
+                            // Inside an opaque shell expression: never split.
                             current.append(character)
                         } else {
                             switch character {
                             case "|":
-                                appendCurrentSegment()
-                                if index + 1 < characters.count {
-                                    let next = characters[index + 1]
-                                    if next == "|" || next == "&" {
-                                        index += 1
+                                if Self.segmentContainsCaseTerminator(current) {
+                                    appendCurrentSegment()
+                                } else {
+                                    ensureCasePatternContext(for: current)
+                                    if currentCasePatternState() == .awaitingPatternEnd {
+                                        // `case ... in foo|bar)` uses `|` as a
+                                        // pattern alternative, not a pipeline.
+                                        current.append(character)
+                                    } else {
+                                        appendCurrentSegment()
+                                        if index + 1 < characters.count {
+                                            let next = characters[index + 1]
+                                            if next == "|" || next == "&" {
+                                                index += 1
+                                            }
+                                        }
                                     }
                                 }
                             case "&":
@@ -176,8 +355,34 @@ enum LocalExecCommandParser {
                                     // Background `&` separator.
                                     appendCurrentSegment()
                                 }
-                            case ";", "\n", "\r":
+                            case ";":
                                 appendCurrentSegment()
+                                if currentCasePatternState() == .inBranchBody,
+                                   index + 1 < characters.count {
+                                    let next = characters[index + 1]
+                                    if next == ";" {
+                                        index += 1
+                                        if index + 1 < characters.count,
+                                           characters[index + 1] == "&" {
+                                            index += 1
+                                        }
+                                        setCurrentCasePatternState(.awaitingPatternEnd)
+                                    } else if next == "&" {
+                                        index += 1
+                                        setCurrentCasePatternState(.awaitingPatternEnd)
+                                    }
+                                }
+                            case "\n", "\r":
+                                if Self.segmentContainsCaseTerminator(current) {
+                                    appendCurrentSegment()
+                                } else {
+                                    ensureCasePatternContext(for: current)
+                                    if currentCasePatternState() == .awaitingPatternEnd {
+                                        current.append(character)
+                                    } else {
+                                        appendCurrentSegment()
+                                    }
+                                }
                             case "#":
                                 // Shell comment: only at a word boundary
                                 // (preceded by whitespace or segment start).
@@ -214,6 +419,56 @@ enum LocalExecCommandParser {
         case double
     }
 
+    private enum CasePatternState {
+        case awaitingPatternEnd
+        case inBranchBody
+    }
+
+    private struct CasePatternContext {
+        var state: CasePatternState
+        var patternBracketDepth = 0
+        var patternBracketHasMember = false
+    }
+
+    private static func isCompoundCommandBoundary(_ character: Character?) -> Bool {
+        guard let character else {
+            return true
+        }
+        return character.isWhitespace || ";|&({".contains(character)
+    }
+
+    private static func segmentContainsCaseHeader(_ segment: String) -> Bool {
+        let words = shellWords(in: segment)
+        guard let caseIndex = words.firstIndex(where: {
+            !$0.wasQuoted && $0.value == "case"
+        }),
+        words[..<caseIndex].allSatisfy({
+            !$0.wasQuoted && isControlFlowKeyword($0.value)
+        }),
+        words[(caseIndex + 1)...].contains(where: {
+            !$0.wasQuoted && $0.value == "in"
+        }) else {
+            return false
+        }
+        return true
+    }
+
+    private static func segmentContainsCaseTerminator(_ segment: String) -> Bool {
+        let words = shellWords(in: segment)
+        guard let esacIndex = words.firstIndex(where: {
+            !$0.wasQuoted && $0.value == "esac"
+        }) else {
+            return false
+        }
+        return words[..<esacIndex].allSatisfy {
+            !$0.wasQuoted && caseTerminatorPrefixKeywords.contains($0.value)
+        }
+    }
+
+    private static let caseTerminatorPrefixKeywords: Set<String> = [
+        "if", "then", "else", "elif", "while", "until", "do", "!", "{", "}"
+    ]
+
     // MARK: - Executable identity
 
     /// Extracts the authorization identity for a single command segment by
@@ -221,6 +476,26 @@ enum LocalExecCommandParser {
     /// control-flow keywords, wrapper commands, and quote characters, then
     /// classifying the first remaining token.
     static func executableIdentity(for segment: String) -> Identity {
+        let trimmedSegment = segment.trimmingCharacters(in: .whitespacesAndNewlines)
+        if Self.isStandaloneGroupingDelimiter(trimmedSegment) {
+            return .skip
+        }
+        let compoundSegment = strippingLeadingCompoundExpressionKeywords(from: trimmedSegment)
+        if compoundSegment.hasPrefix("(("),
+           let trailingText = arithmeticCommandTrailingText(in: compoundSegment) {
+            // Arithmetic evaluation is a shell construct, not an executable.
+            // Nested command substitutions are extracted separately. Anything
+            // after the balanced expression is retained conservatively.
+            return trailingText.isEmpty ? .skip : .executable("((")
+        }
+        if startsExtendedTest(compoundSegment),
+           let trailingText = extendedTestTrailingText(in: compoundSegment) {
+            // Operators such as `>`, `<`, `&&`, and `||` inside `[[ ... ]]`
+            // belong to the conditional expression. Only syntax following the
+            // balanced closing token can turn the builtin into a side effect.
+            return trailingText.isEmpty ? .skip : .executable("[[")
+        }
+
         let words = shellWords(in: segment)
         guard !words.isEmpty else {
             return .unresolved(segment.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -350,9 +625,10 @@ enum LocalExecCommandParser {
             if !word.wasQuoted {
                 if skippableBuiltins.contains(cleaned) {
                     // C2: a built-in is only harmless if the segment has no
-                    // redirections or substitutions that could have side
-                    // effects (e.g. `: > victim`, `true > file`).
-                    if segmentHasRedirectionOrSubstitution(segment) {
+                    // redirections that could read or modify files (e.g.
+                    // `: > victim`, `true < input`). Commands inside
+                    // substitutions are extracted independently below.
+                    if segmentHasRedirection(segment) {
                         return .executable(cleaned)
                     }
                     return .skip
@@ -376,10 +652,162 @@ enum LocalExecCommandParser {
         return .executable(cleaned)
     }
 
+    private static let compoundExpressionPrefixKeywords: Set<String> = [
+        "if", "then", "else", "elif", "while", "until", "do", "!", "{"
+    ]
+
+    private static func strippingLeadingCompoundExpressionKeywords(
+        from segment: String
+    ) -> String {
+        var remainder = segment.trimmingCharacters(in: .whitespacesAndNewlines)
+        while true {
+            let words = shellWords(in: remainder)
+            guard let first = words.first,
+                  !first.wasQuoted,
+                  compoundExpressionPrefixKeywords.contains(first.value),
+                  remainder.hasPrefix(first.value) else {
+                return remainder
+            }
+            let endIndex = remainder.index(remainder.startIndex, offsetBy: first.value.count)
+            if endIndex < remainder.endIndex,
+               !remainder[endIndex].isWhitespace {
+                return remainder
+            }
+            remainder = String(remainder[endIndex...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    private static func startsExtendedTest(_ segment: String) -> Bool {
+        let characters = Array(segment)
+        guard characters.count >= 2,
+              characters[0] == "[",
+              characters[1] == "[" else {
+            return false
+        }
+        return characters.count == 2 || isCompoundCommandBoundary(characters[2])
+    }
+
+    /// Returns text following a balanced top-level `(( ... ))` arithmetic
+    /// command. Nil means the construct is unbalanced and must fall through to
+    /// conservative executable parsing rather than being silently skipped.
+    private static func arithmeticCommandTrailingText(in segment: String) -> String? {
+        let characters = Array(segment)
+        guard characters.count >= 4, characters[0] == "(", characters[1] == "(" else {
+            return nil
+        }
+
+        var depth = 0
+        var quote = Quote.none
+        var escaping = false
+        var index = 0
+        while index < characters.count {
+            let character = characters[index]
+            switch quote {
+            case .single:
+                if character == "'" { quote = .none }
+            case .double:
+                if escaping {
+                    escaping = false
+                } else if character == "\\" {
+                    escaping = true
+                } else if character == "\"" {
+                    quote = .none
+                }
+            case .none:
+                if escaping {
+                    escaping = false
+                } else {
+                    switch character {
+                    case "\\": escaping = true
+                    case "'": quote = .single
+                    case "\"": quote = .double
+                    case "(": depth += 1
+                    case ")":
+                        depth -= 1
+                        if depth == 0 {
+                            return String(characters.dropFirst(index + 1))
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    default: break
+                    }
+                }
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    /// Returns text following a balanced top-level `[[ ... ]]` expression.
+    /// Quoted and substitution-contained `]]` text does not close the command.
+    private static func extendedTestTrailingText(in segment: String) -> String? {
+        let characters = Array(segment)
+        guard characters.count >= 4, characters[0] == "[", characters[1] == "[" else {
+            return nil
+        }
+
+        var quote = Quote.none
+        var escaping = false
+        var inBacktick = false
+        var substitutionDepth = 0
+        var index = 2
+        while index < characters.count {
+            let character = characters[index]
+            switch quote {
+            case .single:
+                if character == "'" { quote = .none }
+            case .double:
+                if escaping {
+                    escaping = false
+                } else if character == "\\" {
+                    escaping = true
+                } else if character == "\"" {
+                    quote = .none
+                }
+            case .none:
+                if escaping {
+                    escaping = false
+                } else if inBacktick {
+                    if character == "`" {
+                        inBacktick = false
+                    } else if character == "\\" {
+                        escaping = true
+                    }
+                } else {
+                    switch character {
+                    case "\\": escaping = true
+                    case "'": quote = .single
+                    case "\"": quote = .double
+                    case "`": inBacktick = true
+                    case "$":
+                        if index + 1 < characters.count, characters[index + 1] == "(" {
+                            substitutionDepth += 1
+                            index += 1
+                        }
+                    case "(":
+                        if substitutionDepth > 0 { substitutionDepth += 1 }
+                    case ")":
+                        if substitutionDepth > 0 { substitutionDepth -= 1 }
+                    case "]":
+                        if substitutionDepth == 0,
+                           index + 1 < characters.count,
+                           characters[index + 1] == "]" {
+                            return String(characters.dropFirst(index + 2))
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    default: break
+                    }
+                }
+            }
+            index += 1
+        }
+        return nil
+    }
+
     /// Returns `true` when the segment contains a shell redirection operator
-    /// (`>`, `>>`, `<`, `2>&1`, `&>`, etc.) or a command/ process substitution
-    /// (`$(...)`, backtick, `<(...)`) that could have side effects.
-    private static func segmentHasRedirectionOrSubstitution(_ segment: String) -> Bool {
+    /// (`>`, `>>`, `<`, `2>&1`, `&>`, etc.). Process substitutions are excluded:
+    /// their nested commands are extracted independently.
+    private static func segmentHasRedirection(_ segment: String) -> Bool {
         let chars = Array(segment)
         var i = 0
         var inSingle = false
@@ -413,16 +841,14 @@ enum LocalExecCommandParser {
                 inSingle = true
             case "\"":
                 inDouble = true
-            case "$":
-                if i + 1 < chars.count, chars[i + 1] == "(" { return true }
-            case "`":
-                return true
             case ">":
-                // `>&` or `>` or `>>` etc.
-                return true
+                if i + 1 >= chars.count || chars[i + 1] != "(" {
+                    return true
+                }
             case "<":
-                // `<<<`, `<<`, `<(` etc.
-                return true
+                if i + 1 >= chars.count || chars[i + 1] != "(" {
+                    return true
+                }
             case "&":
                 if i + 1 < chars.count, chars[i + 1] == ">" { return true }
             default:
@@ -862,6 +1288,16 @@ enum LocalExecCommandParser {
     /// excessive work on pathological input.
     private static let maxCandidateCount = 64
 
+    /// Sentinel proving that part of a command was not inventoried. It may gate
+    /// one exact command in memory, but must never become a reusable or
+    /// persisted executable permission.
+    static let tooManyCommandsIdentity = "<too-many-commands>"
+    static let analysisDepthLimitIdentity = "<command-analysis-depth-limit>"
+
+    static func isNonPersistableIdentity(_ identity: String) -> Bool {
+        identity == tooManyCommandsIdentity || identity == analysisDepthLimitIdentity
+    }
+
     /// Extracts ordered, deduplicated authorization candidates from a command
     /// string. Each candidate carries the canonical executable identity (for
     /// cache/persistence) and a cleaned invocation (for display).
@@ -883,7 +1319,10 @@ enum LocalExecCommandParser {
             // fallback candidate so the gate still prompts.
             let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return [] }
-            return [AuthorizationCandidate(identity: trimmed, invocation: trimmed)]
+            return [AuthorizationCandidate(
+                identity: Self.analysisDepthLimitIdentity,
+                invocation: trimmed
+            )]
         }
 
         let segments = commandSegments(in: command)
@@ -930,7 +1369,7 @@ enum LocalExecCommandParser {
         // Fail-closed: if we hit the candidate count limit, there may be
         // unanalyzed commands. Add a conservative fallback so the gate prompts.
         if hitLimit {
-            let fallback = "<too-many-commands>"
+            let fallback = Self.tooManyCommandsIdentity
             if seen.insert(fallback).inserted {
                 candidates.append(AuthorizationCandidate(
                     identity: fallback,

@@ -19,21 +19,28 @@ extension DirectToolExecutor {
             return nil
         }
 
-        for candidate in LocalExecCommandParser.authorizationCandidates(in: command) {
-            let approved = await authorizationHandler(
-                AgentToolAuthorizationRequest(
-                    sessionID: sessionID,
-                    toolCallID: toolCall.id,
-                    toolName: "local.exec",
-                    title: "Run \(candidate.identity)",
-                    kind: "execute",
-                    command: candidate.invocation,
-                    workingDirectory: cwd.path
-                )
+        let candidates = LocalExecCommandParser.authorizationCandidates(in: command)
+        guard !candidates.isEmpty else {
+            return nil
+        }
+
+        // A tool call is one consent decision. The parser still inventories all
+        // executable identities for cache/persistence safety, but pipelines,
+        // substitutions, and compound commands must not fan out into a series
+        // of terminal dialogs that repeatedly suspend and resume the input UI.
+        let approved = await authorizationHandler(
+            AgentToolAuthorizationRequest(
+                sessionID: sessionID,
+                toolCallID: toolCall.id,
+                toolName: "local.exec",
+                title: Self.localExecAuthorizationTitle(for: candidates),
+                kind: "execute",
+                command: command,
+                workingDirectory: cwd.path
             )
-            guard approved else {
-                return deniedLocalExecOutput(command: command, cwd: cwd)
-            }
+        )
+        guard approved else {
+            return deniedLocalExecOutput(command: command, cwd: cwd)
         }
 
         return nil
@@ -48,6 +55,22 @@ extension DirectToolExecutor {
     static func localExecAuthorizationDisplayIdentity(in command: String) -> String {
         LocalExecCommandParser.authorizationCandidates(in: command).first?.identity
             ?? command.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func localExecAuthorizationTitle(
+        for candidates: [LocalExecCommandParser.AuthorizationCandidate]
+    ) -> String {
+        let identities = candidates.map(\.identity)
+        guard identities.count > 1 else {
+            return "Run \(identities[0])"
+        }
+
+        let visibleIdentities = identities.prefix(3).joined(separator: ", ")
+        let remainingCount = identities.count - min(identities.count, 3)
+        if remainingCount > 0 {
+            return "Run \(visibleIdentities) +\(remainingCount) more"
+        }
+        return "Run \(visibleIdentities)"
     }
 
     private func deniedLocalExecOutput(command: String, cwd: URL) -> String {

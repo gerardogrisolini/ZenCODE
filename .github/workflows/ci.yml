@@ -1,0 +1,87 @@
+name: CI
+
+# Reproducible build and test matrix for ZenCODE. The committed Package.resolved
+# is the dependency authority; live-provider tests remain explicitly disabled.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ZENCODE_RUN_LIVE_FEATURE_E2E: "0"
+
+jobs:
+  build-test:
+    name: build and test (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            # ZenCODE declares macOS 26 as its deployment target.
+            runner: macos-26
+          - name: Ubuntu
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The same stable compiler is installed on both platforms. Quote the
+      # value: YAML would otherwise treat 6.3.0 as a number.
+      - name: Set up Swift 6.3.0
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.3.0"
+
+      - name: Show Swift toolchain
+        run: swift --version
+
+      - name: Assert live provider suites are disabled
+        run: |
+          if [ "${ZENCODE_RUN_LIVE_FEATURE_E2E:-0}" = "1" ]; then
+            echo "::error::Live provider E2E must not run in CI." >&2
+            exit 1
+          fi
+          echo "Live provider suites disabled."
+
+      - name: Verify Package.resolved is tracked
+        run: |
+          if ! git ls-files --error-unmatch Package.resolved >/dev/null 2>&1; then
+            echo "::error::Package.resolved must be committed so dependency versions are pinned." >&2
+            exit 1
+          fi
+
+      - name: Resolve dependencies from the immutable lockfile
+        run: |
+          swift package resolve --only-use-versions-from-resolved-file
+          if ! git diff --exit-code -- Package.resolved; then
+            echo "::error::Package.resolved is out of date. Run 'swift package resolve' and commit the result." >&2
+            exit 1
+          fi
+
+      - name: Lint installer and support shell scripts
+        run: bash -n Scripts/*.sh
+
+      - name: Build ZenCODECore library
+        run: swift build --target ZenCODECore
+
+      - name: Run tests including bundled-feature parity
+        # Provider-backed integration tests require opt-in environment variables
+        # and therefore stay inactive in this ordinary CI run.
+        run: swift test
+
+      - name: Build release zen binary and bundled dependencies
+        run: swift build -c release --product zen
+
+      - name: Verify source diff hygiene
+        run: git diff --check

@@ -41,6 +41,7 @@ public enum AgentSettingsManifestStore {
 
         let data: Data
         do {
+            try SensitiveFilePermissions.hardenExistingFile(at: url)
             data = try Data(contentsOf: url)
         } catch {
             throw AgentSettingsManifestStoreError.unreadableFile(url, error)
@@ -68,15 +69,10 @@ public enum AgentSettingsManifestStore {
         _ manifest: AgentSettingsManifest,
         to url: URL = settingsURL()
     ) throws {
-        let directoryURL = url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(
-            at: directoryURL,
-            withIntermediateDirectories: true
-        )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted]
         let data = try encoder.encode(manifest)
-        try data.write(to: url, options: [.atomic])
+        try SensitiveFilePermissions.write(data, to: url)
         if url.standardizedFileURL.path == settingsURL().standardizedFileURL.path {
             defaultSettingsCache.store(manifest)
         }

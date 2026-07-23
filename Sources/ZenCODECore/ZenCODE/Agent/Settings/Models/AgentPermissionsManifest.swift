@@ -24,8 +24,21 @@ public struct AgentPermissionsManifest: Codable, Equatable, Sendable {
         localExecAllowedCommands: [String] = []
     ) {
         self.version = version
-        self.localExecAllowedCommands = Self.normalizedLocalExecAllowedCommands(
-            localExecAllowedCommands
+        self.localExecAllowedCommands = Self.deduplicatedCommandIdentities(
+            localExecAllowedCommands.flatMap {
+                LocalExecPermissionAuthorizer
+                    .persistedCommandPermissionIdentities(for: $0)
+            }
+        )
+    }
+
+    private init(
+        version: Int,
+        normalizedLocalExecAllowedCommandIdentities: [String]
+    ) {
+        self.version = version
+        self.localExecAllowedCommands = Self.deduplicatedCommandIdentities(
+            normalizedLocalExecAllowedCommandIdentities
         )
     }
 
@@ -38,20 +51,30 @@ public struct AgentPermissionsManifest: Codable, Equatable, Sendable {
     public func appendingLocalExecAllowedCommand(
         _ commandIdentity: String
     ) -> AgentPermissionsManifest {
-        guard !containsLocalExecAllowedCommand(commandIdentity) else {
+        appendingLocalExecAllowedCommandIdentities([commandIdentity])
+    }
+
+    func appendingLocalExecAllowedCommandIdentities(
+        _ commandIdentities: [String]
+    ) -> AgentPermissionsManifest {
+        let updatedIdentities = Self.deduplicatedCommandIdentities(
+            localExecAllowedCommands + commandIdentities
+        )
+        guard updatedIdentities != localExecAllowedCommands else {
             return self
         }
         return AgentPermissionsManifest(
             version: version,
-            localExecAllowedCommands: localExecAllowedCommands + [commandIdentity]
+            normalizedLocalExecAllowedCommandIdentities: updatedIdentities
         )
     }
 
-    private static func normalizedLocalExecAllowedCommands(_ commands: [String]) -> [String] {
+    private static func deduplicatedCommandIdentities(_ identities: [String]) -> [String] {
         var seen = Set<String>()
-        return commands.compactMap { command in
-            guard let normalized = LocalExecPermissionAuthorizer
-                .persistedCommandPermissionIdentity(for: command) else {
+        return identities.compactMap { identity in
+            let normalized = identity.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty,
+                  !LocalExecCommandParser.isNonPersistableIdentity(normalized) else {
                 return nil
             }
             let key = normalized.lowercased()
@@ -83,6 +106,7 @@ public enum AgentPermissionsManifestStore {
 
         let data: Data
         do {
+            try SensitiveFilePermissions.hardenExistingFile(at: url)
             data = try Data(contentsOf: url)
         } catch {
             throw AgentPermissionsManifestStoreError.unreadableFile(url, error)
@@ -110,15 +134,10 @@ public enum AgentPermissionsManifestStore {
         _ manifest: AgentPermissionsManifest,
         to url: URL = permissionsURL()
     ) throws {
-        let directoryURL = url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(
-            at: directoryURL,
-            withIntermediateDirectories: true
-        )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted]
         let data = try encoder.encode(manifest)
-        try data.write(to: url, options: [.atomic])
+        try SensitiveFilePermissions.write(data, to: url)
     }
 
     public static func permissionsURL(fileManager: FileManager = .default) -> URL {

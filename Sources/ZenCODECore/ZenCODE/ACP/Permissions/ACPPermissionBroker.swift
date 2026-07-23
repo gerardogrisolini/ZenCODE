@@ -128,16 +128,16 @@ public actor ACPPermissionBroker {
     }
 
     private func permissionCacheKey(for request: AgentToolAuthorizationRequest) -> String {
-        [
+        Self.permissionCacheKeyValue(for: request)
+    }
+
+    static func permissionCacheKeyValue(for request: AgentToolAuthorizationRequest) -> String {
+        Self.lengthPrefixedComponents([
             request.sessionID ?? "",
             request.toolName,
             request.workingDirectory,
-            permissionCommandIdentity(for: request)
-        ].joined(separator: "\u{1f}")
-    }
-
-    private func permissionCommandIdentity(for request: AgentToolAuthorizationRequest) -> String {
-        Self.permissionCacheCommandIdentity(for: request)
+            Self.permissionCacheCommandIdentity(for: request)
+        ])
     }
 
     static func permissionCacheCommandIdentity(
@@ -146,9 +146,18 @@ public actor ACPPermissionBroker {
         guard request.toolName == "local.exec" else {
             return request.command
         }
-        return LocalExecPermissionAuthorizer.persistedCommandPermissionIdentity(
-            for: request.command
-        ) ?? request.command
+        let identities = LocalExecPermissionAuthorizer
+            .localExecPermissionCacheIdentities(for: request.command)
+        guard !identities.isEmpty else {
+            return request.command
+        }
+        return Self.lengthPrefixedComponents(identities)
+    }
+
+    private static func lengthPrefixedComponents(_ components: [String]) -> String {
+        "\(components.count):" + components.map {
+            "\($0.utf8.count):\($0)"
+        }.joined()
     }
 
     static func permissionOptionID(from result: JSONValue?) -> String? {

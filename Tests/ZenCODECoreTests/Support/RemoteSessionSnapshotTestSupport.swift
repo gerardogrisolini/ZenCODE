@@ -446,6 +446,7 @@ final class RemoteNIOStreamingFixture: @unchecked Sendable {
     private let group: MultiThreadedEventLoopGroup
     private let channel: any Channel
     private let script: RemoteNIOStreamingScript
+    private let shutdownState = Mutex(false)
 
     private init(
         transport: RemoteTransportCore,
@@ -460,8 +461,7 @@ final class RemoteNIOStreamingFixture: @unchecked Sendable {
     }
 
     deinit {
-        channel.close(promise: nil)
-        group.shutdownGracefully(queue: .global()) { _ in }
+        beginShutdown()
     }
 
     static func start(
@@ -492,7 +492,8 @@ final class RemoteNIOStreamingFixture: @unchecked Sendable {
                 )
                 .childChannelOption(ChannelOptions.autoRead, value: true)
                 .childChannelInitializer { channel in
-                    channel.eventLoop.makeCompletedFuture {
+                    script.registerChild(channel)
+                    return channel.eventLoop.makeCompletedFuture {
                         try channel.pipeline.syncOperations.configureHTTPServerPipeline(
                             withPipeliningAssistance: false
                         )
@@ -528,8 +529,32 @@ final class RemoteNIOStreamingFixture: @unchecked Sendable {
     }
 
     func shutdown() async {
+        guard claimShutdown() else {
+            return
+        }
+        try? await transport.shutdown()
+        script.closeChildChannels()
         _ = try? await channel.close().get()
         try? await group.shutdownGracefully()
+    }
+
+    func beginShutdown() {
+        guard claimShutdown() else {
+            return
+        }
+        script.closeChildChannels()
+        channel.close(promise: nil)
+        group.shutdownGracefully(queue: .global()) { _ in }
+    }
+
+    private func claimShutdown() -> Bool {
+        shutdownState.withLock { isShuttingDown in
+            guard !isShuttingDown else {
+                return false
+            }
+            isShuttingDown = true
+            return true
+        }
     }
 
     private func url(path: String) -> URL {
@@ -550,6 +575,7 @@ private final class RemoteNIOStreamingScript: @unchecked Sendable {
     private let closeAfterHead: Bool
     private var failuresBeforeHead: Int
     private var requests: [CapturedRemoteRequest] = []
+    private var childChannels: [ObjectIdentifier: any Channel] = [:]
 
     init(
         responseBody: Data,
@@ -610,6 +636,22 @@ private final class RemoteNIOStreamingScript: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return requests
+    }
+
+    func registerChild(_ channel: any Channel) {
+        lock.lock()
+        childChannels[ObjectIdentifier(channel)] = channel
+        lock.unlock()
+    }
+
+    func closeChildChannels() {
+        lock.lock()
+        let channels = Array(childChannels.values)
+        childChannels.removeAll()
+        lock.unlock()
+        for channel in channels {
+            channel.close(promise: nil)
+        }
     }
 }
 

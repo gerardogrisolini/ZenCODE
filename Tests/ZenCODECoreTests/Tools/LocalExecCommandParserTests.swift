@@ -103,6 +103,69 @@ struct LocalExecCommandParserTests {
         )
     }
 
+    @Test
+    func extendedTestRegexPipeIsNotTreatedAsPipeline() {
+        let command = #"[[ "$value" =~ ^(foo|bar)$ ]] && rm -f marker"#
+        #expect(
+            LocalExecCommandParser.commandSegments(in: command)
+            == [#"[[ "$value" =~ ^(foo|bar)$ ]]"#, "rm -f marker"]
+        )
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
+            == ["rm"]
+        )
+    }
+
+    @Test
+    func executableStartingWithDoubleBracketIsNotAConditionalBuiltin() {
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(
+                in: "[[evil]] | rm -f marker"
+            ).map(\.identity) == ["[[evil]]", "rm"]
+        )
+    }
+
+    @Test
+    func arithmeticBitwisePipeIsNotTreatedAsPipeline() {
+        let command = "(( mask = 1 | 2 )) && rm -f marker"
+        #expect(
+            LocalExecCommandParser.commandSegments(in: command)
+            == ["(( mask = 1 | 2 ))", "rm -f marker"]
+        )
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
+            == ["rm"]
+        )
+    }
+
+    @Test
+    func compoundExpressionsAfterControlKeywordsDoNotBecomeExecutables() {
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(
+                in: "if (( mask = 1 | 2 )); then :; fi"
+            ).isEmpty
+        )
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(
+                in: "if [[ left > right ]]; then rm -f marker; fi"
+            ).map(\.identity) == ["rm"]
+        )
+    }
+
+    @Test
+    func compoundExpressionsAfterBraceGroupDoNotBecomeExecutables() {
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(
+                in: "{ [[ left > right ]]; (( harmless = 1 )); }"
+            ).isEmpty
+        )
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(
+                in: "{ [[ left > right ]]; rm -rf target; }"
+            ).map(\.identity) == ["rm"]
+        )
+    }
+
     // MARK: - Segmentation: substitutions are opaque
 
     @Test
@@ -709,6 +772,30 @@ struct LocalExecCommandParserTests {
         #expect(identities.contains("rm"))
     }
 
+    @Test
+    func harmlessBuiltinWithSubstitutionSurfacesOnlyNestedExecutable() {
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(
+                in: "true $(rm -f marker)"
+            ).map(\.identity) == ["rm"]
+        )
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(
+                in: #"[[ "$(rm -f marker)" =~ foo|bar ]]"#
+            ).map(\.identity) == ["rm"]
+        )
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(
+                in: #"[[ left > right && right < limit ]]"#
+            ).isEmpty
+        )
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(
+                in: #"[[ left > right ]] > result.txt"#
+            ).map(\.identity) == ["[["]
+        )
+    }
+
     // MARK: - Review fixes: process substitution extraction (F2)
 
     @Test
@@ -820,6 +907,125 @@ struct LocalExecCommandParserTests {
         #expect(!identities.contains("x"))
     }
 
+    @Test
+    func casePatternAlternationPipeIsNotACommandPipeline() {
+        let command = "case x in foo|bar) rm -rf target;; esac"
+        #expect(
+            LocalExecCommandParser.commandSegments(in: command)
+            == ["case x in foo|bar)", "rm -rf target", "esac"]
+        )
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
+            == ["rm"]
+        )
+    }
+
+    @Test
+    func caseTerminatorRestoresPipelineParsing() {
+        let command = "case x in x) :;; esac\ntrue | rm -rf target"
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
+            == ["rm"]
+        )
+    }
+
+    @Test
+    func caseSubjectNamedEsacDoesNotCloseTheCase() {
+        let command = "case esac in\nfoo|bar) rm -rf target;;\nesac"
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
+            == ["rm"]
+        )
+    }
+
+    @Test
+    func casePatternIgnoresParenthesisInsideParameterExpansion() {
+        let command = "X=; case 'foo)bar' in ${X:-foo)bar}) rm -rf target;; esac"
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
+            == ["rm"]
+        )
+    }
+
+    @Test
+    func caseParameterExpansionSurvivesBraceInsideNestedCommandSubstitution() {
+        let command = "X=; case '}foo)true' in ${X:-$(printf %s })foo)true}) touch marker;; esac"
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
+            == ["touch"]
+        )
+    }
+
+    @Test
+    func casePatternIgnoresParenthesisInsideBracketExpression() {
+        let command = "case ')' in [)]) rm -rf target;; esac"
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
+            == ["rm"]
+        )
+    }
+
+    @Test
+    func quotedParenDoesNotCloseCasePattern() {
+        let command = #"case true in "x)"|true) rm -rf target;; esac"#
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
+            == ["rm"]
+        )
+    }
+
+    @Test
+    func multilineCaseKeepsPatternPipesButSplitsBranchPipelines() {
+        let command = """
+        case "$value" in
+          foo|bar) cat input | grep needle ;;
+          baz|qux) rm -f marker ;;
+        esac
+        """
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
+            == ["cat", "grep", "rm"]
+        )
+    }
+
+    @Test
+    func laterCasePatternStillExtractsCommandSubstitution() {
+        let command = """
+        case "$value" in
+          first) true ;;
+          $(rm -f marker)|other) true ;;
+        esac
+        """
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
+            == ["rm"]
+        )
+    }
+
+    @Test
+    func nestedCaseAndEsacArgumentKeepOuterPatternState() {
+        let nested = """
+        case "$outer" in
+          first)
+            case "$inner" in
+              x|y) cat input ;;
+            esac
+            ;;
+          second|third) rm -f marker ;;
+        esac
+        """
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: nested).map(\.identity)
+            == ["cat", "rm"]
+        )
+
+        let esacArgument = "case x in first) echo esac;; second|third) rm marker;; esac"
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: esacArgument).map(\.identity)
+            == ["rm"]
+        )
+    }
+
     // MARK: - Review fixes: unquoted heredoc expansion (F6)
 
     @Test
@@ -890,5 +1096,6 @@ struct LocalExecCommandParserTests {
         }
         let candidates = LocalExecCommandParser.authorizationCandidates(in: command)
         #expect(!candidates.isEmpty)
+        #expect(candidates.contains { $0.identity == LocalExecCommandParser.analysisDepthLimitIdentity })
     }
 }

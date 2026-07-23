@@ -99,6 +99,16 @@ struct XcodeFeatureCharacterizationTests {
             throw error
         }
 
+        // `disconnect()` must close every local pipe and drain its detached
+        // readers. Otherwise a fixture (or a misbehaving bridge descendant)
+        // can keep Swift Testing's process alive after this test returns.
+        #expect(await client.process == nil)
+        #expect(await client.inputHandle == nil)
+        #expect(await client.outputHandle == nil)
+        #expect(await client.errorHandle == nil)
+        #expect(await client.readLoopTask == nil)
+        #expect(await client.errorLoopTask == nil)
+
         let requests = try String(contentsOf: requestsURL, encoding: .utf8)
             .split(separator: "\n")
             .map(String.init)

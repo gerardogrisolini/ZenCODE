@@ -19,6 +19,11 @@ set -euo pipefail
 # Flags:
 #   --debug          Build with the debug configuration
 #   --prefix DIR     Install the binary into DIR (sets INSTALL_DIR)
+#   --ref REF        Git ref (tag/branch/commit) the URL installer checks out
+#                    (overrides ZENCODE_INSTALLER_REF). For a reproducible
+#                    install pass an immutable ref such as a tag vX.Y.Z or a
+#                    full commit SHA. The default 'main' is a moving ref and
+#                    produces a development build.
 #   -h, --help       Show this help and exit
 
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
@@ -57,8 +62,28 @@ Environment overrides:
 Flags:
   --debug          Build with the debug configuration
   --prefix DIR     Install the binary into DIR (sets INSTALL_DIR)
+  --ref REF        Git ref (tag/branch/commit) the URL installer checks out
+                   (overrides ZENCODE_INSTALLER_REF). For a reproducible
+                   install pass an immutable ref such as a tag vX.Y.Z or a
+                   full commit SHA. The default 'main' is a moving ref and
+                   produces a development build.
   -h, --help       Show this help and exit
 EOF
+}
+
+# Warn when the URL installer is pinned to a moving ref. An immutable ref
+# (tag vX.Y.Z or a full commit SHA) is required for a reproducible install;
+# 'main' (or any branch) advances over time and yields a development build.
+warn_if_mobile_ref() {
+    local ref="$1"
+    if printf '%s' "$ref" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+        echo "Installing immutable release ref: ${ref}"
+    elif printf '%s' "$ref" | grep -Eq '^[0-9a-f]{40}$'; then
+        echo "Installing immutable commit ref: ${ref}"
+    else
+        echo "Warning: ref '${ref}' is a moving ref; this produces a development build." >&2
+        echo "         For a reproducible install pass --ref vX.Y.Z or a full commit SHA." >&2
+    fi
 }
 
 backup_existing_config_files() {
@@ -124,6 +149,28 @@ resolve_package_dir() {
     printf '%s\n' "$package_dir"
 }
 
+# Clone REPO_URL at REF into DEST. A full 40-hex commit SHA cannot be used with
+# `git clone --branch`, so fetch it explicitly; tags and branches use a shallow
+# branch clone. This keeps an explicit immutable ref (tag/commit) robust.
+checkout_ref() {
+    local repo_url="$1"
+    local ref="$2"
+    local dest="$3"
+
+    if printf '%s' "$ref" | grep -Eq '^[0-9a-f]{40}$'; then
+        git init --quiet "$dest"
+        git -C "$dest" remote add origin "$repo_url"
+        if ! git -C "$dest" fetch --depth 1 origin "$ref"; then
+            echo "Error: could not fetch commit ${ref} from ${repo_url}." >&2
+            echo "       Ensure the commit exists and is reachable." >&2
+            exit 1
+        fi
+        git -C "$dest" checkout --quiet FETCH_HEAD
+    else
+        git clone --depth 1 --branch "$ref" "$repo_url" "$dest"
+    fi
+}
+
 bootstrap_checkout() {
     local checkout=""
     local status=0
@@ -137,8 +184,9 @@ bootstrap_checkout() {
     checkout="${BOOTSTRAP_TMP_ROOT}/ZenCODE"
     trap 'rm -rf "$BOOTSTRAP_TMP_ROOT"' EXIT
 
-    echo "Downloading ZenCODE installer checkout..."
-    git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$checkout"
+    warn_if_mobile_ref "$REPO_REF"
+    echo "Downloading ZenCODE installer checkout (ref: ${REPO_REF})..."
+    checkout_ref "$REPO_URL" "$REPO_REF" "$checkout"
     echo ""
 
     set +e
@@ -160,6 +208,14 @@ while [ "$#" -gt 0 ]; do
                 exit 1
             fi
             INSTALL_DIR="$2"
+            shift 2
+            ;;
+        --ref)
+            if [ "$#" -lt 2 ]; then
+                echo "Error: --ref requires a git ref argument." >&2
+                exit 1
+            fi
+            REPO_REF="$2"
             shift 2
             ;;
         -h|--help)

@@ -13,6 +13,12 @@ import Foundation
 import Synchronization
 
 public final class TerminalRawInput: Sendable {
+    enum ByteReadResult: Equatable, Sendable {
+        case byte(UInt8)
+        case timedOut
+        case endOfInput
+    }
+
     private struct InputFileDescriptor {
         let fileDescriptor: Int32
         let shouldClose: Bool
@@ -53,6 +59,20 @@ public final class TerminalRawInput: Sendable {
             self.inputFileDescriptorLabel = "terminal"
             self.state = Mutex(State(rawModeFailureDescription: Self.noForegroundTerminalDescription))
         }
+    }
+
+    init(
+        fileDescriptor: Int32,
+        controlFileDescriptor: Int32 = -1,
+        ownsFileDescriptors: Bool = false,
+        inputLabel: String = "injected"
+    ) {
+        self.fileDescriptor = fileDescriptor
+        self.shouldCloseFileDescriptor = ownsFileDescriptors
+        self.controlFileDescriptor = controlFileDescriptor
+        self.shouldCloseControlFileDescriptor = ownsFileDescriptors
+        self.inputFileDescriptorLabel = inputLabel
+        self.state = Mutex(State())
     }
 
     deinit {
@@ -366,24 +386,50 @@ public final class TerminalRawInput: Sendable {
     }
 
     public func readByte(timeoutMilliseconds: Int32? = nil) -> UInt8? {
-        guard fileDescriptor >= 0 else {
-            return nil
-        }
-
-        if let timeoutMilliseconds {
-            var descriptor = pollfd(fd: fileDescriptor, events: Int16(POLLIN), revents: 0)
-            let pollResult = poll(&descriptor, 1, timeoutMilliseconds)
-            guard pollResult > 0,
-                  (descriptor.revents & Int16(POLLIN)) != 0 else {
-                return nil
-            }
-        }
-
-        var byte: UInt8 = 0
-        let readCount = read(fileDescriptor, &byte, 1)
-        guard readCount == 1 else {
+        guard case let .byte(byte) = readByteResult(
+            timeoutMilliseconds: timeoutMilliseconds
+        ) else {
             return nil
         }
         return byte
+    }
+
+    func readByteResult(timeoutMilliseconds: Int32? = nil) -> ByteReadResult {
+        guard fileDescriptor >= 0 else {
+            return .endOfInput
+        }
+
+        if let timeoutMilliseconds {
+            while true {
+                var descriptor = pollfd(fd: fileDescriptor, events: Int16(POLLIN), revents: 0)
+                let pollResult = poll(&descriptor, 1, timeoutMilliseconds)
+                if pollResult == 0 {
+                    return .timedOut
+                }
+                if pollResult < 0 {
+                    if errno == EINTR {
+                        continue
+                    }
+                    return .endOfInput
+                }
+                guard (descriptor.revents & Int16(POLLIN)) != 0 else {
+                    // POLLHUP/POLLERR/POLLNVAL without readable buffered data.
+                    return .endOfInput
+                }
+                break
+            }
+        }
+
+        while true {
+            var byte: UInt8 = 0
+            let readCount = read(fileDescriptor, &byte, 1)
+            if readCount == 1 {
+                return .byte(byte)
+            }
+            if readCount < 0, errno == EINTR {
+                continue
+            }
+            return .endOfInput
+        }
     }
 }

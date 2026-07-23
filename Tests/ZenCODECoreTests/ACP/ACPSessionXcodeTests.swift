@@ -153,37 +153,43 @@ extension ACPCompatibilityTests {
                 await discoveryProbe.discovery(workspacePath: "/tmp/acp-tools-workspace/App.xcodeproj")
             }
         )
-        let bridge = try makeBridge(
-            models: [
-                AgentSettingsModelManifest(
-                    id: "test-model",
-                    kind: .remoteAPI,
-                    modelID: "local/test-model"
-                )
-            ],
-            mcpRuntime: mcpRuntime,
-            xcodeIsRunning: { true }
-        )
+        do {
+            let bridge = try makeBridge(
+                models: [
+                    AgentSettingsModelManifest(
+                        id: "test-model",
+                        kind: .remoteAPI,
+                        modelID: "local/test-model"
+                    )
+                ],
+                mcpRuntime: mcpRuntime,
+                xcodeIsRunning: { true }
+            )
 
-        try await bridge.newSession(id: nil, params: [
-            "cwd": "/tmp/acp-tools-workspace",
-            "allowed_tools": ["shell", "xcode"] as [String],
-            "mcpServers": [
-                [
-                    "type": "stdio",
-                    "name": "Xcode",
-                    "command": executableURL.path,
-                    "args": [] as [String]
-                ] as [String: Any]
-            ]
-        ])
+            try await bridge.newSession(id: nil, params: [
+                "cwd": "/tmp/acp-tools-workspace",
+                "allowed_tools": ["shell", "xcode"] as [String],
+                "mcpServers": [
+                    [
+                        "type": "stdio",
+                        "name": "Xcode",
+                        "command": executableURL.path,
+                        "args": [] as [String]
+                    ] as [String: Any]
+                ]
+            ])
 
-        let configuration = try #require(await bridge.sessionConfigurationsForTesting().first)
-        let allowedToolNames = try #require(configuration.allowedToolNames)
+            let configuration = try #require(await bridge.sessionConfigurationsForTesting().first)
+            let allowedToolNames = try #require(configuration.allowedToolNames)
 
-        #expect(allowedToolNames.contains("local.exec"))
-        #expect(allowedToolNames.contains("xcode.XcodeRead"))
-        #expect(await discoveryProbe.count() == 0)
+            #expect(allowedToolNames.contains("local.exec"))
+            #expect(allowedToolNames.contains("xcode.XcodeRead"))
+            #expect(await discoveryProbe.count() == 0)
+            await mcpRuntime.shutdown()
+        } catch {
+            await mcpRuntime.shutdown()
+            throw error
+        }
     }
 
     @Test
@@ -436,20 +442,26 @@ extension ACPCompatibilityTests {
             arguments: [],
             environment: ["MCP_XCODE_SESSION_ID": "session-1"]
         )
-        let firstDescriptors = try await runtime.installExternalMCPServer(
-            name: "Xcode",
-            configuration: configuration
-        )
-        let secondDescriptors = try await runtime.installExternalMCPServer(
-            name: "Xcode",
-            configuration: configuration
-        )
-        let launches = try String(contentsOf: launchesURL, encoding: .utf8)
-            .split(separator: "\n")
+        do {
+            let firstDescriptors = try await runtime.installExternalMCPServer(
+                name: "Xcode",
+                configuration: configuration
+            )
+            let secondDescriptors = try await runtime.installExternalMCPServer(
+                name: "Xcode",
+                configuration: configuration
+            )
+            let launches = try String(contentsOf: launchesURL, encoding: .utf8)
+                .split(separator: "\n")
 
-        #expect(firstDescriptors.map(\.name) == ["xcode.XcodeRead"])
-        #expect(secondDescriptors.map(\.name) == ["xcode.XcodeRead"])
-        #expect(launches.count == 1)
+            #expect(firstDescriptors.map(\.name) == ["xcode.XcodeRead"])
+            #expect(secondDescriptors.map(\.name) == ["xcode.XcodeRead"])
+            #expect(launches.count == 1)
+            await runtime.shutdown()
+        } catch {
+            await runtime.shutdown()
+            throw error
+        }
     }
 
     @Test
@@ -490,33 +502,39 @@ extension ACPCompatibilityTests {
         )
 
         let runtime = DirectMCPToolRuntime()
-        let descriptors = try await runtime.installExternalMCPServer(
-            name: "Xcode",
-            configuration: MCPServerConfiguration(
-                executablePath: executableURL.path,
-                arguments: [],
-                environment: [:]
+        do {
+            let descriptors = try await runtime.installExternalMCPServer(
+                name: "Xcode",
+                configuration: MCPServerConfiguration(
+                    executablePath: executableURL.path,
+                    arguments: [],
+                    environment: [:]
+                )
             )
-        )
-        let output = try await runtime.execute(
-            toolCall: DirectAgentToolCall(
-                id: "call-1",
-                name: "xcode.read",
-                argumentsObject: ["path": "Sources/App/File.swift"],
-                argumentsJSON: #"{"path":"Sources/App/File.swift"}"#
+            let output = try await runtime.execute(
+                toolCall: DirectAgentToolCall(
+                    id: "call-1",
+                    name: "xcode.read",
+                    argumentsObject: ["path": "Sources/App/File.swift"],
+                    argumentsJSON: #"{"path":"Sources/App/File.swift"}"#
+                )
             )
-        )
-        let capturedRequestData = try Data(contentsOf: requestURL)
-        let capturedRequest = try #require(
-            JSONSerialization.jsonObject(with: capturedRequestData) as? [String: Any]
-        )
-        let capturedParams = try #require(capturedRequest["params"] as? [String: Any])
-        let capturedArguments = try #require(capturedParams["arguments"] as? [String: Any])
+            let capturedRequestData = try Data(contentsOf: requestURL)
+            let capturedRequest = try #require(
+                JSONSerialization.jsonObject(with: capturedRequestData) as? [String: Any]
+            )
+            let capturedParams = try #require(capturedRequest["params"] as? [String: Any])
+            let capturedArguments = try #require(capturedParams["arguments"] as? [String: Any])
 
-        #expect(descriptors.map(\.name) == ["xcode.XcodeRead"])
-        #expect(output == "ok")
-        #expect(capturedParams["name"] as? String == "XcodeRead")
-        #expect(capturedArguments["filePath"] as? String == "Sources/App/File.swift")
+            #expect(descriptors.map(\.name) == ["xcode.XcodeRead"])
+            #expect(output == "ok")
+            #expect(capturedParams["name"] as? String == "XcodeRead")
+            #expect(capturedArguments["filePath"] as? String == "Sources/App/File.swift")
+            await runtime.shutdown()
+        } catch {
+            await runtime.shutdown()
+            throw error
+        }
     }
 
 }

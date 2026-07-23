@@ -16,19 +16,34 @@ import os
 
 extension TerminalInteractiveLineReader {
     func readKey(pollTimeoutMilliseconds: Int32? = nil) -> Key? {
-        guard let byte = readByte(timeoutMilliseconds: pollTimeoutMilliseconds) else {
+        guard case let .key(key) = readKeyResult(
+            pollTimeoutMilliseconds: pollTimeoutMilliseconds
+        ) else {
             return nil
+        }
+        return key
+    }
+
+    func readKeyResult(pollTimeoutMilliseconds: Int32? = nil) -> KeyReadResult {
+        let byte: UInt8
+        switch rawInput.readByteResult(timeoutMilliseconds: pollTimeoutMilliseconds) {
+        case let .byte(value):
+            byte = value
+        case .timedOut:
+            return .timedOut
+        case .endOfInput:
+            return .endOfInput
         }
 
         if let key = Self.controlKey(for: byte) {
-            return key
+            return .key(key)
         }
 
         switch byte {
         case 0x1B:
-            return readEscapeKey()
+            return .key(readEscapeKey())
         default:
-            return decodeCharacter(startingWith: byte).map(Key.character) ?? .unknown
+            return .key(decodeCharacter(startingWith: byte).map(Key.character) ?? .unknown)
         }
     }
 

@@ -171,8 +171,15 @@ overlay, or status-bar state concurrently.
 ## Validation Gates
 
 Every structural checkpoint must at least build the affected target and run its
-focused tests. Before release, validate the remote-only graph. Check feature `--list-tools` output, validate
-shell syntax with `bash -n Scripts/*.sh`, and finish with `git diff --check`.
+focused tests. Before a release, resolve only from the tracked
+`Package.resolved`, validate the package graph, build `ZenCODECore`, run the
+complete non-live test suite, and build the release `zen` product. Check feature
+`--list-tools` output when a feature changes, validate shell syntax with
+`bash -n Scripts/*.sh`, and finish with `git diff --check`.
 
-Network and installer execution are dedicated validation tasks;
-they are not routine local checks for a layout-only change.
+The version/release contract is documented in [release.md](release.md): a
+`vX.Y.Z` tag must equal `ZenPackageMetadata.version`, and release installers
+receive the same immutable tag or full commit SHA through `--ref`. The tracked
+GitHub Actions workflow mirrors the ordinary macOS/Linux non-live gate; network
+and installer execution remain dedicated validation tasks rather than routine
+checks for a layout-only change.

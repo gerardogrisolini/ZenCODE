@@ -28,6 +28,7 @@ extension MCPClient {
             return
         }
 
+        let connectionID = UUID()
         let process = Process()
         let executableURL = Self.resolvedExecutableURL(for: configuration)
         process.executableURL = executableURL
@@ -50,27 +51,54 @@ extension MCPClient {
         process.standardError = standardError
         process.terminationHandler = { [weak self] terminatedProcess in
             Task {
-                await self?.handleProcessTermination(terminatedProcess)
+                await self?.handleProcessTermination(
+                    terminatedProcess,
+                    connectionID: connectionID
+                )
             }
         }
 
         try process.run()
 
         self.process = process
+        activeConnectionID = connectionID
+        terminatingConnectionID = nil
         inputHandle = standardInput.fileHandleForWriting
-        startDiagnosticMonitor(for: process)
+        startDiagnosticMonitor(for: process, connectionID: connectionID)
 
         signal(SIGPIPE, SIG_IGN)
         prepareStdoutTracingFiles()
 
         let outputHandle = standardOutput.fileHandleForReading
+        self.outputHandle = outputHandle
+        do {
+            try Self.makeNonBlocking(outputHandle)
+        } catch {
+            await disconnect()
+            throw error
+        }
         readLoopTask = Task.detached { [self] in
-            await Self.readLoop(from: outputHandle, client: self)
+            await Self.readLoop(
+                from: outputHandle,
+                client: self,
+                connectionID: connectionID
+            )
         }
 
         let errorHandle = standardError.fileHandleForReading
+        self.errorHandle = errorHandle
+        do {
+            try Self.makeNonBlocking(errorHandle)
+        } catch {
+            await disconnect()
+            throw error
+        }
         errorLoopTask = Task.detached { [self] in
-            await Self.errorLoop(from: errorHandle, client: self)
+            await Self.errorLoop(
+                from: errorHandle,
+                client: self,
+                connectionID: connectionID
+            )
         }
 
         let initializeParams = MCPInitializeParams(
@@ -145,20 +173,38 @@ extension MCPClient {
             return
         }
 
-        readLoopTask?.cancel()
+        let connectionID = activeConnectionID
+        activeConnectionID = nil
+        if terminatingConnectionID == connectionID {
+            terminatingConnectionID = nil
+        }
+
+        let readTask = readLoopTask
         readLoopTask = nil
-        errorLoopTask?.cancel()
+        let errorTask = errorLoopTask
         errorLoopTask = nil
-        stopDiagnosticMonitor()
+        let diagnosticMonitor = stopDiagnosticMonitor()
 
-        inputHandle?.closeFile()
+        let currentInputHandle = inputHandle
         inputHandle = nil
+        let currentOutputHandle = outputHandle
+        outputHandle = nil
+        let currentErrorHandle = errorHandle
+        errorHandle = nil
+        // The descriptors are non-blocking, so cancellation makes the readers
+        // leave promptly without closing an FD that a reader may still hold.
+        // Close their captured handles only after both readers have joined.
+        currentInputHandle?.closeFile()
+        readTask?.cancel()
+        errorTask?.cancel()
 
-        if let process {
-            if process.isRunning {
-                process.terminate()
+        let bridgeProcess = process
+        process = nil
+        if let bridgeProcess {
+            bridgeProcess.terminationHandler = nil
+            if bridgeProcess.isRunning {
+                bridgeProcess.terminate()
             }
-            self.process = nil
         }
 
         resumeAllPending(with: MCPClientError.connectionClosed)
@@ -168,9 +214,16 @@ extension MCPClient {
         stdoutChunkTraceURLs.removeAll(keepingCapacity: false)
         stdoutReassembledBufferURLs.removeAll(keepingCapacity: false)
         lastReassembledBufferSize = -1
+
+        await readTask?.value
+        await errorTask?.value
+        await diagnosticMonitor.task?.value
+        currentOutputHandle?.closeFile()
+        currentErrorHandle?.closeFile()
+        diagnosticMonitor.outputHandle?.closeFile()
     }
 
-    func startDiagnosticMonitor(for bridgeProcess: Process) {
+    func startDiagnosticMonitor(for bridgeProcess: Process, connectionID: UUID) {
         guard diagnosticMonitorProcess == nil,
               let monitorConfiguration = localTransportPolicy.diagnosticMonitor(
                   Int32(bridgeProcess.processIdentifier)
@@ -195,22 +248,45 @@ extension MCPClient {
             return
         }
 
-        diagnosticMonitorProcess = monitorProcess
         let outputHandle = outputPipe.fileHandleForReading
+        do {
+            try Self.makeNonBlocking(outputHandle)
+        } catch {
+            outputHandle.closeFile()
+            if monitorProcess.isRunning {
+                monitorProcess.terminate()
+            }
+            log("Unable to prepare local MCP diagnostic monitor: \(error.localizedDescription)")
+            return
+        }
+
+        diagnosticMonitorProcess = monitorProcess
+        diagnosticMonitorOutputHandle = outputHandle
+        diagnosticMonitorConnectionID = connectionID
         diagnosticMonitorTask = Task.detached { [self] in
-            await Self.diagnosticMonitorLoop(from: outputHandle, client: self)
+            await Self.diagnosticMonitorLoop(
+                from: outputHandle,
+                client: self,
+                connectionID: connectionID
+            )
         }
     }
 
-    func stopDiagnosticMonitor() {
-        diagnosticMonitorTask?.cancel()
+    @discardableResult
+    func stopDiagnosticMonitor() -> (task: Task<Void, Never>?, outputHandle: FileHandle?) {
+        let task = diagnosticMonitorTask
         diagnosticMonitorTask = nil
+        let outputHandle = diagnosticMonitorOutputHandle
+        diagnosticMonitorOutputHandle = nil
+        diagnosticMonitorConnectionID = nil
+        task?.cancel()
 
         if let monitorProcess = diagnosticMonitorProcess,
            monitorProcess.isRunning {
             monitorProcess.terminate()
         }
         diagnosticMonitorProcess = nil
+        return (task, outputHandle)
     }
 
     nonisolated static func resolvedExecutableURL(for configuration: MCPServerConfiguration) -> URL {
@@ -225,6 +301,22 @@ extension MCPClient {
 
         return DeveloperToolEnvironment.executableURL(named: executablePath)
             ?? URL(fileURLWithPath: executablePath)
+    }
+
+    /// A detached reader must be cancellable even if the bridge or one of its
+    /// descendants keeps a pipe open. `read(2)` on a blocking descriptor is not
+    /// reliably interrupted when another task closes that descriptor on macOS,
+    /// so use a non-blocking descriptor and let the async loop observe
+    /// cancellation between bounded polls.
+    nonisolated static func makeNonBlocking(_ handle: FileHandle) throws {
+        let descriptor = handle.fileDescriptor
+        let currentFlags = Darwin.fcntl(descriptor, F_GETFL)
+        guard currentFlags >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        guard Darwin.fcntl(descriptor, F_SETFL, currentFlags | O_NONBLOCK) >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
     }
 
     nonisolated static func resolvedEnvironment(for configuration: MCPServerConfiguration) -> [String: String] {

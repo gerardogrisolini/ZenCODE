@@ -38,6 +38,9 @@ struct AnthropicSubscriptionNIOStreamingTests {
                 )
             ]
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = makeClient(fixture: fixture)
         var session = makeSession()
         let events = CapturedDirectAgentEvents()
@@ -89,6 +92,9 @@ struct AnthropicSubscriptionNIOStreamingTests {
                 )
             ]
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = makeClient(fixture: fixture)
         var session = makeSession()
 
@@ -122,6 +128,9 @@ struct AnthropicSubscriptionNIOStreamingTests {
             responseBody: Data(),
             failuresBeforeHead: 1
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = makeClient(fixture: fixture)
         var session = makeSession()
 

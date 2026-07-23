@@ -30,10 +30,12 @@ Creates files under `~/.zencode/`:
 ## Command Line Options
 
 ```text
-zen [--setup] [--acp] [--agent NAME] [--model MODEL_ID] [--cwd PATH] [--skills LIST]
+zen [--setup] [--doctor] [--acp] [--agent NAME] [--model MODEL_ID] [--cwd PATH] [--skills LIST]
 ```
 
 - `--setup`: open setup, then exit.
+- `--doctor`: print a redacted, read-only diagnostic report and exit. It never
+  starts setup, accesses a provider, creates configuration, or writes a log.
 - `--acp`: run ACP JSON-RPC over stdio.
 - `--agent NAME`: select an agent profile (default: `Developer`).
 - `--model MODEL_ID`: request a model override for the direct session; delegated sub-agents remain restricted to the selected profile's authorized bindings.
@@ -44,6 +46,27 @@ zen [--setup] [--acp] [--agent NAME] [--model MODEL_ID] [--cwd PATH] [--skills L
 - `--verbose`: show status/tool progress on stderr.
 
 Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, `ZENCODE_AGENT_MODEL`, `ZENCODE_AGENT_CWD`, `ZENCODE_AGENT_SKILLS`, `ZENCODE_AGENT_VERBOSE`, `ZENCODE_AGENT_BEARER_TOKEN`.
+
+## Diagnostics
+
+Run `zen --doctor` when setup, permissions, or provider configuration looks
+wrong. It reports environment, configuration state, sensitive-file privacy, and
+the diagnostic-log status without printing API keys, OAuth tokens, or Telegram
+credentials. A missing setup is a warning, so the command remains convenient in
+scripts and clean installations.
+
+Local diagnostics are off by default and never use remote telemetry. Enable a
+redacted local log explicitly when investigating an issue:
+
+```bash
+ZENCODE_LOG=debug zen
+# Optionally choose a different local destination instead of ~/.zencode/logs/zencode.log:
+ZENCODE_LOG=debug ZENCODE_LOG_FILE=/tmp/zencode.log zen
+```
+
+`ZENCODE_LOG=stderr` is also available when stderr is appropriate; it never
+writes to stdout, so ACP JSON-RPC output remains clean. See
+[security.md](security.md) for the persisted-credential protection model.
 
 ## Agent Profiles
 
@@ -132,7 +155,13 @@ Commands start with `/`:
 
 Full access bypasses only `local.exec` approval checks. It does not expose disabled tools or bypass OS permissions. The status bar shows a red dot while active.
 
-`local.exec` authorization filters shell noise so that only significant commands trigger an approval prompt. Comments, decorative `echo`/`printf` (without output redirections), harmless built-ins (`true`, `false`, `cd`, `pwd`, …), environment assignments, wrappers (`env`, `command`, …), and control-flow keywords are stripped or skipped. Nested commands inside shell `-c` payloads, `$(...)`/backtick command substitutions, process substitutions `<(...)`/`>(...)`, and unquoted heredoc bodies are recursively extracted and each surfaced for authorization, while `$((...))` arithmetic expansion and quoted heredoc bodies are treated as literal. Wrapper options that consume an operand (`env -u NAME`, `env -C DIR`, `time -o FILE`) are handled so the real executable surfaces, and introspection-only forms (`command -v`) are not authorized as executions. When parsing hits its recursion or candidate limits it fails closed by emitting a conservative fallback candidate. The original command is still executed in full after approval; only the displayed authorization request is cleaned.
+`local.exec` authorization filters shell noise so that only significant commands trigger approval. Comments, decorative `echo`/`printf` (without output redirections), harmless built-ins (`true`, `false`, `cd`, `pwd`, …), environment assignments, wrappers (`env`, `command`, …), and control-flow keywords are stripped or skipped. Nested commands inside shell `-c` payloads, `$(...)`/backtick command substitutions, process substitutions `<(...)`/`>(...)`, and unquoted heredoc bodies are recursively inventoried, while `$((...))` arithmetic expansion and quoted heredoc bodies are treated as literal. Extended `[[ ... ]]` expressions, arithmetic `(( ... ))` commands, and `case` pattern alternatives remain opaque during pipeline segmentation, so regex, bitwise, and pattern `|` characters are not mistaken for shell pipes. Wrapper options that consume an operand (`env -u NAME`, `env -C DIR`, `time -o FILE`) are handled so the real executable surfaces, and introspection-only forms (`command -v`) are not authorized as executions. When parsing hits its recursion or candidate limits it fails closed by emitting a conservative fallback candidate. Each `local.exec` tool call presents one authorization request containing the full command; all parsed executable identities still participate in cache and persistence checks.
+
+The terminal consent prompt makes the scope of **Always** explicit: for
+`local.exec`, it remembers every parsed executable identity in the request across sessions; for
+destructive direct tools it grants only the current process/session and is not
+persisted. Use **Run once** when the broader executable-level approval is not
+intended.
 
 ## Tool Selection
 

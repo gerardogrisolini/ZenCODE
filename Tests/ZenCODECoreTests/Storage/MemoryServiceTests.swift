@@ -324,7 +324,6 @@ struct MemoryServiceTests {
             "Developer",
             "Builder",
             "Minimal",
-            "Xcode",
             "Reviewer",
             "Reporter",
             "Planner"

@@ -21,20 +21,38 @@ extension TerminalInteractiveLineReader {
         commandSuggestions: [TerminalCommandSuggestion] = [],
         onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
     ) async -> Bool {
-        let canStart = withPanelLock { () -> Bool in
-            if panelTask != nil {
-                return false
-            }
-            panelStatusBar = statusBar
-            panelBuffer.removeAll()
-            panelCursorIndex = 0
-            panelOverlayOverride = nil
-            panelCommandSuggestions = commandSuggestions
-            panelCommandSuggestionIndex = 0
-            historyIndex = nil
-            draftBeforeHistory.removeAll()
-            return true
-        }
+        await startPanelInput(
+            statusBar: statusBar,
+            commandSuggestions: commandSuggestions,
+            preservingState: false,
+            onEvent: onEvent
+        )
+    }
+
+    func resumePanelInput(
+        statusBar: TerminalStatusBar,
+        commandSuggestions: [TerminalCommandSuggestion] = [],
+        onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
+    ) async -> Bool {
+        await startPanelInput(
+            statusBar: statusBar,
+            commandSuggestions: commandSuggestions,
+            preservingState: true,
+            onEvent: onEvent
+        )
+    }
+
+    private func startPanelInput(
+        statusBar: TerminalStatusBar,
+        commandSuggestions: [TerminalCommandSuggestion],
+        preservingState: Bool,
+        onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
+    ) async -> Bool {
+        let canStart = preparePanelForStart(
+            statusBar: statusBar,
+            commandSuggestions: commandSuggestions,
+            preservingState: preservingState
+        )
         guard canStart else {
             return true
         }
@@ -63,6 +81,33 @@ extension TerminalInteractiveLineReader {
         }
         await renderPanel()
         return true
+    }
+
+    func preparePanelForStart(
+        statusBar: TerminalStatusBar,
+        commandSuggestions: [TerminalCommandSuggestion],
+        preservingState: Bool
+    ) -> Bool {
+        withPanelLock { () -> Bool in
+            if panelTask != nil {
+                return false
+            }
+            panelStatusBar = statusBar
+            panelCommandSuggestions = commandSuggestions
+            if preservingState {
+                panelCommandSuggestionIndex = commandSuggestions.isEmpty
+                    ? 0
+                    : min(panelCommandSuggestionIndex, commandSuggestions.count - 1)
+            } else {
+                panelCommandSuggestionIndex = 0
+                panelBuffer.removeAll()
+                panelCursorIndex = 0
+                panelOverlayOverride = nil
+                historyIndex = nil
+                draftBeforeHistory.removeAll()
+            }
+            return true
+        }
     }
 
     public func stopPanelInput(clearPanel: Bool = true) async {
@@ -101,9 +146,9 @@ extension TerminalInteractiveLineReader {
                 panelOverlayOverride = nil
                 panelCommandSuggestions.removeAll()
                 panelCommandSuggestionIndex = 0
+                historyIndex = nil
+                draftBeforeHistory.removeAll()
             }
-            historyIndex = nil
-            draftBeforeHistory.removeAll()
         }
     }
 
@@ -167,8 +212,15 @@ extension TerminalInteractiveLineReader {
         onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
     ) async {
         while !Task.isCancelled {
-            guard let key = readKey(pollTimeoutMilliseconds: 1000) else {
+            let key: Key
+            switch readKeyResult(pollTimeoutMilliseconds: 1000) {
+            case let .key(value):
+                key = value
+            case .timedOut:
                 continue
+            case .endOfInput:
+                onEvent(.endOfInput)
+                return
             }
             await handlePanelKey(key, onEvent: onEvent)
         }

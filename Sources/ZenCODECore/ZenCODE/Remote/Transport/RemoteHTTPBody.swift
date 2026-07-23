@@ -107,6 +107,7 @@ actor RemoteHTTPBodyStorage {
     private var bodyConsumerID: UUID?
     private var isReading = false
     private var isFinished = false
+    private var activeHead: RemoteHTTPReadContinuation<RemoteHTTPResponseHead>?
     private var activeChunk: RemoteHTTPReadContinuation<Data?>?
 
     init(lease: RemoteChannelLease) {
@@ -128,7 +129,9 @@ actor RemoteHTTPBodyStorage {
                 throw RemoteTransportError.closed
             }
             return try await withCheckedThrowingContinuation { continuation in
-                enqueue(.head(RemoteHTTPReadContinuation(continuation)))
+                let read = RemoteHTTPReadContinuation(continuation)
+                activeHead = read
+                enqueue(.head(read))
             }
         } onCancel: {
             lease.close()
@@ -266,6 +269,9 @@ actor RemoteHTTPBodyStorage {
         continuation: RemoteHTTPReadContinuation<RemoteHTTPResponseHead>
     ) {
         returnedHead = true
+        if activeHead === continuation {
+            activeHead = nil
+        }
         continuation.resume(returning: head)
     }
 
@@ -298,6 +304,16 @@ actor RemoteHTTPBodyStorage {
         lease.close()
 
         let terminalError = error ?? RemoteTransportError.closed
+        activeHead?.resume(throwing: terminalError)
+        activeHead = nil
+        if let activeChunk {
+            if error == nil {
+                activeChunk.resume(returning: nil)
+            } else {
+                activeChunk.resume(throwing: terminalError)
+            }
+            self.activeChunk = nil
+        }
         for request in pendingRequests {
             switch request {
             case let .head(continuation):

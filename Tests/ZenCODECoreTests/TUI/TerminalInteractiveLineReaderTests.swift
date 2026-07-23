@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 03/06/26.
 //
 
+import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
@@ -217,6 +218,29 @@ struct TerminalInteractiveLineReaderTests {
     }
 
     @Test
+    func cancellableConsentReadDistinguishesTimeoutByteAndEOF() {
+        let pipe = Pipe()
+        let rawInput = TerminalRawInput(
+            fileDescriptor: pipe.fileHandleForReading.fileDescriptor
+        )
+
+        #expect(rawInput.readByteResult(timeoutMilliseconds: 5) == .timedOut)
+        pipe.fileHandleForWriting.write(Data([0x72]))
+        #expect(rawInput.readByteResult(timeoutMilliseconds: 100) == .byte(0x72))
+        pipe.fileHandleForWriting.closeFile()
+        #expect(rawInput.readByteResult(timeoutMilliseconds: 100) == .endOfInput)
+
+        let closedPipe = Pipe()
+        let reader = TerminalInteractiveLineReader(
+            rawInput: TerminalRawInput(
+                fileDescriptor: closedPipe.fileHandleForReading.fileDescriptor
+            )
+        )
+        closedPipe.fileHandleForWriting.closeFile()
+        #expect(reader.readSingleKey(prompt: "", shouldCancel: { false }) == nil)
+    }
+
+    @Test
     func accessModeToggleEventPreservesPanelTextAndCursor() async {
         let reader = TerminalInteractiveLineReader()
         reader.panelBuffer = Array("hello")
@@ -238,6 +262,37 @@ struct TerminalInteractiveLineReaderTests {
         #expect(reader.panelCursorIndex == 2)
         #expect(reader.panelHelpTextLocked().contains("Ctrl+T tools · Ctrl+A access"))
         #expect(reader.panelCompactHelpTextLocked() == "Ctrl+T · Ctrl+A access")
+    }
+
+    @Test
+    func consentPanelResumePreservesDraftHistoryAndSuggestionState() {
+        let reader = TerminalInteractiveLineReader()
+        let suggestions = [
+            TerminalCommandSuggestion(command: "/one", summary: "one"),
+            TerminalCommandSuggestion(command: "/two", summary: "two"),
+            TerminalCommandSuggestion(command: "/three", summary: "three")
+        ]
+        reader.panelBuffer = Array("unfinished prompt")
+        reader.panelCursorIndex = 4
+        reader.historyIndex = 1
+        reader.draftBeforeHistory = Array("original draft")
+        reader.panelCommandSuggestions = suggestions
+        reader.panelCommandSuggestionIndex = 2
+
+        reader.finishPanelStop(clearPanel: false)
+
+        let prepared = reader.preparePanelForStart(
+            statusBar: TerminalStatusBar(isEnabled: false),
+            commandSuggestions: suggestions,
+            preservingState: true
+        )
+
+        #expect(prepared)
+        #expect(String(reader.panelBuffer) == "unfinished prompt")
+        #expect(reader.panelCursorIndex == 4)
+        #expect(reader.historyIndex == 1)
+        #expect(String(reader.draftBeforeHistory) == "original draft")
+        #expect(reader.panelCommandSuggestionIndex == 2)
     }
 
     @Test

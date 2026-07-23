@@ -23,12 +23,16 @@ ZenCODE supports several ways to run the model, all selected through `zen --setu
 ### macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh | bash
+VERSION=vX.Y.Z
+curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/${VERSION}/Scripts/install.sh" \
+  | bash -s -- --ref "$VERSION"
 ```
 
-Re-run the same command to update. The installer downloads a temporary source
-checkout, builds `zen`, installs the binary and feature executables, then
-removes the checkout.
+Replace `vX.Y.Z` with a published release tag. The tag pins both the downloaded
+installer and its source checkout. For a development build from the moving
+`main` branch, use the same URL with `main`; the installer labels it clearly as
+a development build. See [release and reproducibility](Docs/release.md) for
+the full release procedure.
 
 Requires macOS 26 (Tahoe), Apple Silicon, Git, and the Swift toolchain from
 Xcode or the Apple command line tools.
@@ -36,7 +40,9 @@ Xcode or the Apple command line tools.
 ### Linux and Windows via WSL
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh | bash
+VERSION=vX.Y.Z
+curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/${VERSION}/Scripts/install-linux.sh" \
+  | bash -s -- --ref "$VERSION"
 ```
 
 Drive the agent through configured remote providers (`zen --setup`). The
@@ -135,6 +141,7 @@ swift test
 swift build -c release --product zen
 
 zen --help
+zen --doctor
 zen --setup
 zen --cwd /path/to/project
 zen --acp --cwd /path/to/project
@@ -143,6 +150,8 @@ zen --acp --cwd /path/to/project
 ## More Docs
 
 - [Architecture and layout contract](Docs/architecture.md)
+- [Release and reproducible-install guide](Docs/release.md)
+- [Persisted credential security](Docs/security.md)
 - [Why ZenCODE](Docs/why-zen.md)
 - [ZenCODE guide](Docs/zen.md)
 - [Agents and sub-agents guide](Docs/agents.md)

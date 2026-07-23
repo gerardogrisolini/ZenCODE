@@ -180,6 +180,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let configuration = AgentRuntimeConfiguration(
             modelID: "claude-haiku-4-5",
             bearerToken: nil,
@@ -363,6 +366,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -417,6 +423,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(

@@ -85,6 +85,7 @@ public struct AgentConfiguration: Sendable {
     public let appMode: Bool
     public let printHelp: Bool
     public let printVersion: Bool
+    public let printDoctor: Bool
     public let hostedAgentProfiles: [AgentProfile]?
     public let hostedModels: [AgentSettingsModelManifest]?
 
@@ -115,6 +116,7 @@ public struct AgentConfiguration: Sendable {
         var rawVerboseLogging = agentEnvironmentValue("VERBOSE")
         var shouldPrintHelp = false
         var shouldPrintVersion = false
+        var shouldPrintDoctor = false
 
         var index = 1
         while index < arguments.count {
@@ -124,6 +126,8 @@ public struct AgentConfiguration: Sendable {
                 shouldPrintHelp = true
             case "--version":
                 shouldPrintVersion = true
+            case "--doctor":
+                shouldPrintDoctor = true
             case "--model":
                 index += 1
                 guard index < arguments.count else {
@@ -198,7 +202,7 @@ public struct AgentConfiguration: Sendable {
         let settingsManifest: AgentSettingsManifest?
         let selectedAgent: AgentProfile?
         let agentName: String?
-        if shouldPrintHelp || shouldPrintVersion {
+        if shouldPrintHelp || shouldPrintVersion || shouldPrintDoctor {
             settingsManifest = nil
             selectedAgent = nil
             agentName = requestedAgentName
@@ -233,6 +237,7 @@ public struct AgentConfiguration: Sendable {
         self.appMode = appMode
         self.printHelp = shouldPrintHelp
         self.printVersion = shouldPrintVersion
+        self.printDoctor = shouldPrintDoctor
         self.hostedAgentProfiles = nil
         self.hostedModels = nil
     }
@@ -284,6 +289,7 @@ public struct AgentConfiguration: Sendable {
         self.appMode = appMode
         self.printHelp = false
         self.printVersion = false
+        self.printDoctor = false
         self.hostedAgentProfiles = cacheAgentProfiles ? availableAgents : nil
         self.hostedModels = availableModels
     }

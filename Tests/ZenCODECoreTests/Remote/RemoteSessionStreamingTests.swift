@@ -24,6 +24,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -66,6 +69,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -124,6 +130,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         var configuration = remoteStreamingConfiguration()
         configuration = configuration.withModelSettings(
             configuredContextWindowLimit: nil,
@@ -193,6 +202,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -232,6 +244,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -271,6 +286,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -301,6 +319,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data("".utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -347,6 +368,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -397,6 +421,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -447,6 +474,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -487,6 +517,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         var configuration = remoteStreamingConfiguration()
         configuration = configuration.withModelSettings(
             configuredContextWindowLimit: nil,
@@ -587,6 +620,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -626,6 +662,9 @@ extension RemoteSessionSnapshotTests {
             responseBody: Data(response.utf8),
             failuresBeforeHead: 1
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -667,6 +706,9 @@ extension RemoteSessionSnapshotTests {
             responseBody: Data(response.utf8),
             closeAfterHead: true
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -743,6 +785,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -781,6 +826,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -819,6 +867,9 @@ extension RemoteSessionSnapshotTests {
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
@@ -871,6 +922,9 @@ extension RemoteSessionSnapshotTests {
                 RemoteHTTPHeader(name: "x-request-id", value: "req_openai_nio")
             ]
         )
+        defer {
+            fixture.beginShutdown()
+        }
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(

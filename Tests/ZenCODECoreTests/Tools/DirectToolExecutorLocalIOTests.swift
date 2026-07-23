@@ -207,8 +207,8 @@ struct DirectToolExecutorLocalIOTests {
     }
 
     @Test
-    func localExecAuthorizesPipelineCommandsInOrderAndStopsAtDenial() async {
-        let recorder = LocalExecAuthorizationRecorder(decisions: [true, false, true])
+    func localExecAuthorizesWholePipelineWithOneRequest() async {
+        let recorder = LocalExecAuthorizationRecorder(decisions: [true])
         let executor = DirectToolExecutor(
             authorizationHandler: { request in
                 await recorder.authorize(request)
@@ -232,9 +232,39 @@ struct DirectToolExecutorLocalIOTests {
         )
         let authorizedCommands = await recorder.recordedCommands()
 
-        #expect(authorizedCommands == ["cat one", "grep one"])
-        #expect(output?.contains("no shell command was run") == true)
-        #expect(output?.contains(command) == true)
+        #expect(authorizedCommands == [command])
+        #expect(output == nil)
+    }
+
+    @Test
+    func localExecWithManyPipelineStagesStillRequestsConsentOnce() async {
+        let recorder = LocalExecAuthorizationRecorder(decisions: [true])
+        let executor = DirectToolExecutor(
+            authorizationHandler: { request in
+                await recorder.authorize(request)
+            },
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+        )
+        let command = (1...10).map { "tool\($0) --flag" }.joined(separator: " | ")
+
+        let output = await executor.deniedLocalExecOutputIfNeeded(
+            sessionID: "session",
+            toolCall: DirectAgentToolCall(
+                id: "many-stage-tool-call",
+                name: "local.exec",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            command: command,
+            cwd: URL(fileURLWithPath: "/tmp")
+        )
+        let requests = await recorder.recordedRequests()
+
+        #expect(output == nil)
+        #expect(requests.count == 1)
+        #expect(requests.first?.command == command)
+        #expect(requests.first?.title == "Run tool1, tool2, tool3 +7 more")
     }
 
     @Test
@@ -264,7 +294,7 @@ struct DirectToolExecutorLocalIOTests {
 
     @Test
     func localExecSkipsHarmlessBuiltinsEndToEnd() async {
-        let recorder = LocalExecAuthorizationRecorder(decisions: [true, true])
+        let recorder = LocalExecAuthorizationRecorder(decisions: [true])
         let executor = DirectToolExecutor(
             authorizationHandler: { request in
                 await recorder.authorize(request)
@@ -288,7 +318,7 @@ struct DirectToolExecutorLocalIOTests {
         )
         let authorizedCommands = await recorder.recordedCommands()
 
-        #expect(authorizedCommands == ["swift build 2>&1", "tail -n 20"])
+        #expect(authorizedCommands == [command])
         #expect(output == nil)
     }
 
@@ -323,12 +353,12 @@ struct DirectToolExecutorLocalIOTests {
         )
         let authorizedCommands = await recorder.recordedCommands()
 
-        #expect(authorizedCommands == ["swift test"])
+        #expect(authorizedCommands == [command])
         #expect(output == nil)
     }
 
     @Test
-    func localExecAuthorizationRequestUsesCleanedInvocation() async {
+    func localExecAuthorizationRequestPreservesWholeCommand() async {
         let recorder = LocalExecAuthorizationRecorder(decisions: [true])
         let executor = DirectToolExecutor(
             authorizationHandler: { request in
@@ -337,8 +367,9 @@ struct DirectToolExecutorLocalIOTests {
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
             subAgentBackendFactory: { TestAgentRuntimeBackend() }
         )
-        // The `command` field should be the cleaned invocation, not the raw
-        // segment with env assignments and wrappers.
+        // The authorization is one decision for the exact tool call. Parsing
+        // still derives executable identities for cache and persistence, while
+        // the prompt retains the complete command the shell will execute.
         _ = await executor.deniedLocalExecOutputIfNeeded(
             sessionID: "session",
             toolCall: DirectAgentToolCall(
@@ -352,7 +383,7 @@ struct DirectToolExecutorLocalIOTests {
         )
         let authorizedCommands = await recorder.recordedCommands()
 
-        #expect(authorizedCommands == ["swift build"])
+        #expect(authorizedCommands == ["FOO=bar env CI=1 swift build"])
     }
 
     @Test
@@ -381,7 +412,7 @@ struct DirectToolExecutorLocalIOTests {
         #expect(requests.count == 1)
         let request = requests[0]
         #expect(request.title == "Run swift")
-        #expect(request.command == "swift build")
+        #expect(request.command == "env CI=1 swift build")
         #expect(request.workingDirectory == "/work/dir")
         #expect(request.toolName == "local.exec")
         #expect(request.kind == "execute")
@@ -391,7 +422,7 @@ struct DirectToolExecutorLocalIOTests {
 
     @Test
     func localExecAuthorizationExtractsNestedCommandFromSubstitution() async {
-        let recorder = LocalExecAuthorizationRecorder(decisions: [true, true])
+        let recorder = LocalExecAuthorizationRecorder(decisions: [true])
         let executor = DirectToolExecutor(
             authorizationHandler: { request in
                 await recorder.authorize(request)
@@ -399,8 +430,8 @@ struct DirectToolExecutorLocalIOTests {
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
             subAgentBackendFactory: { TestAgentRuntimeBackend() }
         )
-        // A normal executable with a nested command substitution must surface
-        // BOTH the outer command and the nested one (security: rm must prompt).
+        // The single request keeps the full command; the authorizer reparses it
+        // and requires both `cat` and nested `rm` identities for Always/cache.
         _ = await executor.deniedLocalExecOutputIfNeeded(
             sessionID: "session",
             toolCall: DirectAgentToolCall(
@@ -414,7 +445,7 @@ struct DirectToolExecutorLocalIOTests {
         )
         let authorizedCommands = await recorder.recordedCommands()
 
-        #expect(authorizedCommands == ["cat $(rm -rf /tmp/x)", "rm -rf /tmp/x"])
+        #expect(authorizedCommands == ["cat \"$(rm -rf /tmp/x)\""])
     }
 
     private func runFileTool(

@@ -236,10 +236,68 @@ extension ACPCompatibilityTests {
             command: "swift test --filter One",
             workingDirectory: "/tmp/project"
         )
+        let pipelineRequest = AgentToolAuthorizationRequest(
+            sessionID: "session",
+            toolCallID: "call_pipeline",
+            toolName: "local.exec",
+            title: "Run swift and tail",
+            kind: "execute",
+            command: "swift build | tail -n 20",
+            workingDirectory: "/tmp/project"
+        )
+        let separatorPipelineRequest = AgentToolAuthorizationRequest(
+            sessionID: "session",
+            toolCallID: "call_separator_pipeline",
+            toolName: "local.exec",
+            title: "Run a and b",
+            kind: "execute",
+            command: "a | b",
+            workingDirectory: "/tmp/project"
+        )
+        let separatorExecutableRequest = AgentToolAuthorizationRequest(
+            sessionID: "session",
+            toolCallID: "call_separator_executable",
+            toolName: "local.exec",
+            title: "Run one unusual executable",
+            kind: "execute",
+            command: "'a\u{1e}b'",
+            workingDirectory: "/tmp/project"
+        )
 
-        #expect(ACPPermissionBroker.permissionCacheCommandIdentity(for: localExecRequest) == "swift")
-        #expect(ACPPermissionBroker.permissionCacheCommandIdentity(for: secondLocalExecRequest) == "swift")
+        #expect(ACPPermissionBroker.permissionCacheCommandIdentity(for: localExecRequest) == "1:5:swift")
+        #expect(ACPPermissionBroker.permissionCacheCommandIdentity(for: secondLocalExecRequest) == "1:5:swift")
         #expect(ACPPermissionBroker.permissionCacheCommandIdentity(for: nonLocalRequest) == "swift test --filter One")
+        #expect(
+            ACPPermissionBroker.permissionCacheCommandIdentity(for: pipelineRequest)
+            == "2:5:swift4:tail"
+        )
+        #expect(
+            ACPPermissionBroker.permissionCacheCommandIdentity(for: separatorPipelineRequest)
+            != ACPPermissionBroker.permissionCacheCommandIdentity(for: separatorExecutableRequest)
+        )
+
+        let tupleCollisionA = AgentToolAuthorizationRequest(
+            sessionID: "session",
+            toolCallID: "tuple_a",
+            toolName: "local.exec",
+            title: "Run unusual executable",
+            kind: "execute",
+            command: "'p\u{1f}1:1:q'",
+            workingDirectory: "/tmp/a"
+        )
+        let tupleCollisionB = AgentToolAuthorizationRequest(
+            sessionID: "session",
+            toolCallID: "tuple_b",
+            toolName: "local.exec",
+            title: "Run q",
+            kind: "execute",
+            command: "q",
+            workingDirectory: "/tmp/a\u{1f}1:7:p"
+        )
+        #expect(
+            ACPPermissionBroker.permissionCacheKeyValue(for: tupleCollisionA)
+            != ACPPermissionBroker.permissionCacheKeyValue(for: tupleCollisionB)
+        )
     }
 
     @Test

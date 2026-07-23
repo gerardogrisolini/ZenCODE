@@ -24,6 +24,12 @@ public enum ZenCODECommandLineRunner {
             SwiftPMResourceBundleDirectory.configure()
 
             let sanitizedArguments = ZenCODECommandLineArgumentSanitizer.sanitized(rawArguments)
+            if ZenCODEDoctorRunner.shouldRun(arguments: sanitizedArguments) {
+                // Non-interactive diagnostics: print a redacted report and exit.
+                // Handled before configuration parsing so it never starts setup
+                // or is rejected as an unknown argument.
+                Foundation.exit(ZenCODEDoctorRunner.run())
+            }
             let configuration = try AgentConfiguration(
                 arguments: sanitizedArguments
             )
@@ -60,7 +66,9 @@ public enum ZenCODECommandLineRunner {
 
             await AgentRuntimeLauncher.runACP(configuration: configuration)
         } catch {
-            AgentOutput.standardError.writeString("ZenCODE: \(error.localizedDescription)\n")
+            AgentOutput.standardError.writeString(
+                "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"
+            )
             Foundation.exit(1)
         }
     }
@@ -99,6 +107,7 @@ public enum ZenCODECommandLineRunner {
         argument == "-h"
             || argument == "--help"
             || argument == "--version"
+            || argument == "--doctor"
             || argument == "--model"
             || argument == "--agent"
             || argument == "--bearer-token"

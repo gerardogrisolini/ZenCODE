@@ -15,6 +15,22 @@ import ToolCore
 #if os(macOS)
 extension MCPClient {
     public nonisolated static func readLoop(from handle: FileHandle, client: MCPClient) async {
+        await runReadLoop(from: handle, client: client, connectionID: nil)
+    }
+
+    nonisolated static func readLoop(
+        from handle: FileHandle,
+        client: MCPClient,
+        connectionID: UUID
+    ) async {
+        await runReadLoop(from: handle, client: client, connectionID: connectionID)
+    }
+
+    private nonisolated static func runReadLoop(
+        from handle: FileHandle,
+        client: MCPClient,
+        connectionID: UUID?
+    ) async {
         let fileDescriptor = handle.fileDescriptor
         var rawBuffer = [UInt8](repeating: 0, count: 4096)
 
@@ -22,7 +38,17 @@ extension MCPClient {
             while !Task.isCancelled {
                 let bytesRead = Darwin.read(fileDescriptor, &rawBuffer, rawBuffer.count)
                 if bytesRead > 0 {
-                    await client.handleStdoutChunk(Data(rawBuffer.prefix(bytesRead)))
+                    let chunk = Data(rawBuffer.prefix(bytesRead))
+                    if let connectionID {
+                        await client.handleStdoutChunk(chunk, connectionID: connectionID)
+                        if await client.shouldStopReaderAfterProcessTermination(
+                            connectionID: connectionID
+                        ) {
+                            return
+                        }
+                    } else {
+                        await client.handleStdoutChunk(chunk)
+                    }
                     continue
                 }
 
@@ -34,17 +60,58 @@ extension MCPClient {
                     continue
                 }
 
+                if errno == EAGAIN || errno == EWOULDBLOCK {
+                    if let connectionID,
+                       await client.shouldStopReaderAfterProcessTermination(
+                           connectionID: connectionID
+                       ) {
+                        return
+                    }
+                    do {
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                    } catch {
+                        return
+                    }
+                    continue
+                }
+
                 throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
             }
         } catch {
-            await client.handleStdoutReadFailure(error)
+            if !Task.isCancelled {
+                if let connectionID {
+                    await client.handleStdoutReadFailure(error, connectionID: connectionID)
+                } else {
+                    await client.handleStdoutReadFailure(error)
+                }
+            }
             return
         }
 
-        await client.handleStdoutClosed()
+        if let connectionID {
+            await client.handleStdoutClosed(connectionID: connectionID)
+        } else {
+            await client.handleStdoutClosed()
+        }
     }
 
     public nonisolated static func errorLoop(from handle: FileHandle, client: MCPClient) async {
+        await runErrorLoop(from: handle, client: client, connectionID: nil)
+    }
+
+    nonisolated static func errorLoop(
+        from handle: FileHandle,
+        client: MCPClient,
+        connectionID: UUID
+    ) async {
+        await runErrorLoop(from: handle, client: client, connectionID: connectionID)
+    }
+
+    private nonisolated static func runErrorLoop(
+        from handle: FileHandle,
+        client: MCPClient,
+        connectionID: UUID?
+    ) async {
         let fileDescriptor = handle.fileDescriptor
         var rawBuffer = [UInt8](repeating: 0, count: 4096)
 
@@ -52,7 +119,17 @@ extension MCPClient {
             while !Task.isCancelled {
                 let bytesRead = Darwin.read(fileDescriptor, &rawBuffer, rawBuffer.count)
                 if bytesRead > 0 {
-                    await client.handleStderrChunk(Data(rawBuffer.prefix(bytesRead)))
+                    let chunk = Data(rawBuffer.prefix(bytesRead))
+                    if let connectionID {
+                        await client.handleStderrChunk(chunk, connectionID: connectionID)
+                        if await client.shouldStopReaderAfterProcessTermination(
+                            connectionID: connectionID
+                        ) {
+                            return
+                        }
+                    } else {
+                        await client.handleStderrChunk(chunk)
+                    }
                     continue
                 }
 
@@ -64,42 +141,91 @@ extension MCPClient {
                     continue
                 }
 
+                if errno == EAGAIN || errno == EWOULDBLOCK {
+                    if let connectionID,
+                       await client.shouldStopReaderAfterProcessTermination(
+                           connectionID: connectionID
+                       ) {
+                        return
+                    }
+                    do {
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                    } catch {
+                        return
+                    }
+                    continue
+                }
+
                 throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
             }
         } catch {
-            await client.handleStderrReadFailure(error)
+            if !Task.isCancelled {
+                if let connectionID {
+                    await client.handleStderrReadFailure(error, connectionID: connectionID)
+                } else {
+                    await client.handleStderrReadFailure(error)
+                }
+            }
         }
     }
 
-    nonisolated static func diagnosticMonitorLoop(from handle: FileHandle, client: MCPClient) async {
+    nonisolated static func diagnosticMonitorLoop(
+        from handle: FileHandle,
+        client: MCPClient,
+        connectionID: UUID
+    ) async {
         let fileDescriptor = handle.fileDescriptor
         var rawBuffer = [UInt8](repeating: 0, count: 4096)
         var lineBuffer = Data()
 
-        while !Task.isCancelled {
-            let bytesRead = Darwin.read(fileDescriptor, &rawBuffer, rawBuffer.count)
-            if bytesRead > 0 {
-                lineBuffer.append(contentsOf: rawBuffer.prefix(bytesRead))
-                while let newlineIndex = lineBuffer.firstIndex(of: 0x0A) {
-                    let lineData = lineBuffer.subdata(in: lineBuffer.startIndex ..< newlineIndex)
-                    lineBuffer.removeSubrange(lineBuffer.startIndex ... newlineIndex)
-                    guard let line = String(data: lineData, encoding: .utf8) else {
-                        continue
+        do {
+            while !Task.isCancelled {
+                let bytesRead = Darwin.read(fileDescriptor, &rawBuffer, rawBuffer.count)
+                if bytesRead > 0 {
+                    lineBuffer.append(contentsOf: rawBuffer.prefix(bytesRead))
+                    while let newlineIndex = lineBuffer.firstIndex(of: 0x0A) {
+                        let lineData = lineBuffer.subdata(in: lineBuffer.startIndex ..< newlineIndex)
+                        lineBuffer.removeSubrange(lineBuffer.startIndex ... newlineIndex)
+                        guard let line = String(data: lineData, encoding: .utf8) else {
+                            continue
+                        }
+                        await client.handleDiagnosticLine(line, connectionID: connectionID)
+                        if await client.shouldStopDiagnosticMonitor(connectionID: connectionID) {
+                            return
+                        }
                     }
-                    await client.handleDiagnosticLine(line)
+                    if await client.shouldStopDiagnosticMonitor(connectionID: connectionID) {
+                        return
+                    }
+                    continue
                 }
-                continue
-            }
 
-            if bytesRead == 0 {
-                break
-            }
+                if bytesRead == 0 {
+                    return
+                }
 
-            if errno == EINTR {
-                continue
-            }
+                if errno == EINTR {
+                    continue
+                }
 
-            break
+                if errno == EAGAIN || errno == EWOULDBLOCK {
+                    if await client.shouldStopDiagnosticMonitor(connectionID: connectionID) {
+                        return
+                    }
+                    do {
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                    } catch {
+                        return
+                    }
+                    continue
+                }
+
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        } catch {
+            if !Task.isCancelled {
+                await client.handleDiagnosticReadFailure(error, connectionID: connectionID)
+            }
         }
     }
 
@@ -111,11 +237,31 @@ extension MCPClient {
 
     public func handleStdoutReadFailure(_ error: Error) {
         log("stdout read failed: \(error.localizedDescription)")
+        guard terminatingConnectionID == nil else {
+            return
+        }
         resumeAllPending(with: error)
+    }
+
+    func handleStdoutChunk(_ chunk: Data, connectionID: UUID) {
+        guard activeConnectionID == connectionID else {
+            return
+        }
+        handleStdoutChunk(chunk)
+    }
+
+    func handleStdoutReadFailure(_ error: Error, connectionID: UUID) {
+        guard activeConnectionID == connectionID else {
+            return
+        }
+        handleStdoutReadFailure(error)
     }
 
     public func handleStdoutClosed() {
         log("stdout closed")
+        guard terminatingConnectionID == nil else {
+            return
+        }
         if let terminalBridgeError {
             resumeAllPending(with: terminalBridgeError)
             return
@@ -133,6 +279,33 @@ extension MCPClient {
         }
 
         resumeAllPending(with: MCPClientError.connectionClosed)
+    }
+
+    func handleStdoutClosed(connectionID: UUID) {
+        guard activeConnectionID == connectionID,
+              terminatingConnectionID != connectionID else {
+            return
+        }
+
+        // EOF can arrive before Process invokes its termination handler. Let
+        // that handler own the final drain and pending-response failure so a
+        // reply written immediately before exit cannot lose to
+        // `.connectionClosed`.
+        guard let process else {
+            handleStdoutClosed()
+            return
+        }
+
+        let wasRunning = process.isRunning
+        terminatingConnectionID = connectionID
+        if wasRunning {
+            terminalBridgeError = terminalBridgeError ?? .connectionClosed
+#if canImport(Darwin)
+            kill(process.processIdentifier, SIGKILL)
+#else
+            process.terminate()
+#endif
+        }
     }
 
     public func handleStderrChunk(_ chunk: Data) {
@@ -161,19 +334,93 @@ extension MCPClient {
         resumeAllPending(with: detectedError)
     }
 
+    func handleStderrChunk(_ chunk: Data, connectionID: UUID) {
+        guard activeConnectionID == connectionID else {
+            return
+        }
+        handleStderrChunk(chunk)
+    }
+
     public func handleStderrReadFailure(_ error: Error) {
         stderrBuffer.append(Data(error.localizedDescription.utf8))
         log("stderr read failed: \(error.localizedDescription)")
     }
 
+    func handleStderrReadFailure(_ error: Error, connectionID: UUID) {
+        guard activeConnectionID == connectionID else {
+            return
+        }
+        handleStderrReadFailure(error)
+    }
+
+    func shouldStopReaderAfterProcessTermination(connectionID: UUID) -> Bool {
+        activeConnectionID != connectionID || terminatingConnectionID == connectionID
+    }
+
+    func shouldStopDiagnosticMonitor(connectionID: UUID) -> Bool {
+        activeConnectionID != connectionID
+            || diagnosticMonitorConnectionID != connectionID
+            || terminatingConnectionID == connectionID
+    }
+
     public func handleProcessTermination(_ terminatedProcess: Process) {
+        guard let activeConnectionID else {
+            return
+        }
+        Task { [weak self] in
+            await self?.handleProcessTermination(
+                terminatedProcess,
+                connectionID: activeConnectionID
+            )
+        }
+    }
+
+    func handleProcessTermination(
+        _ terminatedProcess: Process,
+        connectionID: UUID
+    ) async {
+        guard activeConnectionID == connectionID,
+              process === terminatedProcess else {
+            return
+        }
+
+        // A local bridge can write its final JSON-RPC response and exit in the
+        // same scheduler turn. Drain both non-blocking pipe readers before
+        // classifying the exit, otherwise the termination handler can resume a
+        // still-pending request with `.serverExited` ahead of that final reply.
+        terminatingConnectionID = connectionID
+        let readTask = readLoopTask
+        let errorTask = errorLoopTask
+        let diagnosticMonitor = stopDiagnosticMonitor()
+        await readTask?.value
+        await errorTask?.value
+        await diagnosticMonitor.task?.value
+        diagnosticMonitor.outputHandle?.closeFile()
+
+        // Explicit disconnect can run while awaiting the detached readers.
+        // Its cleanup owns the state in that case.
+        guard activeConnectionID == connectionID,
+              process === terminatedProcess else {
+            return
+        }
+
         let detectedError = terminalBridgeError ?? exitError(for: terminatedProcess)
         terminalBridgeError = detectedError
-        if process === terminatedProcess {
-            process = nil
-            inputHandle = nil
-        }
-        stopDiagnosticMonitor()
+        let currentInputHandle = inputHandle
+        let currentOutputHandle = outputHandle
+        let currentErrorHandle = errorHandle
+        activeConnectionID = nil
+        terminatingConnectionID = nil
+        process = nil
+        inputHandle = nil
+        outputHandle = nil
+        errorHandle = nil
+        readLoopTask = nil
+        errorLoopTask = nil
+        terminatedProcess.terminationHandler = nil
+        currentInputHandle?.closeFile()
+        currentOutputHandle?.closeFile()
+        currentErrorHandle?.closeFile()
         importantLog("MCP bridge terminated with error: \(detectedError.localizedDescription)")
         log("process terminated with error: \(detectedError.localizedDescription)")
         resumeAllPending(with: detectedError)
@@ -401,6 +648,23 @@ extension MCPClient {
         resumeAllPending(with: policyError)
     }
 
+    func handleDiagnosticLine(_ line: String, connectionID: UUID) {
+        guard activeConnectionID == connectionID,
+              diagnosticMonitorConnectionID == connectionID,
+              terminatingConnectionID != connectionID else {
+            return
+        }
+        handleDiagnosticLine(line)
+    }
+
+    func handleDiagnosticReadFailure(_ error: Error, connectionID: UUID) {
+        guard activeConnectionID == connectionID,
+              diagnosticMonitorConnectionID == connectionID else {
+            return
+        }
+        log("diagnostic monitor read failed: \(error.localizedDescription)")
+    }
+
     func recordPendingRequestMethodForTesting(id: Int, method: String) {
         pendingRequestMethods[id] = method
     }
@@ -415,9 +679,11 @@ extension MCPClient {
 
     func terminateLocalProcessAfterPolicyError(_ error: MCPClientError) {
         terminalBridgeError = error
+        if let activeConnectionID {
+            terminatingConnectionID = activeConnectionID
+        }
         inputHandle?.closeFile()
         inputHandle = nil
-        stopDiagnosticMonitor()
 
         guard let process else {
             return
@@ -431,7 +697,6 @@ extension MCPClient {
             process.terminate()
 #endif
         }
-        self.process = nil
     }
 
     public func importantLog(_ message: String) {

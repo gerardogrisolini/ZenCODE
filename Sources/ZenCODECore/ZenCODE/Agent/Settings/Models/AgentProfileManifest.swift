@@ -543,6 +543,10 @@ public enum AgentProfileStore {
 
         let data: Data
         do {
+            try SensitiveFilePermissions.hardenExistingFile(
+                at: url,
+                fileManager: fileManager
+            )
             data = try Data(contentsOf: url)
         } catch {
             throw AgentProfileStoreError.unreadableFile(url, error)
@@ -574,11 +578,6 @@ public enum AgentProfileStore {
         fileManager: FileManager = .default
     ) throws {
         let url = agentsManifestURL(fileManager: fileManager)
-        try fileManager.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-
         let manifest = AgentProfileManifest(
             agents: normalizedAgentsForSave(agents).sorted {
                 $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
@@ -587,7 +586,7 @@ public enum AgentProfileStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(manifest)
-        try data.write(to: url, options: [.atomic])
+        try SensitiveFilePermissions.write(data, to: url, fileManager: fileManager)
     }
 
     @discardableResult
