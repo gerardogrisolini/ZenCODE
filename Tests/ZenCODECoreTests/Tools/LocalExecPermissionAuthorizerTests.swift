@@ -273,10 +273,11 @@ struct LocalExecPermissionAuthorizerTests {
             workingDirectory: "/tmp/project"
         )
         let prompt = LocalExecPermissionAuthorizer.terminalPrompt(for: request)
-        #expect(prompt.contains(request.title))
+        #expect(!prompt.contains(request.title))
         #expect(prompt.contains("/tmp/project"))
         #expect(prompt.contains("swift test --filter One"))
         #expect(prompt.contains("[R]un once / [A]lways / [C]ancel"))
+        #expect(prompt.hasSuffix("╯\n"))
     }
 
     @Test
@@ -306,6 +307,49 @@ struct LocalExecPermissionAuthorizerTests {
         )
         let deletePrompt = LocalExecPermissionAuthorizer.terminalPrompt(for: deleteRequest)
         #expect(deletePrompt.contains("session only"))
+    }
+
+    @Test
+    func terminalPromptReflowsLongCommandsWithinTerminalWidth() {
+        let columns = 48
+        let request = AgentToolAuthorizationRequest(
+            sessionID: "session",
+            toolCallID: "call",
+            toolName: "local.exec",
+            title: "Run a command whose arguments exceed the card width",
+            kind: "shell",
+            command: "printf '%s' "
+                + String(repeating: "very-long-argument ", count: 12)
+                + "tail-token",
+            workingDirectory: "/tmp/project"
+        )
+
+        let prompt = LocalExecPermissionAuthorizer.terminalPrompt(
+            for: request,
+            terminalColumns: columns
+        )
+        let renderedRows = prompt
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        let visibleRows = renderedRows.map(TerminalANSIText.stripANSI)
+        let boxRows = visibleRows.filter {
+            $0.hasPrefix("╭")
+                || $0.hasPrefix("│")
+                || $0.hasPrefix("├")
+                || $0.hasPrefix("╰")
+        }
+        let bodyRows = boxRows.filter { $0.hasPrefix("│") }
+
+        // Never use the rightmost terminal cell: terminals can autowrap a row
+        // that exactly fills it, which would damage the box and panel layout.
+        #expect(renderedRows.allSatisfy {
+            TerminalANSIText.visibleWidth($0) <= columns - 1
+        })
+        #expect(boxRows.first?.hasPrefix("╭") == true)
+        #expect(boxRows.last?.hasPrefix("╰") == true)
+        #expect(bodyRows.count > 5)
+        #expect(bodyRows.allSatisfy { $0.hasSuffix("│") })
+        #expect(prompt.contains("tail-token"))
     }
 
     @Test

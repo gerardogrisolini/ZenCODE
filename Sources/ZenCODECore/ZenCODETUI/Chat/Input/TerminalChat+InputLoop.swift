@@ -29,6 +29,10 @@ extension TerminalChat {
                 reader: interactiveReader,
                 prompt: prompt
             )
+            // `readSingleKey` terminates the echoed choice with one newline.
+            // Add another before restoring the panel so its first rendered row
+            // cannot overlap or clip the authorization card's bottom border.
+            AgentOutput.standardError.writeString("\n")
             let suggestions = self?.commandSuggestionsForCurrentAgent() ?? []
             _ = await interactiveReader.resumePanelInput(
                 statusBar: statusBar,

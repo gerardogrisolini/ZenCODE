@@ -103,8 +103,16 @@ extension LocalExecPermissionAuthorizer {
         """
     }
 
-    static func terminalPrompt(for request: AgentToolAuthorizationRequest) -> String {
+    static func terminalPrompt(
+        for request: AgentToolAuthorizationRequest,
+        terminalColumns: Int? = nil
+    ) -> String {
         let useColor = AgentOutput.standardErrorIsTerminal
+        let columns = terminalColumns ?? TerminalWidth.current(
+            descriptors: [AgentOutput.standardError.fileDescriptor],
+            fallback: 100,
+            forceRefresh: true
+        )
 
         let directory = Self.abbreviatedHomePath(
             Self.singleLined(Self.sanitizedForTerminal(request.workingDirectory))
@@ -112,40 +120,36 @@ extension LocalExecPermissionAuthorizer {
         let command = Self.singleLined(Self.sanitizedForTerminal(request.command))
         let hint = Self.compactAlwaysHint(forToolName: request.toolName)
 
-        let title = Self.singleLined(Self.sanitizedForTerminal(request.title))
         let commandLine = Self.commandLine(command: command, colored: useColor)
         let directoryPlain = "⊙ \(directory)"
 
-        // Each card row carries both its plain text (for box-width math) and its
-        // ANSI-rendered form, so padding never counts invisible escape bytes.
-        // The request title leads the body (what is being authorized); the
-        // generic "Authorization" label is the card title in the top border.
-        let innerLines: [(plain: String, rendered: String)] = [
-            (title, Self.wrap(title, code: Self.ansiOrangeBold, colored: useColor)),
-            (commandLine.plain, commandLine.rendered),
-            (directoryPlain, Self.wrap(directoryPlain, code: Self.ansiDim, colored: useColor)),
-            (hint, Self.wrap(hint, code: Self.ansiDim, colored: useColor))
+        // The top border already identifies this as an authorization request;
+        // the command itself is the primary body content, so repeating the
+        // request title here would duplicate the same action in most prompts.
+        // `renderConsentBox` measures visible terminal cells, excluding ANSI
+        // escapes, and reflows these rows before it draws either border.
+        let innerLines = [
+            commandLine,
+            Self.wrap(directoryPlain, code: Self.ansiDim, colored: useColor),
+            Self.wrap(hint, code: Self.ansiDim, colored: useColor)
         ]
 
-        // The run/always/cancel options are the card footer, set off from the
-        // command details by a divider rule and colored with the original cyan
-        // accent so the decision reads as part of the box (matching the retry
-        // prompt). The `(r/a/c):` prompt is the last text emitted (no trailing
-        // newline) so the single-key reader echoes the operator's answer inline,
-        // right after the colon.
+        // The run/always/cancel options and their compact key hint form the card
+        // footer, set off from the command details by a divider rule. Keeping
+        // `(r/a/c)` here avoids repeating the available choices below the box.
         let options = "[R]un once / [A]lways / [C]ancel"
-        let footer: (plain: String, rendered: String) = (
-            options,
-            Self.wrap(options, code: Self.ansiCyanBold, colored: useColor)
-        )
+        let footer = Self.wrap(options, code: Self.ansiCyanBold, colored: useColor)
         let box = Self.renderConsentBox(
             title: "Authorization",
             innerLines: innerLines,
             footer: footer,
-            colored: useColor
+            colored: useColor,
+            terminalColumns: columns
         )
-        let suffix = Self.wrap("(r/a/c): ", code: Self.ansiCyanBold, colored: useColor)
-        return "\n\(box)\n  \(suffix)"
+        // `readSingleKey` echoes the selected key followed by a newline. End the
+        // box with a newline so that echo gets its own physical row and the TUI
+        // resumes below the card instead of overwriting its bottom rows.
+        return "\n\(box)\n"
     }
 
     /// Orange ANSI accents reused across the consent card. Kept private so the
@@ -169,8 +173,8 @@ extension LocalExecPermissionAuthorizer {
             : "always · this session only"
     }
 
-    /// Collapses newlines, tabs, and repeated whitespace so every card row is a
-    /// single visual line — the box renderer assumes exactly one line per row.
+    /// Collapses newlines, tabs, and repeated whitespace so untrusted fields
+    /// become one logical line before the width-aware card renderer reflows them.
     private static func singleLined(_ text: String) -> String {
         text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
     }
@@ -189,67 +193,91 @@ extension LocalExecPermissionAuthorizer {
     /// Splits the command into its executable token (bold cyan, so the operator
     /// can spot what would actually run) and the remaining arguments. Falls back
     /// to the whole string when the command is a single token.
-    private static func commandLine(
-        command: String,
-        colored: Bool
-    ) -> (plain: String, rendered: String) {
+    private static func commandLine(command: String, colored: Bool) -> String {
         let marker = "❯ "
         guard !command.isEmpty else {
-            return (marker, marker)
+            return marker
         }
         guard let boundary = command.firstIndex(where: { $0.isWhitespace }) else {
-            return (
-                marker + command,
-                marker + Self.wrap(command, code: Self.ansiCyanBold, colored: colored)
-            )
+            return marker + Self.wrap(command, code: Self.ansiCyanBold, colored: colored)
         }
         let executable = String(command[..<boundary])
         let rest = String(command[boundary...])
-        let rendered = Self.wrap(marker, code: Self.ansiOrange, colored: colored)
+        return Self.wrap(marker, code: Self.ansiOrange, colored: colored)
             + Self.wrap(executable, code: Self.ansiCyanBold, colored: colored)
             + rest
-        return (marker + executable + rest, rendered)
     }
 
-    /// Builds the orange-bordered card around the consent information. Width is
-    /// content-driven (not full terminal) because the prompt is printed once and
-    /// never redrawn frame by frame. The `title` is drawn inside the top border
-    /// so it reads as the card heading rather than a body row. When a `footer`
-    /// is supplied it is drawn as the last row, preceded by a divider rule that
-    /// separates the choice options from the command details above.
+    /// Builds the orange-bordered card around the consent information. The card
+    /// is content-driven up to the available terminal width, then its content is
+    /// explicitly reflowed. Leaving the final terminal column unused prevents
+    /// automatic right-margin wrapping from adding invisible physical rows that
+    /// would desynchronize the TUI panel's cursor bookkeeping.
     private static func renderConsentBox(
         title: String,
-        innerLines: [(plain: String, rendered: String)],
-        footer: (plain: String, rendered: String)?,
-        colored: Bool
+        innerLines: [String],
+        footer: String?,
+        colored: Bool,
+        terminalColumns: Int
     ) -> String {
-        var rowWidths = innerLines.map(\.plain.count)
-        if let footer { rowWidths.append(footer.plain.count) }
-        let innerWidth = max(28, rowWidths.max() ?? 0)
+        // A box row is `│ <content> │`, i.e. four visible cells of chrome.
+        // Keep one terminal column spare so a row never triggers terminal
+        // autowrap at the right margin.
+        let safeRowWidth = max(4, terminalColumns - 1)
+        let maximumInnerWidth = max(1, safeRowWidth - 4)
+        var naturalWidths = innerLines.map(TerminalANSIText.visibleWidth)
+        if let footer {
+            naturalWidths.append(TerminalANSIText.visibleWidth(footer))
+        }
+        let innerWidth = min(
+            maximumInnerWidth,
+            max(min(28, maximumInnerWidth), naturalWidths.max() ?? 0)
+        )
         let rule = String(repeating: "─", count: innerWidth + 2)
         let border = { Self.wrap($0, code: Self.ansiOrange, colored: colored) }
 
         // Top border embeds the title (`╭─ Title ────╮`), padded to the content
-        // width so the title is the card heading, not a body row.
-        let titleSegment = " \(title) "
+        // width so the title is the card heading, not a body row. On unusually
+        // narrow terminals, fit the title itself before drawing the border.
+        let topMiddleWidth = innerWidth + 1
+        let untruncatedTitleSegment = " \(title) "
+        let titleSegment = TerminalANSIText.visibleWidth(untruncatedTitleSegment) <= topMiddleWidth
+            ? untruncatedTitleSegment
+            : TerminalANSIText.truncate(title, to: topMiddleWidth)
         let titleSuffix = String(
             repeating: "─",
-            count: max(0, innerWidth + 2 - (1 + titleSegment.count))
+            count: max(0, topMiddleWidth - TerminalANSIText.visibleWidth(titleSegment))
         )
         var rows: [String] = [border("╭─\(titleSegment)\(titleSuffix)╮")]
-        for line in innerLines {
-            let padding = String(repeating: " ", count: max(0, innerWidth - line.plain.count))
-            let body = " \(line.rendered)\(padding) "
+        for line in Self.wrappedConsentRows(innerLines, width: innerWidth) {
+            let padding = String(
+                repeating: " ",
+                count: max(0, innerWidth - TerminalANSIText.visibleWidth(line))
+            )
+            let body = " \(line)\(padding) "
             rows.append(border("│") + body + border("│"))
         }
         if let footer {
             rows.append(border("├\(rule)┤"))
-            let padding = String(repeating: " ", count: max(0, innerWidth - footer.plain.count))
-            let body = " \(footer.rendered)\(padding) "
-            rows.append(border("│") + body + border("│"))
+            for line in Self.wrappedConsentRows([footer], width: innerWidth) {
+                let padding = String(
+                    repeating: " ",
+                    count: max(0, innerWidth - TerminalANSIText.visibleWidth(line))
+                )
+                let body = " \(line)\(padding) "
+                rows.append(border("│") + body + border("│"))
+            }
         }
         rows.append(border("╰\(rule)╯"))
         return rows.joined(separator: "\n")
+    }
+
+    /// Reflows rendered content without counting ANSI escape sequences as cells.
+    /// Whitespace is retained verbatim because this is a shell command preview;
+    /// long unbroken arguments are split rather than allowed to overflow the
+    /// border.
+    private static func wrappedConsentRows(_ lines: [String], width: Int) -> [String] {
+        lines.flatMap { TerminalANSIText.wrapPreservingWhitespace($0, width: width) }
     }
 
     /// Explains the scope of the "Always" choice so the consent dialog makes
@@ -268,7 +296,7 @@ extension LocalExecPermissionAuthorizer {
     }
 
     static func terminalRetryPrompt() -> String {
-        Self.colorChoiceLine("Please choose [R]un once / [A]lways / [C]ancel (r/a/c): ")
+        Self.colorChoiceLine("Please choose [R]un once / [A]lways / [C]ancel")
     }
 
     /// Accent-colors the run/always/cancel choice line so the consent decision
