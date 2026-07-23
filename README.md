@@ -1,10 +1,23 @@
 ![ZenCODE](Docs/Images/social-preview.png)
 
-**ZenCODE** is a flexible coding agent for the terminal and ACP. Drive it with cloud providers or your existing ChatGPT and Claude subscriptions.
+**ZenCODE** is a fast, native-Swift coding agent for the terminal and ACP. Bring any
+OpenAI-compatible API key or sign in with your existing ChatGPT or Claude subscription —
+no API key required. One compiled binary, no Node runtime, running on macOS, Linux, and
+Windows (via WSL), all the way down to a Raspberry Pi.
 
 Keywords: ZenCODE, coding agent, AI coding assistant, cloud LLM agent, OpenAI-compatible coding agent, OpenRouter coding agent, ACP agent, terminal coding agent for macOS and Linux.
 
-ZenCODE is provider-agnostic: bring your own API key for any OpenAI-compatible endpoint (OpenRouter, local servers, and more), or sign in once with your ChatGPT or Claude subscription through the browser.
+## Highlights
+
+- **Provider-agnostic** — any OpenAI-compatible endpoint (OpenRouter, local servers, any `/v1` API), or a browser sign-in with your ChatGPT or Claude subscription.
+- **Native Swift, tiny footprint** — a single compiled binary with no interpreter or Node event loop; a few MB of RAM at idle, small enough to run on constrained ARM boards.
+- **Runs everywhere** — macOS, Linux, and Windows (via WSL); model inference stays on the remote provider, so even a single-board computer can host the agent.
+- **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, with a dedicated agent profile.
+- **Agentic workflows** — dependency-aware task graph with `/plan`, `/workflow`, and `/review`, plus capability-based delegation to specialized sub-agents.
+- **Full control over tools** — granular `/tools` selection (filesystem, shell, Git, search, memory, sub-agents, Xcode, Figma, features), with change tracking and `/undo` as a safety net.
+- **Extensible** — the Builder generates reusable Dynamic Swift Features as durable tools; skills are selectable per session and installable from GitHub or a local folder.
+
+See [Why ZenCODE](Docs/why-zen.md) for the full rationale.
 
 ## Providers
 
