@@ -6,7 +6,7 @@
 import Foundation
 
 extension TerminalChat {
-    static func savedSessionCommandAction(
+    nonisolated static func savedSessionCommandAction(
         rawArguments: String
     ) -> TerminalSavedSessionCommandAction {
         let trimmedArguments = rawArguments.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -50,7 +50,7 @@ extension TerminalChat {
     /// Derives a session name from the first user prompt in a message list.
     /// Used when `/sessions save` runs without an active saved session so a new
     /// snapshot is named after what the user first asked instead of failing.
-    static func derivedSessionName(
+    nonisolated static func derivedSessionName(
         fromFirstPromptIn messages: [AgentRuntimeMessage]
     ) -> String? {
         guard let firstPrompt = messages.first(where: { $0.role == .user })?.content else {
@@ -61,7 +61,7 @@ extension TerminalChat {
 
     /// Reduces a raw prompt to a concise single-line session name, truncating at
     /// a word boundary when it exceeds `limit`. Returns nil for blank prompts.
-    static func derivedSessionName(
+    nonisolated static func derivedSessionName(
         fromFirstPrompt prompt: String,
         limit: Int = 40
     ) -> String? {
@@ -88,13 +88,13 @@ extension TerminalChat {
         return truncated.trimmingCharacters(in: .whitespaces)
     }
 
-    public static func selectedToolSelectionNames(
+    public nonisolated static func selectedToolSelectionNames(
         _ selectedToolKeys: Set<String>
     ) -> [String] {
         selectedToolKeys.sorted()
     }
 
-    public static func savedSessionCacheKey(
+    public nonisolated static func savedSessionCacheKey(
         name: String,
         workingDirectory: URL
     ) -> String {
@@ -103,14 +103,14 @@ extension TerminalChat {
         return "terminal:\(projectKey):session:\(stem)"
     }
 
-    public static func savedSessionTimestamp(_ date: Date) -> String {
+    public nonisolated static func savedSessionTimestamp(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .short
         return formatter.string(from: date)
     }
 
-    public static func savedSessionTokenCountText(_ value: Int) -> String {
+    public nonisolated static func savedSessionTokenCountText(_ value: Int) -> String {
         let absoluteValue = abs(value)
                 if absoluteValue >= 1_000_000 {
             return String(format: "%.1fm", Double(value) / 1_000_000)

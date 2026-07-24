@@ -12,7 +12,7 @@ extension TerminalChat {
     /// an implementation plan. Planners can inspect the workspace, project
     /// context, memory, web references, and non-mutating Git state, but must not
     /// edit files, run shell commands, or perform mutating Git/memory/task work.
-    public static let plannerReadOnlyToolNames: Set<String> = [
+    public nonisolated static let plannerReadOnlyToolNames: Set<String> = [
         "local.pwd",
         "local.ls",
         "local.readFile",
@@ -178,17 +178,17 @@ extension TerminalChat {
         )
     }
 
-    static let planMissingGoalMessage =
+    nonisolated static let planMissingGoalMessage =
         "ZenCODE: /plan requires a goal. "
         + "Use /plan <goal> to describe what should be planned.\n"
 
-    static let planUnavailableForApprovalMessage =
+    nonisolated static let planUnavailableForApprovalMessage =
         "ZenCODE: no completed plan is available to approve. "
         + "Run /plan <goal> and wait for it to finish successfully.\n"
 
-    static let planAuthorAgentName = "plan-author"
+    nonisolated static let planAuthorAgentName = "plan-author"
 
-    static func planImplementationPrompt(for plan: TerminalSessionPlan) -> String {
+    nonisolated static func planImplementationPrompt(for plan: TerminalSessionPlan) -> String {
         guard !plan.points.isEmpty else {
             return """
             Implement the active approved legacy plan now. Work through its written steps in \
@@ -216,11 +216,11 @@ extension TerminalChat {
         """
     }
 
-    static func planStatusTable(for plan: TerminalSessionPlan) -> String {
+    nonisolated static func planStatusTable(for plan: TerminalSessionPlan) -> String {
         planStatusTable(for: plan, graph: nil)
     }
 
-    static func planStatusTable(
+    nonisolated static func planStatusTable(
         for plan: TerminalSessionPlan,
         graph: TaskGraphSnapshot?
     ) -> String {
@@ -282,7 +282,7 @@ extension TerminalChat {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    static func plan(
+    nonisolated static func plan(
         _ plan: TerminalSessionPlan,
         applying graph: TaskGraphSnapshot
     ) -> TerminalSessionPlan {
@@ -296,7 +296,7 @@ extension TerminalChat {
         return projected
     }
 
-    static func planPointStatus(for status: TaskStatus) -> TerminalSessionPlanPointStatus {
+    nonisolated static func planPointStatus(for status: TaskStatus) -> TerminalSessionPlanPointStatus {
         switch status {
         case .pending: .pending
         case .inProgress: .inProgress
@@ -308,7 +308,7 @@ extension TerminalChat {
         }
     }
 
-    static func taskDefinitions(
+    nonisolated static func taskDefinitions(
         for points: [TerminalSessionPlanPoint]
     ) -> [TaskDefinition] {
         points.enumerated().map { index, point in
@@ -323,7 +323,7 @@ extension TerminalChat {
         }
     }
 
-    static func planPointUpdates(
+    nonisolated static func planPointUpdates(
         from toolCall: DirectAgentToolCall
     ) -> (points: [TerminalSessionPlanPoint], mode: DirectTodoTaskRuntime.TodoWriteMode)? {
         let request = DirectTodoTaskRuntime.normalizedToolRequest(for: toolCall)
@@ -483,7 +483,7 @@ extension TerminalChat {
         }
     }
 
-    private static func escapedPlanTableCell(_ text: String) -> String {
+    private nonisolated static func escapedPlanTableCell(_ text: String) -> String {
         text
             .replacingOccurrences(of: "|", with: "\\|")
             .replacingOccurrences(of: "\r\n", with: " ")
@@ -505,19 +505,19 @@ extension TerminalChat {
         return AgentProfileStore.defaultProfiles()[0]
     }
 
-    static func isPlannerProfile(_ agent: AgentProfile) -> Bool {
+    nonisolated static func isPlannerProfile(_ agent: AgentProfile) -> Bool {
         agent.id.caseInsensitiveCompare(AgentProfileStore.plannerAgentID.uuidString) == .orderedSame
             || agent.name.caseInsensitiveCompare(AgentProfileStore.plannerAgentName) == .orderedSame
     }
 
     /// Canonical, read-only tool names a Planner sub-agent may receive: the
     /// profile's own tools intersected with the read-only planning allowlist.
-    static func plannerSubAgentToolNames(for planner: AgentProfile) -> [String] {
+    nonisolated static func plannerSubAgentToolNames(for planner: AgentProfile) -> [String] {
         let profileTools = planner.allowedToolNames()
         return profileTools.intersection(plannerReadOnlyToolNames).sorted()
     }
 
-    static func planDelegationPrompt(
+    nonisolated static func planDelegationPrompt(
         goal: String,
         planner: AgentProfile
     ) -> String {
@@ -595,7 +595,7 @@ extension TerminalChat {
             """
     }
 
-    static func plannerAuthoredPlanResponse(
+    nonisolated static func plannerAuthoredPlanResponse(
         parentResponse: DirectAgentResponse,
         snapshots: [DirectSubAgentRuntime.AgentSnapshot],
         excludingAgentIDs: Set<String> = []
@@ -636,7 +636,7 @@ extension TerminalChat {
         )
     }
 
-    static func isPlannerSnapshotProfile(
+    nonisolated static func isPlannerSnapshotProfile(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot
     ) -> Bool {
         snapshot.profileID?.caseInsensitiveCompare(
@@ -647,7 +647,7 @@ extension TerminalChat {
             ) == .orderedSame
     }
 
-    static func historyByReplacingPlanCoordinatorOutput(
+    nonisolated static func historyByReplacingPlanCoordinatorOutput(
         _ history: [AgentRuntimeMessage],
         with plannerOutput: String
     ) -> [AgentRuntimeMessage] {

@@ -168,6 +168,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    @TerminalChatActor
     func skillSelectionUpdatesAnExistingSessionWithoutRecreatingIt() async throws {
         let workingDirectory = URL(
             fileURLWithPath: "/tmp/ZenCODE-skill-selection",
@@ -241,6 +242,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    @TerminalChatActor
     func deselectingSkillUpdatesOnlyTheSessionProvider() async throws {
         let workingDirectory = URL(
             fileURLWithPath: "/tmp/ZenCODE-skill-revocation",
@@ -315,6 +317,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    @TerminalChatActor
     func toolSelectionChangeResetsSessionAndInformsModel() async throws {
         let workingDirectory = URL(
             fileURLWithPath: "/tmp/ZenCODE-tool-selection",

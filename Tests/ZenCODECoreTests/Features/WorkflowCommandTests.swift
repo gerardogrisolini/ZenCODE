@@ -7,6 +7,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
+@TerminalChatActor
 @Suite
 struct WorkflowCommandTests {
     @Test

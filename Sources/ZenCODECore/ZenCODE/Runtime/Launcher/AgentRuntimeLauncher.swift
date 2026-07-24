@@ -8,6 +8,10 @@ import Foundation
 /// Shared entry points for launching ZenCODE terminal and ACP runtimes.
 public enum AgentRuntimeLauncher {
     /// Runs terminal chat, shutting down an explicitly supplied runner when the chat ends or fails.
+    ///
+    /// `TerminalChat` is isolated to ``TerminalChatActor``, so both its
+    /// construction and its `run()` happen on that actor.
+    @TerminalChatActor
     public static func runTerminalChat(
         configuration: AgentConfiguration,
         stdinIsTerminal: Bool,

@@ -100,7 +100,7 @@ extension TerminalChat {
         return attachments
     }
 
-    public static func renderAttachmentUsage() -> String {
+    public nonisolated static func renderAttachmentUsage() -> String {
         """
         Usage: /attach <image-or-video-file> [file ...]
                /attach list
@@ -109,11 +109,11 @@ extension TerminalChat {
         """
     }
 
-    public static func renderAttachmentDeleteUsage() -> String {
+    public nonisolated static func renderAttachmentDeleteUsage() -> String {
         "Usage: /attach delete [all|attachment-number]\n"
     }
 
-    public static func renderAttachmentLine(
+    public nonisolated static func renderAttachmentLine(
         number: Int,
         attachment: AgentRuntimeAttachment
     ) -> String {
@@ -130,7 +130,7 @@ extension TerminalChat {
         return "  \(number). \(attachment.originalFilename)\(suffix)"
     }
 
-    public static func splitAttachmentCommandArguments(_ rawArguments: String) throws -> [String] {
+    public nonisolated static func splitAttachmentCommandArguments(_ rawArguments: String) throws -> [String] {
         var arguments: [String] = []
         var current = ""
         var activeQuote: Character?
@@ -211,7 +211,7 @@ extension TerminalChat {
             .standardizedFileURL
     }
 
-    private static func renderByteCount(_ byteCount: Int) -> String {
+    private nonisolated static func renderByteCount(_ byteCount: Int) -> String {
         ByteCountFormatter.string(
             fromByteCount: Int64(byteCount),
             countStyle: .file

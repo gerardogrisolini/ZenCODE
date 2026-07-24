@@ -37,7 +37,7 @@ extension TerminalChat {
         )
     }
 
-    static func makeAgentsPrompt(workingDirectory: URL) -> String {
+    nonisolated static func makeAgentsPrompt(workingDirectory: URL) -> String {
         let directoryLiteral = jsonStringLiteral(
             workingDirectory.standardizedFileURL.path
         )
@@ -61,7 +61,7 @@ extension TerminalChat {
         """
     }
 
-    static let makeAgentsAllowedToolNames: Set<String> = [
+    nonisolated static let makeAgentsAllowedToolNames: Set<String> = [
         "git.diff",
         "git.grep",
         "git.log",
@@ -82,13 +82,13 @@ extension TerminalChat {
         "text.wc",
     ]
 
-    private static let makeAgentsRequiredToolNames: Set<String> = [
+    private nonisolated static let makeAgentsRequiredToolNames: Set<String> = [
         "local.ls",
         "local.readFile",
         "local.writeFile",
     ]
 
-    private static func jsonStringLiteral(_ value: String) -> String {
+    private nonisolated static func jsonStringLiteral(_ value: String) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.withoutEscapingSlashes]
         guard let data = try? encoder.encode(value),

@@ -77,11 +77,11 @@ extension TerminalChat {
         return "\(displayCommand) (\(summary))"
     }
 
-    public static func renderActiveTools(_ toolNames: [String]) -> String {
+    public nonisolated static func renderActiveTools(_ toolNames: [String]) -> String {
         renderActiveTools(toolNames, items: [], selectedKeys: [])
     }
 
-    public static func renderActiveTools(
+    public nonisolated static func renderActiveTools(
         _ toolNames: [String],
         items: [TerminalToolSelectionItem],
         selectedKeys: Set<String>
@@ -122,7 +122,7 @@ extension TerminalChat {
         return "Active tools: \(renderedGroups.joined(separator: ", "))\n"
     }
 
-    public static func renderSelectedSkills(_ skills: [PromptSkill]) -> String {
+    public nonisolated static func renderSelectedSkills(_ skills: [PromptSkill]) -> String {
         guard !skills.isEmpty else {
             return "Selected skills: none\n"
         }
@@ -133,7 +133,7 @@ extension TerminalChat {
         return "Selected skills: \(renderedSkills)\n"
     }
 
-    public static func renderActiveSkills(_ skills: [PromptSkill]) -> String {
+    public nonisolated static func renderActiveSkills(_ skills: [PromptSkill]) -> String {
         guard !skills.isEmpty else {
             return "Active skills: none\n"
         }
@@ -144,15 +144,15 @@ extension TerminalChat {
         return "Active skills: \(renderedSkills)\n"
     }
 
-    public static func renderToolSelectionUsage() -> String {
+    public nonisolated static func renderToolSelectionUsage() -> String {
         "Usage: /tools [all|none|tool-name|package-name|tool-number]\n"
     }
 
-    public static func renderSkillSelectionUsage() -> String {
+    public nonisolated static func renderSkillSelectionUsage() -> String {
         "Usage: /skills [all|none|skill-name|skill-number|install <github-url|local-path>|<github-url|local-path>]\n"
     }
 
-    public static func renderStartupBox(lines: [String]) -> String {
+    public nonisolated static func renderStartupBox(lines: [String]) -> String {
         let columns = terminalColumnCount()
         let horizontalInset = terminalBoxHorizontalInset(columns: columns)
         let contentWidth = max(20, columns - horizontalInset * 2)
@@ -180,7 +180,7 @@ extension TerminalChat {
     /// Colors a startup summary line so the label (up to the first colon) keeps
     /// the orange identity color while the value is rendered in a softer gray.
     /// Continuation lines (a long value wrapped onto extra rows) stay gray.
-    private static func colorStartupLine(
+    private nonisolated static func colorStartupLine(
         _ line: String,
         isContinuation: Bool
     ) -> String {
@@ -197,7 +197,7 @@ extension TerminalChat {
         return "\(orange)\(label)\(gray)\(value)"
     }
 
-    public static var zenCODEHeader: String {
+    public nonisolated static var zenCODEHeader: String {
         """
         ███████╗                 ██████╗ ██████╗ ██████╗ ███████╗
         ╚══███╔╝ █████╗ ██████╗ ██╔════╝██╔═══██╗██╔══██╗██╔════╝
@@ -209,7 +209,7 @@ extension TerminalChat {
         """
     }
 
-    public static var appVersionDescription: String {
+    public nonisolated static var appVersionDescription: String {
         let version = bundleInfoString("CFBundleShortVersionString") ?? agentVersion
         guard let build = bundleInfoString("CFBundleVersion"),
               build != version else {
@@ -218,7 +218,7 @@ extension TerminalChat {
         return "\(version) (\(build))"
     }
 
-    public static func bundleInfoString(_ key: String) -> String? {
+    public nonisolated static func bundleInfoString(_ key: String) -> String? {
         guard let value = Bundle.main.object(forInfoDictionaryKey: key) as? String else {
             return nil
         }
@@ -227,7 +227,7 @@ extension TerminalChat {
         return trimmedValue.isEmpty ? nil : trimmedValue
     }
 
-    public static func terminalColumnCount(forceRefresh: Bool = false) -> Int {
+    public nonisolated static func terminalColumnCount(forceRefresh: Bool = false) -> Int {
         TerminalWidth.current(
             descriptors: [AgentOutput.standardError.fileDescriptor],
             fallback: 100,
@@ -235,7 +235,7 @@ extension TerminalChat {
         )
     }
 
-    public static func terminalBoxHorizontalInset(columns _: Int? = nil) -> Int {
+    public nonisolated static func terminalBoxHorizontalInset(columns _: Int? = nil) -> Int {
         return 0
     }
 
@@ -249,7 +249,7 @@ extension TerminalChat {
     ///   emoji and CJK glyphs count as one here even when they occupy two cells.
     ///   Routing these startup, overview, or Telegram helpers through the
     ///   width-aware core would change their wrap points.
-    public static func fitInline(_ text: String, width: Int) -> String {
+    public nonisolated static func fitInline(_ text: String, width: Int) -> String {
         wrapInline(text, width: width).joined(separator: "\n")
     }
 
@@ -261,7 +261,7 @@ extension TerminalChat {
     ///   two terminal columns. This matches ``fitInline(_:width:)`` and
     ///   ``truncatedInline(_:limit:)`` and intentionally differs from the
     ///   width-aware `fitDisplayWidth` / ``TerminalANSIText`` family.
-    public static func wrapInline(_ text: String, width: Int) -> [String] {
+    public nonisolated static func wrapInline(_ text: String, width: Int) -> [String] {
         let singleLine = text
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -292,14 +292,14 @@ extension TerminalChat {
         return lines
     }
 
-    public static func padded(_ text: String, width: Int) -> String {
+    public nonisolated static func padded(_ text: String, width: Int) -> String {
         guard text.count < width else {
             return text
         }
         return text + String(repeating: " ", count: width - text.count)
     }
 
-    public static func memoryToolEnabled(_ allowedToolNames: Set<String>) -> Bool {
+    public nonisolated static func memoryToolEnabled(_ allowedToolNames: Set<String>) -> Bool {
         allowedToolNames.contains { $0.hasPrefix("memory.") }
     }
 
@@ -315,7 +315,7 @@ extension TerminalChat {
     ///   core would silently change startup, overview, and Telegram output. The
     ///   `...` glyph has a three-cluster budget, while its measurement remains
     ///   count-based.
-    public static func truncatedInline(_ text: String, limit: Int) -> String {
+    public nonisolated static func truncatedInline(_ text: String, limit: Int) -> String {
         let singleLine = inlineText(text)
         return truncatedByCount(singleLine, limit: limit, ellipsis: "...")
     }
@@ -331,7 +331,7 @@ extension TerminalChat {
     /// columns. Callers are expected to have already flattened newlines
     /// (e.g. via ``inlineText(_:)``). No ANSI handling is performed because the
     /// count-based callers never carry escape sequences.
-    static func truncatedByCount(
+    nonisolated static func truncatedByCount(
         _ text: String,
         limit: Int,
         ellipsis: String = "..."
@@ -349,7 +349,7 @@ extension TerminalChat {
         return String(text.prefix(boundedLimit - ellipsis.count)) + ellipsis
     }
 
-    public static func inlineText(_ text: String) -> String {
+    public nonisolated static func inlineText(_ text: String) -> String {
         text
             .replacingOccurrences(of: "\r\n", with: " ")
             .replacingOccurrences(of: "\n", with: " ")

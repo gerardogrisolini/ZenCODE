@@ -23,7 +23,7 @@ public nonisolated enum AnthropicSubscriptionModel {
     }
 
     public static let llmID = "claude"
-    public static let defaultModelID = "claude-opus-4-8"
+    public static let defaultModelID = "claude-opus-5"
     public static var defaultLLMID: String {
         selectionID(forModelID: defaultModelID)
     }

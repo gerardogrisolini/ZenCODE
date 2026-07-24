@@ -37,7 +37,7 @@ extension TerminalChat {
   /// Resolves the operating system language into a human-readable English
   /// language name (e.g. "Italian"). Returns nil when the system language
   /// cannot be determined, so callers can fall back to the generic guidance.
-  static func systemResponseLanguageName() -> String? {
+  nonisolated static func systemResponseLanguageName() -> String? {
     guard let code = systemLanguageCode() else {
       return nil
     }
@@ -61,7 +61,7 @@ extension TerminalChat {
   /// Extracts a normalized, lowercased ISO language code from the system
   /// locale, with an environment-variable fallback for hosts where
   /// `Locale.current` is not populated (common on Linux).
-  private static func systemLanguageCode() -> String? {
+  private nonisolated static func systemLanguageCode() -> String? {
       if let code = normalizedLanguageCode(Locale.current.language.languageCode?.identifier) {
       return code
     }
@@ -82,7 +82,7 @@ extension TerminalChat {
     return nil
   }
 
-  private static func normalizedLanguageCode(_ value: String?) -> String? {
+  private nonisolated static func normalizedLanguageCode(_ value: String?) -> String? {
     guard let value else {
       return nil
     }
@@ -97,7 +97,7 @@ extension TerminalChat {
     return normalized
   }
 
-  private static let responseLanguageDisplayNames: [String: String] = [
+  private nonisolated static let responseLanguageDisplayNames: [String: String] = [
     "en": "English",
     "it": "Italian",
     "es": "Spanish",

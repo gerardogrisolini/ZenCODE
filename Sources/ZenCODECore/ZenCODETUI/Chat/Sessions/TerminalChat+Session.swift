@@ -212,7 +212,7 @@ extension TerminalChat {
         )
     }
 
-    public static func effectiveThinkingSelection(
+    public nonisolated static func effectiveThinkingSelection(
         manualThinkingSelectionOverride: AgentThinkingSelection?,
         hostedModel: AgentSettingsModelManifest?,
         explicitModelID: String?,
@@ -372,7 +372,7 @@ extension TerminalChat {
         #endif
     }
 
-    public static func toolSelectionChangedMessage(
+    public nonisolated static func toolSelectionChangedMessage(
         previousAllowedToolNames: Set<String>,
         currentAllowedToolNames: Set<String>
     ) -> AgentRuntimeMessage {
@@ -394,7 +394,7 @@ extension TerminalChat {
         )
     }
 
-    private static func toolSelectionChangedToolList(_ toolNames: Set<String>) -> String {
+    private nonisolated static func toolSelectionChangedToolList(_ toolNames: Set<String>) -> String {
         let names = toolNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }

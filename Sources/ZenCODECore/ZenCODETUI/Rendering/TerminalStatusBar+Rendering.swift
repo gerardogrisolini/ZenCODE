@@ -343,6 +343,9 @@ extension TerminalStatusBar {
         let tokensUsed = state.latestContextWindow?.usedTokens
         ?? state.latestMetrics?.totalTokenCount
         var fragments: [String] = []
+        if let accessModeFragment = Self.accessModeStatusFragment(state.localExecAccessMode) {
+            fragments.append(accessModeFragment)
+        }
         if let latestModelID = state.latestModelID {
             let model = Self.modelStatusFragment(
                 modelID: latestModelID,
@@ -386,9 +389,6 @@ extension TerminalStatusBar {
         if let latestSubscriptionUsage = state.latestSubscriptionUsage,
            let usageText = Self.subscriptionUsageFragment(latestSubscriptionUsage) {
             fragments.append(usageText)
-        }
-        if let accessModeFragment = Self.accessModeStatusFragment(state.localExecAccessMode) {
-            fragments.append(accessModeFragment)
         }
         if let latestGitStatusSummary = state.latestGitStatusSummary {
             fragments.append(Self.gitStatusFragment(summary: latestGitStatusSummary))

@@ -38,11 +38,11 @@ extension TerminalChat {
         return message
     }
 
-    public static func shouldPrintMetricsForAutomation() -> Bool {
+    public nonisolated static func shouldPrintMetricsForAutomation() -> Bool {
         ProcessInfo.processInfo.environment["ZENCODE_PRINT_METRICS"] == "1"
     }
 
-    public static func metricsSummary(_ metrics: DirectAgentGenerationMetrics) -> String {
+    public nonisolated static func metricsSummary(_ metrics: DirectAgentGenerationMetrics) -> String {
         let total = metrics.totalTokenCount.map(String.init) ?? "--"
         let prefill = metrics.promptTokenCount.map(String.init) ?? "--"
         let cache = metrics.cachedPromptTokenCount.map(String.init) ?? "--"
@@ -57,7 +57,7 @@ extension TerminalChat {
         return "tokens \(total) | pre \(prefill) | cache \(cache) | prompt \(promptRate)/s | out \(output) | gen \(generationRate)/s | time \(duration)"
     }
 
-    public static func durationText(_ value: Double) -> String {
+    public nonisolated static func durationText(_ value: Double) -> String {
         guard value.isFinite, value >= 0 else {
             return "--"
         }

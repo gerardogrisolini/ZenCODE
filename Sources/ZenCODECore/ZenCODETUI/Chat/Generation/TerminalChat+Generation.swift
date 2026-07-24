@@ -96,7 +96,7 @@ extension TerminalChat {
                     )
                 },
                 toolProviders: [],
-                onEvent: { event in
+                onEvent: { @TerminalChatActor event in
                     switch event {
                     case let .status(message):
                         if self.configuration.verboseLogging {
@@ -299,7 +299,7 @@ extension TerminalChat {
         return true
     }
 
-    static func planID(from points: [TerminalSessionPlanPoint]) -> String {
+    nonisolated static func planID(from points: [TerminalSessionPlanPoint]) -> String {
         guard let firstID = points.first?.id.nilIfBlank else {
             return "plan-\(UUID().uuidString.lowercased())"
         }

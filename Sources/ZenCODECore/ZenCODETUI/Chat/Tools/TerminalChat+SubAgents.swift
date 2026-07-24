@@ -146,7 +146,7 @@ extension TerminalChat {
         )
     }
 
-    public static func renderSubAgentOverview(
+    public nonisolated static func renderSubAgentOverview(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
         modelTitleResolver: (String) -> String = { $0 }
     ) -> String {
@@ -157,7 +157,7 @@ extension TerminalChat {
         )
     }
 
-    private static func renderSubAgentOverview(
+    private nonisolated static func renderSubAgentOverview(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
         modelTitleResolver: (String) -> String,
         includesFinalResponses: Bool
@@ -207,7 +207,7 @@ extension TerminalChat {
         return renderSubAgentOverviewLines(lines)
     }
 
-    private static func renderSubAgentSummary(
+    private nonisolated static func renderSubAgentSummary(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
     ) -> String {
         let activeCount = snapshots.filter(\.pending).count
@@ -233,7 +233,7 @@ extension TerminalChat {
         return segments.joined(separator: " ")
     }
 
-    private static func renderSubAgentHeader(
+    private nonisolated static func renderSubAgentHeader(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot
     ) -> String {
         let name = snapshot.name.nilIfBlank ?? snapshot.id
@@ -242,7 +242,7 @@ extension TerminalChat {
         return "\(marker) \(boldText(name))  \(badge)"
     }
 
-    private static func renderSubAgentModel(
+    private nonisolated static func renderSubAgentModel(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
         modelTitleResolver: (String) -> String
     ) -> String? {
@@ -272,7 +272,7 @@ extension TerminalChat {
     ///    against the catalog → the significant model name, with the internal
     ///    provider UUID prefix removed.
     /// 3. Any other identifier → returned unchanged.
-    public static func resolvedSubAgentModelTitle(
+    public nonisolated static func resolvedSubAgentModelTitle(
         for modelID: String,
         hostedModel: AgentSettingsModelManifest? = nil
     ) -> String {
@@ -287,7 +287,7 @@ extension TerminalChat {
 
     /// Returns the significant model name when `modelID` is an internal
     /// `remoteapi:<uuid>:<modelName>` identifier, otherwise `nil`.
-    public static func subAgentModelNameStrippingRemoteAPIPrefix(
+    public nonisolated static func subAgentModelNameStrippingRemoteAPIPrefix(
         _ modelID: String
     ) -> String? {
         let trimmed = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -310,7 +310,7 @@ extension TerminalChat {
         return String(modelName)
     }
 
-    private static func renderSubAgentActivityLines(
+    private nonisolated static func renderSubAgentActivityLines(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot
     ) -> [SubAgentOverviewLine] {
         let currentToolName = snapshot.currentToolName?.nilIfBlank
@@ -338,7 +338,7 @@ extension TerminalChat {
         return lines
     }
 
-    private static func renderSubAgentDetail(
+    private nonisolated static func renderSubAgentDetail(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
         includesFinalResponse: Bool
     ) -> SubAgentOverviewLine? {
@@ -359,7 +359,7 @@ extension TerminalChat {
     /// surrounding overview remains pre-rendered terminal text, while each
     /// response stays as source Markdown so the coordinator can format it with
     /// the same renderer used for normal assistant messages.
-    static func subAgentMarkdownResponses(
+    nonisolated static func subAgentMarkdownResponses(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
     ) -> [TerminalChatRenderCoordinator.SubAgentMarkdownResponse] {
         snapshots.compactMap { snapshot in
@@ -382,7 +382,7 @@ extension TerminalChat {
     /// snapshots carry a monotonic completion revision, so metadata-only changes
     /// (for example closing an agent) cannot make an old response appear new.
     /// The digest is a fallback for manually constructed legacy snapshots.
-    private static func subAgentResponseToken(
+    private nonisolated static func subAgentResponseToken(
         snapshot: DirectSubAgentRuntime.AgentSnapshot,
         output: String
     ) -> String {
@@ -400,7 +400,7 @@ extension TerminalChat {
             .joined(separator: "\u{1F}")
     }
 
-    private static func statusBadge(
+    private nonisolated static func statusBadge(
         for snapshot: DirectSubAgentRuntime.AgentSnapshot
     ) -> String {
         let text = displayStatus(for: snapshot).uppercased()
@@ -426,19 +426,19 @@ extension TerminalChat {
         return "\(color)[\(text)]\u{1B}[0m"
     }
 
-    private static func boldText(_ text: String) -> String {
+    private nonisolated static func boldText(_ text: String) -> String {
         AgentOutput.standardErrorIsTerminal ? "\u{1B}[1m\(text)\u{1B}[0m" : text
     }
 
-    private static func dimText(_ text: String) -> String {
+    private nonisolated static func dimText(_ text: String) -> String {
         AgentOutput.standardErrorIsTerminal ? "\u{1B}[90m\(text)\u{1B}[0m" : text
     }
 
-    private static func colorText(_ text: String, code: String) -> String {
+    private nonisolated static func colorText(_ text: String, code: String) -> String {
         AgentOutput.standardErrorIsTerminal ? "\(code)\(text)\u{1B}[0m" : text
     }
 
-    private static func displayStatus(
+    private nonisolated static func displayStatus(
         for snapshot: DirectSubAgentRuntime.AgentSnapshot
     ) -> String {
         if snapshot.status == .idle,
@@ -448,7 +448,7 @@ extension TerminalChat {
         return snapshot.status.rawValue
     }
 
-    private static func coloredStatusMarker(
+    private nonisolated static func coloredStatusMarker(
         for snapshot: DirectSubAgentRuntime.AgentSnapshot
     ) -> String {
         let marker = "●"
@@ -474,7 +474,7 @@ extension TerminalChat {
         return "\(color)\(marker)\u{1B}[0m"
     }
 
-    private static func renderSubAgentOverviewLines(_ lines: [SubAgentOverviewLine]) -> String {
+    private nonisolated static func renderSubAgentOverviewLines(_ lines: [SubAgentOverviewLine]) -> String {
         let columns = terminalColumnCount()
         let horizontalInset = terminalBoxHorizontalInset(columns: columns)
         let contentWidth = max(40, columns - horizontalInset)
@@ -510,7 +510,7 @@ extension TerminalChat {
         return "\n\(output.joined(separator: "\n"))\n"
     }
 
-    static func subAgentOverviewSignature(
+    nonisolated static func subAgentOverviewSignature(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
     ) -> String {
         snapshots.map { snapshot in

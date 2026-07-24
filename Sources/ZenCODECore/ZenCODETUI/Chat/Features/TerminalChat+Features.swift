@@ -111,7 +111,7 @@ extension TerminalChat {
         }
     }
 
-    static func featurePromptResult(
+    nonisolated static func featurePromptResult(
         _ prompt: String,
         requirements: String?
     ) -> TerminalFeatureCommandResult {

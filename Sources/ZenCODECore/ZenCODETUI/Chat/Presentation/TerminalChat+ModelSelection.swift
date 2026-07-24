@@ -358,7 +358,7 @@ extension TerminalChat {
         await refreshStatusBarThinkingSelection()
         let loadedModelID = try await sessionRunner.preloadModel(
             configuration: await currentSessionConfiguration()
-        ) { event in
+        ) { @TerminalChatActor event in
             switch event {
             case let .status(message):
                 if emitStatus && self.configuration.verboseLogging {

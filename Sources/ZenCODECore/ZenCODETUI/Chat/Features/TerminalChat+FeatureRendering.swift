@@ -6,15 +6,15 @@
 import Foundation
 
 extension TerminalChat {
-    public static func renderFeatureCommandUsage() -> String {
+    public nonisolated static func renderFeatureCommandUsage() -> String {
         "Usage: /feature [list|status|reload|enable <id|name|#>|disable <id|name|#>|edit <id|name|#> [requirements]|delete <id|name|#>|build <id|name|#>|validate <id|name|#>]\n"
     }
 
-    public static func renderFeatureCommandUnavailableForAgent() -> String {
+    public nonisolated static func renderFeatureCommandUnavailableForAgent() -> String {
         "ZenCODE: /feature is only available with the Builder agent. Switch with /agents Builder.\n"
     }
 
-    public static func renderFeatureWizardCompletion(
+    public nonisolated static func renderFeatureWizardCompletion(
         id: String,
         built: Bool,
         enabled: Bool,
@@ -42,7 +42,7 @@ extension TerminalChat {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    public static func featureImplementationPrompt(
+    public nonisolated static func featureImplementationPrompt(
         id: String,
         displayName: String,
         directoryPath: String,
@@ -89,7 +89,7 @@ extension TerminalChat {
         return sections.joined()
     }
 
-    public static func featureModificationPrompt(
+    public nonisolated static func featureModificationPrompt(
         report: SwiftFeatureEditReport,
         requirements: String?
     ) -> String {
@@ -140,7 +140,7 @@ extension TerminalChat {
         return sections.joined()
     }
 
-    public static func renderFeatureManagementToolOutput(
+    public nonisolated static func renderFeatureManagementToolOutput(
         name: String,
         output: String
     ) -> String {
@@ -185,7 +185,7 @@ extension TerminalChat {
         return trimmedOutput + "\n"
     }
 
-    public static func featureManagementToolSucceeded(
+    public nonisolated static func featureManagementToolSucceeded(
         name: String,
         output: String
     ) -> Bool {
@@ -208,7 +208,7 @@ extension TerminalChat {
         }
     }
 
-    static func renderFeatureScaffoldReport(
+    nonisolated static func renderFeatureScaffoldReport(
         _ report: SwiftFeatureScaffoldReport
     ) -> String {
         var lines = [
@@ -234,7 +234,7 @@ extension TerminalChat {
         return lines.joined(separator: "\n") + "\n\n"
     }
 
-    static func renderFeatureValidationReport(
+    nonisolated static func renderFeatureValidationReport(
         _ report: SwiftFeatureValidationReport
     ) -> String {
         let id = report.id ?? "unknown"
@@ -254,7 +254,7 @@ extension TerminalChat {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    static func renderFeatureBuildReport(
+    nonisolated static func renderFeatureBuildReport(
         _ report: SwiftFeatureBuildReport
     ) -> String {
         guard report.ok else {
@@ -273,7 +273,7 @@ extension TerminalChat {
         """
     }
 
-    static func renderFeatureInstallReport(
+    nonisolated static func renderFeatureInstallReport(
         _ report: SwiftFeatureInstallReport
     ) -> String {
         guard report.ok else {
@@ -293,7 +293,7 @@ extension TerminalChat {
         """
     }
 
-    static func renderFeatureAdoptReport(
+    nonisolated static func renderFeatureAdoptReport(
         _ report: SwiftFeatureAdoptReport
     ) -> String {
         guard report.ok else {
@@ -307,7 +307,7 @@ extension TerminalChat {
         """
     }
 
-    static func renderFeatureEditReport(
+    nonisolated static func renderFeatureEditReport(
         _ report: SwiftFeatureEditReport
     ) -> String {
         guard report.ok else {
@@ -330,7 +330,7 @@ extension TerminalChat {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    static func renderFeatureDeleteReport(
+    nonisolated static func renderFeatureDeleteReport(
         _ report: SwiftFeatureDeleteReport
     ) -> String {
         guard report.ok else {
@@ -343,7 +343,7 @@ extension TerminalChat {
         """
     }
 
-    static func renderFeatureListToolOutput(
+    nonisolated static func renderFeatureListToolOutput(
         name: String,
         output: String
     ) -> String {
@@ -370,14 +370,14 @@ extension TerminalChat {
             : output + "\n"
     }
 
-    static func renderFeatureMutationToolOutput(output: String) -> String {
+    nonisolated static func renderFeatureMutationToolOutput(output: String) -> String {
         guard let firstLine = output.split(separator: "\n").first.map(String.init)?.nilIfBlank else {
             return output + "\n"
         }
         return "\(firstLine)\n"
     }
 
-    static func decodeFeatureOutput<T: Decodable>(
+    nonisolated static func decodeFeatureOutput<T: Decodable>(
         _ type: T.Type,
         from output: String
     ) -> T? {
@@ -387,7 +387,7 @@ extension TerminalChat {
         return try? JSONDecoder().decode(type, from: data)
     }
 
-    public static func renderFeatureStatusList(
+    public nonisolated static func renderFeatureStatusList(
         _ statuses: [SwiftFeatureStatus]
     ) -> String {
         guard !statuses.isEmpty else {
@@ -408,7 +408,7 @@ extension TerminalChat {
         return lines.joined()
     }
 
-    static func featureCheckboxItem(_ status: SwiftFeatureStatus) -> TerminalCheckboxMenuItem<String> {
+    nonisolated static func featureCheckboxItem(_ status: SwiftFeatureStatus) -> TerminalCheckboxMenuItem<String> {
         TerminalCheckboxMenuItem(
             value: status.id,
             title: "\(featureDisplayName(status)) [\(status.id)]",
@@ -417,7 +417,7 @@ extension TerminalChat {
         )
     }
 
-    public static func resolvedFeatureID(
+    public nonisolated static func resolvedFeatureID(
         _ rawValue: String,
         statuses: [SwiftFeatureStatus]
     ) throws -> String {
@@ -438,7 +438,7 @@ extension TerminalChat {
         throw TerminalFeatureCommandError.unknownFeature(rawValue)
     }
 
-    static func featureWizardDisplayName(from id: String) -> String {
+    nonisolated static func featureWizardDisplayName(from id: String) -> String {
         id.replacingOccurrences(of: "-", with: " ")
             .replacingOccurrences(of: "_", with: " ")
             .split(separator: " ")
@@ -446,7 +446,7 @@ extension TerminalChat {
             .joined(separator: " ")
     }
 
-    static func featureWizardPrefix(from id: String) -> String {
+    nonisolated static func featureWizardPrefix(from id: String) -> String {
         let value = id
             .lowercased()
             .map { character -> Character in
@@ -457,14 +457,14 @@ extension TerminalChat {
         return "\(prefix.nilIfBlank ?? "feature")."
     }
 
-    static func featureWizardArguments(_ rawValue: String) -> [String] {
+    nonisolated static func featureWizardArguments(_ rawValue: String) -> [String] {
         rawValue
             .split(separator: " ")
             .map(String.init)
             .filter { !$0.isEmpty }
     }
 
-    static func featureWizardEnvironment(_ rawValue: String) -> [String: String] {
+    nonisolated static func featureWizardEnvironment(_ rawValue: String) -> [String: String] {
         var environment: [String: String] = [:]
         for entry in rawValue.split(separator: " ").map(String.init) {
             let parts = entry.split(separator: "=", maxSplits: 1).map(String.init)
@@ -477,7 +477,7 @@ extension TerminalChat {
         return environment
     }
 
-    static func featureDisplayName(_ status: SwiftFeatureStatus) -> String {
+    nonisolated static func featureDisplayName(_ status: SwiftFeatureStatus) -> String {
         if let displayName = status.displayName?.nilIfBlank {
             return displayName
         }
@@ -501,11 +501,11 @@ extension TerminalChat {
         }
     }
 
-    static func featureMenuDetail(_ status: SwiftFeatureStatus) -> String {
+    nonisolated static func featureMenuDetail(_ status: SwiftFeatureStatus) -> String {
         TerminalToolSelectionCatalog.featureDetail(status)
     }
 
-    static func featureSourceSummary(_ status: SwiftFeatureStatus) -> String {
+    nonisolated static func featureSourceSummary(_ status: SwiftFeatureStatus) -> String {
         if status.adoptedFrom != nil {
             return "local copy"
         }
@@ -515,7 +515,7 @@ extension TerminalChat {
         return status.editable ? "generated, editable" : "generated"
     }
 
-    static func featureLookupKeys(_ status: SwiftFeatureStatus) -> Set<String> {
+    nonisolated static func featureLookupKeys(_ status: SwiftFeatureStatus) -> Set<String> {
         let keys: Set<String> = [
             normalizedFeatureLookupKey(status.id),
             normalizedFeatureLookupKey(featureDisplayName(status))
@@ -523,7 +523,7 @@ extension TerminalChat {
         return keys.filter { !$0.isEmpty }
     }
 
-    static func normalizedFeatureLookupKey(_ value: String) -> String {
+    nonisolated static func normalizedFeatureLookupKey(_ value: String) -> String {
         value.folding(
             options: [.caseInsensitive, .diacriticInsensitive],
             locale: .current
@@ -537,14 +537,14 @@ extension TerminalChat {
         .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 
-    static func featureStatusSortOrder(
+    nonisolated static func featureStatusSortOrder(
         lhs: SwiftFeatureStatus,
         rhs: SwiftFeatureStatus
     ) -> Bool {
         return featureDisplayName(lhs).localizedStandardCompare(featureDisplayName(rhs)) == .orderedAscending
     }
 
-    static func featureStatusToolsSummary(_ status: SwiftFeatureStatus) -> String {
+    nonisolated static func featureStatusToolsSummary(_ status: SwiftFeatureStatus) -> String {
         if !status.tools.isEmpty {
             let sample = status.tools.prefix(3).joined(separator: ", ")
             let suffix = status.tools.count > 3 ? ", ..." : ""

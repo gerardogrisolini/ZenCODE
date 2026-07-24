@@ -105,25 +105,6 @@ extension TerminalChatRenderingTests {
         #expect(lines.contains { $0.contains("Sources/App.swift") })
     }
 
-//    @Test
-//    func toolIconsFollowConfiguredFamilies() {
-//        #expect(ZenCODEACPBridge.toolIcon(for: "local.exec") == "💻")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "local.readFile") == "📄")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "local.editFile") == "✏️")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "local.delete") == "🗑️")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "local.move") == "↔️")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "memory.read") == "🧠")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "agent.create") == "👥")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "tasks.create") == "👥")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "git.diff") == "🔀")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "web.fetch") == "🌐")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "search.grep") == "🔎")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "xcode.BuildProject") == "🛠️")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "figma.get") == "🎨")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "jira.search") == "📋")
-//        #expect(ZenCODEACPBridge.toolIcon(for: "unknown.tool") == "🔨")
-//    }
-
     @Test
     func compactToolTerminalTextDoesNotInsertBlankRows() {
         let rendered = TerminalChat.compactToolTerminalText(

@@ -171,6 +171,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    @TerminalChatActor
     func selectedProfileBindingUsesManualModelOverride() {
         let allowed = AgentSettingsModelManifest(
             id: "allowed",
@@ -208,6 +209,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    @TerminalChatActor
     func modelPickerListsAllConfiguredModelsForBoundProfile() throws {
         let allowed = AgentSettingsModelManifest(
             id: "allowed",
@@ -244,6 +246,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    @TerminalChatActor
     func selectedProfileBindingRemainsTheDefaultWithoutManualOverride() {
         let allowed = AgentSettingsModelManifest(
             id: "allowed",

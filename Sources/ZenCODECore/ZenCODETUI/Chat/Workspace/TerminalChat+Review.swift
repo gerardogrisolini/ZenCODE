@@ -12,7 +12,7 @@ extension TerminalChat {
   /// how the Reviewer profile is configured. Acts as a safety allowlist so the
   /// delegated reviewers can inspect only the session change surface and current
   /// files, but never mutate the workspace or broaden scope through git/memory.
-  public static let reviewerReadOnlyToolNames: Set<String> = [
+  public nonisolated static let reviewerReadOnlyToolNames: Set<String> = [
     "local.pwd",
     "local.ls",
     "local.readFile",
@@ -93,19 +93,19 @@ extension TerminalChat {
     return AgentProfileStore.defaultProfiles()[0]
   }
 
-  static func isReviewerProfile(_ agent: AgentProfile) -> Bool {
+  nonisolated static func isReviewerProfile(_ agent: AgentProfile) -> Bool {
     agent.id.caseInsensitiveCompare(AgentProfileStore.reviewerAgentID.uuidString) == .orderedSame
       || agent.name.caseInsensitiveCompare(AgentProfileStore.reviewerAgentName) == .orderedSame
   }
 
   /// Canonical, read-only tool names a Reviewer sub-agent may receive: the
   /// profile's own tools intersected with the read-only safety allowlist.
-  static func reviewerSubAgentToolNames(for reviewer: AgentProfile) -> [String] {
+  nonisolated static func reviewerSubAgentToolNames(for reviewer: AgentProfile) -> [String] {
     let profileTools = reviewer.allowedToolNames()
     return profileTools.intersection(reviewerReadOnlyToolNames).sorted()
   }
 
-  static func reviewDelegationPrompt(
+  nonisolated static func reviewDelegationPrompt(
     scope: String,
     reviewer: AgentProfile,
     changeSummary: TurnFileChangeSummary?,
@@ -260,7 +260,7 @@ extension TerminalChat {
       """
   }
 
-  static func taskGraphReviewSection(_ graph: TaskGraphSnapshot) -> String {
+  nonisolated static func taskGraphReviewSection(_ graph: TaskGraphSnapshot) -> String {
     var lines = [
       "graph=\(graph.id) state=\(graph.state.rawValue) revision=\(graph.revision)",
     ]
@@ -313,13 +313,13 @@ extension TerminalChat {
     return lines.joined(separator: "\n")
   }
 
-  private static func reviewInline(_ text: String) -> String {
+  private nonisolated static func reviewInline(_ text: String) -> String {
     text.replacingOccurrences(of: "\r\n", with: " ")
       .replacingOccurrences(of: "\n", with: " ")
       .replacingOccurrences(of: "\r", with: " ")
   }
 
-  private static func legacyReviewDelegationPrompt(
+  private nonisolated static func legacyReviewDelegationPrompt(
     scope: String,
     reviewer: AgentProfile,
     changeSummary: TurnFileChangeSummary
@@ -387,7 +387,7 @@ extension TerminalChat {
       """
   }
 
-  static func reviewChangeSummarySection(_ summary: TurnFileChangeSummary) -> String {
+  nonisolated static func reviewChangeSummarySection(_ summary: TurnFileChangeSummary) -> String {
     var lines = [
       "Files: \(summary.fileCount)  +\(summary.totalAdditions) -\(summary.totalDeletions)"
     ]

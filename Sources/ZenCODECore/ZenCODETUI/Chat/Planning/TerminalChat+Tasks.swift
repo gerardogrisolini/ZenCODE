@@ -112,7 +112,7 @@ extension TerminalChat {
         await renderCoordinator.shouldPublishDeferredOverview(.taskGraph)
     }
 
-    static func taskGraphOverviewSignature(_ graph: TaskGraphSnapshot) -> String {
+    nonisolated static func taskGraphOverviewSignature(_ graph: TaskGraphSnapshot) -> String {
         let tasks = graph.tasks.sorted { $0.id < $1.id }.map { task in
             let attempts = task.attempts.map {
                 "\($0.id):\($0.status.rawValue)"
@@ -194,7 +194,7 @@ extension TerminalChat {
         )
     }
 
-    static func taskGraphMarkdown(
+    nonisolated static func taskGraphMarkdown(
         graph: TaskGraphSnapshot,
         tasks: [TaskRecordView]
     ) -> String {
@@ -256,7 +256,7 @@ extension TerminalChat {
         return lines.joined(separator: "\n   ") + "\n\n"
     }
 
-    static func taskDetailMarkdown(_ view: TaskRecordView) -> String {
+    nonisolated static func taskDetailMarkdown(_ view: TaskRecordView) -> String {
         let task = view.task
         var lines = [
             "## Task `\(task.id)`",
@@ -294,7 +294,7 @@ extension TerminalChat {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    private static func escapedTaskMarkdown(_ text: String) -> String {
+    private nonisolated static func escapedTaskMarkdown(_ text: String) -> String {
         text.replacingOccurrences(of: "\r\n", with: " ")
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")

@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
+@TerminalChatActor
 @Suite
 struct TaskCommandTests {
     @Test

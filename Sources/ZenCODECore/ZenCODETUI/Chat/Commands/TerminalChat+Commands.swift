@@ -45,7 +45,7 @@ enum TerminalSubmittedLineRole: Sendable, Equatable {
 }
 
 extension TerminalChat {
-    static func submittedLineRole(for line: String) -> TerminalSubmittedLineRole {
+    nonisolated static func submittedLineRole(for line: String) -> TerminalSubmittedLineRole {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return .empty
@@ -56,7 +56,7 @@ extension TerminalChat {
         return .slashCommand(token: command)
     }
 
-    static func isKnownSlashCommand(_ line: String) -> Bool {
+    nonisolated static func isKnownSlashCommand(_ line: String) -> Bool {
         guard let command = commandToken(from: line) else {
             return false
         }
@@ -66,7 +66,7 @@ extension TerminalChat {
         return allCommandDescriptors.contains { $0.command == command }
     }
 
-    static func shouldSuspendPanelInput(for line: String) -> Bool {
+    nonisolated static func shouldSuspendPanelInput(for line: String) -> Bool {
         switch submittedLineRole(for: line) {
         case .empty, .prompt:
             return false
@@ -75,11 +75,11 @@ extension TerminalChat {
         }
     }
 
-    static func isVoiceCommand(_ line: String) -> Bool {
+    nonisolated static func isVoiceCommand(_ line: String) -> Bool {
         commandToken(from: line) == "/voice"
     }
 
-    static func isAvailableDuringGeneration(for line: String) -> Bool {
+    nonisolated static func isAvailableDuringGeneration(for line: String) -> Bool {
         guard let command = commandToken(from: line) else {
             return false
         }
@@ -142,7 +142,7 @@ extension TerminalChat {
         )
     }
 
-    static func visibleCommandDescriptors(
+    nonisolated static func visibleCommandDescriptors(
         builderAgentEnabled: Bool,
         telegramEnabled: Bool,
         voiceEnabled: Bool
@@ -185,7 +185,7 @@ extension TerminalChat {
         isVoiceConfigured()
     }
 
-    static func commandToken(from line: String) -> String? {
+    nonisolated static func commandToken(from line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("/") else {
             return nil
@@ -196,12 +196,12 @@ extension TerminalChat {
             .map(String.init)
     }
 
-    static func unknownCommandMessage(for line: String) -> String {
+    nonisolated static func unknownCommandMessage(for line: String) -> String {
         let command = commandToken(from: line) ?? line.trimmingCharacters(in: .whitespacesAndNewlines)
         return "ZenCODE: unknown command '\(command)'.\n"
     }
 
-    private static let allCommandDescriptors: [TerminalChatCommandDescriptor] = [
+    private nonisolated static let allCommandDescriptors: [TerminalChatCommandDescriptor] = [
         TerminalChatCommandDescriptor(
             command: "/help",
             summary: "show command help",

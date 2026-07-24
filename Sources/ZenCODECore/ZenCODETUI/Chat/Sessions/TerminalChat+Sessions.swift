@@ -482,7 +482,7 @@ extension TerminalChat {
         )
     }
 
-    private static func savedSessionHistoryHasVisibleContent(
+    private nonisolated static func savedSessionHistoryHasVisibleContent(
         _ history: [AgentRuntimeMessage]
     ) -> Bool {
         history.contains { message in
@@ -499,7 +499,7 @@ extension TerminalChat {
         }
     }
 
-        static func directToolCall(
+        nonisolated static func directToolCall(
         from toolCall: AgentRuntimeToolCall
     ) -> DirectAgentToolCall {
         DirectAgentToolCall(
@@ -510,13 +510,13 @@ extension TerminalChat {
         )
     }
 
-    private static func toolArgumentsObject(from argumentsJSON: String) -> [String: Any] {
+    private nonisolated static func toolArgumentsObject(from argumentsJSON: String) -> [String: Any] {
         DirectToolExecutor.toolArguments(from: argumentsJSON)
             .mapValues(\.jsonObject)
     }
 
 
-    private static func toolResult(
+    private nonisolated static func toolResult(
         for toolCall: AgentRuntimeToolCall,
         in history: [AgentRuntimeMessage],
         renderedToolResultIDs: inout Set<String>
@@ -538,7 +538,7 @@ extension TerminalChat {
         )
     }
 
-    private static func savedToolResultSummary(_ output: String) -> String {
+    private nonisolated static func savedToolResultSummary(_ output: String) -> String {
         output
             .split(separator: "\n", omittingEmptySubsequences: false)
             .first
@@ -547,7 +547,7 @@ extension TerminalChat {
             .nilIfBlank ?? "restored tool output"
     }
 
-    public static func savedSessionDisplayHistory(
+    public nonisolated static func savedSessionDisplayHistory(
         _ savedSession: TerminalSavedSession
     ) -> [AgentRuntimeMessage] {
         if let transcriptHistory = savedSession.transcriptHistory {
@@ -568,7 +568,7 @@ extension TerminalChat {
         ] + savedSession.history
     }
 
-    private static func compactionSummaryDisplayText(
+    private nonisolated static func compactionSummaryDisplayText(
         from systemPrompt: String?
     ) -> String? {
         guard let systemPrompt,
@@ -643,7 +643,7 @@ extension TerminalChat {
         return nil
     }
 
-    public static func renderSessionSelectionUsage() -> String {
+    public nonisolated static func renderSessionSelectionUsage() -> String {
         """
         Usage: /sessions                    List and select saved sessions
                /sessions <name>             Save or overwrite a named snapshot

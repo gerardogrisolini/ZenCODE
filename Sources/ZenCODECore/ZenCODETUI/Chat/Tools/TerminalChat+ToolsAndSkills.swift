@@ -90,7 +90,7 @@ extension TerminalChat {
         await writeSystemMessage(Self.renderActiveTools(Array(allowedToolNames), items: items, selectedKeys: selectedToolKeys))
     }
 
-    public static func shouldDiscoverExternalTools(
+    public nonisolated static func shouldDiscoverExternalTools(
         previousKeys: Set<String>,
         selectedKeys: Set<String>,
         items: [TerminalToolSelectionItem]
@@ -106,7 +106,7 @@ extension TerminalChat {
         return !selectedPrefixes.subtracting(previousPrefixes).isEmpty
     }
 
-    public static func toolCheckboxItems(
+    public nonisolated static func toolCheckboxItems(
         items: [TerminalToolSelectionItem]
     ) -> [TerminalCheckboxMenuItem<String>] {
         items.map { item in
@@ -119,7 +119,7 @@ extension TerminalChat {
         }
     }
 
-    public static func parseToolSelection(
+    public nonisolated static func parseToolSelection(
         _ rawSelection: String,
         items: [TerminalToolSelectionItem]
     ) throws -> Set<String> {
@@ -147,7 +147,7 @@ extension TerminalChat {
         )
     }
 
-    public static func toolSelectionItems(
+    public nonisolated static func toolSelectionItems(
         featureStatuses: [SwiftFeatureStatus],
         additionalDescriptors: [DirectToolDescriptor] = []
     ) -> [TerminalToolSelectionItem] {
@@ -163,7 +163,7 @@ extension TerminalChat {
             : []
     }
 
-    public static func toolSelectionKeys(
+    public nonisolated static func toolSelectionKeys(
         from rawValues: [String],
         items: [TerminalToolSelectionItem]
     ) -> Set<String> {
@@ -360,7 +360,7 @@ extension TerminalChat {
         return skills.filter { selectedSkillIDs.contains($0.id) }
     }
 
-    public static func githubSkillInstallURL(from rawArguments: String) -> URL? {
+    public nonisolated static func githubSkillInstallURL(from rawArguments: String) -> URL? {
         guard let rawValue = skillInstallValue(from: rawArguments),
               let urlToken = rawValue.split(whereSeparator: \.isWhitespace).first.map(String.init) else {
             return nil
@@ -374,7 +374,7 @@ extension TerminalChat {
         return url
     }
 
-    public static func localSkillInstallURL(
+    public nonisolated static func localSkillInstallURL(
         from rawArguments: String,
         baseDirectory: URL
     ) -> URL? {
@@ -411,7 +411,7 @@ extension TerminalChat {
         return nil
     }
 
-    public static func isSkillInstallRequest(_ rawArguments: String) -> Bool {
+    public nonisolated static func isSkillInstallRequest(_ rawArguments: String) -> Bool {
         let tokens = rawArguments
             .split { $0.isWhitespace }
         guard let command = tokens.first?.lowercased() else {
@@ -420,7 +420,7 @@ extension TerminalChat {
         return ["install", "add"].contains(command)
     }
 
-    public static func skillInstallValue(from rawArguments: String) -> String? {
+    public nonisolated static func skillInstallValue(from rawArguments: String) -> String? {
         let trimmedArguments = rawArguments.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedArguments.isEmpty else {
             return nil
@@ -440,7 +440,7 @@ extension TerminalChat {
         return value.isEmpty ? nil : value
     }
 
-    public static func parseSkillSelection(
+    public nonisolated static func parseSkillSelection(
         _ rawSelection: String,
         availableSkills: [PromptSkill]
     ) throws -> Set<String> {
@@ -478,7 +478,7 @@ extension TerminalChat {
         return selectedSkillIDs
     }
 
-    public static func skill(
+    public nonisolated static func skill(
         matching rawToken: String,
         in availableSkills: [PromptSkill]
     ) -> PromptSkill? {
@@ -495,7 +495,7 @@ extension TerminalChat {
         }
     }
 
-    public static func selectionKey(_ value: String) -> String {
+    public nonisolated static func selectionKey(_ value: String) -> String {
         let foldedValue = value.folding(
             options: [.caseInsensitive, .diacriticInsensitive],
             locale: .current

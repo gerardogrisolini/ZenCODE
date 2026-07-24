@@ -74,7 +74,7 @@ extension TerminalChat {
         await writeFileChangeDiffs(summary)
     }
 
-    public static func renderFileChangeSummary(
+    public nonisolated static func renderFileChangeSummary(
         _ summary: TurnFileChangeSummary
     ) -> String {
         let title = summary.fileCount == 1
@@ -90,7 +90,7 @@ extension TerminalChat {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    public static func renderFileChangeEntry(
+    public nonisolated static func renderFileChangeEntry(
         _ entry: TurnFileChangeSummary.Entry
     ) -> String {
         if entry.isBinary {
@@ -100,7 +100,7 @@ extension TerminalChat {
         return "  \(entry.status.rawValue) \(entry.path)  +\(entry.additions) -\(entry.deletions)"
     }
 
-    static func renderFileChangeDiffPatch(
+    nonisolated static func renderFileChangeDiffPatch(
         _ patch: String,
         isEnabled: Bool
     ) -> String {
@@ -114,7 +114,7 @@ extension TerminalChat {
             .joined(separator: "\n")
     }
 
-    private static func renderFileChangeDiffLine(_ line: String) -> String {
+    private nonisolated static func renderFileChangeDiffLine(_ line: String) -> String {
         let reset = "\u{1B}[0m"
         let meta = "\u{1B}[38;5;244m"
         let hunk = "\u{1B}[38;5;141m"

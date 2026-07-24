@@ -100,7 +100,7 @@ extension TerminalChat {
         #endif
     }
 
-    static func gitNumstatSummary(from output: String) -> TerminalGitStatusSummary {
+    nonisolated static func gitNumstatSummary(from output: String) -> TerminalGitStatusSummary {
         var changedFileCount = 0
         var additions = 0
         var deletions = 0

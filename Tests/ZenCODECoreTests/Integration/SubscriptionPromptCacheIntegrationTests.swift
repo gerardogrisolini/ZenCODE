@@ -100,7 +100,7 @@ struct SubscriptionPromptCacheIntegrationTests {
         let selection = try Self.subscriptionSelection(
             providerID: AgentRemoteProvider.anthropicSubscriptionProviderID,
             requestedModelEnv: "ZENCODE_LIVE_ANTHROPIC_MODEL",
-            preferredModelID: "claude-sonnet-4-6"
+            preferredModelID: "claude-sonnet-5"
         )
         let provider = try #require(selection.remoteProvider)
         let client = AnthropicSubscriptionGenerationClient(

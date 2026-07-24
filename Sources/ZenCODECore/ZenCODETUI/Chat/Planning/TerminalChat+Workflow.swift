@@ -53,15 +53,15 @@ extension TerminalChat {
         )
     }
 
-    static let workflowMissingGoalMessage =
+    nonisolated static let workflowMissingGoalMessage =
         "ZenCODE: /workflow requires a goal. "
         + "Use /workflow <goal> to describe what should be planned and delegated.\n"
 
-    static let workflowActivePlanMessage =
+    nonisolated static let workflowActivePlanMessage =
         "ZenCODE: /workflow cannot start while an active plan exists. "
         + "Finish it or use /plan clear before starting a workflow.\n"
 
-    static func workflowPrompt(goal: String, graphID: String) -> String {
+    nonisolated static func workflowPrompt(goal: String, graphID: String) -> String {
         return """
         You are the coordinator of a delegated workflow. You plan the work, add tasks to \
         the active task graph, delegate every task to the best-matching sub-agent, and act \

@@ -275,6 +275,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    @TerminalChatActor
     func hostedEffectiveModelUsesHostedManifestInsteadOfCoderSettings() {
         let provider = AgentRemoteProvider(
             name: "remote-server",
@@ -376,6 +377,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    @TerminalChatActor
     func terminalSessionConfigurationUsesSessionIDCacheKeyByDefault() throws {
         let workingDirectory = URL(
             fileURLWithPath: "/tmp/ZenCODE-cache-project",
@@ -399,6 +401,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    @TerminalChatActor
     func terminalSessionConfigurationPreservesLoadedCacheKey() throws {
         let workingDirectory = URL(
             fileURLWithPath: "/tmp/ZenCODE-cache-project",

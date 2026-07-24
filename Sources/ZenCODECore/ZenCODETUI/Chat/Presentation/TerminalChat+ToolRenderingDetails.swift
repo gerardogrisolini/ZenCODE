@@ -6,7 +6,7 @@
 import Foundation
 
 extension TerminalChat {
-    static func detailedToolCallStartedLines(
+    nonisolated static func detailedToolCallStartedLines(
         for toolCall: DirectAgentToolCall
     ) -> [String] {
         var lines = detailedToolBaseLines(for: toolCall)
@@ -17,7 +17,7 @@ extension TerminalChat {
         return lines
     }
 
-    static func detailedToolCallCompletedLines(
+    nonisolated static func detailedToolCallCompletedLines(
         for toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) -> [String] {
@@ -40,7 +40,7 @@ extension TerminalChat {
         return lines
     }
 
-    static func detailedToolBaseLines(
+    nonisolated static func detailedToolBaseLines(
         for toolCall: DirectAgentToolCall
     ) -> [String] {
         let title = ToolCallPresentation.toolTitle(for: toolCall)
@@ -59,7 +59,7 @@ extension TerminalChat {
 
     /// Edit tools already render their old/new strings in the change detail
     /// lines, so repeating the raw parameters would only crowd out the diff.
-    static func shouldHideParameterLines(for toolName: String) -> Bool {
+    nonisolated static func shouldHideParameterLines(for toolName: String) -> Bool {
         switch normalizedMutationToolName(toolName) {
         case "local.editFile", "local.multiEdit":
             return true
@@ -70,7 +70,7 @@ extension TerminalChat {
 
     /// Renders the full call parameters as pretty-printed JSON for the
     /// `expanded` level, keeping the formatting and the wide limits.
-    static func parameterLines(
+    nonisolated static func parameterLines(
         for toolCall: DirectAgentToolCall
     ) -> [String] {
         guard !toolCall.argumentsObject.isEmpty else {
@@ -90,7 +90,7 @@ extension TerminalChat {
         return lines
     }
 
-    static func formattedParameterSnippet(
+    nonisolated static func formattedParameterSnippet(
         for arguments: [String: Any]
     ) -> (text: String, preservesIndentation: Bool) {
         let entries = arguments
@@ -118,14 +118,14 @@ extension TerminalChat {
         return (lines.joined(separator: "\n"), true)
     }
 
-    static func shouldRenderParameterAsMultilineString(_ value: JSONValue) -> Bool {
+    nonisolated static func shouldRenderParameterAsMultilineString(_ value: JSONValue) -> Bool {
         guard case let .string(text) = value else {
             return false
         }
         return text.contains("\n") && !text.contains("\"\"\"")
     }
 
-    static func formattedParameterValueLines(_ value: JSONValue) -> [String] {
+    nonisolated static func formattedParameterValueLines(_ value: JSONValue) -> [String] {
         if case let .string(text) = value,
            shouldRenderParameterAsMultilineString(value) {
             let contentLines = text
@@ -140,7 +140,7 @@ extension TerminalChat {
             .map(String.init)
     }
 
-    static func appliedChangeDetailLines(
+    nonisolated static func appliedChangeDetailLines(
         for toolCall: DirectAgentToolCall
     ) -> [String] {
         let arguments = toolCall.argumentsObject
@@ -198,7 +198,7 @@ extension TerminalChat {
         }
     }
 
-    static func toolLocationLines(
+    nonisolated static func toolLocationLines(
         for toolCall: DirectAgentToolCall
     ) -> [String] {
         ToolCallPresentation.toolLocations(for: toolCall).compactMap { location in
@@ -210,7 +210,7 @@ extension TerminalChat {
         }
     }
 
-    static func multiEditChangeDetailLines(
+    nonisolated static func multiEditChangeDetailLines(
         _ arguments: [String: Any]
     ) -> [String] {
         let edits = arrayObjectArgument(arguments, keys: ["edits"])
@@ -234,7 +234,7 @@ extension TerminalChat {
         return lines
     }
 
-    static func isFileMutationTool(_ toolName: String) -> Bool {
+    nonisolated static func isFileMutationTool(_ toolName: String) -> Bool {
         switch normalizedMutationToolName(toolName) {
         case "local.writeFile", "local.append", "local.replace",
              "local.editFile", "local.multiEdit", "local.applyPatch",
@@ -246,7 +246,7 @@ extension TerminalChat {
         }
     }
 
-    static func normalizedMutationToolName(_ toolName: String) -> String {
+    nonisolated static func normalizedMutationToolName(_ toolName: String) -> String {
         let trimmedName = toolName.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedName.hasPrefix("xcode.") {
             return String(trimmedName.dropFirst("xcode.".count))
@@ -254,7 +254,7 @@ extension TerminalChat {
         return trimmedName
     }
 
-    static func targetPath(_ arguments: [String: Any]) -> String? {
+    nonisolated static func targetPath(_ arguments: [String: Any]) -> String? {
         stringArgument(
             arguments,
             keys: [
@@ -268,7 +268,7 @@ extension TerminalChat {
         )
     }
 
-    static func stringArgument(
+    nonisolated static func stringArgument(
         _ arguments: [String: Any],
         keys: [String]
     ) -> String? {
@@ -285,7 +285,7 @@ extension TerminalChat {
         return nil
     }
 
-    static func boolArgument(
+    nonisolated static func boolArgument(
         _ arguments: [String: Any],
         keys: [String]
     ) -> Bool? {
@@ -300,7 +300,7 @@ extension TerminalChat {
         return nil
     }
 
-    static func arrayObjectArgument(
+    nonisolated static func arrayObjectArgument(
         _ arguments: [String: Any],
         keys: [String]
     ) -> [[String: Any]] {
@@ -324,7 +324,7 @@ extension TerminalChat {
         return []
     }
 
-    static func compactSummaryLine(_ text: String) -> String? {
+    nonisolated static func compactSummaryLine(_ text: String) -> String? {
         let summary = text
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: .newlines)
@@ -339,7 +339,7 @@ extension TerminalChat {
         return truncatedByCount(summary, limit: 160)
     }
 
-    static func expandedToolSummary(
+    nonisolated static func expandedToolSummary(
         for toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) -> String? {
@@ -353,7 +353,7 @@ extension TerminalChat {
         return compactSummaryLine(result.summary)
     }
 
-    static func numberedFileReadLineCount(
+    nonisolated static func numberedFileReadLineCount(
         toolName: String,
         output: String
     ) -> Int? {
@@ -378,7 +378,7 @@ extension TerminalChat {
             })
     }
 
-    static func indentedSnippet(
+    nonisolated static func indentedSnippet(
         _ text: String,
         indentation: String = "  "
     ) -> [String] {
@@ -418,7 +418,7 @@ extension TerminalChat {
         return output
     }
 
-    static func indentedSnippetPreservingIndentation(
+    nonisolated static func indentedSnippetPreservingIndentation(
         _ text: String,
         indentation: String = "  "
     ) -> [String] {
@@ -446,7 +446,7 @@ extension TerminalChat {
     /// Deduces the syntax-highlighting language for the tool's code snippets
     /// from the extension of the file the call targets, so written/edited
     /// code is rendered with proper highlighting in the expanded view.
-    static func codeLanguageHint(for toolCall: DirectAgentToolCall) -> String? {
+    nonisolated static func codeLanguageHint(for toolCall: DirectAgentToolCall) -> String? {
         let arguments = toolCall.argumentsObject
         let path = targetPath(arguments)
             ?? ToolCallPresentation.patchDisplayTarget(from: arguments)
@@ -459,7 +459,7 @@ extension TerminalChat {
         return fileExtension.isEmpty ? nil : fileExtension
     }
 
-    static func leadingSpaceCount(_ line: String) -> Int {
+    nonisolated static func leadingSpaceCount(_ line: String) -> Int {
         var count = 0
         for character in line {
             if character == " " {

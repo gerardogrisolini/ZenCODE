@@ -133,7 +133,7 @@ extension TerminalChat {
     /// Builds an open candidate for an attachment that is backed by a file on
     /// disk. Attachments held only as in-memory data are skipped because `open`
     /// needs a real path.
-    static func attachmentCandidate(
+    nonisolated static func attachmentCandidate(
         from attachment: AgentRuntimeAttachment
     ) -> TerminalOpenCandidate? {
         guard let fileURL = attachment.fileURL else {
@@ -152,7 +152,7 @@ extension TerminalChat {
 
     /// Extracts file paths and http(s) URLs from a single message body, keeping
     /// the order in which they appear in the text.
-    static func extractOpenCandidates(
+    nonisolated static func extractOpenCandidates(
         from text: String,
         workingDirectory: URL
     ) -> [TerminalOpenCandidate] {
@@ -182,7 +182,7 @@ extension TerminalChat {
         return candidates
     }
 
-    private static func tokenize(_ text: String) -> [Substring] {
+    private nonisolated static func tokenize(_ text: String) -> [Substring] {
         text.split { character in
             character == " "
                 || character == "\n"
@@ -199,7 +199,7 @@ extension TerminalChat {
 
     /// Strips Markdown and punctuation noise that commonly surrounds inline
     /// references, such as trailing commas, parentheses, or list markers.
-    private static func trimToken(_ token: Substring) -> String {
+    private nonisolated static func trimToken(_ token: Substring) -> String {
         let leading = CharacterSet(charactersIn: "([{*_~#-")
         let trailing = CharacterSet(charactersIn: ".,;:!?)]}*_~")
         var result = String(token)
@@ -214,17 +214,17 @@ extension TerminalChat {
 
         /// Schemes that use an authority component (`scheme://host/...`) and so
     /// require a host to be considered a valid open candidate.
-    private static let authoritySchemes: Set<String> = [
+    private nonisolated static let authoritySchemes: Set<String> = [
         "http", "https", "ftp", "ftps", "sftp", "ssh", "file", "smb", "vnc"
     ]
 
     /// Schemes that address a resource without an authority component, such as
     /// `mailto:user@example.com` or `tel:+123456789`.
-    private static let schemelessOpaqueSchemes: Set<String> = [
+    private nonisolated static let schemelessOpaqueSchemes: Set<String> = [
         "mailto", "tel", "sms", "facetime", "facetime-audio"
     ]
 
-    private static func urlCandidate(from token: String) -> TerminalOpenCandidate? {
+    private nonisolated static func urlCandidate(from token: String) -> TerminalOpenCandidate? {
         guard let schemeRange = token.range(of: ":") else {
             return nil
         }
@@ -255,7 +255,7 @@ extension TerminalChat {
         return nil
     }
 
-    private static func fileCandidate(
+    private nonisolated static func fileCandidate(
         from token: String,
         workingDirectory: URL
     ) -> TerminalOpenCandidate? {
@@ -283,7 +283,7 @@ extension TerminalChat {
         Self.resolveOpenURL(from: rawPath, workingDirectory: configuration.workingDirectory)
     }
 
-    private static func resolveOpenURL(
+    private nonisolated static func resolveOpenURL(
         from rawPath: String,
         workingDirectory: URL
     ) -> URL {
@@ -307,7 +307,7 @@ extension TerminalChat {
             .standardizedFileURL
     }
 
-    static func renderOpenCandidateList(_ candidates: [TerminalOpenCandidate]) -> String {
+    nonisolated static func renderOpenCandidateList(_ candidates: [TerminalOpenCandidate]) -> String {
         let lines = candidates.enumerated().map { index, candidate -> String in
             let kind = candidate.kind == .url ? "url" : "file"
             return "  \(index + 1). \(candidate.display) (\(kind))"

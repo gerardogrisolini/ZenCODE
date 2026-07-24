@@ -164,7 +164,7 @@ extension TerminalChat {
         await writeSystemMessage("\n")
     }
 
-    public static func agentSelectionDetail(_ agent: AgentProfile) -> String {
+    public nonisolated static func agentSelectionDetail(_ agent: AgentProfile) -> String {
         var parts = [agentPurposeSummary(agent)]
         if let modelID = agent.modelID {
             let prefix = agent.modelBindings.count > 1 ? "default model" : "model"
@@ -182,7 +182,7 @@ extension TerminalChat {
         return parts.joined(separator: " · ")
     }
 
-    public static func renderAgentModelBindings(
+    public nonisolated static func renderAgentModelBindings(
         agents: [AgentProfile],
         selectedAgent: AgentProfile?
     ) -> String {
@@ -200,7 +200,7 @@ extension TerminalChat {
 
     /// Returns the display lines for a single agent's model bindings, using the
     /// shared layout produced by the `/bindings` command and the setup summary.
-    public static func renderAgentModelBindings(
+    public nonisolated static func renderAgentModelBindings(
         for agent: AgentProfile,
         selectedAgent: AgentProfile?
     ) -> [String] {
@@ -220,7 +220,7 @@ extension TerminalChat {
 
     /// Returns a single binding line using the shared `/bindings` formatting:
     /// `    [default] Provider / modelID · capability: N/10 · thinking: X`.
-    public static func renderModelBindingLine(
+    public nonisolated static func renderModelBindingLine(
         _ binding: AgentModelBinding,
         defaultBindingID: String?
     ) -> String {
@@ -237,7 +237,7 @@ extension TerminalChat {
         return "    \(marker) \(details.joined(separator: " · "))"
     }
 
-    private static func agentPurposeSummary(_ agent: AgentProfile) -> String {
+    private nonisolated static func agentPurposeSummary(_ agent: AgentProfile) -> String {
         switch agent.id.lowercased() {
         case AgentProfileStore.developerAgentID.uuidString.lowercased():
             return "General software development with web, memory, and sub-agents"
@@ -258,7 +258,7 @@ extension TerminalChat {
         }
     }
 
-    private static func customAgentToolSummary(_ tools: [String]) -> String {
+    private nonisolated static func customAgentToolSummary(_ tools: [String]) -> String {
         let visibleTools = tools.filter { tool in
             let trimmedTool = tool.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmedTool != TerminalToolSelectionCatalog.featureBuilderKey
@@ -293,18 +293,18 @@ extension TerminalChat {
         return "Tools: \(summaryLabels.joined(separator: ", "))"
     }
 
-    public static func renderSelectedAgent(_ agent: AgentProfile?) -> String {
+    public nonisolated static func renderSelectedAgent(_ agent: AgentProfile?) -> String {
         guard let agent else {
             return "Selected agent: unavailable\n"
         }
         return "Selected agent: \(agent.displayName)\n"
     }
 
-    public static func renderAgentSelectionUsage() -> String {
+    public nonisolated static func renderAgentSelectionUsage() -> String {
         "Usage: /agents [list|<agent name>|<number>]\n"
     }
 
-    public static func agentSelectionKey(_ value: String) -> String {
+    public nonisolated static func agentSelectionKey(_ value: String) -> String {
         value
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)

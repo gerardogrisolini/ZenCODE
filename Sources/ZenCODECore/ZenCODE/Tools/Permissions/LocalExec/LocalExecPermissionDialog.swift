@@ -137,7 +137,7 @@ extension LocalExecPermissionAuthorizer {
         // The run/always/cancel options and their compact key hint form the card
         // footer, set off from the command details by a divider rule. Keeping
         // `(r/a/c)` here avoids repeating the available choices below the box.
-        let options = "[R]un once / [A]lways / [C]ancel"
+        let options = "\(Self.ansiCyanBold)[R]un once / \(Self.ansiCyanBold)[A]lways / \(Self.ansiCyanBold)[C]ancel"
         let footer = Self.wrap(options, code: Self.ansiCyanBold, colored: useColor)
         let box = Self.renderConsentBox(
             title: "Authorization",

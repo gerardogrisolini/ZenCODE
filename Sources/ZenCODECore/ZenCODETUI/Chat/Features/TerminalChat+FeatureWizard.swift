@@ -259,7 +259,10 @@ extension TerminalChat {
             let prompt = defaultValue?.isEmpty == false
                 ? "\(label) [\(defaultValue!)]: "
                 : "\(label): "
-            guard let line = interactiveReader.readLine(prompt: prompt) else {
+            guard let line = await Self.readLineOffActor(
+                reader: interactiveReader,
+                prompt: prompt
+            ) else {
                 return nil
             }
             let value = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -282,7 +285,10 @@ extension TerminalChat {
     ) async -> Bool? {
         let suffix = defaultValue ? "Y/n" : "y/N"
         while true {
-            guard let line = interactiveReader.readLine(prompt: "\(label) [\(suffix)]: ") else {
+            guard let line = await Self.readLineOffActor(
+                reader: interactiveReader,
+                prompt: "\(label) [\(suffix)]: "
+            ) else {
                 return nil
             }
             switch line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {

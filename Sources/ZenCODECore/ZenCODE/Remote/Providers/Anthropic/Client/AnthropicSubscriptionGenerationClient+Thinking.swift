@@ -166,10 +166,7 @@ extension AnthropicSubscriptionGenerationClient {
     static func usesAdaptiveThinking(modelID: String) -> Bool {
         switch modelID {
         case "claude-fable-5",
-             "claude-opus-4-6",
-             "claude-opus-4-7",
-             "claude-opus-4-8",
-            "claude-sonnet-4-6",
+             "claude-opus-5",
              "claude-sonnet-5":
             return true
         default:
@@ -194,10 +191,8 @@ extension AnthropicSubscriptionGenerationClient {
              .max,
              .ultra:
             switch modelID {
-            case "claude-fable-5", "claude-opus-4-7", "claude-opus-4-8":
+            case "claude-fable-5", "claude-opus-5":
                 return "xhigh"
-            case "claude-opus-4-6":
-                return "max"
             default:
                 return "high"
             }

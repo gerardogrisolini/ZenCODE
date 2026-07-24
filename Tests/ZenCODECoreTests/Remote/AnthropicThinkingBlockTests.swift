@@ -371,7 +371,7 @@ struct AnthropicThinkingBlockTests {
     @Test
     func oauthBetaHeaderMatchesClaudeCodeCachingAndThinkingBetas() {
         let adaptiveHeader = AnthropicSubscriptionGenerationClient.oauthBetaHeader(
-            forModelID: "claude-opus-4-8"
+            forModelID: "claude-opus-5"
         )
         let interleavedHeader = AnthropicSubscriptionGenerationClient.oauthBetaHeader(
             forModelID: "claude-haiku-4-5"
@@ -437,7 +437,7 @@ struct AnthropicThinkingBlockTests {
     func otherAdaptiveThinkingModelsDoNotForceSummarizedDisplay() throws {
         let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
             for: .high,
-            modelID: "claude-opus-4-8",
+            modelID: "claude-opus-5",
             maxTokens: 8192
         )
         let thinking = try #require(payload.thinking)

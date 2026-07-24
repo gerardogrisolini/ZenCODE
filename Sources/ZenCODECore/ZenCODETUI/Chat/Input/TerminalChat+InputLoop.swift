@@ -23,7 +23,7 @@ extension TerminalChat {
     /// input device), then resumed. Reading runs off the cooperative executor
     /// so the authorizer actor is not blocked while the operator decides.
     func configureConsentReader(eventQueue: TerminalChatEventQueue) async {
-        await permissionAuthorizer.setConsentReader({ [interactiveReader, statusBar, weak self] prompt in
+        await permissionAuthorizer.setConsentReader({ @TerminalChatActor [interactiveReader, statusBar, weak self] prompt in
             await interactiveReader.stopPanelInput(clearPanel: false)
             let answer = await Self.readConsentKeyOffActor(
                 reader: interactiveReader,
@@ -64,22 +64,86 @@ extension TerminalChat {
         }
     }
 
+    /// Reads one interactive line off the cooperative executor.
+    ///
+    /// `TerminalInteractiveLineReader.readLine(prompt:)` puts the terminal in raw
+    /// mode and blocks the calling thread until the operator submits a line, so
+    /// it must never run on `TerminalChatActor`: doing so would stall rendering,
+    /// the status bar, and every background refresh task for the whole wait.
+    static func readLineOffActor(
+        reader: TerminalInteractiveLineReader,
+        prompt: String
+    ) async -> String? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: reader.readLine(prompt: prompt))
+            }
+        }
+    }
+
+    /// Reads a single piped line off the cooperative executor.
+    ///
+    /// Used for the very first non-interactive line, before the input loop
+    /// takes over: `StdioLineReader.readLine()` blocks on stdin, so it must not
+    /// run on `TerminalChatActor`. No paste drain happens here because the line
+    /// is handed to the loop as its pending input.
+    static func readStdinLineOffActor(
+        reader: StdioLineReader
+    ) async -> String? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: reader.readLine())
+            }
+        }
+    }
+
+    /// Reads one piped line plus any buffered paste continuation off the
+    /// cooperative executor. Both `readLine()` and `drainBufferedLines(_:)`
+    /// block on stdin, so they run together on a global queue to keep the
+    /// paste-drain window contiguous with its originating line.
+    static func readPipedLineOffActor(
+        reader: StdioLineReader,
+        initialLine: String?,
+        waitMilliseconds: Int32
+    ) async -> String? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                guard let line = initialLine ?? reader.readLine() else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let pastedLines = reader.drainBufferedLines(
+                    waitMilliseconds: waitMilliseconds
+                )
+                continuation.resume(
+                    returning: ([line] + pastedLines).joined(separator: "\n")
+                )
+            }
+        }
+    }
+
     func runBlockingInputLoop(initialInputLine: String?) async throws {
         var pendingInputLine = initialInputLine
         while true {
             let promptInput: String
             if stdinIsTerminal {
-                guard let line = interactiveReader.readLine(prompt: "> ") else {
+                guard let line = await Self.readLineOffActor(
+                    reader: interactiveReader,
+                    prompt: "> "
+                ) else {
                     break
                 }
                 promptInput = line
             } else {
-                guard let line = pendingInputLine ?? reader.readLine() else {
+                guard let line = await Self.readPipedLineOffActor(
+                    reader: reader,
+                    initialLine: pendingInputLine,
+                    waitMilliseconds: 80
+                ) else {
                     break
                 }
                 pendingInputLine = nil
-                let pastedLines = reader.drainBufferedLines(waitMilliseconds: 80)
-                promptInput = ([line] + pastedLines).joined(separator: "\n")
+                promptInput = line
             }
 
             if activeVoiceRecordingSession != nil {

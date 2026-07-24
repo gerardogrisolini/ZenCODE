@@ -34,7 +34,7 @@ extension TerminalChat {
         await renderCoordinator.writeAccessModeChangeMessage(accessMode)
     }
 
-    static func compactToolTerminalText(
+    nonisolated static func compactToolTerminalText(
         _ lines: [String],
         lineInset: String,
         newline: Bool = false,
@@ -55,7 +55,7 @@ extension TerminalChat {
     /// the full orange identity color, while the target/status row drops to a
     /// lighter peach-orange so the block stays readable instead of flat
     /// monochromatic orange.
-    static func renderCompactToolLine(
+    nonisolated static func renderCompactToolLine(
         _ line: String,
         isTitle: Bool
     ) -> String {
@@ -65,7 +65,7 @@ extension TerminalChat {
         return "\(toolValueColor)\(line)"
     }
 
-    static func compactToolLines(
+    nonisolated static func compactToolLines(
         for toolCall: DirectAgentToolCall,
         statusIcon: String,
         contentInsetWidth: Int = 0,
@@ -95,7 +95,7 @@ extension TerminalChat {
         ]
     }
 
-    static func compactToolStatusLine(
+    nonisolated static func compactToolStatusLine(
         target: String,
         statusIcon: String,
         contentInsetWidth: Int = 0,
@@ -125,7 +125,7 @@ extension TerminalChat {
         return "\(fittedTarget) \(statusIcon)"
     }
 
-    static func renderedTerminalRowCount(
+    nonisolated static func renderedTerminalRowCount(
         for lines: [String],
         contentInsetWidth: Int = 0,
         columnWidth: Int? = nil
@@ -149,7 +149,7 @@ extension TerminalChat {
     /// ending in the final column has terminal-dependent auto-wrap behavior;
     /// that would make the cursor position disagree with the saved row count
     /// used to redraw the tool on completion.
-    static func safelyWrappedDetailedToolLines(
+    nonisolated static func safelyWrappedDetailedToolLines(
         _ lines: [String],
         contentInsetWidth: Int = 0,
         columnWidth: Int? = nil
@@ -172,13 +172,13 @@ extension TerminalChat {
         }
     }
 
-    static func compactToolInlineTarget(_ target: String) -> String {
+    nonisolated static func compactToolInlineTarget(_ target: String) -> String {
         target
             .split(whereSeparator: \.isWhitespace)
             .joined(separator: " ")
     }
 
-    static func fitDisplayWidth(_ text: String, width: Int) -> String {
+    nonisolated static func fitDisplayWidth(_ text: String, width: Int) -> String {
         guard displayWidth(text) > width else {
             return text
         }
@@ -215,11 +215,11 @@ extension TerminalChat {
         )
     }
 
-    static func displayWidth(_ text: String) -> Int {
+    nonisolated static func displayWidth(_ text: String) -> Int {
         TerminalANSIText.visibleWidth(text)
     }
 
-    static func renderDetailedToolLine(
+    nonisolated static func renderDetailedToolLine(
         _ line: String,
         codeLanguage: String? = nil
     ) -> String {
@@ -245,7 +245,7 @@ extension TerminalChat {
     /// whole code area reads as one framed block. Highlight resets emitted by
     /// the code renderer are re-anchored to the background color so token
     /// colors never punch holes in the frame.
-    static func renderCodeAreaLine(
+    nonisolated static func renderCodeAreaLine(
         _ line: String,
         language: String?
     ) -> String {
@@ -259,7 +259,7 @@ extension TerminalChat {
 
     /// Returns whether the text before the first colon looks like a metadata
     /// label (single lowercase word) rather than part of the tool title.
-    static func isDetailedToolLabel(_ candidate: Substring) -> Bool {
+    nonisolated static func isDetailedToolLabel(_ candidate: Substring) -> Bool {
         let trimmed = candidate.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
             return false
@@ -271,12 +271,12 @@ extension TerminalChat {
     // terracotta for labels, and a light peach-orange for values so the whole
     // tool block stays within the orange family while keeping a readable
     // hierarchy.
-    static let toolTitleColor = "\u{1B}[38;5;208m"
-    static let toolLabelColor = "\u{1B}[38;5;173m"
-    static let toolValueColor = "\u{1B}[38;5;215m"
+    nonisolated static let toolTitleColor = "\u{1B}[38;5;208m"
+    nonisolated static let toolLabelColor = "\u{1B}[38;5;173m"
+    nonisolated static let toolValueColor = "\u{1B}[38;5;215m"
     // Dark gray background framing the code areas of expanded tool blocks,
     // matching the background used for submitted prompts.
-    static let codeAreaBackgroundColor = "\u{1B}[48;5;236m"
-    static let expandedSnippetLineLimit = 100
-    static let expandedSnippetCharacterLimit = 10_000
+    nonisolated static let codeAreaBackgroundColor = "\u{1B}[48;5;236m"
+    nonisolated static let expandedSnippetLineLimit = 100
+    nonisolated static let expandedSnippetCharacterLimit = 10_000
 }
