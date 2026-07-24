@@ -12,6 +12,79 @@ import Testing
 
 extension ACPCompatibilityTests {
     @Test
+    func acpSessionKeepsTheEffectiveAgentAcrossRoutingAndRestore() async throws {
+        let agentA = AgentProfile(
+            id: "agent-a",
+            name: "Agent A",
+            instructions: "Instructions for Agent A.",
+            tools: []
+        )
+        let agentB = AgentProfile(
+            id: "agent-b",
+            name: "Agent B",
+            instructions: "Instructions for Agent B.",
+            tools: []
+        )
+        let backend = CapturingACPBackend()
+        let bridge = try makeBridge(
+            models: [
+                AgentSettingsModelManifest(
+                    id: "test-model",
+                    kind: .remoteAPI,
+                    modelID: "local/test-model"
+                )
+            ],
+            availableAgents: [agentA, agentB],
+            agentName: agentA.name,
+            backendFactory: { _, _ in backend }
+        )
+
+        try await bridge.newSession(id: nil, params: [
+            "cwd": "/tmp/acp-agent-routing",
+            "agentId": agentA.id
+        ])
+        let sessionID = try #require(
+            await bridge.sessionConfigurationsForTesting().first?.sessionID
+        )
+        #expect(await bridge.selectedAgentIDForTesting(sessionID: sessionID) == agentA.id)
+
+        try await bridge.prompt(id: nil, params: [
+            "sessionId": sessionID,
+            "prompt": "@AgentB inspect this session"
+        ])
+
+        #expect(await bridge.selectedAgentIDForTesting(sessionID: sessionID) == agentB.id)
+        #expect(await backend.createdSystemPrompt()?.contains("Instructions for Agent B.") == true)
+        #expect(await bridge.lifecycleAgentIDForTesting(sessionID: sessionID) == agentB.id)
+
+        let restoredBridge = try makeBridge(
+            models: [
+                AgentSettingsModelManifest(
+                    id: "test-model",
+                    kind: .remoteAPI,
+                    modelID: "local/test-model"
+                )
+            ],
+            availableAgents: [agentA, agentB],
+            agentName: agentA.name,
+            backendFactory: { _, _ in CapturingACPBackend() }
+        )
+        try await restoredBridge.restoreSession(
+            id: nil,
+            params: [
+                "sessionId": "restored-agent-b",
+                "cwd": "/tmp/acp-agent-routing",
+                "agentId": agentB.id
+            ],
+            replayHistory: false
+        )
+        #expect(
+            await restoredBridge.selectedAgentIDForTesting(sessionID: "restored-agent-b")
+                == agentB.id
+        )
+    }
+
+    @Test
     func newSessionSkipsUnavailableACPProvidedMCPServers() async throws {
         let bridge = try makeBridge(
             models: [

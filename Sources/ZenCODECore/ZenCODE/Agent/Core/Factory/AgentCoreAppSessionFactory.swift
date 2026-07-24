@@ -101,7 +101,6 @@ public enum AgentCoreAppSessionFactory {
             workingDirectory: request.workingDirectory,
             systemPrompt: systemPrompt,
             allowedToolNames: allowedToolNames,
-            selectedSkillIDs: request.selectedSkillIDs,
             preserveThinking: request.preserveThinking
         )
 
@@ -132,16 +131,16 @@ public enum AgentCoreAppSessionFactory {
     ) -> String {
         let memoryToolEnabled = memoryToolEnabled(allowedToolNames)
         let selectedAgentSection = selectedAgent?.promptSection(memoryToolEnabled: memoryToolEnabled)
-        let selectedSkillSection = selectedSkillSection(
-            for: selectedAgent,
-            selectedSkillIDs: selectedSkillIDs
-        )
+        let selectedSkillSection = SystemPromptBuilder.staticSkillSection
         let providedSystemPrompt = providedSystemPrompt?.nilIfBlank
 
         if let providedSystemPrompt {
+            let alreadyHasSkillSection = providedSystemPrompt.contains(
+                SystemPromptBuilder.staticSkillSectionMarker
+            )
             let contextSections = [
                 selectedAgentSection,
-                selectedSkillSection
+                alreadyHasSkillSection ? nil : selectedSkillSection
             ]
             .compactMap { $0?.nilIfBlank }
             let sections = contextSections + [
@@ -225,7 +224,14 @@ public enum AgentCoreAppSessionFactory {
         } else {
             resolvedToolNames = selectedAgent?.allowedToolNames()
         }
-        return ExternalToolAvailability.resolvedAllowedToolNames(resolvedToolNames)
+        let resolved = ExternalToolAvailability.resolvedAllowedToolNames(resolvedToolNames)
+        guard var resolved else {
+            return resolved
+        }
+        // Both skill tools are intrinsic and always-on, so they must remain in
+        // any explicit allowlist regardless of the user's tool selection.
+        resolved.formUnion(PromptSkillToolProvider.toolNames)
+        return resolved
     }
 
     private static func intrinsicAllowedToolNames(for selectedAgent: AgentProfile?) -> Set<String> {
@@ -257,7 +263,6 @@ public enum AgentCoreAppSessionFactory {
         workingDirectory: URL,
         systemPrompt: String,
         allowedToolNames: Set<String>?,
-        selectedSkillIDs: Set<String>,
         preserveThinking: Bool
     ) -> String? {
         let seed = requestedCacheKey?.nilIfBlank ?? sessionID.nilIfBlank
@@ -265,13 +270,15 @@ public enum AgentCoreAppSessionFactory {
             return nil
         }
 
+        // The skill selection is intentionally excluded: it is mutable
+        // session-scoped state and must not affect the cache identity, so that
+        // adding or removing a skill preserves the remote KV-cache prefix.
         let baseHash = cacheKeyBaseHash(from: seed)
         let identityPayload = [
             "model=\(modelID?.nilIfBlank ?? "")",
             "cwd=\(workingDirectory.standardizedFileURL.path)",
             "system=\(systemPrompt)",
             "tools=\((allowedToolNames ?? []).sorted().joined(separator: ","))",
-            "skills=\(selectedSkillIDs.sorted().joined(separator: ","))",
             "preserveThinking=\(preserveThinking)"
         ].joined(separator: "\u{1f}")
         return "\(appCacheKeyPrefix)\(baseHash):\(stableHash(identityPayload))"
@@ -299,24 +306,4 @@ public enum AgentCoreAppSessionFactory {
         return String(hash, radix: 16)
     }
 
-    private static func selectedSkillSection(
-        for selectedAgent: AgentProfile?,
-        selectedSkillIDs explicitSelectedSkillIDs: Set<String>
-    ) -> String? {
-        guard !explicitSelectedSkillIDs.isEmpty || selectedAgent?.skills.isEmpty == false else {
-            return nil
-        }
-
-        let availableSkills = PromptSkillCatalog.discoverSkills(
-            searchRoots: PromptSkillCatalog.appCatalogSearchRoots()
-        )
-        var selectedSkillIDs = explicitSelectedSkillIDs
-        if let selectedAgent {
-            selectedSkillIDs.formUnion(
-                selectedAgent.selectedSkillIDs(availableSkills: availableSkills)
-            )
-        }
-        let selectedSkills = availableSkills.filter { selectedSkillIDs.contains($0.id) }
-        return SystemPromptBuilder.selectedSkillSection(skills: selectedSkills)
-    }
 }

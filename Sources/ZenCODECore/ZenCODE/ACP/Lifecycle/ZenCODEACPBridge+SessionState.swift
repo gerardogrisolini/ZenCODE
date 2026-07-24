@@ -100,6 +100,7 @@ extension ZenCODEACPBridge {
 
     public func sessionState(
         configuration: AgentCoreSessionConfiguration,
+        selectedAgent: AgentProfile? = nil,
         activePromptTask: Task<PromptCompletion, Error>? = nil
     ) -> SessionState {
         SessionState(
@@ -107,6 +108,7 @@ extension ZenCODEACPBridge {
             cwd: configuration.workingDirectory.path,
             allowedToolNames: configuration.allowedToolNames,
             configuration: configuration,
+            selectedAgent: selectedAgent,
             activePromptTask: activePromptTask
         )
     }
@@ -191,6 +193,7 @@ extension ZenCODEACPBridge {
                 thinkingSelection: snapshot.thinkingSelection,
                 preserveThinking: snapshot.preserveThinking
             ),
+            selectedAgent: session.selectedAgent,
             activePromptTask: session.activePromptTask
         )
     }

@@ -486,7 +486,10 @@ public protocol AgentRuntimeBackend: Actor {
         _ executor: AgentBorrowedToolExecutor?
     ) async
 
-    func updateToolProviders(_ providers: [AgentToolProvider]) async
+    func updateToolProviders(
+        _ providers: [AgentToolProvider],
+        sessionID: String?
+    ) async
 
     func closeSession(id: String) async
     func shutdown() async
@@ -531,7 +534,10 @@ extension AgentRuntimeBackend {
         _ executor: AgentBorrowedToolExecutor?
     ) async {}
 
-    public func updateToolProviders(_ providers: [AgentToolProvider]) async {}
+    public func updateToolProviders(
+        _ providers: [AgentToolProvider],
+        sessionID _: String?
+    ) async {}
 
     public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
         []

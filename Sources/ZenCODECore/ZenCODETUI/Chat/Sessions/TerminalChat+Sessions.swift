@@ -361,6 +361,10 @@ extension TerminalChat {
         try await sessionRunner.restoreSession(
             configuration: await currentSessionConfiguration(discoverExternalTools: true)
         )
+        await sessionRunner.updatePromptSkillSelection(
+            selectedPromptSkills(),
+            sessionID: sessionID
+        )
         if let taskGraph = savedSession.taskGraph {
             _ = try await sessionRunner.restoreTaskGraph(
                 taskGraph,

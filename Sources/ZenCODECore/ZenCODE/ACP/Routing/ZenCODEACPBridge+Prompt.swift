@@ -44,7 +44,10 @@ extension ZenCODEACPBridge {
                 applying: agentMentionResolution.agent,
                 to: session.configuration
             )
-            session = sessionState(configuration: promptConfiguration)
+            session = sessionState(
+                configuration: promptConfiguration,
+                selectedAgent: agentMentionResolution.agent
+            )
         } else {
             promptConfiguration = session.configuration
         }
@@ -96,10 +99,15 @@ extension ZenCODEACPBridge {
         }
 
         let activePromptTask = Task {
+            await sessionRunner.updatePromptSkillSelection(
+                selectedAgentSkills(for: session.selectedAgent),
+                sessionID: promptConfiguration.sessionID
+            )
             let response = try await sessionRunner.sendPrompt(
                 configuration: promptConfiguration,
                 prompt: routedPromptText,
                 attachments: attachments,
+                toolProviders: [],
                 onEvent: { event in
                     switch event {
                     case let .status(message):
@@ -466,8 +474,8 @@ private struct ACPAgentMentionResolution {
     let prompt: String
 }
 
-private extension ZenCODEACPBridge {
-    func resolveLeadingACPAgentMention(in prompt: String) throws -> ACPAgentMentionResolution? {
+extension ZenCODEACPBridge {
+    private func resolveLeadingACPAgentMention(in prompt: String) throws -> ACPAgentMentionResolution? {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedPrompt.hasPrefix("@") else {
             return nil
@@ -500,14 +508,37 @@ private extension ZenCODEACPBridge {
         return try AgentProfileStore.loadRequired()
     }
 
+    func resolvedACPAgentProfile(from params: [String: Any]) throws -> AgentProfile? {
+        let rawAgentReference = (params["agentId"] as? String)?.nilIfBlank
+            ?? (params["agentID"] as? String)?.nilIfBlank
+            ?? (params["agent_id"] as? String)?.nilIfBlank
+            ?? (params["agentName"] as? String)?.nilIfBlank
+            ?? (params["agent_name"] as? String)?.nilIfBlank
+        guard let rawAgentReference else {
+            return configuration.selectedAgent
+        }
+
+        let lookupKey = Self.acpAgentMentionLookupKey(rawAgentReference)
+        guard let agent = try availableACPAgentProfiles().first(where: {
+            Self.acpAgentMentionLookupKeys(for: $0).contains(lookupKey)
+        }) else {
+            throw ACPError.invalidParams("Unknown agent: \(rawAgentReference).")
+        }
+        return agent
+    }
+
     func acpSessionConfiguration(
         applying agent: AgentProfile,
         to baseConfiguration: AgentCoreSessionConfiguration
     ) async -> AgentCoreSessionConfiguration {
-        let allowedToolNames = await resolvedAllowedToolNames(
+        var allowedToolNames = await resolvedAllowedToolNames(
             agent.allowedToolNames(),
             workingDirectory: baseConfiguration.workingDirectory
         )
+        if var effectiveAllowedToolNames = allowedToolNames {
+            effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
+            allowedToolNames = effectiveAllowedToolNames
+        }
         let modelID = agent.modelID ?? baseConfiguration.modelID
         let systemPrompt = AgentCoreAppSessionFactory.resolvedSystemPrompt(
             providedSystemPrompt: nil,

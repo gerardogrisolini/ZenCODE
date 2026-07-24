@@ -89,7 +89,8 @@ extension ChatGPTSubscriptionGenerationClient {
                 let toolCatalog = RemoteToolWireCatalog(
                     descriptors: await toolExecutor.descriptors(
                         allowedToolNames: session.allowedToolNames,
-                        preferredWorkspaceRootURL: URL(fileURLWithPath: session.cwd)
+                        preferredWorkspaceRootURL: URL(fileURLWithPath: session.cwd),
+                        sessionID: session.id
                     )
                 )
                 if configuration.verboseLogging {

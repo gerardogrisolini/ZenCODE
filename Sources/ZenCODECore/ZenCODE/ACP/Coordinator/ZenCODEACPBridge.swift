@@ -23,6 +23,7 @@ public actor ZenCODEACPBridge {
         public let cwd: String
         public let allowedToolNames: Set<String>?
         public let configuration: AgentCoreSessionConfiguration
+        public var selectedAgent: AgentProfile?
         public var activePromptTask: Task<PromptCompletion, Error>?
     }
 

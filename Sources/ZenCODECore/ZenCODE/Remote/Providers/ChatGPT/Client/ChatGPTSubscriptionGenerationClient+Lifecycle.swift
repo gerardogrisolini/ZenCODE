@@ -102,6 +102,7 @@ extension ChatGPTSubscriptionGenerationClient {
 
     public func closeSession(id: String) async {
         let session = sessions.removeValue(forKey: id)
+        await toolExecutor.removeToolProviders(sessionID: id)
         if let chatGPTSessionID = session?.chatGPTSessionID {
             webSocketPool.closeSession(sessionID: chatGPTSessionID)
         }
@@ -126,8 +127,11 @@ extension ChatGPTSubscriptionGenerationClient {
         await toolExecutor.updateBorrowedSubAgentToolExecutor(executor)
     }
 
-    public func updateToolProviders(_ providers: [AgentToolProvider]) async {
-        await toolExecutor.updateToolProviders(providers)
+    public func updateToolProviders(
+        _ providers: [AgentToolProvider],
+        sessionID: String? = nil
+    ) async {
+        await toolExecutor.updateToolProviders(providers, sessionID: sessionID)
     }
 
     public func preloadModel(

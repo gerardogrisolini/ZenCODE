@@ -537,20 +537,23 @@ extension ZenCODEACPBridge {
     public func resolvedSystemPrompt(
         providedSystemPrompt: String?,
         cwd: String,
-        allowedToolNames: Set<String>?
+        allowedToolNames: Set<String>?,
+        selectedAgent: AgentProfile? = nil
     ) -> String {
         AgentCoreAppSessionFactory.resolvedSystemPrompt(
             providedSystemPrompt: providedSystemPrompt,
             cwd: cwd,
-            selectedAgent: configuration.selectedAgent,
+            selectedAgent: selectedAgent ?? configuration.selectedAgent,
             allowedToolNames: allowedToolNames
         )
     }
 
-    public func selectedAgentSkillSection() -> String? {
-        guard let selectedAgent = configuration.selectedAgent,
+    public func selectedAgentSkills(
+        for selectedAgent: AgentProfile? = nil
+    ) -> [PromptSkill] {
+        guard let selectedAgent = selectedAgent ?? configuration.selectedAgent,
               !selectedAgent.skills.isEmpty else {
-            return nil
+            return []
         }
 
         let availableSkills = PromptSkillCatalog.discoverSkills(
@@ -559,8 +562,7 @@ extension ZenCODEACPBridge {
         let selectedSkillIDs = selectedAgent.selectedSkillIDs(
             availableSkills: availableSkills
         )
-        let selectedSkills = availableSkills.filter { selectedSkillIDs.contains($0.id) }
-        return SystemPromptBuilder.selectedSkillSection(skills: selectedSkills)
+        return availableSkills.filter { selectedSkillIDs.contains($0.id) }
     }
 
 }

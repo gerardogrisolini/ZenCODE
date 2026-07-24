@@ -168,6 +168,153 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    func skillSelectionUpdatesAnExistingSessionWithoutRecreatingIt() async throws {
+        let workingDirectory = URL(
+            fileURLWithPath: "/tmp/ZenCODE-skill-selection",
+            isDirectory: true
+        )
+        let configuration = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: workingDirectory
+        )
+        let backend = SkillSelectionCountingBackend()
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in backend }
+        )
+        let terminal = TerminalChat(
+            configuration: configuration,
+            stdinIsTerminal: false,
+            sessionRunner: runner
+        )
+        let skill = PromptSkill(
+            canonicalName: "release-review",
+            title: "Release Review",
+            summary: "Review release changes before publishing.",
+            promptBody: "FULL-SKILL-BODY: inspect changelog.",
+            sourceHash: "release-review-hash"
+        )
+        terminal.availableSkillsCache = [skill]
+
+        try await terminal.createCurrentSession(discoverExternalTools: false)
+        let initialConfiguration = terminal.currentSessionConfiguration(
+            allowedToolNames: []
+        )
+        _ = try await runner.sendPrompt(
+            configuration: initialConfiguration,
+            prompt: "Initial request",
+            attachments: [],
+            onEvent: { _ in }
+        )
+
+        let preSelectionCreateCount = await backend.createCount()
+        let preSelectionUpdateCount = await backend.updateCount()
+        let preSelectionSnapshot = try #require(
+            await runner.snapshotSession(id: terminal.sessionID)
+        )
+
+        await terminal.applySkillSelection([skill.id])
+        let snapshot = try #require(
+            await runner.snapshotSession(id: terminal.sessionID)
+        )
+
+        // Selecting a skill must not create or update the remote session, nor
+        // change its prompt, allowlist, or cache key.
+        #expect(preSelectionCreateCount > 0)
+        #expect(await backend.createCount() == preSelectionCreateCount)
+        #expect(await backend.updateCount() == preSelectionUpdateCount)
+        #expect(snapshot.systemPrompt == preSelectionSnapshot.systemPrompt)
+        #expect(snapshot.allowedToolNames == preSelectionSnapshot.allowedToolNames)
+        #expect(snapshot.cacheKey == preSelectionSnapshot.cacheKey)
+        let effectiveAllowedToolNames = await terminal.selectedAllowedToolNames(
+            discoverExternalTools: false
+        )
+        // Both skill tools are intrinsic and always advertised.
+        #expect(effectiveAllowedToolNames.contains(PromptSkillToolProvider.listToolName))
+        #expect(effectiveAllowedToolNames.contains(PromptSkillToolProvider.toolName))
+        #expect(snapshot.allowedToolNames?.contains(PromptSkillToolProvider.listToolName) == true)
+        #expect(snapshot.allowedToolNames?.contains(PromptSkillToolProvider.toolName) == true)
+        // The prompt is the static skill instruction, with no catalog or body.
+        #expect(snapshot.systemPrompt?.contains(SystemPromptBuilder.staticSkillSectionMarker) == true)
+        #expect(snapshot.systemPrompt?.contains(skill.summary) == false)
+        #expect(snapshot.systemPrompt?.contains("FULL-SKILL-BODY") == false)
+    }
+
+    @Test
+    func deselectingSkillUpdatesOnlyTheSessionProvider() async throws {
+        let workingDirectory = URL(
+            fileURLWithPath: "/tmp/ZenCODE-skill-revocation",
+            isDirectory: true
+        )
+        let configuration = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: workingDirectory
+        )
+        let backend = SkillSelectionCountingBackend()
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in backend }
+        )
+        let terminal = TerminalChat(
+            configuration: configuration,
+            stdinIsTerminal: false,
+            sessionRunner: runner
+        )
+        let skill = PromptSkill(
+            canonicalName: "release-review",
+            title: "Release Review",
+            summary: "Review release changes before publishing.",
+            promptBody: "FULL-SKILL-BODY",
+            sourceHash: "release-review-hash"
+        )
+        terminal.availableSkillsCache = [skill]
+        terminal.selectedSkillIDs = [skill.id]
+        terminal.activeSessionHistory = [
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "Loaded guidance.",
+                toolCalls: [
+                    AgentRuntimeToolCall(
+                        id: "skill-read",
+                        name: PromptSkillToolProvider.toolName,
+                        argumentsJSON: #"{"identifier":"release-review"}"#
+                    )
+                ]
+            ),
+            AgentRuntimeMessage(
+                role: .tool,
+                content: "FULL-SKILL-BODY",
+                toolCallID: "skill-read",
+                toolName: PromptSkillToolProvider.toolName
+            )
+        ]
+
+        try await terminal.createCurrentSession(discoverExternalTools: false)
+        let initialCreateCount = await backend.createCount()
+        let initialUpdateCount = await backend.updateCount()
+        let preDeselectionSnapshot = try #require(
+            await runner.snapshotSession(id: terminal.sessionID)
+        )
+
+        await terminal.applySkillSelection([])
+        let snapshot = try #require(await runner.snapshotSession(id: terminal.sessionID))
+
+        // Deselection must not create/update the remote session or alter its
+        // prompt, allowlist, cache key, or history. Revocation is
+        // non-retroactive, so the continuation and KV-cache prefix stay valid.
+        #expect(await backend.createCount() == initialCreateCount)
+        #expect(await backend.updateCount() == initialUpdateCount)
+        #expect(snapshot.systemPrompt == preDeselectionSnapshot.systemPrompt)
+        #expect(snapshot.allowedToolNames == preDeselectionSnapshot.allowedToolNames)
+        #expect(snapshot.cacheKey == preDeselectionSnapshot.cacheKey)
+        #expect(snapshot.history.count == preDeselectionSnapshot.history.count)
+        #expect(snapshot.history.contains { $0.content.contains("FULL-SKILL-BODY") })
+        // Both skill tools remain always-on even with no selection.
+        #expect(snapshot.allowedToolNames?.contains(PromptSkillToolProvider.toolName) == true)
+        #expect(snapshot.systemPrompt?.contains("FULL-SKILL-BODY") == false)
+    }
+
+    @Test
     func toolSelectionChangeResetsSessionAndInformsModel() async throws {
         let workingDirectory = URL(
             fileURLWithPath: "/tmp/ZenCODE-tool-selection",
@@ -218,11 +365,11 @@ extension AgentConfigurationTests {
         let snapshot = try #require(await runner.snapshotSession(id: terminal.sessionID))
         let notice = try #require(snapshot.history.last)
 
-        #expect(allowedToolNames.isEmpty)
-        #expect(snapshot.allowedToolNames == [])
+        #expect(allowedToolNames == PromptSkillToolProvider.toolNames)
+        #expect(snapshot.allowedToolNames == PromptSkillToolProvider.toolNames)
         #expect(notice.role == .system)
         #expect(notice.content.contains("Tool selection changed during this session."))
-        #expect(notice.content.contains("Current available tool names: none."))
+        #expect(notice.content.contains("Current available tool names: skills.list, skills.read."))
         #expect(notice.content.contains("Removed tool names:"))
         #expect(notice.content.contains("local.exec"))
         #expect(notice.content.contains("historical context"))
@@ -363,5 +510,75 @@ extension AgentConfigurationTests {
         #expect(AgentModelCatalogPresentation.modelTitle(for: fallbackTitleModel) == "remote-community/qwen3")
         #expect(AgentModelCatalogPresentation.modelTitle(for: fallbackTitleModel, in: group) == "remote-community/qwen3")
         #expect(AgentModelCatalogPresentation.modelTitle(for: titledModel, in: group) == "Qwen3 Local")
+    }
+}
+
+private actor SkillSelectionCountingBackend: AgentRuntimeBackend {
+    private var created = 0
+    private var updated = 0
+
+    func createSession(
+        id _: String,
+        cwd _: String,
+        systemPrompt _: String?,
+        history _: [AgentRuntimeMessage],
+        cacheKey _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {
+        created += 1
+    }
+
+    func createSessionIfNeeded(
+        id _: String,
+        cwd _: String,
+        systemPrompt _: String?,
+        history _: [AgentRuntimeMessage],
+        cacheKey _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func updateSessionOptions(
+        id _: String,
+        systemPrompt _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {
+        updated += 1
+    }
+
+    func closeSession(id _: String) {}
+
+    func shutdown() async {}
+
+    func preloadModel(
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> String {
+        "test-model"
+    }
+
+    func activeToolDescriptors() async -> [DirectToolDescriptor] {
+        []
+    }
+
+    func sendPrompt(
+        sessionID _: String,
+        prompt _: String,
+        attachments _: [AgentRuntimeAttachment],
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> DirectAgentResponse {
+        DirectAgentResponse(text: "", stopReason: "end_turn", modelID: "test-model")
+    }
+
+    func createCount() -> Int {
+        created
+    }
+
+    func updateCount() -> Int {
+        updated
     }
 }

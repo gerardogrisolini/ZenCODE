@@ -43,6 +43,17 @@ extension DirectToolExecutor {
         ) {
             return output
         }
+        if let toolExecutor = toolProviderRegistry(
+            forSessionID: sessionID
+        ).executor(for: toolCall.name) {
+            return try await toolExecutor(
+                AgentToolCall(
+                    id: toolCall.id,
+                    name: toolCall.name,
+                    argumentsJSON: toolCall.argumentsJSON
+                )
+            )
+        }
         if await mcpRuntime.canExecute(
             toolName: toolCall.name,
             allowedToolNames: allowedToolNames,
@@ -53,15 +64,6 @@ extension DirectToolExecutor {
         if DirectMCPToolRuntime.isXcodeToolName(toolCall.name) {
             throw DirectToolError.permissionDenied(
                 "Xcode MCP is not connected for this session. Re-enable Xcode from /tools, approve Xcode's MCP prompt once, then retry."
-            )
-        }
-        if let toolExecutor = toolProviderRegistry.executor(for: toolCall.name) {
-            return try await toolExecutor(
-                AgentToolCall(
-                    id: toolCall.id,
-                    name: toolCall.name,
-                    argumentsJSON: toolCall.argumentsJSON
-                )
             )
         }
         if SwiftFeatureRuntime.isFeatureManagementToolName(toolCall.name) {

@@ -14,7 +14,7 @@ public actor AgentCoreBackend {
     private struct SessionSeed {
         let cwd: String
         var systemPrompt: String?
-        let history: [AgentRuntimeMessage]
+        var history: [AgentRuntimeMessage]
         let cacheKey: String?
         var allowedToolNames: Set<String>?
         var thinkingSelection: AgentThinkingSelection?
@@ -29,7 +29,7 @@ public actor AgentCoreBackend {
     private var sessions: [String: SessionSeed] = [:]
     private var taskOrchestrator: SessionTaskOrchestrator?
     private var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
-    private var toolProviders: [AgentToolProvider] = []
+    private var toolProvidersBySessionID: [String: [AgentToolProvider]] = [:]
     private let backendFactory: AgentRuntimeBackendFactory?
 
     public init(
@@ -193,14 +193,18 @@ public actor AgentCoreBackend {
     }
 
     public func updateToolProviders(
-        _ providers: [AgentToolProvider]
+        _ providers: [AgentToolProvider],
+        sessionID: String
     ) async {
-        toolProviders = providers
-        await applyToolProviders(to: activeBackend)
+        toolProvidersBySessionID[sessionID] = providers
+        if let backend = activeBackend {
+            await backend.updateToolProviders(providers, sessionID: sessionID)
+        }
     }
 
     public func clearSession(id: String) async {
         sessions.removeValue(forKey: id)
+        toolProvidersBySessionID.removeValue(forKey: id)
         if let backend = activeBackend {
             await backend.closeSession(id: id)
         }
@@ -208,6 +212,7 @@ public actor AgentCoreBackend {
 
     public func shutdown() async {
         sessions.removeAll()
+        toolProvidersBySessionID.removeAll()
         if let backend = activeBackend {
             await backend.shutdown()
         }
@@ -363,8 +368,11 @@ public actor AgentCoreBackend {
     private func applyToolProviders(
         to backend: (any AgentRuntimeBackend)?
     ) async {
-        if let backend {
-            await backend.updateToolProviders(toolProviders)
+        guard let backend else {
+            return
+        }
+        for (sessionID, providers) in toolProvidersBySessionID {
+            await backend.updateToolProviders(providers, sessionID: sessionID)
         }
     }
 

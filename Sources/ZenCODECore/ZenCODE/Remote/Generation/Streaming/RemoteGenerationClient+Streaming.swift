@@ -118,7 +118,8 @@ extension RemoteGenerationClient {
     ) async throws -> RemoteStreamResult {
         let toolDescriptors = await toolExecutor.descriptors(
             allowedToolNames: allowedToolNames,
-            preferredWorkspaceRootURL: preferredWorkspaceRootURL
+            preferredWorkspaceRootURL: preferredWorkspaceRootURL,
+            sessionID: sessionID
         )
         if configuration.verboseLogging {
             await onEvent(.diagnostic(
@@ -180,7 +181,8 @@ extension RemoteGenerationClient {
     ) async throws -> RemoteStreamResult {
         let toolDescriptors = await toolExecutor.descriptors(
             allowedToolNames: allowedToolNames,
-            preferredWorkspaceRootURL: preferredWorkspaceRootURL
+            preferredWorkspaceRootURL: preferredWorkspaceRootURL,
+            sessionID: sessionID
         )
         if configuration.verboseLogging {
             await onEvent(.diagnostic(

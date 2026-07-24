@@ -44,7 +44,9 @@ public actor DirectToolExecutor {
     public let execJobRuntime = DirectExecJobRuntime()
     public let preferredWorkspaceRootURL: URL?
     public var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
+    /// Legacy/global providers used by runtimes that do not identify a session.
     public var toolProviderRegistry = AgentToolProviderRegistry()
+    private var toolProviderRegistriesBySessionID: [String: AgentToolProviderRegistry] = [:]
 
     public init(
         outputLimit: Int = 48_000,
@@ -111,8 +113,30 @@ public actor DirectToolExecutor {
         borrowedSubAgentToolExecutor = executor
     }
 
-    public func updateToolProviders(_ providers: [AgentToolProvider]) {
-        toolProviderRegistry.update(providers)
+    public func updateToolProviders(
+        _ providers: [AgentToolProvider],
+        sessionID: String? = nil
+    ) {
+        guard let sessionID = sessionID?.nilIfBlank else {
+            toolProviderRegistry.update(providers)
+            return
+        }
+
+        var registry = toolProviderRegistriesBySessionID[sessionID]
+            ?? AgentToolProviderRegistry()
+        registry.update(providers)
+        toolProviderRegistriesBySessionID[sessionID] = registry
+    }
+
+    public func removeToolProviders(sessionID: String) {
+        toolProviderRegistriesBySessionID.removeValue(forKey: sessionID)
+    }
+
+    func toolProviderRegistry(forSessionID sessionID: String?) -> AgentToolProviderRegistry {
+        guard let sessionID = sessionID?.nilIfBlank else {
+            return toolProviderRegistry
+        }
+        return toolProviderRegistriesBySessionID[sessionID] ?? toolProviderRegistry
     }
 
     public func shutdown() async {
@@ -134,7 +158,8 @@ public actor DirectToolExecutor {
 
     public func descriptors(
         allowedToolNames: Set<String>? = nil,
-        preferredWorkspaceRootURL: URL? = nil
+        preferredWorkspaceRootURL: URL? = nil,
+        sessionID: String? = nil
     ) async -> [DirectToolDescriptor] {
         if allowedToolNames?.isEmpty == true {
             return []
@@ -142,16 +167,22 @@ public actor DirectToolExecutor {
         let preferredWorkspaceRootURL = preferredWorkspaceRootURL
             ?? self.preferredWorkspaceRootURL
 
+        let providerRegistry = toolProviderRegistry(forSessionID: sessionID)
+        let providerDescriptors = providerRegistry.descriptors
         let coreDescriptors = Self.filtered(
             Self.canonicalized(
-                DirectToolCatalog.baseDescriptors + toolProviderRegistry.descriptors
+                DirectToolCatalog.baseDescriptors + providerDescriptors
             ),
             allowedToolNames: allowedToolNames
         )
+        let providerToolNames = Set(providerDescriptors.map(\.name))
+        let reservedSkillToolNames = PromptSkillToolProvider.toolNames
         let mcpDescriptors = await mcpRuntime.descriptors(
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL
         )
+        .filter { !providerToolNames.contains($0.name) }
+        .filter { !reservedSkillToolNames.contains($0.name) }
         let excludingFeatureIDs = Self.mcpManagedSwiftFeatureIDs(
             mcpDescriptors: mcpDescriptors
         )
@@ -159,6 +190,7 @@ public actor DirectToolExecutor {
             allowedToolNames: allowedToolNames,
             excludingFeatureIDs: excludingFeatureIDs
         )
+        .filter { !reservedSkillToolNames.contains($0.name) }
 
         let result = Self.canonicalized(
             coreDescriptors + featureDescriptors + mcpDescriptors

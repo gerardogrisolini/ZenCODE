@@ -47,6 +47,20 @@ snapshots, checkpoint trees, task graphs, permissions, feature manifests, and
 the session cache-key formats survive a change of provider, while only transient
 per-request model state is rebuilt.
 
+The prompt-skill tools (`skills.list`, `skills.read`) are intrinsic, always-on
+tools owned by `AgentCoreSessionRunner` as a per-session mutable
+`PromptSkillSessionProvider`. Their descriptors and the single static skill
+instruction in the system prompt are part of the stable remote session identity
+from creation — even with no skills selected — so adding or removing a skill
+updates only the provider snapshot (via `updatePromptSkillSelection`) and never
+the system prompt, allowlist, cache key, history, or remote continuation. The
+model discovers the current selection at runtime through `skills.list` and loads
+guidance through `skills.read`; revocation is non-retroactive (it blocks future
+reads but cannot erase guidance already in the conversation without sacrificing
+the continuation). A session persisted with a legacy eager/lazy skill catalog is
+normalized to the static instruction on restore, which is a one-time full replay;
+subsequent selection changes are cache-stable.
+
 Remote generation has one cross-platform transport stack. HTTP/1.1, incremental
 SSE, and ChatGPT Responses WebSockets under `Remote/Generation`, the ChatGPT
 client/task/pool, and Anthropic messages are expressed as `RemoteHTTP*` /

@@ -25,6 +25,10 @@ extension TerminalChat {
                 discoverExternalTools: discoverExternalTools
             )
         )
+        await sessionRunner.updatePromptSkillSelection(
+            selectedPromptSkills(),
+            sessionID: sessionID
+        )
         await startTaskGraphObserver()
     }
 
@@ -41,10 +45,15 @@ extension TerminalChat {
         allowedToolNames: Set<String>,
         includesActivePlanProgress: Bool = true
     ) -> AgentCoreSessionConfiguration {
+        let effectiveAllowedToolNames = allowedToolNamesIncludingSelectedPromptSkills(
+            allowedToolNames
+        )
+        let promptSource = activeSessionSystemPromptOverride?.nilIfBlank.map {
+            SystemPromptBuilder.replacingSelectedSkillSection(in: $0)
+        } ?? currentSystemPrompt(allowedToolNames: effectiveAllowedToolNames)
         let baseSystemPrompt = SystemPromptBuilder.appendingTaskOrchestrationSection(
-            to: activeSessionSystemPromptOverride?.nilIfBlank
-                ?? currentSystemPrompt(allowedToolNames: allowedToolNames),
-            allowedToolNames: allowedToolNames
+            to: promptSource,
+            allowedToolNames: effectiveAllowedToolNames
         )
         let systemPrompt = includesActivePlanProgress
             ? systemPromptWithActivePlanProgress(baseSystemPrompt)
@@ -58,7 +67,7 @@ extension TerminalChat {
             cacheKey: activeSessionCacheKey ?? sessionID,
             sessionRevision: 0,
             history: activeSessionHistory,
-            allowedToolNames: allowedToolNames,
+            allowedToolNames: effectiveAllowedToolNames,
             maxToolRounds: configuration.maxToolRounds,
             maxOutputTokens: configuration.maxOutputTokens,
             verboseLogging: configuration.verboseLogging,
@@ -66,6 +75,18 @@ extension TerminalChat {
             thinkingSelection: currentAgentThinkingSelection(),
             preserveThinking: false
         )
+    }
+
+    private func allowedToolNamesIncludingSelectedPromptSkills(
+        _ allowedToolNames: Set<String>
+    ) -> Set<String> {
+        // Both skill tools are intrinsic and always-on, so they remain in the
+        // allowlist regardless of the current selection. This keeps the tool
+        // schema (and therefore the remote cache identity) stable across
+        // selection changes.
+        var effectiveAllowedToolNames = allowedToolNames
+        effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
+        return effectiveAllowedToolNames
     }
 
     public func currentSystemPrompt(allowedToolNames: Set<String>) -> String {
@@ -76,9 +97,7 @@ extension TerminalChat {
             allowedToolNames: allowedToolNames,
             locksModelToSession: configuration.hostedAgentProfiles != nil,
             selectedAgentSection: selectedAgent?.promptSection(memoryToolEnabled: memoryToolEnabled),
-                        selectedSkillSection: SystemPromptBuilder.selectedSkillSection(
-                skills: selectedPromptSkills()
-            ),
+                        selectedSkillSection: SystemPromptBuilder.staticSkillSection,
             responseLanguageSection: responseLanguageSystemPromptSection()
         )
     }
@@ -232,7 +251,9 @@ extension TerminalChat {
         let intrinsicToolNames = intrinsicAllowedToolNamesForSelectedAgent()
         let baseItems = await toolSelectionItems()
         guard !selectedToolKeys.isEmpty else {
-            return intrinsicToolNames
+            return allowedToolNamesIncludingSelectedPromptSkills(
+                intrinsicToolNames
+            )
         }
 
         selectedToolKeys = TerminalToolSelectionCatalog.normalizedSelectionKeys(
@@ -272,7 +293,7 @@ extension TerminalChat {
             items: items
         )
         allowedToolNames.formUnion(intrinsicToolNames)
-        return allowedToolNames
+        return allowedToolNamesIncludingSelectedPromptSkills(allowedToolNames)
     }
 
     @discardableResult

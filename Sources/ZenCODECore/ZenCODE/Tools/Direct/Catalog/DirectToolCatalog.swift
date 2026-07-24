@@ -30,10 +30,17 @@ public enum DirectToolCatalog {
 
     public static var baseDescriptors: [DirectToolDescriptor] {
 #if canImport(Darwin) || canImport(Glibc)
-        coreLocalFileAndTextDescriptors + coreProcessDescriptors + featureDescriptors + memoryDescriptors + todoTaskDescriptors + subAgentDescriptors
+        coreLocalFileAndTextDescriptors + coreProcessDescriptors + skillToolDescriptors + featureDescriptors + memoryDescriptors + todoTaskDescriptors + subAgentDescriptors
 #else
-        coreLocalFileAndTextDescriptors + featureDescriptors + memoryDescriptors + todoTaskDescriptors + subAgentDescriptors
+        coreLocalFileAndTextDescriptors + skillToolDescriptors + featureDescriptors + memoryDescriptors + todoTaskDescriptors + subAgentDescriptors
 #endif
+    }
+
+    /// Intrinsic, always-on prompt-skill tools (`skills.list`, `skills.read`).
+    /// They are not user-selectable from `/tools` and remain available even when
+    /// every user tool group is disabled.
+    public static var skillToolDescriptors: [DirectToolDescriptor] {
+        PromptSkillToolProvider.descriptors
     }
 
     public static var selectableDescriptors: [DirectToolDescriptor] {

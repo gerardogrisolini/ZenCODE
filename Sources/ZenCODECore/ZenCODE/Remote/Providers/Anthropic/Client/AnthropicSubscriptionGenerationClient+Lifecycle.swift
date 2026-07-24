@@ -63,6 +63,7 @@ extension AnthropicSubscriptionGenerationClient {
 
     public func closeSession(id: String) async {
         sessions.removeValue(forKey: id)
+        await toolExecutor.removeToolProviders(sessionID: id)
     }
 
     public func updateSessionOptions(
@@ -94,8 +95,11 @@ extension AnthropicSubscriptionGenerationClient {
         await toolExecutor.updateBorrowedSubAgentToolExecutor(executor)
     }
 
-    public func updateToolProviders(_ providers: [AgentToolProvider]) async {
-        await toolExecutor.updateToolProviders(providers)
+    public func updateToolProviders(
+        _ providers: [AgentToolProvider],
+        sessionID: String? = nil
+    ) async {
+        await toolExecutor.updateToolProviders(providers, sessionID: sessionID)
     }
 
     public func shutdown() async {

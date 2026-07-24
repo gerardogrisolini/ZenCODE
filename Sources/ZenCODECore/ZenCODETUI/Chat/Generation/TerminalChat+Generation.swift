@@ -95,6 +95,7 @@ extension TerminalChat {
                         forAgentToolCall: toolCall
                     )
                 },
+                toolProviders: [],
                 onEvent: { event in
                     switch event {
                     case let .status(message):

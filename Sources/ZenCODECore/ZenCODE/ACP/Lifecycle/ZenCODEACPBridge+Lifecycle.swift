@@ -108,6 +108,7 @@ extension ZenCODEACPBridge {
         let modelID = requestedModelID
             ?? configuration.effectiveModelID
 
+        let selectedAgent = try resolvedACPAgentProfile(from: params)
         let sessionID = "swift-agent-\(UUID().uuidString.lowercased())"
         let cacheKey = (params["sessionKey"] as? String)
             ?? (params["cacheKey"] as? String)
@@ -117,7 +118,7 @@ extension ZenCODEACPBridge {
         }
         let acpMCPDescriptors = await registerACPProvidedMCPServers(from: params)
         let requestedAllowedToolNames = Self.allowedToolNames(from: params)
-            ?? configuration.selectedAgent?.allowedToolNames()
+            ?? selectedAgent?.allowedToolNames()
         let hasACPProvidedXcodeTools = acpMCPDescriptors.contains {
             DirectMCPToolRuntime.isXcodeToolName($0.name)
         }
@@ -126,17 +127,22 @@ extension ZenCODEACPBridge {
             workingDirectory: workingDirectoryURL,
             skipXcodeDiscovery: hasACPProvidedXcodeMCPServer || hasACPProvidedXcodeTools
         )
-        let allowedToolNames = Self.allowedToolNames(
+        var allowedToolNames = Self.allowedToolNames(
             resolvedRequestedAllowedToolNames,
             adding: acpMCPDescriptors
         )
+        if var effectiveAllowedToolNames = allowedToolNames {
+            effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
+            allowedToolNames = effectiveAllowedToolNames
+        }
         await verboseACPLog(
             "session/new allowedTools=\(Self.verboseToolNameSummary(allowedToolNames))"
         )
         let systemPrompt = resolvedSystemPrompt(
             providedSystemPrompt: nil,
             cwd: cwd,
-            allowedToolNames: allowedToolNames
+            allowedToolNames: allowedToolNames,
+            selectedAgent: selectedAgent
         )
         let requestedThinkingSelection = Self.thinkingSelection(from: params["thinkingSelection"])
         let hostedManifest = configuration.hostedModels.map { hostedModels in
@@ -148,8 +154,8 @@ extension ZenCODEACPBridge {
         let thinkingSelection = AgentSettingsStore.thinkingSelection(
             requestedSelection: requestedThinkingSelection,
             explicitModelID: requestedModelID ?? configuration.modelID,
-            agentModelID: configuration.selectedAgent?.modelID,
-            agentThinkingSelection: configuration.selectedAgent?.thinkingSelection,
+            agentModelID: selectedAgent?.modelID,
+            agentThinkingSelection: selectedAgent?.thinkingSelection,
             manifest: hostedManifest ?? AgentSettingsManifestStore.load()
         )
         let preserveThinking = (params["preserveThinking"] as? Bool) ?? false
@@ -169,7 +175,10 @@ extension ZenCODEACPBridge {
             thinkingSelection: thinkingSelection,
             preserveThinking: preserveThinking
         )
-        sessions[sessionID] = sessionState(configuration: configuration)
+        sessions[sessionID] = sessionState(
+            configuration: configuration,
+            selectedAgent: selectedAgent
+        )
         updateSessionSleepAssertion()
         try await sessionRunner.createSession(configuration: configuration)
 
@@ -326,7 +335,10 @@ extension ZenCODEACPBridge {
         default:
             throw ACPError.invalidParams("Unsupported config option: \(configID)")
         }
-        sessions[sessionID] = sessionState(configuration: updatedConfiguration)
+        sessions[sessionID] = sessionState(
+            configuration: updatedConfiguration,
+            selectedAgent: session.selectedAgent
+        )
         try await sessionRunner.createSession(configuration: updatedConfiguration)
         await writer.sendResultIfRequest(
             id: id,
@@ -362,7 +374,10 @@ extension ZenCODEACPBridge {
             .withThinkingSelection(model?.thinkingSelection(
                 for: session.configuration.thinkingSelection
             ))
-        sessions[sessionID] = sessionState(configuration: updatedConfiguration)
+        sessions[sessionID] = sessionState(
+            configuration: updatedConfiguration,
+            selectedAgent: session.selectedAgent
+        )
         try await sessionRunner.createSession(configuration: updatedConfiguration)
         await writer.sendResultIfRequest(id: id, result: .object([:]))
     }
@@ -405,17 +420,22 @@ extension ZenCODEACPBridge {
             $0.isXcodeCandidate
         }
         let acpMCPDescriptors = await registerACPProvidedMCPServers(from: params)
+        let selectedAgent = try resolvedACPAgentProfile(from: params)
         let configuration = await restoredACPClientSessionConfiguration(
             sessionID: sessionID,
             params: params,
             workingDirectory: workingDirectory,
             acpMCPDescriptors: acpMCPDescriptors,
-            hasACPProvidedXcodeMCPServer: hasACPProvidedXcodeMCPServer
+            hasACPProvidedXcodeMCPServer: hasACPProvidedXcodeMCPServer,
+            selectedAgent: selectedAgent
         )
         await verboseACPLog(
             "session/restore allowedTools=\(Self.verboseToolNameSummary(configuration.allowedToolNames)) history=\(configuration.history.count)"
         )
-        sessions[sessionID] = sessionState(configuration: configuration)
+        sessions[sessionID] = sessionState(
+            configuration: configuration,
+            selectedAgent: selectedAgent
+        )
         updateSessionSleepAssertion()
         try await sessionRunner.restoreSession(configuration: configuration)
         if replayHistory {
@@ -520,13 +540,14 @@ extension ZenCODEACPBridge {
         params: [String: Any],
         workingDirectory: URL,
         acpMCPDescriptors: [DirectToolDescriptor],
-        hasACPProvidedXcodeMCPServer: Bool = false
+        hasACPProvidedXcodeMCPServer: Bool = false,
+        selectedAgent: AgentProfile? = nil
     ) async -> AgentCoreSessionConfiguration {
         let requestedModelID = Self.modelID(from: params)
         let modelID = requestedModelID
             ?? configuration.effectiveModelID
         let requestedAllowedToolNames = Self.allowedToolNames(from: params)
-            ?? configuration.selectedAgent?.allowedToolNames()
+            ?? selectedAgent?.allowedToolNames()
         let hasACPProvidedXcodeTools = acpMCPDescriptors.contains {
             DirectMCPToolRuntime.isXcodeToolName($0.name)
         }
@@ -535,14 +556,19 @@ extension ZenCODEACPBridge {
             workingDirectory: workingDirectory,
             skipXcodeDiscovery: hasACPProvidedXcodeMCPServer || hasACPProvidedXcodeTools
         )
-        let allowedToolNames = Self.allowedToolNames(
+        var allowedToolNames = Self.allowedToolNames(
             resolvedRequestedAllowedToolNames,
             adding: acpMCPDescriptors
         )
+        if var effectiveAllowedToolNames = allowedToolNames {
+            effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
+            allowedToolNames = effectiveAllowedToolNames
+        }
         let systemPrompt = resolvedSystemPrompt(
             providedSystemPrompt: nil,
             cwd: workingDirectory.path,
-            allowedToolNames: allowedToolNames
+            allowedToolNames: allowedToolNames,
+            selectedAgent: selectedAgent
         )
         let requestedThinkingSelection = Self.thinkingSelection(from: params["thinkingSelection"])
         let hostedManifest = configuration.hostedModels.map { hostedModels in
@@ -554,8 +580,8 @@ extension ZenCODEACPBridge {
         let thinkingSelection = AgentSettingsStore.thinkingSelection(
             requestedSelection: requestedThinkingSelection,
             explicitModelID: requestedModelID ?? configuration.modelID,
-            agentModelID: configuration.selectedAgent?.modelID,
-            agentThinkingSelection: configuration.selectedAgent?.thinkingSelection,
+            agentModelID: selectedAgent?.modelID,
+            agentThinkingSelection: selectedAgent?.thinkingSelection,
             manifest: hostedManifest ?? AgentSettingsManifestStore.load()
         )
         let cacheKey = (params["sessionKey"] as? String)
@@ -583,10 +609,11 @@ extension ZenCODEACPBridge {
     }
 
     public func sessionLifecycleResult(sessionID: String) -> [String: Any] {
-        let sessionConfiguration = sessions[sessionID]?.configuration
+        let session = sessions[sessionID]
+        let sessionConfiguration = session?.configuration
         let modelID = sessionConfiguration?.modelID
             ?? configuration.effectiveModelID
-        return [
+        var result: [String: Any] = [
             "sessionId": sessionID,
             "modes": [
                 "availableModes": [
@@ -609,6 +636,11 @@ extension ZenCODEACPBridge {
             ),
             "models": modelState(for: modelID)
         ]
+        if let selectedAgent = session?.selectedAgent {
+            result["agentId"] = selectedAgent.id
+            result["agentName"] = selectedAgent.name
+        }
+        return result
     }
 
 }

@@ -16,6 +16,10 @@ public actor AgentCoreSessionRunner {
     private var activeRuntimeConfiguration: AgentCoreSessionConfiguration?
     private var sessions: [String: AgentCoreSessionConfiguration] = [:]
     private var lastKnownSessionSnapshots: [String: AgentRuntimeSessionSnapshot] = [:]
+    /// Session-scoped, mutable prompt-skill providers. Owned here so changing
+    /// the skill selection updates only this snapshot and never the system
+    /// prompt, allowlist, cache key, or remote session identity.
+    private var promptSkillProvidersBySessionID: [String: PromptSkillSessionProvider] = [:]
     private var promptTaskRegistry = AgentCorePromptTaskRegistry()
     private var promptAuthorizationHandlers: [UUID: AgentToolAuthorizationHandler] = [:];
     /// Maps each prompt ID to the session it belongs to so `authorizeTool`
@@ -58,6 +62,7 @@ public actor AgentCoreSessionRunner {
             id: configuration.sessionID,
             workingDirectory: URL(fileURLWithPath: configuration.workingDirectoryPath)
         )
+        _ = ensurePromptSkillProvider(sessionID: configuration.sessionID)
         let backend = try await ensureBackend(configuration: configuration)
         await backend.createSession(
             id: configuration.sessionID,
@@ -88,6 +93,28 @@ public actor AgentCoreSessionRunner {
             preserveThinking: configuration.preserveThinking
         )
         sessions[configuration.sessionID] = configuration
+    }
+
+    /// Updates only the session-scoped prompt-skill selection. This mutates the
+    /// provider snapshot in place and never changes the system prompt,
+    /// allowlist, cache key, history, or remote session identity, so the
+    /// KV-cache prefix and any remote continuation stay valid across selection
+    /// changes.
+    public func updatePromptSkillSelection(
+        _ skills: [PromptSkill],
+        sessionID: String
+    ) async {
+        let provider = ensurePromptSkillProvider(sessionID: sessionID)
+        await provider.update(skills)
+    }
+
+    private func ensurePromptSkillProvider(sessionID: String) -> PromptSkillSessionProvider {
+        if let existing = promptSkillProvidersBySessionID[sessionID] {
+            return existing
+        }
+        let provider = PromptSkillSessionProvider()
+        promptSkillProvidersBySessionID[sessionID] = provider
+        return provider
     }
 
     public func preloadModel(
@@ -163,7 +190,15 @@ public actor AgentCoreSessionRunner {
         await backend.updateBorrowedSubAgentToolExecutor(
             borrowedSubAgentToolExecutor
         )
-        await backend.updateToolProviders(toolProviders)
+        let ownedSkillProvider = promptSkillProvidersBySessionID[configuration.sessionID]?.asToolProvider()
+        let nonSkillProviders = toolProviders.filter { provider in
+            !provider.tools.contains { PromptSkillToolProvider.toolNames.contains($0.name) }
+        }
+        let effectiveToolProviders = (ownedSkillProvider.map { [$0] } ?? []) + nonSkillProviders
+        await backend.updateToolProviders(
+            effectiveToolProviders,
+            sessionID: configuration.sessionID
+        )
         try await ensureSession(configuration: configuration)
         let initialSnapshot = await backend.snapshotSession(id: configuration.sessionID)
             ?? AgentRuntimeSessionSnapshot(configuration: configuration)
@@ -314,6 +349,7 @@ public actor AgentCoreSessionRunner {
         }
         return true
     }
+
 
     public func compactSession(
         id sessionID: String,
@@ -489,6 +525,7 @@ public actor AgentCoreSessionRunner {
         try? await taskOrchestrator.flush(sessionID: sessionID)
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
+        promptSkillProvidersBySessionID.removeValue(forKey: sessionID)
         await backend?.closeSession(id: sessionID)
     }
 
@@ -508,6 +545,7 @@ public actor AgentCoreSessionRunner {
         try? await taskOrchestrator.flush()
         sessions.removeAll()
         lastKnownSessionSnapshots.removeAll()
+        promptSkillProvidersBySessionID.removeAll()
         activeRuntimeConfiguration = nil
         let backendToShutdown = backend
         backend = nil
@@ -580,6 +618,7 @@ public actor AgentCoreSessionRunner {
     private func resetBackend() async {
         sessions.removeAll()
         lastKnownSessionSnapshots.removeAll()
+        promptSkillProvidersBySessionID.removeAll()
         activeRuntimeConfiguration = nil
         await backend?.shutdown()
         backend = nil

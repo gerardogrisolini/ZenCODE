@@ -240,3 +240,17 @@ actor CapturingACPBackend: AgentRuntimeBackend {
         systemPrompt
     }
 }
+
+
+extension ZenCODEACPBridge {
+    func selectedAgentIDForTesting(sessionID: String) -> String? {
+        sessions[sessionID]?.selectedAgent?.id
+    }
+}
+
+
+extension ZenCODEACPBridge {
+    func lifecycleAgentIDForTesting(sessionID: String) -> String? {
+        sessionLifecycleResult(sessionID: sessionID)["agentId"] as? String
+    }
+}

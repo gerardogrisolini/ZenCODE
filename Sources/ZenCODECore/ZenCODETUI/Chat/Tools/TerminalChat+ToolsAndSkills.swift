@@ -280,14 +280,7 @@ extension TerminalChat {
     private func finishInstalledSkill(_ result: PromptSkillInstallResult) async {
         availableSkillsCache = nil
         selectedSkillIDs.insert(result.skill.id)
-        activeSessionSystemPromptOverride = nil
-        do {
-            try await createCurrentSession()
-        } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-        }
-        await statusBar.reset()
-        await refreshInitialStatusBarContextWindow()
+        await applySkillSelection(selectedSkillIDs, reportsSelection: false)
         await writeSystemMessage(
             "Installed and selected skill: \(result.skill.title)\n"
         )
@@ -307,16 +300,26 @@ extension TerminalChat {
     }
 
     public func applySkillSelection(_ selectedSkillIDs: Set<String>) async {
+        await applySkillSelection(selectedSkillIDs, reportsSelection: true)
+    }
+
+    private func applySkillSelection(
+        _ selectedSkillIDs: Set<String>,
+        reportsSelection: Bool
+    ) async {
         self.selectedSkillIDs = selectedSkillIDs
-        activeSessionSystemPromptOverride = nil
-        do {
-            try await createCurrentSession()
-        } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-        }
+        // Selection is session-scoped, mutable state. Updating it must not
+        // touch the system prompt, allowlist, cache key, or history, so the
+        // remote continuation and KV-cache prefix stay valid.
+        await sessionRunner.updatePromptSkillSelection(
+            selectedPromptSkills(),
+            sessionID: sessionID
+        )
         await statusBar.reset()
         await refreshInitialStatusBarContextWindow()
-        await printSkillSelectionStatus()
+        if reportsSelection {
+            await printSkillSelectionStatus()
+        }
     }
 
     public func printSkillSelectionStatus() async {

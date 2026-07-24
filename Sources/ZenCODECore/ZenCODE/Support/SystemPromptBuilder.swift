@@ -251,21 +251,65 @@ public enum SystemPromptBuilder {
         return normalizedPrompt + "\n\n" + section
     }
 
+    /// Stable, selection-independent instruction that advertises the skill
+    /// tools. It is always identical regardless of which skills are selected,
+    /// so changing the selection never alters the system prompt or the remote
+    /// cache prefix. The model discovers the current selection at runtime via
+    /// `skills.list` and loads guidance via `skills.read`.
+    public static let staticSkillSection = """
+    Prompt skills may change during this session. When a selected skill is relevant, call `skills.list` to see the currently selected skills (id, name, and description), then call `skills.read` with a listed id or canonical name to load that skill's paginated guidance. Only skills selected for this session can be read.
+    """
+
+    /// Stable opening phrase of `staticSkillSection`, used to detect an already
+    /// present skill instruction without matching the whole section.
+    public static let staticSkillSectionMarker = "Prompt skills may change during this session."
+
+    /// Returns the selection-independent skill instruction. The `skills`
+    /// argument is retained for source compatibility but no longer affects the
+    /// section, which keeps the system prompt stable across selection changes.
     public static func selectedSkillSection(skills: [PromptSkill]) -> String? {
-        guard !skills.isEmpty else {
-            return nil
+        staticSkillSection
+    }
+
+    /// Normalizes a persisted prompt so its skill section is the stable,
+    /// selection-independent instruction. Replaces both the current lazy-skill
+    /// catalog and the legacy eager-skill section (and is idempotent), so
+    /// restoring a session never replays obsolete, selection-derived guidance.
+    public static func replacingSelectedSkillSection(
+        in prompt: String
+    ) -> String {
+        let markers = [
+            staticSkillSectionMarker,
+            "Selected prompt skills are available as supplemental context.",
+            "Selected skill guidance for this task is supplemental context."
+        ]
+        guard let startRange = markers.compactMap({ prompt.range(of: $0) })
+            .min(by: { $0.lowerBound < $1.lowerBound }) else {
+            return prompt
         }
 
-        let skillPrompt = skills
-            .map { skillPromptSection(skill: $0) }
+        let suffixMarkers = ["\n\nResponse language:", "\n\nTurn-closing rule:"]
+        let suffixStart = suffixMarkers.compactMap { marker in
+            prompt.range(
+                of: marker,
+                range: startRange.lowerBound..<prompt.endIndex
+            ).map(\.lowerBound)
+        }
+        .min()
+            ?? prompt.endIndex
+
+        let prefix = String(prompt[..<startRange.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = String(prompt[suffixStart...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sections: [String?] = [
+            prefix,
+            staticSkillSection,
+            suffix
+        ]
+        return sections
+            .compactMap { $0?.nilIfBlank }
             .joined(separator: "\n\n")
-
-        return """
-        Selected skill guidance for this task is supplemental context. Use it when relevant.
-
-        Additional skill guidance selected for this task:
-        \(skillPrompt)
-        """
     }
 
     public static func responseLanguageSection(languageName: String? = nil) -> String {
@@ -351,22 +395,6 @@ public enum SystemPromptBuilder {
 
     private static var standaloneTurnClosingInstruction: String {
         "Once the requested work is complete and no tool call is needed, stop."
-    }
-
-    private static func skillPromptSection(skill: PromptSkill) -> String {
-        guard let sourceDirectoryPath = skill.sourceDirectoryPath?.nilIfBlank else {
-            return """
-            Skill: \(skill.title)
-            \(skill.promptBody)
-            """
-        }
-
-        return """
-        Skill: \(skill.title)
-        Skill root path: \(sourceDirectoryPath)
-        Any relative file paths mentioned in this skill are relative to the skill root above, not to the task working directory. If you need to open one of those files with a local tool, keep the `references/...` or similar subpath under that skill root, or pass the absolute skill file path directly.
-        \(skill.promptBody)
-        """
     }
 
     private static func normalized(_ value: String) -> String {

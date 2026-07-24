@@ -18,7 +18,8 @@ extension AnthropicSubscriptionGenerationClient {
     ) async throws -> RemoteStreamResult {
         let toolDescriptors = await toolExecutor.descriptors(
             allowedToolNames: session.allowedToolNames,
-            preferredWorkspaceRootURL: session.cwd
+            preferredWorkspaceRootURL: session.cwd,
+            sessionID: session.id
         )
         if configuration.verboseLogging {
             await onEvent(.diagnostic(RemoteStreamTransport.toolExposureDiagnostic(from: toolDescriptors)))
