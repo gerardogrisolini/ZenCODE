@@ -48,6 +48,13 @@ extension LocalExecPermissionAuthorizer {
             await Self.readTerminalKey(prompt: prompt)
         }
 
+        // Claim the terminal for the whole prompt, retries included. Otherwise a
+        // concurrent reader on the same TTY (the Esc-to-stop monitor polls it
+        // during generation) can win the `read` and silently drop the operator's
+        // `r`/`a`/`c`, leaving the card waiting for a key that was consumed.
+        await TerminalConsentInputOwnership.beginConsent()
+        defer { TerminalConsentInputOwnership.endConsent() }
+
         var firstAttempt = true
         while true {
             let prompt = firstAttempt
@@ -137,8 +144,7 @@ extension LocalExecPermissionAuthorizer {
         // The run/always/cancel options and their compact key hint form the card
         // footer, set off from the command details by a divider rule. Keeping
         // `(r/a/c)` here avoids repeating the available choices below the box.
-        let options = "\(Self.ansiCyanBold)[R]un once / \(Self.ansiCyanBold)[A]lways / \(Self.ansiCyanBold)[C]ancel"
-        let footer = Self.wrap(options, code: Self.ansiCyanBold, colored: useColor)
+        let footer = "\(Self.ansiCyanBold)[R]\(ansiReset)un once / \(Self.ansiCyanBold)[A]\(ansiReset)lways / \(Self.ansiCyanBold)[C]\(ansiReset)ancel"
         let box = Self.renderConsentBox(
             title: "Authorization",
             innerLines: innerLines,

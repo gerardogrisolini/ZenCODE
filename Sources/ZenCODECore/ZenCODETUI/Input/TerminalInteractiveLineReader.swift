@@ -100,46 +100,60 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
     ) -> String? {
         AgentOutput.standardError.writeString(prompt)
 
-        return rawInput.withRawTerminal {
-            while true {
-                if shouldCancel?() == true {
-                    AgentOutput.standardError.writeString("\n")
-                    return nil
-                }
-                let readResult = readKeyResult(
-                    pollTimeoutMilliseconds: shouldCancel == nil ? nil : 100
-                )
-                let key: Key
-                switch readResult {
-                case let .key(value):
-                    key = value
-                case .timedOut:
-                    continue
-                case .endOfInput:
-                    AgentOutput.standardError.writeString("\n")
-                    return nil
-                }
+        // Raw mode is what makes this a *single-key* read. When it cannot be
+        // enabled the terminal stays canonical and delivers nothing until Enter,
+        // which looks exactly like a prompt that ignores `r`/`a`/`c`. Say so
+        // once instead of leaving the operator pressing keys with no effect.
+        let isRawMode = rawInput.beginRawMode()
+        if !isRawMode {
+            AgentOutput.standardError.writeString(
+                "\n[ZenCODE] Single-key input unavailable; type your choice and press Enter.\n"
+            )
+        }
+        defer {
+            if isRawMode {
+                rawInput.restoreRawMode()
+            }
+        }
 
-                switch key {
-                case let .character(text):
-                    AgentOutput.standardError.writeString("\(text)\n")
-                    return text
-                case let .paste(text):
-                    guard let firstCharacter = text.first else {
-                        continue
-                    }
-                    let value = String(firstCharacter)
-                    AgentOutput.standardError.writeString("\(value)\n")
-                    return value
-                case .enter:
-                    AgentOutput.standardError.writeString("\n")
-                    return ""
-                case .endOfInput:
-                    AgentOutput.standardError.writeString("\n")
-                    return nil
-                default:
+        while true {
+            if shouldCancel?() == true {
+                AgentOutput.standardError.writeString("\n")
+                return nil
+            }
+            let readResult = readKeyResult(
+                pollTimeoutMilliseconds: shouldCancel == nil ? nil : 100
+            )
+            let key: Key
+            switch readResult {
+            case let .key(value):
+                key = value
+            case .timedOut:
+                continue
+            case .endOfInput:
+                AgentOutput.standardError.writeString("\n")
+                return nil
+            }
+
+            switch key {
+            case let .character(text):
+                AgentOutput.standardError.writeString("\(text)\n")
+                return text
+            case let .paste(text):
+                guard let firstCharacter = text.first else {
                     continue
                 }
+                let value = String(firstCharacter)
+                AgentOutput.standardError.writeString("\(value)\n")
+                return value
+            case .enter:
+                AgentOutput.standardError.writeString("\n")
+                return ""
+            case .endOfInput:
+                AgentOutput.standardError.writeString("\n")
+                return nil
+            default:
+                continue
             }
         }
     }

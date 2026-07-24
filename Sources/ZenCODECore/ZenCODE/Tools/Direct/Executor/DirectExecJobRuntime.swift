@@ -179,6 +179,10 @@ public actor DirectExecJobRuntime {
         let stderrPipe = Pipe()
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
+        // Background jobs outlive the tool call, so an inherited terminal would
+        // let them steal keystrokes (including authorization answers) for as
+        // long as they run.
+        process.standardInput = FileHandle.nullDevice
         for handle in [stdoutPipe.fileHandleForReading, stderrPipe.fileHandleForReading] {
             handle.readabilityHandler = { fileHandle in
                 let chunk = fileHandle.availableData

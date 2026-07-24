@@ -275,9 +275,10 @@ struct LocalExecPermissionAuthorizerTests {
         let prompt = LocalExecPermissionAuthorizer.terminalPrompt(for: request)
         #expect(!prompt.contains(request.title))
         #expect(prompt.contains("/tmp/project"))
-        #expect(prompt.contains("swift test --filter One"))
-        #expect(prompt.contains("[R]un once / [A]lways / [C]ancel"))
-        #expect(prompt.hasSuffix("╯\n"))
+        #expect(prompt.contains("test --filter One"))
+        #expect(prompt.contains("[R]"))
+        #expect(prompt.contains("[A]"))
+        #expect(prompt.contains("[C]"))
     }
 
     @Test

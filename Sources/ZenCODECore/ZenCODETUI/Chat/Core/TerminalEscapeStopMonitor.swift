@@ -25,7 +25,15 @@ enum TerminalEscapeStopMonitor {
             }
 
             while !Task.isCancelled {
-                guard let byte = rawInput.readByte(timeoutMilliseconds: 100) else {
+                // Stand down while a consent prompt owns the terminal: this
+                // monitor discards every byte that is not ESC, so reading here
+                // would swallow the operator's `r`/`a`/`c` answer.
+                guard let byte = TerminalConsentInputOwnership.withBackgroundRead({
+                    rawInput.readByte(timeoutMilliseconds: 100)
+                }) else {
+                    if TerminalConsentInputOwnership.isConsentActive {
+                        try? await Task.sleep(nanoseconds: 20_000_000)
+                    }
                     continue
                 }
                 guard byte == 0x1B else {

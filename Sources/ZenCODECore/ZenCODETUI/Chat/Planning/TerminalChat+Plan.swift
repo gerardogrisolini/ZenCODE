@@ -112,7 +112,7 @@ extension TerminalChat {
             plan.isApproved = true
             activePlan = plan
             await writeSystemMessage(
-                "Approved the active plan and activated its task graph. Starting implementation now; /review will verify task claims against real files.\n"
+                "Approved the active plan and activated its task graph. Starting implementation now; /review will verify task claims against real files.\n\n"
             )
             return .runHiddenPrompt(
                 Self.planImplementationPrompt(for: plan),

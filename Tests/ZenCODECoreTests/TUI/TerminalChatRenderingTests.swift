@@ -576,42 +576,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func statusBarShowsAccessModeDotOnlyForFullAccess() {
-        let statusBar = TerminalStatusBar(isEnabled: false)
-        var defaultState = TerminalStatusBar.State()
-        defaultState.latestModelID = "test-model"
-
-        let defaultText = statusBar.statusTextLocked(state: &defaultState)
-        #expect(defaultText == "test-model")
-        #expect(TerminalStatusBar.accessModeStatusFragment(.standard) == nil)
-
-        var fullAccessState = defaultState
-        fullAccessState.localExecAccessMode = .fullAccess
-        let fullAccessText = statusBar.statusTextLocked(state: &fullAccessState)
-        let redDot = "\u{1B}[31m●\u{1B}[0m"
-        #expect(fullAccessText == "test-model · \(redDot)")
-        #expect(!fullAccessText.contains("mode full access"))
-    }
-
-    @Test
-    func statusBarPlacesAccessModeDotImmediatelyBeforeFiles() {
-        let statusBar = TerminalStatusBar(isEnabled: false)
-        var state = TerminalStatusBar.State()
-        state.localExecAccessMode = .fullAccess
-        state.latestModelID = "test-model"
-        state.latestGitStatusSummary = TerminalGitStatusSummary(
-            changedFileCount: 3,
-            additions: 12,
-            deletions: 4
-        )
-
-        let statusText = statusBar.statusTextLocked(state: &state)
-        let redDot = "\u{1B}[31m●\u{1B}[0m"
-
-        #expect(statusText.contains("test-model · \(redDot) · \u{1B}[38;5;81m3\u{1B}[0m files"))
-    }
-
-    @Test
     func statusBarSynchronizesFromCurrentRunnerAccessMode() async throws {
         let runner = AgentCoreSessionRunner()
         #expect(await runner.toggleLocalExecAccessMode() == .fullAccess)

@@ -58,6 +58,11 @@ public enum AsyncProcessRunner {
         process.standardError = stderrPipe
         if let stdinPipe {
             process.standardInput = stdinPipe
+        } else {
+            // Never let a child inherit the controlling terminal: a command that
+            // reads stdin would consume keystrokes meant for ZenCODE itself,
+            // including the answer to a pending authorization prompt.
+            process.standardInput = FileHandle.nullDevice
         }
 
         let exitObserver = AsyncProcessExitObserver()

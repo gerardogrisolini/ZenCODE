@@ -39,6 +39,10 @@ public enum FeatureProcessRunner {
         process.standardError = stderrPipe
         if let stdinPipe {
             process.standardInput = stdinPipe
+        } else {
+            // Feature processes must not inherit the controlling terminal;
+            // otherwise they compete with ZenCODE for the operator's keystrokes.
+            process.standardInput = FileHandle.nullDevice
         }
 
         let exitObserver = FeatureProcessExitObserver()
