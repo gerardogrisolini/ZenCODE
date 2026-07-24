@@ -444,8 +444,8 @@ public actor AgentCoreSessionRunner {
         promptTaskRegistry.register(task, id: promptID, sessionID: configuration.sessionID)
         continuation.onTermination = { _ in
             task.cancel()
-            Task {
-                await self.clearActivePromptTask(id: promptID)
+            Task { [weak self] in
+                await self?.clearActivePromptTask(id: promptID)
             }
         }
         return stream
@@ -543,6 +543,9 @@ public actor AgentCoreSessionRunner {
         promptTaskRegistry.cancelAllTasks()
         promptAuthorizationHandlers.removeAll()
         try? await taskOrchestrator.flush()
+        // Terminate every task-graph event observer so suspended `events(...)`
+        // consumers resume instead of waiting forever after shutdown.
+        await taskOrchestrator.finishEventStreams()
         sessions.removeAll()
         lastKnownSessionSnapshots.removeAll()
         promptSkillProvidersBySessionID.removeAll()

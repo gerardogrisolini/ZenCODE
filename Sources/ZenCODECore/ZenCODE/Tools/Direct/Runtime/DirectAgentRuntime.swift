@@ -23,11 +23,16 @@ public struct DirectAgentResponse: Sendable {
     }
 }
 
-/// Tool arguments are JSON-compatible but stored as `[String: Any]` for the public tool runtime API.
-public struct DirectAgentToolCall: @unchecked Sendable {
+/// Tool arguments are JSON-compatible. They are stored as `[String: JSONValue]`
+/// (a genuinely `Sendable` representation) and materialized as `[String: Any]`
+/// through `argumentsObject` for compatibility with the public tool runtime API.
+/// The previous `[String: Any]` storage required `@unchecked Sendable` and could
+/// not prove the absence of shared mutable references; storing `JSONValue` makes
+/// the conformance sound without changing the public surface.
+public struct DirectAgentToolCall: Sendable {
     public let id: String
     public let name: String
-    public let argumentsObject: [String: Any]
+    private let arguments: [String: JSONValue]
     public let argumentsJSON: String
 
     public init(
@@ -38,8 +43,14 @@ public struct DirectAgentToolCall: @unchecked Sendable {
     ) {
         self.id = id
         self.name = name
-        self.argumentsObject = argumentsObject
+        self.arguments = argumentsObject.mapValues { JSONValue(jsonObject: $0) }
         self.argumentsJSON = argumentsJSON
+    }
+
+    /// The tool arguments as a JSON-compatible `[String: Any]` dictionary,
+    /// materialized on demand from the stored `JSONValue` payload.
+    public var argumentsObject: [String: Any] {
+        arguments.mapValues { $0.jsonObject }
     }
 }
 

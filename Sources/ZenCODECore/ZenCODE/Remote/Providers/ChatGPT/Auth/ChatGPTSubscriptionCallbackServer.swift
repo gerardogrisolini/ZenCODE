@@ -325,6 +325,13 @@ private actor ChatGPTSubscriptionCallbackServerState {
                 continuation.resume(throwing: ChatGPTSubscriptionAuthError.callbackCancelled)
                 return
             }
+            if waitContinuation != nil {
+                // A concurrent wait is already registered. Never overwrite the
+                // existing continuation: resume this waiter immediately so the
+                // first waiter is still delivered exactly once.
+                continuation.resume(throwing: CancellationError())
+                return
+            }
             waitContinuation = continuation
         }
     }

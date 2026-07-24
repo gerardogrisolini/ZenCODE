@@ -188,10 +188,17 @@ final class JiraBrowserSetupServer: Sendable {
     func waitForResult(timeout: TimeInterval) async throws -> JiraAuthenticatedConfiguration {
         try await withThrowingTaskGroup(of: JiraAuthenticatedConfiguration.self) { group in
             group.addTask {
-                try await withCheckedThrowingContinuation { continuation in
-                    if let buffered = self.state.takeResult(orRegister: continuation) {
-                        continuation.resume(with: buffered)
+                try await withTaskCancellationHandler {
+                    try await withCheckedThrowingContinuation { continuation in
+                        if let buffered = self.state.takeResult(orRegister: continuation) {
+                            continuation.resume(with: buffered)
+                        }
                     }
+                } onCancel: {
+                    // Ensure the suspended continuation is released when the task
+                    // group cancels this child (e.g. the timeout branch won), so the
+                    // group can drain instead of hanging on an unobserved cancel.
+                    self.state.resumeResult(with: .failure(CancellationError()))
                 }
             }
             group.addTask {
@@ -222,6 +229,9 @@ final class JiraBrowserSetupServer: Sendable {
             self.state.resumeResult(with: .failure(wrapped))
         case .cancelled:
             self.state.resumeReadiness(
+                with: .failure(JiraToolsError.browserSetupFailed("The Jira setup server was stopped."))
+            )
+            self.state.resumeResult(
                 with: .failure(JiraToolsError.browserSetupFailed("The Jira setup server was stopped."))
             )
         default:

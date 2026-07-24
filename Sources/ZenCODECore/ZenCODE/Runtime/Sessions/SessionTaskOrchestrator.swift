@@ -989,10 +989,37 @@ public actor SessionTaskOrchestrator {
 
     public func events(sessionID: String) -> AsyncStream<TaskGraphEvent> {
         let observerID = UUID()
-        return AsyncStream { continuation in
-            eventContinuations[sessionID, default: [:]][observerID] = continuation
-            continuation.onTermination = { _ in
-                Task { await self.removeEventContinuation(sessionID: sessionID, id: observerID) }
+        // `makeStream` lets us register the continuation synchronously within
+        // the actor (no escaping @Sendable build closure that has to touch
+        // isolated state) and gives us an explicit buffering policy. The single
+        // observer coalesces events through a debounced render that re-reads the
+        // snapshot, so keeping only the newest pending event is correct and
+        // bounds memory under bursts of mutations.
+        let (stream, continuation) = AsyncStream<TaskGraphEvent>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        eventContinuations[sessionID, default: [:]][observerID] = continuation
+        // `[weak self]` breaks the retention cycle: the actor owns the
+        // continuation through `eventContinuations`, and the previous strong
+        // `self` capture here would keep the actor alive for as long as the
+        // continuation existed (i.e. until the consumer happened to terminate).
+        continuation.onTermination = { [weak self] _ in
+            guard let self else { return }
+            Task { await self.removeEventContinuation(sessionID: sessionID, id: observerID) }
+        }
+        return stream
+    }
+
+    /// Terminates every active event subscription: extracts and drops all
+    /// retained continuations, then finishes each one so observers stop
+    /// promptly instead of waiting for their own cancellation. Intended to be
+    /// invoked from the runner's shutdown path.
+    public func finishEventStreams() {
+        let continuations = eventContinuations
+        eventContinuations.removeAll()
+        for continuationsBySession in continuations.values {
+            for continuation in continuationsBySession.values {
+                continuation.finish()
             }
         }
     }

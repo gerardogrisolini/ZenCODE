@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 
 #if os(macOS)
 import Darwin
@@ -73,13 +74,10 @@ public enum AsyncProcessRunner {
             throw error
         }
 
-        if let stdinData,
-           let stdinPipe {
-            let writer = stdinPipe.fileHandleForWriting
-            try? writer.write(contentsOf: stdinData)
-            try? writer.close()
-        }
-
+        // Drain stdout/stderr concurrently with the stdin write. The readers
+        // are started before feeding stdin so a child that fills its output
+        // pipe and then waits for input cannot deadlock against the parent
+        // filling stdin (a classic bidirectional pipe deadlock).
         let stdoutReader = Task.detached { () -> (Data, Bool) in
             readStdout(
                 from: stdoutPipe,
@@ -91,17 +89,22 @@ public enum AsyncProcessRunner {
             stderrPipe.fileHandleForReading.readDataToEndOfFile()
         }
 
-        let timedOut = await withTaskCancellationHandler {
-            await waitForProcessExit(
-                process,
-                exitObserver: exitObserver,
-                timeout: timeout
-            )
-        } onCancel: {
-            if process.isRunning {
-                process.terminate()
-            }
+        if let stdinData,
+           let stdinPipe {
+            let writer = stdinPipe.fileHandleForWriting
+            try? writer.write(contentsOf: stdinData)
+            try? writer.close()
         }
+
+        // The exit wait is cancellation-aware: both the timeout and
+        // cancellation outcomes traverse the same escalation
+        // (terminate -> grace period -> SIGKILL), so a process that ignores
+        // SIGTERM can never leave the exit continuation suspended.
+        let timedOut = await waitForProcessExit(
+            process,
+            exitObserver: exitObserver,
+            timeout: timeout
+        )
 
         process.terminationHandler = nil
         let stdoutResult = await stdoutReader.value
@@ -172,38 +175,73 @@ public enum AsyncProcessRunner {
         exitObserver: AsyncProcessExitObserver,
         timeout: TimeInterval?
     ) async -> Bool {
-        guard let timeout, timeout > 0 else {
-            await exitObserver.wait()
-            return false
-        }
-
-        return await withTaskGroup(of: Bool.self) { group in
+        await withTaskGroup(of: ExitOutcome.self) { group in
+            // Natural exit: resumed by the process termination handler.
             group.addTask {
                 await exitObserver.wait()
-                return false
+                return .exited
             }
 
+            // Timeout deadline (optional).
+            if let timeout, timeout > 0 {
+                group.addTask {
+                    let timeoutNanoseconds = UInt64(max(timeout, 0) * 1_000_000_000)
+                    try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                    // If the process exited while we slept, this is not a
+                    // timeout; treat it as a natural exit to avoid escalation.
+                    if await exitObserver.hasFinished {
+                        return .exited
+                    }
+                    return .timedOut
+                }
+            }
+
+            // Cooperative cancellation. Structured cancellation propagates into
+            // this child task, so its continuation is resumed (exactly once) as
+            // soon as the surrounding run is cancelled.
             group.addTask {
-                let timeoutNanoseconds = UInt64(max(timeout, 0) * 1_000_000_000)
-                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
-                guard await !exitObserver.hasFinished else {
-                    return false
-                }
-
-                process.terminate()
-                if await waitForExitAfterTermination(exitObserver: exitObserver) {
-                    return true
-                }
-
-                kill(process.processIdentifier, SIGKILL)
-                await exitObserver.wait()
-                return true
+                await waitUntilCancelled()
+                return .cancelled
             }
 
-            let timedOut = await group.next() ?? false
+            let outcome = await group.next() ?? .exited
             group.cancelAll()
-            return timedOut
+
+            // Timeout and cancellation share the same escalation path so SIGKILL
+            // is always reachable even when SIGTERM is ignored.
+            if outcome != .exited {
+                await escalateTermination(process: process, exitObserver: exitObserver)
+            }
+            return outcome == .timedOut
         }
+    }
+
+    /// Graceful-to-forced termination shared by the timeout and cancellation
+    /// paths: SIGTERM, then a grace period, then SIGKILL. Idempotent — it is a
+    /// no-op once the process has already exited, and every signal is guarded by
+    /// `process.isRunning`, so a concurrent timeout/cancellation overlap cannot
+    /// escalate twice. Forcing SIGKILL (rather than relying on SIGTERM alone)
+    /// guarantees the exit observer's continuation is always resumed exactly once.
+    private static func escalateTermination(
+        process: Process,
+        exitObserver: AsyncProcessExitObserver
+    ) async {
+        guard await !exitObserver.hasFinished else {
+            return
+        }
+        if process.isRunning {
+            process.terminate()
+        }
+
+        // Grace period: give the SIGTERM a chance to be honored.
+        if await waitForExitAfterTermination(exitObserver: exitObserver) {
+            return
+        }
+
+        if process.isRunning {
+            kill(process.processIdentifier, SIGKILL)
+        }
+        await exitObserver.wait()
     }
 
     private static func waitForExitAfterTermination(
@@ -225,10 +263,64 @@ public enum AsyncProcessRunner {
             return exited
         }
     }
+
+    /// Suspends the current task until it is cancelled (returning immediately if
+    /// already cancelled). Gives the exit-wait task group a cancellation signal
+    /// to race against natural completion, so a cancelled run is never stuck
+    /// behind a process that ignores SIGTERM. The continuation is resumed exactly
+    /// once through `CancellationResumeBox`.
+    private static func waitUntilCancelled() async {
+        let box = CancellationResumeBox()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                box.store(continuation)
+            }
+        } onCancel: {
+            box.resume()
+        }
+    }
     #endif
 }
 
 #if os(macOS) || os(Linux)
+/// Outcome of racing the natural process exit against timeout and cancellation
+/// inside `AsyncProcessRunner.waitForProcessExit`.
+private enum ExitOutcome: Sendable {
+    case exited
+    case timedOut
+    case cancelled
+}
+
+/// Holds the cancellation continuation for `AsyncProcessRunner.waitUntilCancelled`
+/// and resumes it exactly once, whether cancellation arrives before or after the
+/// continuation is installed. Mirrors the module's `Mutex`-based exactly-once
+/// resume guards.
+private final class CancellationResumeBox: Sendable {
+    private let state = Mutex<CheckedContinuation<Void, Never>?>(nil)
+
+    func store(_ continuation: CheckedContinuation<Void, Never>) {
+        let alreadyCancelled = state.withLock { stored -> Bool in
+            if Task.isCancelled {
+                return true
+            }
+            stored = continuation
+            return false
+        }
+        if alreadyCancelled {
+            continuation.resume()
+        }
+    }
+
+    func resume() {
+        let pending = state.withLock { stored -> CheckedContinuation<Void, Never>? in
+            let continuation = stored
+            stored = nil
+            return continuation
+        }
+        pending?.resume()
+    }
+}
+
 private actor AsyncProcessExitObserver {
     private var continuations: [CheckedContinuation<Void, Never>] = []
     private(set) var hasFinished = false

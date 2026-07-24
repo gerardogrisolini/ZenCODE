@@ -40,7 +40,7 @@ extension TerminalChat {
                 continue
             }
             let key = "\(snapshot.id)#\(snapshot.status.rawValue)#\(snapshot.latestOutputRevision)"
-            if reflectedSubAgentCompletionKeys.insert(key).inserted {
+            if recordSubAgentCompletionKey(key) {
                 didObserveNewCompletion = true
             }
         }

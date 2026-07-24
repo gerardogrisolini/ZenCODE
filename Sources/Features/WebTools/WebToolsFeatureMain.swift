@@ -174,22 +174,36 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
         let navigationBudget = timeout * 0.6
         let settleBudget = min(timeout - navigationBudget, 6)
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            self.loadContinuation = continuation
-            self.didResume = false
-            self.timeoutTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(navigationBudget * 1_000_000_000))
-                self?.resume(.failure(WebToolsFeatureError.permissionDenied(
-                    "Timed out loading the page after \(Int(navigationBudget))s."
-                )))
+        // Observe cancellation: stop the WKWebView and resume the
+        // navigation continuation so the caller doesn't block until the
+        // navigation timeout. `resume(_:)` is exactly-once, so racing with
+        // didFinish/timeout is safe.
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                self.loadContinuation = continuation
+                self.didResume = false
+                self.timeoutTask = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: UInt64(navigationBudget * 1_000_000_000))
+                    self?.resume(.failure(WebToolsFeatureError.permissionDenied(
+                        "Timed out loading the page after \(Int(navigationBudget))s."
+                    )))
+                }
+                self.webView.load(URLRequest(url: url))
             }
-            self.webView.load(URLRequest(url: url))
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.webView.stopLoading()
+                self?.resume(.failure(CancellationError()))
+            }
         }
+        // If cancellation landed after the continuation resumed successfully,
+        // observe it before entering the settle loop.
+        try Task.checkCancellation()
 
         // Wait for client-side scripts to settle instead of a fixed delay:
         // poll until the document is ready and the rendered text length is
         // stable, bounded by the remaining settle budget.
-        await waitUntilSettled(timeout: settleBudget)
+        try await waitUntilSettled(timeout: settleBudget)
 
         let title = (try? await evaluateString("document.title")) ?? ""
         let finalURL = (try? await evaluateString("location.href")) ?? url.absoluteString
@@ -200,7 +214,7 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
     /// Polls the page until it reports a ready state and the rendered text
     /// length stops growing, so dynamically injected content is captured.
     /// Bounded by `timeout` (shared with the navigation budget).
-    private func waitUntilSettled(timeout: TimeInterval) async {
+    private func waitUntilSettled(timeout: TimeInterval) async throws {
         // Cap the settle wait so pages that mutate continuously (clocks,
         // animations) can't stall extraction for the full navigation budget.
         let start = Date()
@@ -214,9 +228,13 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
         var stableChecks = 0
 
         // Minimal settle so very fast client scripts run at least once.
-        try? await Task.sleep(nanoseconds: pollInterval)
+        // Don't swallow cancellation: let it propagate immediately.
+        try await Task.sleep(nanoseconds: pollInterval)
 
         while Date() < deadline {
+            // Observe cancellation between iterations even when the poll
+            // interval elapses without a thrown sleep.
+            try Task.checkCancellation()
             let ready = (try? await evaluateString("document.readyState")) ?? ""
             let lengthString = (try? await evaluateString(
                 "String(((document.body && document.body.innerText) || '').length)"
@@ -234,7 +252,7 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
                 stableChecks = 0
             }
             lastLength = length
-            try? await Task.sleep(nanoseconds: pollInterval)
+            try await Task.sleep(nanoseconds: pollInterval)
         }
     }
 

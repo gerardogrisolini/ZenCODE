@@ -124,6 +124,7 @@ enum BrowserPNGCodec {
         compressed.reserveCapacity(min(bytes.count, maximumEncodedBytes))
 
         chunkLoop: while cursor < bytes.count {
+            try Task.checkCancellation()
             guard bytes.count - cursor >= 12 else {
                 throw BrowserPNGCodecError.malformedPNGChunk
             }
@@ -291,6 +292,7 @@ enum BrowserPNGCodec {
         var scanlines = [UInt8]()
         scanlines.reserveCapacity(scanlineBytes)
         for row in 0..<height {
+            try Task.checkCancellation()
             scanlines.append(0) // PNG filter: None
             let start = row * rowBytes
             scanlines.append(contentsOf: rgba[start..<(start + rowBytes)])
@@ -332,6 +334,7 @@ enum BrowserPNGCodec {
         var sourceOffset = 0
 
         for row in 0..<height {
+            try Task.checkCancellation()
             let filter = scanlines[sourceOffset]
             sourceOffset += 1
             guard filter <= 4 else {
@@ -425,6 +428,7 @@ enum BrowserPNGCodec {
         var blockCount = 0
 
         repeat {
+            try Task.checkCancellation()
             blockCount += 1
             guard blockCount <= maximumDeflateBlocks else {
                 throw BrowserPNGCodecError.invalidDeflateStream
@@ -590,7 +594,12 @@ enum BrowserPNGCodec {
             6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13,
         ]
 
+        var symbolsProcessed = 0
         while true {
+            if symbolsProcessed.isMultiple(of: 4096) {
+                try Task.checkCancellation()
+            }
+            symbolsProcessed += 1
             let symbol = try literalLengthTree.decode(reader: &reader)
             switch symbol {
             case 0...255:
@@ -631,6 +640,7 @@ enum BrowserPNGCodec {
         output.reserveCapacity(bytes.count + (bytes.count / 65_535 + 1) * 5 + 6)
         var offset = 0
         while offset < bytes.count {
+            try Task.checkCancellation()
             let count = min(65_535, bytes.count - offset)
             let isFinal = offset + count == bytes.count
             output.append(isFinal ? 0x01 : 0x00)

@@ -14,6 +14,10 @@ public actor MCPClient {
     public let httpTransport: MCPHTTPTransportClient?
     public var process: Process?
     public var inputHandle: FileHandle?
+    /// Serialized, non-blocking writer for the local bridge's stdin. It lives
+    /// outside this actor so a full pipe back-pressures the writer task instead
+    /// of blocking the actor (which would deadlock disconnect()/cancellation).
+    var writer: MCPLocalTransportWriter?
     /// Parent-owned read ends of the local bridge pipes. They are closed after
     /// their detached non-blocking readers have joined, including when a bridge
     /// exits badly or leaves a descendant holding its write end open.

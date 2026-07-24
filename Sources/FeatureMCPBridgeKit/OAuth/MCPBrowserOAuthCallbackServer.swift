@@ -86,6 +86,18 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
                                 state.didResumeCallback = true
                                 return pending
                             }
+                            if state.callbackContinuation != nil {
+                                // A concurrent wait is already registered. Never
+                                // overwrite the existing continuation: resume this
+                                // waiter immediately so the first waiter is still
+                                // delivered exactly once. Leave didResumeCallback
+                                // untouched so the registered waiter is preserved.
+                                return .failure(
+                                    MCPClientError.browserAuthenticationFailed(
+                                        "The \(self.serviceName) browser sign-in wait is already in progress."
+                                    )
+                                )
+                            }
                             state.callbackContinuation = continuation
                             return nil
                         }

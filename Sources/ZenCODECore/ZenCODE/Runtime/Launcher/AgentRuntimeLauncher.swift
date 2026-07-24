@@ -63,12 +63,21 @@ public enum AgentRuntimeLauncher {
                 guard !trimmedLine.isEmpty else {
                     continue
                 }
-                group.addTask {
+                // addImmediateTask runs each child up to its first suspension
+                // point before the next line is dequeued, preserving the order
+                // in which ACP requests enter the bridge (e.g. a session/cancel
+                // read after session/prompt reaches the actor in that order).
+                group.addImmediateTask {
                     await bridge.handleLine(trimmedLine)
                 }
             }
-        }
 
-        await bridge.shutdown()
+            // Input has ended (EOF or cancellation). Shut the bridge down while
+            // still inside the task group so handlers suspended on a host
+            // response (e.g. session/request_permission) are unblocked by
+            // writer.failAllPending() before the group's implicit barrier waits
+            // for its remaining children, which would otherwise hang.
+            await bridge.shutdown()
+        }
     }
 }

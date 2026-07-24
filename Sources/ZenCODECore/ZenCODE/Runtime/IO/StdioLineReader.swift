@@ -22,16 +22,37 @@ public final class StdioLineReader: Sendable {
 
     public func readLine() -> String? {
         while true {
+            // Cooperative cancellation: StdioLineReader is driven by a detached
+            // task in the ACP launcher whose `onTermination` cancels this task.
+            // `availableData` blocks indefinitely and would never observe that
+            // cancellation, so poll with a short timeout instead and stop as
+            // soon as the task is cancelled.
+            if Task.isCancelled {
+                return nil
+            }
             if let line = takeBufferedLine() {
                 return line
             }
 
-            let data = FileHandle.standardInput.availableData
-            if data.isEmpty {
-                return takeBufferedRemainder()
+            var descriptor = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+            let pollResult = poll(&descriptor, 1, 200)
+            if Task.isCancelled {
+                return nil
             }
-            buffer.withLock { buffer in
-                buffer.append(contentsOf: data)
+            if pollResult > 0, (descriptor.revents & Int16(POLLIN)) != 0 {
+                var bytes = [UInt8](repeating: 0, count: 4096)
+                let readCount = bytes.withUnsafeMutableBytes { rawBuffer in
+                    read(STDIN_FILENO, rawBuffer.baseAddress, rawBuffer.count)
+                }
+                if readCount <= 0 {
+                    // EOF (0) or read error (-1): flush any buffered remainder.
+                    return takeBufferedRemainder()
+                }
+                buffer.withLock { buffer in
+                    buffer.append(contentsOf: Array(bytes.prefix(readCount)))
+                }
+            } else if pollResult == -1, errno != EINTR {
+                return takeBufferedRemainder()
             }
         }
     }

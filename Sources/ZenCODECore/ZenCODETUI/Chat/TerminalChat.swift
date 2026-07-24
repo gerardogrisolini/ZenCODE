@@ -13,6 +13,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import Synchronization
 
 /// Detail level used when rendering executed tool calls in the terminal.
 public enum ToolOutputDetailLevel: CaseIterable, Sendable {
@@ -62,7 +63,14 @@ public final class TerminalChat: @unchecked Sendable {
     public var printedModelID: String?
     public var didPrintActiveTools = false
     public var didReceiveMetricsForCurrentPrompt = false
-    public var didRefreshGitStatusDuringCurrentPrompt = false
+    /// Tracks whether the status-bar git summary has already been refreshed
+    /// during the current prompt. Backed by `subAgentRefreshState` (see below)
+    /// because it is read and written from the periodic sub-agent overview
+    /// refresh task and the generation callback concurrently.
+    var didRefreshGitStatusDuringCurrentPrompt: Bool {
+        get { subAgentRefreshState.withLock { $0.didRefreshGitStatusDuringCurrentPrompt } }
+        set { subAgentRefreshState.withLock { $0.didRefreshGitStatusDuringCurrentPrompt = newValue } }
+    }
     public var selectedAgent: AgentProfile?
     public var manualModelIDOverride: String?
     public var manualThinkingSelectionOverride: AgentThinkingSelection?
@@ -82,7 +90,31 @@ public final class TerminalChat: @unchecked Sendable {
     /// Keys of sub-agent completions already reflected in the statusbar git
     /// summary (agent ID + status + output revision). A sub-agent re-run via
     /// `agent.message` produces a new revision and triggers a fresh refresh.
-    var reflectedSubAgentCompletionKeys = Set<String>()
+    /// Mutated concurrently by the periodic overview refresh task and the
+    /// generation callback, so it lives behind `subAgentRefreshState`.
+    var reflectedSubAgentCompletionKeys: Set<String> {
+        get { subAgentRefreshState.withLock { $0.reflectedSubAgentCompletionKeys } }
+        set { subAgentRefreshState.withLock { $0.reflectedSubAgentCompletionKeys = newValue } }
+    }
+
+    /// Mutex-guarded state shared between the periodic sub-agent overview
+    /// refresh task and the generation callback. `TerminalChat` is
+    /// `@unchecked Sendable`; these two fields are the known concurrent-access
+    /// surface, so every read and write is serialized through this lock.
+    private let subAgentRefreshState = Mutex(SubAgentRefreshState())
+
+    private struct SubAgentRefreshState {
+        var reflectedSubAgentCompletionKeys = Set<String>()
+        var didRefreshGitStatusDuringCurrentPrompt = false
+    }
+
+    /// Atomically records a sub-agent completion key and returns whether it was
+    /// new (so the caller refreshes the git summary at most once per completion).
+    func recordSubAgentCompletionKey(_ key: String) -> Bool {
+        subAgentRefreshState.withLock { state in
+            state.reflectedSubAgentCompletionKeys.insert(key).inserted
+        }
+    }
     /// Test hook invoked at the start of each refresh tick. When set, the tick
     /// awaits this closure before rendering, allowing tests to deterministically
     /// gate tick timing. Captured at `start` time; `nil` in production.

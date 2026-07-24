@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import Synchronization
 #if canImport(Speech)
 import Speech
 #endif
@@ -120,32 +119,31 @@ public actor AgentVoiceTranscriptionService {
             request.requiresOnDeviceRecognition = true
         }
 
-        // SFSpeechRecognizer holds only a weak reference to the recognition task.
-        // If the task is not retained it is deallocated (and cancelled) as soon as
-        // this closure returns, producing an empty final transcript. Retain it in a
-        // holder captured by the result handler, then clear it on completion to break
-        // the resulting retain cycle.
-        return try await withCheckedThrowingContinuation { continuation in
-            let resumeState = ResumeGuard()
-            let holder = RecognitionTaskHolder()
-            holder.task = recognizer.recognitionTask(with: request) { result, error in
-                if let error {
-                    if resumeState.consume() {
-                        holder.task = nil
-                        continuation.resume(throwing: AgentVoiceTranscriptionError.recognitionFailed(
-                            error.localizedDescription
-                        ))
-                    }
-                    return
+        // Coordinator that strongly retains the recognition task (SFSpeechRecognizer
+        // only keeps a weak reference, so without retention the task is deallocated and
+        // cancelled as soon as this closure returns, yielding an empty transcript).
+        // It also serializes the continuation, the task and the terminal state in a
+        // single mutex, guarantees exactly-once resume, propagates cooperative
+        // cancellation to SFSpeechRecognitionTask.cancel(), and breaks the
+        // holder<->task<->callback retain cycle on completion.
+        let state = RecognitionContinuationState()
+
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<String, any Error>) in
+                // install(continuation:) returns false when cancellation (or another
+                // terminal outcome) already happened: the continuation is resumed
+                // exactly once inside the call and no recognition task is created,
+                // avoiding a clear-before-install / leaked-task race.
+                guard state.install(continuation: continuation) else { return }
+
+                let task = recognizer.recognitionTask(with: request) { result, error in
+                    state.handleResult(result, error: error)
                 }
-                guard let result, result.isFinal else {
-                    return
-                }
-                if resumeState.consume() {
-                    holder.task = nil
-                    continuation.resume(returning: result.bestTranscription.formattedString)
-                }
+                state.install(task: task)
             }
+        } onCancel: {
+            state.cancelAndFinish(throwing: CancellationError())
         }
     }
 
@@ -174,23 +172,179 @@ public actor AgentVoiceTranscriptionService {
     #endif
 }
 
-/// Ensures a single resume of the recognition continuation.
-private final class ResumeGuard: Sendable {
-    private let didResume = Mutex(false)
+#if canImport(Speech)
+/// Thread-safe coordinator for a single speech recognition continuation.
+///
+/// Owns the continuation, the retained `SFSpeechRecognitionTask`, and the terminal
+/// state inside a single `Mutex`, guaranteeing exactly-once resume across the Speech
+/// callback queue, the calling task, and cooperative cancellation. Resume calls and
+/// `SFSpeechRecognitionTask.cancel()` are always performed outside the lock to keep
+/// critical sections minimal and avoid reentrancy.
+///
+/// `@unchecked Sendable` is required because `SFSpeechRecognitionTask` is an
+/// Objective-C type that is not itself `Sendable`; however every read and write of
+/// the stored task and continuation is serialized through the mutex, so the
+/// unchecked conformance is sound. (The previous `RecognitionTaskHolder` exposed the
+/// same field as a plain `var` with no synchronization, which was a real data race.)
+private final class RecognitionContinuationState: @unchecked Sendable {
+    private enum Status: Sendable {
+        /// Continuation not installed yet.
+        case waitingForContinuation
+        /// Continuation installed; recognition in progress.
+        case active
+        /// Terminal: an outcome has been delivered. No further action is allowed.
+        case terminal
+    }
 
-    func consume() -> Bool {
-        didResume.withLock { didResume in
-            guard !didResume else { return false }
-            didResume = true
-            return true
+    private struct Storage {
+        var status: Status = .waitingForContinuation
+        var continuation: CheckedContinuation<String, any Error>?
+        var task: SFSpeechRecognitionTask?
+        /// Cancellation arrived before the continuation was available. Stored so the
+        /// subsequent `install(continuation:)` resumes immediately without creating a
+        /// recognition task (cancel-before-install).
+        var pendingCancellationError: (any Error)?
+    }
+
+    /// A resume operation extracted under the lock and executed after it returns.
+    private enum PendingResume {
+        case none
+        case value(CheckedContinuation<String, any Error>, String)
+        case thrown(CheckedContinuation<String, any Error>, any Error)
+
+        func perform() {
+            switch self {
+            case .none:
+                break
+            case let .value(continuation, value):
+                continuation.resume(returning: value)
+            case let .thrown(continuation, error):
+                continuation.resume(throwing: error)
+            }
         }
     }
-}
 
-#if canImport(Speech)
-/// Strongly retains a speech recognition task for the duration of recognition.
-private final class RecognitionTaskHolder: @unchecked Sendable {
-    var task: SFSpeechRecognitionTask?
+    // `SFSpeechRecognitionTask` is an Objective-C type that is not `Sendable`, so the
+    // storage cannot satisfy `Mutex`'s `Sendable` requirement (nor the `sending`
+    // semantics of `Mutex.withLock`). A manual `NSLock` serializes every read and
+    // write of the task/continuation instead, making the unchecked `Sendable`
+    // conformance sound. (The previous `RecognitionTaskHolder` exposed the same
+    // field as a plain `var` with no synchronization, which was a real data race.)
+    private let lock = NSLock()
+    private var storage = Storage()
+
+    /// Installs the continuation.
+    ///
+    /// - Returns: `true` when recognition should proceed (the caller must then create
+    ///   the recognition task and call `install(task:)`). Returns `false` when the
+    ///   operation already reached a terminal state before installation (e.g.
+    ///   cancellation): the continuation is resumed exactly once inside this call and
+    ///   no task must be created.
+    func install(continuation: CheckedContinuation<String, any Error>) -> Bool {
+        var pendingResume: PendingResume = .none
+        lock.lock()
+        var proceed = false
+        switch storage.status {
+        case .waitingForContinuation:
+            if let error = storage.pendingCancellationError {
+                // Cancel-before-install: resume immediately, never create a task.
+                storage.status = .terminal
+                storage.pendingCancellationError = nil
+                pendingResume = .thrown(continuation, error)
+                proceed = false
+            } else {
+                storage.status = .active
+                storage.continuation = continuation
+                proceed = true
+            }
+        case .active, .terminal:
+            // Defensive: continuation handed over twice, or state already terminal.
+            pendingResume = .thrown(continuation, CancellationError())
+            proceed = false
+        }
+        lock.unlock()
+        pendingResume.perform()
+        return proceed
+    }
+
+    /// Installs the recognition task so it can be cancelled and its retain cycle
+    /// broken on completion. If the state became terminal between
+    /// `install(continuation:)` and this call (e.g. cancellation arrived), the task
+    /// is cancelled to avoid a leaked or lingering recognition.
+    func install(task: SFSpeechRecognitionTask) {
+        var taskToCancel: SFSpeechRecognitionTask?
+        lock.lock()
+        switch storage.status {
+        case .active, .waitingForContinuation:
+            storage.task = task
+        case .terminal:
+            taskToCancel = task
+        }
+        lock.unlock()
+        taskToCancel?.cancel()
+    }
+
+    /// Handles a recognition callback. Only the first final outcome (error or final
+    /// result) resumes the continuation; non-final partial results and any callback
+    /// received after a terminal state are ignored.
+    func handleResult(_ result: SFSpeechRecognitionResult?, error: Error?) {
+        let isFinal = error != nil || (result?.isFinal ?? false)
+        guard isFinal else { return }
+
+        var pendingResume: PendingResume = .none
+        lock.lock()
+        if storage.status == .active {
+            storage.status = .terminal
+            if let continuation = storage.continuation {
+                // Drop the references to break the holder<->task<->callback retain cycle.
+                storage.continuation = nil
+                storage.task = nil
+                if let error {
+                    pendingResume = .thrown(
+                        continuation,
+                        AgentVoiceTranscriptionError.recognitionFailed(error.localizedDescription)
+                    )
+                } else if let result {
+                    pendingResume = .value(continuation, result.bestTranscription.formattedString)
+                }
+            }
+        }
+        lock.unlock()
+        pendingResume.perform()
+    }
+
+    /// Cooperative cancellation handler. Atomically extracts the continuation and the
+    /// recognition task (if any), cancels the Speech task, and resumes the
+    /// continuation with `error` exactly once. If the continuation is not installed
+    /// yet (cancel-before-install), the error is stashed and resumed by
+    /// `install(continuation:)`.
+    func cancelAndFinish(throwing error: any Error) {
+        var pendingResume: PendingResume = .none
+        var taskToCancel: SFSpeechRecognitionTask?
+        lock.lock()
+        switch storage.status {
+        case .waitingForContinuation:
+            // No continuation to resume yet; defer until install(continuation:).
+            if storage.pendingCancellationError == nil {
+                storage.pendingCancellationError = error
+            }
+        case .active:
+            storage.status = .terminal
+            if let continuation = storage.continuation {
+                storage.continuation = nil
+                pendingResume = .thrown(continuation, error)
+            }
+            taskToCancel = storage.task
+            storage.task = nil
+        case .terminal:
+            break
+        }
+        lock.unlock()
+        // Cancel the Speech task outside the lock; cancel() is safe to call from any
+        // thread and the callback queue may re-enter the lock afterwards.
+        taskToCancel?.cancel()
+        pendingResume.perform()
+    }
 }
 #endif
 

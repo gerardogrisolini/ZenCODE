@@ -264,7 +264,14 @@ enum BrowserScreenshotComparison {
         var maximumX = -1
         var maximumY = -1
 
+        // The pixel diff is CPU-bound across up to `maximumPixelCount` pixels.
+        // Observe cooperative cancellation before the loop and every 4096
+        // pixels within it. checkCancellation never alters the comparison output.
+        try Task.checkCancellation()
         for pixel in 0..<pixelCount {
+            if pixel.isMultiple(of: 4096) {
+                try Task.checkCancellation()
+            }
             let offset = pixel * 4
             let changed = baselineImage.rgba[offset] != candidateImage.rgba[offset]
                 || baselineImage.rgba[offset + 1] != candidateImage.rgba[offset + 1]
@@ -460,6 +467,10 @@ struct BrowserCompareScreenshotsTool: FeatureTool {
                 candidate: candidate,
                 thresholdPercent: thresholdPercent
             )
+        } catch is CancellationError {
+            // Cooperative cancellation must propagate rather than degrade to a
+            // byte-only "decode failed" result.
+            throw CancellationError()
         } catch {
             return BrowserCompareScreenshotsOutput(
                 baseline: baseline.artifact,
@@ -476,6 +487,8 @@ struct BrowserCompareScreenshotsTool: FeatureTool {
         let diffArtifact: BrowserArtifact
         do {
             diffArtifact = try store.storeVisualDiffPNG(visualDiff.pngData)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             return BrowserCompareScreenshotsOutput(
                 baseline: baseline.artifact,

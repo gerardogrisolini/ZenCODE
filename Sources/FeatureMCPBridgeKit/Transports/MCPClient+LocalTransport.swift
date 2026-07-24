@@ -63,7 +63,30 @@ extension MCPClient {
         self.process = process
         activeConnectionID = connectionID
         terminatingConnectionID = nil
-        inputHandle = standardInput.fileHandleForWriting
+        let stdinHandle = standardInput.fileHandleForWriting
+        inputHandle = stdinHandle
+        // Make the bridge's stdin non-blocking and funnel every write through a
+        // single serialized writer that runs OUTSIDE this actor. With a blocking
+        // descriptor a full pipe would block writeAll while it executes on the
+        // actor, preventing disconnect() and the onCancel handlers from ever
+        // entering. The writer task provides async back-pressure instead.
+        do {
+            try Self.makeNonBlocking(stdinHandle)
+        } catch {
+            await disconnect()
+            throw error
+        }
+        // If a previous connection's writer is still around (e.g. the bridge
+        // exited through its own termination handler, which does not own the
+        // writer), tear it down before starting a fresh one so its detached
+        // consumer task cannot leak across reconnections.
+        if let staleWriter = writer {
+            staleWriter.finish()
+            staleWriter.cancel()
+            await staleWriter.join()
+            writer = nil
+        }
+        writer = MCPLocalTransportWriter(fileDescriptor: stdinHandle.fileDescriptor)
         startDiagnosticMonitor(for: process, connectionID: connectionID)
 
         signal(SIGPIPE, SIG_IGN)
@@ -107,64 +130,83 @@ extension MCPClient {
             clientInfo: MCPClientInfo(name: "Feature MCP client", version: "1.0")
         )
 
-        if localTransportPolicy.handshake == .optimisticInitialized {
-            let initializeRequestID = nextRequestID
-            nextRequestID += 1
+        do {
+            try Task.checkCancellation()
 
-            let initializeRequest = MCPRequest(
-                jsonrpc: "2.0",
-                id: .int(initializeRequestID),
+            if localTransportPolicy.handshake == .optimisticInitialized {
+                let initializeRequestID = nextRequestID
+                nextRequestID += 1
+
+                let initializeRequest = MCPRequest(
+                    jsonrpc: "2.0",
+                    id: .int(initializeRequestID),
+                    method: "initialize",
+                    params: initializeParams
+                )
+                let initializePayload = try JSONEncoder().encode(initializeRequest)
+                let initializedNotification = MCPNotification(
+                    jsonrpc: "2.0",
+                    method: "notifications/initialized",
+                    params: JSONValue.object([:])
+                )
+                let initializedPayload = try JSONEncoder().encode(initializedNotification)
+
+                log("Sending initialize request (optimistic local transport handshake)")
+                log(
+                    "Request \(initializeRequestID) -> initialize: " +
+                    (String(data: initializePayload, encoding: .utf8) ?? "<non-utf8>")
+                )
+                _ = try await withTaskCancellationHandler {
+                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<JSONValue, Error>) in
+                        pendingResponses[initializeRequestID] = continuation
+                        pendingRequestMethods[initializeRequestID] = "initialize"
+
+                        // The write is asynchronous (it goes through the serialized
+                        // writer), so perform it off the synchronous continuation
+                        // body. The response continuation is already registered, so
+                        // an early response is captured; on write failure we claim
+                        // and resume it exactly once.
+                        Task { [self] in
+                            do {
+                                try await self.write(initializePayload)
+                                self.log("Sending initialized notification early")
+                                try await self.write(initializedPayload)
+                            } catch {
+                                self.claimAndResumeResponse(
+                                    id: initializeRequestID,
+                                    with: .failure(error)
+                                )
+                            }
+                        }
+                    }
+                } onCancel: {
+                    Task {
+                        await self.cancelPendingResponse(id: initializeRequestID)
+                    }
+                }
+                importantLog("Initialize completed successfully for request \(initializeRequestID).")
+                log("MCP bridge connected successfully")
+                return
+            }
+
+            log("Sending initialize request")
+            _ = try await request(
                 method: "initialize",
                 params: initializeParams
             )
-            let initializePayload = try JSONEncoder().encode(initializeRequest)
-            let initializedNotification = MCPNotification(
-                jsonrpc: "2.0",
-                method: "notifications/initialized",
-                params: JSONValue.object([:])
-            )
-            let initializedPayload = try JSONEncoder().encode(initializedNotification)
 
-            log("Sending initialize request (optimistic local transport handshake)")
-            log(
-                "Request \(initializeRequestID) -> initialize: " +
-                (String(data: initializePayload, encoding: .utf8) ?? "<non-utf8>")
-            )
-            _ = try await withTaskCancellationHandler {
-                try await withCheckedThrowingContinuation { continuation in
-                    pendingResponses[initializeRequestID] = continuation
-                    pendingRequestMethods[initializeRequestID] = "initialize"
+            log("Sending initialized notification")
+            try await notify(method: "notifications/initialized", params: JSONValue.object([:]))
 
-                    do {
-                        try write(initializePayload)
-                        log("Sending initialized notification early")
-                        try write(initializedPayload)
-                    } catch {
-                        pendingResponses.removeValue(forKey: initializeRequestID)
-                        pendingRequestMethods.removeValue(forKey: initializeRequestID)
-                        continuation.resume(throwing: error)
-                    }
-                }
-            } onCancel: {
-                Task {
-                    await self.cancelPendingResponse(id: initializeRequestID)
-                }
-            }
-            importantLog("Initialize completed successfully for request \(initializeRequestID).")
             log("MCP bridge connected successfully")
-            return
+        } catch {
+            // process.run() has already launched the bridge and its detached
+            // readers. On handshake failure or cancellation tear everything down
+            // (terminate -> SIGKILL) so a later connect() starts from a clean
+            // state instead of returning early because process != nil.
+            await disconnect()
+            throw error
         }
-
-        log("Sending initialize request")
-        _ = try await request(
-            method: "initialize",
-            params: initializeParams
-        )
-
-        log("Sending initialized notification")
-        try await notify(method: "notifications/initialized", params: JSONValue.object([:]))
-
-        log("MCP bridge connected successfully")
     }
 
     public func disconnect() async {
@@ -191,6 +233,13 @@ extension MCPClient {
         outputHandle = nil
         let currentErrorHandle = errorHandle
         errorHandle = nil
+        // Stop the serialized writer first: it must stop touching the write FD
+        // and we join it (below) before the FD can be closed/reused by a later
+        // connection, otherwise a late write could target a recycled descriptor.
+        let currentWriter = writer
+        writer = nil
+        currentWriter?.finish()
+        currentWriter?.cancel()
         // The descriptors are non-blocking, so cancellation makes the readers
         // leave promptly without closing an FD that a reader may still hold.
         // Close their captured handles only after both readers have joined.
@@ -203,7 +252,19 @@ extension MCPClient {
         if let bridgeProcess {
             bridgeProcess.terminationHandler = nil
             if bridgeProcess.isRunning {
+                // Ask nicely (SIGTERM), give the bridge a short grace window,
+                // then force-kill (SIGKILL) so a wedged/orphan bridge cannot
+                // survive disconnect().
                 bridgeProcess.terminate()
+                for _ in 0..<50 {
+                    if !bridgeProcess.isRunning || Task.isCancelled {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 20_000_000)
+                }
+                if bridgeProcess.isRunning {
+                    Darwin.kill(bridgeProcess.processIdentifier, SIGKILL)
+                }
             }
         }
 
@@ -217,6 +278,7 @@ extension MCPClient {
 
         await readTask?.value
         await errorTask?.value
+        await currentWriter?.join()
         await diagnosticMonitor.task?.value
         currentOutputHandle?.closeFile()
         currentErrorHandle?.closeFile()
@@ -376,17 +438,22 @@ extension MCPClient {
         log("Request \(requestID) -> \(method): \(String(data: payload, encoding: .utf8) ?? "<non-utf8>")")
 
         return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<JSONValue, Error>) in
                 pendingResponses[requestID] = continuation
                 pendingRequestMethods[requestID] = method
 
-                do {
-                    try write(payload)
-                    onRequestWritten?()
-                } catch {
-                    pendingResponses.removeValue(forKey: requestID)
-                    pendingRequestMethods.removeValue(forKey: requestID)
-                    continuation.resume(throwing: error)
+                // Writes are serialized and asynchronous (routed through the
+                // writer actor outside this actor), so perform the write off the
+                // synchronous continuation body. The response continuation is
+                // already registered, so an early response is captured; on write
+                // failure or cancellation we claim and resume it exactly once.
+                Task { [self] in
+                    do {
+                        try await self.write(payload)
+                        onRequestWritten?()
+                    } catch {
+                        self.claimAndResumeResponse(id: requestID, with: .failure(error))
+                    }
                 }
             }
         } onCancel: {
@@ -404,7 +471,7 @@ extension MCPClient {
 
         let payload = try JSONEncoder().encode(notification)
         log("Notification -> \(method): \(String(data: payload, encoding: .utf8) ?? "<non-utf8>")")
-        try write(payload)
+        try await write(payload)
     }
 
     private func notify<Params: Encodable>(method: String, params: Params) async throws {
@@ -416,15 +483,15 @@ extension MCPClient {
 
         let payload = try JSONEncoder().encode(notification)
         log("Notification -> \(method): \(String(data: payload, encoding: .utf8) ?? "<non-utf8>")")
-        try write(payload)
+        try await write(payload)
     }
 
-    private func write(_ payload: Data) throws {
+    private func write(_ payload: Data) async throws {
         if let terminalBridgeError {
             throw terminalBridgeError
         }
 
-        guard let inputHandle else {
+        guard let writer else {
             throw MCPClientError.connectionClosed
         }
 
@@ -436,37 +503,137 @@ extension MCPClient {
             throw exitError(for: process)
         }
 
-        let framedPayload = MCPTransportCodec.frame(payload)
         do {
-            try Self.writeAll(framedPayload, to: inputHandle.fileDescriptor)
+            try await writer.enqueue(payload)
+        } catch is CancellationError {
+            // Don't mask cooperative cancellation as a bridge-exit error.
+            throw CancellationError()
         } catch {
             log("Write failed: \(error.localizedDescription)")
             throw exitError(for: process)
         }
     }
 
-    private nonisolated static func writeAll(_ payload: Data, to fileDescriptor: Int32) throws {
-        try payload.withUnsafeBytes { rawBuffer in
-            guard let baseAddress = rawBuffer.baseAddress else {
-                return
+    /// Atomically claims a pending response continuation (if still registered)
+    /// and resumes it. Idempotent with `cancelPendingResponse(id:)` and
+    /// `resumeAllPending(with:)`: whichever removes the entry first wins, so a
+    /// continuation is never resumed twice across the write-failure and
+    /// cancellation paths.
+    private func claimAndResumeResponse(id: Int, with result: Result<JSONValue, Error>) {
+        guard let continuation = pendingResponses.removeValue(forKey: id) else {
+            return
+        }
+        pendingRequestMethods.removeValue(forKey: id)
+        switch result {
+        case .success(let value):
+            continuation.resume(returning: value)
+        case .failure(let error):
+            continuation.resume(throwing: error)
+        }
+    }
+}
+
+/// Serialized, non-blocking writer for a local MCP bridge's stdin.
+///
+/// All writes are funneled through a single detached consumer task that drains
+/// an `AsyncStream`, so exactly one frame is ever in flight on the descriptor at
+/// a time: concurrent producers cannot interleave bytes even though an
+/// individual write suspends on back-pressure. Because the descriptor is
+/// non-blocking, a full pipe yields async back-pressure (`Task.sleep` on
+/// `EAGAIN`) instead of blocking a thread; `MCPClient` merely awaits the job's
+/// continuation and stays free to run `disconnect()` or cancellation handlers.
+struct MCPLocalTransportWriter: Sendable {
+    private struct Job: Sendable {
+        let payload: Data
+        let result: CheckedContinuation<Void, Error>
+    }
+
+    private let task: Task<Void, Never>
+    private let sink: AsyncStream<Job>.Continuation
+
+    init(fileDescriptor: Int32) {
+        let (stream, continuation) = AsyncStream<Job>.makeStream()
+        sink = continuation
+        task = Task.detached {
+            for await job in stream {
+                do {
+                    try Task.checkCancellation()
+                    try await Self.writeAllNonBlocking(
+                        MCPTransportCodec.frame(job.payload),
+                        to: fileDescriptor
+                    )
+                    job.result.resume()
+                } catch {
+                    job.result.resume(throwing: error)
+                }
             }
+        }
+    }
 
-            var totalBytesWritten = 0
-            while totalBytesWritten < rawBuffer.count {
-                let remainingByteCount = rawBuffer.count - totalBytesWritten
-                let nextBaseAddress = baseAddress.advanced(by: totalBytesWritten)
-                let bytesWritten = Darwin.write(fileDescriptor, nextBaseAddress, remainingByteCount)
+    /// Enqueues `payload` for serialized writing and suspends until it has been
+    /// fully written (or fails). Cancellation propagates through the detached
+    /// writer's cancellation checks.
+    func enqueue(_ payload: Data) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            // If the stream has already been finished (disconnect() is tearing
+            // the writer down), yield discards the job without resuming its
+            // continuation. Resume it ourselves so the awaiting writer caller
+            // cannot hang forever.
+            if case .terminated = sink.yield(Job(payload: payload, result: continuation)) {
+                continuation.resume(throwing: CancellationError())
+            }
+        }
+    }
 
-                if bytesWritten > 0 {
-                    totalBytesWritten += bytesWritten
-                    continue
+    /// Stops accepting new jobs. Buffered jobs are still drained (and failed)
+    /// until the consumer task observes cancellation and exits; required so the
+    /// draining `for await` loop can terminate and `join()` can return.
+    func finish() {
+        sink.finish()
+    }
+
+    func cancel() {
+        task.cancel()
+    }
+
+    func join() async {
+        await task.value
+    }
+
+    /// Writes `payload` fully to a non-blocking descriptor. On `EAGAIN`/
+    /// `EWOULDBLOCK` it suspends briefly (async back-pressure) instead of
+    /// busy-spinning or blocking a thread; cooperative cancellation aborts the
+    /// loop. `errno` is captured inside the `withUnsafeBytes` body so it cannot
+    /// be reset before it is inspected.
+    private static func writeAllNonBlocking(_ payload: Data, to fileDescriptor: Int32) async throws {
+        var totalWritten = 0
+        while totalWritten < payload.count {
+            try Task.checkCancellation()
+            let outcome = payload.withUnsafeBytes { rawBuffer -> (written: ssize_t, capturedErrno: Int32) in
+                guard let base = rawBuffer.baseAddress else {
+                    return (written: 0, capturedErrno: 0)
                 }
-
-                if bytesWritten == -1, errno == EINTR {
+                let remaining = rawBuffer.count - totalWritten
+                let written = Darwin.write(fileDescriptor, base.advanced(by: totalWritten), remaining)
+                return (written: written, capturedErrno: written == -1 ? errno : 0)
+            }
+            switch outcome.written {
+            case 1...:
+                totalWritten += Int(outcome.written)
+            case 0:
+                throw POSIXError(.EIO)
+            case -1:
+                switch outcome.capturedErrno {
+                case EINTR:
                     continue
+                case EAGAIN, EWOULDBLOCK:
+                    try await Task.sleep(nanoseconds: 1_000_000)
+                    continue
+                default:
+                    throw POSIXError(POSIXErrorCode(rawValue: outcome.capturedErrno) ?? .EIO)
                 }
-
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            default:
+                throw POSIXError(.EIO)
             }
         }
     }

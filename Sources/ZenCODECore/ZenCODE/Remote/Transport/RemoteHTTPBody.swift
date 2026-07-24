@@ -102,7 +102,7 @@ actor RemoteHTTPBodyStorage {
 
     private let lease: RemoteChannelLease
     private var pendingRequests: [ReadRequest] = []
-    private var requestWaiter: CheckedContinuation<ReadRequest, Never>?
+    private var requestWaiter: CheckedContinuation<ReadRequest?, Never>?
     private var returnedHead = false
     private var bodyConsumerID: UUID?
     private var isReading = false
@@ -302,6 +302,16 @@ actor RemoteHTTPBodyStorage {
         }
         isFinished = true
         lease.close()
+
+        // Wake the producer parked in `nextRequest()` so `run()` returns and the
+        // `NIOAsyncChannel.executeThenClose` closure can complete. Without this,
+        // a channel close while the body producer is waiting for its next read
+        // request leaves `run()` suspended forever, so `executeThenClose` never
+        // finishes and the caller hangs.
+        if let requestWaiter {
+            self.requestWaiter = nil
+            requestWaiter.resume(returning: nil)
+        }
 
         let terminalError = error ?? RemoteTransportError.closed
         activeHead?.resume(throwing: terminalError)

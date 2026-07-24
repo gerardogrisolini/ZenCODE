@@ -470,9 +470,18 @@ extension DirectSubAgentRuntime {
                     + Self.renderSnapshots(currentSnapshots, includeLatestOutput: true)
             }
 
-            try? await Task.sleep(
-                nanoseconds: UInt64(pollInterval * 1_000_000_000)
-            )
+            do {
+                try await Task.sleep(
+                    nanoseconds: UInt64(pollInterval * 1_000_000_000)
+                )
+            } catch {
+                // Cooperative cancellation: `try?` would swallow the
+                // CancellationError and busy-loop on the immediately-returning
+                // sleep until the deadline, monopolizing this actor. Stop polling
+                // promptly and report the current snapshots.
+                return "Cancelled waiting for delegated sub-agents.\n"
+                    + Self.renderSnapshots(currentSnapshots, includeLatestOutput: true)
+            }
         }
     }
 

@@ -23,15 +23,21 @@ public actor ACPWriter {
         let id = nextRequestID
         nextRequestID += 1
         let key = String(id)
+        let requestObject: JSONValue = .object([
+            "jsonrpc": .string("2.0"),
+            "id": .number(Double(id)),
+            "method": .string(method),
+            "params": params
+        ])
+        // Encode before registering the continuation so an encoding failure
+        // (e.g. NaN/Infinity in a JSON number) throws instead of leaving the
+        // continuation suspended in `pendingRequests` with no message ever
+        // written to the host.
+        let payload = try JSONEncoder().encode(requestObject)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 pendingRequests[key] = continuation
-                send(.object([
-                    "jsonrpc": .string("2.0"),
-                    "id": .number(Double(id)),
-                    "method": .string(method),
-                    "params": params
-                ]))
+                write(payload)
             }
         } onCancel: {
             Task {
@@ -137,6 +143,10 @@ public actor ACPWriter {
             return
         }
 
+        write(data)
+    }
+
+    private func write(_ data: Data) {
         AgentOutput.standardOutput.write(data)
         AgentOutput.standardOutput.write(Data([0x0a]))
     }

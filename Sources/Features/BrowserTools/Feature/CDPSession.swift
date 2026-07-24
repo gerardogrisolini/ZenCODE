@@ -98,7 +98,13 @@ final class CDPSession: @unchecked Sendable {
     private let lock = NSLock()
     private var nextIDCounter = 1
     private var pending: [Int: CheckedContinuation<[String: Any], Error>] = [:]
-    private var cancelledPendingIDs = Set<Int>()
+    /// Terminal outcomes that arrived before a command's continuation was
+    /// registered (timeout, response, send error, cancellation, disconnect).
+    /// Routing every outcome through `resolve(id:with:)` makes the ordering
+    /// between registration and resolution irrelevant: whichever runs second
+    /// consumes the state left by the first, so no outcome is lost and no
+    /// continuation is resumed twice.
+    private var earlyResults: [Int: Result<[String: Any], Error>] = [:]
     private var eventHandlers: [UUID: @Sendable (CDPEvent) -> Void] = [:]
     private var receiveTask: Task<Void, Never>?
 
@@ -188,9 +194,10 @@ final class CDPSession: @unchecked Sendable {
         let timeoutTask = Task { [weak self, timeoutNanoseconds, timeoutSeconds] in
             try? await Task.sleep(nanoseconds: timeoutNanoseconds)
             guard !Task.isCancelled else { return }
-            if let leftover = self?.removePending(id: id) {
-                leftover.resume(throwing: CDPError.commandFailed("Command timed out after \(timeoutSeconds)s"))
-            }
+            self?.resolve(
+                id: id,
+                with: .failure(CDPError.commandFailed("Command timed out after \(timeoutSeconds)s"))
+            )
         }
         defer { timeoutTask.cancel() }
 
@@ -200,15 +207,14 @@ final class CDPSession: @unchecked Sendable {
 
                 webSocket.send(.string(text)) { [weak self] sendError in
                     guard let self, let sendError else { return }
-                    if let removed = self.removePending(id: id) {
-                        removed.resume(throwing: sendError)
-                    }
+                    self.resolve(id: id, with: .failure(sendError))
                 }
             }
         } onCancel: {
-            if let removed = cancelPending(id: id) {
-                removed.resume(throwing: CancellationError())
-            }
+            // Cancellation may race ahead of registerPending. resolve() stashes
+            // an early failure so the continuation, once registered, resumes
+            // immediately instead of waiting for a response that never arrives.
+            resolve(id: id, with: .failure(CancellationError()))
         }
     }
 
@@ -394,29 +400,69 @@ final class CDPSession: @unchecked Sendable {
 
     private func registerPending(id: Int, continuation: CheckedContinuation<[String: Any], Error>) {
         lock.lock()
-        if cancelledPendingIDs.remove(id) != nil {
-            lock.unlock()
-            continuation.resume(throwing: CancellationError())
-            return
+        // If an outcome (response, timeout, cancellation, send error, or
+        // disconnect) already arrived, consume it and resume immediately
+        // instead of registering a continuation that nothing will resume.
+        let early = earlyResults.removeValue(forKey: id)
+        if early == nil {
+            pending[id] = continuation
         }
-        pending[id] = continuation
         lock.unlock()
+        if let early {
+            continuation.resume(with: early)
+        }
     }
 
-    private func removePending(id: Int) -> CheckedContinuation<[String: Any], Error>? {
+    /// Single terminal path for every pending-command outcome: timeout,
+    /// cancellation, send error, response, and disconnect. Serialised through
+    /// `lock`, it removes the registered continuation (if any) and resumes it;
+    /// otherwise it stashes the outcome in `earlyResults` so the eventual
+    /// `registerPending` resumes immediately. Because the continuation is only
+    /// ever removed once, exactly one caller resumes it, so registration and
+    /// resolution can happen in either order without losing or double-firing
+    /// the outcome. First-write-wins keeps the earliest cause when two outcomes
+    /// race before registration.
+    private func resolve(id: Int, with result: Result<[String: Any], Error>) {
+        let continuation = removePendingContinuation(id)
+        guard let continuation else {
+            stashEarlyResult(id, result: result)
+            return
+        }
+        // Route the outcome through the unchecked early-results store and read
+        // it back via a separate function. The non-Sendable `[String: Any]`
+        // payload is not tracked as caller task-isolated across the function
+        // boundary (the same reason `registerPending` resumes safely from that
+        // store), so it can cross the continuation resume boundary.
+        stashEarlyResult(id, result: result)
+        guard let outcome = takeEarlyResult(id) else {
+            return
+        }
+        switch outcome {
+        case let .success(value):
+            continuation.resume(returning: value)
+        case let .failure(error):
+            continuation.resume(throwing: error)
+        }
+    }
+
+    private func removePendingContinuation(_ id: Int) -> CheckedContinuation<[String: Any], Error>? {
         lock.lock()
         defer { lock.unlock() }
         return pending.removeValue(forKey: id)
     }
 
-    private func cancelPending(id: Int) -> CheckedContinuation<[String: Any], Error>? {
+    private func stashEarlyResult(_ id: Int, result: Result<[String: Any], Error>) {
+        lock.lock()
+        if earlyResults[id] == nil {
+            earlyResults[id] = result
+        }
+        lock.unlock()
+    }
+
+    private func takeEarlyResult(_ id: Int) -> Result<[String: Any], Error>? {
         lock.lock()
         defer { lock.unlock() }
-        if let continuation = pending.removeValue(forKey: id) {
-            return continuation
-        }
-        cancelledPendingIDs.insert(id)
-        return nil
+        return earlyResults.removeValue(forKey: id)
     }
 
     private func setReceiveTask(_ task: Task<Void, Never>) {
@@ -459,15 +505,12 @@ final class CDPSession: @unchecked Sendable {
         }
 
         if let id = json["id"] as? Int {
-            let continuation = removePending(id: id)
-            guard let continuation else { return }
-
             if let error = json["error"] {
                 let message = (error as? [String: Any])?["message"] as? String
                     ?? String(describing: error)
-                continuation.resume(throwing: CDPError.commandFailed(message))
+                resolve(id: id, with: .failure(CDPError.commandFailed(message)))
             } else {
-                continuation.resume(returning: json)
+                resolve(id: id, with: .success(json))
             }
             return
         }
@@ -483,10 +526,16 @@ final class CDPSession: @unchecked Sendable {
     }
 
     private func failAll(_ error: Error) {
+        let failure = Result<[String: Any], Error>.failure(error)
         lock.lock()
         let allPending = pending
         pending.removeAll()
-        cancelledPendingIDs.removeAll()
+        // Supersede any not-yet-registered outcomes with the terminal failure
+        // so a later registerPending cannot resume a command with a stale
+        // per-command result once the session is gone.
+        for id in earlyResults.keys {
+            earlyResults[id] = failure
+        }
         lock.unlock()
         for (_, continuation) in allPending {
             continuation.resume(throwing: error)
