@@ -14,17 +14,25 @@ import NIOHTTP1
 /// Calling `next()` drives a bounded read from the underlying NIO channel. A
 /// second iterator is rejected rather than duplicating or buffering a remote
 /// stream. Cancelling a suspended `next()` closes the connection immediately.
+///
+/// This handle and its `AsyncIterator` retain a shared `RemoteTransportLifetimeToken`.
+/// The token is the sole owner of the connection's lifetime: releasing the last
+/// copy (body, response, SSE sequence or iterator) closes the channel and tears
+/// down the scoped run-task, so a consumer that stops draining the stream can
+/// never leak the driver actor that the run-task retains.
 public struct RemoteHTTPBody: AsyncSequence, Sendable {
     public typealias Element = Data
 
     let storage: RemoteHTTPBodyStorage
+    let lifetime: RemoteTransportLifetimeToken
 
-    init(storage: RemoteHTTPBodyStorage) {
+    init(storage: RemoteHTTPBodyStorage, lifetime: RemoteTransportLifetimeToken) {
         self.storage = storage
+        self.lifetime = lifetime
     }
 
     public func makeAsyncIterator() -> AsyncIterator {
-        AsyncIterator(storage: storage)
+        AsyncIterator(storage: storage, lifetime: lifetime)
     }
 
     /// Creates an SSE decoder over this same unicast body. Do not also iterate
@@ -35,11 +43,16 @@ public struct RemoteHTTPBody: AsyncSequence, Sendable {
 
     public struct AsyncIterator: AsyncIteratorProtocol {
         private let storage: RemoteHTTPBodyStorage
+        private let lifetime: RemoteTransportLifetimeToken
         private let identifier = UUID()
         private var isFinished = false
 
-        fileprivate init(storage: RemoteHTTPBodyStorage) {
+        fileprivate init(
+            storage: RemoteHTTPBodyStorage,
+            lifetime: RemoteTransportLifetimeToken
+        ) {
             self.storage = storage
+            self.lifetime = lifetime
         }
 
         public mutating func next() async throws -> Data? {
@@ -258,6 +271,20 @@ actor RemoteHTTPBodyStorage {
 
     func fail(_ error: any Error) {
         finish(throwing: error)
+    }
+
+    /// Tears the driver down on behalf of the lifetime token when the last
+    /// public handle is released while a consumer is no longer draining the
+    /// stream. It reuses the normal terminal path so the run-task parked in
+    /// `nextRequest()` is resumed, which lets `executeThenClose` complete and
+    /// the driver be released. Idempotent.
+    ///
+    /// This is reached only through actual handle release, never through a
+    /// channel-closure observation, so it cannot mask a Content-Length
+    /// truncation error (the NIO iterator remains the sole framing authority
+    /// while a consumer holds the handle).
+    func abandon() {
+        finish(throwing: RemoteTransportError.closed)
     }
 
     private func cancelActiveRead() {

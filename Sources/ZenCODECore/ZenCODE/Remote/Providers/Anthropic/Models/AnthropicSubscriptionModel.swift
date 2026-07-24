@@ -47,22 +47,8 @@ public nonisolated enum AnthropicSubscriptionModel {
             maxOutputTokens: largeMaxOutputTokens
         ),
         modelOption(
-            modelID: "claude-opus-4-8",
-            title: "Claude Opus 4.8",
-            subtitle: "Frontier reasoning",
-            contextWindowTokenLimit: largeContextWindowTokenLimit,
-            maxOutputTokens: largeMaxOutputTokens
-        ),
-        modelOption(
-            modelID: "claude-opus-4-7",
-            title: "Claude Opus 4.7",
-            subtitle: "Frontier reasoning",
-            contextWindowTokenLimit: largeContextWindowTokenLimit,
-            maxOutputTokens: largeMaxOutputTokens
-        ),
-        modelOption(
-            modelID: "claude-opus-4-6",
-            title: "Claude Opus 4.6",
+            modelID: "claude-opus-5",
+            title: "Claude Opus 5",
             subtitle: "Frontier reasoning",
             contextWindowTokenLimit: largeContextWindowTokenLimit,
             maxOutputTokens: largeMaxOutputTokens
@@ -75,15 +61,8 @@ public nonisolated enum AnthropicSubscriptionModel {
             maxOutputTokens: largeMaxOutputTokens
         ),
         modelOption(
-            modelID: "claude-sonnet-4-6",
-            title: "Claude Sonnet 4.6",
-            subtitle: "Everyday coding",
-            contextWindowTokenLimit: largeContextWindowTokenLimit,
-            maxOutputTokens: defaultMaxOutputTokens
-        ),
-        modelOption(
             modelID: "claude-haiku-4-5",
-            title: "Claude Haiku 4.5 (latest)",
+            title: "Claude Haiku 4.5",
             subtitle: "Fast small model",
             contextWindowTokenLimit: defaultContextWindowTokenLimit,
             maxOutputTokens: defaultMaxOutputTokens

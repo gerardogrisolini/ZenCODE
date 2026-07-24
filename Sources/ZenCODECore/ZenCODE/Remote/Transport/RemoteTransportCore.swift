@@ -113,10 +113,14 @@ public final class RemoteTransportCore: Sendable {
 
                 do {
                     let bodyStorage = RemoteHTTPBodyStorage(lease: lease)
-                    Task { [weak bodyStorage] in
-                        guard let bodyStorage else {
-                            return
-                        }
+                    let lifetime = RemoteTransportLifetimeToken(lease: lease)
+                    // The run-task captures the driver strongly (it must drive
+                    // NIO for the channel's whole life) and the token weakly, so
+                    // the token can be released by the public handle without the
+                    // task forming a retain cycle back to it. The token cancels
+                    // this task and abandons the driver when the last handle is
+                    // released, which is what unblocks `nextRequest()`.
+                    let runTask = Task<Void, Never> { [weak lifetime] in
                         do {
                             try await asyncChannel.executeThenClose(
                                 isolation: bodyStorage
@@ -132,13 +136,26 @@ public final class RemoteTransportCore: Sendable {
                         } catch {
                             await bodyStorage.fail(error)
                         }
+                        lifetime?.runDidFinish()
                     }
-                    let head = try await bodyStorage.receiveHead()
-                    return RemoteHTTPStreamingResponse(
-                        status: head.status,
-                        headers: RemoteHTTPHeaders(head.headers),
-                        body: RemoteHTTPBody(storage: bodyStorage)
-                    )
+                    lifetime.install(runTask: runTask) { [weak bodyStorage] in
+                        await bodyStorage?.abandon()
+                    }
+                    do {
+                        let head = try await bodyStorage.receiveHead()
+                        return RemoteHTTPStreamingResponse(
+                            status: head.status,
+                            headers: RemoteHTTPHeaders(head.headers),
+                            body: RemoteHTTPBody(
+                                storage: bodyStorage,
+                                lifetime: lifetime
+                            )
+                        )
+                    } catch {
+                        lifetime.invalidate()
+                        lease.close()
+                        throw error
+                    }
                 } catch {
                     lease.close()
                     throw error
@@ -254,28 +271,33 @@ public final class RemoteTransportCore: Sendable {
                 pendingConnection.attach(channel)
                 do {
                     let asyncChannel = try await upgradeState.wait()
-                    let connection = RemoteWebSocketConnection(
+                    let driver = RemoteWebSocketDriver(
                         allocator: channel.allocator,
                         lease: lease
                     )
-                    Task { [weak connection] in
-                        guard let connection else {
-                            return
-                        }
+                    let lifetime = RemoteTransportLifetimeToken(lease: lease)
+                    let runTask = Task<Void, Never> { [weak lifetime] in
                         do {
                             try await asyncChannel.executeThenClose(
-                                isolation: connection
+                                isolation: driver
                             ) { inbound, outbound in
-                                try await connection.run(
+                                try await driver.run(
                                     inbound: inbound,
                                     outbound: outbound
                                 )
                             }
                         } catch {
-                            await connection.fail(error)
+                            await driver.fail(error)
                         }
+                        lifetime?.runDidFinish()
                     }
-                    return connection
+                    lifetime.install(runTask: runTask) { [weak driver] in
+                        await driver?.abandon()
+                    }
+                    return RemoteWebSocketConnection(
+                        driver: driver,
+                        lifetime: lifetime
+                    )
                 } catch {
                     lease.close()
                     throw error

@@ -9,24 +9,100 @@ import Foundation
 @preconcurrency import NIOCore
 import NIOWebSocket
 
+/// Nil-safe holder for a single parked WebSocket receive continuation, so a
+/// caller cancellation and the read loop can both try to resume it without
+/// ever resuming a `CheckedContinuation` twice.
+private final class RemoteWebSocketReadHolder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<RemoteWebSocketFrame?, any Error>?
+
+    init(_ continuation: CheckedContinuation<RemoteWebSocketFrame?, any Error>) {
+        self.continuation = continuation
+    }
+
+    func resume(returning frame: RemoteWebSocketFrame?) {
+        lock.lock()
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(returning: frame)
+    }
+
+    func resume(throwing error: any Error) {
+        lock.lock()
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(throwing: error)
+    }
+}
+
 /// Actor-isolated WebSocket connection returned by `RemoteTransportCore`.
 ///
+/// This is a thin public handle. All NIO state, queues, waiters and frame
+/// handling live in the internal `RemoteWebSocketDriver` actor, and this handle
+/// retains the driver together with a `RemoteTransportLifetimeToken`. Releasing
+/// the last reference to the connection closes the channel and tears down the
+/// scoped run-task, so a caller that stops using an upgraded connection can no
+/// longer leak the driver actor the run-task retains.
+///
 /// All access to NIO's inbound stream and outbound writer remains inside the
-/// `executeThenClose` scope that owns the channel. Public operations are
-/// queued by this actor and serviced by two scoped loops: one drains write
-/// requests, the other drains read requests. Keeping the loops independent is
-/// required for correctness: a caller must be able to send a frame while
-/// another caller is already parked on `receive()`, otherwise a
-/// request/response protocol over an idle connection deadlocks.
+/// `executeThenClose` scope that owns the channel. Public operations are queued
+/// by the driver and serviced by two scoped loops: one drains write requests,
+/// the other drains read requests. Keeping the loops independent is required
+/// for correctness: a caller must be able to send a frame while another caller
+/// is already parked on `receive()`, otherwise a request/response protocol over
+/// an idle connection deadlocks. Delegating to the reentrant driver actor
+/// preserves that property.
 public actor RemoteWebSocketConnection {
+    let driver: RemoteWebSocketDriver
+    private let lifetime: RemoteTransportLifetimeToken
+
+    init(
+        driver: RemoteWebSocketDriver,
+        lifetime: RemoteTransportLifetimeToken
+    ) {
+        self.driver = driver
+        self.lifetime = lifetime
+    }
+
+    /// Sends one WebSocket frame. Client frames are always masked as required
+    /// by RFC 6455, including control frames.
+    public func send(_ frame: RemoteWebSocketFrame) async throws {
+        try await driver.send(frame)
+    }
+
+    /// Receives one frame, or `nil` after a clean peer/channel closure.
+    public func receive() async throws -> RemoteWebSocketFrame? {
+        try await driver.receive()
+    }
+
+    /// Sends a close control frame and closes the underlying transport channel.
+    /// Callers that require the peer close acknowledgement can use `send(.close)`
+    /// followed by `receive()` instead.
+    public func close(
+        code: UInt16 = 1000,
+        reason: String? = nil
+    ) async throws {
+        try await driver.close(code: code, reason: reason)
+    }
+}
+
+/// Internal driver actor for an upgraded WebSocket connection.
+///
+/// It owns the queues, waiters, the read/write loops, the frame codec and the
+/// channel lease. The scoped run-task captures this actor (strongly) and a weak
+/// reference back to the lifetime token; the public handle captures the token.
+/// `abandon()`, invoked from the token when the last handle is released, wakes
+/// both loop waiters so the run-task can complete and release this actor even
+/// when the caller dropped the connection without closing it.
+actor RemoteWebSocketDriver {
     private enum WriteRequest {
         case send(RemoteWebSocketFrame, CheckedContinuation<Void, any Error>)
         case close(UInt16, String?, CheckedContinuation<Void, any Error>)
     }
 
-    private typealias ReadRequest = CheckedContinuation<
-        RemoteWebSocketFrame?, any Error
-    >
+    private typealias ReadRequest = RemoteWebSocketReadHolder
 
     private let allocator: ByteBufferAllocator
     private let lease: RemoteChannelLease
@@ -35,6 +111,7 @@ public actor RemoteWebSocketConnection {
     private var writeWaiter: CheckedContinuation<WriteRequest?, Never>?
     private var readWaiter: CheckedContinuation<ReadRequest?, Never>?
     private var isReceiving = false
+    private var activeRead: ReadRequest?
     private var didSendClose = false
     private var isClosed = false
 
@@ -49,7 +126,7 @@ public actor RemoteWebSocketConnection {
 
     /// Sends one WebSocket frame. Client frames are always masked as required
     /// by RFC 6455, including control frames.
-    public func send(_ frame: RemoteWebSocketFrame) async throws {
+    func send(_ frame: RemoteWebSocketFrame) async throws {
         guard !isClosed else {
             throw RemoteTransportError.closed
         }
@@ -63,7 +140,7 @@ public actor RemoteWebSocketConnection {
     }
 
     /// Receives one frame, or `nil` after a clean peer/channel closure.
-    public func receive() async throws -> RemoteWebSocketFrame? {
+    func receive() async throws -> RemoteWebSocketFrame? {
         guard !isClosed else {
             return nil
         }
@@ -74,10 +151,16 @@ public actor RemoteWebSocketConnection {
         do {
             return try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { continuation in
-                    enqueueRead(continuation)
+                    let holder = RemoteWebSocketReadHolder(continuation)
+                    activeRead = holder
+                    enqueueRead(holder)
                 }
             } onCancel: {
+                // Resume the parked receive directly so the caller observes
+                // cancellation rather than a clean EOF, then close the channel.
+                // The actor hop guarantees `activeRead` is set before this runs.
                 lease.close()
+                Task { await self.cancelActiveReceive() }
             }
         } catch {
             isReceiving = false
@@ -86,9 +169,7 @@ public actor RemoteWebSocketConnection {
     }
 
     /// Sends a close control frame and closes the underlying transport channel.
-    /// Callers that require the peer close acknowledgement can use `send(.close)`
-    /// followed by `receive()` instead.
-    public func close(
+    func close(
         code: UInt16 = 1000,
         reason: String? = nil
     ) async throws {
@@ -178,12 +259,12 @@ public actor RemoteWebSocketConnection {
     ) async throws {
         var iterator = inbound.makeAsyncIterator()
         do {
-            while let continuation = await nextReadRequest() {
+            while let holder = await nextReadRequest() {
                 do {
                     guard let rawFrame = try await iterator.next() else {
                         isReceiving = false
                         finish()
-                        continuation.resume(returning: nil)
+                        holder.resume(returning: nil)
                         continue
                     }
                     let frame = try await Self.decode(
@@ -193,13 +274,13 @@ public actor RemoteWebSocketConnection {
                         didSendClose: didSendClose
                     )
                     isReceiving = false
-                    continuation.resume(returning: frame)
+                    holder.resume(returning: frame)
                     if case .close = frame {
                         finish()
                     }
                 } catch {
                     isReceiving = false
-                    continuation.resume(throwing: error)
+                    holder.resume(throwing: error)
                     throw error
                 }
             }
@@ -211,6 +292,25 @@ public actor RemoteWebSocketConnection {
 
     func fail(_ error: any Error) {
         finish(throwing: error)
+    }
+
+    /// Tears the driver down on behalf of the lifetime token when the last
+    /// public handle is released. It reuses the normal terminal path so both
+    /// loop waiters are resumed, which lets `executeThenClose` complete and the
+    /// driver be released. Idempotent. Reached only through actual handle
+    /// release, never through a channel-closure observation.
+    func abandon() {
+        finish(throwing: RemoteTransportError.closed)
+    }
+
+    /// Resumes a parked receive with cancellation. Called from the receive
+    /// cancellation handler through an actor hop; by then `activeRead` is set.
+    func cancelActiveReceive() {
+        guard let activeRead else {
+            return
+        }
+        self.activeRead = nil
+        activeRead.resume(throwing: CancellationError())
     }
 
     private func enqueueWrite(_ request: WriteRequest) {
@@ -229,17 +329,17 @@ public actor RemoteWebSocketConnection {
         }
     }
 
-    private func enqueueRead(_ continuation: ReadRequest) {
+    private func enqueueRead(_ holder: ReadRequest) {
         guard !isClosed else {
             isReceiving = false
-            continuation.resume(returning: nil)
+            holder.resume(returning: nil)
             return
         }
         if let readWaiter {
             self.readWaiter = nil
-            readWaiter.resume(returning: continuation)
+            readWaiter.resume(returning: holder)
         } else {
-            pendingReads.append(continuation)
+            pendingReads.append(holder)
         }
     }
 
@@ -282,15 +382,23 @@ public actor RemoteWebSocketConnection {
             }
         }
         pendingWrites.removeAll()
-        for continuation in pendingReads {
+        for holder in pendingReads {
             isReceiving = false
             if error == nil {
-                continuation.resume(returning: nil)
+                holder.resume(returning: nil)
             } else {
-                continuation.resume(throwing: terminalError)
+                holder.resume(throwing: terminalError)
             }
         }
         pendingReads.removeAll()
+        if let activeRead {
+            self.activeRead = nil
+            if error == nil {
+                activeRead.resume(returning: nil)
+            } else {
+                activeRead.resume(throwing: terminalError)
+            }
+        }
         if let writeWaiter {
             self.writeWaiter = nil
             writeWaiter.resume(returning: nil)

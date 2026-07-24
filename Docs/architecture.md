@@ -79,6 +79,21 @@ consumers, but are never consulted for generation I/O. The compatibility facade
 is deliberately isolated from the transport engine; it preserves API inspection
 and injection without restoring a second networking path.
 
+Each opened HTTP/SSE response and upgraded WebSocket separates its public handle
+from the NIO driver actor that the scoped `executeThenClose` run-task retains.
+`RemoteHTTPBody` / `RemoteHTTPStreamingResponse` / `RemoteSSEEventStream` (and
+their iterators) and `RemoteWebSocketConnection` are the handles; they retain a
+shared internal `RemoteTransportLifetimeToken`, while the run-task captures only
+the driver actor and a weak reference to the token. Releasing the last handle
+copy closes the channel lease, cancels the run-task, and abandons the driver's
+continuation-based waiters, so the run-task completes and the driver is released
+even when a consumer stops draining a stream. This is reached only through
+actual handle release, never through a `channel.closeFuture` observation: the NIO
+inbound iterator stays the sole authority for a clean end-of-stream versus a
+Content-Length or framing truncation error, so such errors are never masked as a
+clean `nil` (the earlier regression).
+
+
 Authentication remains intentionally separate from generation transport.
 ChatGPT uses the macOS local-browser callback (including its callback listener)
 and the non-macOS device-code flow; its OAuth exchanges retain their

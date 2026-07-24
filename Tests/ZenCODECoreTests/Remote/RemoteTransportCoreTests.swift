@@ -250,6 +250,181 @@ struct RemoteTransportCoreTests {
         try await transport.shutdown()
         await server.shutdown()
     }
+
+    @Test("Releasing an abandoned HTTP/SSE stream tears down its parked driver")
+    func httpStreamAbandonmentReleasesParkedDriver() async throws {
+        // The server keeps the body open; the consumer reads one event and then
+        // stops. The run-task is parked in `nextRequest()` waiting for the next
+        // read request, which is fed by the consumer (not by the NIO iterator),
+        // so nothing but the lifetime token can resume it. Dropping every handle
+        // copy must release the driver the run-task retains.
+        let server = try await LocalHTTPTestServer.start { context, _ in
+            var headers = HTTPHeaders()
+            headers.add(name: "content-type", value: "text/event-stream")
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(
+                    .head(
+                        HTTPResponseHead(
+                            version: .http1_1,
+                            status: .ok,
+                            headers: headers
+                        )
+                    )
+                ),
+                promise: nil
+            )
+            var body = context.channel.allocator.buffer(capacity: 64)
+            body.writeString("data: hello\n\n")
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(.body(.byteBuffer(body))),
+                promise: nil
+            )
+        }
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+
+        let storageBox: WeakBox<RemoteHTTPBodyStorage>
+        do {
+            storageBox = try await {
+                let response = try await transport.openHTTPStream(
+                    RemoteHTTPStreamingRequest(url: server.url(path: "/abandon"))
+                )
+                var events = response.body.sseEvents().makeAsyncIterator()
+                let event = try await events.next()
+                #expect(event?.data == "hello")
+                // Returning releases `response` and `events`, dropping the last
+                // lifetime token copies while the run-task is still parked.
+                return WeakBox(response.body.storage)
+            }()
+        } catch {
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            throw error
+        }
+
+        try await awaitDeallocated(storageBox)
+        try await transport.shutdown()
+        await server.shutdown()
+    }
+
+    @Test("A truncated Content-Length body surfaces as an error, never a clean EOF")
+    func httpTruncatedContentLengthSurfacesError() async throws {
+        let payload = "data: partial\n\n"
+        let actualBytes = payload.utf8.count
+        let server = try await LocalHTTPTestServer.start { context, _ in
+            var headers = HTTPHeaders()
+            headers.add(name: "content-type", value: "text/event-stream")
+            // Declare one byte more than is sent, then close without `.end`.
+            headers.add(
+                name: "content-length",
+                value: String(actualBytes + 1)
+            )
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(
+                    .head(
+                        HTTPResponseHead(
+                            version: .http1_1,
+                            status: .ok,
+                            headers: headers
+                        )
+                    )
+                ),
+                promise: nil
+            )
+            var body = context.channel.allocator.buffer(capacity: actualBytes)
+            body.writeString(payload)
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(.body(.byteBuffer(body))),
+                promise: nil
+            )
+            // Close the socket mid-body to truncate the declared length.
+            context.close(promise: nil)
+        }
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+
+        do {
+            let response = try await transport.openHTTPStream(
+                RemoteHTTPStreamingRequest(url: server.url(path: "/truncate"))
+            )
+            var events = response.body.sseEvents().makeAsyncIterator()
+            let first = try await events.next()
+            #expect(first?.data == "partial")
+            do {
+                _ = try await events.next()
+                Issue.record(
+                    "A truncated Content-Length body returned a value instead of erroring."
+                )
+            } catch let error as RemoteTransportError {
+                // The NIO framing error must surface as a transport error and
+                // never as `nil` (which would mask the truncation).
+                #expect(error != .closed)
+            }
+        } catch {
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            throw error
+        }
+
+        try await transport.shutdown()
+        await server.shutdown()
+    }
+
+    @Test("Releasing an abandoned WebSocket connection tears down its parked driver")
+    func webSocketAbandonmentReleasesParkedDriver() async throws {
+        // After upgrade the read/write loops park in their queue waiters waiting
+        // for consumer requests, which are not fed by the NIO iterator. Dropping
+        // the connection must release the driver the run-task retains.
+        let server = try await LocalWebSocketTestServer.start()
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+
+        let driverBox: WeakBox<RemoteWebSocketDriver>
+        do {
+            driverBox = try await {
+                let connection = try await transport.connectWebSocket(
+                    RemoteWebSocketRequest(url: server.url(path: "/abandon"))
+                )
+                // Returning releases `connection`, dropping the lifetime token
+                // while both loops are parked in their queue waiters.
+                return WeakBox(await connection.driver)
+            }()
+        } catch {
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            throw error
+        }
+
+        try await awaitDeallocated(driverBox)
+        try await transport.shutdown()
+        await server.shutdown()
+    }
+
+    @Test("Cancelling a parked WebSocket receive reports cancellation and closes the channel")
+    func webSocketCancellationResumesParkedReceive() async throws {
+        let server = try await LocalWebSocketTestServer.start()
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+
+        do {
+            let connection = try await transport.connectWebSocket(
+                RemoteWebSocketRequest(url: server.url(path: "/cancel"))
+            )
+            let receiveTask = Task { _ = try await connection.receive() }
+            await Task.yield()
+            receiveTask.cancel()
+
+            do {
+                _ = try await receiveTask.value
+                Issue.record("The cancelled WebSocket receive unexpectedly completed.")
+            } catch is CancellationError {
+                // Expected: the parked receive resumes with cancellation.
+            }
+        } catch {
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            throw error
+        }
+
+        try await transport.shutdown()
+        await server.shutdown()
+    }
 }
 
 private extension RemoteTransportCore {
@@ -303,6 +478,30 @@ private func wait(for signal: TestSignal) async throws {
         }
         return result
     }
+}
+
+/// Weak holder for an internal driver actor, so a test can observe that the
+/// parked run-task released it after the last public handle was dropped.
+private final class WeakBox<T: AnyObject>: @unchecked Sendable {
+    weak var value: T?
+    init(_ value: T) { self.value = value }
+}
+
+/// Polls until `box.value` becomes `nil`. The bounded deadline is only a final
+/// protection: the proof is that the object is actually deallocated, never a
+/// fixed sleep.
+private func awaitDeallocated<T: AnyObject>(
+    _ box: WeakBox<T>,
+    timeout: Duration = .seconds(5)
+) async throws {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while ContinuousClock.now < deadline {
+        if box.value == nil {
+            return
+        }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    Issue.record("The driver was not deallocated within \(timeout.components.seconds) seconds.")
 }
 
 private final class LocalHTTPTestServer: @unchecked Sendable {
