@@ -421,7 +421,7 @@ enum TerminalChatTextFormatting {
 
     /// Warm gold distinguishes the summary heading while staying harmonious with
     /// the orange card accents, yellow highlights, and muted gray metadata.
-    static let fileChangeSummaryHeaderANSIColor = "\u{1B}[1;38;5;220m"
+    static let fileChangeSummaryHeaderANSIColor = "\u{1B}[38;5;208m"
 
     static func failureMessageColorApplied(to text: String, isEnabled: Bool) -> String {
         guard isEnabled, !text.isEmpty else {

@@ -347,6 +347,7 @@ if [ -z "$PACKAGE_DIR" ]; then
 fi
 SCRIPT_DIR="${PACKAGE_DIR}/Scripts"
 source "${SCRIPT_DIR}/feature-catalog.sh"
+source "${SCRIPT_DIR}/install-support.sh"
 
 cd "$PACKAGE_DIR"
 
@@ -404,13 +405,11 @@ $SUDO mkdir -p "$FEATURES_DIR"
 # would make runtime discovery expose an unusable tool provider.
 $SUDO rm -f "${FEATURES_DIR}/xcode-tools-feature"
 
-$SUDO cp "${BIN_PATH}/zen" "${INSTALL_DIR}/zen"
-$SUDO chmod +x "${INSTALL_DIR}/zen"
+zencode_install_executable_atomically "${BIN_PATH}/zen" "${INSTALL_DIR}/zen"
 
 for product in "${FEATURE_PRODUCTS[@]}"; do
     if [ -x "${BIN_PATH}/${product}" ]; then
-        $SUDO cp "${BIN_PATH}/${product}" "${FEATURES_DIR}/${product}"
-        $SUDO chmod +x "${FEATURES_DIR}/${product}"
+        zencode_install_executable_atomically "${BIN_PATH}/${product}" "${FEATURES_DIR}/${product}"
     else
         echo "Warning: ${product} was not built, skipping." >&2
     fi

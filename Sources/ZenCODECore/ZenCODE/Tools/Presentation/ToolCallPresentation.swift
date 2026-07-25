@@ -149,7 +149,8 @@ public enum ToolCallPresentation {
         "directoryPath",
         "path",
         "command",
-        "pattern"
+        "pattern",
+        "identifier"
     ]
 
     public static func toolLocations(for toolCall: DirectAgentToolCall) -> [[String: Any]] {
