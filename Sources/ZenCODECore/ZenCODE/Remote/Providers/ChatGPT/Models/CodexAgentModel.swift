@@ -78,18 +78,15 @@ public nonisolated enum CodexAgentModel {
     public static let modelID = defaultModelID
     public static let displayTitle = "ChatGPT Subscription"
     public static let displaySubtitle = "ChatGPT Plus/Pro"
-    private static let standardThinkingSupport = ModelThinkingSupport.effort(
+    private static let xhighThinkingSupport = ModelThinkingSupport.effort(
         levels: [.low, .medium, .high, .xhigh]
     )
     private static let maxThinkingSupport = ModelThinkingSupport.effort(
         levels: [.low, .medium, .high, .xhigh, .max]
     )
-    private static let solThinkingSupport = ModelThinkingSupport.effort(
+    private static let ultraThinkingSupport = ModelThinkingSupport.effort(
         levels: [.low, .medium, .high, .xhigh, .max, .ultra],
         defaultSelection: .low
-    )
-    private static let terraThinkingSupport = ModelThinkingSupport.effort(
-        levels: [.low, .medium, .high, .xhigh, .max, .ultra]
     )
     public static let availableModels: [ModelOption] = [
         ModelOption(
@@ -97,14 +94,14 @@ public nonisolated enum CodexAgentModel {
             title: "GPT-5.6 Sol",
             subtitle: "Latest frontier agentic coding model",
             contextWindowTokenLimit: 372_000,
-            thinkingSupport: solThinkingSupport
+            thinkingSupport: ultraThinkingSupport
         ),
         ModelOption(
             modelID: "gpt-5.6-terra",
             title: "GPT-5.6 Terra",
             subtitle: "Balanced agentic coding model for everyday work",
             contextWindowTokenLimit: 372_000,
-            thinkingSupport: terraThinkingSupport
+            thinkingSupport: ultraThinkingSupport
         ),
         ModelOption(
             modelID: "gpt-5.6-luna",
@@ -116,23 +113,9 @@ public nonisolated enum CodexAgentModel {
         ModelOption(
             modelID: "gpt-5.5",
             title: "GPT-5.5",
-            subtitle: "Frontier model for complex coding, research, and real-world work",
+            subtitle: "Legacy model with improved performance",
             contextWindowTokenLimit: 272_000,
-            thinkingSupport: standardThinkingSupport
-        ),
-        ModelOption(
-            modelID: "gpt-5.4",
-            title: "GPT-5.4",
-            subtitle: "Strong model for everyday coding",
-            contextWindowTokenLimit: 272_000,
-            thinkingSupport: standardThinkingSupport
-        ),
-        ModelOption(
-            modelID: "gpt-5.4-mini",
-            title: "GPT-5.4 Mini",
-            subtitle: "Small, fast, and cost-efficient model for simpler coding tasks",
-            contextWindowTokenLimit: 272_000,
-            thinkingSupport: standardThinkingSupport
+            thinkingSupport: xhighThinkingSupport
         )
     ]
     public static var thinkingSupport: ModelThinkingSupport {
@@ -196,7 +179,7 @@ public nonisolated enum CodexAgentModel {
             title: normalizedModelID,
             subtitle: displaySubtitle,
             contextWindowTokenLimit: nil,
-            thinkingSupport: standardThinkingSupport
+            thinkingSupport: xhighThinkingSupport
         )
     }
 
