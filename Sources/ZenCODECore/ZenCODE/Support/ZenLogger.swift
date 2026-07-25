@@ -420,7 +420,7 @@ final class ZenLogSink: Sendable {
             attributes: [.posixPermissions: 0o700]
         )
         if !FileManager.default.fileExists(atPath: url.path) {
-            FileManager.default.createFile(
+            _ = FileManager.default.createFile(
                 atPath: url.path,
                 contents: nil,
                 attributes: [.posixPermissions: 0o600]

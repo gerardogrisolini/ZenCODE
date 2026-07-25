@@ -202,9 +202,15 @@ public enum PromptSkillToolProvider {
         if let value = value as? Int {
             return value
         }
-        if let value = value as? NSNumber,
-           CFNumberIsFloatType(value) == false {
-            return value.intValue
+        if let value = value as? NSNumber {
+            // `objCType` inspects the underlying number type in a cross-platform
+            // way. CoreFoundation's `CFNumberIsFloatType` is Darwin-only, so the
+            // floating-point encodings ("d" = Double, "f" = Float) are checked
+            // directly and rejected, mirroring the original `== false` guard.
+            let typeCode = String(cString: value.objCType)
+            if typeCode != "d" && typeCode != "f" {
+                return value.intValue
+            }
         }
         throw PromptSkillToolProviderError.invalidIntegerArgument(name)
     }
