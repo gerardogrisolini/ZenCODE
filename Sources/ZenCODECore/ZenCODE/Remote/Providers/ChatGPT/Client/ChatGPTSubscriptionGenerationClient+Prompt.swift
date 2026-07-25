@@ -28,7 +28,7 @@ extension ChatGPTSubscriptionGenerationClient {
             throw ChatGPTSubscriptionGenerationError.missingSession
         }
 
-        let credentials = try await CodexAgentModel.loadValidCredentials()
+        var credentials = try await CodexAgentModel.loadValidCredentials()
         let modelLLMID = modelLLMID()
         let modelID = CodexAgentModel.modelID(fromLLMID: modelLLMID)
         await onEvent(.modelLoaded(CodexAgentModel.selectionTitle(forLLMID: modelLLMID)))
@@ -49,7 +49,7 @@ extension ChatGPTSubscriptionGenerationClient {
         session.chatGPTSessionID = chatGPTSessionID
         sessions[sessionID] = session
 
-        let client = ChatGPTSubscriptionResponsesClient(
+        var client = ChatGPTSubscriptionResponsesClient(
             credentials: credentials,
             urlSession: urlSession,
             webSocketPool: webSocketPool
@@ -181,6 +181,23 @@ extension ChatGPTSubscriptionGenerationClient {
                     }
                     if streamInterruptionRetries < Self.maxStreamInterruptionRetries,
                        Self.isRetryableStreamInterruption(error) {
+                        // A rejected WebSocket upgrade with an auth status
+                        // (401/403) means the access token is stale on the
+                        // server even though the local expiry window passed.
+                        // Force a refresh so the next upgrade request carries a
+                        // fresh token before closing and rebuilding the client.
+                        if Self.isWebSocketAuthFailure(error),
+                           let refreshed = try? await ChatGPTSubscriptionAuthService
+                            .refresh(credentials: credentials) {
+                            credentials = refreshed
+                            client = ChatGPTSubscriptionResponsesClient(
+                                credentials: credentials,
+                                baseURL: client.baseURL,
+                                urlSession: urlSession,
+                                webSocketPool: webSocketPool
+                            )
+                            await onEvent(.diagnostic(Self.authRefreshDiagnostic()))
+                        }
                         // A transport failure that the streaming client could
                         // not retry safely (for example the socket closed after
                         // output already streamed). Content deltas are buffered
@@ -339,6 +356,21 @@ extension ChatGPTSubscriptionGenerationClient {
             return false
         }
         return ChatGPTSubscriptionResponsesClient.isRetryableTransportError(error)
+    }
+
+    /// True when the WebSocket upgrade was rejected with an auth-related HTTP
+    /// status (401/403). Such failures warrant a forced token refresh.
+    static func isWebSocketAuthFailure(_ error: Error) -> Bool {
+        if let error = error as? RemoteTransportError,
+           case let .upgradeRejected(status, _) = error {
+            return status == 401 || status == 403
+        }
+        return false
+    }
+
+    static func authRefreshDiagnostic() -> String {
+        "ChatGPT Subscription rejected the WebSocket upgrade with an auth "
+            + "error; refreshed the access token and will retry."
     }
 
     static func continuationUnavailableError(

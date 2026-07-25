@@ -157,7 +157,7 @@ public enum RemoteTransportError: Error, Sendable, Equatable, LocalizedError {
     case invalidWebSocketFrameSize(Int)
     case timeout
     case shutdown
-    case upgradeRejected
+    case upgradeRejected(status: Int, body: String)
     case closed
     case bodyAlreadyConsumed
     case concurrentBodyRead
@@ -182,8 +182,12 @@ public enum RemoteTransportError: Error, Sendable, Equatable, LocalizedError {
             return "Remote transport request timed out."
         case .shutdown:
             return "Remote transport has been shut down."
-        case .upgradeRejected:
-            return "The remote peer rejected the WebSocket upgrade."
+        case let .upgradeRejected(status, body):
+            let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedBody.isEmpty {
+                return "The remote peer rejected the WebSocket upgrade (HTTP \(status))."
+            }
+            return "The remote peer rejected the WebSocket upgrade (HTTP \(status)): \(trimmedBody)"
         case .closed:
             return "Remote transport connection is closed."
         case .bodyAlreadyConsumed:

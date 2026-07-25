@@ -640,6 +640,12 @@ private final class RemoteWebSocketHandshakeRequestHandler:
     private let requestHead: HTTPRequestHead
     private let upgradeState: RemoteWebSocketUpgradeState
     private var didWriteRequest = false
+    /// Status code captured from the rejection response head, if any.
+    private var rejectionStatus: Int?
+    /// Accumulated rejection body for diagnostics (bounded).
+    private var rejectionBody = ""
+    /// Guards against unbounded body accumulation.
+    private static let maxRejectionBodyBytes = 512
 
     init(
         requestHead: HTTPRequestHead,
@@ -668,8 +674,30 @@ private final class RemoteWebSocketHandshakeRequestHandler:
         // On a successful upgrade the NIO upgrade handler buffers the 101
         // response and removes this handler before WebSocket framing is
         // installed. Any HTTP part that reaches us therefore declined it.
-        upgradeState.fail(RemoteTransportError.upgradeRejected)
+        // Capture the status code and a bounded excerpt of the response body
+        // so the caller can distinguish a 401 (expired token), 403 (forbidden),
+        // or 429 (rate limited) from a genuine protocol error.
+        let part = Self.unwrapInboundIn(data)
+        switch part {
+        case .head(let head):
+            rejectionStatus = Int(head.status.code)
+        case .body(let byteBuffer):
+            if rejectionBody.utf8.count < Self.maxRejectionBodyBytes {
+                rejectionBody += String(buffer: byteBuffer)
+            }
+        case .end:
+            failUpgradeRejected()
+        }
         context.fireChannelRead(data)
+    }
+
+    private func failUpgradeRejected() {
+        upgradeState.fail(
+            RemoteTransportError.upgradeRejected(
+                status: rejectionStatus ?? 0,
+                body: rejectionBody
+            )
+        )
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
@@ -678,7 +706,13 @@ private final class RemoteWebSocketHandshakeRequestHandler:
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        upgradeState.fail(RemoteTransportError.closed)
+        // If we already saw a rejection head but the connection closed before
+        // .end, surface the diagnostic status instead of a bare .closed.
+        if rejectionStatus != nil {
+            failUpgradeRejected()
+        } else {
+            upgradeState.fail(RemoteTransportError.closed)
+        }
         context.fireChannelInactive()
     }
 }

@@ -194,13 +194,17 @@ extension ChatGPTSubscriptionResponsesClient {
             switch error {
             case .timeout, .closed, .connectionFailure:
                 return true
+            case let .upgradeRejected(status, _):
+                // Auth and rate-limit failures may recover after a token
+                // refresh or a brief backoff. Every other HTTP status is a
+                // permanent protocol error (e.g. 404, 400) and must not loop.
+                return status == 401 || status == 403 || status == 429
             case .invalidURL,
                  .unsupportedScheme,
                  .invalidHTTPMethod,
                  .invalidHeader,
                  .invalidWebSocketFrameSize,
                  .shutdown,
-                 .upgradeRejected,
                  .bodyAlreadyConsumed,
                  .concurrentBodyRead,
                  .concurrentWebSocketReceive,

@@ -197,6 +197,62 @@ struct RemoteTransportCoreTests {
         await server.shutdown()
     }
 
+    @Test("WebSocket upgrade rejection surfaces the HTTP status and body")
+    func webSocketUpgradeRejectionIncludesStatusAndBody() async throws {
+        let server = try await LocalHTTPTestServer.start { context, _ in
+            var headers = HTTPHeaders()
+            headers.add(name: "content-type", value: "application/json")
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(
+                    .head(
+                        HTTPResponseHead(
+                            version: .http1_1,
+                            status: .unauthorized,
+                            headers: headers
+                        )
+                    )
+                ),
+                promise: nil
+            )
+            var body = context.channel.allocator.buffer(capacity: 64)
+            body.writeString(#"{"error":"invalid_token"}"#)
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(.body(.byteBuffer(body))),
+                promise: nil
+            )
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(.end(nil)),
+                promise: nil
+            )
+        }
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+
+        do {
+            let wsURL = URL(
+                string: server.url(path: "/reject")
+                    .absoluteString.replacingOccurrences(of: "http://", with: "ws://")
+            )!
+            _ = try await transport.connectWebSocket(
+                RemoteWebSocketRequest(url: wsURL)
+            )
+            Issue.record("Expected an upgrade rejection error")
+        } catch let error as RemoteTransportError {
+            guard case let .upgradeRejected(status, body) = error else {
+                Issue.record("Expected upgradeRejected, got \(error)")
+                return
+            }
+            #expect(status == 401)
+            #expect(body.contains("invalid_token"))
+        } catch {
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            Issue.record("Expected RemoteTransportError, got \(error)")
+        }
+
+        try await transport.shutdown()
+        await server.shutdown()
+    }
+
     @Test("WebSocket send completes while a receive is already parked")
     func webSocketSendProceedsWhileReceiveIsPending() async throws {
         let server = try await LocalWebSocketTestServer.start()

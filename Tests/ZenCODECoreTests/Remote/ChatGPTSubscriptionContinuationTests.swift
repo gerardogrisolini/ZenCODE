@@ -224,6 +224,59 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionUpgradeRejectedAuthFailureIsRetryable() {
+        let unauthorized = RemoteTransportError.upgradeRejected(
+            status: 401,
+            body: #"{"error":"invalid_token"}"#
+        )
+        let forbidden = RemoteTransportError.upgradeRejected(
+            status: 403,
+            body: #"{"error":"forbidden"}"#
+        )
+        let rateLimited = RemoteTransportError.upgradeRejected(
+            status: 429,
+            body: #"{"error":"rate_limit"}"#
+        )
+        let badRequest = RemoteTransportError.upgradeRejected(
+            status: 400,
+            body: #"{"error":"bad_request"}"#
+        )
+        let notFound = RemoteTransportError.upgradeRejected(
+            status: 404,
+            body: #"{"error":"not_found"}"#
+        )
+
+        #expect(
+            ChatGPTSubscriptionResponsesClient.isRetryableTransportError(unauthorized)
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.isRetryableTransportError(forbidden)
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.isRetryableTransportError(rateLimited)
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.isRetryableTransportError(badRequest)
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.isRetryableTransportError(notFound)
+        )
+
+        #expect(
+            ChatGPTSubscriptionGenerationClient.isWebSocketAuthFailure(unauthorized)
+        )
+        #expect(
+            ChatGPTSubscriptionGenerationClient.isWebSocketAuthFailure(forbidden)
+        )
+        #expect(
+            !ChatGPTSubscriptionGenerationClient.isWebSocketAuthFailure(rateLimited)
+        )
+        #expect(
+            !ChatGPTSubscriptionGenerationClient.isWebSocketAuthFailure(badRequest)
+        )
+    }
+
+    @Test
     func chatGPTSubscriptionManualFreshReplayDropsUnavailablePreviousResponseID() throws {
         let messages = chatGPTContinuationMessages()
         let continuation = ChatGPTSubscriptionContinuationState(
