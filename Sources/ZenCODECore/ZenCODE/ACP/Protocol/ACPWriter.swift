@@ -14,12 +14,33 @@ import Dispatch
 import Foundation
 
 public actor ACPWriter {
+    /// Sink for encoded JSON-RPC messages. Injectable so tests can observe the
+    /// exact bytes the bridge puts on the wire; production still writes to the
+    /// duplicated stdout handle.
+    public typealias Sink = @Sendable (Data) -> Void
+
     private var nextRequestID = 1
     private var pendingRequests: [String: CheckedContinuation<JSONValue?, Error>] = [:]
+    private let sink: Sink
+    /// Latches on `close()`. Once set nothing is ever written again: late
+    /// prompt results, buffered session updates, tool-call events and error
+    /// responses are dropped instead of reaching a transport the host already
+    /// considers closed.
+    private var isClosed = false
 
-    public init() {}
+    public init(sink: Sink? = nil) {
+        self.sink = sink ?? { data in
+            AgentOutput.standardOutput.write(data)
+            AgentOutput.standardOutput.write(Data([0x0a]))
+        }
+    }
 
     public func request(method: String, params: JSONValue) async throws -> JSONValue? {
+        // A request issued after the fence would suspend forever: the host is
+        // gone, so no response can ever resolve the continuation.
+        guard !isClosed else {
+            throw ACPError.internalError("ACP transport closed.")
+        }
         let id = nextRequestID
         nextRequestID += 1
         let key = String(id)
@@ -85,6 +106,20 @@ public actor ACPWriter {
         }
     }
 
+    /// Closes the transport: fences every later write and fails every pending
+    /// host request.
+    ///
+    /// This is the single choke point that makes the shutdown contract
+    /// enforceable. A prompt still unwinding reaches the host only through this
+    /// actor — its `onEvent` callbacks, its buffered-update flush and its final
+    /// `stopReason` result all funnel here — so latching once is what
+    /// guarantees no result, update or error is emitted after `shutdown()`,
+    /// however far the in-flight work had progressed when the fence landed.
+    public func close(_ error: Error = ACPError.internalError("ACP transport closed.")) {
+        isClosed = true
+        failAllPending(error)
+    }
+
     public func sendResultIfRequest(id: JSONValue?, result: JSONValue) async {
         guard let id else {
             return
@@ -115,6 +150,9 @@ public actor ACPWriter {
     }
 
     public func sendSessionUpdate(sessionID: String, update: JSONValue) {
+        guard !isClosed else {
+            return
+        }
         send(.object([
             "jsonrpc": .string("2.0"),
             "method": .string("session/update"),
@@ -138,6 +176,9 @@ public actor ACPWriter {
     }
 
     private func send(_ object: JSONValue) {
+        guard !isClosed else {
+            return
+        }
         guard let data = try? JSONEncoder().encode(object) else {
             AgentOutput.standardError.writeString("ZenCODE: failed to encode ACP message\n")
             return
@@ -147,7 +188,9 @@ public actor ACPWriter {
     }
 
     private func write(_ data: Data) {
-        AgentOutput.standardOutput.write(data)
-        AgentOutput.standardOutput.write(Data([0x0a]))
+        guard !isClosed else {
+            return
+        }
+        sink(data)
     }
 }

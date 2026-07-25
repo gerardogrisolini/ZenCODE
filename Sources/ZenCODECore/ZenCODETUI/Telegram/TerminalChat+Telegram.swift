@@ -51,16 +51,24 @@ extension TerminalChat {
         }
     }
 
+    /// Forwards incoming Telegram messages into the runtime queue.
+    ///
+    /// The task holds only a weak reference to the chat, so it cannot keep it
+    /// alive after teardown, and it stops as soon as it is cancelled or the chat
+    /// is gone rather than draining messages into a queue nobody consumes.
     func startTelegramForwardingTask(
         eventQueue: TerminalChatEventQueue
     ) -> Task<Void, Never> {
         let service = telegramControlService
         return Task { [weak self] in
             for await message in service.incomingMessages {
-                guard self != nil else {
+                if Task.isCancelled || self == nil {
                     return
                 }
-                eventQueue.send(.telegramMessage(message))
+                guard eventQueue.send(.telegramMessage(message)) else {
+                    // The runtime loop has finished; stop forwarding.
+                    return
+                }
             }
         }
     }
@@ -69,7 +77,8 @@ extension TerminalChat {
         _ message: TerminalTelegramIncomingMessage,
         isGenerating: Bool,
         queuedPrompts: inout [TerminalQueuedPrompt],
-        eventQueue: TerminalChatEventQueue
+        eventQueue: TerminalChatEventQueue,
+        transcriptions: TerminalVoiceTranscriptionRegistry
     ) async {
         guard telegramControlState.isActive else {
             return
@@ -95,7 +104,8 @@ extension TerminalChat {
             await handleTelegramVoiceMessage(
                 voice,
                 chatID: message.chatID,
-                eventQueue: eventQueue
+                eventQueue: eventQueue,
+                transcriptions: transcriptions
             )
             return
         }
@@ -129,7 +139,8 @@ extension TerminalChat {
     func handleTelegramVoiceMessage(
         _ voice: TerminalTelegramVoiceAttachment,
         chatID: Int64,
-        eventQueue: TerminalChatEventQueue
+        eventQueue: TerminalChatEventQueue,
+        transcriptions: TerminalVoiceTranscriptionRegistry
     ) async {
         guard isVoiceConfigured() else {
             await sendTelegramSystemMessage(
@@ -139,11 +150,24 @@ extension TerminalChat {
             return
         }
 
+        // Bounded ownership: a burst of voice notes must not start an unbounded
+        // number of concurrent downloads and transcriptions, and every started
+        // task must be cancellable at teardown.
+        guard let slot = transcriptions.reserveSlot() else {
+            await sendTelegramSystemMessage(
+                "Too many voice messages are being transcribed. Try again shortly.",
+                to: chatID
+            )
+            return
+        }
+
         await sendTelegramSystemMessage("Voice received. Transcribing...", to: chatID)
-        Task { [weak self] in
+        let task = Task { [weak self] in
+            defer { transcriptions.release(slot) }
             guard let self else { return }
             do {
                 let audio = try await self.telegramControlService.downloadVoiceAudio(voice)
+                try Task.checkCancellation()
                 let transcript = try await AgentVoiceTranscriptionService()
                     .transcribe(audio) { message in
                         eventQueue.send(
@@ -163,6 +187,10 @@ extension TerminalChat {
                         )
                     )
                 )
+            } catch is CancellationError {
+                // Teardown or an explicit cancel: the runtime loop is gone, so
+                // no completion event is reported.
+                return
             } catch {
                 eventQueue.send(
                     .voicePromptCompleted(
@@ -174,6 +202,7 @@ extension TerminalChat {
                 )
             }
         }
+        transcriptions.register(task, for: slot)
     }
 
     func writeTelegramSubmittedPrompt(_ prompt: String) async {

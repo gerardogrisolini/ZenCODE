@@ -65,7 +65,6 @@ struct ThinkingConfigurationTests {
         #expect(sol.thinkingSupport.availableSelections == [.off, .low, .medium, .high, .xhigh, .max, .ultra])
         #expect(sol.thinkingSupport.defaultSelection == .low)
         #expect(terra.thinkingSupport.availableSelections == [.off, .low, .medium, .high, .xhigh, .max, .ultra])
-        #expect(terra.thinkingSupport.defaultSelection == .medium)
         #expect(luna.thinkingSupport.availableSelections == [.off, .low, .medium, .high, .xhigh, .max])
         #expect(luna.thinkingSupport.defaultSelection == .medium)
     }

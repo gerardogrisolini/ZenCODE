@@ -349,14 +349,24 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
 
 /// A single-reader frame dispatcher. It keeps application receives and pong
 /// waiters independent, preventing a heartbeat/readiness ping from racing the
-/// Responses stream or consuming a JSON message.
-private actor ChatGPTSubscriptionNIOWebSocketDriver {
-    private let connection: RemoteWebSocketConnection
+/// Responses stream or consuming a JSON message. Application buffering remains
+/// bounded, but capacity is awaited only before an application message is
+/// queued: a full application queue must not prevent the next control frame
+/// from being received and handled.
+actor ChatGPTSubscriptionNIOWebSocketDriver {
+    static let defaultMaximumQueuedApplicationMessages = 64
+
+    private let receiveFrame: @Sendable () async throws -> RemoteWebSocketFrame?
+    private let sendFrame: @Sendable (RemoteWebSocketFrame) async throws -> Void
+    private let closeConnection: @Sendable (UInt16, String?) async throws -> Void
+    private let onFrameDelivered: @Sendable (RemoteWebSocketFrame) async -> Void
+    private let maximumQueuedApplicationMessages: Int
     private var receiveWaiter: CheckedContinuation<
         ChatGPTSubscriptionWebSocketMessage,
         Error
     >?
     private var queuedMessages: [ChatGPTSubscriptionWebSocketMessage] = []
+    private var queueSpaceWaiter: CheckedContinuation<Void, Error>?
     private var pingWaiters: [Data: CheckedContinuation<Void, Error>] = [:]
     private var observedPongs = Set<Data>()
     private var terminalError: Error?
@@ -365,7 +375,36 @@ private actor ChatGPTSubscriptionNIOWebSocketDriver {
     private var fragmentedMessageIsText = false
 
     init(connection: RemoteWebSocketConnection) {
-        self.connection = connection
+        receiveFrame = {
+            try await connection.receive()
+        }
+        sendFrame = { frame in
+            try await connection.send(frame)
+        }
+        closeConnection = { code, reason in
+            try await connection.close(code: code, reason: reason)
+        }
+        onFrameDelivered = { _ in }
+        maximumQueuedApplicationMessages = Self.defaultMaximumQueuedApplicationMessages
+    }
+
+    /// Internal injection points keep dispatcher back-pressure and teardown
+    /// tests deterministic without opening a network connection.
+    init(
+        maximumQueuedApplicationMessages: Int,
+        receiveFrame: @escaping @Sendable () async throws -> RemoteWebSocketFrame?,
+        sendFrame: @escaping @Sendable (RemoteWebSocketFrame) async throws -> Void,
+        closeConnection: @escaping @Sendable (UInt16, String?) async throws -> Void,
+        onFrameDelivered: @escaping @Sendable (RemoteWebSocketFrame) async -> Void = { _ in }
+    ) {
+        self.maximumQueuedApplicationMessages = max(
+            maximumQueuedApplicationMessages,
+            1
+        )
+        self.receiveFrame = receiveFrame
+        self.sendFrame = sendFrame
+        self.closeConnection = closeConnection
+        self.onFrameDelivered = onFrameDelivered
     }
 
     func start() {
@@ -381,15 +420,17 @@ private actor ChatGPTSubscriptionNIOWebSocketDriver {
         try throwIfTerminal()
         switch message {
         case let .text(value):
-            try await connection.send(.text(value))
+            try await sendFrame(.text(value))
         case let .binary(data):
-            try await connection.send(.binary(data))
+            try await sendFrame(.binary(data))
         }
     }
 
     func receive() async throws -> ChatGPTSubscriptionWebSocketMessage {
         if !queuedMessages.isEmpty {
-            return queuedMessages.removeFirst()
+            let message = queuedMessages.removeFirst()
+            resumeQueueSpaceWaiterIfNeeded()
+            return message
         }
         try throwIfTerminal()
         guard receiveWaiter == nil else {
@@ -402,7 +443,9 @@ private actor ChatGPTSubscriptionNIOWebSocketDriver {
                     Error
                 >) in
                 if !queuedMessages.isEmpty {
-                    continuation.resume(returning: queuedMessages.removeFirst())
+                    let message = queuedMessages.removeFirst()
+                    resumeQueueSpaceWaiterIfNeeded()
+                    continuation.resume(returning: message)
                 } else if let terminalError {
                     continuation.resume(throwing: terminalError)
                 } else {
@@ -419,26 +462,25 @@ private actor ChatGPTSubscriptionNIOWebSocketDriver {
     func sendPing() async throws {
         try throwIfTerminal()
         let payload = Self.makePingPayload()
-        try await connection.send(.ping(payload))
+        try await sendFrame(.ping(payload))
         try await waitForPong(payload)
     }
 
     func close(code: UInt16?, reason: Data?) async {
-        if terminalError == nil {
-            finish(RemoteTransportError.closed)
-        }
+        finish(
+            RemoteTransportError.closed,
+            discardingQueuedMessages: true
+        )
         let closeCode = code ?? ChatGPTSubscriptionWebSocketCloseCode.normalClosure
         let closeReason = reason.flatMap { String(data: $0, encoding: .utf8) }
-        try? await connection.close(code: closeCode, reason: closeReason)
+        try? await closeConnection(closeCode, closeReason)
     }
 
     private func cancel() async {
-        if terminalError == nil {
-            finish(CancellationError())
-        }
-        try? await connection.close(
-            code: ChatGPTSubscriptionWebSocketCloseCode.goingAway,
-            reason: nil
+        finish(CancellationError(), discardingQueuedMessages: true)
+        try? await closeConnection(
+            ChatGPTSubscriptionWebSocketCloseCode.goingAway,
+            nil
         )
     }
 
@@ -475,11 +517,12 @@ private actor ChatGPTSubscriptionNIOWebSocketDriver {
     private func readLoop() async {
         while !Task.isCancelled {
             do {
-                guard let frame = try await connection.receive() else {
+                guard let frame = try await receiveFrame() else {
                     finish(RemoteTransportError.closed)
                     return
                 }
-                try receive(frame)
+                try await receive(frame)
+                await onFrameDelivered(frame)
             } catch is CancellationError {
                 finish(CancellationError())
                 return
@@ -490,7 +533,7 @@ private actor ChatGPTSubscriptionNIOWebSocketDriver {
         }
     }
 
-    private func receive(_ frame: RemoteWebSocketFrame) throws {
+    private func receive(_ frame: RemoteWebSocketFrame) async throws {
         switch frame {
         case let .text(text, isFinal):
             guard fragmentedPayload == nil else {
@@ -499,7 +542,7 @@ private actor ChatGPTSubscriptionNIOWebSocketDriver {
                 )
             }
             if isFinal {
-                deliver(.text(text))
+                try await deliver(.text(text))
             } else {
                 fragmentedPayload = Data(text.utf8)
                 fragmentedMessageIsText = true
@@ -511,7 +554,7 @@ private actor ChatGPTSubscriptionNIOWebSocketDriver {
                 )
             }
             if isFinal {
-                deliver(.binary(data))
+                try await deliver(.binary(data))
             } else {
                 fragmentedPayload = data
                 fragmentedMessageIsText = false
@@ -531,9 +574,9 @@ private actor ChatGPTSubscriptionNIOWebSocketDriver {
                             "Fragmented WebSocket text message was not valid UTF-8"
                         )
                     }
-                    deliver(.text(text))
+                    try await deliver(.text(text))
                 } else {
-                    deliver(.binary(fragmentedPayload))
+                    try await deliver(.binary(fragmentedPayload))
                 }
             } else {
                 self.fragmentedPayload = fragmentedPayload
@@ -552,23 +595,78 @@ private actor ChatGPTSubscriptionNIOWebSocketDriver {
         }
     }
 
-    private func deliver(_ message: ChatGPTSubscriptionWebSocketMessage) {
+    private func deliver(_ message: ChatGPTSubscriptionWebSocketMessage) async throws {
         if let waiter = receiveWaiter {
             receiveWaiter = nil
             waiter.resume(returning: message)
-        } else {
-            queuedMessages.append(message)
+            return
         }
+
+        // A frame is received before capacity is awaited, so control frames do
+        // not get stuck behind a full application queue. Recheck after every
+        // suspension so a future dispatcher change cannot turn an invariant
+        // violation into a silently dropped application message. A consumer
+        // can also register while this await is suspended; satisfy it directly
+        // rather than queueing a message it is already waiting for.
+        try await waitForQueueSpace()
+        if let waiter = receiveWaiter {
+            receiveWaiter = nil
+            waiter.resume(returning: message)
+            return
+        }
+        queuedMessages.append(message)
     }
 
-    private func finish(_ error: Error) {
+    private func waitForQueueSpace() async throws {
+        while queuedMessages.count >= maximumQueuedApplicationMessages {
+            try throwIfTerminal()
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, Error>) in
+                if let terminalError {
+                    continuation.resume(throwing: terminalError)
+                } else if queuedMessages.count < maximumQueuedApplicationMessages {
+                    continuation.resume()
+                } else {
+                    // `readLoop` is the sole reader, so there can be only one
+                    // capacity waiter. Replacing it would lose a frame.
+                    precondition(queueSpaceWaiter == nil)
+                    queueSpaceWaiter = continuation
+                }
+            }
+        }
+        try throwIfTerminal()
+    }
+
+    private func resumeQueueSpaceWaiterIfNeeded() {
+        guard queuedMessages.count < maximumQueuedApplicationMessages,
+              let queueSpaceWaiter else {
+            return
+        }
+        self.queueSpaceWaiter = nil
+        queueSpaceWaiter.resume()
+    }
+
+    private func finish(
+        _ error: Error,
+        discardingQueuedMessages: Bool = false
+    ) {
         guard terminalError == nil else {
+            if discardingQueuedMessages {
+                queuedMessages.removeAll(keepingCapacity: false)
+            }
             return
         }
         terminalError = error
         fragmentedPayload = nil
+        if discardingQueuedMessages {
+            queuedMessages.removeAll(keepingCapacity: false)
+        }
         readerTask?.cancel()
         readerTask = nil
+
+        let queueSpaceWaiter = self.queueSpaceWaiter
+        self.queueSpaceWaiter = nil
+        queueSpaceWaiter?.resume(throwing: error)
 
         let receiveWaiter = self.receiveWaiter
         self.receiveWaiter = nil
@@ -591,5 +689,11 @@ private actor ChatGPTSubscriptionNIOWebSocketDriver {
     private static func makePingPayload() -> Data {
         // A unique payload correlates a pong to its readiness/heartbeat ping.
         Data(UUID().uuidString.utf8)
+    }
+
+    /// Visible to deterministic module tests only; production consumers never
+    /// need to observe dispatcher internals.
+    var bufferedApplicationMessageCount: Int {
+        queuedMessages.count
     }
 }

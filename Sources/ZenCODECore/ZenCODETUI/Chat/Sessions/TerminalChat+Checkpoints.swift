@@ -73,7 +73,7 @@ extension TerminalChat {
                 detail: entry.id == tree.activeLeafID ? "active" : nil
             )
         }
-        return TerminalCheckboxMenu.selectOne(
+        return await TerminalCheckboxMenu.selectOneOffActor(
             title: title,
             items: items,
             selected: tree.activeLeafID,

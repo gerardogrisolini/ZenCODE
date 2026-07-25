@@ -53,7 +53,7 @@ extension TerminalChat {
             )
         }
 
-        guard let selectedIndex = TerminalCheckboxMenu.selectOne(
+        guard let selectedIndex = await TerminalCheckboxMenu.selectOneOffActor(
             title: "Open file or URL",
             items: items,
             selected: 0,

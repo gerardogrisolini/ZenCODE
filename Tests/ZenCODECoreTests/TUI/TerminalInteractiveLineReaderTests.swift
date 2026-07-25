@@ -287,7 +287,7 @@ struct TerminalInteractiveLineReaderTests {
             preservingState: true
         )
 
-        #expect(prepared)
+        #expect(prepared == .admitted)
         #expect(String(reader.panelBuffer) == "unfinished prompt")
         #expect(reader.panelCursorIndex == 4)
         #expect(reader.historyIndex == 1)

@@ -15,22 +15,12 @@ extension MCPHTTPTransportClient {
             return
         }
 
-        if let connectTask {
-            try await connectTask.value
-            return
-        }
-
-        let connectTask = Task<Void, Error> {
+        // Single-flight: concurrent callers share one handshake, each of them
+        // can be cancelled independently, and a handshake completing after
+        // disconnect() cannot flip `isInitialized` back on.
+        try await connectFlight.run { [weak self] in
+            guard let self else { return }
             try await self.performConnect()
-        }
-        self.connectTask = connectTask
-
-        do {
-            try await connectTask.value
-            self.connectTask = nil
-        } catch {
-            self.connectTask = nil
-            throw error
         }
     }
 
@@ -47,18 +37,20 @@ extension MCPHTTPTransportClient {
             includeSession: false
         )
         try await notify(method: "notifications/initialized", params: JSONValue.object([:]))
+        try Task.checkCancellation()
         isInitialized = true
     }
 
     public func disconnect() async {
-        defer {
-            sessionIdentifier = nil
-            isInitialized = false
-            connectTask?.cancel()
-            connectTask = nil
-            oauthAuthenticationTask?.cancel()
-            oauthAuthenticationTask = nil
-        }
+        // Invalidate both single-flights BEFORE clearing session state: their
+        // waiters fail with CancellationError and any result still in flight is
+        // fenced, so it cannot resurrect the session we are tearing down.
+        connectFlight.cancel()
+        oauthAuthenticationFlight.cancel()
+
+        let sessionIdentifier = self.sessionIdentifier
+        self.sessionIdentifier = nil
+        isInitialized = false
 
         guard let sessionIdentifier else {
             return
@@ -167,6 +159,7 @@ extension MCPHTTPTransportClient {
         if httpResponse.statusCode == 401,
            allowAuthenticationRetry,
            shouldUseBrowserOAuth {
+            try Task.checkCancellation()
             let requiresFreshLogin = oauthAccessToken != nil
             _ = try await ensureOAuthAccessToken(requiringFreshLogin: requiresFreshLogin)
             return try await send(

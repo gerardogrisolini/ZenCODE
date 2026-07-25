@@ -93,7 +93,7 @@ extension TerminalChat {
             }
 
             let items = savedSessionSelectionItems(sessions)
-            guard let selectedName = TerminalCheckboxMenu.selectOne(
+            guard let selectedName = await TerminalCheckboxMenu.selectOneOffActor(
                 title: "Saved sessions",
                 items: items,
                 selected: activeSavedSessionName,
@@ -127,7 +127,7 @@ extension TerminalChat {
             }
 
             let items = savedSessionSelectionItems(sessions)
-            guard let selectedNames = TerminalCheckboxMenu.select(
+            guard let selectedNames = await TerminalCheckboxMenu.selectOffActor(
                 title: "Delete saved sessions",
                 items: items,
                 selected: [],

@@ -19,11 +19,16 @@ public actor MCPHTTPTransportClient {
     public var sessionIdentifier: String?
     public var isInitialized = false
     public var nextRequestID = 1
-    public var connectTask: Task<Void, Error>?
+    /// Coalesces concurrent `connect()` calls. Unlike a bare `Task` handle it is
+    /// cancellation-aware for every joiner and fences a late handshake result
+    /// after `disconnect()`.
+    public let connectFlight = MCPSingleFlight<Void>()
     public var oauthMetadata: MCPOAuthAuthorizationServerMetadata?
     public var oauthClientRegistration: MCPOAuthClientRegistration?
     public var oauthAccessToken: MCPOAuthAccessToken?
-    public var oauthAuthenticationTask: Task<MCPOAuthAccessToken, Error>?
+    /// Coalesces concurrent browser sign-ins with the same cancellation and
+    /// late-result fencing guarantees as `connectFlight`.
+    public let oauthAuthenticationFlight = MCPSingleFlight<MCPOAuthAccessToken>()
 
     public init(
         endpointURL: URL,

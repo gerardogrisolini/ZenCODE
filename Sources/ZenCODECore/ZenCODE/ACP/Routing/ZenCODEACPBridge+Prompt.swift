@@ -15,14 +15,72 @@ import Foundation
 
 extension ZenCODEACPBridge {
     public func prompt(id: JSONValue?, params: [String: Any]) async throws {
+        // Check the fence *before* looking the session up. `shutdown()` empties
+        // `sessions`, so the reverse order would report "unknown session" and
+        // `handleMessage` would turn that into a JSON-RPC error response on a
+        // transport that is already closed. A post-shutdown prompt must be
+        // abandoned silently instead.
+        try ensureNotShutDown()
         guard let sessionID = Self.sessionID(from: params),
               var session = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        guard session.activePromptTask == nil else {
+        guard session.activePromptID == nil, session.activePromptTask == nil else {
             throw ACPError.invalidParams("A prompt is already running for this session.")
         }
 
+        // Reserve the session synchronously, before the first `await`. Actor
+        // reentrancy would otherwise let a second `session/prompt` pass the
+        // guard above while this one is suspended parsing or resolving tools.
+        let promptID = UUID()
+        let epoch = session.epoch
+        session.activePromptID = promptID
+        sessions[sessionID] = session
+        var didReleaseReservation = false
+
+        /// Releases the reservation only when it is still ours and the session
+        /// is still the same incarnation.
+        func releaseReservation() {
+            guard !didReleaseReservation else {
+                return
+            }
+            didReleaseReservation = true
+            updateLiveSession(id: sessionID, epoch: epoch) { session in
+                guard session.activePromptID == promptID else {
+                    return
+                }
+                session.activePromptID = nil
+                session.activePromptTask = nil
+            }
+        }
+
+        do {
+            try await runPrompt(
+                id: id,
+                params: params,
+                sessionID: sessionID,
+                session: session,
+                promptID: promptID,
+                epoch: epoch,
+                releaseReservation: releaseReservation
+            )
+        } catch {
+            releaseReservation()
+            throw error
+        }
+        releaseReservation()
+    }
+
+    private func runPrompt(
+        id: JSONValue?,
+        params: [String: Any],
+        sessionID: String,
+        session initialSession: SessionState,
+        promptID: UUID,
+        epoch: UInt64,
+        releaseReservation: () -> Void
+    ) async throws {
+        var session = initialSession
         let promptBlocks = promptBlocks(from: params)
         let rawPromptText = PromptContentFormatter.renderPromptText(from: promptBlocks)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -44,10 +102,19 @@ extension ZenCODEACPBridge {
                 applying: agentMentionResolution.agent,
                 to: session.configuration
             )
+            // Keep the same incarnation and reservation: routing to another
+            // agent updates the configuration, it does not restart the session.
             session = sessionState(
                 configuration: promptConfiguration,
-                selectedAgent: agentMentionResolution.agent
+                selectedAgent: agentMentionResolution.agent,
+                epoch: epoch,
+                activePromptID: promptID
             )
+            guard updateLiveSession(id: sessionID, epoch: epoch, { liveSession in
+                liveSession = session
+            }) else {
+                throw CancellationError()
+            }
         } else {
             promptConfiguration = session.configuration
         }
@@ -96,6 +163,12 @@ extension ZenCODEACPBridge {
                     update: update
                 )
             }
+        }
+
+        // The session may have been closed, replaced, or shut down while the
+        // prompt was being prepared; never start generation for a dead session.
+        guard liveSession(id: sessionID, epoch: epoch)?.activePromptID == promptID else {
+            throw CancellationError()
         }
 
         let activePromptTask = Task {
@@ -192,16 +265,29 @@ extension ZenCODEACPBridge {
             )
         }
 
-        session.activePromptTask = activePromptTask
-        sessions[sessionID] = session
+        // Register the task under the reservation. A `session/cancel` that
+        // landed between the reservation and this point already dropped
+        // `activePromptID`, so the mutation is skipped and the task must be
+        // cancelled here: otherwise the cancel would be silently lost because
+        // it had no task to cancel yet.
+        var didRegisterPromptTask = false
+        let sessionIsLive = updateLiveSession(id: sessionID, epoch: epoch) { session in
+            guard session.activePromptID == promptID else {
+                return
+            }
+            session.activePromptTask = activePromptTask
+            didRegisterPromptTask = true
+        }
+        guard sessionIsLive, didRegisterPromptTask else {
+            activePromptTask.cancel()
+            throw CancellationError()
+        }
 
         do {
             let completion = try await activePromptTask.value
-                        await flushPromptUpdates()
+            await flushPromptUpdates()
             await refreshSessionStateIfAvailable(sessionID: sessionID)
-            var refreshedSession = sessions[sessionID] ?? session
-            refreshedSession.activePromptTask = nil
-            sessions[sessionID] = refreshedSession
+            releaseReservation()
 
             await writer.sendResultIfRequest(
                 id: id,
@@ -210,7 +296,7 @@ extension ZenCODEACPBridge {
         } catch is CancellationError {
             await flushPromptUpdates()
             await refreshSessionStateIfAvailable(sessionID: sessionID)
-            sessions[sessionID]?.activePromptTask = nil
+            releaseReservation()
             await writer.sendResultIfRequest(
                 id: id,
                 result: JSONValue.acpValue(from: ["stopReason": "cancelled"])
@@ -218,7 +304,7 @@ extension ZenCODEACPBridge {
         } catch {
             await flushPromptUpdates()
             await refreshSessionStateIfAvailable(sessionID: sessionID)
-            sessions[sessionID]?.activePromptTask = nil
+            releaseReservation()
             throw error
         }
     }
@@ -245,25 +331,51 @@ extension ZenCODEACPBridge {
     }
 
     public func cancel(id: JSONValue?, params: [String: Any]) async throws {
+        // After shutdown every prompt was already cancelled and `sessions` is
+        // empty; without this fence the handler would answer "unknown session"
+        // on a transport that is closing.
+        try ensureNotShutDown()
         guard let sessionID = Self.sessionID(from: params),
               var session = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
+        // Cancel and clear synchronously: the prompt's own release is fenced by
+        // prompt id and epoch, so it cannot revive this reservation afterwards.
         session.activePromptTask?.cancel()
         session.activePromptTask = nil
+        session.activePromptID = nil
         sessions[sessionID] = session
         await writer.sendResultIfRequest(id: id, result: .object([:]))
     }
 
     public func close(id: JSONValue?, params: [String: Any]) async throws {
+        try ensureNotShutDown()
         guard let sessionID = Self.sessionID(from: params) else {
             throw ACPError.invalidParams("session/close requires params.sessionId.")
         }
-        sessions[sessionID]?.activePromptTask?.cancel()
-        await refreshSessionStateIfAvailable(sessionID: sessionID)
-        sessions.removeValue(forKey: sessionID)
+        // Drop the session before any suspension so a prompt finishing
+        // concurrently cannot restore it through refreshSessionStateIfAvailable.
+        let closedSession = sessions.removeValue(forKey: sessionID)
+        closedSession?.activePromptTask?.cancel()
+        if let closedEpoch = closedSession?.epoch {
+            // Invalidate the lifecycle work bound to the incarnation we are
+            // closing: a `set_model`, `set_config_option` or restore suspended
+            // inside the runner must not complete, re-create the session in the
+            // backend, and answer success for a session that is now gone.
+            invalidateLifecycleOperations(sessionID: sessionID, epoch: closedEpoch)
+        }
         updateSessionSleepAssertion()
         await sessionRunner.closeSession(id: sessionID)
+        // Re-drop in case a racing handler re-created the entry while the
+        // runner was closing the session.
+        if let resurrected = sessions[sessionID],
+           resurrected.epoch == closedSession?.epoch {
+            sessions.removeValue(forKey: sessionID)
+            updateSessionSleepAssertion()
+        }
+        // `closeSession` suspends: a shutdown landing there already failed all
+        // pending requests, so do not write a late reply.
+        try ensureNotShutDown()
         await writer.sendResultIfRequest(id: id, result: .object([:]))
     }
 

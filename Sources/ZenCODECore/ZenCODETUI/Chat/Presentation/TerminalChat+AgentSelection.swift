@@ -26,7 +26,7 @@ extension TerminalChat {
                 return
             }
 
-            let selectedAgent = TerminalCheckboxMenu.selectOne(
+            let selectedAgent = await TerminalCheckboxMenu.selectOneOffActor(
                 title: "Agent profiles",
                 items: try agentSelectionItems(),
                 selected: selectedAgent,

@@ -98,9 +98,13 @@ extension ZenCODEACPBridge {
         ]
     }
 
+    /// Builds a session state with a fresh epoch. Pass `epoch` to preserve the
+    /// existing incarnation when only refreshing an already-live session.
     public func sessionState(
         configuration: AgentCoreSessionConfiguration,
         selectedAgent: AgentProfile? = nil,
+        epoch: UInt64? = nil,
+        activePromptID: UUID? = nil,
         activePromptTask: Task<PromptCompletion, Error>? = nil
     ) -> SessionState {
         SessionState(
@@ -108,7 +112,9 @@ extension ZenCODEACPBridge {
             cwd: configuration.workingDirectory.path,
             allowedToolNames: configuration.allowedToolNames,
             configuration: configuration,
+            epoch: epoch ?? makeSessionEpoch(),
             selectedAgent: selectedAgent,
+            activePromptID: activePromptID,
             activePromptTask: activePromptTask
         )
     }
@@ -170,10 +176,16 @@ extension ZenCODEACPBridge {
     }
 
     public func refreshSessionStateIfAvailable(sessionID: String) async {
+        // Capture the incarnation before suspending so a close/shutdown that
+        // lands during the snapshot read cannot be undone by this refresh.
+        guard let existingSession = sessions[sessionID] else {
+            return
+        }
+        let epoch = existingSession.epoch
         guard let snapshot = await sessionRunner.snapshotSession(id: sessionID) else {
             return
         }
-        guard let session = sessions[sessionID] else {
+        guard let session = liveSession(id: sessionID, epoch: epoch) else {
             return
         }
         sessions[sessionID] = sessionState(
@@ -194,6 +206,8 @@ extension ZenCODEACPBridge {
                 preserveThinking: snapshot.preserveThinking
             ),
             selectedAgent: session.selectedAgent,
+            epoch: session.epoch,
+            activePromptID: session.activePromptID,
             activePromptTask: session.activePromptTask
         )
     }

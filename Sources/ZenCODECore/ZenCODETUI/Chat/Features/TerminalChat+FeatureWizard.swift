@@ -7,7 +7,7 @@ import Foundation
 
 extension TerminalChat {
     func runFeatureWizard() async -> TerminalFeatureCommandResult {
-        guard let template = TerminalCheckboxMenu.selectOne(
+        guard let template = await TerminalCheckboxMenu.selectOneOffActor(
             title: "Feature template",
             items: [
                 TerminalCheckboxMenuItem(
@@ -80,7 +80,7 @@ extension TerminalChat {
             }
             arguments["toolPrefix"] = toolPrefix
 
-            guard let transport = TerminalCheckboxMenu.selectOne(
+            guard let transport = await TerminalCheckboxMenu.selectOneOffActor(
                 title: "MCP transport",
                 items: [
                     TerminalCheckboxMenuItem(

@@ -580,7 +580,7 @@ actor TerminalChatRenderCoordinator {
         finishActiveToolOutputBeforeInterleavedMessage()
         toolOutputDetailLevel = toolOutputDetailLevel.next
         writeSystemMessageWithoutInterrupt(
-            "Tool details: \(toolOutputDetailLevel.label)\n"
+            "Tool details: \(toolOutputDetailLevel.label)\n\n"
         )
         renderPendingOverviewsIfIdle()
     }

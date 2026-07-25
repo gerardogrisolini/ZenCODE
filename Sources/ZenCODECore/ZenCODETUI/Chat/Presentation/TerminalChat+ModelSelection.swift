@@ -159,7 +159,7 @@ extension TerminalChat {
             return
         }
 
-        guard let selectedThinkingSelection = TerminalCheckboxMenu.selectOne(
+        guard let selectedThinkingSelection = await TerminalCheckboxMenu.selectOneOffActor(
             title: "Thinking / effort for \(modelDisplayTitle(currentModel))",
             items: thinkingSelectionItems(options),
             selected: defaultSelection,
@@ -225,7 +225,7 @@ extension TerminalChat {
         let selectedModel = selectedModelID.flatMap { modelID in
             models.first { $0.matches(modelID) }
         }
-        return TerminalCheckboxMenu.selectOne(
+        return await TerminalCheckboxMenu.selectOneOffActor(
             title: message ?? "Available models",
             items: modelSelectionItems(models),
             selected: selectedModel,
@@ -286,7 +286,7 @@ extension TerminalChat {
                 : manualThinkingSelectionOverride
         )
         let defaultSelection = currentSelection ?? model.resolvedDefaultThinkingSelection
-        return TerminalCheckboxMenu.selectOne(
+        return await TerminalCheckboxMenu.selectOneOffActor(
             title: "Thinking / effort for \(modelDisplayTitle(model))",
             items: thinkingSelectionItems(options),
             selected: defaultSelection,

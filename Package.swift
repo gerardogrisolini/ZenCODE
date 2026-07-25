@@ -279,6 +279,12 @@ targets += [
             "LocalToolsSupport",
             "FeatureKit"
         ]
+    ),
+    .testTarget(
+        name: "JiraToolsFeatureTests",
+        dependencies: [
+            "jira-tools-feature"
+        ]
     )
 ]
 

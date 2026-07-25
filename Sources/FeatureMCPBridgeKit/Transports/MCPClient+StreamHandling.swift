@@ -409,6 +409,12 @@ extension MCPClient {
         let currentInputHandle = inputHandle
         let currentOutputHandle = outputHandle
         let currentErrorHandle = errorHandle
+        // This path owns the writer exactly like disconnect() does. Detach it
+        // from the actor BEFORE anything else can observe the torn-down state, so
+        // a later connect() can never inherit this generation's writer and a
+        // concurrent disconnect() cannot tear it down a second time.
+        let currentWriter = writer
+        writer = nil
         activeConnectionID = nil
         terminatingConnectionID = nil
         process = nil
@@ -418,6 +424,15 @@ extension MCPClient {
         readLoopTask = nil
         errorLoopTask = nil
         terminatedProcess.terminationHandler = nil
+        // Stop accepting jobs, cancel the consumer, then tear it down under a
+        // DEADLINE before closing stdin. The bridge process is already gone, but
+        // a descendant may have inherited the read end and may never drain it, so
+        // an in-flight frame can stay on `EAGAIN` indefinitely; an unbounded join
+        // here would make a spontaneous exit hang teardown forever.
+        // `shutdown()` guarantees on return that the descriptor is detached and
+        // that no job continuation is left suspended, which is exactly what
+        // closing (and thereby freeing for reuse) the FD requires.
+        await currentWriter?.shutdown()
         currentInputHandle?.closeFile()
         currentOutputHandle?.closeFile()
         currentErrorHandle?.closeFile()
@@ -682,6 +697,13 @@ extension MCPClient {
         if let activeConnectionID {
             terminatingConnectionID = activeConnectionID
         }
+        // Detach the writer's descriptor BEFORE closing it. This path closes stdin
+        // synchronously while the writer's consumer may still hold a claimed
+        // frame, so without the gate a job could write onto a closed — or already
+        // recycled — descriptor. Invalidation is synchronous and needs no join,
+        // so it is safe here; the full bounded teardown runs in
+        // `handleProcessTermination` once the SIGKILLed process is reaped.
+        writer?.invalidateDescriptor()
         inputHandle?.closeFile()
         inputHandle = nil
 

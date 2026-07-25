@@ -151,20 +151,29 @@ struct BrowserElementConditionsTests {
     @Test
     func probeRaceCancelsAndDrainsDeadlineLoser() async throws {
         let marker = BrowserElementConditionCancellationMarker()
-        let deadline = DispatchTime.now().uptimeNanoseconds &+ 50_000_000
-
-        let result = try await BrowserElementConditionProbeRace.race(
-            until: deadline,
-            operation: {
-                do {
-                    try await Task.sleep(nanoseconds: 5_000_000_000)
-                } catch {
-                    await marker.markCancelled()
-                    throw error
+        // The operation must have entered before the deadline wins; otherwise a
+        // cancelled child can legitimately never start and has no cancellation
+        // handler to observe. This pins the interleaving the test is meant to
+        // exercise rather than relying on executor scheduling under suite load.
+        let deadline = DispatchTime.now().uptimeNanoseconds &+ 1_000_000_000
+        let racing = Task {
+            try await BrowserElementConditionProbeRace.race(
+                until: deadline,
+                operation: {
+                    await marker.markStarted()
+                    do {
+                        try await Task.sleep(nanoseconds: 5_000_000_000)
+                    } catch {
+                        await marker.markCancelled()
+                        throw error
+                    }
+                    return 1
                 }
-                return 1
-            }
-        )
+            )
+        }
+        await marker.waitUntilStarted()
+
+        let result = try await racing.value
 
         #expect(result == nil)
         let didObserveCancellation = await marker.didObserveCancellation()
@@ -175,7 +184,34 @@ struct BrowserElementConditionsTests {
 }
 
 private actor BrowserElementConditionCancellationMarker {
+    private var started = false
     private var cancelled = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func markStarted() {
+        guard !started else {
+            return
+        }
+        started = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func waitUntilStarted() async {
+        guard !started else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            if started {
+                continuation.resume()
+            } else {
+                startWaiters.append(continuation)
+            }
+        }
+    }
 
     func markCancelled() {
         cancelled = true

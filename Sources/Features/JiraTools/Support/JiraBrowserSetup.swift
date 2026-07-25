@@ -49,7 +49,7 @@ enum JiraBrowserSetup {
             reason: reason,
             defaults: defaults,
             validate: { submission in
-                await validateAndStore(submission)
+                await validate(submission)
             }
         )
 
@@ -60,20 +60,26 @@ enum JiraBrowserSetup {
         writeLine("If the browser does not open, visit: \(setupURL.absoluteString)", stderr: true)
         openBrowser(setupURL)
 
+        let result: JiraAuthenticatedConfiguration
         do {
-            let result = try await server.waitForResult(timeout: 600)
-            server.stop()
-            return result
+            result = try await server.waitForResult(timeout: 600)
         } catch {
             server.stop()
             throw error
         }
+
+        // `waitForResult` returns only the submission that the server state
+        // accepted. Stop first to cancel/reject every other in-flight path,
+        // then make the accepted configuration durable exactly once.
+        server.stop()
+        try persist(result)
+        return result
     }
 
-    /// Validates the submitted credentials against Jira and, on success, persists
-    /// the configuration and API token. Returns a human-readable error message on
-    /// failure so the browser form can be re-rendered with guidance.
-    private static func validateAndStore(
+    /// Validates submitted credentials against Jira without changing local state.
+    /// Persistence is deliberately delayed until the server has selected this
+    /// result as the single winner of the setup flow.
+    private static func validate(
         _ submission: JiraSetupSubmission
     ) async -> Result<JiraAuthenticatedConfiguration, JiraSetupValidationError> {
         guard let site = submission.site.nilIfBlank else {
@@ -94,8 +100,6 @@ enum JiraBrowserSetup {
             )
             let service = JiraRESTService(configuration: configuration, apiToken: token)
             let accountName = try await service.validateCredentials()
-            try JiraConfigurationStore.save(configuration)
-            try JiraCredentialStore.save(token, account: configuration.credentialAccount)
             return .success(
                 JiraAuthenticatedConfiguration(
                     configuration: configuration,
@@ -108,6 +112,14 @@ enum JiraBrowserSetup {
         } catch {
             return .failure(JiraSetupValidationError(message: error.localizedDescription))
         }
+    }
+
+    private static func persist(_ authenticatedConfiguration: JiraAuthenticatedConfiguration) throws {
+        try JiraConfigurationStore.save(authenticatedConfiguration.configuration)
+        try JiraCredentialStore.save(
+            authenticatedConfiguration.apiToken,
+            account: authenticatedConfiguration.configuration.credentialAccount
+        )
     }
 
     private static func openBrowser(_ url: URL) {
@@ -180,6 +192,7 @@ final class JiraBrowserSetupServer: Sendable {
     }
 
     func stop() {
+        state.stop()
         queue.async {
             self.listener.cancel()
         }
@@ -195,15 +208,19 @@ final class JiraBrowserSetupServer: Sendable {
                         }
                     }
                 } onCancel: {
-                    // Ensure the suspended continuation is released when the task
-                    // group cancels this child (e.g. the timeout branch won), so the
-                    // group can drain instead of hanging on an unobserved cancel.
-                    self.state.resumeResult(with: .failure(CancellationError()))
+                    // A cancelled waiter means the setup flow can no longer
+                    // consume a winner. Stop synchronously so a validator which
+                    // completes after cancellation is rejected and cancelled.
+                    self.stop()
                 }
             }
             group.addTask {
                 let nanoseconds = UInt64(max(timeout, 1) * 1_000_000_000)
                 try await Task.sleep(nanoseconds: nanoseconds)
+                // Close the admission gate before reporting timeout. This makes
+                // a concurrent validation result late rather than letting it
+                // become a buffered winner while the task group unwinds.
+                self.stop()
                 throw JiraToolsError.browserSetupTimedOut
             }
 
@@ -285,9 +302,28 @@ final class JiraBrowserSetupServer: Sendable {
                 email: fields["email"] ?? "",
                 token: fields["token"] ?? ""
             )
+
+            guard state.beginSubmission() else {
+                sendHTML(
+                    formPage(
+                        error: "A Jira setup submission is already being validated. Please wait.",
+                        values: submission
+                    ),
+                    statusCode: 409,
+                    on: connection
+                )
+                return
+            }
+
             let validate = self.validate
-            Task {
+            let validationTask = Task { [weak self] in
+                guard let self else {
+                    return
+                }
                 let result = await validate(submission)
+                guard self.state.finishSubmission(with: result) else {
+                    return
+                }
                 switch result {
                 case let .success(configuration):
                     self.sendHTML(
@@ -295,7 +331,6 @@ final class JiraBrowserSetupServer: Sendable {
                         statusCode: 200,
                         on: connection
                     )
-                    self.state.resumeResult(with: .success(configuration))
                 case let .failure(error):
                     self.sendHTML(
                         self.formPage(error: error.localizedDescription, values: submission),
@@ -304,6 +339,7 @@ final class JiraBrowserSetupServer: Sendable {
                     )
                 }
             }
+            state.setSubmissionTask(validationTask)
         default:
             sendHTML(formPage(error: nil), statusCode: 405, on: connection)
         }
@@ -343,13 +379,16 @@ final class JiraBrowserSetupServer: Sendable {
 
 /// Thread-safe continuation storage for the setup server, shared across the
 /// listener queue and the awaiting task.
-private final class JiraBrowserSetupState: @unchecked Sendable {
+final class JiraBrowserSetupState: @unchecked Sendable {
     private let lock = NSLock()
     private var readinessContinuation: CheckedContinuation<Void, Error>?
     private var resultContinuation: CheckedContinuation<JiraAuthenticatedConfiguration, Error>?
     private var pendingResult: Result<JiraAuthenticatedConfiguration, Error>?
     private var didResumeReadiness = false
     private var didResumeResult = false
+    private var isStopped = false
+    private var isValidatingSubmission = false
+    private var submissionTask: Task<Void, Never>?
 
     func setReadiness(_ continuation: CheckedContinuation<Void, Error>) {
         lock.lock()
@@ -393,6 +432,7 @@ private final class JiraBrowserSetupState: @unchecked Sendable {
             return
         }
         guard let continuation = resultContinuation else {
+            didResumeResult = true
             if pendingResult == nil {
                 pendingResult = result
             }
@@ -403,6 +443,81 @@ private final class JiraBrowserSetupState: @unchecked Sendable {
         resultContinuation = nil
         lock.unlock()
         continuation.resume(with: result)
+    }
+
+    /// Starts at most one credential validation at a time. The listener queue
+    /// may receive simultaneous browser POSTs, while the actual validation runs
+    /// asynchronously, so this state must be protected independently of that
+    /// queue.
+    func beginSubmission() -> Bool {
+        lock.withLock {
+            guard !isStopped, !didResumeResult, !isValidatingSubmission else {
+                return false
+            }
+            isValidatingSubmission = true
+            return true
+        }
+    }
+
+    /// Keeps the asynchronous validator owned by the server. If teardown won
+    /// the small race between `beginSubmission` and task creation, cancellation
+    /// is requested immediately rather than letting a detached validation outlive
+    /// the loopback setup flow.
+    func setSubmissionTask(_ task: Task<Void, Never>) {
+        let cancelTask = lock.withLock { () -> Bool in
+            guard !isStopped, isValidatingSubmission else {
+                return true
+            }
+            submissionTask = task
+            return false
+        }
+        if cancelTask {
+            task.cancel()
+        }
+    }
+
+    /// Finishes the active submission. Only a successful result can resolve the
+    /// setup continuation; failed validation simply permits a new POST. Results
+    /// after timeout/stop are ignored, preventing late persistence by callers.
+    func finishSubmission(
+        with result: Result<JiraAuthenticatedConfiguration, JiraSetupValidationError>
+    ) -> Bool {
+        let completion = lock.withLock { () -> (CheckedContinuation<JiraAuthenticatedConfiguration, Error>?, Bool) in
+            isValidatingSubmission = false
+            submissionTask = nil
+            guard !isStopped, !didResumeResult else {
+                return (nil, false)
+            }
+            switch result {
+            case let .success(configuration):
+                let accepted: Result<JiraAuthenticatedConfiguration, Error> = .success(configuration)
+                didResumeResult = true
+                if let continuation = resultContinuation {
+                    resultContinuation = nil
+                    return (continuation, true)
+                }
+                pendingResult = accepted
+                return (nil, true)
+            case .failure:
+                return (nil, true)
+            }
+        }
+
+        if case let .success(configuration) = result {
+            completion.0?.resume(returning: configuration)
+        }
+        return completion.1
+    }
+
+    func stop() {
+        let task = lock.withLock { () -> Task<Void, Never>? in
+            isStopped = true
+            isValidatingSubmission = false
+            defer { submissionTask = nil }
+            return submissionTask
+        }
+        task?.cancel()
+        resumeResult(with: .failure(CancellationError()))
     }
 }
 

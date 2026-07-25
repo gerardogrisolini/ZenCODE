@@ -26,7 +26,7 @@ extension TerminalChat {
             }
 
             let items = await toolSelectionItems()
-            let selectedKeys = TerminalCheckboxMenu.select(
+            let selectedKeys = await TerminalCheckboxMenu.selectOffActor(
                 title: "Tools",
                 items: Self.toolCheckboxItems(items: items),
                 selected: TerminalToolSelectionCatalog.normalizedSelectionKeys(
@@ -238,7 +238,7 @@ extension TerminalChat {
                 await printSkillSelectionStatus()
                 return
             }
-            let selectedSkillIDs = TerminalCheckboxMenu.select(
+            let selectedSkillIDs = await TerminalCheckboxMenu.selectOffActor(
                 title: "Prompt skills",
                 items: skillItems,
                 selected: selectedSkillIDs,

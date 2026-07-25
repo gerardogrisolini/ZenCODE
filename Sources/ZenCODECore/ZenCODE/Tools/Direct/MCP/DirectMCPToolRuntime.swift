@@ -10,6 +10,11 @@ import Foundation
 import XcodeToolsFeature
 #endif
 
+/// Thrown when an MCP server install completes after the runtime was shut
+/// down. The caller treats it like any other install failure, so the ordinary
+/// wire behaviour (the server is simply absent) is unchanged.
+public struct MCPRuntimeShutdownError: Error {}
+
 public actor DirectMCPToolRuntime {
     public struct XcodeDiscovery: Sendable {
         public let executor: XcodeToolExecutor
@@ -81,6 +86,31 @@ public actor DirectMCPToolRuntime {
     var didAttemptXcodeDiscovery = false
     var didAttemptFigmaDiscovery = false
     var servers: [Server] = []
+    /// Bumped by every `shutdown()`. Any install or discovery that was already
+    /// suspended compares against the generation it captured before the await
+    /// and disconnects its executor instead of appending a server to a runtime
+    /// that was torn down.
+    private var shutdownGeneration: UInt64 = 0
+
+    /// Snapshot of the shutdown generation, captured *before* a suspension
+    /// point. Comparing it after the await tells the caller whether a
+    /// `shutdown()` landed in between, i.e. whether the state it is about to
+    /// publish (a server append, a connected executor) belongs to a runtime
+    /// generation that no longer exists.
+    struct ShutdownFence: Sendable, Equatable {
+        fileprivate let generation: UInt64
+    }
+
+    /// Capture before every `await` that is followed by an append or any other
+    /// observable side effect on the runtime.
+    func shutdownFence() -> ShutdownFence {
+        ShutdownFence(generation: shutdownGeneration)
+    }
+
+    /// `false` once a `shutdown()` completed while the caller was suspended.
+    func isActive(_ fence: ShutdownFence) -> Bool {
+        shutdownGeneration == fence.generation
+    }
     let autoDiscoverExternalConnectors: Bool
     let xcodeDiscoveryProvider: XcodeDiscoveryProvider
 
@@ -104,6 +134,7 @@ public actor DirectMCPToolRuntime {
     public func shutdown() async {
         let currentServers = servers
         servers.removeAll()
+        shutdownGeneration &+= 1
         didAttemptXcodeDiscovery = false
         didAttemptFigmaDiscovery = false
         for server in currentServers {
@@ -131,6 +162,7 @@ public actor DirectMCPToolRuntime {
         preferredWorkspaceRootURL: URL?,
         ownsExecutor: Bool
     ) async -> [DirectToolDescriptor] {
+        let fence = shutdownFence()
         let descriptors = ToolDescriptor.canonicalized(tools)
             .map { tool in
                 return DirectToolDescriptor(
@@ -144,8 +176,15 @@ public actor DirectMCPToolRuntime {
         servers.removeAll { $0.family == .xcode }
         didAttemptXcodeDiscovery = true
 
+        // Suspension point: a shutdown() can interleave while the previous
+        // executors are being torn down.
         for server in previousXcodeServers {
             await server.disconnectIfOwned()
+        }
+
+        guard isActive(fence) else {
+            await disconnectStaleExecutor(.xcode(executor), ownsBackend: ownsExecutor)
+            return []
         }
 
         guard !descriptors.isEmpty else {
@@ -176,10 +215,21 @@ public actor DirectMCPToolRuntime {
         return descriptors
     }
 
+    /// Tears down an executor that finished connecting for a runtime
+    /// generation that no longer exists. Borrowed backends are left alone:
+    /// their owner is responsible for the lifecycle.
+    func disconnectStaleExecutor(_ backend: Backend, ownsBackend: Bool) async {
+        guard ownsBackend else {
+            return
+        }
+        await backend.disconnect()
+    }
+
     public func installExternalMCPServer(
         name: String,
         configuration: MCPServerConfiguration
     ) async throws -> [DirectToolDescriptor] {
+        let fence = shutdownFence()
         let externalServerID = Self.externalServerID(for: name)
         let isXcodeCandidate = XcodeToolIntegration.isServerCandidate(
             name: name,
@@ -201,8 +251,13 @@ public actor DirectMCPToolRuntime {
 
         let previousServers = servers.filter { $0.family == family }
         servers.removeAll { $0.family == family }
+        // Suspension point: do not spawn a new backend process if a shutdown
+        // landed while the superseded ones were disconnecting.
         for server in previousServers {
             await server.disconnectIfOwned()
+        }
+        guard isActive(fence) else {
+            throw MCPRuntimeShutdownError()
         }
 
         let toolPrefix = isXcodeCandidate
@@ -217,6 +272,13 @@ public actor DirectMCPToolRuntime {
         )
         do {
             let tools = ToolDescriptor.canonicalized(try await executor.loadTools())
+            // `loadTools()` suspends on the network/pipe: if a shutdown landed
+            // there, this install is stale. Drop the executor instead of
+            // resurrecting a server inside a runtime that was already torn down.
+            guard isActive(fence) else {
+                await disconnectStaleExecutor(.remote(executor), ownsBackend: true)
+                throw MCPRuntimeShutdownError()
+            }
             guard !tools.isEmpty else {
                 await executor.disconnect()
                 return []
@@ -233,6 +295,8 @@ public actor DirectMCPToolRuntime {
                     inputSchema: tool.inputSchema
                 )
             }
+            // Descriptor mapping is synchronous, so the fence checked after
+            // `loadTools()` still holds at the append below.
             servers.append(
                 Server(
                     family: family,

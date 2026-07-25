@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Synchronization
 
 /// Thread-safe FIFO ingress for the terminal runtime loop.
 ///
@@ -11,9 +12,34 @@ import Foundation
 /// task retain their physical order instead of being forwarded through
 /// independently scheduled tasks. `AsyncStream.Continuation` is safe to yield
 /// from concurrent producers and the runtime loop remains the sole consumer.
+///
+/// Lifecycle: the runtime loop calls ``finish()`` when it exits, which
+/// terminates the stream and makes every later `send(_:)` a no-op. Producers
+/// that outlive the loop for a moment (the Telegram forwarder, a voice
+/// transcription that is being cancelled, the panel task during teardown) can
+/// therefore keep calling `send(_:)` safely without their events accumulating
+/// in a buffer nobody drains.
+///
+/// Buffering: input events are unbounded so operator keystrokes and their
+/// physical order are never dropped. Voice progress events are advisory
+/// re-renders of the same overlay, so they are bounded: only
+/// ``maximumBufferedVoiceProgressEvents`` may be in flight, and further progress
+/// updates are dropped rather than growing without limit while the consumer is
+/// busy. The bound never reorders or drops non-progress events.
 final class TerminalChatEventQueue: Sendable {
+    /// Upper bound on undelivered voice-progress events. Progress messages are
+    /// idempotent status refreshes, so dropping surplus ones preserves UX while
+    /// keeping the queue bounded.
+    static let maximumBufferedVoiceProgressEvents = 32
+
+    private struct State {
+        var isFinished = false
+        var bufferedVoiceProgressEvents = 0
+    }
+
     let events: AsyncStream<TerminalChatRuntimeEvent>
     private let continuation: AsyncStream<TerminalChatRuntimeEvent>.Continuation
+    private let state = Mutex(State())
 
     init() {
         let stream = AsyncStream<TerminalChatRuntimeEvent>.makeStream(
@@ -23,8 +49,64 @@ final class TerminalChatEventQueue: Sendable {
         self.continuation = stream.continuation
     }
 
-    func send(_ event: TerminalChatRuntimeEvent) {
+    /// Enqueues an event unless the queue has been finished.
+    /// Returns whether the event was accepted.
+    @discardableResult
+    func send(_ event: TerminalChatRuntimeEvent) -> Bool {
+        let shouldSend = state.withLock { state -> Bool in
+            guard !state.isFinished else {
+                return false
+            }
+            guard case .voicePromptProgress = event else {
+                return true
+            }
+            guard state.bufferedVoiceProgressEvents
+                < Self.maximumBufferedVoiceProgressEvents else {
+                return false
+            }
+            state.bufferedVoiceProgressEvents += 1
+            return true
+        }
+        guard shouldSend else {
+            return false
+        }
         continuation.yield(event)
+        return true
+    }
+
+    /// Reports that a bounded event has been consumed by the runtime loop, so
+    /// its slot becomes available again.
+    func didConsume(_ event: TerminalChatRuntimeEvent) {
+        guard case .voicePromptProgress = event else {
+            return
+        }
+        state.withLock { state in
+            state.bufferedVoiceProgressEvents = max(
+                0,
+                state.bufferedVoiceProgressEvents - 1
+            )
+        }
+    }
+
+    /// Terminates the stream. Idempotent, and safe to call while producers are
+    /// still running: later `send(_:)` calls are dropped instead of trapping or
+    /// buffering into a stream nobody consumes.
+    func finish() {
+        let shouldFinish = state.withLock { state -> Bool in
+            guard !state.isFinished else {
+                return false
+            }
+            state.isFinished = true
+            return true
+        }
+        guard shouldFinish else {
+            return
+        }
+        continuation.finish()
+    }
+
+    var isFinished: Bool {
+        state.withLock { $0.isFinished }
     }
 
     deinit {

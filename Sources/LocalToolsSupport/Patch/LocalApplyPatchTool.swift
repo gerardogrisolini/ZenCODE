@@ -35,9 +35,15 @@ struct LocalApplyPatchTool: FeatureTool {
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let rawPatch = try LocalToolsSupport.requiredRawString(input.patch, input.diff, name: "patch")
-        let plannedChanges = try plannedPatchChanges(for: rawPatch, context: context)
-        let changedPaths = try commit(plannedChanges)
-        return "Applied patch to \(changedPaths.count) file(s):\n" + changedPaths.joined(separator: "\n")
+        // The patch is parsed, validated against existing files, and committed
+        // as a single off-pool unit so the atomicity guarantee ("no file is
+        // changed if any hunk fails") is preserved while no blocking I/O runs
+        // on the cooperative thread pool.
+        return try await LocalIOOffloader.run { [self] in
+            let plannedChanges = try plannedPatchChanges(for: rawPatch, context: context)
+            let changedPaths = try commit(plannedChanges)
+            return "Applied patch to \(changedPaths.count) file(s):\n" + changedPaths.joined(separator: "\n")
+        }
     }
 
     private func plannedPatchChanges(

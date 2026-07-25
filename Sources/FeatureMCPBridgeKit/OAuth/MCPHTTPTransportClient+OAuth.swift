@@ -39,24 +39,18 @@ extension MCPHTTPTransportClient {
             return oauthAccessToken
         }
 
-        if let oauthAuthenticationTask {
-            return try await oauthAuthenticationTask.value
+        // Single-flight: concurrent 401 retries share one browser sign-in, each
+        // caller stays cancellable (an interactive login can take minutes), and
+        // a login completing after disconnect() is fenced instead of installing
+        // a token on a torn-down transport.
+        let accessToken = try await oauthAuthenticationFlight.run { [weak self] in
+            guard let self else {
+                throw CancellationError()
+            }
+            return try await self.performBrowserOAuthLogin()
         }
-
-        let authenticationTask = Task<MCPOAuthAccessToken, Error> {
-            try await self.performBrowserOAuthLogin()
-        }
-        oauthAuthenticationTask = authenticationTask
-
-        do {
-            let accessToken = try await authenticationTask.value
-            oauthAccessToken = accessToken
-            oauthAuthenticationTask = nil
-            return accessToken
-        } catch {
-            oauthAuthenticationTask = nil
-            throw error
-        }
+        oauthAccessToken = accessToken
+        return accessToken
     }
 
     public func performBrowserOAuthLogin() async throws -> MCPOAuthAccessToken {
@@ -68,6 +62,7 @@ extension MCPHTTPTransportClient {
         let serviceName = oauthConfiguration.serviceName
 
         let metadata = try await loadOAuthMetadata(using: oauthConfiguration)
+        try Task.checkCancellation()
         let callbackServer = try MCPBrowserOAuthCallbackServer(
             redirectURL: oauthConfiguration.redirectURL,
             serviceName: serviceName
@@ -100,7 +95,17 @@ extension MCPHTTPTransportClient {
 
         try await Self.openBrowser(at: authorizationURL, serviceName: serviceName)
 
-        let callback = try await callbackTask.value
+        // `Task.value` does not observe the caller's cancellation, and the
+        // unstructured callback task does not inherit it either, so a cancelled
+        // sign-in would otherwise stay parked until `callbackTimeout` expires.
+        // Bridge cancellation explicitly onto the callback task and its server.
+        let callback = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await callbackTask.value
+        } onCancel: {
+            callbackTask.cancel()
+            callbackServer.stop()
+        }
         guard callback.state == state else {
             throw MCPClientError.browserAuthenticationFailed(
                 "The \(serviceName) sign-in callback was rejected because the OAuth state did not match."

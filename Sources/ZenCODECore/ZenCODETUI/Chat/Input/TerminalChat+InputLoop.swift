@@ -49,20 +49,11 @@ extension TerminalChat {
         reader: TerminalInteractiveLineReader,
         prompt: String
     ) async -> String? {
-        let cancellation = ConsentReadCancellationFlag()
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                DispatchQueue.global().async {
-                    continuation.resume(
-                        returning: reader.readSingleKey(
-                            prompt: prompt,
-                            shouldCancel: cancellation.isCancelled
-                        )
-                    )
-                }
-            }
-        } onCancel: {
-            cancellation.cancel()
+        await TerminalBlockingRead.run { token in
+            reader.readSingleKey(
+                prompt: prompt,
+                shouldCancel: token.isCancelled
+            )
         }
     }
 
@@ -72,14 +63,14 @@ extension TerminalChat {
     /// mode and blocks the calling thread until the operator submits a line, so
     /// it must never run on `TerminalChatActor`: doing so would stall rendering,
     /// the status bar, and every background refresh task for the whole wait.
+    /// The read is cancellation-aware, so a cancelled turn does not leave the
+    /// terminal owned by a read nobody awaits.
     static func readLineOffActor(
         reader: TerminalInteractiveLineReader,
         prompt: String
     ) async -> String? {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                continuation.resume(returning: reader.readLine(prompt: prompt))
-            }
+        await TerminalBlockingRead.run { token in
+            reader.readLine(prompt: prompt, shouldCancel: token.isCancelled)
         }
     }
 
@@ -88,39 +79,45 @@ extension TerminalChat {
     /// Used for the very first non-interactive line, before the input loop
     /// takes over: `StdioLineReader.readLine()` blocks on stdin, so it must not
     /// run on `TerminalChatActor`. No paste drain happens here because the line
-    /// is handed to the loop as its pending input.
+    /// is handed to the loop as its pending input. The bridge token is passed
+    /// down so the poll loop unwinds on cancellation: the bridge now waits for
+    /// this body to return before resuming its caller, so a read that ignored
+    /// the token would hold the teardown until a line arrived.
     static func readStdinLineOffActor(
         reader: StdioLineReader
     ) async -> String? {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                continuation.resume(returning: reader.readLine())
-            }
+        await TerminalBlockingRead.run { token in
+            reader.readLine(shouldCancel: token.isCancelled)
         }
     }
 
     /// Reads one piped line plus any buffered paste continuation off the
     /// cooperative executor. Both `readLine()` and `drainBufferedLines(_:)`
-    /// block on stdin, so they run together on a global queue to keep the
+    /// block on stdin, so they run together off the cooperative pool to keep the
     /// paste-drain window contiguous with its originating line.
+    ///
+    /// The token is threaded through *both* halves. The drain keeps consuming
+    /// while data keeps arriving, so against a continuous producer it has no
+    /// natural end: only cancellation ends it, and the bridge stays suspended
+    /// until this body returns.
     static func readPipedLineOffActor(
         reader: StdioLineReader,
         initialLine: String?,
         waitMilliseconds: Int32
     ) async -> String? {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                guard let line = initialLine ?? reader.readLine() else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                let pastedLines = reader.drainBufferedLines(
-                    waitMilliseconds: waitMilliseconds
-                )
-                continuation.resume(
-                    returning: ([line] + pastedLines).joined(separator: "\n")
-                )
+        await TerminalBlockingRead.run { token in
+            guard let line = initialLine
+                ?? reader.readLine(shouldCancel: token.isCancelled) else {
+                return nil
             }
+            guard !token.isCancelled() else {
+                return nil
+            }
+            let pastedLines = reader.drainBufferedLines(
+                waitMilliseconds: waitMilliseconds,
+                shouldCancel: token.isCancelled
+            )
+            return ([line] + pastedLines).joined(separator: "\n")
         }
     }
 
@@ -175,6 +172,7 @@ extension TerminalChat {
         var queuedPrompts: [TerminalQueuedPrompt] = []
         var generationTask: Task<Void, Never>?
         var voiceTranscriptionTask: Task<Void, Never>?
+        let remoteTranscriptions = TerminalVoiceTranscriptionRegistry()
         let telegramForwardingTask = startTelegramForwardingTask(eventQueue: eventQueue)
         var isGenerating = false
         var isQueuedPromptStartScheduled = false
@@ -261,10 +259,15 @@ extension TerminalChat {
             throw TerminalChatError.interactivePromptUnavailable
         }
         defer {
+            // Stop producers before terminating the queue so no task keeps
+            // running (or keeps this chat alive) after the loop exits, and any
+            // event racing the teardown is dropped instead of buffered forever.
             generationTask?.cancel()
             voiceTranscriptionTask?.cancel()
             voiceRecordingService.cancelRecording()
             telegramForwardingTask.cancel()
+            remoteTranscriptions.cancelAll()
+            eventQueue.finish()
         }
 
         func handleSubmittedPanelLine(
@@ -326,6 +329,7 @@ extension TerminalChat {
         }
 
         eventLoop: for await event in eventQueue.events {
+            defer { eventQueue.didConsume(event) }
             switch event {
             case let .input(inputEvent):
                 switch inputEvent {
@@ -416,7 +420,8 @@ extension TerminalChat {
                     message,
                     isGenerating: isGenerating,
                     queuedPrompts: &queuedPrompts,
-                    eventQueue: eventQueue
+                    eventQueue: eventQueue,
+                    transcriptions: remoteTranscriptions
                 )
                 await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
                 scheduleQueuedPromptIfNeeded()

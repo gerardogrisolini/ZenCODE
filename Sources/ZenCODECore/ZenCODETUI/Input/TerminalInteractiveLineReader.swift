@@ -45,6 +45,11 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
         case endOfInput
     }
 
+    /// Poll granularity used by cancellation-aware blocking reads. Short enough
+    /// that a cancelled read unwinds promptly, long enough not to spin.
+    static let cancellationPollTimeout: Int32 = 50
+    /// Idle interval used while a consent prompt owns the terminal.
+    static let consentBackoffSeconds: TimeInterval = 0.02
     static let escapeSequenceInitialTimeout: Int32 = 120
     static let escapeSequenceContinuationTimeout: Int32 = 60
     static let bracketedPasteByteTimeout: Int32 = 2000
@@ -54,9 +59,46 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
     var history: [String] = []
     var historyIndex: Int?
     var draftBeforeHistory: [Character] = []
+    /// Ownership of the terminal by the input panel.
+    ///
+    /// Only one code path may hold the TTY at a time, and the transient states
+    /// matter as much as the settled ones: a stop is not done when it clears
+    /// `panelTask`, it is done when it has awaited the loop task *and* restored
+    /// raw mode. A start admitted before that would call `beginRawMode()`, get
+    /// `true` because the terminal is still raw from the previous session, and
+    /// then have its termios state torn down by the predecessor's
+    /// `restoreRawMode()`. Modelling `starting`/`stopping` explicitly lets the
+    /// racing side wait for quiescence instead of stepping into that window.
+    enum PanelLifecycleState: Sendable {
+        /// No panel owns the terminal and no transition is in flight.
+        case idle
+        /// A start has been admitted and is acquiring raw mode.
+        case starting
+        /// The panel loop owns the terminal; `panelTask` is its task.
+        case running
+        /// A stop is unwinding the loop and restoring raw mode.
+        case stopping
+    }
+
+    /// Outcome of trying to claim the panel for a new start.
+    enum PanelStartAdmission: Equatable, Sendable {
+        /// The caller owns the `starting` transition and must publish or
+        /// abandon it.
+        case admitted
+        /// A panel is already running or being started; the caller must not
+        /// touch the terminal.
+        case alreadyActive
+        /// A stop is still unwinding; the caller has to wait for quiescence
+        /// before it can be admitted.
+        case transitionInFlight
+    }
+
     let rawInput: TerminalRawInput
     let panelLock = Mutex(())
     var panelTask: Task<Void, Never>?
+    var panelLifecycle: PanelLifecycleState = .idle
+    /// Callers parked until the in-flight start or stop reaches a settled state.
+    var panelTransitionWaiters: [CheckedContinuation<Void, Never>] = []
     var panelStatusBar: TerminalStatusBar?
     var panelBuffer: [Character] = []
     var panelCursorIndex = 0
@@ -65,6 +107,10 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
     var panelOverlayOverride: TerminalPanelModeOverride?
     var panelCommandSuggestions: [TerminalCommandSuggestion] = []
     var panelCommandSuggestionIndex = 0
+    /// Cancellation token of the panel loop's in-flight blocking read. Stopping
+    /// the panel cancels it so the loop unwinds at once instead of waiting out
+    /// the current read timeout while the caller awaits the task.
+    var panelReadToken: TerminalBlockingReadToken?
     var panelRenderRevision: UInt64 = 0
 
     public init() {
@@ -159,6 +205,26 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
     }
 
     public func readLine(prompt: String) -> String? {
+        readLineInternal(prompt: prompt, shouldCancel: nil)
+    }
+
+    /// Cancellation-aware variant used by the async bridges.
+    ///
+    /// A blocking `read` cannot observe `Task.isCancelled` (it runs off the
+    /// cooperative pool), so the caller supplies a token that is polled between
+    /// short read timeouts. The read then unwinds on cancellation instead of
+    /// holding the terminal until the operator presses a key.
+    func readLine(
+        prompt: String,
+        shouldCancel: @escaping @Sendable () -> Bool
+    ) -> String? {
+        readLineInternal(prompt: prompt, shouldCancel: shouldCancel)
+    }
+
+    private func readLineInternal(
+        prompt: String,
+        shouldCancel: (@Sendable () -> Bool)?
+    ) -> String? {
         var buffer: [Character] = []
         var cursorIndex = 0
         historyIndex = nil
@@ -168,7 +234,21 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
 
         return rawInput.withRawTerminal {
             while true {
-                guard let key = readKey() else {
+                if shouldCancel?() == true {
+                    AgentOutput.standardError.writeString("\n")
+                    return nil
+                }
+                let key: Key
+                switch readKeyResult(
+                    pollTimeoutMilliseconds: shouldCancel == nil
+                        ? nil
+                        : Self.cancellationPollTimeout
+                ) {
+                case let .key(value):
+                    key = value
+                case .timedOut:
+                    continue
+                case .endOfInput:
                     AgentOutput.standardError.writeString("\n")
                     return nil
                 }

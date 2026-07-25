@@ -409,8 +409,10 @@ private enum WebToolsSupport {
 
         var lastError: Error?
         for attempt in 0..<maxAttempts {
+            try Task.checkCancellation()
             do {
                 let (data, response) = try await URLSession.shared.data(for: request)
+                try Task.checkCancellation()
                 if let http = response as? HTTPURLResponse,
                    http.statusCode == 429 || (500..<600).contains(http.statusCode) {
                     lastError = WebToolsFeatureError.permissionDenied(
@@ -418,16 +420,23 @@ private enum WebToolsSupport {
                     )
                     if attempt < maxAttempts - 1 {
                         let backoff = UInt64(pow(2.0, Double(attempt))) * 500_000_000
-                        try? await Task.sleep(nanoseconds: backoff)
+                        try await Task.sleep(nanoseconds: backoff)
                         continue
                     }
                 }
                 return (data, response)
+            } catch is CancellationError {
+                // Cancellation is terminal: retrying it keeps a cancelled tool
+                // invocation alive and can issue another network request.
+                throw CancellationError()
             } catch {
+                guard !Task.isCancelled else {
+                    throw CancellationError()
+                }
                 lastError = error
                 if attempt < maxAttempts - 1 {
                     let backoff = UInt64(pow(2.0, Double(attempt))) * 500_000_000
-                    try? await Task.sleep(nanoseconds: backoff)
+                    try await Task.sleep(nanoseconds: backoff)
                     continue
                 }
             }

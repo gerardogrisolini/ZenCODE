@@ -61,12 +61,16 @@ public enum AgentRuntimeLauncher {
             }
         }
 
-        await withTaskGroup(of: Void.self) { group in
+        await withDiscardingTaskGroup { group in
             for await line in lines {
                 let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmedLine.isEmpty else {
                     continue
                 }
+                // A discarding group releases each child as soon as it finishes
+                // instead of retaining a result per handled line, so a long ACP
+                // session no longer grows an unbounded child list.
+                //
                 // addImmediateTask runs each child up to its first suspension
                 // point before the next line is dequeued, preserving the order
                 // in which ACP requests enter the bridge (e.g. a session/cancel

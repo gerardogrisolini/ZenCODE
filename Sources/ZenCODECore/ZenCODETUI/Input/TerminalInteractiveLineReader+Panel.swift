@@ -48,12 +48,15 @@ extension TerminalInteractiveLineReader {
         preservingState: Bool,
         onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
     ) async -> Bool {
-        let canStart = preparePanelForStart(
+        // A start may only proceed from a settled panel. If a stop is still
+        // unwinding, its `restoreRawMode()` has not run yet, so acquiring raw
+        // mode here would be silently undone by the predecessor's teardown.
+        let admission = await admitPanelStart(
             statusBar: statusBar,
             commandSuggestions: commandSuggestions,
             preservingState: preservingState
         )
-        guard canStart else {
+        guard admission == .admitted else {
             return true
         }
 
@@ -63,9 +66,7 @@ extension TerminalInteractiveLineReader {
                     "[ZenCODE] Interactive prompt raw input failed: \(failureDescription)\n"
                 )
             }
-            withPanelLock {
-                panelStatusBar = nil
-            }
+            abandonPanelStart()
             return false
         }
 
@@ -76,22 +77,55 @@ extension TerminalInteractiveLineReader {
             await self.runPanelInputLoop(statusBar: statusBar, onEvent: onEvent)
         }
 
-        withPanelLock {
-            panelTask = task
-        }
+        finishPanelStart(task: task)
         await renderPanel()
         return true
     }
 
+    /// Waits out any in-flight panel transition, then tries to claim the panel
+    /// for a new start.
+    ///
+    /// Waiting is what makes the hand-over safe: `panelTask == nil` says only
+    /// that a stop has *begun*, not that the terminal is free. The stop still
+    /// has to await its loop task and restore raw mode, and a start admitted in
+    /// between would observe `beginRawMode() == true` merely because the
+    /// terminal is still raw from the session being torn down.
+    func admitPanelStart(
+        statusBar: TerminalStatusBar,
+        commandSuggestions: [TerminalCommandSuggestion],
+        preservingState: Bool
+    ) async -> PanelStartAdmission {
+        while true {
+            let admission = preparePanelForStart(
+                statusBar: statusBar,
+                commandSuggestions: commandSuggestions,
+                preservingState: preservingState
+            )
+            guard admission == .transitionInFlight else {
+                return admission
+            }
+            await awaitPanelTransition()
+        }
+    }
+
+    /// Synchronous half of the start admission, taken under the panel lock.
     func preparePanelForStart(
         statusBar: TerminalStatusBar,
         commandSuggestions: [TerminalCommandSuggestion],
         preservingState: Bool
-    ) -> Bool {
-        withPanelLock { () -> Bool in
-            if panelTask != nil {
-                return false
+    ) -> PanelStartAdmission {
+        withPanelLock { () -> PanelStartAdmission in
+            switch panelLifecycle {
+            case .running, .starting:
+                // Another reader already owns (or is acquiring) the terminal.
+                return .alreadyActive
+            case .stopping:
+                return .transitionInFlight
+            case .idle:
+                break
             }
+
+            panelLifecycle = .starting
             panelStatusBar = statusBar
             panelCommandSuggestions = commandSuggestions
             if preservingState {
@@ -106,15 +140,37 @@ extension TerminalInteractiveLineReader {
                 historyIndex = nil
                 draftBeforeHistory.removeAll()
             }
-            return true
+            return .admitted
+        }
+    }
+
+    /// Publishes the running panel and releases anyone waiting on the start.
+    func finishPanelStart(task: Task<Void, Never>) {
+        resumePanelTransitionWaiters {
+            panelTask = task
+            panelLifecycle = .running
+        }
+    }
+
+    /// Rolls a failed start back to `idle` so a later start (or a stop) is not
+    /// blocked behind a transition that will never complete.
+    func abandonPanelStart() {
+        resumePanelTransitionWaiters {
+            panelTask = nil
+            panelLifecycle = .idle
+            panelStatusBar = nil
         }
     }
 
     public func stopPanelInput(clearPanel: Bool = true) async {
-        let stopState = takePanelTaskForStop()
+        let stopState = await claimPanelForStop()
 
         stopState.task?.cancel()
         await stopState.task?.value
+        // Only now is the terminal provably free: the loop has left its blocking
+        // read, so raw mode can be handed back. The panel stays marked
+        // `stopping` until `finishPanelStop`, so no successor can acquire the
+        // TTY before this restore has run.
         rawInput.restoreRawMode()
         if clearPanel {
             let revision = withPanelLock { () -> UInt64 in
@@ -126,19 +182,51 @@ extension TerminalInteractiveLineReader {
         finishPanelStop(clearPanel: clearPanel)
     }
 
-    func takePanelTaskForStop() -> (
+    /// Waits out any in-flight transition, then marks the panel `stopping` and
+    /// takes the state this teardown owns.
+    ///
+    /// A stop must not race a start either: during `starting` the successor has
+    /// not published its task yet, so a stop would await `nil`, restore raw mode
+    /// under the new reader, and leave it reading a cooked terminal.
+    func claimPanelForStop() async -> (
         task: Task<Void, Never>?,
         statusBar: TerminalStatusBar?
     ) {
-        withPanelLock {
+        while true {
+            if let claim = takePanelTaskForStop() {
+                return claim
+            }
+            await awaitPanelTransition()
+        }
+    }
+
+    /// Synchronous half of the stop claim. Returns `nil` while another
+    /// transition still owns the panel.
+    func takePanelTaskForStop() -> (
+        task: Task<Void, Never>?,
+        statusBar: TerminalStatusBar?
+    )? {
+        withPanelLock { () -> (task: Task<Void, Never>?, statusBar: TerminalStatusBar?)? in
+            switch panelLifecycle {
+            case .starting, .stopping:
+                return nil
+            case .idle, .running:
+                break
+            }
+
             let state = (task: panelTask, statusBar: panelStatusBar)
+            panelLifecycle = .stopping
             panelTask = nil
+            // Unblock the in-flight terminal read before awaiting the task, so
+            // the stop does not wait out the remainder of the read window.
+            panelReadToken?.cancel()
+            panelReadToken = nil
             return state
         }
     }
 
     func finishPanelStop(clearPanel: Bool) {
-        withPanelLock {
+        resumePanelTransitionWaiters {
             if clearPanel {
                 panelStatusBar = nil
                 panelBuffer.removeAll()
@@ -149,6 +237,48 @@ extension TerminalInteractiveLineReader {
                 historyIndex = nil
                 draftBeforeHistory.removeAll()
             }
+            panelTask = nil
+            panelLifecycle = .idle
+        }
+    }
+
+    /// Suspends until the in-flight transition publishes a settled state.
+    ///
+    /// Registration happens under the same lock that settles the panel, so a
+    /// transition completing between the check and the suspension cannot strand
+    /// the waiter.
+    private func awaitPanelTransition() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let isSettled = withPanelLock { () -> Bool in
+                switch panelLifecycle {
+                case .idle, .running:
+                    return true
+                case .starting, .stopping:
+                    panelTransitionWaiters.append(continuation)
+                    return false
+                }
+            }
+            if isSettled {
+                continuation.resume()
+            }
+        }
+    }
+
+    /// Applies a settling mutation and releases the parked callers.
+    ///
+    /// The waiters are resumed outside the panel lock: resuming re-enters the
+    /// caller, which immediately reaches for the same lock.
+    private func resumePanelTransitionWaiters(
+        _ settle: @Sendable () -> Void
+    ) {
+        let waiters = withPanelLock { () -> [CheckedContinuation<Void, Never>] in
+            settle()
+            let waiters = panelTransitionWaiters
+            panelTransitionWaiters.removeAll()
+            return waiters
+        }
+        for waiter in waiters {
+            waiter.resume()
         }
     }
 
@@ -207,13 +337,44 @@ extension TerminalInteractiveLineReader {
         await renderPanel()
     }
 
+    /// Drives the live input panel.
+    ///
+    /// The key read blocks the calling thread, so it runs through
+    /// ``TerminalBlockingRead`` instead of directly on this task: a cooperative
+    /// worker must never sit in a POSIX `poll`/`read` loop, or rendering, the
+    /// status bar, and every background refresh task stall behind it. Reads are
+    /// polled at a short timeout and gated on the panel's cancellation token, so
+    /// `stopPanelInput()` unwinds the loop immediately rather than after the
+    /// remainder of a long read window.
     func runPanelInputLoop(
         statusBar _: TerminalStatusBar,
         onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
     ) async {
-        while !Task.isCancelled {
+        let token = TerminalBlockingReadToken()
+        withPanelLock {
+            panelReadToken?.cancel()
+            panelReadToken = token
+        }
+        defer {
+            token.cancel()
+            withPanelLock {
+                if panelReadToken === token {
+                    panelReadToken = nil
+                }
+            }
+        }
+
+        while !Task.isCancelled, !token.isCancelled() {
+            let result = await TerminalBlockingRead.run(token: token) { token in
+                Self.readPanelKeyResult(reader: self, token: token)
+            }
+            guard let result else {
+                // Cancelled: the panel is stopping and must not emit further
+                // events for keys read during teardown.
+                return
+            }
             let key: Key
-            switch readKeyResult(pollTimeoutMilliseconds: 1000) {
+            switch result {
             case let .key(value):
                 key = value
             case .timedOut:
@@ -224,6 +385,35 @@ extension TerminalInteractiveLineReader {
             }
             await handlePanelKey(key, onEvent: onEvent)
         }
+    }
+
+    /// Blocking half of the panel read. Polls in short slices so the loop
+    /// observes cancellation promptly, and stands down while a consent prompt
+    /// owns the terminal so it cannot consume the operator's authorization key.
+    static func readPanelKeyResult(
+        reader: TerminalInteractiveLineReader,
+        token: TerminalBlockingReadToken
+    ) -> KeyReadResult? {
+        while !token.isCancelled() {
+            guard let result = TerminalConsentInputOwnership.withBackgroundRead({
+                reader.readKeyResult(
+                    pollTimeoutMilliseconds: TerminalInteractiveLineReader.cancellationPollTimeout
+                )
+            }) else {
+                // Consent owns the terminal; report a timeout so the loop
+                // re-checks cancellation without consuming any byte. Idle first
+                // so the arbiter is not polled in a tight loop.
+                Thread.sleep(forTimeInterval: consentBackoffSeconds)
+                return .timedOut
+            }
+            if result == .timedOut {
+                // Surface the timeout so the caller can re-evaluate its state
+                // instead of holding this thread indefinitely.
+                return .timedOut
+            }
+            return result
+        }
+        return nil
     }
 
     func handlePanelKey(

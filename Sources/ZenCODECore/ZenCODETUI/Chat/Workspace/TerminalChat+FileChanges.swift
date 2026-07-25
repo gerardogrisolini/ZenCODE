@@ -84,7 +84,7 @@ extension TerminalChat {
             ? "Use /undo to revert, /changes diff to show patches."
             : "Undo is not available for this summary."
 
-        var lines = ["", "📋 Summary: \(title)  +\(summary.totalAdditions) -\(summary.totalDeletions)"]
+        var lines = ["", "🪬 Summary: \(title)  +\(summary.totalAdditions) -\(summary.totalDeletions)"]
         lines.append(contentsOf: summary.entries.map(Self.renderFileChangeEntry))
         lines.append(undoText)
         return lines.joined(separator: "\n") + "\n"

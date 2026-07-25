@@ -12,7 +12,31 @@ public actor AgentCoreSessionRunner {
         true
     }
 
+    /// Thrown internally when a backend creation is fenced out by a concurrent
+    /// reset or shutdown, so `ensureBackend` retries instead of installing a
+    /// backend that no longer belongs to the current runtime generation.
+    private struct BackendInvalidatedError: Error {}
+
+    /// Identifies one incarnation of a session. Every `createSession` starts a
+    /// new generation and every close/reset drops it, so work that started
+    /// before the change cannot cache or restore state afterwards.
+    private struct SessionGeneration: Hashable {
+        let rawValue: UInt64
+    }
+
     private var backend: AgentCoreBackend?
+    /// Single-flight guard: concurrent `ensureBackend` callers join this task
+    /// instead of each building their own `AgentCoreBackend`.
+    private var backendPreparation: Task<AgentCoreBackend, Error>?
+    /// Bumped by every reset/shutdown so an in-flight backend creation that
+    /// started earlier is discarded instead of overwriting newer state.
+    private var backendGeneration: UInt64 = 0
+    /// Bumped only by shutdown (never by an ordinary backend reset). Work that
+    /// entered before a shutdown compares against it and gives up instead of
+    /// building a fresh backend for a runtime nobody is driving anymore.
+    private var shutdownGeneration: UInt64 = 0
+    private var sessionGenerations: [String: SessionGeneration] = [:]
+    private var nextSessionGenerationValue: UInt64 = 1
     private var activeRuntimeConfiguration: AgentCoreSessionConfiguration?
     private var sessions: [String: AgentCoreSessionConfiguration] = [:]
     private var lastKnownSessionSnapshots: [String: AgentRuntimeSessionSnapshot] = [:]
@@ -75,6 +99,7 @@ public actor AgentCoreSessionRunner {
             preserveThinking: configuration.preserveThinking
         )
         sessions[configuration.sessionID] = configuration
+        beginSessionGeneration(for: configuration.sessionID)
         ZenLogger.debug(
             .viewModelRuntime,
             "agent core session runner created session id=\(configuration.sessionID) history=\(configuration.history.count) tools=\(configuration.allowedToolNames?.count ?? 0)."
@@ -200,6 +225,10 @@ public actor AgentCoreSessionRunner {
             sessionID: configuration.sessionID
         )
         try await ensureSession(configuration: configuration)
+        // Capture the session incarnation only after the session exists: a later
+        // close/reset/rebuild drops this generation and fences the turn's
+        // snapshot cache and backend restore.
+        let sessionGeneration = currentSessionGeneration(for: configuration.sessionID)
         let initialSnapshot = await backend.snapshotSession(id: configuration.sessionID)
             ?? AgentRuntimeSessionSnapshot(configuration: configuration)
         let turnRecorder = AgentCorePromptTurnRecorder(
@@ -226,6 +255,7 @@ public actor AgentCoreSessionRunner {
                 backend: backend,
                 configuration: configuration,
                 recorder: turnRecorder,
+                sessionGeneration: sessionGeneration,
                 onEvent: onEvent
             )
             return response
@@ -235,6 +265,7 @@ public actor AgentCoreSessionRunner {
                 backend: backend,
                 configuration: configuration,
                 recorder: turnRecorder,
+                sessionGeneration: sessionGeneration,
                 onEvent: onEvent
             )
             throw CancellationError()
@@ -244,6 +275,7 @@ public actor AgentCoreSessionRunner {
                 backend: backend,
                 configuration: configuration,
                 recorder: turnRecorder,
+                sessionGeneration: sessionGeneration,
                 onEvent: onEvent
             )
             throw error
@@ -256,17 +288,20 @@ public actor AgentCoreSessionRunner {
         backend: AgentCoreBackend,
         configuration: AgentCoreSessionConfiguration,
         recorder: AgentCorePromptTurnRecorder,
+        sessionGeneration: SessionGeneration?,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async {
         let recovery = await recoveredSessionSnapshot(
             backend: backend,
             configuration: configuration,
-            recorder: recorder
+            recorder: recorder,
+            sessionGeneration: sessionGeneration
         )
         await restoreSessionIfNeeded(
             recovery,
             backend: backend,
-            baseConfiguration: configuration
+            baseConfiguration: configuration,
+            sessionGeneration: sessionGeneration
         )
         await onEvent(.sessionSnapshot(recovery.snapshot))
         await onEvent(.turnEnded(outcome))
@@ -487,6 +522,7 @@ public actor AgentCoreSessionRunner {
     /// task graph for the same session identity.
     public func rebuildSession(id sessionID: String) async {
         promptTaskRegistry.cancelAll(for: sessionID)
+        invalidateSessionGeneration(for: sessionID)
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
         await backend?.clearSession(id: sessionID)
@@ -503,6 +539,7 @@ public actor AgentCoreSessionRunner {
 
         promptTaskRegistry.cancelAllTasks()
         promptAuthorizationHandlers.removeAll()
+        sessionGenerations.removeAll()
 
         let taskSessionIDs = await taskOrchestrator.registeredSessionIDs()
         let sessionIDs = Array(
@@ -521,15 +558,29 @@ public actor AgentCoreSessionRunner {
 
     public func closeSession(id sessionID: String) async {
         promptTaskRegistry.cancelAll(for: sessionID)
-        _ = await interruptSubAgents(rootSessionID: sessionID)
-        try? await taskOrchestrator.flush(sessionID: sessionID)
+        // Drop the incarnation before any suspension so a prompt that is still
+        // winding down cannot cache or restore this session afterwards.
+        invalidateSessionGeneration(for: sessionID)
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
+        _ = await interruptSubAgents(rootSessionID: sessionID)
+        try? await taskOrchestrator.flush(sessionID: sessionID)
         promptSkillProvidersBySessionID.removeValue(forKey: sessionID)
         await backend?.closeSession(id: sessionID)
+        // Re-drop after the suspensions above: a prompt finalization that raced
+        // this close may have re-inserted state before its generation check.
+        sessions.removeValue(forKey: sessionID)
+        lastKnownSessionSnapshots.removeValue(forKey: sessionID)
     }
 
     public func shutdown() async {
+        // Latch before the first suspension: an `ensureBackend` caller that is
+        // already parked in the single-flight preparation observes this and
+        // gives up, instead of looping and building a fresh backend for a
+        // runtime that is being torn down. An ordinary backend reset (model or
+        // agent switch) deliberately does *not* latch it, so those callers keep
+        // their retry-and-rebuild behaviour.
+        shutdownGeneration &+= 1
         await shutdownBackendKeepingExternalTools()
         await mcpRuntime.shutdown()
     }
@@ -542,6 +593,11 @@ public actor AgentCoreSessionRunner {
     public func shutdownBackendKeepingExternalTools() async {
         promptTaskRegistry.cancelAllTasks()
         promptAuthorizationHandlers.removeAll()
+        // Fence in-flight backend creation and session work before suspending.
+        backendGeneration &+= 1
+        backendPreparation?.cancel()
+        backendPreparation = nil
+        sessionGenerations.removeAll()
         try? await taskOrchestrator.flush()
         // Terminate every task-graph event observer so suspended `events(...)`
         // consumers resume instead of waiting forever after shutdown.
@@ -587,18 +643,85 @@ public actor AgentCoreSessionRunner {
         try await createSession(configuration: configuration)
     }
 
+    /// Returns the runner-owned backend, creating it at most once even when
+    /// several prompts, preloads, or session updates race: concurrent callers
+    /// join the in-flight creation instead of starting a second one.
     private func ensureBackend(
         configuration: AgentCoreSessionConfiguration
     ) async throws -> AgentCoreBackend {
-        if let activeRuntimeConfiguration,
-           !activeRuntimeConfiguration.matchesRuntime(configuration) {
-            await resetBackend()
+        // Snapshot the shutdown epoch on entry. A `reset` (model or agent
+        // switch) is a legitimate reason to loop and rebuild; a `shutdown` is
+        // not, so a caller that was suspended across one must fail instead of
+        // resurrecting a backend behind the closed runtime.
+        let entryShutdownGeneration = shutdownGeneration
+
+        func ensureNotShutDownSinceEntry() throws {
+            guard shutdownGeneration == entryShutdownGeneration else {
+                throw BackendInvalidatedError()
+            }
         }
 
-        if let backend {
-            return backend
-        }
+        while true {
+            try ensureNotShutDownSinceEntry()
+            if let preparation = backendPreparation {
+                // Single-flight: wait for the in-flight creation, then
+                // re-evaluate because a reset may have happened meanwhile.
+                _ = try? await preparation.value
+                if backendPreparation == preparation {
+                    backendPreparation = nil
+                }
+                try ensureNotShutDownSinceEntry()
+                continue
+            }
 
+            if let activeRuntimeConfiguration,
+               !activeRuntimeConfiguration.matchesRuntime(configuration) {
+                await resetBackend()
+                try ensureNotShutDownSinceEntry()
+                continue
+            }
+
+            if let backend {
+                return backend
+            }
+
+            let generation = backendGeneration
+            let preparation = Task { [weak self] () throws -> AgentCoreBackend in
+                guard let self else {
+                    throw BackendInvalidatedError()
+                }
+                return try await self.makeBackend(
+                    configuration: configuration,
+                    generation: generation
+                )
+            }
+            backendPreparation = preparation
+            do {
+                let backend = try await preparation.value
+                if backendPreparation == preparation {
+                    backendPreparation = nil
+                }
+                try ensureNotShutDownSinceEntry()
+                return backend
+            } catch {
+                if backendPreparation == preparation {
+                    backendPreparation = nil
+                }
+                // A shutdown fences this caller for good; only a reset earns a
+                // retry against the current generation.
+                try ensureNotShutDownSinceEntry()
+                if error is BackendInvalidatedError {
+                    continue
+                }
+                throw error
+            }
+        }
+    }
+
+    private func makeBackend(
+        configuration: AgentCoreSessionConfiguration,
+        generation: UInt64
+    ) async throws -> AgentCoreBackend {
         let runtimeConfiguration = configuration.runtimeConfiguration
             .withToolAuthorizationHandler { request in
                 await self.authorizeTool(request)
@@ -609,6 +732,12 @@ public actor AgentCoreSessionRunner {
             backendFactory: backendFactory
         )
         await backend.installTaskOrchestrator(taskOrchestrator)
+        guard generation == backendGeneration else {
+            // Reset or shutdown ran while this backend was being prepared:
+            // discard the orphan instead of installing stale state.
+            await backend.shutdown()
+            throw BackendInvalidatedError()
+        }
         self.backend = backend
         activeRuntimeConfiguration = configuration
         ZenLogger.debug(
@@ -619,42 +748,96 @@ public actor AgentCoreSessionRunner {
     }
 
     private func resetBackend() async {
+        backendGeneration &+= 1
+        backendPreparation?.cancel()
+        backendPreparation = nil
         sessions.removeAll()
         lastKnownSessionSnapshots.removeAll()
         promptSkillProvidersBySessionID.removeAll()
+        sessionGenerations.removeAll()
         activeRuntimeConfiguration = nil
-        await backend?.shutdown()
+        let backendToShutdown = backend
         backend = nil
+        await backendToShutdown?.shutdown()
+    }
+
+    @discardableResult
+    private func beginSessionGeneration(for sessionID: String) -> SessionGeneration {
+        let generation = SessionGeneration(rawValue: nextSessionGenerationValue)
+        nextSessionGenerationValue &+= 1
+        sessionGenerations[sessionID] = generation
+        return generation
+    }
+
+    private func currentSessionGeneration(for sessionID: String) -> SessionGeneration? {
+        sessionGenerations[sessionID]
+    }
+
+    private func invalidateSessionGeneration(for sessionID: String) {
+        sessionGenerations.removeValue(forKey: sessionID)
+    }
+
+    /// `true` while the captured incarnation is still the live one. A closed,
+    /// rebuilt, reset, or shut-down session never matches again.
+    private func isCurrentSessionGeneration(
+        _ generation: SessionGeneration?,
+        for sessionID: String
+    ) -> Bool {
+        guard let generation else {
+            return false
+        }
+        return sessionGenerations[sessionID] == generation
     }
 
     private func recoveredSessionSnapshot(
         backend: AgentCoreBackend,
         configuration: AgentCoreSessionConfiguration,
-        recorder: AgentCorePromptTurnRecorder
+        recorder: AgentCorePromptTurnRecorder,
+        sessionGeneration: SessionGeneration?
     ) async -> AgentCoreSessionSnapshotRecovery {
         let recordedSnapshot = await recorder.snapshot()
         if let backendSnapshot = await backend.snapshotSession(id: configuration.sessionID),
            backendSnapshot.includesLikelyTurn(from: recordedSnapshot) {
-            cacheSessionSnapshot(backendSnapshot, baseConfiguration: configuration)
+            cacheSessionSnapshot(
+                backendSnapshot,
+                baseConfiguration: configuration,
+                sessionGeneration: sessionGeneration
+            )
             return AgentCoreSessionSnapshotRecovery(
                 snapshot: backendSnapshot,
                 shouldRestoreBackend: false
             )
         }
 
-        cacheSessionSnapshot(recordedSnapshot, baseConfiguration: configuration)
+        cacheSessionSnapshot(
+            recordedSnapshot,
+            baseConfiguration: configuration,
+            sessionGeneration: sessionGeneration
+        )
         return AgentCoreSessionSnapshotRecovery(
             snapshot: recordedSnapshot,
-            shouldRestoreBackend: true
+            shouldRestoreBackend: isCurrentSessionGeneration(
+                sessionGeneration,
+                for: configuration.sessionID
+            )
         )
     }
 
     private func restoreSessionIfNeeded(
         _ recovery: AgentCoreSessionSnapshotRecovery,
         backend: AgentCoreBackend,
-        baseConfiguration: AgentCoreSessionConfiguration
+        baseConfiguration: AgentCoreSessionConfiguration,
+        sessionGeneration: SessionGeneration?
     ) async {
         guard recovery.shouldRestoreBackend else {
+            return
+        }
+        // The session may have been closed or rebuilt while the turn was
+        // running; recreating it here would resurrect discarded state.
+        guard isCurrentSessionGeneration(
+            sessionGeneration,
+            for: baseConfiguration.sessionID
+        ) else {
             return
         }
         let configuration = baseConfiguration.replacingRuntimeState(
@@ -674,8 +857,17 @@ public actor AgentCoreSessionRunner {
 
     private func cacheSessionSnapshot(
         _ snapshot: AgentRuntimeSessionSnapshot,
-        baseConfiguration: AgentCoreSessionConfiguration
+        baseConfiguration: AgentCoreSessionConfiguration,
+        sessionGeneration: SessionGeneration?
     ) {
+        // Never re-add state for a session that was closed, rebuilt, or reset
+        // while the turn was still running.
+        guard isCurrentSessionGeneration(
+            sessionGeneration,
+            for: snapshot.sessionID
+        ) else {
+            return
+        }
         lastKnownSessionSnapshots[snapshot.sessionID] = snapshot
         sessions[snapshot.sessionID] = baseConfiguration.replacingRuntimeState(
             with: snapshot

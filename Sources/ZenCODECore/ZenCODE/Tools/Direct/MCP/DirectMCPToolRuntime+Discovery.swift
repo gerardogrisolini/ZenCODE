@@ -35,16 +35,31 @@ extension DirectMCPToolRuntime {
             guard force || !didAttemptXcodeDiscovery || !previousXcodeServers.isEmpty else {
                 return
             }
+            let fence = shutdownFence()
             servers.removeAll { $0.family == .xcode }
             didAttemptXcodeDiscovery = true
+            // Suspension point: superseded executors tear down asynchronously.
             for server in previousXcodeServers {
                 await server.disconnectIfOwned()
             }
-            if let xcodeServer = await discoverXcodeServer(
-                preferredWorkspaceRootURL: preferredWorkspaceRootURL
-            ) {
-                servers.append(xcodeServer)
+            guard isActive(fence) else {
+                return
             }
+            // Suspension point: the provider connects to Xcode and may return a
+            // live executor long after a shutdown() drained the runtime.
+            guard let xcodeServer = await discoverXcodeServer(
+                preferredWorkspaceRootURL: preferredWorkspaceRootURL
+            ) else {
+                return
+            }
+            guard isActive(fence) else {
+                await disconnectStaleExecutor(
+                    xcodeServer.backend,
+                    ownsBackend: xcodeServer.ownsBackend
+                )
+                return
+            }
+            servers.append(xcodeServer)
         case .figma:
             guard force || !didAttemptFigmaDiscovery else {
                 return
@@ -52,10 +67,21 @@ extension DirectMCPToolRuntime {
             guard !servers.contains(where: { $0.family == .figma }) else {
                 return
             }
+            let fence = shutdownFence()
             didAttemptFigmaDiscovery = true
-            if let figmaServer = await discoverFigmaServer() {
-                servers.append(figmaServer)
+            // Suspension point: the probe and `loadTools()` both suspend on the
+            // Figma desktop socket.
+            guard let figmaServer = await discoverFigmaServer() else {
+                return
             }
+            guard isActive(fence) else {
+                await disconnectStaleExecutor(
+                    figmaServer.backend,
+                    ownsBackend: figmaServer.ownsBackend
+                )
+                return
+            }
+            servers.append(figmaServer)
         case .external:
             return
         }

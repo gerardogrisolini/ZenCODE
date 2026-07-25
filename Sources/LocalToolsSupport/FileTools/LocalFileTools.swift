@@ -39,10 +39,11 @@ struct LocalListDirectoryTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        try LocalToolsSupport.listDirectory(
-            context.resolvePath(input.path ?? "."),
-            includeHidden: input.includeHidden ?? false
-        )
+        let url = context.resolvePath(input.path ?? ".")
+        let includeHidden = input.includeHidden ?? false
+        return try await LocalIOOffloader.run {
+            try LocalToolsSupport.listDirectory(url, includeHidden: includeHidden)
+        }
     }
 }
 
@@ -62,11 +63,12 @@ struct LocalReadFileTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        try LocalToolsSupport.readFile(
-            LocalToolsSupport.requiredPath(input.path, input.file_path, context: context),
-            offset: input.offset,
-            limit: input.limit
-        )
+        let url = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
+        let offset = input.offset
+        let limit = input.limit
+        return try await LocalIOOffloader.run {
+            try LocalToolsSupport.readFile(url, offset: offset, limit: limit)
+        }
     }
 }
 
@@ -91,15 +93,18 @@ struct LocalReadFilesTool: FeatureTool {
         guard !rawPaths.isEmpty else {
             throw LocalToolsFeatureError.missingArgument("paths")
         }
+        let offset = input.offset
+        let limit = input.limit
         var sections: [String] = []
         for rawPath in rawPaths {
+            // Honor cancellation between files so a multi-file read can be
+            // aborted before touching remaining files.
+            try Task.checkCancellation()
             let url = context.resolvePath(rawPath)
             do {
-                let body = try LocalToolsSupport.readFile(
-                    url,
-                    offset: input.offset,
-                    limit: input.limit
-                )
+                let body = try await LocalIOOffloader.run {
+                    try LocalToolsSupport.readFile(url, offset: offset, limit: limit)
+                }
                 sections.append("===== \(url.path) =====\n\(body)")
             } catch {
                 sections.append("===== \(url.path) =====\n<error: \(error.localizedDescription)>")
@@ -125,10 +130,11 @@ struct LocalInspectFileTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        try LocalToolsSupport.inspectFile(
-            LocalToolsSupport.requiredPath(input.path, input.file_path, context: context),
-            maxSymbols: input.maxSymbols ?? input.max_symbols
-        )
+        let url = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
+        let maxSymbols = input.maxSymbols ?? input.max_symbols
+        return try await LocalIOOffloader.run {
+            try LocalToolsSupport.inspectFile(url, maxSymbols: maxSymbols)
+        }
     }
 }
 
@@ -150,14 +156,18 @@ struct LocalWriteFileTool: FeatureTool {
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
         let content = input.content ?? ""
-        if input.createDirectories == true {
-            try FileManager.default.createDirectory(
-                at: path.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
+        let createDirectories = input.createDirectories == true
+        let byteCount = content.utf8.count
+        return try await LocalIOOffloader.run {
+            if createDirectories {
+                try FileManager.default.createDirectory(
+                    at: path.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+            }
+            try content.write(to: path, atomically: true, encoding: .utf8)
+            return "Wrote \(path.path) (\(byteCount) bytes)."
         }
-        try content.write(to: path, atomically: true, encoding: .utf8)
-        return "Wrote \(path.path) (\(content.utf8.count) bytes)."
     }
 }
 
@@ -182,15 +192,17 @@ struct LocalReplaceTool: FeatureTool {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
         let oldString = try LocalToolsSupport.requiredRawString(input.oldString, input.old_string, name: "oldString")
         let newString = input.newString ?? input.new_string ?? ""
-        let original = try String(contentsOf: path, encoding: .utf8)
-        // Count without materializing the full split array.
-        let occurrences = original.ranges(of: oldString).count
-        guard occurrences > 0 else {
-            throw LocalToolsFeatureError.permissionDenied("oldString was not found in \(path.path).")
+        return try await LocalIOOffloader.run {
+            let original = try String(contentsOf: path, encoding: .utf8)
+            // Count without materializing the full split array.
+            let occurrences = original.ranges(of: oldString).count
+            guard occurrences > 0 else {
+                throw LocalToolsFeatureError.permissionDenied("oldString was not found in \(path.path).")
+            }
+            let updated = original.replacingOccurrences(of: oldString, with: newString)
+            try updated.write(to: path, atomically: true, encoding: .utf8)
+            return "Replaced \(occurrences) occurrence(s) in \(path.path)."
         }
-        let updated = original.replacingOccurrences(of: oldString, with: newString)
-        try updated.write(to: path, atomically: true, encoding: .utf8)
-        return "Replaced \(occurrences) occurrence(s) in \(path.path)."
     }
 }
 
@@ -219,19 +231,21 @@ struct LocalEditFileTool: FeatureTool {
         let oldString = try LocalToolsSupport.requiredRawString(input.oldString, input.old_string, name: "oldString")
         let newString = input.newString ?? input.new_string ?? ""
         let replaceAll = input.replaceAll ?? input.replace_all ?? false
-        let original = try String(contentsOf: path, encoding: .utf8)
-        let occurrences = original.ranges(of: oldString).count
-        guard occurrences > 0 else {
-            throw LocalToolsFeatureError.permissionDenied("oldString was not found in \(path.path).")
+        return try await LocalIOOffloader.run {
+            let original = try String(contentsOf: path, encoding: .utf8)
+            let occurrences = original.ranges(of: oldString).count
+            guard occurrences > 0 else {
+                throw LocalToolsFeatureError.permissionDenied("oldString was not found in \(path.path).")
+            }
+            if !replaceAll && occurrences != 1 {
+                throw LocalToolsFeatureError.permissionDenied("oldString matched \(occurrences) times. Set replaceAll=true or provide a unique string.")
+            }
+            let updated = replaceAll
+                ? original.replacingOccurrences(of: oldString, with: newString)
+                : original.replacingFirstOccurrence(of: oldString, with: newString)
+            try updated.write(to: path, atomically: true, encoding: .utf8)
+            return "Updated \(path.path). Replacements: \(replaceAll ? occurrences : 1)."
         }
-        if !replaceAll && occurrences != 1 {
-            throw LocalToolsFeatureError.permissionDenied("oldString matched \(occurrences) times. Set replaceAll=true or provide a unique string.")
-        }
-        let updated = replaceAll
-            ? original.replacingOccurrences(of: oldString, with: newString)
-            : original.replacingFirstOccurrence(of: oldString, with: newString)
-        try updated.write(to: path, atomically: true, encoding: .utf8)
-        return "Updated \(path.path). Replacements: \(replaceAll ? occurrences : 1)."
     }
 }
 
@@ -265,9 +279,15 @@ struct LocalMultiEditTool: FeatureTool {
         guard !input.edits.isEmpty else {
             throw LocalToolsFeatureError.missingArgument("edits")
         }
-        var contents = try String(contentsOf: path, encoding: .utf8)
+        // Read off the cooperative pool, then validate/transform on it (pure
+        // CPU) so a long edit list can be cancelled between edits, then write
+        // the result back off the pool.
+        var contents = try await LocalIOOffloader.run {
+            try String(contentsOf: path, encoding: .utf8)
+        }
         var totalReplacements = 0
         for (index, edit) in input.edits.enumerated() {
+            try Task.checkCancellation()
             let oldString = try LocalToolsSupport.requiredRawString(
                 edit.oldString,
                 edit.old_string,
@@ -287,7 +307,10 @@ struct LocalMultiEditTool: FeatureTool {
                 : contents.replacingFirstOccurrence(of: oldString, with: newString)
             totalReplacements += replaceAll ? occurrences : 1
         }
-        try contents.write(to: path, atomically: true, encoding: .utf8)
+        let finalContents = contents
+        try await LocalIOOffloader.run {
+            try finalContents.write(to: path, atomically: true, encoding: .utf8)
+        }
         return "Edited \(totalReplacements) occurrence(s) across \(input.edits.count) edit(s) in \(path.path)."
     }
 }
@@ -310,15 +333,17 @@ struct LocalAppendTool: FeatureTool {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
         let content = input.content ?? ""
         let data = Data(content.utf8)
-        if FileManager.default.fileExists(atPath: path.path) {
-            let handle = try FileHandle(forWritingTo: path)
-            defer { try? handle.close() }
-            try handle.seekToEnd()
-            try handle.write(contentsOf: data)
-        } else {
-            try data.write(to: path)
+        return try await LocalIOOffloader.run {
+            if FileManager.default.fileExists(atPath: path.path) {
+                let handle = try FileHandle(forWritingTo: path)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                try handle.write(contentsOf: data)
+            } else {
+                try data.write(to: path)
+            }
+            return "Appended \(data.count) bytes to \(path.path)."
         }
-        return "Appended \(data.count) bytes to \(path.path)."
     }
 }
 
@@ -337,11 +362,14 @@ struct LocalMakeDirectoryTool: FeatureTool {
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, nil, context: context)
-        try FileManager.default.createDirectory(
-            at: path,
-            withIntermediateDirectories: input.createIntermediateDirectories ?? true
-        )
-        return "Created directory \(path.path)."
+        let withIntermediateDirectories = input.createIntermediateDirectories ?? true
+        return try await LocalIOOffloader.run {
+            try FileManager.default.createDirectory(
+                at: path,
+                withIntermediateDirectories: withIntermediateDirectories
+            )
+            return "Created directory \(path.path)."
+        }
     }
 }
 
@@ -360,15 +388,18 @@ struct LocalDeleteTool: FeatureTool {
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, nil, context: context)
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory) else {
-            return "Path does not exist: \(path.path)"
+        let recursive = input.recursive
+        return try await LocalIOOffloader.run {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory) else {
+                return "Path does not exist: \(path.path)"
+            }
+            if isDirectory.boolValue && recursive != true {
+                throw LocalToolsFeatureError.permissionDenied("Refusing to delete directory without recursive=true.")
+            }
+            try FileManager.default.removeItem(at: path)
+            return "Deleted \(path.path)."
         }
-        if isDirectory.boolValue && input.recursive != true {
-            throw LocalToolsFeatureError.permissionDenied("Refusing to delete directory without recursive=true.")
-        }
-        try FileManager.default.removeItem(at: path)
-        return "Deleted \(path.path)."
     }
 }
 
@@ -393,13 +424,16 @@ struct LocalMoveTool: FeatureTool {
         }
         let sourceURL = context.resolvePath(sourcePath)
         let destinationURL = context.resolvePath(destinationPath)
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            guard input.overwriteExisting == true else {
-                throw LocalToolsFeatureError.permissionDenied("Destination exists. Set overwriteExisting=true.")
+        let overwriteExisting = input.overwriteExisting == true
+        return try await LocalIOOffloader.run {
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                guard overwriteExisting else {
+                    throw LocalToolsFeatureError.permissionDenied("Destination exists. Set overwriteExisting=true.")
+                }
+                try FileManager.default.removeItem(at: destinationURL)
             }
-            try FileManager.default.removeItem(at: destinationURL)
+            try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+            return "Moved \(sourceURL.path) to \(destinationURL.path)."
         }
-        try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
-        return "Moved \(sourceURL.path) to \(destinationURL.path)."
     }
 }

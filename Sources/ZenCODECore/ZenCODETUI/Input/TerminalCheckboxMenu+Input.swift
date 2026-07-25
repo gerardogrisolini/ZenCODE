@@ -12,9 +12,16 @@ import Foundation
 
 extension TerminalCheckboxMenu {
     static func readInputLine(rawInput: TerminalRawInput) -> InputLineReadResult {
+        readInputLine(rawInput: rawInput, shouldCancel: nil)
+    }
+
+    static func readInputLine(
+        rawInput: TerminalRawInput,
+        shouldCancel: (@Sendable () -> Bool)?
+    ) -> InputLineReadResult {
         var bytes: [UInt8] = []
         while true {
-            guard let byte = rawInput.readByte() else {
+            guard let byte = readByte(rawInput: rawInput, shouldCancel: shouldCancel) else {
                 return .endOfInput
             }
 
@@ -47,6 +54,40 @@ extension TerminalCheckboxMenu {
         }
     }
 
+    /// Reads one byte, honoring cooperative cancellation.
+    ///
+    /// An uncancellable menu read owns the terminal until the operator presses a
+    /// key; when the surrounding turn is cancelled the menu must instead unwind
+    /// like a cancel. Without a cancellation token the read blocks indefinitely,
+    /// so poll in short slices and report end-of-input once cancelled. Reads also
+    /// stand down while a consent prompt owns the terminal so the menu cannot
+    /// swallow the operator's authorization key.
+    static func readByte(
+        rawInput: TerminalRawInput,
+        shouldCancel: (@Sendable () -> Bool)?
+    ) -> UInt8? {
+        guard let shouldCancel else {
+            return rawInput.readByte()
+        }
+
+        while !shouldCancel() {
+            guard let result = TerminalConsentInputOwnership.withBackgroundRead({
+                rawInput.readByteResult(timeoutMilliseconds: cancellationPollTimeout)
+            }) else {
+                continue
+            }
+            switch result {
+            case let .byte(byte):
+                return byte
+            case .timedOut:
+                continue
+            case .endOfInput:
+                return nil
+            }
+        }
+        return nil
+    }
+
     static func removeLastUTF8Character(from bytes: inout [UInt8]) {
         repeat {
             let removedByte = bytes.removeLast()
@@ -67,7 +108,14 @@ extension TerminalCheckboxMenu {
     }
 
     static func readKey(rawInput: TerminalRawInput) -> Key? {
-        guard let byte = rawInput.readByte() else {
+        readKey(rawInput: rawInput, shouldCancel: nil)
+    }
+
+    static func readKey(
+        rawInput: TerminalRawInput,
+        shouldCancel: (@Sendable () -> Bool)?
+    ) -> Key? {
+        guard let byte = readByte(rawInput: rawInput, shouldCancel: shouldCancel) else {
             return nil
         }
 

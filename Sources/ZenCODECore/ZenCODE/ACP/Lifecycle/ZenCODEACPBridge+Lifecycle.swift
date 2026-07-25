@@ -83,11 +83,17 @@ extension ZenCODEACPBridge {
     }
 
     public func preloadModel(id: JSONValue?, params: [String: Any]) async throws {
+        // `preloadModel` builds a runtime backend, so it is fenced like the
+        // session-creating handlers.
+        let operation = try registerLifecycleOperation()
+        defer { finishLifecycleOperation(operation) }
+
         let preloadConfiguration = defaultSessionConfiguration(sessionID: "preload")
             .withModelID(Self.modelID(from: params) ?? configuration.effectiveModelID)
         let modelID = try await sessionRunner.preloadModel(
             configuration: preloadConfiguration
         ) { _ in }
+        try ensureLifecycleOperationLive(operation)
         await writer.sendResultIfRequest(
             id: id,
             result: JSONValue.acpValue(from: ["modelID": modelID])
@@ -95,6 +101,12 @@ extension ZenCODEACPBridge {
     }
 
     public func newSession(id: JSONValue?, params: [String: Any]) async throws {
+        // Claim the operation synchronously, before the first `await`: from now
+        // on a concurrent `shutdown()` invalidates this token and every
+        // re-check below aborts instead of creating a session or a backend.
+        let operation = try registerLifecycleOperation()
+        defer { finishLifecycleOperation(operation) }
+
         let rawCwd = Self.workingDirectory(from: params)
             ?? configuration.workingDirectory.path
         let cwd = AgentConfiguration.resolvedWorkingDirectory(
@@ -104,6 +116,7 @@ extension ZenCODEACPBridge {
         await verboseACPLog(
             "session/new cwd=\(cwd) mcpServers=\(Self.mcpServerInputSummary(from: params))"
         )
+        try ensureLifecycleOperationLive(operation)
         let requestedModelID = Self.modelID(from: params)
         let modelID = requestedModelID
             ?? configuration.effectiveModelID
@@ -116,7 +129,11 @@ extension ZenCODEACPBridge {
         let hasACPProvidedXcodeMCPServer = Self.mcpServerDefinitions(from: params).contains {
             $0.isXcodeCandidate
         }
-        let acpMCPDescriptors = await registerACPProvidedMCPServers(from: params)
+        let acpMCPDescriptors = await registerACPProvidedMCPServers(
+            from: params,
+            operation: operation
+        )
+        try ensureLifecycleOperationLive(operation)
         let requestedAllowedToolNames = Self.allowedToolNames(from: params)
             ?? selectedAgent?.allowedToolNames()
         let hasACPProvidedXcodeTools = acpMCPDescriptors.contains {
@@ -127,6 +144,7 @@ extension ZenCODEACPBridge {
             workingDirectory: workingDirectoryURL,
             skipXcodeDiscovery: hasACPProvidedXcodeMCPServer || hasACPProvidedXcodeTools
         )
+        try ensureLifecycleOperationLive(operation)
         var allowedToolNames = Self.allowedToolNames(
             resolvedRequestedAllowedToolNames,
             adding: acpMCPDescriptors
@@ -138,6 +156,7 @@ extension ZenCODEACPBridge {
         await verboseACPLog(
             "session/new allowedTools=\(Self.verboseToolNameSummary(allowedToolNames))"
         )
+        try ensureLifecycleOperationLive(operation)
         let systemPrompt = resolvedSystemPrompt(
             providedSystemPrompt: nil,
             cwd: cwd,
@@ -175,12 +194,36 @@ extension ZenCODEACPBridge {
             thinkingSelection: thinkingSelection,
             preserveThinking: preserveThinking
         )
-        sessions[sessionID] = sessionState(
+        // Last fence before any observable effect. Past this point the session
+        // entry, the runner session and the JSON-RPC reply are published, so a
+        // shutdown that lands *here* must abort rather than leave a live
+        // session and a backend behind a closed transport.
+        try ensureLifecycleOperationLive(operation)
+        let sessionEntry = sessionState(
             configuration: configuration,
             selectedAgent: selectedAgent
         )
+        let sessionEpoch = sessionEntry.epoch
+        sessions[sessionID] = sessionEntry
+        // From here the session exists, so a `session/close` for it must be
+        // able to invalidate this handler before it answers.
+        bindLifecycleOperation(operation, sessionID: sessionID, epoch: sessionEpoch)
         updateSessionSleepAssertion()
-        try await sessionRunner.createSession(configuration: configuration)
+        do {
+            try await sessionRunner.createSession(configuration: configuration)
+        } catch {
+            // Do not leave a session entry that has no runner session behind.
+            // Scope the removal to our own incarnation so a racing handler's
+            // newer session is never dropped.
+            discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
+            throw error
+        }
+        // `createSession` suspends: if shutdown landed during it, drop the
+        // session we just created instead of announcing it to a closing host.
+        guard isLifecycleOperationLive(operation) else {
+            discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
+            throw ACPShutdownFenceError()
+        }
 
         await writer.sendResultIfRequest(
             id: id,
@@ -220,7 +263,8 @@ extension ZenCODEACPBridge {
     }
 
     public func registerACPProvidedMCPServers(
-        from params: [String: Any]
+        from params: [String: Any],
+        operation: UInt64? = nil
     ) async -> [DirectToolDescriptor] {
         let definitions = Self.mcpServerDefinitions(from: params)
         await verboseACPLog(
@@ -235,6 +279,12 @@ extension ZenCODEACPBridge {
 
         var descriptors: [DirectToolDescriptor] = []
         for definition in definitions {
+            // Re-check per iteration, not only after the whole loop: each
+            // install suspends, so a shutdown landing inside one must stop the
+            // remaining definitions from connecting new servers at all.
+            if let operation, !isLifecycleOperationLive(operation) {
+                return []
+            }
             do {
                 await verboseACPLog(
                     "connecting ACP MCP server name=\(definition.name) type=\(definition.type)"
@@ -269,6 +319,7 @@ extension ZenCODEACPBridge {
     }
 
     public func setMode(id: JSONValue?, params: [String: Any]) async throws {
+        try ensureNotShutDown()
         guard let sessionID = Self.sessionID(from: params) else {
             throw ACPError(code: -32602, message: "Missing sessionId.")
         }
@@ -291,11 +342,14 @@ extension ZenCODEACPBridge {
     }
 
     public func setConfigOption(id: JSONValue?, params: [String: Any]) async throws {
+        let operation = try registerLifecycleOperation()
+        defer { finishLifecycleOperation(operation) }
+
         guard let sessionID = Self.sessionID(from: params),
               let session = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        guard session.activePromptTask == nil else {
+        guard session.activePromptTask == nil, session.activePromptID == nil else {
             throw ACPError.invalidParams("Cannot change session options while a prompt is running.")
         }
 
@@ -335,11 +389,30 @@ extension ZenCODEACPBridge {
         default:
             throw ACPError.invalidParams("Unsupported config option: \(configID)")
         }
-        sessions[sessionID] = sessionState(
-            configuration: updatedConfiguration,
-            selectedAgent: session.selectedAgent
-        )
+        let sessionEpoch = session.epoch
+        // Bind before the runner call: a `session/close` for this incarnation
+        // must invalidate this operation, otherwise the suspended
+        // `createSession` below would re-create the session in the backend and
+        // answer success for a session the host already closed.
+        bindLifecycleOperation(operation, sessionID: sessionID, epoch: sessionEpoch)
+        // Reuse the incarnation rather than minting a new one: this only
+        // reconfigures a live session. A shutdown or close that landed while we
+        // validated the option makes this write fail instead of resurrecting
+        // the session.
+        guard updateLiveSession(id: sessionID, epoch: sessionEpoch, { liveSession in
+            liveSession = sessionState(
+                configuration: updatedConfiguration,
+                selectedAgent: session.selectedAgent,
+                epoch: sessionEpoch
+            )
+        }) else {
+            throw ACPShutdownFenceError()
+        }
         try await sessionRunner.createSession(configuration: updatedConfiguration)
+        try await ensureLifecycleOperationLiveAfterSessionWrite(
+            operation,
+            sessionID: sessionID
+        )
         await writer.sendResultIfRequest(
             id: id,
             result: JSONValue.acpValue(from: [
@@ -352,11 +425,14 @@ extension ZenCODEACPBridge {
     }
 
     public func setModel(id: JSONValue?, params: [String: Any]) async throws {
+        let operation = try registerLifecycleOperation()
+        defer { finishLifecycleOperation(operation) }
+
         guard let sessionID = Self.sessionID(from: params),
               let session = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        guard session.activePromptTask == nil else {
+        guard session.activePromptTask == nil, session.activePromptID == nil else {
             throw ACPError.invalidParams("Cannot change session model while a prompt is running.")
         }
         guard let modelID = Self.modelID(from: params) else {
@@ -374,12 +450,46 @@ extension ZenCODEACPBridge {
             .withThinkingSelection(model?.thinkingSelection(
                 for: session.configuration.thinkingSelection
             ))
-        sessions[sessionID] = sessionState(
-            configuration: updatedConfiguration,
-            selectedAgent: session.selectedAgent
-        )
+        let sessionEpoch = session.epoch
+        // Same close-invalidation contract as `setConfigOption`.
+        bindLifecycleOperation(operation, sessionID: sessionID, epoch: sessionEpoch)
+        guard updateLiveSession(id: sessionID, epoch: sessionEpoch, { liveSession in
+            liveSession = sessionState(
+                configuration: updatedConfiguration,
+                selectedAgent: session.selectedAgent,
+                epoch: sessionEpoch
+            )
+        }) else {
+            throw ACPShutdownFenceError()
+        }
         try await sessionRunner.createSession(configuration: updatedConfiguration)
+        try await ensureLifecycleOperationLiveAfterSessionWrite(
+            operation,
+            sessionID: sessionID
+        )
         await writer.sendResultIfRequest(id: id, result: .object([:]))
+    }
+
+    /// Re-check for the handlers that reconfigure an existing session through
+    /// the runner.
+    ///
+    /// `createSession` suspends, so a `session/close` or `shutdown` can land
+    /// inside it and re-create the session in the runner after the host already
+    /// dropped it. When that happened, undo the resurrection before failing, so
+    /// no orphan runner session survives a closed ACP session.
+    private func ensureLifecycleOperationLiveAfterSessionWrite(
+        _ operation: UInt64,
+        sessionID: String
+    ) async throws {
+        guard !isLifecycleOperationLive(operation) else {
+            return
+        }
+        // Only clean up when the id is genuinely gone: if a newer incarnation
+        // exists, it owns the runner session and must not be torn down.
+        if sessions[sessionID] == nil {
+            await sessionRunner.closeSession(id: sessionID)
+        }
+        throw ACPShutdownFenceError()
     }
 
         public func restoreSession(
@@ -387,19 +497,32 @@ extension ZenCODEACPBridge {
         params: [String: Any],
         replayHistory: Bool
     ) async throws {
+        // Same claim-before-first-await rule as `newSession`: `session/load`
+        // and `session/resume` also create sessions and backends.
+        let operation = try registerLifecycleOperation()
+        defer { finishLifecycleOperation(operation) }
+
         // A session_id is optional: stateless clients can resume by resending
         // their transcript. When omitted we mint an internal session id.
         let sessionID = Self.sessionID(from: params)
             ?? "swift-agent-\(UUID().uuidString.lowercased())"
         if let session = sessions[sessionID] {
+            // Bind to the incarnation we are about to replay/answer for: a
+            // `session/close` landing inside `snapshotSession` must stop this
+            // handler from replaying history and reporting success for a
+            // session that no longer exists.
+            bindLifecycleOperation(operation, sessionID: sessionID, epoch: session.epoch)
             if replayHistory,
                let snapshot = await sessionRunner.snapshotSession(id: sessionID) {
+                try ensureLifecycleOperationLive(operation)
                 await replaySessionHistory(snapshot)
             }
+            try ensureLifecycleOperationLive(operation)
             await writer.sendResultIfRequest(
                 id: id,
                 result: JSONValue.acpValue(from: sessionLifecycleResult(sessionID: sessionID))
             )
+            try ensureLifecycleOperationLive(operation)
             await sendSessionInfoUpdate(
                 sessionID: sessionID,
                 title: URL(fileURLWithPath: session.cwd).lastPathComponent
@@ -416,10 +539,15 @@ extension ZenCODEACPBridge {
         await verboseACPLog(
             "session/restore id=\(sessionID) cwd=\(workingDirectory.path) replay=\(replayHistory) mcpServers=\(Self.mcpServerInputSummary(from: params))"
         )
+        try ensureLifecycleOperationLive(operation)
         let hasACPProvidedXcodeMCPServer = Self.mcpServerDefinitions(from: params).contains {
             $0.isXcodeCandidate
         }
-        let acpMCPDescriptors = await registerACPProvidedMCPServers(from: params)
+        let acpMCPDescriptors = await registerACPProvidedMCPServers(
+            from: params,
+            operation: operation
+        )
+        try ensureLifecycleOperationLive(operation)
         let selectedAgent = try resolvedACPAgentProfile(from: params)
         let configuration = await restoredACPClientSessionConfiguration(
             sessionID: sessionID,
@@ -429,15 +557,31 @@ extension ZenCODEACPBridge {
             hasACPProvidedXcodeMCPServer: hasACPProvidedXcodeMCPServer,
             selectedAgent: selectedAgent
         )
+        try ensureLifecycleOperationLive(operation)
         await verboseACPLog(
             "session/restore allowedTools=\(Self.verboseToolNameSummary(configuration.allowedToolNames)) history=\(configuration.history.count)"
         )
-        sessions[sessionID] = sessionState(
+        // Last fence before the session entry, the runner session, the history
+        // replay and the reply become observable.
+        try ensureLifecycleOperationLive(operation)
+        let sessionEntry = sessionState(
             configuration: configuration,
             selectedAgent: selectedAgent
         )
+        let sessionEpoch = sessionEntry.epoch
+        sessions[sessionID] = sessionEntry
+        bindLifecycleOperation(operation, sessionID: sessionID, epoch: sessionEpoch)
         updateSessionSleepAssertion()
-        try await sessionRunner.restoreSession(configuration: configuration)
+        do {
+            try await sessionRunner.restoreSession(configuration: configuration)
+        } catch {
+            discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
+            throw error
+        }
+        guard isLifecycleOperationLive(operation) else {
+            discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
+            throw ACPShutdownFenceError()
+        }
         if replayHistory {
             await replaySessionHistory(
                 AgentRuntimeSessionSnapshot(
@@ -452,12 +596,14 @@ extension ZenCODEACPBridge {
                     preserveThinking: configuration.preserveThinking
                 )
             )
+            try ensureLifecycleOperationLive(operation)
         }
 
         await writer.sendResultIfRequest(
             id: id,
             result: JSONValue.acpValue(from: sessionLifecycleResult(sessionID: sessionID))
         )
+        try ensureLifecycleOperationLive(operation)
         await sendSessionInfoUpdate(
             sessionID: sessionID,
             title: workingDirectory.lastPathComponent
