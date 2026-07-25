@@ -463,6 +463,86 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
+    func adaptiveThinkingEffortUsesGatedLevelsOnEveryAdaptiveModel() {
+        for modelID in ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"] {
+            #expect(
+                AnthropicSubscriptionGenerationClient.adaptiveThinkingEffort(
+                    for: .xhigh,
+                    modelID: modelID
+                ) == "xhigh"
+            )
+            #expect(
+                AnthropicSubscriptionGenerationClient.adaptiveThinkingEffort(
+                    for: .max,
+                    modelID: modelID
+                ) == "max"
+            )
+            #expect(
+                AnthropicSubscriptionGenerationClient.adaptiveThinkingEffort(
+                    for: .ultra,
+                    modelID: modelID
+                ) == "max"
+            )
+        }
+
+        #expect(
+            AnthropicSubscriptionGenerationClient.adaptiveThinkingEffort(
+                for: .minimal,
+                modelID: "claude-opus-5"
+            ) == "low"
+        )
+        #expect(
+            AnthropicSubscriptionGenerationClient.adaptiveThinkingEffort(
+                for: .enabled,
+                modelID: "claude-opus-5"
+            ) == nil
+        )
+        #expect(
+            AnthropicSubscriptionGenerationClient.adaptiveThinkingEffort(
+                for: .max,
+                modelID: "claude-haiku-4-5"
+            ) == "high"
+        )
+    }
+
+    @Test
+    func manualThinkingBudgetsAreMonotonicWithinAnthropicLimits() {
+        let ladder: [AgentThinkingSelection] = [
+            .minimal, .low, .medium, .high, .xhigh, .max
+        ]
+        let budgets = ladder.map(
+            AnthropicSubscriptionGenerationClient.thinkingBudgetTokens(for:)
+        )
+
+        #expect(budgets == budgets.sorted())
+        #expect(Set(budgets).count == budgets.count)
+        #expect(
+            AnthropicSubscriptionGenerationClient.thinkingBudgetTokens(for: .off) == 0
+        )
+        #expect(
+            budgets.first == AnthropicSubscriptionGenerationClient
+                .minimumThinkingBudgetTokens
+        )
+        #expect((budgets.last ?? 0) <= 32_000)
+        #expect(
+            AnthropicSubscriptionGenerationClient.thinkingBudgetTokens(for: .ultra)
+                == AnthropicSubscriptionGenerationClient.thinkingBudgetTokens(for: .max)
+        )
+    }
+
+    @Test
+    func manualThinkingPayloadIsOmittedBelowAnthropicBudgetMinimum() {
+        let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
+            for: .high,
+            modelID: "claude-haiku-4-5",
+            maxTokens: 1_500
+        )
+
+        #expect(payload.thinking == nil)
+        #expect(payload.outputConfig == nil)
+    }
+
+    @Test
     func manualThinkingBudgetLeavesRoomForOutputTokens() {
         #expect(
             AnthropicSubscriptionGenerationClient.adjustedThinkingBudget(

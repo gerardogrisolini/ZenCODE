@@ -35,7 +35,7 @@ public nonisolated enum AnthropicSubscriptionModel {
     public static let defaultMaxOutputTokens = 64_000
     public static let largeMaxOutputTokens = 128_000
     public static let thinkingSupport = ModelThinkingSupport.effort(
-        levels: [.low, .medium, .high, .xhigh]
+        levels: [.low, .medium, .high, .xhigh, .max]
     )
 
     public static let availableModels: [ModelOption] = [

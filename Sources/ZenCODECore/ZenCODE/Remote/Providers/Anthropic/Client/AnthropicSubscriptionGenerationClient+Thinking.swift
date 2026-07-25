@@ -143,7 +143,7 @@ extension AnthropicSubscriptionGenerationClient {
             thinkingBudgetTokens(for: selection),
             maxTokens: maxTokens
         )
-        guard budget > 0 else {
+        guard budget >= minimumThinkingBudgetTokens else {
             return (nil, nil)
         }
         return (
@@ -163,15 +163,28 @@ extension AnthropicSubscriptionGenerationClient {
         AnthropicSubscriptionModel.option(forModelID: modelID).thinkingSupport != nil
     }
 
+    /// Models of the Claude 5 generation that replace manual `budget_tokens`
+    /// with `thinking: {type: "adaptive"}` plus `output_config.effort`.
+    /// They are also the models that accept the gated `xhigh` and `max`
+    /// effort levels.
+    static let adaptiveThinkingModelIDs: Set<String> = [
+        "claude-fable-5",
+        "claude-opus-5",
+        "claude-sonnet-5"
+    ]
+
+    /// Anthropic rejects a `budget_tokens` value below this floor.
+    static let minimumThinkingBudgetTokens = 1_024
+
     static func usesAdaptiveThinking(modelID: String) -> Bool {
-        switch modelID {
-        case "claude-fable-5",
-             "claude-opus-5",
-             "claude-sonnet-5":
-            return true
-        default:
-            return false
-        }
+        adaptiveThinkingModelIDs.contains(modelID)
+    }
+
+    /// `xhigh` and `max` are model gated. Every adaptive model in the catalog
+    /// supports both, while any other model falls back to `high`, which is the
+    /// API default.
+    static func supportsExtendedEffortLevels(modelID: String) -> Bool {
+        adaptiveThinkingModelIDs.contains(modelID)
     }
 
     static func adaptiveThinkingEffort(
@@ -180,37 +193,48 @@ extension AnthropicSubscriptionGenerationClient {
     ) -> String? {
         switch selection {
         case .off, .enabled:
+            // Omitting `effort` selects the API default, which is `high`, and
+            // keeps the prompt cache stable.
             return nil
         case .minimal, .low:
+            // Anthropic has no `minimal` effort level.
             return "low"
         case .medium:
             return "medium"
         case .high:
             return "high"
-        case .xhigh,
-             .max,
-             .ultra:
-            switch modelID {
-            case "claude-fable-5", "claude-opus-5":
-                return "xhigh"
-            default:
-                return "high"
-            }
+        case .xhigh:
+            return supportsExtendedEffortLevels(modelID: modelID) ? "xhigh" : "high"
+        case .max, .ultra:
+            return supportsExtendedEffortLevels(modelID: modelID) ? "max" : "high"
         }
     }
 
+    /// Manual thinking budgets for models that still use
+    /// `thinking: {type: "enabled", budget_tokens: N}`.
+    ///
+    /// The ladder stays between Anthropic's documented 1,024 token minimum and
+    /// the 32,000 token ceiling above which long thinking requests are expected
+    /// to run as batch work instead of streaming.
     static func thinkingBudgetTokens(for selection: AgentThinkingSelection) -> Int {
         switch selection {
         case .off:
             return 0
-        case .enabled, .minimal:
-            return 1_024
+        case .minimal:
+            return minimumThinkingBudgetTokens
+        case .enabled:
+            // Thinking on without an explicit level: balanced depth.
+            return 8_192
         case .low:
-            return 2_048
+            return 4_096
         case .medium:
             return 8_192
-        case .high, .xhigh, .max, .ultra:
+        case .high:
             return 16_384
+        case .xhigh:
+            return 24_576
+        case .max, .ultra:
+            return 32_000
         }
     }
 
