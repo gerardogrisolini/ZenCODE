@@ -96,6 +96,7 @@ extension ZenCODESetupRunner {
         let voiceSummary = ""
         #endif
         let agentsDetail = agentsSetupDetail()
+        let responseLanguageDetail = responseLanguageSetupDetail(manifest)
 
         AgentOutput.standardError.writeString(
             """
@@ -106,6 +107,7 @@ extension ZenCODESetupRunner {
               Default model: \(selectedModelTitle)
               Default thinking: \(thinkingTitle)
               Agents: \(agentsDetail)
+              Response language: \(responseLanguageDetail)
               Telegram remote control: \(telegramStatus)\(voiceSummary)
 
             Files:

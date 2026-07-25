@@ -22,6 +22,7 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         case localExecAllowedCommands
         case chatGPTSubscriptionCredentials
         case anthropicSubscriptionCredentials
+        case responseLanguage
     }
 
     public static let currentVersion = 10
@@ -38,6 +39,9 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
     public let localExecAllowedCommands: [String]
     public let chatGPTSubscriptionCredentials: CodexAgentCredentials?
     public let anthropicSubscriptionCredentials: AnthropicSubscriptionCredentials?
+    /// ISO language code (e.g. "it", "en") for the model's natural-language
+    /// responses. When nil, the operating system language is used at runtime.
+    public let responseLanguage: String?
 
     public init(
         version: Int = Self.currentVersion,
@@ -50,7 +54,8 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         remoteAPIKeysByProviderID: [String: String] = [:],
         localExecAllowedCommands: [String] = [],
         chatGPTSubscriptionCredentials: CodexAgentCredentials? = nil,
-        anthropicSubscriptionCredentials: AnthropicSubscriptionCredentials? = nil
+        anthropicSubscriptionCredentials: AnthropicSubscriptionCredentials? = nil,
+        responseLanguage: String? = nil
     ) {
         let normalizedProviders = Self.normalizedProviders(
             providers,
@@ -82,6 +87,7 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         )
         self.chatGPTSubscriptionCredentials = chatGPTSubscriptionCredentials
         self.anthropicSubscriptionCredentials = anthropicSubscriptionCredentials
+        self.responseLanguage = responseLanguage?.nilIfBlank
     }
 
     public init(from decoder: Decoder) throws {
@@ -124,6 +130,10 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
             anthropicSubscriptionCredentials: try container.decodeIfPresent(
                 AnthropicSubscriptionCredentials.self,
                 forKey: .anthropicSubscriptionCredentials
+            ),
+            responseLanguage: try container.decodeIfPresent(
+                String.self,
+                forKey: .responseLanguage
             )
         )
     }
@@ -157,6 +167,9 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         if let anthropicSubscriptionCredentials {
             try container.encode(anthropicSubscriptionCredentials, forKey: .anthropicSubscriptionCredentials)
         }
+        if let responseLanguage {
+            try container.encode(responseLanguage, forKey: .responseLanguage)
+        }
     }
 
     public var isEmpty: Bool {
@@ -170,6 +183,7 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
             && localExecAllowedCommands.isEmpty
             && chatGPTSubscriptionCredentials == nil
             && anthropicSubscriptionCredentials == nil
+            && responseLanguage == nil
     }
 
     private static func normalizedLocalExecAllowedCommands(_ commands: [String]) -> [String] {

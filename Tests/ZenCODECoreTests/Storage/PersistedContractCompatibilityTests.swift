@@ -107,6 +107,33 @@ struct PersistedContractCompatibilityTests {
     }
 
     @Test
+    func responseLanguageRoundTripsAndDecodesAbsence() throws {
+        let withLanguage = AgentSettingsManifest(
+            models: [],
+            responseLanguage: "it"
+        )
+        let encoded = try JSONEncoder().encode(withLanguage)
+        let reloaded = try JSONDecoder().decode(
+            AgentSettingsManifest.self,
+            from: encoded
+        )
+
+        #expect(reloaded.responseLanguage == "it")
+
+        // A manifest without the field decodes to nil.
+        let absent = try decode(
+            AgentSettingsManifest.self,
+            from: #"""
+            {
+              "version": 10,
+              "models": []
+            }
+            """#
+        )
+        #expect(absent.responseLanguage == nil)
+    }
+
+    @Test
     func savedSessionSnapshotRoundTripsPersistedTranscriptAndPlan() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("persisted-contract-\(UUID().uuidString)", isDirectory: true)

@@ -107,7 +107,7 @@ extension ZenCODESetupRunner {
             return setupStatusMarker(manifest?.voice?.isConfigured == true, optional: true)
         case .features:
             return setupStatusMarker(featuresAreEnabled(), optional: true)
-        case .defaultModel, .defaultThinking, .resetRemoteConfiguration, .finish, .cancel:
+        case .defaultModel, .defaultThinking, .resetRemoteConfiguration, .finish, .cancel, .responseLanguage:
             return nil
         }
     }
@@ -143,6 +143,10 @@ extension ZenCODESetupRunner {
             SetupSectionOption(
                 section: .features,
                 detail: featuresSetupDetail()
+            ),
+            SetupSectionOption(
+                section: .responseLanguage,
+                detail: responseLanguageSetupDetail(manifest)
             ),
             SetupSectionOption(
                 section: .resetRemoteConfiguration,

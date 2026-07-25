@@ -95,7 +95,8 @@ public enum AgentSettingsManifestStore {
                 remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
                 localExecAllowedCommands: current.localExecAllowedCommands,
                 chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
-                anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials
+                anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
+                responseLanguage: current.responseLanguage
             )
         )
     }
@@ -116,7 +117,8 @@ public enum AgentSettingsManifestStore {
                 remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
                 localExecAllowedCommands: current.localExecAllowedCommands,
                 chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
-                anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials
+                anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
+                responseLanguage: current.responseLanguage
             )
         )
     }
@@ -137,7 +139,8 @@ public enum AgentSettingsManifestStore {
                 remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
                 localExecAllowedCommands: current.localExecAllowedCommands,
                 chatGPTSubscriptionCredentials: credentials,
-                anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials
+                anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
+                responseLanguage: current.responseLanguage
             )
         )
     }
@@ -158,7 +161,28 @@ public enum AgentSettingsManifestStore {
                 remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
                 localExecAllowedCommands: current.localExecAllowedCommands,
                 chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
-                anthropicSubscriptionCredentials: credentials
+                anthropicSubscriptionCredentials: credentials,
+                responseLanguage: current.responseLanguage
+            )
+        )
+    }
+
+    public static func saveResponseLanguage(_ languageCode: String?) throws {
+        let current = try manifestForCredentialUpdate()
+        try save(
+            AgentSettingsManifest(
+                version: current.version,
+                providers: current.providers,
+                models: current.models,
+                selectedModelID: current.selectedModelID,
+                selectedThinkingSelection: current.selectedThinkingSelection,
+                telegram: current.telegram,
+                voice: current.voice,
+                remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
+                localExecAllowedCommands: current.localExecAllowedCommands,
+                chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
+                anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
+                responseLanguage: languageCode
             )
         )
     }

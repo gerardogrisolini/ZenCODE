@@ -597,7 +597,7 @@ actor TerminalChatRenderCoordinator {
             ? freshColumnWidthProvider()
             : columnWidthProvider()
         let contentInsetWidth = TerminalChat.displayWidth(lineInset)
-        let lines = toolBlockLines(
+        let rows = toolBlockRows(
             for: toolCall,
             lifecycle: lifecycle,
             style: style,
@@ -611,7 +611,7 @@ actor TerminalChatRenderCoordinator {
                 id: toolCall.id,
                 style: style,
                 rows: TerminalChat.renderedTerminalRowCount(
-                    for: lines,
+                    for: rows.map(\.plainText),
                     contentInsetWidth: contentInsetWidth,
                     columnWidth: columnWidth
                 ),
@@ -658,8 +658,8 @@ actor TerminalChatRenderCoordinator {
             }
         }
 
-        writeToolBlockLines(
-            lines,
+        writeToolBlockRows(
+            rows,
             for: toolCall,
             lifecycle: lifecycle,
             style: style
@@ -672,13 +672,13 @@ actor TerminalChatRenderCoordinator {
         detailLevel == .compact ? .compact : .detailed
     }
 
-    private func toolBlockLines(
+    private func toolBlockRows(
         for toolCall: DirectAgentToolCall,
         lifecycle: ToolBlockLifecycle,
         style: ToolBlockStyle,
         contentInsetWidth: Int,
         columnWidth: Int
-    ) -> [String] {
+    ) -> [TerminalChat.DetailedToolRow] {
         switch (style, lifecycle) {
         case (.compact, .started):
             return TerminalChat.compactToolLines(
@@ -687,6 +687,7 @@ actor TerminalChatRenderCoordinator {
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
             )
+            .map(TerminalChat.DetailedToolRow.text)
         case let (.compact, .completed(result)):
             return TerminalChat.compactToolLines(
                 for: toolCall,
@@ -694,17 +695,21 @@ actor TerminalChatRenderCoordinator {
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
             )
+            .map(TerminalChat.DetailedToolRow.text)
         case (.detailed, .started):
-            return TerminalChat.safelyWrappedDetailedToolLines(
-                TerminalChat.detailedToolCallStartedLines(for: toolCall),
+            return TerminalChat.safelyWrappedDetailedToolRows(
+                TerminalChat.detailedToolCallStartedLines(for: toolCall)
+                    .map(TerminalChat.DetailedToolRow.text),
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
             )
         case let (.detailed, .completed(result)):
-            return TerminalChat.safelyWrappedDetailedToolLines(
-                TerminalChat.detailedToolCallCompletedLines(
+            let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
+            return TerminalChat.safelyWrappedDetailedToolRows(
+                TerminalChat.detailedToolCallCompletedRows(
                     for: toolCall,
-                    result: result
+                    result: result,
+                    contentWidth: safeContentWidth
                 ),
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
@@ -712,18 +717,18 @@ actor TerminalChatRenderCoordinator {
         }
     }
 
-    private func writeToolBlockLines(
-        _ lines: [String],
+    private func writeToolBlockRows(
+        _ rows: [TerminalChat.DetailedToolRow],
         for toolCall: DirectAgentToolCall,
         lifecycle: ToolBlockLifecycle,
         style: ToolBlockStyle
     ) {
         switch style {
         case .compact:
-            writeCompactToolLines(lines, newline: lifecycle.isCompletion)
+            writeCompactToolLines(rows.map(\.plainText), newline: lifecycle.isCompletion)
         case .detailed:
             writeToolBlock(
-                lines,
+                rows,
                 codeLanguage: TerminalChat.codeLanguageHint(for: toolCall)
             )
             if lifecycle.isCompletion {
@@ -746,11 +751,14 @@ actor TerminalChatRenderCoordinator {
         writeRawChatError(text)
     }
 
-    private func writeToolBlock(_ lines: [String], codeLanguage: String? = nil) {
+    private func writeToolBlock(
+        _ rows: [TerminalChat.DetailedToolRow],
+        codeLanguage: String? = nil
+    ) {
         let reset = "\u{1B}[0m"
-        let text = lines
+        let text = rows
             .map {
-                "\(lineInset)\(TerminalChat.renderDetailedToolLine($0, codeLanguage: codeLanguage))\(reset)"
+                "\(lineInset)\(TerminalChat.renderDetailedToolRow($0, codeLanguage: codeLanguage))\(reset)"
             }
             .joined(separator: "\n")
         writeRawChatError("\(text)\n")

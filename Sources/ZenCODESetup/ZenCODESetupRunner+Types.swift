@@ -96,6 +96,7 @@ enum SetupSection: Equatable, Hashable {
     case features
     case agents
     case agentModels
+    case responseLanguage
     case resetRemoteConfiguration
     case finish
     case cancel
@@ -120,6 +121,8 @@ enum SetupSection: Equatable, Hashable {
             return "Agents"
         case .agentModels:
             return "Agent model bindings"
+        case .responseLanguage:
+            return "Response language"
         case .resetRemoteConfiguration:
             return "Reset remote configuration"
         case .finish:
@@ -133,7 +136,7 @@ enum SetupSection: Equatable, Hashable {
         switch self {
         case .providersAndModels:
             return .required
-        case .defaultModelSettings, .agents, .agentModels:
+        case .defaultModelSettings, .agents, .agentModels, .responseLanguage:
             return .recommended
         case .telegram, .voice, .features, .resetRemoteConfiguration:
             return .optional
@@ -146,7 +149,7 @@ enum SetupSection: Equatable, Hashable {
 
     var requiresConfiguredModels: Bool {
         switch self {
-        case .providersAndModels, .agents, .features, .resetRemoteConfiguration, .finish, .cancel:
+        case .providersAndModels, .agents, .features, .responseLanguage, .resetRemoteConfiguration, .finish, .cancel:
             return false
         case .defaultModelSettings, .defaultModel, .defaultThinking, .telegram, .voice, .agentModels:
             return true
@@ -185,6 +188,8 @@ enum SetupSection: Equatable, Hashable {
                 "capability",
                 "agent models & capability"
             ]
+        case .responseLanguage:
+            return ["language", "response language", "locale", "response_language"]
         case .resetRemoteConfiguration:
             return ["reset", "reset remote configuration", "reset configuration"]
         case .finish:

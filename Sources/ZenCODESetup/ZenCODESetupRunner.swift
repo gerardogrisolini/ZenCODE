@@ -148,6 +148,7 @@ public enum ZenCODESetupRunner {
 
         var manifest = try await configureProvidersAndModels(existingManifest: existingManifest)
         manifest = try configureDefaultModel(in: manifest)
+        manifest = try configureResponseLanguage(existingManifest: manifest)
         try ZenCODEAgentProfileSetupRunner.configureInteractively()
         return manifest
     }
@@ -210,6 +211,10 @@ public enum ZenCODESetupRunner {
         case .agents:
             try ZenCODEAgentProfileSetupRunner.configureInteractively()
             return SetupSectionConfigurationResult(manifest: manifest)
+        case .responseLanguage:
+            return SetupSectionConfigurationResult(
+                manifest: try configureResponseLanguage(existingManifest: manifest)
+            )
         case .agentModels:
             try ZenCODEAgentProfileSetupRunner.configureAgentModels()
             return SetupSectionConfigurationResult(

@@ -138,6 +138,54 @@ struct ZenCODESetupSessionTests {
     }
 
     @Test
+    func responseLanguageSectionIsAvailableWithoutConfiguredModels() {
+        let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
+
+        #expect(options.contains { $0.section == .responseLanguage })
+        #expect(!SetupSection.responseLanguage.requiresConfiguredModels)
+        #expect(SetupSection.responseLanguage.category == .recommended)
+        #expect(SetupSection.responseLanguage.title == "Response language")
+        // A configured language is reflected in the menu detail.
+        let withLanguage = AgentSettingsManifest(models: [], responseLanguage: "it")
+        #expect(
+            ZenCODESetupRunner.responseLanguageSetupDetail(withLanguage) == "Italian"
+        )
+        #expect(
+            ZenCODESetupRunner.responseLanguageSetupDetail(nil) == "system default"
+        )
+    }
+
+    @Test
+    func updatingResponseLanguagePreservesExistingSettings() {
+        let original = Self.remoteManifest(commands: ["ls"])
+        let updated = ZenCODESetupRunner.manifestByUpdatingResponseLanguage(
+            original,
+            responseLanguage: "es"
+        )
+
+        #expect(updated.responseLanguage == "es")
+        #expect(updated.providers == original.providers)
+        #expect(updated.models == original.models)
+        #expect(updated.selectedModelID == original.selectedModelID)
+        #expect(updated.localExecAllowedCommands == original.localExecAllowedCommands)
+    }
+
+    @Test
+    func responseLanguageChangeMarksSettingsChanged() {
+        let original = Self.remoteManifest(commands: ["ls"])
+        var session = SetupSession(originalManifest: original)
+        let mutated = ZenCODESetupRunner.manifestByUpdatingResponseLanguage(
+            original,
+            responseLanguage: "fr"
+        )
+
+        session.apply(SetupSectionConfigurationResult(manifest: mutated))
+
+        #expect(session.manifest?.responseLanguage == "fr")
+        #expect(session.shouldWriteSettings)
+    }
+
+    @Test
     func remoteResetRemovesProvidedConfigurationFilesOnce() throws {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory

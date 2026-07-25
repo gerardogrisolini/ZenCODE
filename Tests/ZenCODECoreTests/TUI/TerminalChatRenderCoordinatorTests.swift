@@ -273,6 +273,58 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func detailedToolBlockBeyondScrollRegionAppendsCompletionWithoutErasingOverlay() async {
         let scrollableRows = 12
+        // The *started* block must exceed the scrolling region: that is the
+        // precondition for the append-only completion path under test.
+        // Expanded mutation tools now render their payload only on completion,
+        // so this fixture uses a tool whose parameters are shown at start time.
+        let script = (0..<40)
+            .map { "echo line\($0)" }
+            .joined(separator: "\n")
+        let renderer = makeRenderer(
+            stdinIsTerminal: true,
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "tool-overflowing-scroll-region",
+            name: "local.exec",
+            argumentsObject: [
+                "cwd": "/tmp/project",
+                "command": script
+            ],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallStarted(
+            toolCall,
+            maximumInPlaceRows: scrollableRows
+        )
+        let started = await renderer.snapshot()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done"),
+            maximumInPlaceRows: scrollableRows
+        )
+
+        let completionText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventCountBeforeCompletion)
+            .map(\.text)
+            .joined()
+
+        #expect(started.activeDetailedToolRenderedRowCount > scrollableRows)
+        #expect(!containsCursorUpSequence(completionText))
+        #expect(TerminalANSIText.stripANSI(completionText).contains("status: ✅"))
+    }
+
+    @Test
+    func expandedMutationCompletionBeyondScrollRegionAppendsWithoutErasingOverlay() async {
+        // Companion case for expanded mutations: the payload appears only on
+        // completion, so the started block stays small while the completion
+        // far exceeds the scrolling region.
+        let scrollableRows = 4
         let content = (0..<40)
             .map { "let value\($0) = \($0)" }
             .joined(separator: "\n")
@@ -282,7 +334,7 @@ struct TerminalChatRenderCoordinatorTests {
             columnWidthProvider: { 80 }
         )
         let toolCall = DirectAgentToolCall(
-            id: "tool-overflowing-scroll-region",
+            id: "tool-expanded-write-overflow",
             name: "local.writeFile",
             argumentsObject: [
                 "path": "/tmp/project/Sources/App.swift",
@@ -309,10 +361,14 @@ struct TerminalChatRenderCoordinatorTests {
             .dropFirst(eventCountBeforeCompletion)
             .map(\.text)
             .joined()
+        let visibleRows = TerminalANSIText.stripANSI(completionText)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
 
         #expect(started.activeDetailedToolRenderedRowCount > scrollableRows)
         #expect(!containsCursorUpSequence(completionText))
-        #expect(TerminalANSIText.stripANSI(completionText).contains("status: ✅"))
+        #expect(visibleRows.contains { $0.contains("status: ✅") })
+        #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 80 })
     }
 
     @Test
@@ -1150,6 +1206,328 @@ struct TerminalChatRenderCoordinatorTests {
             .joined()
         #expect(stderr.contains("🤔 Thinking:"))
         #expect(stderr.contains("*"))
+    }
+
+    @Test
+    func expandedMutationCompletionUsesTerminalSafeSideBySideBudget() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "expanded-crlf-tab-diff",
+            name: "local.editFile",
+            argumentsObject: [
+                "path": "Sources/Feature.swift",
+                "oldString": "// removed\r\n\tlet oldValue = 1",
+                "newString": "let newValue = 2\r\n\tlet replacement = 3"
+            ],
+            argumentsJSON: "{}"
+        )
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallStarted(toolCall)
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "", summary: "updated")
+        )
+
+        let completionText = await renderer.capturedWriteEvents()
+            .dropFirst(eventCountBeforeCompletion)
+            .filter { $0.channel == .standardError }
+            .map(\.text)
+            .joined()
+        let visibleRows = TerminalANSIText.stripANSI(completionText)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        let sideBySideRows = visibleRows.filter {
+            $0.contains("// removed") && $0.contains("let newValue = 2")
+        }
+
+        #expect(sideBySideRows.count == 1)
+        #expect(sideBySideRows.allSatisfy { TerminalChat.displayWidth($0) <= 80 })
+        #expect(sideBySideRows.allSatisfy { !$0.contains("\r") && !$0.contains("\t") })
+        // `let` comes after a comment on the old side, so this color can only
+        // appear when the coordinator renders the new column independently.
+        #expect(completionText.contains("\u{1B}[38;5;141mlet"))
+    }
+
+    @Test
+    func expandedMutationCompletionKeepsColumnsSeparateForAnsiHostilePayload() async {
+        // End-to-end guard for the former in-band boundary sentinel: a payload
+        // containing that exact sequence must not be able to split the row at
+        // the wrong place or leak into the other column.
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 120 }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "expanded-ansi-collision",
+            name: "local.editFile",
+            argumentsObject: [
+                "path": "Sources/Feature.swift",
+                "oldString": "\u{1B}[0m │ let injected = 1",
+                "newString": "let replacement = 2"
+            ],
+            argumentsJSON: "{}"
+        )
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallStarted(toolCall)
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "", summary: "updated")
+        )
+
+        let completionText = await renderer.capturedWriteEvents()
+            .dropFirst(eventCountBeforeCompletion)
+            .filter { $0.channel == .standardError }
+            .map(\.text)
+            .joined()
+        let visibleRows = TerminalANSIText.stripANSI(completionText)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        let diffRows = visibleRows.filter { $0.contains("let injected = 1") }
+
+        #expect(diffRows.count == 1)
+        #expect(diffRows.allSatisfy { $0.contains("let replacement = 2") })
+        #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 120 })
+    }
+
+    @Test
+    func expandedToolBlockNeutralizesControlSequencesInPathMetadataEndToEnd() async {
+        // End-to-end guard: a hostile path must not be able to emit ESC, CR, LF
+        // or a tab through the title, the location row or the change row of the
+        // expanded block, at start or at completion.
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 100 }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "expanded-path-injection",
+            name: "local.writeFile",
+            argumentsObject: [
+                "path": "Sources/\u{1B}[2J\u{1B}[1;1H\u{9B}31mApp\u{7F}.swift",
+                "content": "let value = 1"
+            ],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallStarted(toolCall)
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "", summary: "written")
+        )
+
+        let text = await renderer.capturedWriteEvents()
+            .filter { $0.channel == .standardError }
+            .map(\.text)
+            .joined()
+        // Split on both newline and CR: a CR here belongs to the coordinator's
+        // own cursor repositioning, never to the payload.
+        let visibleRows = TerminalANSIText.stripANSI(text)
+            .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+            .map(String.init)
+        let metadataRows = visibleRows.filter { !$0.hasPrefix("  ") }
+
+        for row in metadataRows {
+            #expect(!row.contains("\u{1B}"))
+            #expect(!row.contains("\u{9B}"))
+            #expect(!row.contains("\t"))
+            #expect(!row.contains("\u{7F}"))
+        }
+        // No screen-clear or cursor-home sequence may survive anywhere.
+        #expect(!text.contains("\u{1B}[2J"))
+        #expect(!text.contains("\u{1B}[1;1H"))
+        #expect(visibleRows.contains { $0.contains("change: write ") })
+        #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 100 })
+    }
+
+    @Test
+    func expandedPatchBlockNeutralizesControlSequencesFromPatchDerivedTarget() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 100 }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "expanded-patch-injection",
+            name: "local.applyPatch",
+            argumentsObject: [
+                "patch": "*** Update File: Sources/\u{1B}[2JInjected.swift\n@@\n-let a = 1\n+let b = 2\n"
+            ],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallStarted(toolCall)
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "", summary: "patched")
+        )
+
+        let text = await renderer.capturedWriteEvents()
+            .filter { $0.channel == .standardError }
+            .map(\.text)
+            .joined()
+        let visibleRows = TerminalANSIText.stripANSI(text)
+            .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+            .map(String.init)
+
+        #expect(!text.contains("\u{1B}[2J"))
+        #expect(visibleRows.contains { $0.hasPrefix("change: patch ") })
+        #expect(visibleRows.filter { !$0.hasPrefix("  ") }.allSatisfy { !$0.contains("\u{1B}") })
+        #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 100 })
+    }
+
+    @Test
+    func expandedRemoveAndMoveXcodeAliasesRenderMutationChangeRows() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 100 }
+        )
+        await renderer.setToolOutputDetailLevel(.expanded)
+
+        let removeCall = DirectAgentToolCall(
+            id: "expanded-xcode-rm",
+            name: "xcode.rm",
+            argumentsObject: ["path": "Sources/Legacy.swift"],
+            argumentsJSON: "{}"
+        )
+        await renderer.writeToolCallStarted(removeCall)
+        await renderer.writeToolCallCompleted(
+            removeCall,
+            result: DirectAgentToolResult(output: "", summary: "removed")
+        )
+
+        let moveCall = DirectAgentToolCall(
+            id: "expanded-xcode-mv",
+            name: "xcode.mv",
+            argumentsObject: [
+                "sourcePath": "Sources/Old.swift",
+                "destinationPath": "Sources/New.swift"
+            ],
+            argumentsJSON: "{}"
+        )
+        await renderer.writeToolCallStarted(moveCall)
+        await renderer.writeToolCallCompleted(
+            moveCall,
+            result: DirectAgentToolResult(output: "", summary: "moved")
+        )
+
+        let visibleText = TerminalANSIText.stripANSI(
+            await renderer.capturedWriteEvents()
+                .filter { $0.channel == .standardError }
+                .map(\.text)
+                .joined()
+        )
+
+        // The `change: pending` row proves the alias is classified as a mutation
+        // at start time, and the completion rows come from the routed cases.
+        #expect(visibleText.contains("change: pending"))
+        #expect(visibleText.contains("change: delete Sources/Legacy.swift"))
+        #expect(visibleText.contains("change: move"))
+        #expect(visibleText.contains("from: Sources/Old.swift"))
+        #expect(visibleText.contains("to: Sources/New.swift"))
+    }
+
+    @Test
+    func expandedXcodeMoveHidesRawControlCharacterParameters() async {
+        // The markers make each hostile scalar distinguishable from terminal
+        // framing emitted by the coordinator itself. `xcode.mv` only renders
+        // sanitized metadata rows, never its raw parameter JSON.
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 100 }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "expanded-xcode-mv-parameter-injection",
+            name: "xcode.mv",
+            argumentsObject: [
+                "sourcePath": "Sources/Old\nLF_MARKER\u{1B}ESC_MARKER\rCR_MARKER\tTAB_MARKER\u{9B}C1_MARKER.swift",
+                "destinationPath": "Sources/New.swift"
+            ],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallStarted(toolCall)
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "", summary: "moved")
+        )
+
+        let text = await renderer.capturedWriteEvents()
+            .filter { $0.channel == .standardError }
+            .map(\.text)
+            .joined()
+        let visibleText = TerminalANSIText.stripANSI(text)
+
+        #expect(!visibleText.contains("parameters:"))
+        for rawSequence in [
+            "\nLF_MARKER", "\u{1B}ESC_MARKER", "\rCR_MARKER",
+            "\tTAB_MARKER", "\u{9B}C1_MARKER"
+        ] {
+            #expect(!text.contains(rawSequence))
+        }
+        #expect(visibleText.contains("change: move"))
+        #expect(visibleText.contains("from: Sources/Old LF_MARKER ESC_MARKER CR_MARKER TAB_MARKER C1_MARKER.swift"))
+        #expect(visibleText.contains("to: Sources/New.swift"))
+    }
+
+    @Test
+    func expandedEmptyPayloadRendersDistinctlyFromLiteralMarkerPayload() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 100 }
+        )
+        await renderer.setToolOutputDetailLevel(.expanded)
+
+        let emptyCall = DirectAgentToolCall(
+            id: "expanded-empty-payload",
+            name: "local.writeFile",
+            argumentsObject: ["path": "Sources/Empty.swift", "content": ""],
+            argumentsJSON: "{}"
+        )
+        await renderer.writeToolCallStarted(emptyCall)
+        await renderer.writeToolCallCompleted(
+            emptyCall,
+            result: DirectAgentToolResult(output: "", summary: "written")
+        )
+        let emptyEventCount = await renderer.capturedWriteEvents().count
+
+        let literalCall = DirectAgentToolCall(
+            id: "expanded-literal-marker",
+            name: "local.writeFile",
+            argumentsObject: ["path": "Sources/Literal.swift", "content": "<empty>"],
+            argumentsJSON: "{}"
+        )
+        await renderer.writeToolCallStarted(literalCall)
+        await renderer.writeToolCallCompleted(
+            literalCall,
+            result: DirectAgentToolResult(output: "", summary: "written")
+        )
+
+        let allEvents = await renderer.capturedWriteEvents()
+        let emptyText = TerminalANSIText.stripANSI(
+            allEvents.prefix(emptyEventCount)
+                .filter { $0.channel == .standardError }
+                .map(\.text)
+                .joined()
+        )
+        let literalText = TerminalANSIText.stripANSI(
+            allEvents.dropFirst(emptyEventCount)
+                .filter { $0.channel == .standardError }
+                .map(\.text)
+                .joined()
+        )
+
+        // The empty payload has no numbered line; the literal one does.
+        #expect(emptyText.contains("<empty>"))
+        #expect(!emptyText.contains("1 │ <empty>"))
+        #expect(literalText.contains("1 │ <empty>"))
     }
 
     private func makeRenderer(

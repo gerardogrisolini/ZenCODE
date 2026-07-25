@@ -91,7 +91,8 @@ extension ZenCODESetupRunner {
             remoteAPIKeysByProviderID: manifest.remoteAPIKeysByProviderID,
             localExecAllowedCommands: manifest.localExecAllowedCommands,
             chatGPTSubscriptionCredentials: manifest.chatGPTSubscriptionCredentials,
-            anthropicSubscriptionCredentials: manifest.anthropicSubscriptionCredentials
+            anthropicSubscriptionCredentials: manifest.anthropicSubscriptionCredentials,
+            responseLanguage: manifest.responseLanguage
         )
     }
 

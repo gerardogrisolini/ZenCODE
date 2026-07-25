@@ -6,6 +6,41 @@
 import Foundation
 
 extension TerminalChat {
+    /// A detailed tool row before terminal rendering. Side-by-side diff cells
+    /// are kept in separate fields instead of being encoded into the text, so
+    /// no byte sequence in the payload — ANSI, Unicode or otherwise — can be
+    /// mistaken for the column boundary.
+    enum DetailedToolRow: Sendable, Equatable {
+        case text(String)
+        case diff(DetailedToolDiffCells)
+
+        /// Marker-free textual projection used for row accounting, wrapping
+        /// fallbacks, tests and any non-terminal consumer.
+        var plainText: String {
+            switch self {
+            case let .text(line):
+                return line
+            case let .diff(cells):
+                return cells.plainText
+            }
+        }
+    }
+
+    /// A single side-by-side diff row. Both cells are already padded to the
+    /// column width, so the divider position is a layout property instead of
+    /// something parsed back out of the content.
+    struct DetailedToolDiffCells: Sendable, Equatable {
+        static let divider = " │ "
+
+        let indentation: String
+        let oldCell: String
+        let newCell: String
+
+        var plainText: String {
+            "\(indentation)\(oldCell)\(Self.divider)\(newCell)"
+        }
+    }
+
     public func writeToolCallStarted(_ toolCall: DirectAgentToolCall) async {
         let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
         await renderCoordinator.writeToolCallStarted(
@@ -144,32 +179,115 @@ extension TerminalChat {
         }
     }
 
-    /// Reflows detailed tool lines before they are rendered in an in-place
+    /// Reflows detailed tool rows before they are rendered in an in-place
     /// block. One terminal cell remains unused on every row because a line
     /// ending in the final column has terminal-dependent auto-wrap behavior;
     /// that would make the cursor position disagree with the saved row count
     /// used to redraw the tool on completion.
+    nonisolated static func safelyWrappedDetailedToolRows(
+        _ rows: [DetailedToolRow],
+        contentInsetWidth: Int = 0,
+        columnWidth: Int? = nil
+    ) -> [DetailedToolRow] {
+        let resolvedColumns = columnWidth ?? terminalColumnCount()
+        let contentColumns = max(1, resolvedColumns - contentInsetWidth)
+        let safeLineWidth = max(1, contentColumns - 1)
+
+        return rows.flatMap { row -> [DetailedToolRow] in
+            switch row {
+            case let .text(line):
+                return wrappedDetailedToolTextLines(line, width: safeLineWidth)
+                    .map(DetailedToolRow.text)
+            case let .diff(cells):
+                return wrappedDetailedToolDiffRows(cells, width: safeLineWidth)
+            }
+        }
+    }
+
     nonisolated static func safelyWrappedDetailedToolLines(
         _ lines: [String],
         contentInsetWidth: Int = 0,
         columnWidth: Int? = nil
     ) -> [String] {
-        let resolvedColumns = columnWidth ?? terminalColumnCount()
-        let contentColumns = max(1, resolvedColumns - contentInsetWidth)
-        let safeLineWidth = max(1, contentColumns - 1)
+        safelyWrappedDetailedToolRows(
+            lines.map(DetailedToolRow.text),
+            contentInsetWidth: contentInsetWidth,
+            columnWidth: columnWidth
+        )
+        .map(\.plainText)
+    }
 
-        return lines.flatMap { line in
-            // Code snippets begin with at least two spaces. Keep their leading
-            // indentation on continuations so expanded code styling remains
-            // consistent after a hard wrap.
-            let leadingSpaces = String(line.prefix { $0 == " " })
-            let hangingIndent = line.hasPrefix("  ") ? leadingSpaces : ""
-            return TerminalANSIText.wrapPreservingWhitespace(
-                line,
-                width: safeLineWidth,
-                hangingIndent: hangingIndent
-            )
+    private nonisolated static func wrappedDetailedToolTextLines(
+        _ line: String,
+        width: Int
+    ) -> [String] {
+        // Code snippets begin with at least two spaces. Keep their leading
+        // indentation on continuations so expanded code styling remains
+        // consistent after a hard wrap.
+        let leadingSpaces = String(line.prefix { $0 == " " })
+        let hangingIndent = line.hasPrefix("  ") ? leadingSpaces : ""
+        return TerminalANSIText.wrapPreservingWhitespace(
+            line,
+            width: width,
+            hangingIndent: hangingIndent
+        )
+    }
+
+    /// Reflows a side-by-side row by wrapping each cell inside its own column
+    /// budget and re-pairing the resulting fragments. The two columns stay
+    /// aligned and independently highlightable; nothing is parsed back out of
+    /// the payload text to find the divider.
+    private nonisolated static func wrappedDetailedToolDiffRows(
+        _ cells: DetailedToolDiffCells,
+        width: Int
+    ) -> [DetailedToolRow] {
+        guard displayWidth(cells.plainText) > width else {
+            return [.diff(cells)]
         }
+
+        let dividerWidth = displayWidth(DetailedToolDiffCells.divider)
+        let indentWidth = displayWidth(cells.indentation)
+        let columnWidth = (width - indentWidth - dividerWidth) / 2
+        guard columnWidth > 0 else {
+            // No room for two columns: degrade to stacked text rows rather
+            // than emitting a row wider than the terminal.
+            return (
+                wrappedDetailedToolTextLines(
+                    "\(cells.indentation)\(cells.oldCell)",
+                    width: width
+                )
+                + wrappedDetailedToolTextLines(
+                    "\(cells.indentation)\(cells.newCell)",
+                    width: width
+                )
+            ).map(DetailedToolRow.text)
+        }
+
+        let oldFragments = TerminalANSIText.wrapPreservingWhitespace(
+            cells.oldCell,
+            width: columnWidth
+        )
+        let newFragments = TerminalANSIText.wrapPreservingWhitespace(
+            cells.newCell,
+            width: columnWidth
+        )
+        let rowCount = max(1, max(oldFragments.count, newFragments.count))
+        return (0..<rowCount).map { index in
+            let oldFragment = index < oldFragments.count ? oldFragments[index] : ""
+            let newFragment = index < newFragments.count ? newFragments[index] : ""
+            return .diff(DetailedToolDiffCells(
+                indentation: cells.indentation,
+                oldCell: paddedToColumnWidth(oldFragment, width: columnWidth),
+                newCell: paddedToColumnWidth(newFragment, width: columnWidth)
+            ))
+        }
+    }
+
+    private nonisolated static func paddedToColumnWidth(
+        _ text: String,
+        width: Int
+    ) -> String {
+        text + String(repeating: " ", count: max(0, width - displayWidth(text)))
     }
 
     nonisolated static func compactToolInlineTarget(_ target: String) -> String {
@@ -219,6 +337,26 @@ extension TerminalChat {
         TerminalANSIText.visibleWidth(text)
     }
 
+    /// Renders a structured detailed row. A side-by-side row draws its two
+    /// cells from separate fields, so each is tokenized independently and no
+    /// payload sequence can be mistaken for the divider.
+    nonisolated static func renderDetailedToolRow(
+        _ row: DetailedToolRow,
+        codeLanguage: String? = nil
+    ) -> String {
+        switch row {
+        case let .text(line):
+            return renderDetailedToolLine(line, codeLanguage: codeLanguage)
+        case let .diff(cells):
+            return renderDiffCodeAreaLine(
+                indentation: cells.indentation,
+                oldCell: cells.oldCell,
+                newCell: cells.newCell,
+                language: codeLanguage
+            )
+        }
+    }
+
     nonisolated static func renderDetailedToolLine(
         _ line: String,
         codeLanguage: String? = nil
@@ -249,12 +387,33 @@ extension TerminalChat {
         _ line: String,
         language: String?
     ) -> String {
-        let reset = "\u{1B}[0m"
         let clearToEnd = "\u{1B}[K"
-        let highlighted = TerminalCodeBlockRenderer
+        return "\(codeAreaBackgroundColor)\(renderCodeAreaFragment(line, language: language))\(clearToEnd)"
+    }
+
+    /// The old and new cells of a side-by-side diff must be tokenized as two
+    /// independent source lines. In particular, a line comment or an unterminated
+    /// string on the old side must not color the divider and hide highlighting on
+    /// the new side.
+    nonisolated static func renderDiffCodeAreaLine(
+        indentation: String,
+        oldCell: String,
+        newCell: String,
+        language: String?
+    ) -> String {
+        let clearToEnd = "\u{1B}[K"
+        let divider = DetailedToolDiffCells.divider
+        return "\(codeAreaBackgroundColor)\(indentation)\(renderCodeAreaFragment(oldCell, language: language))\(codeAreaBackgroundColor)\(divider)\(renderCodeAreaFragment(newCell, language: language))\(clearToEnd)"
+    }
+
+    private nonisolated static func renderCodeAreaFragment(
+        _ line: String,
+        language: String?
+    ) -> String {
+        let reset = "\u{1B}[0m"
+        return TerminalCodeBlockRenderer
             .renderLine(line, language: language)
             .replacingOccurrences(of: reset, with: "\(reset)\(codeAreaBackgroundColor)")
-        return "\(codeAreaBackgroundColor)\(highlighted)\(clearToEnd)"
     }
 
     /// Returns whether the text before the first colon looks like a metadata

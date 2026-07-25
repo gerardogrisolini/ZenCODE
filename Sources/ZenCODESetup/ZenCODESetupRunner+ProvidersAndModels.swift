@@ -62,7 +62,8 @@ extension ZenCODESetupRunner {
             remoteAPIKeysByProviderID: apiKeysByProviderID,
             localExecAllowedCommands: existingManifest?.localExecAllowedCommands ?? [],
             chatGPTSubscriptionCredentials: subscriptionCredentials.chatGPT,
-            anthropicSubscriptionCredentials: subscriptionCredentials.anthropic
+            anthropicSubscriptionCredentials: subscriptionCredentials.anthropic,
+            responseLanguage: existingManifest?.responseLanguage
         )
     }
 
