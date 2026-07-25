@@ -23,8 +23,9 @@ extension TerminalChat {
     /// input device), then resumed. Reading runs off the cooperative executor
     /// so the authorizer actor is not blocked while the operator decides.
     func configureConsentReader(eventQueue: TerminalChatEventQueue) async {
-        await permissionAuthorizer.setConsentReader({ @TerminalChatActor [interactiveReader, statusBar, weak self] prompt in
+        await permissionAuthorizer.setConsentReader({ @TerminalChatActor [interactiveReader, renderCoordinator, statusBar, weak self] prompt in
             await interactiveReader.stopPanelInput(clearPanel: false)
+            await renderCoordinator.beginExternalTerminalPrompt()
             let answer = await Self.readConsentKeyOffActor(
                 reader: interactiveReader,
                 prompt: prompt
@@ -39,6 +40,7 @@ extension TerminalChat {
                 commandSuggestions: suggestions,
                 onEvent: { event in eventQueue.send(.input(event)) }
             )
+            await renderCoordinator.endExternalTerminalPrompt()
             return answer
         })
     }

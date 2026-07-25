@@ -29,7 +29,7 @@ extension TerminalChatRenderingTests {
 
         let rendered = TerminalChat.renderFileChangeSummary(summary)
 
-        #expect(rendered.hasPrefix("\nSummary: 1 file  +12 -2\n"))
+        #expect(rendered.hasPrefix("\n📋 Summary: 1 file  +12 -2\n"))
         #expect(rendered.contains("  modified Sources/App.swift  +12 -2\n"))
         #expect(rendered.contains("Use /undo to revert, /changes diff to show patches.\n"))
     }
@@ -37,12 +37,12 @@ extension TerminalChatRenderingTests {
     @Test
     func fileChangeSummaryColoringHighlightsNonBlankLines() {
         let rendered = TerminalChatTextFormatting.fileChangeSummaryColorApplied(
-            to: "\nChanged files: 1 modified file  +12 -2\n  modified Sources/App.swift  +12 -2\nUse /undo to revert, /changes diff to show patches.\n",
+            to: "\n📋 Summary: 1 modified file  +12 -2\n  modified Sources/App.swift  +12 -2\nUse /undo to revert, /changes diff to show patches.\n",
             isEnabled: true
         )
 
-        #expect(rendered.hasPrefix("\n\u{1B}[38;5;250mChanged files: 1 modified file  +12 -2\u{1B}[0m"))
-        #expect(rendered.contains("1 modified file"))
+        #expect(rendered.hasPrefix("\n\u{1B}[1;38;5;220m📋 Summary:\u{1B}[0m "))
+        #expect(rendered.contains("\u{1B}[38;5;81m1\u{1B}[0m\u{1B}[97m modified file\u{1B}[0m"))
         #expect(rendered.contains("\u{1B}[38;5;114m+12\u{1B}[0m"))
         #expect(rendered.contains("\u{1B}[38;5;203m-2\u{1B}[0m"))
         #expect(rendered.contains("\u{1B}[38;5;244mmodified\u{1B}[0m \u{1B}[97mSources/App.swift\u{1B}[0m"))

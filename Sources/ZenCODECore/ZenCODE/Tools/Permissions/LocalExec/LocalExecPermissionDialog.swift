@@ -144,7 +144,11 @@ extension LocalExecPermissionAuthorizer {
         // The run/always/cancel options and their compact key hint form the card
         // footer, set off from the command details by a divider rule. Keeping
         // `(r/a/c)` here avoids repeating the available choices below the box.
-        let footer = "\(Self.ansiCyanBold)[R]\(ansiReset)un once / \(Self.ansiCyanBold)[A]\(ansiReset)lways / \(Self.ansiCyanBold)[C]\(ansiReset)ancel"
+        // Non-bold cyan/yellow palette for the footer choices: cyan marks the
+        // option keys ([R], [A], [C]) and gold marks the option words, matching
+        // the TUI's existing cyan (38;5;81) and warm-gold (38;5;220) accents
+        // rather than the orange used for the card border.
+        let footer = "\(Self.ansiCyan)[R]\(Self.ansiYellow)un once / \(Self.ansiCyan)[A]\(Self.ansiYellow)lways / \(Self.ansiCyan)[C]\(Self.ansiYellow)ancel\(Self.ansiReset)"
         let box = Self.renderConsentBox(
             title: "Authorization",
             innerLines: innerLines,
@@ -158,10 +162,13 @@ extension LocalExecPermissionAuthorizer {
         return "\n\(box)\n"
     }
 
-    /// Orange ANSI accents reused across the consent card. Kept private so the
+    /// ANSI accents reused across the consent card. Kept private so the
     /// dialog owns its palette without leaking terminal styling elsewhere.
+    /// The card border stays orange; the footer choices use the TUI's cyan
+    /// (38;5;81) and warm-gold (38;5;220) accents in non-bold weight.
     private static let ansiOrange = "\u{1B}[38;5;208m"
-    private static let ansiOrangeBold = "\u{1B}[1;38;5;208m"
+    private static let ansiCyan = "\u{1B}[38;5;81m"
+    private static let ansiYellow = "\u{1B}[38;5;220m"
     private static let ansiCyanBold = "\u{1B}[1;38;5;81m"
     private static let ansiDim = "\u{1B}[38;5;244m"
     private static let ansiReset = "\u{1B}[0m"

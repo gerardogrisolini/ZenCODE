@@ -323,7 +323,7 @@ enum TerminalChatTextFormatting {
             return ""
         }
 
-        if line.hasPrefix("Summary:") {
+        if line.hasPrefix("📋 Summary:") {
             return colorFileChangeSummaryHeader(line)
         }
         if line.hasPrefix("  ") {
@@ -335,7 +335,7 @@ enum TerminalChatTextFormatting {
     // Compiled once: these headers/entries are colored per line of the
     // file-change summary, so recompiling the pattern each call is wasteful.
     private static let fileChangeSummaryHeaderRegex = try? NSRegularExpression(
-        pattern: #"^(Summary:) (.+)  (\+\d+) ([-]\d+)$"#
+        pattern: #"^(📋 Summary:) (.+)  (\+\d+) ([-]\d+)$"#
     )
     private static let fileChangeSummaryEntryRegex = try? NSRegularExpression(
         pattern: #"^  (\S+) (.+?)(?:  (\+\d+) ([-]\d+)| (\(binary\)))$"#
@@ -419,7 +419,9 @@ enum TerminalChatTextFormatting {
         return rendered
     }
 
-    static let fileChangeSummaryHeaderANSIColor = "\u{1B}[1;97m"
+    /// Warm gold distinguishes the summary heading while staying harmonious with
+    /// the orange card accents, yellow highlights, and muted gray metadata.
+    static let fileChangeSummaryHeaderANSIColor = "\u{1B}[38;5;208m"
 
     static func failureMessageColorApplied(to text: String, isEnabled: Bool) -> String {
         guard isEnabled, !text.isEmpty else {

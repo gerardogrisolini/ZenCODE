@@ -208,6 +208,48 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func externalAuthorizationPromptRelinquishesToolRowsBeforeCompletion() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let toolCall = DirectAgentToolCall(
+            id: "authorized-delete",
+            name: "local.delete",
+            argumentsObject: ["path": "ProvaTest.swift"],
+            argumentsJSON: #"{"path":"ProvaTest.swift"}"#
+        )
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallStarted(toolCall)
+        let started = await renderer.snapshot()
+
+        await renderer.beginExternalTerminalPrompt()
+        let guarded = await renderer.snapshot()
+        let deferred = await renderer.renderTaskGraphOverview(
+            signature: "graph:during-authorization",
+            markdown: "## Tasks\n\n- waiting for authorization\n"
+        )
+
+        #expect(started.activeDetailedToolCallID == toolCall.id)
+        #expect(started.activeDetailedToolRenderedRowCount > 0)
+        #expect(guarded.activeDetailedToolCallID == nil)
+        #expect(guarded.activeDetailedToolRenderedRowCount == 0)
+        #expect(deferred == .deferred)
+
+        await renderer.endExternalTerminalPrompt()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Deleted", summary: "Deleted")
+        )
+
+        let completionText = await renderer.capturedWriteEvents()
+            .dropFirst(eventCountBeforeCompletion)
+            .map(\.text)
+            .joined()
+        #expect(!containsCursorUpSequence(completionText))
+        #expect(!completionText.contains("\u{1B}[2K"))
+        #expect(completionText.contains("status:"))
+    }
+
+    @Test
     func detailedToolRowsReserveTrailingColumnBeforeInPlaceRewrite() async throws {
         let terminalColumns = 40
         let longArgument = String(repeating: "x", count: 100)

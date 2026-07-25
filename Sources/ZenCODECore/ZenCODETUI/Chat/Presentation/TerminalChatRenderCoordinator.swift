@@ -514,6 +514,26 @@ actor TerminalChatRenderCoordinator {
         renderPendingOverviewsIfIdle()
     }
 
+    // MARK: - External terminal prompts
+
+    /// Suspends coordinator-owned overview output before an interactive prompt
+    /// writes directly to the shared terminal. The external rows move the cursor
+    /// beyond any active tool block, so that block must relinquish its in-place
+    /// rewrite slot; otherwise its completion would cursor-up through the prompt
+    /// and erase the authorization card's footer and bottom border.
+    func beginExternalTerminalPrompt() {
+        overviewPublishingSuspended = true
+        finishThoughtOutputIfNeeded()
+        finishAssistantContentFormatting()
+        finishActiveToolOutputBeforeInterleavedMessage()
+    }
+
+    /// Releases the external prompt guard and publishes any overview deferred
+    /// while the operator was choosing an authorization response.
+    func endExternalTerminalPrompt() {
+        setOverviewPublishingSuspended(false)
+    }
+
     // MARK: - Tool blocks
 
     func writeToolCallStarted(
