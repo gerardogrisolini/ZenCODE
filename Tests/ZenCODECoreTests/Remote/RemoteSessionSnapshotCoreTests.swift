@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import os
 #if canImport(CryptoKit)
 import CryptoKit
 #endif
