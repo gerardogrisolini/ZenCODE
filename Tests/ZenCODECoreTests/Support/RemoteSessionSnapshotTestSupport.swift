@@ -101,7 +101,6 @@ extension RemoteSessionSnapshotTests {
         )
         return mcpRuntime
     }
-#if os(macOS)
     func remoteXcodeToolCatalog() -> RemoteToolWireCatalog {
         RemoteToolWireCatalog(
             descriptors: [
@@ -252,7 +251,6 @@ extension RemoteSessionSnapshotTests {
         }
         return messages
     }
-#endif
 }
 
 final class CapturedDirectAgentEvents: Sendable {
