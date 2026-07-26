@@ -70,7 +70,10 @@ writes to stdout, so ACP JSON-RPC output remains clean. See
 
 ## Agent Profiles
 
-Agent profiles live in `~/.zencode/agents.json` and are managed in setup. The recommended profiles are `Developer`, `Builder`, `Minimal`, `Xcode`, `Planner`, `Reviewer`, and `Reporter`. Each defines tools, skills, instructions, and model bindings. Associate at least one binding with every profile intended to receive delegated work: a binding authorizes its profile-and-model pair and supplies its capability and optional thinking selection for routing. A binding-free profile remains supported only through the legacy fallback: a child created without an explicit model inherits the parent session's model and the profile is absent from capability-based delegation routing. See [agents.md](agents.md) for the complete binding behavior.
+Agent profiles live in `~/.zencode/agents.json` and are managed in setup. The
+recommended profiles are `Developer`, `Builder`, `Minimal`, `Xcode`, `Planner`,
+`Reviewer`, and `Reporter`. Each defines tools, skills, instructions, and model
+bindings.
 
 Switch profiles in the TUI without restarting:
 
@@ -80,7 +83,14 @@ Switch profiles in the TUI without restarting:
 /agents 2               # by number
 ```
 
-Switching resets the conversation so the new system prompt and tools apply cleanly. If the selected profile has bindings, its default is used when no model has been selected explicitly. `/models` always presents every configured model, and a manual selection overrides that default for the active session. Use `/bindings` to inspect the configured bindings for every profile, including the selected profile, defaults, capability, and thinking settings. See [agents.md](agents.md) for profile concepts and capability routing.
+Switching resets the conversation so the new system prompt and tools apply
+cleanly. If the selected profile has bindings, its default is used when no model
+has been selected explicitly; `/models` always presents every configured model
+and a manual selection overrides that default for the active session.
+
+Use `/bindings` to inspect the model bindings of every profile — see
+[bindings.md](bindings.md) for how bindings, capability, and task complexity
+drive delegation, and [agents.md](agents.md) for profile and sub-agent concepts.
 
 ## Terminal TUI Commands
 
@@ -90,7 +100,7 @@ Commands start with `/`:
 - `/help` — show command help.
 - `/models` — show every configured model and choose the model for the current session.
 - `/agents [list|<name>|<number>]` — switch agent profile.
-- `/bindings` — show every agent profile's model bindings, including defaults, capability, and thinking settings. Does not accept arguments.
+- `/bindings` — show every agent profile's model bindings, including defaults, capability, and thinking settings. Takes no arguments. See [bindings.md](bindings.md).
 - `/tools [all|none|tool-name|package-name|number]` — select exposed tool groups.
 - `/skills` — select or install prompt skills.
 - `/exit` — close the session.
@@ -171,7 +181,7 @@ Tool groups include: filesystem, shell, text, search, Git, memory, sub-agents, X
 
 `todo.*` is a lightweight checklist for model-local coordination. `tasks.*` operates on the authoritative session task graph owned by `SessionTaskOrchestrator` — a validated DAG with atomic creation, dependency gating, optimistic fencing, and attempt history.
 
-When work has multiple units, dependencies, or concurrent delegation, the coordinator creates a task graph first, then selects runnable work with `tasks.list` and assigns delegated tasks through `agent.create(taskID:)`. Report-agent success completes a task; implementation-agent success moves it to `awaiting_validation` until independently validated. Record a successful validation as completion. For negative validation, record `failed` with `tasks.update`, call `tasks.retry` to return the task to `pending`, then use a **new** `agent.create(taskID:)` to claim the new attempt. Do not use `agent.message` to reopen the already completed agent.
+When work has multiple units, dependencies, or concurrent delegation, the coordinator creates a task graph first, then selects runnable work with `tasks.list` and assigns delegated tasks through `agent.create(taskID:)`. Each task carries a `complexity` (1–10) that is matched against the capability of the chosen profile's model binding — see [bindings.md](bindings.md). Report-agent success completes a task; implementation-agent success moves it to `awaiting_validation` until independently validated. Record a successful validation as completion. For negative validation, record `failed` with `tasks.update`, call `tasks.retry` to return the task to `pending`, then use a **new** `agent.create(taskID:)` to claim the new attempt. Do not use `agent.message` to reopen the already completed agent.
 
 `/workflow` uses a distinct graph source. Its tasks must declare `execution.executor: sub_agent`, and the orchestrator rejects coordinator attempts or graph replacement while that workflow is active. This enforces delegation at the task lifecycle boundary rather than by applying a read-only tool policy to the coordinator. A coordinator without `agent.create` may work directly only in a graph that permits coordinator execution; it must never create or directly execute a workflow task.
 
@@ -271,6 +281,7 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, a
 
 - **Setup starts automatically**: required `~/.zencode` files are missing; complete `--setup`.
 - **Model not found**: run `/models` or check `settings.json`.
+- **A profile is never chosen for delegation**: check its role compatibility, its tool grant, and that it has a model binding with a capability — see [bindings.md](bindings.md).
 - **No tools available**: use `/tools`, switch profile, or check ACP client tool exposure.
 - **`/make-agents` needs Files**: enable `Files` with `/tools` or switch profile.
 - **`/feature` unavailable**: switch to `/agents Builder`.

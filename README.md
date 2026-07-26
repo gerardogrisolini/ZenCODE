@@ -13,7 +13,7 @@ Keywords: ZenCODE, coding agent, AI coding assistant, cloud LLM agent, OpenAI-co
 - **Native Swift, tiny footprint** — a single compiled binary with no interpreter or Node event loop; a few MB of RAM at idle, small enough to run on constrained ARM boards.
 - **Runs everywhere** — macOS, Linux, and Windows (via WSL); model inference stays on the remote provider, so even a single-board computer can host the agent.
 - **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, with a dedicated agent profile.
-- **Agentic workflows** — dependency-aware task graph with `/plan`, `/workflow`, and `/review`, plus capability-based delegation to specialized sub-agents.
+- **Agentic workflows** — dependency-aware task graph with `/plan`, `/workflow`, and `/review`, plus [capability-based delegation](Docs/bindings.md) to specialized sub-agents.
 - **Full control over tools** — granular `/tools` selection (filesystem, shell, Git, search, memory, sub-agents, Xcode, Figma, features), with change tracking and `/undo` as a safety net.
 - **Extensible** — the Builder generates reusable Dynamic Swift Features as durable tools; skills are selectable per session and installable from GitHub or a local folder.
 
@@ -101,35 +101,29 @@ swift build -c release --product zen
 
 ```text
 /help        Show available commands
-/models      Select a model
+/models      Select a model for the current session
 /agents      Select an agent profile
-/bindings    Show agent model bindings
+/bindings    Show agent model bindings (see Docs/bindings.md)
 /tools       Select tool groups
 /skills      Select or install prompt skills
-/sessions    Manage sessions and checkpoint trees:
-               /sessions                 List and select saved sessions
-               /sessions <name>          Save or overwrite a named snapshot
-               /sessions save            Save the current session
-               /sessions new             Start a fresh session
-               /sessions compact         Compact context
-               /sessions delete          Delete a snapshot
-               /sessions tree            Show the checkpoint tree
-               /sessions branches        List branches (leaves)
-               /sessions checkpoint [label]  Create a checkpoint
-               /sessions restore [id|index]   Restore in-place from a checkpoint
-                                              (interactive picker when omitted)
+/sessions    Manage sessions and checkpoint trees
 /open        Open a referenced file, URL, or attachment
 /changes     Review the latest tracked file changes
 /undo        Revert the latest tracked agent changes
-/tasks       Inspect, retry, cancel, or clear the persistent session task graph
+/tasks       Inspect, retry, cancel, or clear the session task graph
 /plan        Create, approve, inspect, or clear a delegated session plan
-/workflow    Plan and delegate all work to sub-agents from the current agent
-/review      Review tracked changes and verify task/approved-plan claims
-/feature     List, enable, disable, create, and manage Swift features with the Builder agent
+/workflow    Plan and delegate all work to sub-agents
+/review      Review tracked changes and verify task/plan claims
+/feature     Manage Swift features with the Builder agent
 /telegram    Turn Telegram remote control on/off when paired in setup
-/voice       Record a voice prompt when local voice tools are enabled in setup
+/voice       Record a voice prompt when local voice tools are enabled
 /exit        Close the session
 ```
+
+`/sessions` also handles snapshots and checkpoint trees
+(`save`, `new`, `compact`, `delete`, `tree`, `branches`, `checkpoint`,
+`restore`). See the [ZenCODE guide](Docs/zen.md#terminal-tui-commands) for the
+complete command reference.
 
 ## Layout
 
@@ -162,15 +156,22 @@ zen --acp --cwd /path/to/project
 
 ## More Docs
 
-- [Architecture and layout contract](Docs/architecture.md)
-- [Release and reproducible-install guide](Docs/release.md)
-- [Persisted credential security](Docs/security.md)
-- [Why ZenCODE](Docs/why-zen.md)
-- [ZenCODE guide](Docs/zen.md)
-- [Agents and sub-agents guide](Docs/agents.md)
-- [Builder agent guide](Docs/builder.md)
-- [Planner agent guide](Docs/planner.md)
-- [Reviewer agent guide](Docs/reviewer.md)
-- [Reporter agent guide](Docs/reporter.md)
-- [Aion UI manual setup](Docs/aion-ui.md)
+Start here — [Docs index](Docs/README.md).
+
+**Using ZenCODE**
+- [ZenCODE guide](Docs/zen.md) — modes, commands, sessions, orchestration.
+- [Why ZenCODE](Docs/why-zen.md) — rationale and differences.
+
+**Agents and delegation**
+- [Agents and sub-agents](Docs/agents.md) — profiles, tools, delegation.
+- [Model bindings](Docs/bindings.md) — agent/model/workflow bindings and capability routing.
+- Profile guides: [Builder](Docs/builder.md), [Planner](Docs/planner.md), [Reviewer](Docs/reviewer.md), [Reporter](Docs/reporter.md).
+
+**Integrations**
 - [Xcode 27 ACP setup](Docs/xcode.md)
+- [Aion UI manual setup](Docs/aion-ui.md)
+
+**Project**
+- [Architecture and layout contract](Docs/architecture.md)
+- [Release and reproducible installs](Docs/release.md)
+- [Persisted credential security](Docs/security.md)

@@ -41,7 +41,7 @@ It intentionally excludes `shell`, `sub-agents`, memory, and web so reports stay
 
 ## Capability Routing
 
-`Reporter` is role-compatible with evidence-based analysis and reporting tasks. After filtering by role, constraints, and required tool access, the coordinator compares the task complexity with `Reporter`'s configured capability. See [agents.md](agents.md) for the complete selection policy.
+`Reporter` is role-compatible with evidence-based analysis and reporting tasks. After filtering by role, constraints, and required tool access, the coordinator compares the task complexity with the capability of the `Reporter` binding it selects. See [bindings.md](bindings.md) for the complete selection policy.
 
 ## When To Use Reporter
 
