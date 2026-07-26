@@ -93,7 +93,7 @@ extension TerminalChat {
             return .continueChat
         case "/bindings":
             do {
-                await writeSystemMessage(
+                await writePreformattedMessage(
                     Self.renderAgentModelBindings(
                         agents: try availableAgents(),
                         selectedAgent: selectedAgent

@@ -182,20 +182,17 @@ extension TerminalChat {
         return parts.joined(separator: " · ")
     }
 
+    /// Renders the `/bindings` overview as an orange-bordered card. Colors and
+    /// layout live in `TerminalChat+BindingsRendering`; the setup summary keeps
+    /// using the plain per-agent lines below.
     public nonisolated static func renderAgentModelBindings(
         agents: [AgentProfile],
         selectedAgent: AgentProfile?
     ) -> String {
-        guard !agents.isEmpty else {
-            return "No agent model bindings configured.\n"
-        }
-
-        var lines = ["Agent model bindings:"]
-        for agent in agents {
-            lines.append(contentsOf: Self.renderAgentModelBindings(for: agent, selectedAgent: selectedAgent))
-        }
-        lines.append("")
-        return lines.joined(separator: "\n")
+        renderAgentModelBindingsCard(
+            agents: agents,
+            selectedAgent: selectedAgent
+        )
     }
 
     /// Returns the display lines for a single agent's model bindings, using the
@@ -225,9 +222,13 @@ extension TerminalChat {
         defaultBindingID: String?
     ) -> String {
         let marker = binding.id == defaultBindingID ? "[default]" : "-"
+        let modelName = Self.strippedModelNameForBinding(
+            binding.modelID,
+            modelProvider: binding.modelProvider
+        )
         var details = [binding.modelProvider.map {
-            "\($0) / \(binding.modelID)"
-        } ?? binding.modelID]
+            "\($0) / \(modelName)"
+        } ?? modelName]
         if let capability = binding.capability {
             details.append("capability: \(capability)/10")
         }

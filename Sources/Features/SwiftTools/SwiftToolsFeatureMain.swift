@@ -746,16 +746,22 @@ private enum SwiftToolsSupport {
     }
 
     static func parseTestSummary(from output: String) -> String? {
-        var summary: String?
+        var legacySummary: String?
+        var swiftTestingSummary: String?
         for line in output.components(separatedBy: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("Test run with")
-                || trimmed.hasPrefix("Executed ")
+            // Swift Testing (import Testing) reports with "Test run with …".
+            // It is the authoritative summary when present because it reflects
+            // the actual matched tests, while the legacy XCTest runner may
+            // print "Executed 0 tests" for the same filter.
+            if trimmed.contains("Test run with") {
+                swiftTestingSummary = trimmed
+            } else if trimmed.hasPrefix("Executed ")
                 || (trimmed.hasPrefix("Test Suite") && (trimmed.contains("passed") || trimmed.contains("failed"))) {
-                summary = trimmed
+                legacySummary = trimmed
             }
         }
-        return summary
+        return swiftTestingSummary ?? legacySummary
     }
 
     private static func tail(of text: String, lines count: Int) -> String {

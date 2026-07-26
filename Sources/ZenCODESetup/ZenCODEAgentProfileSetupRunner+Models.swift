@@ -358,7 +358,11 @@ extension ZenCODEAgentProfileSetupRunner {
     }
 
     static func bindingDisplayTitle(_ binding: AgentModelBinding) -> String {
-        binding.modelProvider.map { "\($0) / \(binding.modelID)" } ?? binding.modelID
+        let modelName = TerminalChat.strippedModelNameForBinding(
+            binding.modelID,
+            modelProvider: binding.modelProvider
+        )
+        return binding.modelProvider.map { "\($0) / \(modelName)" } ?? modelName
     }
 
     static func bindingDetail(

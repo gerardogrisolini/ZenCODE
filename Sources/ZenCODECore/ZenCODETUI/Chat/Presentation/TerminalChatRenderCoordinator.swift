@@ -445,6 +445,15 @@ actor TerminalChatRenderCoordinator {
         renderPendingOverviewsIfIdle()
     }
 
+    /// Writes text that already carries its own ANSI styling (bordered cards and
+    /// other pre-rendered blocks) without applying the system-message color,
+    /// which would otherwise override the block's own palette.
+    func writePreformattedMessage(_ text: String) {
+        interruptActiveToolForInterleavedOutputIfNeeded()
+        writeRawChatError(text)
+        renderPendingOverviewsIfIdle()
+    }
+
     func writeSubmittedPrompt(_ prompt: String) {
         interruptActiveToolForInterleavedOutputIfNeeded()
         let background = "\u{1B}[48;5;236m"

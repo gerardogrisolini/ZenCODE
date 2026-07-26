@@ -65,6 +65,12 @@ extension TerminalChat {
         await renderCoordinator.writeSystemMessage(text)
     }
 
+    /// Writes a block that already carries its own ANSI colors, keeping the
+    /// system-message tint from flattening its palette.
+    func writePreformattedMessage(_ text: String) async {
+        await renderCoordinator.writePreformattedMessage(text)
+    }
+
     /// Renders a complete, non-streaming Markdown block through the same
     /// terminal formatter used for assistant responses. A dedicated formatter
     /// keeps command output from sharing buffered streaming state.

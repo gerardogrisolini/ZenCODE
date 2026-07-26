@@ -312,6 +312,25 @@ extension TerminalChat {
         return String(modelName)
     }
 
+    /// Returns the bare model name from a binding identifier when the provider
+    /// is already shown separately. Reuses the remote-API UUID stripping and
+    /// adds a fallback for provider-scoped identifiers such as
+    /// `chatgpt:gpt-5.6-terra`, taking only the segment after the last colon.
+    public nonisolated static func strippedModelNameForBinding(
+        _ modelID: String,
+        modelProvider: String?
+    ) -> String {
+        if let stripped = subAgentModelNameStrippingRemoteAPIPrefix(modelID) {
+            return stripped
+        }
+        guard modelProvider != nil,
+              let colonRange = modelID.range(of: ":", options: .backwards) else {
+            return modelID
+        }
+        let modelName = modelID[colonRange.upperBound...]
+        return modelName.isEmpty ? modelID : String(modelName)
+    }
+
     private nonisolated static func renderSubAgentActivityLines(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot
     ) -> [SubAgentOverviewLine] {
