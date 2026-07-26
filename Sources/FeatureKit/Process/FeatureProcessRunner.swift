@@ -238,6 +238,13 @@ public enum FeatureProcessRunner {
                 // Bytes written by the child are already queued in the pipe
                 // before it exits, so an empty pipe after exit means drained.
                 if exitObserver.hasFinished || !process.isRunning {
+                    // On Linux a sibling Process may have already reaped this
+                    // child via waitpid(-1), suppressing the terminationHandler.
+                    // Call finish() here so the supervisor and post-SIGKILL reap
+                    // are never left waiting for a handler that will never fire.
+                    if !exitObserver.hasFinished {
+                        exitObserver.finish()
+                    }
                     break
                 }
                 do {
@@ -414,8 +421,30 @@ public enum FeatureProcessRunner {
         // The kill is imminent and unblockable, so this final reap deliberately
         // ignores cancellation: returning here while the child is still alive
         // would leave an unreaped process and an invalid `terminationStatus`.
-        await exitObserver.waitIgnoringCancellation()
+        await reapAfterSIGKILL(process: process, exitObserver: exitObserver)
         return true
+    }
+
+    /// Polls the process status after SIGKILL. The `terminationHandler` usually
+    /// fires within milliseconds, but on Linux another `Process` in the same host
+    /// may have already reaped this child via `waitpid(-1)`, which permanently
+    /// suppresses the handler. Polling `isRunning` (which performs
+    /// `waitpid(pid, WNOHANG)`) provides a bounded fallback so the runner can
+    /// never hang waiting for a signal that will never arrive.
+    private static func reapAfterSIGKILL(
+        process: Process,
+        exitObserver: FeatureProcessExitObserver
+    ) async {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < deadline {
+            if exitObserver.hasFinished || !process.isRunning {
+                if !exitObserver.hasFinished {
+                    exitObserver.finish()
+                }
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
     }
 
     private static func waitForExitAfterTermination(

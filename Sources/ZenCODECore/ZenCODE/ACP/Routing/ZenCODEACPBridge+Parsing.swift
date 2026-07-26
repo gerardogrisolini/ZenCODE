@@ -36,6 +36,20 @@ extension ZenCODEACPBridge {
         }
     }
 
+    /// Cross-platform detection of whether an MCP server definition targets
+    /// Xcode. Delegates to `DirectMCPToolRuntime.isXcodeServerCandidate`, which
+    /// uses name-based detection so an ACP-provided Xcode MCP server is
+    /// recognized identically on macOS and Linux.
+    static func isXcodeServerCandidate(
+        name: String,
+        configuration: MCPServerConfiguration
+    ) -> Bool {
+        DirectMCPToolRuntime.isXcodeServerCandidate(
+            name: name,
+            configuration: configuration
+        )
+    }
+
     public func runtimeHistory(from value: Any?) -> [AgentRuntimeMessage] {
         guard let messages = value as? [[String: Any]] else {
             return []
@@ -369,7 +383,7 @@ extension ZenCODEACPBridge {
                 name: name,
                 type: type,
                 configuration: configuration,
-                isXcodeCandidate: XcodeToolIntegration.isServerCandidate(
+                isXcodeCandidate: Self.isXcodeServerCandidate(
                     name: name,
                     configuration: configuration
                 )
@@ -394,7 +408,7 @@ extension ZenCODEACPBridge {
                 name: name,
                 type: type,
                 configuration: configuration,
-                isXcodeCandidate: XcodeToolIntegration.isServerCandidate(
+                isXcodeCandidate: Self.isXcodeServerCandidate(
                     name: name,
                     configuration: configuration
                 )

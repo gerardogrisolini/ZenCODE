@@ -231,7 +231,7 @@ public actor DirectMCPToolRuntime {
     ) async throws -> [DirectToolDescriptor] {
         let fence = shutdownFence()
         let externalServerID = Self.externalServerID(for: name)
-        let isXcodeCandidate = XcodeToolIntegration.isServerCandidate(
+        let isXcodeCandidate = Self.isXcodeServerCandidate(
             name: name,
             configuration: configuration
         )
@@ -465,6 +465,28 @@ public actor DirectMCPToolRuntime {
 
     public static func isXcodeToolName(_ toolName: String) -> Bool {
         XcodeToolIntegration.isToolName(toolName)
+    }
+
+    /// Cross-platform detection of whether an MCP server definition targets
+    /// Xcode. On Linux the `XcodeToolIntegration` type alias is a no-op shim
+    /// that returns `false` for every candidate; the name-based fallback below
+    /// ensures an ACP-provided Xcode MCP server is recognized identically on
+    /// every platform.
+    static func isXcodeServerCandidate(
+        name: String,
+        configuration: MCPServerConfiguration
+    ) -> Bool {
+        if name.localizedCaseInsensitiveContains("xcode") {
+            return true
+        }
+        let commandName = URL(fileURLWithPath: configuration.executablePath)
+            .lastPathComponent
+            .lowercased()
+        if commandName == "xcrun",
+           configuration.arguments.contains(where: { $0.lowercased() == "mcpbridge" }) {
+            return true
+        }
+        return false
     }
 
 }
