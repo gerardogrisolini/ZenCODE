@@ -63,6 +63,9 @@ actor TerminalChatRenderCoordinator {
         let lastRenderedTaskGraphOverviewSignature: String?
         let lastRenderedSubAgentOverviewSignature: String?
         let isStreamingThoughtOutput: Bool
+        /// Physical rows currently owned by the sub-agent overview, or `0` when
+        /// no section can be rewritten in place.
+        let activeSubAgentOverviewRowCount: Int
     }
 
     private enum ToolBlockStyle: Sendable, Equatable {
@@ -97,6 +100,22 @@ actor TerminalChatRenderCoordinator {
         let maximumInPlaceRows: Int?
     }
 
+    /// Tracks the sub-agent overview section while it is still the last thing
+    /// written to the terminal, so the next publication can replace it in place
+    /// instead of appending another full copy of the section.
+    ///
+    /// `writeSequence` is the emit counter observed right after the section was
+    /// drawn: any other output (tool block, message, markdown response,
+    /// streaming chunk) advances it and therefore invalidates the block without
+    /// needing invalidation hooks spread across the coordinator.
+    private struct ActiveOverviewBlock: Sendable {
+        let rows: Int
+        let columnWidth: Int
+        let maximumInPlaceRows: Int?
+        let cursorStateBeforeRender: CursorState
+        let writeSequence: UInt64
+    }
+
     private struct PendingWrite: Sendable {
         let channel: OutputChannel
         var text: String
@@ -128,7 +147,11 @@ actor TerminalChatRenderCoordinator {
 
     private enum OverviewContent: Sendable {
         case markdown(String)
-        case subAgents(text: String, responses: [SubAgentMarkdownResponse])
+        case subAgents(
+            text: String,
+            responses: [SubAgentMarkdownResponse],
+            maximumInPlaceRows: Int?
+        )
     }
 
     private struct PendingOverview: Sendable {
@@ -164,6 +187,10 @@ actor TerminalChatRenderCoordinator {
     private let freshColumnWidthProvider: @Sendable () -> Int
 
     private var nextWriteSequence: UInt64 = 0
+    /// Counts every physical emission, whether or not writes are captured.
+    /// The sub-agent overview uses it to detect that some other output was
+    /// written after the section, which makes an in-place rewrite unsafe.
+    private var emittedWriteCount: UInt64 = 0
     private var capturedWrites: [WriteEvent] = []
     private var pendingStreamingWrites: [PendingWrite] = []
     private var pendingStreamingByteCount = 0
@@ -184,6 +211,7 @@ actor TerminalChatRenderCoordinator {
     /// such blocks so progress remains visible during long-running delegated
     /// work. Cleared whenever `activeToolBlock` becomes `nil`.
     private var activeToolBlockIsSubAgentTool = false
+    private var activeSubAgentOverviewBlock: ActiveOverviewBlock?
     private var pendingOverviews: [OverviewKind: PendingOverview] = [:]
     private var nextOverviewSequence: UInt64 = 0
     private var overviewSignatures: [OverviewKind: String] = [:]
@@ -674,7 +702,7 @@ actor TerminalChatRenderCoordinator {
             }
 
             if shouldRewriteActiveBlock, let activeBlock {
-                clearOwnedToolRows(activeBlock.rows)
+                clearOwnedRows(activeBlock.rows)
             }
         }
 
@@ -784,9 +812,10 @@ actor TerminalChatRenderCoordinator {
         writeRawChatError("\(text)\n")
     }
 
-    /// Removes only the rows occupied by the pending tool before redrawing it.
-    /// `CSI J` would erase from the transcript into the reserved input panel.
-    private func clearOwnedToolRows(_ rowCount: Int) {
+    /// Removes only the rows occupied by a block this coordinator owns before
+    /// redrawing it. `CSI J` would erase from the transcript into the reserved
+    /// input panel.
+    private func clearOwnedRows(_ rowCount: Int) {
         let count = max(1, rowCount)
         var sequence = "\u{1B}[\(count)A\r"
 
@@ -864,7 +893,8 @@ actor TerminalChatRenderCoordinator {
         text: String,
         responses: [SubAgentMarkdownResponse] = [],
         force: Bool,
-        rememberSignature: Bool
+        rememberSignature: Bool,
+        maximumInPlaceRows: Int? = nil
     ) -> OverviewRenderResult {
         let pendingResponseTokens = responses.compactMap { response in
             consumedSubAgentResponseTokens.contains(response.token)
@@ -885,7 +915,11 @@ actor TerminalChatRenderCoordinator {
             revision: nil,
             force: force,
             rememberSignature: rememberSignature,
-            content: .subAgents(text: text, responses: responses)
+            content: .subAgents(
+                text: text,
+                responses: responses,
+                maximumInPlaceRows: maximumInPlaceRows
+            )
         )
     }
 
@@ -979,15 +1013,138 @@ actor TerminalChatRenderCoordinator {
         switch overview.content {
         case let .markdown(markdown):
             renderMarkdownMessage(markdown)
-        case let .subAgents(text, responses):
-            writeChat(text, to: .standardError)
-            for response in responses
-            where !consumedSubAgentResponseTokens.contains(response.token) {
+        case let .subAgents(text, responses, maximumInPlaceRows):
+            renderSubAgentOverviewContent(
+                text: text,
+                responses: responses,
+                maximumInPlaceRows: maximumInPlaceRows
+            )
+        }
+    }
+
+    /// Draws the sub-agent section, replacing the previously drawn section in
+    /// place whenever this coordinator still owns the rows it occupies.
+    ///
+    /// Ownership is lost as soon as any other output is emitted after the
+    /// section, the terminal is resized, or the section grew past the scrolling
+    /// region: in those cases the update is appended, exactly as before.
+    private func renderSubAgentOverviewContent(
+        text: String,
+        responses: [SubAgentMarkdownResponse],
+        maximumInPlaceRows: Int?
+    ) {
+        let pendingResponses = responses.filter { response in
+            !consumedSubAgentResponseTokens.contains(response.token)
+        }
+        // Any buffered streaming bytes must reach the terminal before the
+        // ownership check, otherwise they would be emitted between the check
+        // and the erase and shift the rows this section believes it owns.
+        flushChatOutput()
+        let columnWidth = freshColumnWidthProvider()
+        let reusableBlock = reusableSubAgentOverviewBlock(
+            columnWidth: columnWidth,
+            maximumInPlaceRows: maximumInPlaceRows
+        )
+
+        // Restoring the spacing state recorded before the previous section was
+        // drawn keeps the replacement byte-identical to a first publication:
+        // the leading blank line normalizer would otherwise be suppressed after
+        // the cursor moved back up.
+        if let reusableBlock {
+            clearOwnedRows(reusableBlock.rows)
+            restoreCursorState(reusableBlock.cursorStateBeforeRender, for: .standardError)
+        }
+
+        // Only a section that starts on a fresh row owns whole physical rows.
+        // Starting mid-row would share its first row with earlier transcript
+        // content that a later erase must not touch.
+        let startsAtLineStart = isAtLineStart(for: .standardError)
+        let cursorStateBeforeRender = currentCursorState(for: .standardError)
+        let renderedText = writeChatMeasured(text, to: .standardError)
+        activeSubAgentOverviewBlock = nil
+
+        guard pendingResponses.isEmpty else {
+            // A completed response is model-authored transcript content: it is
+            // printed once and must never be erased by a later refresh.
+            for response in pendingResponses {
                 writeChat(response.heading, to: .standardError)
                 renderMarkdownMessage(response.markdown, to: .standardError)
                 consumedSubAgentResponseTokens.insert(response.token)
             }
+            return
         }
+
+        guard standardErrorIsTerminal,
+              startsAtLineStart,
+              let rows = ownedRowCount(of: renderedText, columnWidth: columnWidth),
+              rows <= (maximumInPlaceRows ?? Int.max) else {
+            return
+        }
+        activeSubAgentOverviewBlock = ActiveOverviewBlock(
+            rows: rows,
+            columnWidth: columnWidth,
+            maximumInPlaceRows: maximumInPlaceRows,
+            cursorStateBeforeRender: cursorStateBeforeRender,
+            writeSequence: emittedWriteCount
+        )
+    }
+
+    /// Number of physical rows a rendered block occupies, or `nil` when the
+    /// count cannot be trusted for a destructive in-place rewrite.
+    ///
+    /// The block must end on a line boundary (so the cursor rests on the row
+    /// after it) and no row may reach the final column, where auto-wrap is
+    /// deferred and terminal-dependent.
+    private func ownedRowCount(
+        of renderedText: String,
+        columnWidth: Int
+    ) -> Int? {
+        guard !renderedText.isEmpty, columnWidth > 1 else {
+            return nil
+        }
+        var rows = TerminalANSIText.stripANSI(renderedText)
+            .components(separatedBy: "\n")
+        guard rows.count > 1, rows.removeLast().isEmpty else {
+            return nil
+        }
+        guard rows.allSatisfy({ TerminalChat.displayWidth($0) < columnWidth }) else {
+            return nil
+        }
+        return rows.count
+    }
+
+    /// Returns the previously drawn section when it can still be safely erased.
+    private func reusableSubAgentOverviewBlock(
+        columnWidth: Int,
+        maximumInPlaceRows: Int?
+    ) -> ActiveOverviewBlock? {
+        guard standardErrorIsTerminal,
+              let block = activeSubAgentOverviewBlock,
+              block.writeSequence == emittedWriteCount,
+              block.columnWidth == columnWidth else {
+            return nil
+        }
+        // A section taller than the scrolling region has already lost its
+        // earliest rows to scrollback, so cursor-up would descend through the
+        // reserved overlay instead of its own rows.
+        let maximumSafeRows = min(
+            block.maximumInPlaceRows ?? Int.max,
+            maximumInPlaceRows ?? Int.max
+        )
+        guard block.rows <= maximumSafeRows else {
+            return nil
+        }
+        return block
+    }
+
+    /// Rows the sub-agent section still owns at the current cursor position.
+    /// Zero once any other output has been written after it.
+    private var ownedSubAgentOverviewRowCount: Int {
+        guard let block = activeSubAgentOverviewBlock,
+              block.writeSequence == emittedWriteCount else {
+            return 0
+        }
+        return block.rows
     }
 
     func resetOverview(_ kind: OverviewKind, revision: Int? = nil) {
@@ -1043,7 +1200,8 @@ actor TerminalChatRenderCoordinator {
             deferredSubAgentOverviewRender: pendingOverviews[.subAgents] != nil,
             lastRenderedTaskGraphOverviewSignature: overviewSignatures[.taskGraph],
             lastRenderedSubAgentOverviewSignature: overviewSignatures[.subAgents],
-            isStreamingThoughtOutput: thoughtStreamingState.isStreaming
+            isStreamingThoughtOutput: thoughtStreamingState.isStreaming,
+            activeSubAgentOverviewRowCount: ownedSubAgentOverviewRowCount
         )
     }
 
@@ -1104,14 +1262,28 @@ actor TerminalChatRenderCoordinator {
         to channel: OutputChannel,
         preservesSpacing: Bool = false
     ) {
+        _ = writeChatMeasured(
+            text,
+            to: channel,
+            preservesSpacing: preservesSpacing
+        )
+    }
+
+    /// Writes chat text and returns exactly what reached the terminal, so a
+    /// caller can measure the rows it now owns.
+    @discardableResult
+    private func writeChatMeasured(
+        _ text: String,
+        to channel: OutputChannel,
+        preservesSpacing: Bool = false
+    ) -> String {
         let normalizedText = preservesSpacing
             ? chatSpacingPreserved(text, for: channel)
             : chatSpacingNormalized(text, for: channel)
         recordChannelContent(after: normalizedText, for: channel)
-        writeDirect(
-            chatLineInsetApplied(to: normalizedText, for: channel),
-            to: channel
-        )
+        let renderedText = chatLineInsetApplied(to: normalizedText, for: channel)
+        writeDirect(renderedText, to: channel)
+        return renderedText
     }
 
     private func writeStreamingChat(
@@ -1207,6 +1379,13 @@ actor TerminalChatRenderCoordinator {
         withCursorState(for: channel) { $0.spacing.trailingNewlineCount }
     }
 
+    /// True when the next character written to `channel` starts a new physical
+    /// row. Unlike ``trailingNewlineCount`` this is also true at the very start
+    /// of the stream, where nothing has been written yet.
+    private func isAtLineStart(for channel: OutputChannel) -> Bool {
+        withCursorState(for: channel) { $0.lineInset.isAtLineStart }
+    }
+
     private func withChannelState<Result>(
         for channel: OutputChannel,
         _ operation: (inout ChannelState) -> Result
@@ -1228,6 +1407,19 @@ actor TerminalChatRenderCoordinator {
         }
         return withChannelState(for: channel) { state in
             operation(&state.cursor)
+        }
+    }
+
+    private func currentCursorState(for channel: OutputChannel) -> CursorState {
+        withCursorState(for: channel) { $0 }
+    }
+
+    private func restoreCursorState(
+        _ cursorState: CursorState,
+        for channel: OutputChannel
+    ) {
+        withCursorState(for: channel) { state in
+            state = cursorState
         }
     }
 
@@ -1371,6 +1563,7 @@ actor TerminalChatRenderCoordinator {
         guard !text.isEmpty else {
             return
         }
+        emittedWriteCount &+= 1
         if capturesWrites {
             capturedWrites.append(
                 WriteEvent(

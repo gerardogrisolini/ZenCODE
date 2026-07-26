@@ -813,6 +813,192 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func subAgentOverviewRefreshReplacesThePreviousSectionInPlace() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:1",
+            text: "\n👥 Sub-Agents:\n   1 total\n   running\n",
+            force: false,
+            rememberSignature: true
+        )
+        let firstSnapshot = await renderer.snapshot()
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:2",
+            text: "\n👥 Sub-Agents:\n   1 total\n   completed\n",
+            force: false,
+            rememberSignature: true
+        )
+        let events = await renderer.capturedWriteEvents()
+        let refreshText = events
+            .dropFirst(eventsBeforeRefresh)
+            .map(\.text)
+            .joined()
+        let plainStderr = TerminalANSIText.stripANSI(
+            events
+                .filter { $0.channel == .standardError }
+                .map(\.text)
+                .joined()
+        )
+
+        #expect(firstSnapshot.activeSubAgentOverviewRowCount == 4)
+        #expect(refreshText.hasPrefix("\u{1B}[4A\r"))
+        #expect(refreshText.components(separatedBy: "\u{1B}[2K").count - 1 == 4)
+        #expect(!refreshText.contains("\u{1B}[J"))
+        #expect(plainStderr.components(separatedBy: "Sub-Agents:").count - 1 == 2)
+        #expect(plainStderr.contains("completed"))
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 4)
+    }
+
+    @Test
+    func subAgentOverviewIsAppendedWhenOtherOutputFollowedIt() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:1",
+            text: "\n👥 Sub-Agents:\n   1 total\n",
+            force: false,
+            rememberSignature: true
+        )
+        await renderer.writeSystemMessage("Interleaved message.\n")
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:2",
+            text: "\n👥 Sub-Agents:\n   2 total\n",
+            force: false,
+            rememberSignature: true
+        )
+        let refreshText = await renderer.capturedWriteEvents()
+            .dropFirst(eventsBeforeRefresh)
+            .map(\.text)
+            .joined()
+
+        #expect(!refreshText.contains("\u{1B}[2K"))
+        #expect(TerminalANSIText.stripANSI(refreshText).contains("2 total"))
+    }
+
+    @Test
+    func subAgentOverviewIsAppendedWhenStandardErrorIsNotATerminal() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: false,
+            columnWidthProvider: { 80 }
+        )
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:1",
+            text: "\n👥 Sub-Agents:\n   1 total\n",
+            force: false,
+            rememberSignature: true
+        )
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:2",
+            text: "\n👥 Sub-Agents:\n   2 total\n",
+            force: false,
+            rememberSignature: true
+        )
+        let refreshText = await renderer.capturedWriteEvents()
+            .dropFirst(eventsBeforeRefresh)
+            .map(\.text)
+            .joined()
+
+        #expect(!refreshText.contains("\u{1B}[2K"))
+        #expect(refreshText.contains("2 total"))
+    }
+
+    @Test
+    func subAgentOverviewTallerThanTheScrollRegionIsAppended() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:1",
+            text: "\n👥 Sub-Agents:\n   1 total\n   running\n",
+            force: false,
+            rememberSignature: true,
+            maximumInPlaceRows: 2
+        )
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:2",
+            text: "\n👥 Sub-Agents:\n   1 total\n   completed\n",
+            force: false,
+            rememberSignature: true,
+            maximumInPlaceRows: 2
+        )
+        let refreshText = await renderer.capturedWriteEvents()
+            .dropFirst(eventsBeforeRefresh)
+            .map(\.text)
+            .joined()
+
+        #expect(!refreshText.contains("\u{1B}[2K"))
+        #expect(TerminalANSIText.stripANSI(refreshText).contains("completed"))
+    }
+
+    @Test
+    func subAgentCompletedResponseIsNeverErasedByALaterRefresh() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let response = TerminalChatRenderCoordinator.SubAgentMarkdownResponse(
+            token: "agent-3:completion-1",
+            heading: "   ✅ Response from reviewer:\n",
+            markdown: "Final answer"
+        )
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:completed",
+            text: "\n👥 Sub-Agents:\n   1 total\n",
+            responses: [response],
+            force: false,
+            rememberSignature: true
+        )
+        // A section followed by a printed response gives up its rewrite slot.
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:after-response",
+            text: "\n👥 Sub-Agents:\n   1 total closed\n",
+            responses: [response],
+            force: false,
+            rememberSignature: true
+        )
+        let events = await renderer.capturedWriteEvents()
+        let refreshText = events
+            .dropFirst(eventsBeforeRefresh)
+            .map(\.text)
+            .joined()
+        let plainStderr = TerminalANSIText.stripANSI(
+            events
+                .filter { $0.channel == .standardError }
+                .map(\.text)
+                .joined()
+        )
+
+        #expect(!refreshText.contains("\u{1B}[2K"))
+        #expect(plainStderr.components(separatedBy: "Final answer").count - 1 == 1)
+        #expect(plainStderr.contains("1 total closed"))
+    }
+
+    @Test
     func thoughtFragmentsAreBufferedUntilTheStreamIsFlushed() async {
         let renderer = makeRenderer(standardErrorIsTerminal: false)
 

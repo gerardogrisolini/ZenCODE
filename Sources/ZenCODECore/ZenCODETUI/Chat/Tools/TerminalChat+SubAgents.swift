@@ -137,12 +137,14 @@ extension TerminalChat {
             includesFinalResponses: false
         ) + "\n\n"
         let responses = Self.subAgentMarkdownResponses(snapshots)
+        let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
         _ = await renderCoordinator.renderSubAgentOverview(
             signature: signature,
             text: overview,
             responses: responses,
             force: force,
-            rememberSignature: rememberSignature
+            rememberSignature: rememberSignature,
+            maximumInPlaceRows: maximumInPlaceRows
         )
     }
 
