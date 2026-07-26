@@ -528,7 +528,7 @@ extension SwiftFeatureRuntimeTests {
         let empty = DirectToolExecutor.mcpManagedSwiftFeatureIDs(
             mcpDescriptors: []
         )
-        #expect(!empty.contains(XcodeToolIntegration.featureID))
+        #expect(empty.isEmpty)
 
         // (b) feature xcode-tools IS excluded when mcpDescriptors contains an xcode tool.
         let withXcode = DirectToolExecutor.mcpManagedSwiftFeatureIDs(
@@ -540,7 +540,8 @@ extension SwiftFeatureRuntimeTests {
                 )
             ]
         )
-        #expect(withXcode.contains(XcodeToolIntegration.featureID))
+        #expect(withXcode.count == 1)
+        #expect(withXcode.contains("xcode-tools"))
 
         // Non-xcode MCP descriptors must not exclude the xcode feature.
         let nonXcode = DirectToolExecutor.mcpManagedSwiftFeatureIDs(
@@ -552,6 +553,6 @@ extension SwiftFeatureRuntimeTests {
                 )
             ]
         )
-        #expect(!nonXcode.contains(XcodeToolIntegration.featureID))
+        #expect(nonXcode.isEmpty)
     }
 }

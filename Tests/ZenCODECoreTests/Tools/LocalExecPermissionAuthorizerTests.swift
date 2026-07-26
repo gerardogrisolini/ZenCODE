@@ -226,6 +226,7 @@ struct LocalExecPermissionAuthorizerTests {
         )
     }
 
+    #if os(macOS)
     @Test
     func terminalWorkspaceConsentAcceptsOnlyAffirmativeAnswers() {
         #expect(TerminalWorkspaceToolAccessStore.terminalConsentAllowsAccess(""))
@@ -236,6 +237,7 @@ struct LocalExecPermissionAuthorizerTests {
         #expect(!TerminalWorkspaceToolAccessStore.terminalConsentAllowsAccess("no"))
         #expect(!TerminalWorkspaceToolAccessStore.terminalConsentAllowsAccess("maybe"))
     }
+    #endif
 
     @Test
     func terminalPermissionDecisionMapsSingleKeyAnswers() {

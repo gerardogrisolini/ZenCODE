@@ -216,7 +216,7 @@ struct RemoteModelCatalogClientTests {
 }
 
 /// URLProtocol subclasses are invoked by URLSession across threads; static test state is protected by `lock`.
-private final class RemoteModelCatalogURLProtocol: URLProtocol, @unchecked Sendable {
+private final class RemoteModelCatalogURLProtocol: URLProtocol {
     struct Route: Sendable {
         let statusCode: Int
         let contentType: String

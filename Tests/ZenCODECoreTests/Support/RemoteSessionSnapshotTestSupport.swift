@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import NIOCore
 import NIOHTTP1
 import NIOPosix
@@ -334,7 +337,7 @@ struct CapturedRemoteRequest: Sendable {
 }
 
 /// URLProtocol subclasses are invoked by URLSession across threads; static test state is protected by `lock`.
-final class RemoteRequestCapturingURLProtocol: URLProtocol, @unchecked Sendable {
+final class RemoteRequestCapturingURLProtocol: URLProtocol {
     nonisolated(unsafe) private static var responseBody = Data()
     nonisolated(unsafe) private static var failuresBeforeResponse: [URLError.Code] = []
     nonisolated(unsafe) private static var failureAfterResponse: URLError.Code?
