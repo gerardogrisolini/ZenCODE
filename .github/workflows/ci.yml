@@ -63,7 +63,10 @@ jobs:
         run: swift build --target ZenCODECore
 
       - name: Test
-        run: swift test
+        # Several lifecycle suites intentionally exercise Foundation.Process,
+        # whose exit coordination and signal state are process-global. Running
+        # cases concurrently can park that shared manager and cascade timeouts.
+        run: swift test --no-parallel
 
       - name: Build release product
         run: swift build -c release --product zen
@@ -120,7 +123,10 @@ jobs:
         run: swift build --target ZenCODECore
 
       - name: Test
-        run: swift test
+        # Match macOS: deterministic process lifecycle coverage is more valuable
+        # here than case-level parallelism, which can poison Foundation's shared
+        # process manager and leave the test step waiting until the job timeout.
+        run: swift test --no-parallel
 
       - name: Build release product
         run: swift build -c release --product zen

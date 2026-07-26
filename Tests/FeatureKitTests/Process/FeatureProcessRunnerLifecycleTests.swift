@@ -14,7 +14,7 @@ import Testing
 /// SIGTERM-ignoring child, cancellation, large stdin/stdout payloads, and the
 /// line-limit truncation path. Each test bounds itself with a deadline so a
 /// regression fails instead of hanging the suite.
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.serialized, .timeLimit(.minutes(1)))
 struct FeatureProcessRunnerLifecycleTests {
     private static let shell = URL(fileURLWithPath: "/bin/sh")
 
@@ -162,16 +162,17 @@ struct FeatureProcessRunnerLifecycleTests {
         blocker.executableURL = Self.shell
         blocker.arguments = [
             "-c",
-            "trap '' TERM; touch \"\(marker.path)\"; sleep 30"
+            "trap '' TERM; touch \"\(marker.path)\"; exec /bin/sleep 30"
         ]
         blocker.standardInput = FileHandle.nullDevice
         blocker.standardOutput = FileHandle.nullDevice
         blocker.standardError = FileHandle.nullDevice
         try blocker.run()
         let blockerPID = blocker.processIdentifier
+        var blockerWasReaped = false
         defer {
-            if blocker.isRunning {
-                _ = Glibc.kill(blockerPID, SIGKILL)
+            if !blockerWasReaped {
+                _ = Self.killAndReapLinuxChild(blockerPID)
             }
         }
 
@@ -190,12 +191,30 @@ struct FeatureProcessRunnerLifecycleTests {
         #expect(result.exitCode == 7)
         #expect(!result.timedOut)
 
-        _ = Glibc.kill(blockerPID, SIGKILL)
-        let reapDeadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while ContinuousClock.now < reapDeadline, blocker.isRunning {
-            try await Task.sleep(for: .milliseconds(5))
+        // Do not inspect `blocker.isRunning` here: this test deliberately parks
+        // the Foundation manager that updates that property, so it may remain
+        // stale after the OS child has exited. Reap the real child with waitpid
+        // instead; ECHILD means Foundation won the reaping race.
+        blockerWasReaped = Self.killAndReapLinuxChild(blockerPID)
+        #expect(blockerWasReaped)
+    }
+
+    private static func killAndReapLinuxChild(_ processID: Int32) -> Bool {
+        if Glibc.kill(processID, SIGKILL) != 0, errno != ESRCH {
+            return false
         }
-        #expect(!blocker.isRunning)
+
+        var status: Int32 = 0
+        while true {
+            let result = Glibc.waitpid(processID, &status, 0)
+            if result == processID {
+                return true
+            }
+            if result == -1, errno == EINTR {
+                continue
+            }
+            return result == -1 && errno == ECHILD
+        }
     }
     #endif
 }
