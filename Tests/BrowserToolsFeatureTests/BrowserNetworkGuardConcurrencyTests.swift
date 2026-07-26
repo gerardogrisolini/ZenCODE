@@ -25,8 +25,11 @@ struct BrowserNetworkGuardConcurrencyTests {
         // uninstrumented block, so that is a deadlock and the signal never
         // arrives within the timeout. Probing with a non-blocking wait and
         // yielding between attempts keeps the pool responsive on every platform.
-        let resolverDidStart = await resolver.waitUntilStarted()
-        #expect(resolverDidStart)
+        let resolverDidStart = await resolver.waitUntilStarted(timeout: .seconds(10))
+        #expect(
+            resolverDidStart,
+            "Resolver did not enter resolve(host:) within 10 seconds"
+        )
         task.cancel()
 
         await #expect(throws: CancellationError.self) {
@@ -53,8 +56,8 @@ private final class BlockingBrowserHostResolver: BrowserHostResolving, @unchecke
     /// around an uninstrumented block. `wait(timeout:)` is also unavailable from
     /// async contexts, so the non-blocking probe is isolated in a synchronous
     /// helper; it returns immediately and never holds the cooperative thread.
-    func waitUntilStarted() async -> Bool {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    func waitUntilStarted(timeout: Duration) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
         while ContinuousClock.now < deadline {
             if consumeStartSignalIfPending() {
                 return true

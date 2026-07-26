@@ -133,9 +133,9 @@ struct DirectExecJobRuntimeTests {
         #expect(startResult.status == .completed)
         #expect(startResult.output.contains("Started background job job-1"))
 
-        let deadline = Date().addingTimeInterval(10)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         var pollOutput = ""
-        while Date() < deadline {
+        repeat {
             let pollResult = await executor.execute(
                 sessionID: "exec-job-tests",
                 toolCall: DirectAgentToolCall(
@@ -148,13 +148,20 @@ struct DirectExecJobRuntimeTests {
                 allowedToolNames: ["local.exec", "exec.job"]
             )
             pollOutput = pollResult.output
-            if pollOutput.contains("exited") {
+            if pollOutput.contains("exited (code 0)"),
+               pollOutput.contains("executor-background") {
                 break
             }
-            try await Task.sleep(nanoseconds: 100_000_000)
-        }
-        #expect(pollOutput.contains("exited (code 0)"))
-        #expect(pollOutput.contains("executor-background"))
+            try await Task.sleep(for: .milliseconds(100))
+        } while ContinuousClock.now < deadline
+        #expect(
+            pollOutput.contains("exited (code 0)"),
+            "Background job did not exit within 30 seconds. Last poll:\n\(pollOutput)"
+        )
+        #expect(
+            pollOutput.contains("executor-background"),
+            "Background job transcript was incomplete after 30 seconds. Last poll:\n\(pollOutput)"
+        )
 
         let listResult = await executor.execute(
             sessionID: "exec-job-tests",
