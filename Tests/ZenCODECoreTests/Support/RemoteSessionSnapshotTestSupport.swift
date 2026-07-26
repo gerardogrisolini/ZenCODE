@@ -344,6 +344,13 @@ final class RemoteRequestCapturingURLProtocol: URLProtocol {
     nonisolated(unsafe) private static var requests: [CapturedRemoteRequest] = []
     private static let lock = NSLock()
 
+    /// Carries the non-Sendable `URLProtocolClient`/`self` references into a
+    /// `@Sendable` dispatch closure to simulate a delayed mid-stream failure.
+    private struct DelayedFailureDelivery: @unchecked Sendable {
+        let client: URLProtocolClient?
+        let owner: RemoteRequestCapturingURLProtocol
+    }
+
     static func urlSession(
         responseBody: Data,
         failuresBeforeResponse: [URLError.Code] = [],
@@ -400,9 +407,10 @@ final class RemoteRequestCapturingURLProtocol: URLProtocol {
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: responseBody)
         if let failureAfterResponse {
-            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) { [self] in
-                client?.urlProtocol(
-                    self,
+            let delivery = DelayedFailureDelivery(client: client, owner: self)
+            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) {
+                delivery.client?.urlProtocol(
+                    delivery.owner,
                     didFailWithError: URLError(failureAfterResponse)
                 )
             }
