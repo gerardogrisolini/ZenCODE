@@ -50,6 +50,16 @@ public actor TerminalStatusBar {
         let suggestionLines: [String]
     }
 
+    /// `DispatchSourceSignal` is annotated `Sendable` on Apple platforms but not
+    /// in the Linux corelibs libdispatch. The resize signal source is created,
+    /// resumed, cancelled, and released exclusively from this actor's isolation
+    /// domain — the event handler hops back through `await` — so a thin
+    /// `@unchecked Sendable` box restores cross-platform conformance without
+    /// weakening the actor's invariants.
+    struct ResizeSignalSourceBox: @unchecked Sendable {
+        let source: any DispatchSourceSignal
+    }
+
     struct State: Sendable {
         var isStarted = false
         var row = 0
@@ -62,7 +72,7 @@ public actor TerminalStatusBar {
         var spinnerIndex = 0
         var spinnerTask: Task<Void, Never>?
         var spinnerGeneration = 0
-        var resizeSignalSource: DispatchSourceSignal?
+        var resizeSignalSource: ResizeSignalSourceBox?
         var resizeTask: Task<Void, Never>?
         var resizeGeneration = 0
         var isResizePending = false

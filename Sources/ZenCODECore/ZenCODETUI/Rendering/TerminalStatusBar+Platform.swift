@@ -68,7 +68,7 @@ extension TerminalStatusBar {
                 await self?.scheduleTerminalResize()
             }
         }
-        state.resizeSignalSource = source
+        state.resizeSignalSource = ResizeSignalSourceBox(source: source)
         source.resume()
     }
     
@@ -77,8 +77,8 @@ extension TerminalStatusBar {
         state.isResizePending = false
         state.resizeTask?.cancel()
         state.resizeTask = nil
-        state.resizeSignalSource?.setEventHandler {}
-        state.resizeSignalSource?.cancel()
+        state.resizeSignalSource?.source.setEventHandler {}
+        state.resizeSignalSource?.source.cancel()
         state.resizeSignalSource = nil
     }
     
