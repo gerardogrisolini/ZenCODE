@@ -145,6 +145,11 @@ struct TelegramTUITests {
         )
     }
 
+    // Voice recording requires AVFoundation, which is only available on
+    // Apple platforms. The production gate in `visibleCommandDescriptors` uses
+    // the same `canImport(AVFoundation)` condition, so this test is compiled
+    // out on Linux where `/voice` is intentionally unavailable.
+    #if canImport(AVFoundation)
     @Test
     func voiceCommandIsVisibleOnlyWhenConfigured() {
         let disabledCommands = TerminalChat.visibleCommandDescriptors(
@@ -161,6 +166,7 @@ struct TelegramTUITests {
         #expect(!disabledCommands.contains("/voice"))
         #expect(enabledCommands.contains("/voice"))
     }
+    #endif
 
     @Test
     func voiceCommandTokenRendersAsUnknownWhenHidden() {

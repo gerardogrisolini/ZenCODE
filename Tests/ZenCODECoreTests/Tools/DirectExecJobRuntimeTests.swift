@@ -233,7 +233,7 @@ struct DirectExecJobRuntimeTests {
         let startDeadline = Date().addingTimeInterval(5)
         var childPID: Int32 = 0
         while Date() < startDeadline {
-            if let text = try? String(contentsOf: markerURL),
+            if let text = try? String(contentsOf: markerURL, encoding: .utf8),
                let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
                 childPID = pid
                 break
