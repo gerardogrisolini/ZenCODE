@@ -43,9 +43,15 @@ curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/${VERSION
 
 Replace `vX.Y.Z` with a published release tag. The tag pins both the downloaded
 installer and its source checkout. For a development build from the moving
-`main` branch, use the same URL with `main`; the installer labels it clearly as
-a development build. See [release and reproducibility](Docs/release.md) for
-the full release procedure.
+`main` branch:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh" \
+  | bash
+```
+
+The installer labels a moving ref clearly as a development build. See
+[release and reproducibility](Docs/release.md) for the full release procedure.
 
 Requires macOS 26 (Tahoe), Apple Silicon, Git, and the Swift toolchain from
 Xcode or the Apple command line tools.
@@ -56,6 +62,13 @@ Xcode or the Apple command line tools.
 VERSION=vX.Y.Z
 curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/${VERSION}/Scripts/install-linux.sh" \
   | bash -s -- --ref "$VERSION"
+```
+
+For a development build from the moving `main` branch:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh" \
+  | bash
 ```
 
 Drive the agent through configured remote providers (`zen --setup`). The
@@ -168,7 +181,7 @@ Start here — [Docs index](Docs/README.md).
 - Profile guides: [Builder](Docs/builder.md), [Planner](Docs/planner.md), [Reviewer](Docs/reviewer.md), [Reporter](Docs/reporter.md).
 
 **Integrations**
-- [Xcode 27 ACP setup](Docs/xcode.md)
+- [Xcode ACP setup](Docs/xcode.md)
 - [Aion UI manual setup](Docs/aion-ui.md)
 
 **Project**

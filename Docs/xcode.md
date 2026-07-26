@@ -1,6 +1,6 @@
-# Xcode 27 ACP setup
+# Xcode ACP setup
 
-Xcode 27 can run `zen` as an ACP stdio coding agent.
+Xcode can run `zen` as an ACP stdio coding agent.
 
 ## Prerequisites
 
@@ -21,7 +21,7 @@ Xcode 27 can run `zen` as an ACP stdio coding agent.
 
 ## Add `ZenCODE` in Xcode
 
-1. Open **Xcode 27**.
+1. Open **Xcode**.
 2. Open **Xcode > Settings…**.
 3. Select **Intelligence**.
 4. In **Coding Agents**, click **Add an Agent**.
@@ -44,8 +44,6 @@ To pin a specific agent profile, add this environment variable:
 ![Xcode agent arguments and environment configuration](Images/xcode-agent-arguments.png)
 
 Save the agent.
-
-Xcode 27 beta 3 may ask you to authenticate a custom ACP agent even when the agent does not require that step. Choose **Continue with ZenCODE**. This only acknowledges Xcode’s compatibility step; it does not configure or authenticate a model provider.
 
 ## Recommended configuration
 
