@@ -1,11 +1,15 @@
 ![ZenCODE](Docs/Images/social-preview.png)
 
+[![CI](https://github.com/gerardogrisolini/ZenCODE/actions/workflows/ci.yml/badge.svg)](https://github.com/gerardogrisolini/ZenCODE/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/gerardogrisolini/ZenCODE?sort=semver)](https://github.com/gerardogrisolini/ZenCODE/releases)
+[![Swift 6.3](https://img.shields.io/badge/Swift-6.3-F05138?logo=swift&logoColor=white)](https://www.swift.org)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20WSL-blue)](#install)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **ZenCODE** is a fast, native-Swift coding agent for the terminal and ACP. Bring any
 OpenAI-compatible API key or sign in with your existing ChatGPT or Claude subscription —
 no API key required. One compiled binary, no Node runtime, running on macOS, Linux, and
 Windows (via WSL), all the way down to a Raspberry Pi.
-
-Keywords: ZenCODE, coding agent, AI coding assistant, cloud LLM agent, OpenAI-compatible coding agent, OpenRouter coding agent, ACP agent, terminal coding agent for macOS and Linux.
 
 ## Highlights
 
@@ -36,14 +40,13 @@ ZenCODE supports several ways to run the model, all selected through `zen --setu
 ### macOS
 
 ```bash
-VERSION=vX.Y.Z
-curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/${VERSION}/Scripts/install.sh" \
-  | bash -s -- --ref "$VERSION"
+curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/v1.0.2/Scripts/install.sh" \
+  | bash -s -- --ref v1.0.2
 ```
 
-Replace `vX.Y.Z` with a published release tag. The tag pins both the downloaded
-installer and its source checkout. For a development build from the moving
-`main` branch:
+The tag pins both the downloaded installer and its source checkout; replace it
+with the latest [published release](https://github.com/gerardogrisolini/ZenCODE/releases).
+For a development build from the moving `main` branch:
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh" \
@@ -59,9 +62,8 @@ Xcode or the Apple command line tools.
 ### Linux and Windows via WSL
 
 ```bash
-VERSION=vX.Y.Z
-curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/${VERSION}/Scripts/install-linux.sh" \
-  | bash -s -- --ref "$VERSION"
+curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/v1.0.2/Scripts/install-linux.sh" \
+  | bash -s -- --ref v1.0.2
 ```
 
 For a development build from the moving `main` branch:
@@ -188,3 +190,16 @@ Start here — [Docs index](Docs/README.md).
 - [Architecture and layout contract](Docs/architecture.md)
 - [Release and reproducible installs](Docs/release.md)
 - [Persisted credential security](Docs/security.md)
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the build
+requirements, the validation gate CI enforces, and the architecture rules a
+change must preserve. Release history lives in [CHANGELOG.md](CHANGELOG.md).
+
+To report a vulnerability, follow [SECURITY.md](SECURITY.md) — please do not
+open a public issue.
+
+## License
+
+ZenCODE is released under the [MIT License](LICENSE).

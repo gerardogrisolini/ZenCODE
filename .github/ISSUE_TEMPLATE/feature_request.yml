@@ -1,0 +1,51 @@
+name: Feature request
+description: Suggest a capability or improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that ZenCODE makes hard today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Agent runtime and sessions
+        - Providers and transport
+        - Terminal TUI
+        - ACP integration
+        - Tools and permissions
+        - Task graph, plan, and delegation
+        - Dynamic Swift Features / Builder
+        - Prompt skills
+        - Setup and installers
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility impact
+      description: |
+        Would this change public modules, executable names, wire or persisted
+        formats, feature identities, or task-graph ownership? See
+        [Docs/architecture.md](https://github.com/gerardogrisolini/ZenCODE/blob/main/Docs/architecture.md).

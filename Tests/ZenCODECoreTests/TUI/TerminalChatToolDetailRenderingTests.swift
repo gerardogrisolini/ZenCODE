@@ -41,7 +41,13 @@ extension TerminalChatRenderingTests {
             isEnabled: true
         )
 
-        #expect(rendered.hasPrefix("\n\u{1B}[1;38;5;220m🪬 Summary:\u{1B}[0m "))
+        // Anchored to the source constant so a deliberate palette change does
+        // not silently drift from this expectation again.
+        #expect(
+            rendered.hasPrefix(
+                "\n\(TerminalChatTextFormatting.fileChangeSummaryHeaderANSIColor)🪬 Summary:\u{1B}[0m "
+            )
+        )
         #expect(rendered.contains("\u{1B}[38;5;81m1\u{1B}[0m\u{1B}[97m modified file\u{1B}[0m"))
         #expect(rendered.contains("\u{1B}[38;5;114m+12\u{1B}[0m"))
         #expect(rendered.contains("\u{1B}[38;5;203m-2\u{1B}[0m"))

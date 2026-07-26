@@ -49,7 +49,11 @@ struct TerminalChatBindingRenderingTests {
             selectedAgent: developer
         )
 
-        #expect(rendered.contains("Agent model bindings"))
+        // The table itself carries no title: the "Agent model bindings" heading
+        // belongs to the setup flow and the `/bindings` command wrapper, not to
+        // the rendered table.
+        #expect(rendered.contains("Profile"))
+        #expect(rendered.contains("Capability"))
         #expect(rendered.contains("Developer ✱"))
         #expect(rendered.contains("RemoteAPI"))
         #expect(rendered.contains("fast-model"))

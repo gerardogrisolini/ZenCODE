@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Live provider suites are opt-in via ZENCODE_RUN_LIVE_* and must stay off in
+  # ordinary CI. See Docs/release.md and Tests/.../Live.
+  ZENCODE_RUN_LIVE_FEATURE_E2E: "0"
+
+jobs:
+  macos:
+    name: macOS 26 (Swift 6.3)
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version || true
+
+      - name: Cache SwiftPM build products
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-macos-26-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            spm-macos-26-
+
+      - name: Assert live provider suites are disabled
+        run: |
+          if [ "${ZENCODE_RUN_LIVE_FEATURE_E2E:-0}" = "1" ]; then
+            echo "::error::Live provider E2E must not run in CI."
+            exit 1
+          fi
+          echo "Live provider suites disabled."
+
+      - name: Resolve dependencies from the immutable lockfile
+        run: |
+          swift package resolve --only-use-versions-from-resolved-file
+          # CI consumes Package.resolved, it never updates it. A drifting
+          # lockfile must be an explicit, reviewed commit.
+          if ! git diff --exit-code -- Package.resolved; then
+            echo "::error::Package.resolved is out of date. Run 'swift package resolve' and commit the result."
+            exit 1
+          fi
+
+      - name: Build shared runtime
+        run: swift build --target ZenCODECore
+
+      - name: Test
+        run: swift test
+
+      - name: Build release product
+        run: swift build -c release --product zen
+
+      - name: Verify release binary
+        run: .build/release/zen --version
+
+      - name: Check shell syntax
+        run: bash -n Scripts/*.sh
+
+      - name: Check whitespace errors
+        run: git diff --check
+
+  linux:
+    name: Ubuntu 24.04 (Swift 6.3)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container: swift:6.3-noble
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Mark workspace as a safe Git directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache SwiftPM build products
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-ubuntu-24.04-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            spm-ubuntu-24.04-
+
+      - name: Assert live provider suites are disabled
+        run: |
+          if [ "${ZENCODE_RUN_LIVE_FEATURE_E2E:-0}" = "1" ]; then
+            echo "::error::Live provider E2E must not run in CI."
+            exit 1
+          fi
+          echo "Live provider suites disabled."
+
+      - name: Resolve dependencies from the immutable lockfile
+        run: |
+          swift package resolve --only-use-versions-from-resolved-file
+          if ! git diff --exit-code -- Package.resolved; then
+            echo "::error::Package.resolved is out of date. Run 'swift package resolve' and commit the result."
+            exit 1
+          fi
+
+      - name: Build shared runtime
+        run: swift build --target ZenCODECore
+
+      - name: Test
+        run: swift test
+
+      - name: Build release product
+        run: swift build -c release --product zen
+
+      - name: Verify release binary
+        run: .build/release/zen --version
+
+      - name: Check shell syntax
+        run: bash -n Scripts/*.sh
+
+      - name: Check whitespace errors
+        run: git diff --check

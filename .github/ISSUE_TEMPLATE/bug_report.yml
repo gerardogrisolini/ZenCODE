@@ -1,0 +1,83 @@
+name: Bug report
+description: Report a defect in ZenCODE
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do not use this form for security
+        vulnerabilities — follow [SECURITY.md](https://github.com/gerardogrisolini/ZenCODE/blob/main/SECURITY.md) instead.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `zen --setup` with ...
+        2. Send the prompt ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: ZenCODE version
+      description: Output of `zen --version`, or the commit SHA for a source build.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple Silicon)
+        - Linux
+        - Windows (WSL)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options:
+        - OpenAI-compatible API key
+        - OpenRouter
+        - ChatGPT subscription
+        - Claude subscription
+        - Local / self-hosted endpoint
+        - Not provider related
+    validations:
+      required: true
+
+  - type: input
+    id: mode
+    attributes:
+      label: Mode
+      description: Terminal TUI, ACP (which client?), or a feature executable.
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        Output of `zen --doctor`, plus any relevant logs or stack traces.
+        Redact API keys, tokens, and other credentials.
+      render: text

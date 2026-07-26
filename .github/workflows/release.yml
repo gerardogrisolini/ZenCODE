@@ -1,0 +1,125 @@
+name: Release verification
+
+# Verifies a release tag. It does not publish or mutate a GitHub Release.
+#
+# GitHub only accepts a broad tag glob here, so the workflow matches `v*` and
+# then enforces the strict `vX.Y.Z` contract from Docs/release.md, requiring the
+# tag to match ZenPackageMetadata.version.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Release tag to verify (vX.Y.Z)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify-tag:
+    name: Verify tag contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.contract.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Enforce strict vX.Y.Z tag and version match
+        id: contract
+        run: |
+          set -euo pipefail
+
+          raw_ref="${{ inputs.ref || github.ref_name }}"
+
+          if ! printf '%s' "$raw_ref" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag '$raw_ref' does not match the strict vX.Y.Z release contract (Docs/release.md)."
+            exit 1
+          fi
+
+          tag_version="${raw_ref#v}"
+
+          metadata_version="$(
+            sed -n 's/.*static let version = "\([^"]*\)".*/\1/p' \
+              Sources/ZenPackageMetadata/ZenPackageMetadata.swift
+          )"
+
+          if [ -z "$metadata_version" ]; then
+            echo "::error::Could not read ZenPackageMetadata.version."
+            exit 1
+          fi
+
+          if [ "$tag_version" != "$metadata_version" ]; then
+            echo "::error::Tag version '$tag_version' does not match ZenPackageMetadata.version '$metadata_version'."
+            exit 1
+          fi
+
+          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
+          echo "Verified release tag $raw_ref against ZenPackageMetadata.version $metadata_version."
+
+  release-gate:
+    name: Release gate (${{ matrix.name }})
+    needs: verify-tag
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS 26
+            os: macos-26
+            container: ""
+          - name: Ubuntu 24.04
+            os: ubuntu-24.04
+            container: swift:6.3-noble
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container || null }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Mark workspace as a safe Git directory
+        if: matrix.container != ''
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Resolve dependencies from the immutable lockfile
+        run: |
+          swift package resolve --only-use-versions-from-resolved-file
+          git diff --exit-code -- Package.resolved
+
+      - name: Build shared runtime
+        run: swift build --target ZenCODECore
+
+      - name: Test
+        run: swift test
+
+      - name: Build release product
+        run: swift build -c release --product zen
+
+      - name: Verify reported version matches the tag
+        run: |
+          set -euo pipefail
+          expected="${{ needs.verify-tag.outputs.version }}"
+          reported="$(.build/release/zen --version)"
+          echo "zen --version: $reported"
+          if ! printf '%s' "$reported" | grep -Fq "$expected"; then
+            echo "::error::Release binary reported '$reported', expected version '$expected'."
+            exit 1
+          fi
+
+      - name: Check shell syntax
+        run: bash -n Scripts/*.sh
+
+      - name: Check whitespace errors
+        run: git diff --check
