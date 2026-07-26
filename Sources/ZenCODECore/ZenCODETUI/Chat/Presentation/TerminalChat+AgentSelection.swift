@@ -182,60 +182,17 @@ extension TerminalChat {
         return parts.joined(separator: " · ")
     }
 
-    /// Renders the `/bindings` overview as an orange-bordered card. Colors and
-    /// layout live in `TerminalChat+BindingsRendering`; the setup summary keeps
-    /// using the plain per-agent lines below.
+    /// Renders the `/bindings` overview as a GFM table through the shared
+    /// markdown renderer, reusing its box-drawing table layout and column
+    /// fitting. Used by both the `/bindings` command and the setup summary.
     public nonisolated static func renderAgentModelBindings(
         agents: [AgentProfile],
         selectedAgent: AgentProfile?
     ) -> String {
-        renderAgentModelBindingsCard(
+        renderAgentModelBindingsTable(
             agents: agents,
             selectedAgent: selectedAgent
         )
-    }
-
-    /// Returns the display lines for a single agent's model bindings, using the
-    /// shared layout produced by the `/bindings` command and the setup summary.
-    public nonisolated static func renderAgentModelBindings(
-        for agent: AgentProfile,
-        selectedAgent: AgentProfile?
-    ) -> [String] {
-        let selectedMarker = agent == selectedAgent ? " *" : ""
-        var lines = ["  \(agent.displayName)\(selectedMarker)"]
-        guard !agent.modelBindings.isEmpty else {
-            lines.append("    (no dedicated model bindings)")
-            return lines
-        }
-
-        let defaultBindingID = agent.defaultModelBinding?.id
-        for binding in agent.modelBindings {
-            lines.append(renderModelBindingLine(binding, defaultBindingID: defaultBindingID))
-        }
-        return lines
-    }
-
-    /// Returns a single binding line using the shared `/bindings` formatting:
-    /// `    [default] Provider / modelID · capability: N/10 · thinking: X`.
-    public nonisolated static func renderModelBindingLine(
-        _ binding: AgentModelBinding,
-        defaultBindingID: String?
-    ) -> String {
-        let marker = binding.id == defaultBindingID ? "[default]" : "-"
-        let modelName = Self.strippedModelNameForBinding(
-            binding.modelID,
-            modelProvider: binding.modelProvider
-        )
-        var details = [binding.modelProvider.map {
-            "\($0) / \(modelName)"
-        } ?? modelName]
-        if let capability = binding.capability {
-            details.append("capability: \(capability)/10")
-        }
-        if let thinkingSelection = binding.thinkingSelection {
-            details.append("thinking: \(thinkingSelection.displayTitle)")
-        }
-        return "    \(marker) \(details.joined(separator: " · "))"
     }
 
     private nonisolated static func agentPurposeSummary(_ agent: AgentProfile) -> String {

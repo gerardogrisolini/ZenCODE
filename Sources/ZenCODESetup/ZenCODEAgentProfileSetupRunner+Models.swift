@@ -337,12 +337,11 @@ extension ZenCODEAgentProfileSetupRunner {
     // MARK: - Display
 
     private static func printAgentModelSummary(_ agents: [AgentProfile]) {
-        AgentOutput.standardError.writeString("\n")
-        for agent in agents {
-            let lines = TerminalChat.renderAgentModelBindings(for: agent, selectedAgent: nil)
-            AgentOutput.standardError.writeString(lines.joined(separator: "\n") + "\n")
-        }
-        AgentOutput.standardError.writeString("\n")
+        let table = TerminalChat.renderAgentModelBindings(
+            agents: agents,
+            selectedAgent: nil
+        )
+        AgentOutput.standardError.writeString("\n" + table + "\n")
     }
 
     static func agentModelSummary(_ agent: AgentProfile) -> String {

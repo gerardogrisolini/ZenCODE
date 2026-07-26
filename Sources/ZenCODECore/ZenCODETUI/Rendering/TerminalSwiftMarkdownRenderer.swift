@@ -23,6 +23,20 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     private static let tableBorder = "\u{1B}[38;5;240m"
     private static let tableHeader = "\u{1B}[1;38;5;81m"
 
+    /// Sentinel text placed in every cell of a body row to request an in-table
+    /// horizontal separator instead of a normal data row. The renderer detects
+    /// rows whose cells contain only this marker and emits a middle border
+    /// (`├───┼───┤`), producing a visual divider between row groups without
+    /// breaking the single GFM table.
+    private static let tableSeparatorRowSentinel = "\u{E000}"
+
+    /// Builds a GFM table row whose every cell carries the separator sentinel
+    /// so the renderer draws a horizontal divider when the table is rendered.
+    static func tableSeparatorRow(columnCount: Int) -> String {
+        let cells = Array(repeating: tableSeparatorRowSentinel, count: max(columnCount, 1))
+        return "| " + cells.joined(separator: " | ") + " |"
+    }
+
     /// Per-level heading styles, brightest/boldest for top-level headings and
     /// progressively softer for deeper levels so the hierarchy reads visually.
     private static let headingStyles: [String] = [
@@ -379,11 +393,19 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
         headerCells = padCells(headerCells, to: columnCount)
         bodyRows = bodyRows.map { padCells($0, to: columnCount) }
 
+        // Identify separator rows (every cell carries the sentinel) and exclude
+        // them from width and truncation calculations so they don't skew column
+        // sizing or get truncated.
+        let separatorRowIndices = Set(
+            bodyRows.indices.filter { isTableSeparatorRow(bodyRows[$0]) }
+        )
+
         var widths = [Int](repeating: 0, count: columnCount)
         for (index, cell) in headerCells.enumerated() {
             widths[index] = max(widths[index], TerminalANSIText.visibleWidth(cell))
         }
-        for row in bodyRows {
+        for (rowIndex, row) in bodyRows.enumerated() {
+            guard !separatorRowIndices.contains(rowIndex) else { continue }
             for (index, cell) in row.enumerated() {
                 widths[index] = max(widths[index], TerminalANSIText.visibleWidth(cell))
             }
@@ -415,8 +437,9 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
                 headerCells = headerCells.enumerated().map { index, cell in
                     TerminalANSIText.truncate(cell, to: widths[index])
                 }
-                bodyRows = bodyRows.map { row in
-                    row.enumerated().map { index, cell in
+                bodyRows = bodyRows.enumerated().map { rowIndex, row in
+                    guard !separatorRowIndices.contains(rowIndex) else { return row }
+                    return row.enumerated().map { index, cell in
                         TerminalANSIText.truncate(cell, to: widths[index])
                     }
                 }
@@ -429,11 +452,21 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
         lines.append(renderTableBorder(widths: widths, kind: .top))
         lines.append(renderTableRow(headerCells, widths: widths, alignments: alignments, isHeader: true))
         lines.append(renderTableBorder(widths: widths, kind: .middle))
-        for row in bodyRows {
-            lines.append(renderTableRow(row, widths: widths, alignments: alignments, isHeader: false))
+        for (rowIndex, row) in bodyRows.enumerated() {
+            if separatorRowIndices.contains(rowIndex) {
+                lines.append(renderTableBorder(widths: widths, kind: .middle))
+            } else {
+                lines.append(renderTableRow(row, widths: widths, alignments: alignments, isHeader: false))
+            }
         }
         lines.append(renderTableBorder(widths: widths, kind: .bottom))
         return lines.joined(separator: "\n")
+    }
+
+    private func isTableSeparatorRow(_ cells: [String]) -> Bool {
+        !cells.isEmpty && cells.allSatisfy {
+            TerminalANSIText.stripANSI($0) == Self.tableSeparatorRowSentinel
+        }
     }
 
     private func padCells(_ cells: [String], to count: Int) -> [String] {
