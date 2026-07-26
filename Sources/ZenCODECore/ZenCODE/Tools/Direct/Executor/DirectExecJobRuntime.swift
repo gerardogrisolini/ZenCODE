@@ -96,6 +96,22 @@ public actor DirectExecJobRuntime {
     public static let defaultMaxRunningJobs = 8
     static let maxRetainedTranscriptBytes = 2_000_000
     static let maxRetainedFinishedJobs = 16
+    /// Absolute path to the `setsid` launcher when available (Linux). Launching
+    /// a job through `setsid` puts the shell in its own session/process group so
+    /// `kill(-pgid)` reaches the whole process tree instead of only the shell,
+    /// which would orphan descendant processes (pipes, subshells, dev servers).
+    #if os(Linux)
+    private static let setsidExecutablePath: String? = {
+        let pathEnvironment = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        for directory in pathEnvironment.split(separator: ":") where !directory.isEmpty {
+            let candidate = "\(directory)/setsid"
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }()
+    #endif
 
     public enum JobStatus: String, Sendable {
         case running
@@ -120,6 +136,12 @@ public actor DirectExecJobRuntime {
         var finishedAt: Date?
         var killRequested = false
         var killReason: String?
+        /// True when the job was launched through `setsid`, making the shell a
+        /// session/group leader. Signals are then delivered to the whole group
+        /// (`kill(-pid)`) so descendants (pipes, subshells, dev servers) are
+        /// reached; otherwise descendants survive the shell and are reparented
+        /// to init, leaving orphaned processes running after a kill.
+        var sessionLeader = false
 
         init(
             id: String,
@@ -165,8 +187,23 @@ public actor DirectExecJobRuntime {
         nextJobNumber += 1
 
         let process = Process()
+        var sessionLeader = false
+        #if os(Linux)
+        if let setsidPath = Self.setsidExecutablePath {
+            // Launch through setsid so the shell becomes a session/group
+            // leader: `kill(-pid)` then reaches every descendant (pipes,
+            // subshells, dev servers) instead of orphaning them.
+            process.executableURL = URL(fileURLWithPath: setsidPath)
+            process.arguments = [shellPath, "-lc", command]
+            sessionLeader = true
+        } else {
+            process.executableURL = URL(fileURLWithPath: shellPath)
+            process.arguments = ["-lc", command]
+        }
+        #else
         process.executableURL = URL(fileURLWithPath: shellPath)
         process.arguments = ["-lc", command]
+        #endif
         process.currentDirectoryURL = workingDirectory
         if let environment {
             process.environment = environment
@@ -217,6 +254,7 @@ public actor DirectExecJobRuntime {
             process: process,
             transcript: transcript
         )
+        job.sessionLeader = sessionLeader
         jobsByID[jobID] = job
         jobOrder.append(jobID)
 
@@ -292,7 +330,7 @@ public actor DirectExecJobRuntime {
         }
         job.killRequested = true
         let pid = job.process.processIdentifier
-        job.process.terminate()
+        sendSignal(SIGTERM, to: job)
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             await self?.forceKillIfStillRunning(jobID: jobID, pid: pid)
@@ -320,11 +358,26 @@ public actor DirectExecJobRuntime {
         for job in jobsByID.values where job.status == .running {
             job.killRequested = true
             job.killReason = "session shutdown"
-            job.process.terminate()
+            sendSignal(SIGTERM, to: job)
         }
     }
 
     // MARK: - Internal state transitions
+
+    /// Delivers `signal` to a running job, targeting the whole process group
+    /// (`kill(-pgid)`) when the job is a session leader so descendants are
+    /// reached, otherwise the shell PID alone. A negative ID directs the
+    /// signal to every process in the group created by the session leader.
+    private func sendSignal(_ signal: Int32, to job: Job) {
+        let pid = job.process.processIdentifier
+        guard pid > 0 else { return }
+        let target = job.sessionLeader ? -pid : pid
+        #if os(Linux)
+        _ = Glibc.kill(target, signal)
+        #else
+        _ = Darwin.kill(target, signal)
+        #endif
+    }
 
     private func markFinished(jobID: String, exitCode: Int32) {
         guard let job = jobsByID[jobID], job.status == .running else {
@@ -343,18 +396,14 @@ public actor DirectExecJobRuntime {
         }
         job.killRequested = true
         job.killReason = reason
-        job.process.terminate()
+        sendSignal(SIGTERM, to: job)
     }
 
     private func forceKillIfStillRunning(jobID: String, pid: Int32) {
         guard let job = jobsByID[jobID], job.status == .running, pid > 0 else {
             return
         }
-#if os(Linux)
-        _ = Glibc.kill(pid, SIGKILL)
-#else
-        _ = Darwin.kill(pid, SIGKILL)
-#endif
+        sendSignal(SIGKILL, to: job)
     }
 
     private func pruneFinishedJobs() {

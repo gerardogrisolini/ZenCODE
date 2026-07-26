@@ -1001,6 +1001,23 @@ public struct TerminalMarkdownStreamFormatter {
         _ fragment: String,
         startingAtColumn column: Int
     ) -> String {
+        // `fragment` follows text already written directly to the terminal. A
+        // leading mark, joiner, regional indicator, or emoji modifier can
+        // therefore complete the final grapheme in that emitted text. Do not
+        // put that cluster after `inlineParsingSentinel`: the Markdown parser
+        // is allowed to coalesce or discard otherwise-invisible Unicode at a
+        // synthetic boundary (and its behaviour has differed between the
+        // Darwin and Linux implementations). Emit the continuation unchanged,
+        // then parse only the markdown-capable remainder. Keep `column` tied
+        // to the actual previously emitted terminal prefix: no artificial
+        // separator is introduced for the wrapper to account for.
+        let continuation = leadingGraphemeContinuation(in: fragment)
+        if !continuation.prefix.isEmpty {
+            return continuation.prefix + renderInlineFragment(
+                continuation.remainder,
+                startingAtColumn: column
+            )
+        }
         guard mayContainMarkdown(in: fragment) else {
             return wrapWithColumnOffset(fragment, startingAtColumn: column)
         }
@@ -1027,6 +1044,47 @@ public struct TerminalMarkdownStreamFormatter {
             withoutSentinel,
             startingAtColumn: column
         )
+    }
+
+    /// Separates the first independently-segmented `Character` when its first
+    /// scalar can continue the grapheme cluster emitted in the preceding
+    /// stream delta. `String` cannot expose a grapheme that spans two distinct
+    /// values, so preserve this small raw prefix before Markdown sees it.
+    private func leadingGraphemeContinuation(
+        in fragment: String
+    ) -> (prefix: String, remainder: String) {
+        guard let firstScalar = fragment.unicodeScalars.first,
+              Self.isGraphemeContinuationStarter(firstScalar) else {
+            return ("", fragment)
+        }
+        let end = fragment.index(after: fragment.startIndex)
+        return (
+            String(fragment[..<end]),
+            String(fragment[end...])
+        )
+    }
+
+    /// Unicode scalars which may extend a grapheme begun in a previous delta.
+    /// General-category marks cover combining accents and script-specific
+    /// marks; the explicit ranges cover joiner-based emoji, flags, modifiers,
+    /// variation selectors, tag sequences, and Hangul medial/final jamo.
+    private static func isGraphemeContinuationStarter(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .nonspacingMark, .spacingMark, .enclosingMark:
+            return true
+        default:
+            break
+        }
+
+        let value = scalar.value
+        return value == 0x200C // ZERO WIDTH NON-JOINER
+            || value == 0x200D // ZERO WIDTH JOINER
+            || (0x1100...0x11FF).contains(value) // Hangul jamo
+            || (0x1F1E6...0x1F1FF).contains(value) // Regional indicators
+            || (0x1F3FB...0x1F3FF).contains(value) // Emoji modifiers
+            || (0xFE00...0xFE0F).contains(value) // Variation selectors
+            || (0xE0020...0xE007F).contains(value) // Emoji tag sequence
+            || (0xE0100...0xE01EF).contains(value) // Variation Selectors Supplement
     }
 
     /// Wraps text accounting for the columns already occupied on the current

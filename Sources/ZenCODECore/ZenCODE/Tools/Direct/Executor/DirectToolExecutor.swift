@@ -326,7 +326,36 @@ public actor DirectToolExecutor {
     }
 
     private static func mcpErrorIsPermissionDenied(_ error: MCPClientError) -> Bool {
-        XcodeToolIntegration.isPermissionDenied(error)
+        // Generic, cross-platform detection of MCP permission failures.
+        //
+        // This intentionally does NOT delegate to `XcodeToolIntegration.isPermissionDenied`:
+        // on Linux that type is a no-op compatibility shim (`LinuxXcodeToolCompatibility`)
+        // that returns `false` for every MCP error, which misclassifies server-side
+        // permission failures such as JSON-RPC `-32000 "Permission denied"` as generic
+        // `.failed` results. The detection below is pure pattern matching on
+        // `MCPClientError` cases with no platform-specific behaviour, so it behaves
+        // identically on macOS and Linux. See `directToolExecutorMarksGenericMCPPermissionFailures`.
+        switch error {
+        case .authorizationRequired:
+            return true
+        case let .serverExited(_, message),
+             let .serverError(_, message):
+            return messageLooksLikePermissionDenied(message)
+        default:
+            return false
+        }
+    }
+
+    private static func messageLooksLikePermissionDenied(_ message: String) -> Bool {
+        let lowered = message.lowercased()
+        return lowered.contains("permission denied")
+            || lowered.contains("consent denied")
+            || lowered.contains("not authorized")
+            || lowered.contains("not authorised")
+            || lowered.contains("not allowed")
+            || lowered.contains("not permitted")
+            || lowered.contains("rejected")
+            || lowered.contains("declined")
     }
 
     public static func filtered(

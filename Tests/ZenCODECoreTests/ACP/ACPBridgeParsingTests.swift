@@ -62,6 +62,7 @@ extension ACPCompatibilityTests {
         #expect(contents.contains("sample diagnostic"))
     }
 
+    #if os(macOS)
     @Test
     func mcpServersParseACPStdioXcodeConfiguration() throws {
         let definitions = ZenCODEACPBridge.mcpServerDefinitions(from: [
@@ -92,7 +93,9 @@ extension ACPCompatibilityTests {
         #expect(definition.configuration.environment["MCP_XCODE_SESSION_ID"] == "session-1")
         #expect(XcodeMCPServerConfiguration.isBridgeConfiguration(definition.configuration))
     }
+    #endif
 
+    #if os(macOS)
     @Test
     func mcpServersParseBareXcrunXcodeConfiguration() throws {
         let definitions = ZenCODEACPBridge.mcpServerDefinitions(from: [
@@ -115,6 +118,7 @@ extension ACPCompatibilityTests {
         #expect(definition.configuration.arguments == ["mcpbridge"])
         #expect(XcodeMCPServerConfiguration.isBridgeConfiguration(definition.configuration))
     }
+    #endif
 
     @Test
     func mcpServersParseACPHTTPConfiguration() throws {

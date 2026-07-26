@@ -476,6 +476,7 @@ extension ACPCompatibilityTests {
         #expect(descriptors.map(\.name) == ["xcode.BuildProject"])
     }
 
+    #if os(macOS)
     @Test
     func installingSameACPProvidedXcodeMCPServerReusesActiveConnection() async throws {
         let supportURL = FileManager.default.temporaryDirectory
@@ -536,7 +537,9 @@ extension ACPCompatibilityTests {
             throw error
         }
     }
+    #endif
 
+    #if os(macOS)
     @Test
     func acpProvidedXcodeMCPServerRegistersThroughCentralRuntime() async throws {
         let supportURL = FileManager.default.temporaryDirectory
@@ -609,5 +612,6 @@ extension ACPCompatibilityTests {
             throw error
         }
     }
+    #endif
 
 }
