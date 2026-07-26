@@ -50,7 +50,7 @@ public actor TerminalStatusBar {
         let suggestionLines: [String]
     }
 
-    struct State {
+    struct State: Sendable {
         var isStarted = false
         var row = 0
         var columns = 0
