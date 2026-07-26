@@ -190,6 +190,7 @@ extension ACPCompatibilityTests {
         #expect(await backend.createdAllowedToolNames() == allowedToolNames)
     }
 
+    #if os(macOS)
     @Test
     func newSessionDoesNotDiscoverInternalXcodeWhenACPProvidesXcodeTools() async throws {
         let supportURL = FileManager.default.temporaryDirectory
@@ -264,6 +265,7 @@ extension ACPCompatibilityTests {
             throw error
         }
     }
+    #endif
 
     @Test
     func newSessionExposesDiscoveredXcodeToolsWithoutInjectingPromptContext() async throws {
