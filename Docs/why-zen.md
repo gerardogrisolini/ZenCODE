@@ -24,7 +24,7 @@ Why this project exists and where it differs from other coding agents.
 
 - Low client overhead: prompt assembly, tool dispatch, and streaming run in a single compiled Swift process, so the only network hop is the request to your chosen provider.
 - Resume without re-work: sessions restore from on-disk snapshots and checkpoint trees, so continuing a conversation reuses the saved transcript and plan instead of rebuilding local state from scratch.
-- Tiny footprint on modest hardware: compiled ahead of time to a native binary with no interpreter or Node runtime, ZenCODE uses only a few MB of RAM at idle. That makes it an ideal fit for constrained devices like a Raspberry Pi, where it stays fast and responsive while the heavy model work runs on the provider.
+- Tiny footprint on modest hardware: compiled ahead of time to a native binary with no interpreter or Node runtime, ZenCODE starts in around 20 MB of RAM, growing with the size of the session it keeps in memory. That makes it an ideal fit for constrained devices like a Raspberry Pi, where it stays fast and responsive while the heavy model work runs on the provider.
 
 ## Work environment integration
 

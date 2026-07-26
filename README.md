@@ -14,7 +14,7 @@ Windows (via WSL), all the way down to a Raspberry Pi.
 ## Highlights
 
 - **Provider-agnostic** — any OpenAI-compatible endpoint (OpenRouter, local servers, any `/v1` API), or a browser sign-in with your ChatGPT or Claude subscription.
-- **Native Swift, tiny footprint** — a single compiled binary with no interpreter or Node event loop; a few MB of RAM at idle, small enough to run on constrained ARM boards.
+- **Native Swift, tiny footprint** — a single compiled binary with no interpreter or Node event loop; around 20 MB of RAM at startup, small enough to run on constrained ARM boards.
 - **Runs everywhere** — macOS, Linux, and Windows (via WSL); model inference stays on the remote provider, so even a single-board computer can host the agent.
 - **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, with a dedicated agent profile.
 - **Agentic workflows** — dependency-aware task graph with `/plan`, `/workflow`, and `/review`, plus [capability-based delegation](Docs/bindings.md) to specialized sub-agents.
