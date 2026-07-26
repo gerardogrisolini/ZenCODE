@@ -6,6 +6,7 @@
 //  `exec.job` management tool (poll/kill/list).
 //
 
+import FeatureKit
 import Foundation
 
 #if os(macOS)
@@ -130,6 +131,7 @@ public actor DirectExecJobRuntime {
         let workingDirectory: String
         let startedAt = Date()
         let process: Process
+        let exitMonitor: FeatureProcessExitMonitor
         let transcript: DirectExecJobTranscript
         var status: JobStatus = .running
         var exitCode: Int32?
@@ -148,12 +150,14 @@ public actor DirectExecJobRuntime {
             command: String,
             workingDirectory: String,
             process: Process,
+            exitMonitor: FeatureProcessExitMonitor,
             transcript: DirectExecJobTranscript
         ) {
             self.id = id
             self.command = command
             self.workingDirectory = workingDirectory
             self.process = process
+            self.exitMonitor = exitMonitor
             self.transcript = transcript
         }
     }
@@ -231,12 +235,12 @@ public actor DirectExecJobRuntime {
             }
         }
 
-        process.terminationHandler = { [weak self] process in
-            let exitCode = process.terminationStatus
+        let exitMonitor = FeatureProcessExitMonitor { [weak self] exitCode in
             Task {
                 await self?.markFinished(jobID: jobID, exitCode: exitCode)
             }
         }
+        exitMonitor.install(on: process)
 
         do {
             try process.run()
@@ -252,11 +256,13 @@ public actor DirectExecJobRuntime {
             command: command,
             workingDirectory: workingDirectory.path,
             process: process,
+            exitMonitor: exitMonitor,
             transcript: transcript
         )
         job.sessionLeader = sessionLeader
         jobsByID[jobID] = job
         jobOrder.append(jobID)
+        exitMonitor.startMonitoring(processID: process.processIdentifier)
 
         if let timeout, timeout > 0 {
             Task { [weak self] in

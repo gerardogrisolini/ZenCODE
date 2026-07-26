@@ -5,6 +5,9 @@
 
 import Foundation
 import FeatureKit
+#if os(Linux)
+import Glibc
+#endif
 import Testing
 
 /// Lifecycle coverage for `FeatureProcessRunner`: timeout escalation against a
@@ -144,4 +147,55 @@ struct FeatureProcessRunnerLifecycleTests {
         #expect(!result.timedOut)
         #expect(result.exitCode == 0)
     }
+
+    #if os(Linux)
+    @Test
+    func quickExitCompletesWhileFoundationManagerWaitsForLongRunningProcess() async throws {
+        // swift-corelibs-foundation handles Process exits on one manager run
+        // loop. Its callback blocks in waitpid(pid, 0), so this long child parks
+        // the manager before the short FeatureProcessRunner child is launched.
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode_process_manager_blocker_\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: marker) }
+
+        let blocker = Process()
+        blocker.executableURL = Self.shell
+        blocker.arguments = [
+            "-c",
+            "trap '' TERM; touch \"\(marker.path)\"; sleep 30"
+        ]
+        blocker.standardInput = FileHandle.nullDevice
+        blocker.standardOutput = FileHandle.nullDevice
+        blocker.standardError = FileHandle.nullDevice
+        try blocker.run()
+        let blockerPID = blocker.processIdentifier
+        defer {
+            if blocker.isRunning {
+                _ = Glibc.kill(blockerPID, SIGKILL)
+            }
+        }
+
+        let startDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < startDeadline,
+              !FileManager.default.fileExists(atPath: marker.path) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(FileManager.default.fileExists(atPath: marker.path))
+
+        let result = try await FeatureProcessRunner.run(
+            executableURL: Self.shell,
+            arguments: ["-c", "exit 7"],
+            timeout: 5
+        )
+        #expect(result.exitCode == 7)
+        #expect(!result.timedOut)
+
+        _ = Glibc.kill(blockerPID, SIGKILL)
+        let reapDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < reapDeadline, blocker.isRunning {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(!blocker.isRunning)
+    }
+    #endif
 }

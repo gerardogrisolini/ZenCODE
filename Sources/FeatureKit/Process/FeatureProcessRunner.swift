@@ -47,9 +47,10 @@ public enum FeatureProcessRunner {
         }
 
         let exitObserver = FeatureProcessExitObserver()
-        process.terminationHandler = { _ in
-            exitObserver.finish()
+        let exitMonitor = FeatureProcessExitMonitor { exitCode in
+            exitObserver.finish(exitCode: exitCode)
         }
+        exitMonitor.install(on: process)
 
         do {
             try process.run()
@@ -57,6 +58,7 @@ public enum FeatureProcessRunner {
             process.terminationHandler = nil
             throw error
         }
+        exitMonitor.startMonitoring(processID: process.processIdentifier)
 
         // Every parent-owned pipe end is switched to non-blocking mode. A
         // blocking `read`/`write` here would park a cooperative executor thread
@@ -83,14 +85,12 @@ public enum FeatureProcessRunner {
         // stream together with the exit supervisor below.
         async let stdoutOutcome = drainPipe(
             stdoutPipe.fileHandleForReading,
-            process: process,
             exitObserver: exitObserver,
             lineLimit: stdoutLineLimit,
             terminationRequest: terminationRequest
         )
         async let stderrOutcome = drainPipe(
             stderrPipe.fileHandleForReading,
-            process: process,
             exitObserver: exitObserver,
             lineLimit: nil,
             terminationRequest: terminationRequest
@@ -98,7 +98,6 @@ public enum FeatureProcessRunner {
         async let stdinOutcome = writeStdin(
             stdinPipe,
             data: stdinData,
-            process: process,
             exitObserver: exitObserver
         )
 
@@ -122,7 +121,7 @@ public enum FeatureProcessRunner {
         try Task.checkCancellation()
 
         return FeatureProcessResult(
-            exitCode: exitCode(of: process, exitObserver: exitObserver),
+            exitCode: exitObserver.exitCode ?? -1,
             stdoutData: stdoutResult.0,
             stderrData: stderr,
             timedOut: timedOut,
@@ -141,20 +140,6 @@ public enum FeatureProcessRunner {
     }
 
     #if os(macOS) || os(Linux)
-    /// `Process.terminationStatus` traps when the child has not been reaped yet.
-    /// Every escalation path waits for the real exit, so this is only a guard
-    /// against pathological states (e.g. a child that outlived SIGKILL because
-    /// it is a zombie held by another reaper) reporting a bogus status.
-    private static func exitCode(
-        of process: Process,
-        exitObserver: FeatureProcessExitObserver
-    ) -> Int32 {
-        guard exitObserver.hasFinished || !process.isRunning else {
-            return -1
-        }
-        return process.terminationStatus
-    }
-
     /// Writing to a pipe whose reader already exited raises SIGPIPE, whose
     /// default disposition kills ZenCODE itself. Ignore it once so the write
     /// path observes `EPIPE` as an ordinary error instead.
@@ -187,7 +172,6 @@ public enum FeatureProcessRunner {
     /// long after its child (and any timeout escalation) is gone.
     private static func drainPipe(
         _ handle: FileHandle,
-        process: Process,
         exitObserver: FeatureProcessExitObserver,
         lineLimit: Int?,
         terminationRequest: FeatureProcessTerminationRequest
@@ -236,15 +220,10 @@ public enum FeatureProcessRunner {
 
             if capturedErrno == EAGAIN || capturedErrno == EWOULDBLOCK {
                 // Bytes written by the child are already queued in the pipe
-                // before it exits, so an empty pipe after exit means drained.
-                if exitObserver.hasFinished || !process.isRunning {
-                    // On Linux a sibling Process may have already reaped this
-                    // child via waitpid(-1), suppressing the terminationHandler.
-                    // Call finish() here so the supervisor and post-SIGKILL reap
-                    // are never left waiting for a handler that will never fire.
-                    if !exitObserver.hasFinished {
-                        exitObserver.finish()
-                    }
+                // before it exits, so an empty pipe after the owned exit was
+                // observed means drained. A descendant may otherwise keep the
+                // inherited write end open indefinitely.
+                if exitObserver.hasFinished {
                     break
                 }
                 do {
@@ -280,7 +259,6 @@ public enum FeatureProcessRunner {
     private static func writeStdin(
         _ pipe: Pipe?,
         data: Data?,
-        process: Process,
         exitObserver: FeatureProcessExitObserver
     ) async -> StdinWriteOutcome {
         guard let data, let pipe else { return .nothingToWrite }
@@ -311,7 +289,7 @@ public enum FeatureProcessRunner {
             }
 
             if written == -1, capturedErrno == EAGAIN || capturedErrno == EWOULDBLOCK {
-                if exitObserver.hasFinished || !process.isRunning {
+                if exitObserver.hasFinished {
                     outcome = .failed
                     break
                 }
@@ -409,7 +387,7 @@ public enum FeatureProcessRunner {
         _ process: Process,
         exitObserver: FeatureProcessExitObserver
     ) async -> Bool {
-        if process.isRunning {
+        if !exitObserver.hasFinished {
             process.terminate()
         }
 
@@ -417,33 +395,25 @@ public enum FeatureProcessRunner {
             return true
         }
 
-        kill(process.processIdentifier, SIGKILL)
-        // The kill is imminent and unblockable, so this final reap deliberately
-        // ignores cancellation: returning here while the child is still alive
-        // would leave an unreaped process and an invalid `terminationStatus`.
-        await reapAfterSIGKILL(process: process, exitObserver: exitObserver)
+        if !exitObserver.hasFinished {
+            kill(process.processIdentifier, SIGKILL)
+        }
+        // The process monitor owns Linux reaping independently from
+        // Foundation's shared manager run loop, so this wait remains bounded
+        // even when another long-running Process has parked that manager.
+        await waitForExitAfterSIGKILL(exitObserver: exitObserver)
         return true
     }
 
-    /// Polls the process status after SIGKILL. The `terminationHandler` usually
-    /// fires within milliseconds, but on Linux another `Process` in the same host
-    /// may have already reaped this child via `waitpid(-1)`, which permanently
-    /// suppresses the handler. Polling `isRunning` (which performs
-    /// `waitpid(pid, WNOHANG)`) provides a bounded fallback so the runner can
-    /// never hang waiting for a signal that will never arrive.
-    private static func reapAfterSIGKILL(
-        process: Process,
+    /// Waits a bounded interval for the independent exit monitor to observe a
+    /// SIGKILL. The bound protects against platform-level waitpid failures while
+    /// preserving a deterministic return path.
+    private static func waitForExitAfterSIGKILL(
         exitObserver: FeatureProcessExitObserver
     ) async {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while ContinuousClock.now < deadline {
-            if exitObserver.hasFinished || !process.isRunning {
-                if !exitObserver.hasFinished {
-                    exitObserver.finish()
-                }
-                return
-            }
-            try? await Task.sleep(nanoseconds: 10_000_000)
+        while ContinuousClock.now < deadline, !exitObserver.hasFinished {
+            try? await Task.sleep(for: .milliseconds(10))
         }
     }
 
@@ -558,13 +528,13 @@ private final class FeatureProcessExitObserver: Sendable {
     private struct State: Sendable {
         var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
         var cancelledWaiters: Set<UUID> = []
-        var hasFinished = false
+        var exitCode: Int32?
     }
     private let state = Mutex(State())
 
     /// Suspends until the process exits or the calling task is cancelled.
     func wait() async {
-        if state.withLock({ $0.hasFinished }) { return }
+        if state.withLock({ $0.exitCode != nil }) { return }
 
         let waiterID = UUID()
         await withTaskCancellationHandler {
@@ -576,19 +546,9 @@ private final class FeatureProcessExitObserver: Sendable {
         }
     }
 
-    /// Suspends until the process exits, ignoring cancellation of the caller.
-    func waitIgnoringCancellation() async {
-        if state.withLock({ $0.hasFinished }) { return }
-
-        let waiterID = UUID()
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            register(continuation, id: waiterID)
-        }
-    }
-
     private func register(_ continuation: CheckedContinuation<Void, Never>, id: UUID) {
         let resumeImmediately = state.withLock { state -> Bool in
-            if state.hasFinished {
+            if state.exitCode != nil {
                 return true
             }
             // Cancellation can be observed before the continuation exists; the
@@ -620,9 +580,12 @@ private final class FeatureProcessExitObserver: Sendable {
 
     /// Marks the process finished and resumes every waiter. Idempotent, and each
     /// continuation is resumed exactly once.
-    func finish() {
+    func finish(exitCode: Int32) {
         let continuations = state.withLock { state -> [CheckedContinuation<Void, Never>] in
-            state.hasFinished = true
+            guard state.exitCode == nil else {
+                return []
+            }
+            state.exitCode = exitCode
             let pending = Array(state.waiters.values)
             state.waiters.removeAll()
             state.cancelledWaiters.removeAll()
@@ -634,7 +597,11 @@ private final class FeatureProcessExitObserver: Sendable {
     }
 
     var hasFinished: Bool {
-        state.withLock { $0.hasFinished }
+        state.withLock { $0.exitCode != nil }
+    }
+
+    var exitCode: Int32? {
+        state.withLock { $0.exitCode }
     }
 }
 #endif

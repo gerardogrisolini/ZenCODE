@@ -54,13 +54,14 @@ struct MCPSingleFlightTests {
         _ expected: Int,
         in flight: MCPSingleFlight<Int>
     ) async -> Bool {
-        for _ in 0..<20_000 {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        repeat {
             if flight.waiterCount == expected {
                 return true
             }
-            await Task.yield()
-        }
-        return false
+            try? await Task.sleep(for: .milliseconds(1))
+        } while ContinuousClock.now < deadline
+        return flight.waiterCount == expected
     }
 
     @Test
@@ -70,23 +71,30 @@ struct MCPSingleFlightTests {
         let leaderStarted = Gate()
         let invocations = Counter()
 
-        async let first = flight.run {
-            invocations.increment()
-            leaderStarted.open()
-            await gate.wait()
-            return 7
+        let first = Task {
+            try await flight.run {
+                invocations.increment()
+                leaderStarted.open()
+                await gate.wait()
+                return 7
+            }
         }
         await leaderStarted.wait()
 
-        async let second = flight.run {
-            invocations.increment()
-            return 99
+        let second = Task {
+            try await flight.run {
+                invocations.increment()
+                return 99
+            }
         }
 
-        #expect(await Self.waitUntilWaiterCount(2, in: flight))
+        #expect(
+            await Self.waitUntilWaiterCount(2, in: flight),
+            "Both callers did not register with the shared flight within 10 seconds"
+        )
         gate.open()
 
-        let results = try await [first, second]
+        let results = try await [first.value, second.value]
         #expect(results == [7, 7])
         #expect(invocations.value == 1)
     }
@@ -102,12 +110,12 @@ struct MCPSingleFlightTests {
                 return 5
             }
         }
-        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(await Self.waitUntilWaiterCount(1, in: flight))
 
         let joiner = Task {
             try await flight.run { 0 }
         }
-        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(await Self.waitUntilWaiterCount(2, in: flight))
         joiner.cancel()
 
         // The cancelled joiner must return immediately, while the shared work is
@@ -127,9 +135,11 @@ struct MCPSingleFlightTests {
     func cancellingEveryCallerCancelsTheSharedOperation() async throws {
         let flight = MCPSingleFlight<Int>()
         let observedCancellation = Counter()
+        let operationStarted = Gate()
 
         let caller = Task {
             try await flight.run {
+                operationStarted.open()
                 do {
                     try await Task.sleep(nanoseconds: 10_000_000_000)
                 } catch {
@@ -139,7 +149,7 @@ struct MCPSingleFlightTests {
                 return 1
             }
         }
-        try await Task.sleep(nanoseconds: 100_000_000)
+        await operationStarted.wait()
         caller.cancel()
 
         do {
@@ -161,16 +171,20 @@ struct MCPSingleFlightTests {
     func invalidationFencesALateResult() async throws {
         let flight = MCPSingleFlight<Int>()
         let gate = Gate()
+        let operationStarted = Gate()
+        let operationFinished = Gate()
         let applied = Counter()
 
         let caller = Task {
             try await flight.run {
+                operationStarted.open()
                 await gate.wait()
                 applied.increment()
+                operationFinished.open()
                 return 42
             }
         }
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await operationStarted.wait()
 
         // Equivalent to disconnect() while the handshake is still running.
         flight.cancel()
@@ -184,7 +198,8 @@ struct MCPSingleFlightTests {
 
         // Even if the shared operation now finishes, it must not be published.
         gate.open()
-        try await Task.sleep(nanoseconds: 100_000_000)
+        await operationFinished.wait()
+        #expect(applied.value == 1)
         #expect(!flight.isRunning)
     }
 
@@ -206,21 +221,25 @@ struct MCPSingleFlightTests {
         let flight = MCPSingleFlight<Int>()
         let gate = Gate()
 
-        async let first: Int = flight.run {
-            await gate.wait()
-            throw SampleError()
+        let leaderStarted = Gate()
+        let first = Task {
+            try await flight.run {
+                leaderStarted.open()
+                await gate.wait()
+                throw SampleError()
+            }
         }
-        async let second: Int = {
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            return try await flight.run { throw SampleError() }
-        }()
+        await leaderStarted.wait()
+        let second = Task {
+            try await flight.run { throw SampleError() }
+        }
 
-        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(await Self.waitUntilWaiterCount(2, in: flight))
         gate.open()
 
         var failures = 0
-        do { _ = try await first } catch is SampleError { failures += 1 }
-        do { _ = try await second } catch is SampleError { failures += 1 }
+        do { _ = try await first.value } catch is SampleError { failures += 1 }
+        do { _ = try await second.value } catch is SampleError { failures += 1 }
 
         #expect(failures == 2)
         #expect(!flight.isRunning)

@@ -119,15 +119,19 @@ struct TerminalInputLifecycleTests {
 
         // `stopPanelInput` cancels this token before awaiting the loop task, so
         // teardown does not wait out the pending read window.
-        let start = Date()
+        let clock = ContinuousClock()
+        let start = clock.now
         reader.withPanelLock {
             reader.panelReadToken?.cancel()
         }
         loop.cancel()
         await loop.value
-        let elapsed = Date().timeIntervalSince(start)
+        let elapsed = start.duration(to: clock.now)
 
-        #expect(elapsed < 1.0)
+        // Cancellation normally resolves on the next 50 ms poll slice. Keep a
+        // bounded UX regression check while allowing heavily oversubscribed Linux
+        // CI runners enough time to schedule the dedicated blocking-read queue.
+        #expect(elapsed < .seconds(5))
         // No spurious events are emitted while tearing down.
         #expect(receivedEvents.withLock { $0 } == 0)
     }
