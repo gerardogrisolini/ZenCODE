@@ -14,14 +14,12 @@ extension ChatGPTSubscriptionGenerationClient {
     func compactSessionForContextLimitRetry(
         _ session: inout AgentSession,
         maxTokens: Int?,
-        maxOutputTokens: Int?,
-        sessionIdentity: SessionIdentity
+        maxOutputTokens: Int?
     ) -> AgentConversationCompactionResult? {
         compactSession(
             &session,
             maxTokens: maxTokens,
             maxOutputTokens: maxOutputTokens,
-            sessionIdentity: sessionIdentity,
             force: true
         )
     }
@@ -29,14 +27,12 @@ extension ChatGPTSubscriptionGenerationClient {
     func compactSessionIfNeeded(
         _ session: inout AgentSession,
         maxTokens: Int?,
-        maxOutputTokens: Int?,
-        sessionIdentity: SessionIdentity
+        maxOutputTokens: Int?
     ) -> AgentConversationCompactionResult? {
         compactSession(
             &session,
             maxTokens: maxTokens,
             maxOutputTokens: maxOutputTokens,
-            sessionIdentity: sessionIdentity,
             force: false
         )
     }
@@ -45,7 +41,6 @@ extension ChatGPTSubscriptionGenerationClient {
         _ session: inout AgentSession,
         maxTokens: Int?,
         maxOutputTokens: Int?,
-        sessionIdentity: SessionIdentity,
         force: Bool
     ) -> AgentConversationCompactionResult? {
         let result = Self.compactedMessagesIfNeeded(
@@ -63,10 +58,7 @@ extension ChatGPTSubscriptionGenerationClient {
             compactionResult: result,
             preservingRecentFrom: session.messages
         )
-        resetContinuationAndTransport(
-            session: &session,
-            sessionIdentity: sessionIdentity
-        )
+        resetContinuationAndTransport(session: &session)
         return result
     }
 
@@ -78,22 +70,10 @@ extension ChatGPTSubscriptionGenerationClient {
             return nil
         }
         let modelLLMID = modelLLMID()
-        let requestConfiguration = RequestConfiguration(
-            modelID: modelLLMID,
-            workingDirectory: session.cwd,
-            systemPrompt: session.systemPrompt ?? "",
-            sessionKey: session.cacheKey?.nilIfBlank ?? session.id,
-            connectionScopeID: connectionScopeID,
-            history: [],
-            allowedToolNames: session.allowedToolNames,
-            thinkingSelection: session.thinkingSelection,
-            appMode: configuration.appMode
-        )
         guard let result = compactSession(
             &session,
             maxTokens: resolvedContextWindowTokenLimit(forLLMID: modelLLMID),
             maxOutputTokens: configuration.maxOutputTokens,
-            sessionIdentity: SessionIdentity(configuration: requestConfiguration),
             force: force
         ) else {
             return nil
@@ -112,8 +92,7 @@ extension ChatGPTSubscriptionGenerationClient {
         _ session: inout AgentSession,
         estimatedContextTokens: Int?,
         maxTokens: Int?,
-        maxOutputTokens: Int?,
-        sessionIdentity: SessionIdentity
+        maxOutputTokens: Int?
     ) -> AgentConversationCompactionResult? {
         guard let result = Self.compactedMessagesForEstimatedContextIfNeeded(
             session.messages,
@@ -128,24 +107,16 @@ extension ChatGPTSubscriptionGenerationClient {
             compactionResult: result,
             preservingRecentFrom: session.messages
         )
-        resetContinuationAndTransport(
-            session: &session,
-            sessionIdentity: sessionIdentity
-        )
+        resetContinuationAndTransport(session: &session)
         return result
     }
 
-    func resetContinuationAndTransport(
-        session: inout AgentSession,
-        sessionIdentity: SessionIdentity
-    ) {
+    func resetContinuationAndTransport(session: inout AgentSession) {
         session.continuation = nil
         if let chatGPTSessionID = session.chatGPTSessionID {
             webSocketPool.closeSession(sessionID: chatGPTSessionID)
         }
-        let replacementSessionID = UUID().uuidString
-        session.chatGPTSessionID = replacementSessionID
-        storeSessionID(replacementSessionID, for: sessionIdentity)
+        session.chatGPTSessionID = UUID().uuidString
     }
 
     static func compactedMessagesIfNeeded(

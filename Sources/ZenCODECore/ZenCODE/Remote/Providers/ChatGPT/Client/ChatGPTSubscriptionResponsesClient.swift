@@ -98,6 +98,7 @@ public struct ChatGPTSubscriptionResponsesClient {
         reasoningEffort: String?,
         textVerbosity: String,
         sessionID: String,
+        promptCacheKey: String? = nil,
         cachedWebSocketInput: JSONValue? = nil,
         previousResponseID: String? = nil,
         allowsFreshWebSocketContinuation: Bool = false,
@@ -112,6 +113,7 @@ public struct ChatGPTSubscriptionResponsesClient {
             reasoningEffort: reasoningEffort,
             textVerbosity: textVerbosity,
             sessionID: sessionID,
+            promptCacheKey: promptCacheKey,
             toolPayloads: toolPayloads,
             maxOutputTokens: maxOutputTokens
         )

@@ -107,7 +107,9 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         }
         }
 
-    static let sessionStoreUserDefaultsKey =
+    // Keep the existing storage key so installed sessions retain their warm
+    // prompt-cache identity after this state is separated from transport IDs.
+    static let promptCacheKeyStoreUserDefaultsKey =
         "ChatGPTSubscriptionGenerationClient.sessionIDsByIdentity.v1"
     static let compactionReserveTokenCount = 20_000
 
@@ -120,7 +122,7 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
     let ownsWebSocketPool: Bool
     let connectionScopeID: String?
     var sessions: [String: AgentSession] = [:]
-    var sessionIDsByIdentity = ChatGPTSubscriptionGenerationClient.loadStoredSessionIDs()
+    var promptCacheKeysByIdentity = ChatGPTSubscriptionGenerationClient.loadStoredPromptCacheKeys()
 
     public init(
         configuration: AgentRuntimeConfiguration,

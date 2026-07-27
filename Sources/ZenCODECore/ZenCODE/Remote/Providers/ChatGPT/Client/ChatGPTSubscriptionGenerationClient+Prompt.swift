@@ -44,8 +44,11 @@ extension ChatGPTSubscriptionGenerationClient {
             appMode: configuration.appMode
                 )
         let sessionIdentity = SessionIdentity(configuration: requestConfiguration)
-        let chatGPTSessionID = sessionIDsByIdentity[sessionIdentity] ?? UUID().uuidString
-        storeSessionID(chatGPTSessionID, for: sessionIdentity)
+        // Keep cache routing stable across transport resets. The WebSocket ID
+        // may rotate after a failure, but the canonical identity must not.
+        let promptCacheKey = promptCacheKeysByIdentity[sessionIdentity] ?? UUID().uuidString
+        storePromptCacheKey(promptCacheKey, for: sessionIdentity)
+        let chatGPTSessionID = session.chatGPTSessionID ?? promptCacheKey
         session.chatGPTSessionID = chatGPTSessionID
         sessions[sessionID] = session
 
@@ -78,8 +81,7 @@ extension ChatGPTSubscriptionGenerationClient {
             if let result = compactSessionIfNeeded(
                 &session,
                 maxTokens: maxContextWindowTokens,
-                maxOutputTokens: configuration.maxOutputTokens,
-                sessionIdentity: sessionIdentity
+                maxOutputTokens: configuration.maxOutputTokens
             ) {
                 sessions[sessionID] = session
                 await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
@@ -126,8 +128,7 @@ extension ChatGPTSubscriptionGenerationClient {
                     &session,
                     estimatedContextTokens: estimatedContextTokens,
                     maxTokens: maxContextWindowTokens,
-                    maxOutputTokens: configuration.maxOutputTokens,
-                    sessionIdentity: sessionIdentity
+                    maxOutputTokens: configuration.maxOutputTokens
                 ) {
                     sessions[sessionID] = session
                     await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
@@ -148,6 +149,7 @@ extension ChatGPTSubscriptionGenerationClient {
                         reasoningEffort: reasoningEffort,
                         textVerbosity: "medium",
                         sessionID: session.chatGPTSessionID ?? chatGPTSessionID,
+                        promptCacheKey: promptCacheKey,
                         cachedWebSocketInput: requestPayload.cachedWebSocketInput.map {
                             JSONValue.acpValue(from: $0)
                         },
@@ -169,10 +171,7 @@ extension ChatGPTSubscriptionGenerationClient {
                         // (for example the WebSocket died and store=false state
                         // expired). Fall back to a full conversation replay:
                         // requestPayload.input always carries the whole session.
-                        resetContinuationAndTransport(
-                            session: &session,
-                            sessionIdentity: sessionIdentity
-                        )
+                        resetContinuationAndTransport(session: &session)
                         sessions[sessionID] = session
                         await onEvent(
                             .diagnostic(Self.continuationReplayFallbackDiagnostic())
@@ -204,10 +203,7 @@ extension ChatGPTSubscriptionGenerationClient {
                         // until the terminal event, so replaying the turn over a
                         // fresh connection does not duplicate assistant output.
                         streamInterruptionRetries += 1
-                        resetContinuationAndTransport(
-                            session: &session,
-                            sessionIdentity: sessionIdentity
-                        )
+                        resetContinuationAndTransport(session: &session)
                         sessions[sessionID] = session
                         await onEvent(
                             .diagnostic(Self.streamInterruptionRetryDiagnostic())
@@ -220,8 +216,7 @@ extension ChatGPTSubscriptionGenerationClient {
                     guard let result = compactSessionForContextLimitRetry(
                         &session,
                         maxTokens: maxContextWindowTokens,
-                        maxOutputTokens: configuration.maxOutputTokens,
-                        sessionIdentity: sessionIdentity
+                        maxOutputTokens: configuration.maxOutputTokens
                     ) else {
                         await onEvent(.diagnostic(Self.contextLimitRetryUnavailableDiagnostic()))
                         throw error

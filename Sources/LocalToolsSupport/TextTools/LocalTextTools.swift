@@ -14,66 +14,58 @@ import Glibc
 import FeatureKit
 
 
-struct TextHeadTool: FeatureTool {
-    struct Input: Decodable, Sendable {
-        let path: String?
-        let file_path: String?
-        let lines: Int?
+struct TextLinesInput: Decodable, Sendable {
+    let path: String?
+    let file_path: String?
+    let lines: Int?
+}
+
+let textLinesInputSchema = buildInputSchema(
+    [.string("path"), .number("lines")],
+    required: ["path"]
+)
+
+enum TextLineSelection: Equatable, Sendable { case head, tail }
+
+func runTextLines(
+    _ input: TextLinesInput, context: FeatureContext, selection: TextLineSelection
+) async throws -> String {
+    let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
+    let lineCount = max(input.lines ?? 20, 1)
+    return try await LocalIOOffloader.run {
+        let lines = try String(contentsOf: path, encoding: .utf8)
+            .components(separatedBy: .newlines)
+        let selectedLines = selection == .head ? lines.prefix(lineCount) : lines.suffix(lineCount)
+        guard !selectedLines.isEmpty else {
+            return "File: \(path.path)\n<empty>"
+        }
+        return (["File: \(path.path)"] + selectedLines.enumerated().map { index, line in
+            "\(selectedLines.startIndex + index + 1)\t\(line)"
+        }).joined(separator: "\n")
     }
+}
+
+struct TextHeadTool: FeatureTool {
+    typealias Input = TextLinesInput
 
     static let name = "text.head"
     static let description = "Reads the first lines of a local text file."
-    static let inputSchema = buildInputSchema(
-        [.string("path"), .number("lines")],
-        required: ["path"]
-    )
+    static let inputSchema = textLinesInputSchema
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
-        let lineCount = max(input.lines ?? 20, 1)
-        return try await LocalIOOffloader.run {
-            let lines = try String(contentsOf: path, encoding: .utf8)
-                .components(separatedBy: .newlines)
-                .prefix(lineCount)
-            guard !lines.isEmpty else {
-                return "File: \(path.path)\n<empty>"
-            }
-            return (["File: \(path.path)"] + lines.enumerated().map { index, line in
-                "\(index + 1)\t\(line)"
-            }).joined(separator: "\n")
-        }
+        try await runTextLines(input, context: context, selection: .head)
     }
 }
 
 struct TextTailTool: FeatureTool {
-    struct Input: Decodable, Sendable {
-        let path: String?
-        let file_path: String?
-        let lines: Int?
-    }
+    typealias Input = TextLinesInput
 
     static let name = "text.tail"
     static let description = "Reads the last lines of a local text file."
-    static let inputSchema = buildInputSchema(
-        [.string("path"), .number("lines")],
-        required: ["path"]
-    )
+    static let inputSchema = textLinesInputSchema
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
-        let lineCount = max(input.lines ?? 20, 1)
-        return try await LocalIOOffloader.run {
-            let lines = try String(contentsOf: path, encoding: .utf8)
-                .components(separatedBy: .newlines)
-            guard !lines.isEmpty else {
-                return "File: \(path.path)\n<empty>"
-            }
-            let startIndex = max(lines.count - lineCount, 0)
-            let slice = lines[startIndex...]
-            return (["File: \(path.path)"] + slice.enumerated().map { index, line in
-                "\(startIndex + index + 1)\t\(line)"
-            }).joined(separator: "\n")
-        }
+        try await runTextLines(input, context: context, selection: .tail)
     }
 }
 

@@ -7,11 +7,7 @@ import ToolCore
 import Foundation
 import FeatureKit
 
-protocol GitWorkingDirectoryInput: WorkingDirectoryInput {
-    var workingDirectory: String? { get }
-    var cwd: String? { get }
-    var path: String? { get }
-}
+protocol GitWorkingDirectoryInput: WorkingDirectoryInput {}
 
 enum GitToolsSupport {
     static func runGit<T: GitWorkingDirectoryInput>(
@@ -26,7 +22,7 @@ enum GitToolsSupport {
             environment: context.environment,
             timeout: 60
         )
-        return renderProcessResult(result)
+        return result.renderedProcessOutput
     }
 
     static func gitWorkingDirectory<T: GitWorkingDirectoryInput>(
@@ -64,10 +60,6 @@ enum GitToolsSupport {
         default:
             throw GitToolsFeatureError.permissionDenied("Unsupported git stash action: \(action).")
         }
-    }
-
-    static func renderProcessResult(_ result: FeatureProcessResult) -> String {
-        result.renderedProcessOutput
     }
 }
 

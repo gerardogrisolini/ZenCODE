@@ -95,17 +95,19 @@ extension ChatGPTSubscriptionGenerationClient {
         return max(Int((Double(byteCount) / 4.0).rounded(.up)), 1)
     }
 
-    func storeSessionID(_ sessionID: String, for identity: SessionIdentity) {
-        sessionIDsByIdentity[identity] = sessionID
+    func storePromptCacheKey(_ promptCacheKey: String, for identity: SessionIdentity) {
+        promptCacheKeysByIdentity[identity] = promptCacheKey
         guard identity.connectionScopeID == nil else {
             return
         }
-        Self.storeSessionIDs(sessionIDsByIdentity)
+        Self.storePromptCacheKeys(promptCacheKeysByIdentity)
     }
 
-    static func loadStoredSessionIDs() -> [SessionIdentity: String] {
+    static func loadStoredPromptCacheKeys() -> [SessionIdentity: String] {
         guard let rawValues =
-            UserDefaults.standard.dictionary(forKey: sessionStoreUserDefaultsKey) as? [String: String]
+            UserDefaults.standard.dictionary(
+                forKey: promptCacheKeyStoreUserDefaultsKey
+            ) as? [String: String]
         else {
             return [:]
         }
@@ -118,15 +120,15 @@ extension ChatGPTSubscriptionGenerationClient {
         }
     }
 
-    static func storeSessionIDs(_ values: [SessionIdentity: String]) {
-        let persistedValues: [(String, String)] = values.compactMap { identity, sessionID in
+    static func storePromptCacheKeys(_ values: [SessionIdentity: String]) {
+        let persistedValues: [(String, String)] = values.compactMap { identity, key in
             guard identity.connectionScopeID == nil else {
                 return nil
             }
-            return (identity.storageKey, sessionID)
+            return (identity.storageKey, key)
         }
         let rawValues = Dictionary(uniqueKeysWithValues: persistedValues)
-        UserDefaults.standard.set(rawValues, forKey: sessionStoreUserDefaultsKey)
+        UserDefaults.standard.set(rawValues, forKey: promptCacheKeyStoreUserDefaultsKey)
     }
 
     func modelLLMID() -> String {

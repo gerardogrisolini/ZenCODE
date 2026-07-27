@@ -815,9 +815,10 @@ private final class LocalWebSocketEchoHandler:
             // SO_LINGER(0) makes close emit a TCP RST instead of a graceful FIN,
             // reproducing Wi-Fi loss / peer reset rather than an RFC 6455 close.
             if let socket = context.channel as? SocketOptionProvider {
+                let channel = context.channel
                 socket.setSoLinger(linger(l_onoff: 1, l_linger: 0))
                     .whenComplete { _ in
-                        context.close(promise: nil)
+                        channel.close(promise: nil)
                     }
             } else {
                 context.close(promise: nil)

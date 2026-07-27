@@ -7,11 +7,6 @@
 
 import Foundation
 import ToolCore
-#if canImport(CryptoKit)
-import CryptoKit
-#else
-import Crypto
-#endif
 
 public struct ChatGPTSubscriptionContinuationState: Equatable, Sendable {
     public let responseID: String
@@ -140,6 +135,7 @@ public enum ChatGPTSubscriptionRequestBuilder {
         reasoningEffort: String?,
         textVerbosity: String,
         sessionID: String,
+        promptCacheKey: String? = nil,
         toolPayloads: JSONValue = .array([]),
         maxOutputTokens: Int? = nil
     ) -> [String: Any] {
@@ -155,10 +151,10 @@ public enum ChatGPTSubscriptionRequestBuilder {
             "include": [
                 "reasoning.encrypted_content"
             ],
-            "prompt_cache_key": promptCacheKey(
+            "prompt_cache_key": Self.promptCacheKey(
                 instructions: instructions,
                 toolPayloads: toolPayloads,
-                fallbackSessionID: sessionID
+                fallbackSessionID: promptCacheKey?.nilIfBlank ?? sessionID
             )
         ]
 
@@ -182,33 +178,16 @@ public enum ChatGPTSubscriptionRequestBuilder {
         return body
     }
 
-    /// Content-addressed prompt cache key derived from the static request
-    /// prefix (instructions + tool schemas). Requests sharing the same prefix
-    /// are routed to the same cache shard even across sessions, unlike a
-    /// per-session identifier which is always cache-cold on a new session.
+    /// Stable prompt-cache routing key for the lifetime of a logical ChatGPT
+    /// session. The service still keys cached entries by their actual prefix;
+    /// keeping this routing value stable prevents retries and full WebSocket
+    /// replays from moving to a cold cache shard.
     public static func promptCacheKey(
-        instructions: String?,
-        toolPayloads: JSONValue,
+        instructions _: String?,
+        toolPayloads _: JSONValue,
         fallbackSessionID: String
     ) -> String {
-        let normalizedInstructions = instructions?.nilIfBlank ?? ""
-        var toolsPart = ""
-        if case let .array(tools) = toolPayloads,
-           !tools.isEmpty,
-           let data = try? toolPayloads.jsonData(
-               outputFormatting: [.withoutEscapingSlashes, .sortedKeys]
-           ) {
-            toolsPart = String(decoding: data, as: UTF8.self)
-        }
-        guard !(normalizedInstructions.isEmpty && toolsPart.isEmpty) else {
-            return fallbackSessionID
-        }
-        // \u{0} separator so instructions ending in the tool JSON cannot
-        // collide with a request embedding that JSON in the instructions.
-        let content = "\(normalizedInstructions)\u{0}\(toolsPart)"
-        let digest = SHA256.hash(data: Data(content.utf8))
-        let hex = digest.map { String(format: "%02x", $0) }.joined()
-        return "pck_\(String(hex.prefix(24)))"
+        fallbackSessionID
     }
 
     public static func estimatedContextTokenCount(

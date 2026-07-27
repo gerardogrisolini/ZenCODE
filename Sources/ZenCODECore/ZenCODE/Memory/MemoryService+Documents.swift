@@ -10,14 +10,7 @@ extension MemoryService {
         guard let workspaceRootURL else {
             return []
         }
-        return [
-            MemoryDocument(
-                scope: .project,
-                fileURL: workspaceRootURL
-                    .standardizedFileURL
-                    .appendingPathComponent(Self.filename)
-            )
-        ]
+        return [projectMemoryDocument(at: workspaceRootURL)]
     }
 
     func memoryDocument(
@@ -29,13 +22,15 @@ extension MemoryService {
             guard let workspaceRootURL else {
                 throw MemoryServiceError.scopeUnavailable("project")
             }
-            return MemoryDocument(
-                scope: .project,
-                fileURL: workspaceRootURL
-                    .standardizedFileURL
-                    .appendingPathComponent(Self.filename)
-            )
+            return projectMemoryDocument(at: workspaceRootURL)
         }
+    }
+
+    private func projectMemoryDocument(at workspaceRootURL: URL) -> MemoryDocument {
+        MemoryDocument(
+            scope: .project,
+            fileURL: workspaceRootURL.standardizedFileURL.appendingPathComponent(Self.filename)
+        )
     }
 
     func readEntries(from document: MemoryDocument) -> [MemoryEntry] {
@@ -189,7 +184,7 @@ extension MemoryService {
             return ""
         }
         return entries.map { entry in
-            let lines = normalizedBulletContent(entry.content)
+            let lines = MemoryEntry.normalizedContent(entry.content)
                 .components(separatedBy: "\n")
             let firstLine = lines.first ?? ""
             let continuation = lines.dropFirst()
@@ -199,10 +194,6 @@ extension MemoryService {
             return continuation.isEmpty ? header : "\(header)\n\(continuation)"
         }
         .joined(separator: "\n")
-    }
-
-    static func normalizedBulletContent(_ content: String) -> String {
-        MemoryEntry.normalizedContent(content)
     }
 
     public static func timestampString(_ date: Date, timeZone: TimeZone) -> String {

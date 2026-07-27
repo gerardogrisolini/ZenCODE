@@ -1129,6 +1129,8 @@ extension RemoteSessionSnapshotTests {
         #expect(factoryCount.withLock { $0 } == 2)
         #expect(firstPayload["previous_response_id"] as? String == "resp_previous")
         #expect(secondPayload["previous_response_id"] == nil)
+        #expect(firstPayload["prompt_cache_key"] as? String == "retry-continuation")
+        #expect(secondPayload["prompt_cache_key"] as? String == "retry-continuation")
         #expect((secondPayload["input"] as? [Any])?.isEmpty == true)
     }
 
@@ -1621,7 +1623,38 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionPromptCacheKeyIsContentAddressed() throws {
+    func chatGPTSubscriptionPromptCacheKeyUsesStableSessionIDAcrossRequestPrefixes() throws {
+        let firstBody = ChatGPTSubscriptionRequestBuilder.requestBody(
+            input: .array([]),
+            model: "gpt-5.5",
+            instructions: "First system prompt",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "transport-session-a",
+            promptCacheKey: "session-chatgpt",
+            toolPayloads: JSONValue.acpValue(from: [
+                ["type": "function", "name": "first_tool"] as [String: Any]
+            ])
+        )
+        let changedPrefixBody = ChatGPTSubscriptionRequestBuilder.requestBody(
+            input: .array([]),
+            model: "gpt-5.5",
+            instructions: "Changed system prompt",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "transport-session-b",
+            promptCacheKey: "session-chatgpt",
+            toolPayloads: JSONValue.acpValue(from: [
+                ["type": "function", "name": "second_tool"] as [String: Any]
+            ])
+        )
+
+        #expect(firstBody["prompt_cache_key"] as? String == "session-chatgpt")
+        #expect(changedPrefixBody["prompt_cache_key"] as? String == "session-chatgpt")
+    }
+
+    @Test
+    func chatGPTSubscriptionPromptCacheKeyIsSessionScoped() throws {
         let tools = JSONValue.acpValue(from: [
             [
                 "type": "function",
@@ -1634,7 +1667,7 @@ extension RemoteSessionSnapshotTests {
             toolPayloads: tools,
             fallbackSessionID: "session-a"
         )
-        let sameContentDifferentSession = ChatGPTSubscriptionRequestBuilder.promptCacheKey(
+        let differentSession = ChatGPTSubscriptionRequestBuilder.promptCacheKey(
             instructions: "System prompt",
             toolPayloads: tools,
             fallbackSessionID: "session-b"
@@ -1650,15 +1683,14 @@ extension RemoteSessionSnapshotTests {
             fallbackSessionID: "session-fallback"
         )
 
-        #expect(key.hasPrefix("pck_"))
-        #expect(key.count == 28)
-        #expect(key == sameContentDifferentSession)
-        #expect(key != differentInstructions)
+        #expect(key == "session-a")
+        #expect(differentSession == "session-b")
+        #expect(differentInstructions == "session-a")
         #expect(emptyPrefix == "session-fallback")
     }
 
     @Test
-    func chatGPTSubscriptionRequestBodyUsesContentAddressedPromptCacheKey() throws {
+    func chatGPTSubscriptionRequestBodyUsesStableSessionPromptCacheKey() throws {
         let body = ChatGPTSubscriptionRequestBuilder.requestBody(
             input: .array([]),
             model: "gpt-5.5",
@@ -1669,8 +1701,7 @@ extension RemoteSessionSnapshotTests {
         )
         let cacheKey = try #require(body["prompt_cache_key"] as? String)
 
-        #expect(cacheKey.hasPrefix("pck_"))
-        #expect(cacheKey != "session-chatgpt")
+        #expect(cacheKey == "session-chatgpt")
     }
 
     @Test
@@ -1715,6 +1746,66 @@ extension RemoteSessionSnapshotTests {
         #expect(sanitized.count == 1)
         #expect(sanitized.first?["encrypted_content"] as? String == "blob")
         #expect(sanitized.first?["id"] == nil)
+    }
+    @Test
+    func chatGPTSubscriptionTransportResetPreservesCanonicalPromptCacheIdentity() async {
+        let client = ChatGPTSubscriptionGenerationClient(
+            configuration: remoteStreamingConfiguration()
+        )
+
+        let state = await client.resetTransportIdentityForTesting()
+        await client.shutdown()
+
+        #expect(state.promptCacheKey == "stable-prompt-cache-key")
+        #expect(state.transportSessionID != "transport-before-reset")
+        #expect(state.transportSessionID?.isEmpty == false)
+        #expect(state.continuationWasCleared)
+    }
+}
+
+private extension ChatGPTSubscriptionGenerationClient {
+    func resetTransportIdentityForTesting() -> (
+        promptCacheKey: String?,
+        transportSessionID: String?,
+        continuationWasCleared: Bool
+    ) {
+        let identity = SessionIdentity(
+            configuration: RequestConfiguration(
+                modelID: "gpt-5.5",
+                workingDirectory: "/tmp/project",
+                systemPrompt: "System prompt",
+                sessionKey: "stable-session",
+                connectionScopeID: "test-scope",
+                history: [],
+                allowedToolNames: [],
+                thinkingSelection: nil,
+                appMode: false
+            )
+        )
+        storePromptCacheKey("stable-prompt-cache-key", for: identity)
+        var session = AgentSession(
+            id: "session",
+            cwd: "/tmp/project",
+            systemPrompt: "System prompt",
+            cacheKey: nil,
+            messages: [],
+            allowedToolNames: [],
+            thinkingSelection: nil,
+            preserveThinking: false,
+            continuation: ChatGPTSubscriptionContinuationState(
+                responseID: "resp_before_reset",
+                messageCount: 0,
+                instructions: "System prompt"
+            ),
+            chatGPTSessionID: "transport-before-reset"
+        )
+
+        resetContinuationAndTransport(session: &session)
+        return (
+            promptCacheKey: promptCacheKeysByIdentity[identity],
+            transportSessionID: session.chatGPTSessionID,
+            continuationWasCleared: session.continuation == nil
+        )
     }
 }
 
