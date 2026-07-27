@@ -10,6 +10,17 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import Synchronization
+
+private struct TerminalPromptExecutionTasks {
+    var promptTask: Task<TerminalChatGenerationSuccess, Error>?
+    var stopMonitor: Task<Void, Never>?
+
+    mutating func cancel() {
+        promptTask?.cancel()
+        stopMonitor?.cancel()
+    }
+}
 
 extension TerminalChat {
     func renderHelpTextForCurrentAgent() -> String {
@@ -194,28 +205,62 @@ extension TerminalChat {
             didRefreshGitStatusDuringCurrentPrompt = false
             await statusBar.beginRequest()
             await statusBar.setProcessing(true)
-            let promptTask = Task {
-                try await generateResponse(attempt: attempt)
-            }
-            let stopMonitor = TerminalEscapeStopMonitor.startIfNeeded(
-                isEnabled: stdinIsTerminal
-            ) {
-                promptTask.cancel()
-            }
-            let success: TerminalChatGenerationSuccess
-            do {
-                success = try await promptTask.value
-            } catch {
-                if let stopMonitor {
-                    stopMonitor.cancel()
-                    await stopMonitor.value
+            let tasks = Mutex(TerminalPromptExecutionTasks())
+            let success = try await withTaskCancellationHandler(
+                operation: {
+                    let promptTask = Task(name: "ZenCODE.TUI.prompt-generation") {
+                        try await self.generateResponse(attempt: attempt)
+                    }
+                    tasks.withLock { tasks in
+                        tasks.promptTask = promptTask
+                    }
+
+                    let stopMonitor = TerminalEscapeStopMonitor.startIfNeeded(
+                        isEnabled: self.stdinIsTerminal
+                    ) {
+                        promptTask.cancel()
+                    }
+                    tasks.withLock { tasks in
+                        tasks.stopMonitor = stopMonitor
+                    }
+                    // Cancellation may have raced with task creation, before
+                    // `onCancel` could observe both children. Re-check after
+                    // publishing them so neither child outlives this attempt.
+                    if Task.isCancelled {
+                        tasks.withLock { tasks in
+                            tasks.cancel()
+                        }
+                    }
+
+                    do {
+                        let success = try await promptTask.value
+                        if let stopMonitor = tasks.withLock({ tasks -> Task<Void, Never>? in
+                            let stopMonitor = tasks.stopMonitor
+                            tasks.stopMonitor = nil
+                            return stopMonitor
+                        }) {
+                            stopMonitor.cancel()
+                            await stopMonitor.value
+                        }
+                        return success
+                    } catch {
+                        if let stopMonitor = tasks.withLock({ tasks -> Task<Void, Never>? in
+                            let stopMonitor = tasks.stopMonitor
+                            tasks.stopMonitor = nil
+                            return stopMonitor
+                        }) {
+                            stopMonitor.cancel()
+                            await stopMonitor.value
+                        }
+                        throw error
+                    }
+                },
+                onCancel: {
+                    tasks.withLock { tasks in
+                        tasks.cancel()
+                    }
                 }
-                throw error
-            }
-            if let stopMonitor {
-                stopMonitor.cancel()
-                await stopMonitor.value
-            }
+            )
             await finishPromptResult(.success(success))
             await refreshStatusBarGitStatusSummaryAfterPromptIfNeeded()
         } catch {

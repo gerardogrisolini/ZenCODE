@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 
 /// Internal lifetime token shared by a public transport handle and the scoped
 /// NIO run-task that drives its driver actor.
@@ -25,10 +26,9 @@ import Foundation
 /// the sole authority for distinguishing a clean end-of-stream from a framing
 /// or Content-Length truncation error. Re-introducing a `channel.closeFuture`
 /// monitor would mask such errors (the earlier P1 regression).
-final class RemoteTransportLifetimeToken: @unchecked Sendable {
-    private let lock = NSLock()
+final class RemoteTransportLifetimeToken: Sendable {
     private let lease: RemoteChannelLease
-    private var state: State = .idle
+    private let state = Mutex(State.idle)
 
     init(lease: RemoteChannelLease) {
         self.lease = lease
@@ -41,22 +41,27 @@ final class RemoteTransportLifetimeToken: @unchecked Sendable {
         runTask: Task<Void, Never>,
         teardown: @escaping @Sendable () async -> Void
     ) {
-        lock.lock()
-        switch state {
-        case .idle:
-            state = .armed(runTask: runTask, teardown: teardown)
-            lock.unlock()
-        case .armed:
-            // Defensive: installing twice is a programmer error. Ignore it
-            // rather than orphaning the first run-task.
-            lock.unlock()
-        case .finished:
-            lock.unlock()
+        let installAfterFinish = state.withLock { state in
+            switch state {
+            case .idle:
+                state = .armed(runTask: runTask, teardown: teardown)
+                return false
+            case .armed:
+                // Defensive: installing twice is a programmer error. Ignore it
+                // rather than orphaning the first run-task.
+                return false
+            case .finished:
+                return true
+            }
+        }
+        if installAfterFinish {
             // The run already finished or the token was invalidated before
             // install completed. Tear the supplied task down immediately so its
             // driver is not left retained.
             runTask.cancel()
-            Task { await teardown() }
+            Task(name: "Remote transport late lifetime teardown") {
+                await teardown()
+            }
         }
     }
 
@@ -64,13 +69,13 @@ final class RemoteTransportLifetimeToken: @unchecked Sendable {
     /// `executeThenClose` has returned. Natural completion needs no teardown:
     /// the channel scope already closed the channel and released the driver.
     func runDidFinish() {
-        lock.lock()
-        switch state {
-        case .idle, .armed:
-            state = .finished
-            lock.unlock()
-        case .finished:
-            lock.unlock()
+        state.withLock { state in
+            switch state {
+            case .idle, .armed:
+                state = .finished
+            case .finished:
+                break
+            }
         }
     }
 
@@ -83,25 +88,34 @@ final class RemoteTransportLifetimeToken: @unchecked Sendable {
     }
 
     private func performTeardown() {
-        lock.lock()
-        switch state {
-        case .idle:
+        let action = state.withLock { state -> TeardownAction in
+            switch state {
+            case .idle:
             // No run-task/teardown installed yet. Close the lease now; a later
             // install() will tear down whatever it receives.
-            state = .finished
-            lock.unlock()
+                state = .finished
+                return .closeOnly
+            case .armed(let runTask, let teardown):
+                state = .finished
+                return .cancel(runTask: runTask, teardown: teardown)
+            case .finished:
+                return .none
+            }
+        }
+        switch action {
+        case .closeOnly:
             lease.close()
-        case .armed(let runTask, let teardown):
-            state = .finished
-            lock.unlock()
+        case let .cancel(runTask, teardown):
             lease.close()
             // Cancelling the run-task alone does not resume the driver's
             // continuation-based waiters (they use `CheckedContinuation`), so
             // the teardown must abandon them before the task can complete.
             runTask.cancel()
-            Task { await teardown() }
-        case .finished:
-            lock.unlock()
+            Task(name: "Remote transport lifetime teardown") {
+                await teardown()
+            }
+        case .none:
+            break
         }
     }
 
@@ -113,5 +127,11 @@ final class RemoteTransportLifetimeToken: @unchecked Sendable {
         case idle
         case armed(runTask: Task<Void, Never>, teardown: @Sendable () async -> Void)
         case finished
+    }
+
+    private enum TeardownAction {
+        case none
+        case closeOnly
+        case cancel(runTask: Task<Void, Never>, teardown: @Sendable () async -> Void)
     }
 }

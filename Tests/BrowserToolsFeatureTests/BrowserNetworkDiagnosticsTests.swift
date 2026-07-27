@@ -16,7 +16,7 @@ struct BrowserNetworkDiagnosticsTests {
         ]
         observer.consume(CDPEvent(
             method: "Network.requestWillBeSent",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": "request-id-must-not-be-serialized",
                 "timestamp": 10.0,
                 "type": "XHR",
@@ -31,7 +31,7 @@ struct BrowserNetworkDiagnosticsTests {
                     "url": "https://api.example/v1/items?token=url-secret&mode=debug",
                     "headers": requestHeaders,
                 ] as [String: Any],
-            ],
+            ]),
             sessionID: nil
         ))
 
@@ -43,7 +43,7 @@ struct BrowserNetworkDiagnosticsTests {
         ]
         observer.consume(CDPEvent(
             method: "Network.responseReceived",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": "request-id-must-not-be-serialized",
                 "timestamp": 10.2,
                 "type": "XHR",
@@ -68,16 +68,16 @@ struct BrowserNetworkDiagnosticsTests {
                         "receiveHeadersEnd": 13,
                     ] as [String: Any],
                 ] as [String: Any],
-            ],
+            ]),
             sessionID: nil
         ))
         observer.consume(CDPEvent(
             method: "Network.loadingFinished",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": "request-id-must-not-be-serialized",
                 "timestamp": 10.25,
                 "encodedDataLength": 512,
-            ],
+            ]),
             sessionID: nil
         ))
 
@@ -86,7 +86,7 @@ struct BrowserNetworkDiagnosticsTests {
         // redacted chain on the later entry.
         observer.consume(CDPEvent(
             method: "Network.requestWillBeSent",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": "redirect-internal-id",
                 "timestamp": 20.0,
                 "type": "Document",
@@ -94,12 +94,12 @@ struct BrowserNetworkDiagnosticsTests {
                     "method": "GET",
                     "url": "https://example.com/start?token=redirect-secret",
                 ] as [String: Any],
-            ],
+            ]),
             sessionID: nil
         ))
         observer.consume(CDPEvent(
             method: "Network.requestWillBeSent",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": "redirect-internal-id",
                 "timestamp": 20.1,
                 "type": "Document",
@@ -112,7 +112,7 @@ struct BrowserNetworkDiagnosticsTests {
                     "method": "GET",
                     "url": "https://example.com/next?token=next-secret",
                 ] as [String: Any],
-            ],
+            ]),
             sessionID: nil
         ))
 
@@ -203,17 +203,17 @@ struct BrowserNetworkDiagnosticsTests {
         let observer = BrowserNetworkObserver()
         observer.consume(CDPEvent(
             method: "Network.requestWillBeSent",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": "redirect-id",
                 "timestamp": 1.0,
                 "type": "Document",
                 "request": ["method": "GET", "url": "https://example.com/one?token=one"] as [String: Any],
-            ],
+            ]),
             sessionID: nil
         ))
         observer.consume(CDPEvent(
             method: "Network.requestWillBeSent",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": "redirect-id",
                 "timestamp": 1.1,
                 "type": "Document",
@@ -223,7 +223,7 @@ struct BrowserNetworkDiagnosticsTests {
                     "mimeType": "text/html",
                 ] as [String: Any],
                 "request": ["method": "GET", "url": "https://example.com/two?token=two"] as [String: Any],
-            ],
+            ]),
             sessionID: nil
         ))
 
@@ -272,7 +272,7 @@ struct BrowserNetworkDiagnosticsTests {
         // would yield the JSON body of the final 200 response.
         observer.consume(CDPEvent(
             method: "Network.requestWillBeSent",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": requestID,
                 "timestamp": 1.0,
                 "type": "Document",
@@ -280,12 +280,12 @@ struct BrowserNetworkDiagnosticsTests {
                     "method": "GET",
                     "url": "https://login.example/start?state=redirect-state",
                 ] as [String: Any],
-            ],
+            ]),
             sessionID: nil
         ))
         observer.consume(CDPEvent(
             method: "Network.requestWillBeSent",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": requestID,
                 "timestamp": 1.1,
                 "type": "Document",
@@ -299,12 +299,12 @@ struct BrowserNetworkDiagnosticsTests {
                     "method": "GET",
                     "url": "https://app.example/callback?code=authorization-code",
                 ] as [String: Any],
-            ],
+            ]),
             sessionID: nil
         ))
         observer.consume(CDPEvent(
             method: "Network.responseReceived",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": requestID,
                 "timestamp": 1.2,
                 "type": "Document",
@@ -314,16 +314,16 @@ struct BrowserNetworkDiagnosticsTests {
                     "mimeType": "application/json",
                     "encodedDataLength": 64,
                 ] as [String: Any],
-            ],
+            ]),
             sessionID: nil
         ))
         observer.consume(CDPEvent(
             method: "Network.loadingFinished",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": requestID,
                 "timestamp": 1.3,
                 "encodedDataLength": 64,
-            ],
+            ]),
             sessionID: nil
         ))
 

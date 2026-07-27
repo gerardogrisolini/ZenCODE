@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -240,7 +241,7 @@ public actor TerminalTelegramControlService {
             lastError: nil,
             lastMessagePreview: state.lastMessagePreview
         )
-        pollingTask = Task { [weak self] in
+        pollingTask = Task(name: "ZenCODE.Telegram.polling") { [weak self] in
             // The loop lives here (not inside an actor method) so `self?` is
             // retained only for the duration of a single `pollOnce` call.
             // Between iterations the weak reference can go nil when the actor is
@@ -280,9 +281,14 @@ public actor TerminalTelegramControlService {
         let client = TerminalTelegramAPIClient(token: token)
         do {
             try await client.sendMessage(trimmed, to: chatID, parseMode: "Markdown")
-        } catch {
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as TerminalTelegramControlError {
             // Telegram rejects messages whose Markdown markup is malformed.
             // Fall back to plain text so the message is still delivered.
+            guard Self.isMarkdownParsingError(error) else {
+                throw error
+            }
             try await client.sendMessage(trimmed, to: chatID)
         }
         state.lastError = nil
@@ -308,7 +314,7 @@ public actor TerminalTelegramControlService {
         )
     }
 
-    private func telegramSettings() throws -> AgentTelegramSettingsManifest {
+    private func telegramSettings() throws(TerminalTelegramControlError) -> AgentTelegramSettingsManifest {
         guard let settings = AgentSettingsManifestStore.load()?.telegram,
               settings.isConfigured else {
             throw TerminalTelegramControlError.missingConfiguration
@@ -316,7 +322,9 @@ public actor TerminalTelegramControlService {
         return settings
     }
 
-    private func telegramToken(from settings: AgentTelegramSettingsManifest) throws -> String {
+    private func telegramToken(
+        from settings: AgentTelegramSettingsManifest
+    ) throws(TerminalTelegramControlError) -> String {
         guard let token = settings.botToken?.nilIfBlank else {
             throw TerminalTelegramControlError.missingConfiguration
         }
@@ -331,7 +339,7 @@ public actor TerminalTelegramControlService {
     /// Throws `CancellationError` when this call was superseded by a newer
     /// `start()`/`stop()` (a generation bump) or the enclosing task was
     /// cancelled. Call after every suspension point before touching shared state.
-    private func ensureCurrentGeneration(_ generation: Int) throws {
+    private func ensureCurrentGeneration(_ generation: Int) throws(CancellationError) {
         guard generation == pollingGeneration, !Task.isCancelled else {
             throw CancellationError()
         }
@@ -429,6 +437,23 @@ public actor TerminalTelegramControlService {
 
     private nonisolated static func fileExtension(for filename: String) -> String {
         URL(fileURLWithPath: filename).pathExtension.nilIfBlank ?? "oga"
+    }
+
+    private nonisolated static func isMarkdownParsingError(
+        _ error: TerminalTelegramControlError
+    ) -> Bool {
+        guard case let .httpError(statusCode, body) = error,
+              statusCode == 400,
+              let body else {
+            return false
+        }
+        let description = body.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: Locale(identifier: "en_US_POSIX")
+        )
+        return description.contains("can't parse entities")
+            || description.contains("cannot parse entities")
+            || description.contains("unsupported start tag")
     }
 
 }

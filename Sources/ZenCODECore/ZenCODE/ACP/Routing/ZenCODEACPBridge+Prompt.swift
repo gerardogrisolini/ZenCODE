@@ -5,12 +5,6 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
-import Dispatch
 import Foundation
 
 extension ZenCODEACPBridge {
@@ -25,7 +19,9 @@ extension ZenCODEACPBridge {
               var session = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        guard session.activePromptID == nil, session.activePromptTask == nil else {
+        guard case .idle = session.operationState,
+              session.activePromptID == nil,
+              session.activePromptTask == nil else {
             throw ACPError.invalidParams("A prompt is already running for this session.")
         }
 
@@ -35,6 +31,7 @@ extension ZenCODEACPBridge {
         let promptID = UUID()
         let epoch = session.epoch
         session.activePromptID = promptID
+        session.operationState = .prompting(promptID)
         sessions[sessionID] = session
         var didReleaseReservation = false
 
@@ -46,11 +43,14 @@ extension ZenCODEACPBridge {
             }
             didReleaseReservation = true
             updateLiveSession(id: sessionID, epoch: epoch) { session in
-                guard session.activePromptID == promptID else {
+                guard session.activePromptID == promptID,
+                      case let .prompting(activePromptID) = session.operationState,
+                      activePromptID == promptID else {
                     return
                 }
                 session.activePromptID = nil
                 session.activePromptTask = nil
+                session.operationState = .idle
             }
         }
 
@@ -108,7 +108,8 @@ extension ZenCODEACPBridge {
                 configuration: promptConfiguration,
                 selectedAgent: agentMentionResolution.agent,
                 epoch: epoch,
-                activePromptID: promptID
+                activePromptID: promptID,
+                operationState: .prompting(promptID)
             )
             guard updateLiveSession(id: sessionID, epoch: epoch, { liveSession in
                 liveSession = session
@@ -167,11 +168,14 @@ extension ZenCODEACPBridge {
 
         // The session may have been closed, replaced, or shut down while the
         // prompt was being prepared; never start generation for a dead session.
-        guard liveSession(id: sessionID, epoch: epoch)?.activePromptID == promptID else {
+        guard let activeSession = liveSession(id: sessionID, epoch: epoch),
+              activeSession.activePromptID == promptID,
+              case let .prompting(activePromptID) = activeSession.operationState,
+              activePromptID == promptID else {
             throw CancellationError()
         }
 
-        let activePromptTask = Task {
+        let activePromptTask = Task(name: "ZenCODEACPBridge.prompt") {
             await sessionRunner.updatePromptSkillSelection(
                 selectedAgentSkills(for: session.selectedAgent),
                 sessionID: promptConfiguration.sessionID
@@ -185,13 +189,9 @@ extension ZenCODEACPBridge {
                     switch event {
                     case let .status(message):
                         if !appMode {
-                            await sendPromptUpdate(JSONValue.acpValue(from: [
-                                "sessionUpdate": "agent_thought_chunk",
-                                "content": [
-                                    "type": "text",
-                                    "text": message
-                                ]
-                            ]))
+                            await sendPromptUpdate(
+                                Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: message)
+                            )
                         }
                     case let .diagnostic(message):
                         await self.verboseACPLog("diagnostic \(message)")
@@ -199,59 +199,46 @@ extension ZenCODEACPBridge {
                             break
                         }
                         if !appMode || !Self.isAppSuppressedDiagnostic(message) {
-                            await sendPromptUpdate(JSONValue.acpValue(from: [
-                                "sessionUpdate": "agent_thought_chunk",
-                                "content": [
-                                    "type": "text",
-                                    "text": message
-                                ]
-                            ]))
+                            await sendPromptUpdate(
+                                Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: message)
+                            )
                         }
                     case let .thought(message):
-                        await sendPromptUpdate(JSONValue.acpValue(from: [
-                            "sessionUpdate": "agent_thought_chunk",
-                            "content": [
-                                "type": "text",
-                                "text": message
-                            ]
-                        ]))
+                        await sendPromptUpdate(
+                            Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: message)
+                        )
                     case let .modelLoaded(modelID):
                         if !appMode {
-                            await sendPromptUpdate(JSONValue.acpValue(from: [
-                                "sessionUpdate": "agent_thought_chunk",
-                                "content": [
-                                    "type": "text",
-                                    "text": "Loaded model: \(modelID)"
-                                ]
-                            ]))
+                            await sendPromptUpdate(
+                                Self.textChunkJSONUpdate(
+                                    kind: "agent_thought_chunk",
+                                    text: "Loaded model: \(modelID)"
+                                )
+                            )
                         }
                     case .metrics:
                         break
                     case let .contextWindow(status):
-                        if let update = Self.usageUpdate(for: status) {
-                            await sendPromptUpdate(JSONValue.acpValue(from: update))
+                        if let update = Self.usageJSONUpdate(for: status) {
+                            await sendPromptUpdate(update)
                         }
                     case let .subscriptionUsage(status):
-                        if let update = Self.subscriptionUsageUpdate(for: status) {
-                            await sendPromptUpdate(JSONValue.acpValue(from: update))
+                        if let update = Self.subscriptionUsageJSONUpdate(for: status) {
+                            await sendPromptUpdate(update)
                         }
                     case let .content(content):
-                        await sendPromptUpdate(JSONValue.acpValue(from: [
-                            "sessionUpdate": "agent_message_chunk",
-                            "content": [
-                                "type": "text",
-                                "text": content
-                            ]
-                        ]))
+                        await sendPromptUpdate(
+                            Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: content)
+                        )
                     case let .toolCallStarted(toolCall):
-                        await sendPromptUpdate(JSONValue.acpValue(from: Self.toolCallCreateUpdate(for: toolCall)))
-                        await sendPromptUpdate(JSONValue.acpValue(from: Self.toolCallProgressUpdate(for: toolCall)))
+                        await sendPromptUpdate(Self.toolCallCreateJSONUpdate(for: toolCall))
+                        await sendPromptUpdate(Self.toolCallProgressJSONUpdate(for: toolCall))
                     case let .toolCallCompleted(toolCall, result):
                         await sendPromptUpdate(
-                            JSONValue.acpValue(from: Self.toolCallCompletionUpdate(
+                            Self.toolCallCompletionJSONUpdate(
                                 for: toolCall,
                                 result: result
-                            ))
+                            )
                         )
                     case .sessionSnapshot,
                          .turnEnded:
@@ -344,6 +331,7 @@ extension ZenCODEACPBridge {
         session.activePromptTask?.cancel()
         session.activePromptTask = nil
         session.activePromptID = nil
+        session.operationState = .idle
         sessions[sessionID] = session
         await writer.sendResultIfRequest(id: id, result: .object([:]))
     }

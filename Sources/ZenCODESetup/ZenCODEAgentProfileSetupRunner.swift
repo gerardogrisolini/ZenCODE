@@ -90,6 +90,14 @@ public enum ZenCODEAgentProfileSetupRunner {
             AgentOutput.standardError.writeString("\n")
             return agents
         } catch {
+            // Only corrupt JSON is safely recoverable by regenerating the
+            // recommended agents. Structural problems (unsupported version,
+            // missing developer agent, unreadable file) must surface instead of
+            // being silently overwritten.
+            guard let profileError = error as? AgentProfileStoreError,
+                  case .invalidFile = profileError else {
+                throw error
+            }
             let shouldOverwrite = try promptYesNo(
                 "agents.json exists but is invalid. Rewrite it?",
                 defaultValue: true

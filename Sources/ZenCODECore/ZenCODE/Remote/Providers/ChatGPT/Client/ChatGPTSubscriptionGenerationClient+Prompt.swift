@@ -28,10 +28,33 @@ extension ChatGPTSubscriptionGenerationClient {
             throw ChatGPTSubscriptionGenerationError.missingSession
         }
 
+        session.messages.append(
+            RemoteGenerationClient.remoteMessage(
+                role: AgentRuntimeMessage.Role.user.rawValue,
+                content: prompt,
+                attachments: attachments
+            )
+        )
+        // This is the first durable turn mutation; it must precede credential
+        // loading so concurrent compaction sees it and close invalidates the
+        // in-flight operation rather than allowing it to restore the session.
+        sessions[sessionID] = session
+        guard let lease = sessionLease(for: sessionID) else {
+            throw ChatGPTSubscriptionGenerationError.missingSession
+        }
+
         var credentials = try await CodexAgentModel.loadValidCredentials()
+        guard let loadedSession = currentSession(for: lease) else {
+            throw ChatGPTSubscriptionGenerationError.missingSession
+        }
+        session = loadedSession
         let modelLLMID = modelLLMID()
         let modelID = CodexAgentModel.modelID(fromLLMID: modelLLMID)
         await onEvent(.modelLoaded(CodexAgentModel.selectionTitle(forLLMID: modelLLMID)))
+        guard let postLoadSession = currentSession(for: lease) else {
+            throw ChatGPTSubscriptionGenerationError.missingSession
+        }
+        session = postLoadSession
         let requestConfiguration = RequestConfiguration(
             modelID: modelLLMID,
             workingDirectory: session.cwd,
@@ -49,8 +72,17 @@ extension ChatGPTSubscriptionGenerationClient {
         let promptCacheKey = promptCacheKeysByIdentity[sessionIdentity] ?? UUID().uuidString
         storePromptCacheKey(promptCacheKey, for: sessionIdentity)
         let chatGPTSessionID = session.chatGPTSessionID ?? promptCacheKey
-        session.chatGPTSessionID = chatGPTSessionID
-        sessions[sessionID] = session
+        guard mutateSession(for: lease, { session in
+            if session.chatGPTSessionID == nil {
+                session.chatGPTSessionID = chatGPTSessionID
+            }
+        }) else {
+            throw ChatGPTSubscriptionGenerationError.missingSession
+        }
+        guard let resolvedSession = currentSession(for: lease) else {
+            throw ChatGPTSubscriptionGenerationError.missingSession
+        }
+        session = resolvedSession
 
         var client = ChatGPTSubscriptionResponsesClient(
             credentials: credentials,
@@ -63,14 +95,6 @@ extension ChatGPTSubscriptionGenerationClient {
             forLLMID: modelLLMID
         )
 
-        session.messages.append(
-            RemoteGenerationClient.remoteMessage(
-                role: AgentRuntimeMessage.Role.user.rawValue,
-                content: prompt,
-                attachments: attachments
-            )
-        )
-
         var accumulatedText = ""
         var generationStats: [RemoteGenerationStats] = []
         var didRetryAfterContextLimit = false
@@ -78,16 +102,26 @@ extension ChatGPTSubscriptionGenerationClient {
 
 
         for round in 0..<configuration.maxToolRounds {
+            guard let roundSession = currentSession(for: lease) else {
+                throw ChatGPTSubscriptionGenerationError.missingSession
+            }
+            session = roundSession
             if let result = compactSessionIfNeeded(
                 &session,
                 maxTokens: maxContextWindowTokens,
                 maxOutputTokens: configuration.maxOutputTokens
             ) {
-                sessions[sessionID] = session
+                guard mutateSession(for: lease, { $0 = session }) else {
+                    throw ChatGPTSubscriptionGenerationError.missingSession
+                }
                 await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
             }
 
             while true {
+                guard let turnSession = currentSession(for: lease) else {
+                    throw ChatGPTSubscriptionGenerationError.missingSession
+                }
+                session = turnSession
                 let toolCatalog = RemoteToolWireCatalog(
                     descriptors: await toolExecutor.descriptors(
                         allowedToolNames: session.allowedToolNames,
@@ -104,6 +138,10 @@ extension ChatGPTSubscriptionGenerationClient {
                         )
                     )
                 }
+                guard let latestSession = currentSession(for: lease) else {
+                    throw ChatGPTSubscriptionGenerationError.missingSession
+                }
+                session = latestSession
                 let requestPayload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
                     from: toolCatalog.wireMessages(from: session.messages),
                     continuation: session.continuation
@@ -130,7 +168,9 @@ extension ChatGPTSubscriptionGenerationClient {
                     maxTokens: maxContextWindowTokens,
                     maxOutputTokens: configuration.maxOutputTokens
                 ) {
-                    sessions[sessionID] = session
+                    guard mutateSession(for: lease, { $0 = session }) else {
+                        throw ChatGPTSubscriptionGenerationError.missingSession
+                    }
                     await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
                     continue
                 }
@@ -165,14 +205,21 @@ extension ChatGPTSubscriptionGenerationClient {
                         }
                     }
                 } catch {
+                    if Task.isCancelled
+                        || ChatGPTSubscriptionResponsesClient.isCancellationError(error) {
+                        throw error
+                    }
                     if hasContinuationReplay,
                        Self.continuationUnavailableError(from: error) != nil {
                         // The server no longer has the previous response state
                         // (for example the WebSocket died and store=false state
                         // expired). Fall back to a full conversation replay:
                         // requestPayload.input always carries the whole session.
-                        resetContinuationAndTransport(session: &session)
-                        sessions[sessionID] = session
+                        guard mutateSession(for: lease, { session in
+                            resetContinuationAndTransport(session: &session)
+                        }) else {
+                            throw ChatGPTSubscriptionGenerationError.missingSession
+                        }
                         await onEvent(
                             .diagnostic(Self.continuationReplayFallbackDiagnostic())
                         )
@@ -185,17 +232,25 @@ extension ChatGPTSubscriptionGenerationClient {
                         // server even though the local expiry window passed.
                         // Force a refresh so the next upgrade request carries a
                         // fresh token before closing and rebuilding the client.
-                        if Self.isWebSocketAuthFailure(error),
-                           let refreshed = try? await ChatGPTSubscriptionAuthService
-                            .refresh(credentials: credentials) {
-                            credentials = refreshed
-                            client = ChatGPTSubscriptionResponsesClient(
-                                credentials: credentials,
-                                baseURL: client.baseURL,
-                                urlSession: urlSession,
-                                webSocketPool: webSocketPool
-                            )
-                            await onEvent(.diagnostic(Self.authRefreshDiagnostic()))
+                        if Self.isWebSocketAuthFailure(error) {
+                            do {
+                                let refreshed = try await ChatGPTSubscriptionAuthService
+                                    .refresh(credentials: credentials)
+                                credentials = refreshed
+                                client = ChatGPTSubscriptionResponsesClient(
+                                    credentials: credentials,
+                                    baseURL: client.baseURL,
+                                    urlSession: urlSession,
+                                    webSocketPool: webSocketPool
+                                )
+                                await onEvent(.diagnostic(Self.authRefreshDiagnostic()))
+                            } catch {
+                                if Task.isCancelled
+                                    || ChatGPTSubscriptionResponsesClient
+                                        .isCancellationError(error) {
+                                    throw error
+                                }
+                            }
                         }
                         // A transport failure that the streaming client could
                         // not retry safely (for example the socket closed after
@@ -203,8 +258,11 @@ extension ChatGPTSubscriptionGenerationClient {
                         // until the terminal event, so replaying the turn over a
                         // fresh connection does not duplicate assistant output.
                         streamInterruptionRetries += 1
-                        resetContinuationAndTransport(session: &session)
-                        sessions[sessionID] = session
+                        guard mutateSession(for: lease, { session in
+                            resetContinuationAndTransport(session: &session)
+                        }) else {
+                            throw ChatGPTSubscriptionGenerationError.missingSession
+                        }
                         await onEvent(
                             .diagnostic(Self.streamInterruptionRetryDiagnostic())
                         )
@@ -213,23 +271,37 @@ extension ChatGPTSubscriptionGenerationClient {
                     guard Self.isContextLimitError(error), !didRetryAfterContextLimit else {
                         throw error
                     }
-                    guard let result = compactSessionForContextLimitRetry(
-                        &session,
-                        maxTokens: maxContextWindowTokens,
-                        maxOutputTokens: configuration.maxOutputTokens
-                    ) else {
+                    guard var latestSession = currentSession(for: lease),
+                          let result = compactSessionForContextLimitRetry(
+                              &latestSession,
+                              maxTokens: maxContextWindowTokens,
+                              maxOutputTokens: configuration.maxOutputTokens
+                          ) else {
                         await onEvent(.diagnostic(Self.contextLimitRetryUnavailableDiagnostic()))
                         throw error
                     }
                     didRetryAfterContextLimit = true
-                    sessions[sessionID] = session
+                    guard mutateSession(for: lease, { $0 = latestSession }) else {
+                        throw ChatGPTSubscriptionGenerationError.missingSession
+                    }
                     await onEvent(.diagnostic(Self.contextLimitRetryDiagnostic(from: result)))
                     continue
                 }
 
                 await streamAccumulator.recordCompletionResponseID(completion.responseID)
-                let streamResult = try await streamAccumulator.result(
-                    toolCatalog: StreamAccumulatorToolCatalog(toolCatalog)
+                let rawStreamResult = try await streamAccumulator.result()
+                let streamResult = StreamAccumulatorResult(
+                    text: rawStreamResult.text,
+                    reasoningText: rawStreamResult.reasoningText,
+                    stopReason: rawStreamResult.stopReason,
+                    toolCalls: rawStreamResult.toolCalls.map {
+                        toolCatalog.localToolCall(from: $0)
+                    },
+                    usage: rawStreamResult.usage,
+                    firstDeltaAt: rawStreamResult.firstDeltaAt,
+                    latestResponseID: rawStreamResult.latestResponseID,
+                    didEmitContent: rawStreamResult.didEmitContent,
+                    reasoningItemsJSON: rawStreamResult.reasoningItemsJSON
                 )
                 if !streamResult.didEmitContent,
                    !streamResult.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -262,23 +334,27 @@ extension ChatGPTSubscriptionGenerationClient {
                     await onEvent(.diagnostic(cacheDiagnostic))
                 }
 
-                Self.appendAssistantMessage(
-                    text: streamResult.text,
-                    reasoningText: streamResult.reasoningText,
-                    toolCalls: streamResult.toolCalls,
-                    reasoningItemsJSON: streamResult.reasoningItemsJSON,
-                    responseID: streamResult.latestResponseID,
-                    to: &session.messages
-                )
-                if let responseID = streamResult.latestResponseID?.nilIfBlank {
-                    session.continuation = ChatGPTSubscriptionContinuationState(
-                        responseID: responseID,
-                        messageCount: session.messages.count,
-                        instructions: instructions,
-                        allowsFreshTransport: true
+                guard mutateSession(for: lease, { session in
+                    Self.appendAssistantMessage(
+                        text: streamResult.text,
+                        reasoningText: streamResult.reasoningText,
+                        toolCalls: streamResult.toolCalls,
+                        reasoningItemsJSON: streamResult.reasoningItemsJSON,
+                        responseID: streamResult.latestResponseID,
+                        to: &session.messages
                     )
-                } else {
-                    session.continuation = nil
+                    if let responseID = streamResult.latestResponseID?.nilIfBlank {
+                        session.continuation = ChatGPTSubscriptionContinuationState(
+                            responseID: responseID,
+                            messageCount: session.messages.count,
+                            instructions: instructions,
+                            allowsFreshTransport: true
+                        )
+                    } else {
+                        session.continuation = nil
+                    }
+                }) else {
+                    throw ChatGPTSubscriptionGenerationError.missingSession
                 }
 
                 if let metrics = RemoteGenerationClient.generationMetrics(generationStats) {
@@ -294,7 +370,6 @@ extension ChatGPTSubscriptionGenerationClient {
                 }
 
                 if streamResult.toolCalls.isEmpty {
-                    sessions[sessionID] = session
                     return DirectAgentResponse(
                         text: accumulatedText,
                         stopReason: streamResult.stopReason,
@@ -304,23 +379,29 @@ extension ChatGPTSubscriptionGenerationClient {
 
                 for toolCall in streamResult.toolCalls {
                     await onEvent(.toolCallStarted(toolCall))
+                    guard let activeSession = currentSession(for: lease) else {
+                        throw ChatGPTSubscriptionGenerationError.missingSession
+                    }
                     let result = await toolExecutor.execute(
-                        sessionID: session.id,
+                        sessionID: activeSession.id,
                         toolCall: toolCall,
-                        workingDirectory: URL(fileURLWithPath: session.cwd),
-                        allowedToolNames: session.allowedToolNames
+                        workingDirectory: URL(fileURLWithPath: activeSession.cwd),
+                        allowedToolNames: activeSession.allowedToolNames
                     )
                     await onEvent(.toolCallCompleted(toolCall, result))
-                    session.messages.append([
-                        "role": "tool",
-                        "tool_call_id": toolCall.id,
-                        "name": toolCall.name,
-                        "content": result.modelOutput
-                    ])
+                    guard mutateSession(for: lease, { session in
+                        session.messages.append([
+                            "role": "tool",
+                            "tool_call_id": toolCall.id,
+                            "name": toolCall.name,
+                            "content": result.modelOutput
+                        ])
+                    }) else {
+                        throw ChatGPTSubscriptionGenerationError.missingSession
+                    }
                 }
 
                 if round == configuration.maxToolRounds - 1 {
-                    sessions[sessionID] = session
                     throw ChatGPTSubscriptionGenerationError.tooManyToolRounds(
                         configuration.maxToolRounds
                     )
@@ -328,8 +409,6 @@ extension ChatGPTSubscriptionGenerationClient {
                 break
             }
         }
-
-        sessions[sessionID] = session
         throw ChatGPTSubscriptionGenerationError.tooManyToolRounds(configuration.maxToolRounds)
     }
 

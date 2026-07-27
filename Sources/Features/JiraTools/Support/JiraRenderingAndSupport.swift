@@ -138,10 +138,14 @@ enum JiraCredentialStore {
         guard status != errSecItemNotFound else {
             throw JiraToolsError.missingCredentials
         }
-        guard status == errSecSuccess,
-              let data = item as? Data,
-              let token = String(data: data, encoding: .utf8)?.nilIfBlank else {
+        guard status == errSecSuccess else {
             throw JiraToolsError.keychain(status)
+        }
+        guard let data = item as? Data,
+              let token = String(validating: data, as: UTF8.self)?.nilIfBlank else {
+            throw JiraToolsError.invalidConfiguration(
+                "Keychain item for account \(account) is not valid UTF-8 text."
+            )
         }
         return token
     }
@@ -266,6 +270,9 @@ extension JSONValue {
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
                 .joined(separator: "\n")
+
+        @unknown default:
+            return ""
         }
     }
 

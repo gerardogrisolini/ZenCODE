@@ -2609,6 +2609,87 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func subAgentOverviewFitsRowBudgetWhenManyAgentsRun() {
+        let now = Date(timeIntervalSince1970: 0)
+        let snapshots = (0..<12).map { index in
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "agent-\(index)",
+                taskID: "task-\(index)",
+                name: "worker-\(index)",
+                role: "delegated implementation worker number \(index)",
+                profileName: "Developer",
+                status: .running,
+                pending: true,
+                modelID: "chatgpt:gpt-5.6-terra",
+                currentActivity: "inspecting the shared runtime for delegated work \(index)",
+                currentToolName: "search.grep",
+                currentToolTarget: "Sources/ZenCODECore/ZenCODETUI/Chat/Tools",
+                latestOutput: nil,
+                latestError: nil,
+                createdAt: now,
+                updatedAt: now
+            )
+        }
+        // The rows a section may occupy while it still fits the scrolling
+        // region of a small terminal.
+        let rowBudget = TerminalChat.subAgentOverviewRowBudget(forInPlaceRows: 24) ?? 0
+        let unbounded = TerminalChat.renderSubAgentOverviewRowsForTesting(
+            snapshots,
+            rowBudget: nil
+        )
+        let bounded = TerminalChat.renderSubAgentOverviewRowsForTesting(
+            snapshots,
+            rowBudget: rowBudget
+        )
+
+        // Without a budget the full presentation is kept, which is exactly what
+        // overflows a single page and defeats the in-place replacement.
+        #expect(unbounded.count > rowBudget)
+        #expect(bounded.count <= rowBudget)
+        // Every agent stays represented, and the aggregate summary survives.
+        #expect(bounded.first?.contains("Sub-Agents:") == true)
+        #expect(bounded.contains { $0.contains("12 total") })
+        for index in 0..<12 {
+            #expect(bounded.contains { $0.contains("worker-\(index)") })
+        }
+    }
+
+    @Test
+    func subAgentOverviewRowsStayWithinTerminalWidthForInPlaceRewrite() {
+        let now = Date(timeIntervalSince1970: 0)
+        let columns = TerminalChat.terminalColumnCount()
+        let snapshots = (0..<6).map { index in
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "agent-\(index)",
+                name: String(repeating: "long-agent-name-", count: 6) + "\(index)",
+                role: String(repeating: "delegated review responsibility ", count: 6),
+                profileName: "Reviewer",
+                status: .running,
+                pending: true,
+                modelID: "chatgpt:gpt-5.6-sol",
+                currentActivity: String(repeating: "scanning renderer rows ", count: 12),
+                currentToolName: "local.readFile",
+                currentToolTarget: String(repeating: "Sources/Nested/Path/", count: 8),
+                latestOutput: nil,
+                latestError: nil,
+                createdAt: now,
+                updatedAt: now
+            )
+        }
+
+        for rowBudget in [nil, TerminalChat.subAgentOverviewRowBudget(forInPlaceRows: 20)] {
+            let rows = TerminalChat.renderSubAgentOverviewRowsForTesting(
+                snapshots,
+                rowBudget: rowBudget
+            )
+            // A row reaching the final column wraps in a terminal-dependent
+            // way, which desynchronizes the saved row count used to erase the
+            // previous section.
+            #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) < columns })
+        }
+    }
+
+    @Test
     func failureMessageColoringWrapsNonBlankLines() {
         let rendered = TerminalChatTextFormatting.failureMessageColorApplied(
             to: "ZenCODE: HTTP 402\n\nRetry later.\n",

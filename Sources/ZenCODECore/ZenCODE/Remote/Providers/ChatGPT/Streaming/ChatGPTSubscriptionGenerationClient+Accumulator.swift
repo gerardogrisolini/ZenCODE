@@ -40,7 +40,9 @@ extension ChatGPTSubscriptionGenerationClient {
         private var reasoningItemIndexByID: [String: Int] = [:]
 
         func ingest(_ streamObject: StreamAccumulatorObject) throws -> [DirectAgentEvent] {
-            let object = streamObject.value
+            guard let object = streamObject.value.objectValue?.mapValues(\.jsonObject) else {
+                return []
+            }
 
             if let errorMessage = ChatGPTSubscriptionGenerationClient.responseErrorMessage(from: object) {
                 throw ChatGPTSubscriptionGenerationError.responseFailed(errorMessage)
@@ -175,7 +177,7 @@ extension ChatGPTSubscriptionGenerationClient {
             latestResponseID = responseID
         }
 
-        func result(toolCatalog: StreamAccumulatorToolCatalog) throws -> StreamAccumulatorResult {
+        func result() throws -> StreamAccumulatorResult {
             let remoteToolCalls = try toolCallAccumulator.finalize()
             let reasoningItemsJSON: String?
             if reasoningItems.isEmpty {
@@ -191,7 +193,7 @@ extension ChatGPTSubscriptionGenerationClient {
                 text: responseText,
                 reasoningText: responseReasoningText,
                 stopReason: stopReason,
-                toolCalls: remoteToolCalls.map(toolCatalog.value.localToolCall),
+                toolCalls: remoteToolCalls,
                 usage: requestUsage,
                 firstDeltaAt: firstDeltaAt,
                 latestResponseID: latestResponseID,
@@ -312,19 +314,11 @@ extension ChatGPTSubscriptionGenerationClient {
         }
     }
 
-    struct StreamAccumulatorObject: @unchecked Sendable {
-        let value: [String: Any]
+    struct StreamAccumulatorObject: Sendable {
+        let value: JSONValue
 
         init(_ value: [String: Any]) {
-            self.value = value
-        }
-    }
-
-    struct StreamAccumulatorToolCatalog: @unchecked Sendable {
-        let value: RemoteToolWireCatalog
-
-        init(_ value: RemoteToolWireCatalog) {
-            self.value = value
+            self.value = JSONValue(jsonObject: value)
         }
     }
 }

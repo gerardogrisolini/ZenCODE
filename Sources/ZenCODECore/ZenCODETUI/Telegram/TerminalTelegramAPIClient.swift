@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -102,7 +103,7 @@ struct TerminalTelegramAPIClient: Sendable {
               let result = decoded.result else {
             throw TerminalTelegramControlError.httpError(
                 httpResponse.statusCode,
-                decoded.description ?? String(data: data, encoding: .utf8)
+                decoded.description ?? String(validating: data, as: UTF8.self)
             )
         }
         return result

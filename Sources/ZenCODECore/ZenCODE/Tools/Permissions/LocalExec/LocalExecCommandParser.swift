@@ -35,6 +35,16 @@ enum LocalExecCommandParser {
         let invocation: String
     }
 
+    /// Outcome of authorization analysis.  In particular, an incomplete
+    /// analysis is intentionally distinct from a command which is known to be
+    /// safe: callers must obtain consent for the former rather than treating an
+    /// empty candidate list as permission to execute.
+    enum AuthorizationAnalysis: Equatable, Sendable {
+        case safe
+        case candidates([AuthorizationCandidate])
+        case incomplete(reason: String)
+    }
+
     // MARK: - Segmentation
 
     /// Splits a command string into authorization segments at shell separators
@@ -1288,6 +1298,12 @@ enum LocalExecCommandParser {
     /// excessive work on pathological input.
     private static let maxCandidateCount = 64
 
+    /// Bound recursive substitution processing independently from executable
+    /// candidates. A command can contain many substitutions which all resolve
+    /// to harmless built-ins, so the candidate count alone cannot prove that
+    /// every expansion was inspected.
+    private static let maxSubstitutionCount = 16
+
     /// Sentinel proving that part of a command was not inventoried. It may gate
     /// one exact command in memory, but must never become a reusable or
     /// persisted executable permission.
@@ -1308,6 +1324,27 @@ enum LocalExecCommandParser {
     /// substitutions are recursively extracted.
     static func authorizationCandidates(in command: String) -> [AuthorizationCandidate] {
         collectAuthorizationCandidates(in: command, depth: 0)
+    }
+
+    /// Performs a fail-closed inventory for the local-exec consent gate.
+    /// Keep `authorizationCandidates(in:)` for existing callers that need the
+    /// legacy list API; new authorization decisions must use this result.
+    static func authorizationAnalysis(in command: String) -> AuthorizationAnalysis {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return .safe
+        }
+
+        let candidates = collectAuthorizationCandidates(in: command, depth: 0)
+        if candidates.contains(where: { isNonPersistableIdentity($0.identity) }) {
+            return .incomplete(reason: "The command analysis reached a safety limit.")
+        }
+        guard !candidates.isEmpty else {
+            // A non-empty shell program can still execute through syntax the
+            // lightweight parser does not model. Never make this fail open.
+            return .incomplete(reason: "No executable could be determined with confidence.")
+        }
+        return .candidates(candidates)
     }
 
     private static func collectAuthorizationCandidates(
@@ -1359,7 +1396,11 @@ enum LocalExecCommandParser {
                 hitLimit = true
                 break
             }
-            for content in commandSubstitutionContents(in: body).prefix(16) {
+            let substitutions = commandSubstitutionContents(in: body)
+            if substitutions.count > Self.maxSubstitutionCount {
+                add(Self.tooManyCommandsIdentity, invocation: command)
+            }
+            for content in substitutions.prefix(Self.maxSubstitutionCount) {
                 for candidate in collectAuthorizationCandidates(in: content, depth: depth + 1) {
                     add(candidate.identity, invocation: candidate.invocation)
                 }
@@ -1401,6 +1442,11 @@ enum LocalExecCommandParser {
                 for candidate in collectAuthorizationCandidates(in: payload, depth: depth + 1) {
                     add(candidate.identity, candidate.invocation)
                 }
+                // `-c` only consumes its payload. Arguments after it can still
+                // contain expansions evaluated by the outer shell before the
+                // child shell is launched, so inventory the complete segment as
+                // well instead of returning early.
+                extractNestedCandidates(from: segment, depth: depth, into: add)
                 return
             }
 
@@ -1429,7 +1475,11 @@ enum LocalExecCommandParser {
         depth: Int,
         into add: (String, String) -> Void
     ) {
-        for content in commandSubstitutionContents(in: segment).prefix(16) {
+        let substitutions = commandSubstitutionContents(in: segment)
+        if substitutions.count > Self.maxSubstitutionCount {
+            add(Self.tooManyCommandsIdentity, segment.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        for content in substitutions.prefix(Self.maxSubstitutionCount) {
             for candidate in collectAuthorizationCandidates(in: content, depth: depth + 1) {
                 add(candidate.identity, candidate.invocation)
             }
@@ -1554,8 +1604,8 @@ enum LocalExecCommandParser {
     /// nesting. Inside double quotes, `$(...)` and backticks are still expanded
     /// by the shell and are therefore detected here.
     ///
-    /// `$((...))` arithmetic expansion is explicitly excluded: it is not a
-    /// command substitution.
+    /// Arithmetic expansions are traversed too: while `$((...))` is not by
+    /// itself a command substitution, shells permit `$(...)` within it.
     private static func commandSubstitutionContents(in segment: String) -> [String] {
         let chars = Array(segment)
         var contents: [String] = []
@@ -1571,12 +1621,18 @@ enum LocalExecCommandParser {
             if inSingle { if c == "'" { inSingle = false }; i += 1; continue }
 
             // Detect $(...) command substitution outside single quotes.
-            // Explicitly exclude $((...)) arithmetic expansion.
             if c == "$", i + 1 < chars.count, chars[i + 1] == "(" {
-                // Check for $(( arithmetic expansion — skip it entirely.
+                // Inspect command substitutions nested inside `$((...))`.
                 if i + 2 < chars.count, chars[i + 2] == "(" {
-                    // Skip to matching )) of the arithmetic expansion.
-                    i = skipBalancedParenContent(chars, from: i + 2)
+                    let arithmeticEnd = skipBalancedParenContent(chars, from: i + 2)
+                    let contentEnd = max(i + 3, arithmeticEnd - 1)
+                    if i + 3 <= contentEnd, contentEnd <= chars.count {
+                        let arithmeticBody = String(chars[(i + 3)..<contentEnd])
+                        contents.append(contentsOf: commandSubstitutionContents(in: arithmeticBody))
+                    }
+                    // `skipBalancedParenContent` consumes the inner closing
+                    // parenthesis; consume the outer arithmetic delimiter too.
+                    i = min(arithmeticEnd + 1, chars.count)
                     continue
                 }
 

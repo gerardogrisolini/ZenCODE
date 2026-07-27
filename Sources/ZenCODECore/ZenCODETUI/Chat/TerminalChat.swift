@@ -13,6 +13,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import ToolCore
 
 /// Detail level used when rendering executed tool calls in the terminal.
 public enum ToolOutputDetailLevel: CaseIterable, Sendable {

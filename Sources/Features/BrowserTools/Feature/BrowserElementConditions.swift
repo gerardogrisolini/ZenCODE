@@ -112,10 +112,10 @@ enum BrowserElementConditionProbeRace {
         }
 
         return try await withThrowingTaskGroup(of: T?.self) { group in
-            group.addTask {
+            group.addTask(name: "BrowserElementConditions.operation") {
                 try await operation()
             }
-            group.addTask {
+            group.addTask(name: "BrowserElementConditions.timeout") {
                 try await Task.sleep(nanoseconds: remainingNanoseconds)
                 try Task.checkCancellation()
                 return nil

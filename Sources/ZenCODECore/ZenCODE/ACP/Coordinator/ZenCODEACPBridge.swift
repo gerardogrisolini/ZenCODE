@@ -5,12 +5,6 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
-import Dispatch
 import FeatureMCPBridgeKit
 import Foundation
 #if os(macOS)
@@ -25,6 +19,12 @@ import XcodeToolsFeature
 struct ACPShutdownFenceError: Error {}
 
 public actor ZenCODEACPBridge {
+    public enum SessionOperationState: Sendable, Equatable {
+        case idle
+        case prompting(UUID)
+        case reconfiguring(UUID)
+    }
+
     public struct SessionState {
         public let id: String
         public let cwd: String
@@ -40,6 +40,10 @@ public actor ZenCODEACPBridge {
         /// requests are dispatched concurrently.
         public var activePromptID: UUID?
         public var activePromptTask: Task<PromptCompletion, Error>?
+        /// Reserved synchronously before an operation's first suspension. This
+        /// prevents a prompt and a configuration change (or two configuration
+        /// changes) from both observing the session as idle.
+        public var operationState: SessionOperationState
     }
 
     public struct PromptCompletion: Sendable {
@@ -306,25 +310,26 @@ public actor ZenCODEACPBridge {
                 await writer.sendError(id: .null, code: -32600, message: "JSON-RPC message must be an object.")
                 return
             }
-            let message = object.mapValues(\.jsonObject)
-            await handleMessage(message)
+            await handleJSONMessage(object)
         } catch {
             await writer.sendError(id: .null, code: -32700, message: "Invalid JSON.")
         }
     }
 
     public func handleMessage(_ message: [String: Any]) async {
-        let id = JSONValue.acpRequestID(
-            from: message.keys.contains("id") ? message["id"] : nil
-        )
-        if message["jsonrpc"] as? String == "2.0",
+        await handleJSONMessage(message.mapValues { JSONValue(jsonObject: $0) })
+    }
+
+    private func handleJSONMessage(_ message: [String: JSONValue]) async {
+        let id = JSONValue.acpRequestID(from: message)
+        if message["jsonrpc"]?.stringValue == "2.0",
            message["method"] == nil,
            id != nil {
-            await permissionBroker.handleResponse(JSONValue.acpValue(from: message))
+            await permissionBroker.handleResponse(.object(message))
             return
         }
-        guard message["jsonrpc"] as? String == "2.0",
-              let method = message["method"] as? String else {
+        guard message["jsonrpc"]?.stringValue == "2.0",
+              let method = message["method"]?.stringValue else {
             await writer.sendErrorIfRequest(
                 id: id,
                 code: -32600,
@@ -334,31 +339,32 @@ public actor ZenCODEACPBridge {
         }
 
         do {
+            let params = jsonObjectParams(from: message).mapValues(\.jsonObject)
             switch method {
             case "initialize":
-                try await initialize(id: id, params: objectParams(from: message))
+                try await initialize(id: id, params: params)
             case "authenticate":
                 await writer.sendResultIfRequest(id: id, result: .object([:]))
             case "model/preload":
-                try await preloadModel(id: id, params: objectParams(from: message))
+                try await preloadModel(id: id, params: params)
             case "session/new":
-                try await newSession(id: id, params: objectParams(from: message))
+                try await newSession(id: id, params: params)
             case "session/set_mode":
-                try await setMode(id: id, params: objectParams(from: message))
+                try await setMode(id: id, params: params)
             case "session/set_model":
-                try await setModel(id: id, params: objectParams(from: message))
+                try await setModel(id: id, params: params)
             case "session/set_config_option":
-                try await setConfigOption(id: id, params: objectParams(from: message))
+                try await setConfigOption(id: id, params: params)
             case "session/prompt":
-                try await prompt(id: id, params: objectParams(from: message))
+                try await prompt(id: id, params: params)
             case "session/cancel":
-                try await cancel(id: id, params: objectParams(from: message))
+                try await cancel(id: id, params: params)
             case "session/close":
-                try await close(id: id, params: objectParams(from: message))
+                try await close(id: id, params: params)
             case "session/load":
-                try await loadSession(id: id, params: objectParams(from: message))
+                try await loadSession(id: id, params: params)
             case "session/resume":
-                try await resumeSession(id: id, params: objectParams(from: message))
+                try await resumeSession(id: id, params: params)
             default:
                 await writer.sendErrorIfRequest(
                     id: id,
@@ -396,5 +402,9 @@ public actor ZenCODEACPBridge {
             return [:]
         }
         return params
+    }
+
+    private func jsonObjectParams(from message: [String: JSONValue]) -> [String: JSONValue] {
+        message["params"]?.objectValue ?? [:]
     }
 }

@@ -272,16 +272,18 @@ struct BrowserNetworkTool: FeatureTool {
                     _ = try await session.send(method: "Network.enable")
                 }
                 networkEnabled = true
-                let observationStartedAt = Date()
+                let observationStart = ContinuousClock.now
                 if let requestedURL {
                     try await session.navigate(to: requestedURL.absoluteString)
                 }
                 try await Task.sleep(
                     nanoseconds: UInt64(durationSeconds) * 1_000_000_000
                 )
+                let observedDuration = observationStart.duration(to: .now)
                 let observedDurationMilliseconds = max(
                     0,
-                    Date().timeIntervalSince(observationStartedAt) * 1_000
+                    Double(observedDuration.components.seconds) * 1_000
+                        + Double(observedDuration.components.attoseconds) / 1_000_000_000_000_000
                 )
                 var observation = observer.snapshot(filters: filters, limit: limit)
                 if capturesBodies {

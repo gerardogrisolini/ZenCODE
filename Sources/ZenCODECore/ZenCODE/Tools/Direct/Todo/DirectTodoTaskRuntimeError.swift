@@ -29,6 +29,10 @@ public enum DirectToolError: LocalizedError {
     case unknownTool(String)
     case missingArgument(String)
     case permissionDenied(String)
+    case timedOut(String)
+    case processFailed(String)
+    case invalidResponse(String)
+    case toolFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -37,6 +41,11 @@ public enum DirectToolError: LocalizedError {
         case let .missingArgument(name):
             return "Missing required argument: \(name)"
         case let .permissionDenied(message):
+            return message
+        case let .timedOut(message),
+             let .processFailed(message),
+             let .invalidResponse(message),
+             let .toolFailed(message):
             return message
         }
     }

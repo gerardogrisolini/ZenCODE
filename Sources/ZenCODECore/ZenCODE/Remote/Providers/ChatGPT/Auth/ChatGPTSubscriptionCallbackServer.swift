@@ -12,7 +12,7 @@ import os
 #endif
 
 #if os(macOS)
-final class ChatGPTSubscriptionCallbackServer: @unchecked Sendable {
+final class ChatGPTSubscriptionCallbackServer: Sendable {
     let state: String
     let queue = DispatchQueue(label: "ZenCODE.ChatGPTSubscriptionCallback")
     private let callbackState = ChatGPTSubscriptionCallbackServerState()
@@ -110,18 +110,20 @@ final class ChatGPTSubscriptionCallbackServer: @unchecked Sendable {
             listener.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    Task {
+                    Task(name: "ChatGPT callback background task") {
                         await startState.resume(with: .success(()))
                     }
                 case let .failed(error):
-                    Task {
+                    Task(name: "ChatGPT callback background task") {
                         await startState.resume(with: .failure(error))
                     }
                 case .cancelled:
-                    Task {
+                    Task(name: "ChatGPT callback background task") {
                         await startState.resume(with: .failure(ChatGPTSubscriptionAuthError.callbackCancelled))
                     }
-                default:
+                case .setup, .waiting:
+                    break
+                @unknown default:
                     break
                 }
             }
@@ -133,7 +135,7 @@ final class ChatGPTSubscriptionCallbackServer: @unchecked Sendable {
         try await withTaskCancellationHandler {
             try await callbackState.waitForCode()
         } onCancel: {
-            Task {
+            Task(name: "ChatGPT callback background task") {
                 await self.stop()
             }
         }
@@ -232,7 +234,7 @@ final class ChatGPTSubscriptionCallbackServer: @unchecked Sendable {
     }
 
     func complete(_ result: Result<String, Error>) {
-        Task {
+        Task(name: "ChatGPT callback background task") {
             let state = await callbackState.complete(result)
             state.listener?.listener.cancel()
             state.continuation?.resume(with: result)
@@ -288,7 +290,7 @@ final class ChatGPTSubscriptionCallbackServer: @unchecked Sendable {
     }
 }
 
-private struct ChatGPTSubscriptionCallbackListener: @unchecked Sendable {
+private struct ChatGPTSubscriptionCallbackListener: Sendable {
     let listener: NWListener
 }
 

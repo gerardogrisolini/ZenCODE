@@ -186,6 +186,10 @@ extension SwiftFeatureRuntime {
         }
 
         errors.append(contentsOf: Self.validationErrorsForToolNames(toolNames))
+        errors.append(contentsOf: Self.validationErrorsForRouting(
+            toolNamePrefixes: manifest.toolNamePrefixes,
+            toolNameAliases: manifest.toolNameAliases
+        ))
 
         if let build = manifest.build {
             if build.system.lowercased() != "swiftpm" {
@@ -305,18 +309,28 @@ extension SwiftFeatureRuntime {
                 "Feature id '\(id)' is invalid. Use letters, numbers, dots, underscores, and hyphens."
             )
         }
-
         let directoryURL = try scaffoldDirectoryURL(id: id, arguments: arguments)
-        let manifestURL = directoryURL.appendingPathComponent(
+        let finalManifestURL = directoryURL.appendingPathComponent(
             SwiftFeatureRegistry.manifestFilename
         )
         let overwrite = arguments.bool("overwrite") ?? false
-        if fileManager.fileExists(atPath: manifestURL.path),
+        if fileManager.fileExists(atPath: directoryURL.path),
            !overwrite {
             throw DirectToolError.permissionDenied(
                 "Feature already exists at \(directoryURL.path). Pass overwrite=true to replace scaffold files."
             )
         }
+
+        // Render the scaffold outside the live destination. Once every file is
+        // present, `installFeatureDirectory` swaps the complete sibling staging
+        // directory atomically, so an overwrite can never expose a half-written
+        // Package.swift/source/manifest set.
+        let stagingDirectoryURL = directoryURL.deletingLastPathComponent()
+            .appendingPathComponent(".zencode-feature-scaffold-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: stagingDirectoryURL) }
+        let manifestURL = stagingDirectoryURL.appendingPathComponent(
+            SwiftFeatureRegistry.manifestFilename
+        )
 
         let template = Self.scaffoldTemplate(arguments: arguments)
         let displayName = arguments.string("displayName", "display_name", "name")?.nilIfBlank ?? id
@@ -324,10 +338,10 @@ extension SwiftFeatureRuntime {
             ?? Self.defaultScaffoldDescription(template: template, displayName: displayName)
         let targetName = Self.targetName(for: id)
         let productName = id
-        let sourceDirectoryURL = directoryURL
+        let sourceDirectoryURL = stagingDirectoryURL
             .appendingPathComponent("Sources", isDirectory: true)
             .appendingPathComponent(targetName, isDirectory: true)
-        let packageURL = directoryURL.appendingPathComponent("Package.swift")
+        let packageURL = stagingDirectoryURL.appendingPathComponent("Package.swift")
         let sourceURL = sourceDirectoryURL.appendingPathComponent("main.swift")
 
         try fileManager.createDirectory(
@@ -402,12 +416,23 @@ extension SwiftFeatureRuntime {
             reportToolName = toolPrefix
         }
 
+        _ = try installFeatureDirectory(
+            sourceDirectoryURL: stagingDirectoryURL,
+            destinationDirectoryURL: directoryURL,
+            overwrite: overwrite
+        )
+        let finalPackageURL = directoryURL.appendingPathComponent("Package.swift")
+        let finalSourceURL = directoryURL
+            .appendingPathComponent("Sources", isDirectory: true)
+            .appendingPathComponent(targetName, isDirectory: true)
+            .appendingPathComponent("main.swift")
+
         let scaffoldReport = SwiftFeatureScaffoldReport(
             id: id,
             directoryPath: directoryURL.path,
-            manifestPath: manifestURL.path,
-            packagePath: packageURL.path,
-            sourcePath: sourceURL.path,
+            manifestPath: finalManifestURL.path,
+            packagePath: finalPackageURL.path,
+            sourcePath: finalSourceURL.path,
             toolName: reportToolName
         )
 
@@ -418,7 +443,7 @@ extension SwiftFeatureRuntime {
         }
         return try await finalizeScaffoldedFeature(
             report: scaffoldReport,
-            manifestURL: manifestURL,
+            manifestURL: finalManifestURL,
             shouldBuild: shouldBuild,
             shouldEnable: shouldEnable,
             arguments: arguments
@@ -503,6 +528,39 @@ extension SwiftFeatureRuntime {
             )
         }
 
+        // Validate manifest routing before files are copied, built, or enabled.
+        // In particular a `feature.` prefix must never reach the kernel router.
+        let manifestRoutingErrors = Self.validationErrorsForToolNames(
+            sourceManifest.tools.map(\.name)
+        ) + Self.validationErrorsForRouting(
+            toolNamePrefixes: sourceManifest.toolNamePrefixes,
+            toolNameAliases: sourceManifest.toolNameAliases
+        )
+        guard manifestRoutingErrors.isEmpty else {
+            throw DirectToolError.permissionDenied(
+                "Feature manifest validation failed before install:\n"
+                    + manifestRoutingErrors.joined(separator: "\n")
+            )
+        }
+
+        // Validate at the source before replacing any installed package. A
+        // source manifest may legitimately refer to an executable that will be
+        // produced by the requested build, so that single pre-build condition
+        // is deferred; every structural/routing/package error aborts without
+        // mutating (or overwriting) the destination.
+        let sourceValidation = try validateFeature(
+            arguments: ["manifestPath": sourceManifestURL.path]
+        )
+        let sourceBlockingErrors = sourceValidation.errors.filter {
+            !$0.hasPrefix("Executable is missing or not executable:")
+        }
+        guard sourceBlockingErrors.isEmpty else {
+            throw DirectToolError.permissionDenied(
+                "Feature manifest validation failed before install:\n"
+                    + sourceBlockingErrors.joined(separator: "\n")
+            )
+        }
+
         let destinationDirectoryURL = featureRootURL()
             .appendingPathComponent(id, isDirectory: true)
             .standardizedFileURL
@@ -519,6 +577,19 @@ extension SwiftFeatureRuntime {
             enabled: false,
             fileManager: fileManager
         )
+
+        let validation = try validateFeature(
+            arguments: ["manifestPath": destinationManifestURL.path]
+        )
+        guard validation.errors.isEmpty else {
+            // Installation has deliberately not enabled the feature. Reloading
+            // drops any stale discovery cache before surfacing the failure.
+            reloadFeatureBundles()
+            throw DirectToolError.permissionDenied(
+                "Feature validation failed before enable:\n"
+                    + validation.errors.joined(separator: "\n")
+            )
+        }
 
         let shouldBuild = arguments.bool("build") ?? true
         let shouldEnable = arguments.bool("enable") ?? true
@@ -542,9 +613,6 @@ extension SwiftFeatureRuntime {
             reloadFeatureBundles()
         }
 
-        let validation = try validateFeature(
-            arguments: ["manifestPath": destinationManifestURL.path]
-        )
         return SwiftFeatureInstallReport(
             ok: validation.ok && (buildReport?.ok ?? true) && (!shouldEnable || validation.errors.isEmpty),
             id: id,

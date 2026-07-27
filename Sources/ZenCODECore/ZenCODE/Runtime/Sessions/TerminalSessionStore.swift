@@ -137,15 +137,6 @@ public enum TerminalSessionStore {
         supportDirectoryURL: URL? = nil
     ) throws -> URL {
         try validate(session)
-        let directoryURL = sessionsDirectoryURL(
-            for: URL(fileURLWithPath: session.workingDirectoryPath),
-            fileManager: fileManager,
-            supportDirectoryURL: supportDirectoryURL
-        )
-        try fileManager.createDirectory(
-            at: directoryURL,
-            withIntermediateDirectories: true
-        )
         let fileURL = sessionFileURL(
             name: session.name,
             workingDirectory: URL(fileURLWithPath: session.workingDirectoryPath),
@@ -155,7 +146,7 @@ public enum TerminalSessionStore {
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
         let data = try encoder.encode(session)
-        try data.write(to: fileURL, options: .atomic)
+        try SensitiveFilePermissions.write(data, to: fileURL, fileManager: fileManager)
         return fileURL
     }
 
@@ -182,6 +173,7 @@ public enum TerminalSessionStore {
     public static func load(
         from fileURL: URL
     ) throws -> TerminalSavedSession {
+        try SensitiveFilePermissions.hardenExistingFile(at: fileURL)
         let data = try Data(contentsOf: fileURL)
         let session = try PropertyListDecoder().decode(
             TerminalSavedSession.self,
@@ -272,7 +264,7 @@ public enum TerminalSessionStore {
     }
 
     public static func filename(for name: String) -> String {
-        "\(filenameStem(for: name)).\(fileExtension)"
+        "\(filenameStem(for: name))-\(filenameHash(for: name)).\(fileExtension)"
     }
 
     public static func filenameStem(for name: String) -> String {
@@ -298,6 +290,16 @@ public enum TerminalSessionStore {
         return sanitized ?? "session"
     }
 
+    /// Keeps the readable stem while disambiguating distinct names that share a
+    /// sanitized spelling (for example, `review/a` and `review:a`).
+    public static func filenameHash(for name: String) -> String {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return SHA256.hash(data: Data(normalizedName.utf8))
+            .prefix(12)
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
     public static func projectKey(for workingDirectory: URL) -> String {
         let path = normalizedWorkingDirectoryPath(workingDirectory)
         let digest = SHA256.hash(data: Data(path.utf8))
@@ -320,7 +322,7 @@ public enum TerminalSessionStore {
             at: directoryURL,
             includingPropertiesForKeys: nil
         )
-        for sourceURL in fileURLs where sourceURL.pathExtension != fileExtension {
+        for sourceURL in fileURLs {
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(
                 atPath: sourceURL.path,

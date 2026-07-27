@@ -52,14 +52,21 @@ enum LocalIOOffloader {
         // (and occupying a GCD thread) when the caller already gave up.
         try Task.checkCancellation()
 
-        return try await withCheckedThrowingContinuation { continuation in
+        let value = try await withCheckedThrowingContinuation { continuation in
             Self.ioQueue.async {
                 do {
                     continuation.resume(returning: try operation())
+                } catch is CancellationError {
+                    continuation.resume(throwing: CancellationError())
                 } catch {
                     continuation.resume(throwing: error)
                 }
             }
         }
+        // A task can be cancelled while the blocking syscall is in flight. Do
+        // not turn that cancellation into a successful tool result just because
+        // the syscall happened to complete before the continuation resumed.
+        try Task.checkCancellation()
+        return value
     }
 }

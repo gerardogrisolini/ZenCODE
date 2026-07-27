@@ -17,6 +17,12 @@ extension DirectMCPToolRuntime {
         guard force || autoDiscoverExternalConnectors else {
             return
         }
+        guard discoveringFamilies.insert(family).inserted else {
+            return
+        }
+        defer {
+            discoveringFamilies.remove(family)
+        }
 
         switch family {
         case .xcode:
@@ -37,7 +43,6 @@ extension DirectMCPToolRuntime {
             }
             let fence = shutdownFence()
             servers.removeAll { $0.family == .xcode }
-            didAttemptXcodeDiscovery = true
             // Suspension point: superseded executors tear down asynchronously.
             for server in previousXcodeServers {
                 await server.disconnectIfOwned()
@@ -60,6 +65,7 @@ extension DirectMCPToolRuntime {
                 return
             }
             servers.append(xcodeServer)
+            didAttemptXcodeDiscovery = true
         case .figma:
             guard force || !didAttemptFigmaDiscovery else {
                 return
@@ -68,7 +74,6 @@ extension DirectMCPToolRuntime {
                 return
             }
             let fence = shutdownFence()
-            didAttemptFigmaDiscovery = true
             // Suspension point: the probe and `loadTools()` both suspend on the
             // Figma desktop socket.
             guard let figmaServer = await discoverFigmaServer() else {
@@ -82,6 +87,7 @@ extension DirectMCPToolRuntime {
                 return
             }
             servers.append(figmaServer)
+            didAttemptFigmaDiscovery = true
         case .external:
             return
         }

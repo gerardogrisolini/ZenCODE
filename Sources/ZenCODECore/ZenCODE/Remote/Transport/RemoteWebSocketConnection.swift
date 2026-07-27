@@ -6,33 +6,37 @@
 //
 
 import Foundation
-@preconcurrency import NIOCore
+import NIOCore
 import NIOWebSocket
+import Synchronization
 
 /// Nil-safe holder for a single parked WebSocket receive continuation, so a
 /// caller cancellation and the read loop can both try to resume it without
 /// ever resuming a `CheckedContinuation` twice.
-private final class RemoteWebSocketReadHolder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<RemoteWebSocketFrame?, any Error>?
+private final class RemoteWebSocketReadHolder: Sendable {
+    private struct State: Sendable {
+        var continuation: CheckedContinuation<RemoteWebSocketFrame?, any Error>?
+    }
+
+    private let state: Mutex<State>
 
     init(_ continuation: CheckedContinuation<RemoteWebSocketFrame?, any Error>) {
-        self.continuation = continuation
+        state = Mutex(State(continuation: continuation))
     }
 
     func resume(returning frame: RemoteWebSocketFrame?) {
-        lock.lock()
-        let continuation = self.continuation
-        self.continuation = nil
-        lock.unlock()
+        let continuation = state.withLock { state in
+            defer { state.continuation = nil }
+            return state.continuation
+        }
         continuation?.resume(returning: frame)
     }
 
     func resume(throwing error: any Error) {
-        lock.lock()
-        let continuation = self.continuation
-        self.continuation = nil
-        lock.unlock()
+        let continuation = state.withLock { state in
+            defer { state.continuation = nil }
+            return state.continuation
+        }
         continuation?.resume(throwing: error)
     }
 }
@@ -160,7 +164,9 @@ actor RemoteWebSocketDriver {
                 // cancellation rather than a clean EOF, then close the channel.
                 // The actor hop guarantees `activeRead` is set before this runs.
                 lease.close()
-                Task { await self.cancelActiveReceive() }
+                Task(name: "Remote WebSocket receive cancellation") {
+                    await self.cancelActiveReceive()
+                }
             }
         } catch {
             isReceiving = false

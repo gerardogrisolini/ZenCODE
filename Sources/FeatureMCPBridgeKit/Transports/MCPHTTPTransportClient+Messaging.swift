@@ -47,6 +47,12 @@ extension MCPHTTPTransportClient {
         // fenced, so it cannot resurrect the session we are tearing down.
         connectFlight.cancel()
         oauthAuthenticationFlight.cancel()
+        sessionGeneration &+= 1
+        let tasks = Array(requestTasks.values)
+        requestTasks.removeAll()
+        for task in tasks {
+            task.cancel()
+        }
 
         let sessionIdentifier = self.sessionIdentifier
         self.sessionIdentifier = nil
@@ -146,13 +152,19 @@ extension MCPHTTPTransportClient {
             request.setValue(sessionIdentifier, forHTTPHeaderField: "Mcp-Session-Id")
         }
 
-        let (data, response) = try await urlSession.data(for: request)
+        let requestGeneration = sessionGeneration
+        let (data, response) = try await performData(for: request)
+        try Task.checkCancellation()
+        guard requestGeneration == sessionGeneration else {
+            throw CancellationError()
+        }
         guard let httpResponse = response as? HTTPURLResponse else {
             throw MCPClientError.invalidResponse
         }
 
         if let responseSessionID = headerValue(named: "Mcp-Session-Id", in: httpResponse),
-           !responseSessionID.isEmpty {
+           !responseSessionID.isEmpty,
+           requestGeneration == sessionGeneration {
             sessionIdentifier = responseSessionID
         }
 
@@ -244,6 +256,46 @@ extension MCPHTTPTransportClient {
 
         return String(data: messageData, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Starts a cancellable URLSession task that remains owned by this actor until
+    /// completion. `disconnect()` cancels the underlying transfer, not just the
+    /// caller waiting for it.
+    private func performData(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let requestID = UUID()
+        let client = self
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = urlSession.dataTask(with: request) { data, response, error in
+                    defer {
+                        Task(name: "MCP HTTP request cleanup") {
+                            await client.removeRequestTask(requestID)
+                        }
+                    }
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else if let data, let response {
+                        continuation.resume(returning: (data, response))
+                    } else {
+                        continuation.resume(throwing: MCPClientError.invalidResponse)
+                    }
+                }
+                requestTasks[requestID] = task
+                task.resume()
+            }
+        } onCancel: {
+            Task(name: "MCP HTTP request cancellation") { [weak self] in
+                await self?.cancelRequestTask(requestID)
+            }
+        }
+    }
+
+    private func cancelRequestTask(_ requestID: UUID) {
+        requestTasks.removeValue(forKey: requestID)?.cancel()
+    }
+
+    private func removeRequestTask(_ requestID: UUID) {
+        requestTasks.removeValue(forKey: requestID)
     }
 
     private func headerValue(named name: String, in response: HTTPURLResponse) -> String? {

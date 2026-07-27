@@ -10,6 +10,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import ToolCore
 
 extension TerminalChat {
     func generateResponse(
@@ -275,7 +276,7 @@ extension TerminalChat {
         purpose: TerminalPromptPurpose,
         createdAt: Date = Date(),
         points: [TerminalSessionPlanPoint]
-    ) async throws -> Bool {
+    ) async throws(TerminalPlanGenerationError) -> Bool {
         guard case let .plan(originalGoal) = purpose else {
             return false
         }

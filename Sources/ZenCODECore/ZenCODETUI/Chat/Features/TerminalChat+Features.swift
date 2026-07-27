@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 enum TerminalFeatureCommandResult: Sendable {
     case none

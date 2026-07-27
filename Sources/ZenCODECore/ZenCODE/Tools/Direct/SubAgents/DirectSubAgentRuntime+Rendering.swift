@@ -97,7 +97,7 @@ extension DirectSubAgentRuntime {
         return String(text.prefix(limit)) + "\n... truncated ..."
     }
 
-    public static func agentSortOrder(
+    static func agentSortOrder(
         lhs: AgentRecord,
         rhs: AgentRecord
     ) -> Bool {

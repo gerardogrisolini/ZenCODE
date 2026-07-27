@@ -5,12 +5,6 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
-import Dispatch
 import Foundation
 
 extension ZenCODEACPBridge {
@@ -349,7 +343,9 @@ extension ZenCODEACPBridge {
               let session = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        guard session.activePromptTask == nil, session.activePromptID == nil else {
+        guard case .idle = session.operationState,
+              session.activePromptTask == nil,
+              session.activePromptID == nil else {
             throw ACPError.invalidParams("Cannot change session options while a prompt is running.")
         }
 
@@ -390,29 +386,37 @@ extension ZenCODEACPBridge {
             throw ACPError.invalidParams("Unsupported config option: \(configID)")
         }
         let sessionEpoch = session.epoch
+        let reconfigurationID = UUID()
+        var reconfiguringSession = session
+        reconfiguringSession.operationState = .reconfiguring(reconfigurationID)
+        sessions[sessionID] = reconfiguringSession
         // Bind before the runner call: a `session/close` for this incarnation
         // must invalidate this operation, otherwise the suspended
         // `createSession` below would re-create the session in the backend and
         // answer success for a session the host already closed.
         bindLifecycleOperation(operation, sessionID: sessionID, epoch: sessionEpoch)
-        // Reuse the incarnation rather than minting a new one: this only
-        // reconfigures a live session. A shutdown or close that landed while we
-        // validated the option makes this write fail instead of resurrecting
-        // the session.
-        guard updateLiveSession(id: sessionID, epoch: sessionEpoch, { liveSession in
-            liveSession = sessionState(
-                configuration: updatedConfiguration,
-                selectedAgent: session.selectedAgent,
-                epoch: sessionEpoch
+        do {
+            try await sessionRunner.createSession(configuration: updatedConfiguration)
+            try await ensureLifecycleOperationLiveAfterSessionWrite(
+                operation,
+                sessionID: sessionID
             )
-        }) else {
-            throw ACPShutdownFenceError()
+            try commitReconfiguration(
+                sessionID: sessionID,
+                epoch: sessionEpoch,
+                reconfigurationID: reconfigurationID,
+                configuration: updatedConfiguration,
+                selectedAgent: session.selectedAgent
+            )
+        } catch {
+            await rollbackReconfiguration(
+                sessionID: sessionID,
+                epoch: sessionEpoch,
+                reconfigurationID: reconfigurationID,
+                originalSession: session
+            )
+            throw error
         }
-        try await sessionRunner.createSession(configuration: updatedConfiguration)
-        try await ensureLifecycleOperationLiveAfterSessionWrite(
-            operation,
-            sessionID: sessionID
-        )
         await writer.sendResultIfRequest(
             id: id,
             result: JSONValue.acpValue(from: [
@@ -432,7 +436,9 @@ extension ZenCODEACPBridge {
               let session = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        guard session.activePromptTask == nil, session.activePromptID == nil else {
+        guard case .idle = session.operationState,
+              session.activePromptTask == nil,
+              session.activePromptID == nil else {
             throw ACPError.invalidParams("Cannot change session model while a prompt is running.")
         }
         guard let modelID = Self.modelID(from: params) else {
@@ -451,22 +457,34 @@ extension ZenCODEACPBridge {
                 for: session.configuration.thinkingSelection
             ))
         let sessionEpoch = session.epoch
+        let reconfigurationID = UUID()
+        var reconfiguringSession = session
+        reconfiguringSession.operationState = .reconfiguring(reconfigurationID)
+        sessions[sessionID] = reconfiguringSession
         // Same close-invalidation contract as `setConfigOption`.
         bindLifecycleOperation(operation, sessionID: sessionID, epoch: sessionEpoch)
-        guard updateLiveSession(id: sessionID, epoch: sessionEpoch, { liveSession in
-            liveSession = sessionState(
-                configuration: updatedConfiguration,
-                selectedAgent: session.selectedAgent,
-                epoch: sessionEpoch
+        do {
+            try await sessionRunner.createSession(configuration: updatedConfiguration)
+            try await ensureLifecycleOperationLiveAfterSessionWrite(
+                operation,
+                sessionID: sessionID
             )
-        }) else {
-            throw ACPShutdownFenceError()
+            try commitReconfiguration(
+                sessionID: sessionID,
+                epoch: sessionEpoch,
+                reconfigurationID: reconfigurationID,
+                configuration: updatedConfiguration,
+                selectedAgent: session.selectedAgent
+            )
+        } catch {
+            await rollbackReconfiguration(
+                sessionID: sessionID,
+                epoch: sessionEpoch,
+                reconfigurationID: reconfigurationID,
+                originalSession: session
+            )
+            throw error
         }
-        try await sessionRunner.createSession(configuration: updatedConfiguration)
-        try await ensureLifecycleOperationLiveAfterSessionWrite(
-            operation,
-            sessionID: sessionID
-        )
         await writer.sendResultIfRequest(id: id, result: .object([:]))
     }
 
@@ -490,6 +508,53 @@ extension ZenCODEACPBridge {
             await sessionRunner.closeSession(id: sessionID)
         }
         throw ACPShutdownFenceError()
+    }
+
+    /// Commits only the reconfiguration reserved by this operation. A matching
+    /// state check makes a later operation unable to publish over an earlier
+    /// one that was cancelled, closed, or rolled back.
+    private func commitReconfiguration(
+        sessionID: String,
+        epoch: UInt64,
+        reconfigurationID: UUID,
+        configuration: AgentCoreSessionConfiguration,
+        selectedAgent: AgentProfile?
+    ) throws {
+        guard let currentState = liveSession(id: sessionID, epoch: epoch),
+              case let .reconfiguring(activeID) = currentState.operationState,
+              activeID == reconfigurationID else {
+            throw ACPShutdownFenceError()
+        }
+        sessions[sessionID] = sessionState(
+            configuration: configuration,
+            selectedAgent: selectedAgent,
+            epoch: epoch
+        )
+    }
+
+    /// Rebuilds the prior runner configuration, then releases the reservation.
+    /// If close/shutdown invalidated the incarnation, nothing is restored: the
+    /// close path owns the backend cleanup in that case.
+    private func rollbackReconfiguration(
+        sessionID: String,
+        epoch: UInt64,
+        reconfigurationID: UUID,
+        originalSession: SessionState
+    ) async {
+        guard let priorState = liveSession(id: sessionID, epoch: epoch),
+              case let .reconfiguring(activeID) = priorState.operationState,
+              activeID == reconfigurationID else {
+            return
+        }
+        _ = try? await sessionRunner.createSession(
+            configuration: originalSession.configuration
+        )
+        guard let currentState = liveSession(id: sessionID, epoch: epoch),
+              case let .reconfiguring(activeID) = currentState.operationState,
+              activeID == reconfigurationID else {
+            return
+        }
+        sessions[sessionID] = originalSession
     }
 
         public func restoreSession(
@@ -578,10 +643,10 @@ extension ZenCODEACPBridge {
             discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
             throw error
         }
-        guard isLifecycleOperationLive(operation) else {
-            discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
-            throw ACPShutdownFenceError()
-        }
+        try await ensureLifecycleOperationLiveAfterSessionWrite(
+            operation,
+            sessionID: sessionID
+        )
         if replayHistory {
             await replaySessionHistory(
                 AgentRuntimeSessionSnapshot(

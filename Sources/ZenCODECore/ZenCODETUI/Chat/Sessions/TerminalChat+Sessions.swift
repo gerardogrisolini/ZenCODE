@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 enum TerminalSavedSessionCommandAction: Equatable, Sendable {
     case list

@@ -28,7 +28,8 @@ public final class TerminalVoiceRecordingService: Sendable {
 
     public init() {}
 
-    public func startRecording() async throws -> TerminalVoiceRecordingSession {
+    @MainActor
+    public func startRecording() async throws(TerminalVoiceRecordingError) -> TerminalVoiceRecordingSession {
         #if canImport(AVFoundation)
         try await ensureMicrophoneAccess()
         let fileURL = FileManager.default.temporaryDirectory
@@ -38,9 +39,14 @@ public final class TerminalVoiceRecordingService: Sendable {
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
             AVSampleRateKey: 44_100.0,
             AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
         ]
-        let recorder = try AVAudioRecorder(url: fileURL, settings: settings)
+        let recorder: AVAudioRecorder
+        do {
+            recorder = try AVAudioRecorder(url: fileURL, settings: settings)
+        } catch {
+            throw TerminalVoiceRecordingError.startFailed
+        }
         recorder.prepareToRecord()
         guard recorder.record() else {
             throw TerminalVoiceRecordingError.startFailed
@@ -117,7 +123,8 @@ public final class TerminalVoiceRecordingService: Sendable {
         }
     }
 
-    private func ensureMicrophoneAccess() async throws {
+    @MainActor
+    private func ensureMicrophoneAccess() async throws(TerminalVoiceRecordingError) {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             return

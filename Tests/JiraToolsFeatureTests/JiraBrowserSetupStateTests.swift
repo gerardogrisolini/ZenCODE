@@ -67,14 +67,17 @@ struct JiraBrowserSetupStateTests {
         await validator.value
     }
 
-    private static let configuration = JiraAuthenticatedConfiguration(
-        configuration: JiraStoredConfiguration(
+    private static let configuration: JiraAuthenticatedConfiguration = {
+        let stored = try! JiraStoredConfiguration(
             siteURLString: "https://example.atlassian.net",
             email: "person@example.com"
-        ),
-        apiToken: "token",
-        accountName: "Person"
-    )
+        )
+        return JiraAuthenticatedConfiguration(
+            configuration: stored,
+            apiToken: "token",
+            accountName: "Person"
+        )
+    }()
 
     private static func submit(to port: UInt16) async throws -> (Data, URLResponse) {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/")!)

@@ -13,23 +13,30 @@ extension SwiftFeatureRuntime {
         feature: SwiftFeatureBundle
     ) throws -> String {
         guard !result.timedOut else {
-            throw DirectToolError.permissionDenied(
+            throw DirectToolError.timedOut(
                 "Swift feature '\(feature.id)' timed out."
             )
         }
 
         guard result.exitCode == 0 else {
-            throw DirectToolError.permissionDenied(
+            throw DirectToolError.processFailed(
                 processFailureMessage(result, feature: feature)
             )
         }
 
-        let response = try JSONDecoder().decode(
-            SwiftFeatureInvocationResponse.self,
-            from: result.stdoutData
-        )
+        let response: SwiftFeatureInvocationResponse
+        do {
+            response = try JSONDecoder().decode(
+                SwiftFeatureInvocationResponse.self,
+                from: result.stdoutData
+            )
+        } catch {
+            throw DirectToolError.invalidResponse(
+                "Swift feature '\(feature.id)' returned an invalid response: \(error.localizedDescription)"
+            )
+        }
         guard response.ok else {
-            throw DirectToolError.permissionDenied(
+            throw DirectToolError.toolFailed(
                 response.error?.nilIfBlank
                     ?? "Swift feature '\(feature.id)' returned an error."
             )

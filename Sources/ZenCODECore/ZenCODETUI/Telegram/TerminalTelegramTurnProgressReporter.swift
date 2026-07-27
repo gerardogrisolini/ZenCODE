@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 actor TerminalTelegramTurnProgressReporter {
     let chatID: Int64
@@ -42,7 +43,7 @@ actor TerminalTelegramTurnProgressReporter {
             return
         }
         isDraining = true
-        Task {
+        Task(name: "ZenCODE.Telegram.progress-drain") {
             await drain()
         }
     }

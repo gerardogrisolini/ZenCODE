@@ -15,7 +15,7 @@ import Synchronization
 import os
 #endif
 
-public final class TerminalInteractiveLineReader: @unchecked Sendable {
+public final class TerminalInteractiveLineReader: Sendable {
     enum Key: Equatable {
         case character(String)
         case paste(String)
@@ -56,9 +56,6 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
     static let escapeSequenceMaximumLength = 24
     static let maximumPanelCommandSuggestionLines = 6
 
-    var history: [String] = []
-    var historyIndex: Int?
-    var draftBeforeHistory: [Character] = []
     /// Ownership of the terminal by the input panel.
     ///
     /// Only one code path may hold the TTY at a time, and the transient states
@@ -93,25 +90,35 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
         case transitionInFlight
     }
 
+    /// All mutable reader state is owned by this mutex. Keeping the input
+    /// history together with the panel state is important: raw line reads and
+    /// panel reads can both navigate history, and neither may observe a partial
+    /// update from the other.
+    struct State {
+        var history: [String] = []
+        var historyIndex: Int?
+        var draftBeforeHistory: [Character] = []
+        var panelTask: Task<Void, Never>?
+        var panelLifecycle: PanelLifecycleState = .idle
+        /// Callers parked until the in-flight start or stop reaches a settled state.
+        var panelTransitionWaiters: [CheckedContinuation<Void, Never>] = []
+        var panelStatusBar: TerminalStatusBar?
+        var panelBuffer: [Character] = []
+        var panelCursorIndex = 0
+        var panelIsProcessing = false
+        var panelQueuedPromptCount = 0
+        var panelOverlayOverride: TerminalPanelModeOverride?
+        var panelCommandSuggestions: [TerminalCommandSuggestion] = []
+        var panelCommandSuggestionIndex = 0
+        /// Cancellation token of the panel loop's in-flight blocking read. Stopping
+        /// the panel cancels it so the loop unwinds at once instead of waiting out
+        /// the current read timeout while the caller awaits the task.
+        var panelReadToken: TerminalBlockingReadToken?
+        var panelRenderRevision: UInt64 = 0
+    }
+
     let rawInput: TerminalRawInput
-    let panelLock = Mutex(())
-    var panelTask: Task<Void, Never>?
-    var panelLifecycle: PanelLifecycleState = .idle
-    /// Callers parked until the in-flight start or stop reaches a settled state.
-    var panelTransitionWaiters: [CheckedContinuation<Void, Never>] = []
-    var panelStatusBar: TerminalStatusBar?
-    var panelBuffer: [Character] = []
-    var panelCursorIndex = 0
-    var panelIsProcessing = false
-    var panelQueuedPromptCount = 0
-    var panelOverlayOverride: TerminalPanelModeOverride?
-    var panelCommandSuggestions: [TerminalCommandSuggestion] = []
-    var panelCommandSuggestionIndex = 0
-    /// Cancellation token of the panel loop's in-flight blocking read. Stopping
-    /// the panel cancels it so the loop unwinds at once instead of waiting out
-    /// the current read timeout while the caller awaits the task.
-    var panelReadToken: TerminalBlockingReadToken?
-    var panelRenderRevision: UInt64 = 0
+    let state = Mutex(State())
 
     public init() {
         rawInput = TerminalRawInput()
@@ -122,10 +129,10 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
     }
 
     func withPanelLock<T: Sendable>(
-        _ body: @Sendable () throws -> T
+        _ body: @Sendable (inout State) throws -> T
     ) rethrows -> T {
-        try panelLock.withLock { _ in
-            try body()
+        try state.withLock { state in
+            try body(&state)
         }
     }
 
@@ -227,8 +234,10 @@ public final class TerminalInteractiveLineReader: @unchecked Sendable {
     ) -> String? {
         var buffer: [Character] = []
         var cursorIndex = 0
-        historyIndex = nil
-        draftBeforeHistory.removeAll()
+        withPanelLock { state in
+            state.historyIndex = nil
+            state.draftBeforeHistory.removeAll()
+        }
 
         AgentOutput.standardError.writeString(prompt)
 

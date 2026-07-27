@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import FeatureMCPBridgeKit
+public import FeatureMCPBridgeKit
 
 /// Xcode-specific construction and identification of the generic MCP server
 /// configuration. Keeping this outside FeatureMCPBridgeKit preserves the

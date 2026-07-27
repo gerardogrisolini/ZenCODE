@@ -243,8 +243,10 @@ struct TerminalInteractiveLineReaderTests {
     @Test
     func accessModeToggleEventPreservesPanelTextAndCursor() async {
         let reader = TerminalInteractiveLineReader()
-        reader.panelBuffer = Array("hello")
-        reader.panelCursorIndex = 2
+        reader.withPanelLock { state in
+            state.panelBuffer = Array("hello")
+            state.panelCursorIndex = 2
+        }
         let events = Mutex<[TerminalPromptInputEvent]>([])
 
         await reader.handlePanelKey(.toggleAccessMode) { event in
@@ -258,10 +260,14 @@ struct TerminalInteractiveLineReaderTests {
         } else {
             Issue.record("Expected toggleAccessModeRequested")
         }
-        #expect(String(reader.panelBuffer) == "hello")
-        #expect(reader.panelCursorIndex == 2)
-        #expect(reader.panelHelpTextLocked().contains("Ctrl+T tools · Ctrl+A access"))
-        #expect(reader.panelCompactHelpTextLocked() == "Ctrl+T · Ctrl+A access")
+        #expect(reader.withPanelLock { String($0.panelBuffer) } == "hello")
+        #expect(reader.withPanelLock { $0.panelCursorIndex } == 2)
+        #expect(reader.withPanelLock {
+            reader.panelHelpTextLocked(state: $0).contains("Ctrl+T tools · Ctrl+A access")
+        })
+        #expect(reader.withPanelLock {
+            reader.panelCompactHelpTextLocked(state: $0) == "Ctrl+T · Ctrl+A access"
+        })
     }
 
     @Test
@@ -272,12 +278,14 @@ struct TerminalInteractiveLineReaderTests {
             TerminalCommandSuggestion(command: "/two", summary: "two"),
             TerminalCommandSuggestion(command: "/three", summary: "three")
         ]
-        reader.panelBuffer = Array("unfinished prompt")
-        reader.panelCursorIndex = 4
-        reader.historyIndex = 1
-        reader.draftBeforeHistory = Array("original draft")
-        reader.panelCommandSuggestions = suggestions
-        reader.panelCommandSuggestionIndex = 2
+        reader.withPanelLock { state in
+            state.panelBuffer = Array("unfinished prompt")
+            state.panelCursorIndex = 4
+            state.historyIndex = 1
+            state.draftBeforeHistory = Array("original draft")
+            state.panelCommandSuggestions = suggestions
+            state.panelCommandSuggestionIndex = 2
+        }
 
         reader.finishPanelStop(clearPanel: false)
 
@@ -288,11 +296,11 @@ struct TerminalInteractiveLineReaderTests {
         )
 
         #expect(prepared == .admitted)
-        #expect(String(reader.panelBuffer) == "unfinished prompt")
-        #expect(reader.panelCursorIndex == 4)
-        #expect(reader.historyIndex == 1)
-        #expect(String(reader.draftBeforeHistory) == "original draft")
-        #expect(reader.panelCommandSuggestionIndex == 2)
+        #expect(reader.withPanelLock { String($0.panelBuffer) } == "unfinished prompt")
+        #expect(reader.withPanelLock { $0.panelCursorIndex } == 4)
+        #expect(reader.withPanelLock { $0.historyIndex } == 1)
+        #expect(reader.withPanelLock { String($0.draftBeforeHistory) } == "original draft")
+        #expect(reader.withPanelLock { $0.panelCommandSuggestionIndex } == 2)
     }
 
     @Test

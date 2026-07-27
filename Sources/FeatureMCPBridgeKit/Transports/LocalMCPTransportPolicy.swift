@@ -24,7 +24,7 @@ public struct LocalMCPTransportPolicy: Sendable {
         handshake: Handshake = .standard,
         diagnosticMonitor: @escaping @Sendable (Int32) -> LocalMCPDiagnosticMonitorConfiguration? = { _ in nil },
         errorClassifier: @escaping @Sendable (LocalMCPTransportEvent) -> MCPClientError? = { _ in nil },
-        terminateProcessOnClassifiedError: Bool = true
+        terminateProcessOnClassifiedError: Bool = true,
     ) {
         self.handshake = handshake
         self.diagnosticMonitor = diagnosticMonitor

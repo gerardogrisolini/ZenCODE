@@ -105,7 +105,8 @@ extension ZenCODEACPBridge {
         selectedAgent: AgentProfile? = nil,
         epoch: UInt64? = nil,
         activePromptID: UUID? = nil,
-        activePromptTask: Task<PromptCompletion, Error>? = nil
+        activePromptTask: Task<PromptCompletion, Error>? = nil,
+        operationState: SessionOperationState = .idle
     ) -> SessionState {
         SessionState(
             id: configuration.sessionID,
@@ -115,7 +116,8 @@ extension ZenCODEACPBridge {
             epoch: epoch ?? makeSessionEpoch(),
             selectedAgent: selectedAgent,
             activePromptID: activePromptID,
-            activePromptTask: activePromptTask
+            activePromptTask: activePromptTask,
+            operationState: operationState
         )
     }
 
@@ -208,7 +210,8 @@ extension ZenCODEACPBridge {
             selectedAgent: session.selectedAgent,
             epoch: session.epoch,
             activePromptID: session.activePromptID,
-            activePromptTask: session.activePromptTask
+            activePromptTask: session.activePromptTask,
+            operationState: session.operationState
         )
     }
 

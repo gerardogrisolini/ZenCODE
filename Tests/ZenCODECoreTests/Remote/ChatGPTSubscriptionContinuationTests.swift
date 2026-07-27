@@ -561,11 +561,7 @@ extension RemoteSessionSnapshotTests {
                 ]
             ])
         )
-        let result = try await accumulator.result(
-            toolCatalog: ChatGPTSubscriptionGenerationClient.StreamAccumulatorToolCatalog(
-                RemoteToolWireCatalog(descriptors: [])
-            )
-        )
+        let result = try await accumulator.result()
         let storedItems = RemoteGenerationClient.responsesReasoningItems(
             from: result.reasoningItemsJSON
         )

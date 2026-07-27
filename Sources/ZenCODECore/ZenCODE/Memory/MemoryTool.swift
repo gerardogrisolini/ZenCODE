@@ -324,7 +324,12 @@ public enum MemoryTool {
     }
 
     private static func parsedLimit(from arguments: [String: JSONValue]) -> Int {
-        min(max(Int(arguments["limit"]?.numberValue ?? 8), 1), 50)
+        let rawLimit = arguments["limit"]?.numberValue ?? 8
+        guard rawLimit.isFinite else {
+            return 8
+        }
+        let clampedLimit = min(max(rawLimit, 1), 50)
+        return Int(exactly: clampedLimit.rounded(.towardZero)) ?? 8
     }
 
     private static func renderEntries(_ entries: [MemoryEntry]) -> String {

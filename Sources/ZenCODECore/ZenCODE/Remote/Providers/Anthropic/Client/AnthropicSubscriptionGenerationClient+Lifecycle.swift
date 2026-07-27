@@ -19,7 +19,7 @@ extension AnthropicSubscriptionGenerationClient {
         preserveThinking: Bool = false
     ) {
         let cwdURL = URL(fileURLWithPath: cwd).standardizedFileURL
-        sessions[id] = AgentSession(
+        installSession(AgentSession(
             id: id,
             cwd: cwdURL,
             systemPrompt: systemPrompt,
@@ -32,8 +32,7 @@ extension AnthropicSubscriptionGenerationClient {
                 systemPrompt: systemPrompt,
                 history: history,
                 allowedToolNames: allowedToolNames
-            )
-        )
+            )), id: id)
     }
 
     public func createSessionIfNeeded(
@@ -62,7 +61,7 @@ extension AnthropicSubscriptionGenerationClient {
     }
 
     public func closeSession(id: String) async {
-        sessions.removeValue(forKey: id)
+        invalidateSession(id: id)
         await toolExecutor.removeToolProviders(sessionID: id)
     }
 
@@ -104,6 +103,7 @@ extension AnthropicSubscriptionGenerationClient {
 
     public func shutdown() async {
         sessions.removeAll()
+        sessionGenerations.removeAll()
         await toolExecutor.shutdown()
         if ownsTransport {
             try? await transport.shutdown()

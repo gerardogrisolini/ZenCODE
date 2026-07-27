@@ -45,7 +45,7 @@ public actor AgentCoreSessionRunner {
     /// prompt, allowlist, cache key, or remote session identity.
     private var promptSkillProvidersBySessionID: [String: PromptSkillSessionProvider] = [:]
     private var promptTaskRegistry = AgentCorePromptTaskRegistry()
-    private var promptAuthorizationHandlers: [UUID: AgentToolAuthorizationHandler] = [:];
+    private var promptAuthorizationHandlers: [UUID: AgentToolAuthorizationHandler] = [:]
     /// Maps each prompt ID to the session it belongs to so `authorizeTool`
     /// can route authorization requests to the correct handler.
     private var promptAuthorizationSessionIDs: [UUID: String] = [:]
@@ -88,6 +88,7 @@ public actor AgentCoreSessionRunner {
         )
         _ = ensurePromptSkillProvider(sessionID: configuration.sessionID)
         let backend = try await ensureBackend(configuration: configuration)
+        let generation = backendGeneration
         await backend.createSession(
             id: configuration.sessionID,
             cwd: configuration.workingDirectoryPath,
@@ -98,6 +99,7 @@ public actor AgentCoreSessionRunner {
             thinkingSelection: configuration.thinkingSelection,
             preserveThinking: configuration.preserveThinking
         )
+        try verifyBackendGeneration(generation)
         sessions[configuration.sessionID] = configuration
         beginSessionGeneration(for: configuration.sessionID)
         ZenLogger.debug(
@@ -110,6 +112,7 @@ public actor AgentCoreSessionRunner {
         configuration: AgentCoreSessionConfiguration
     ) async throws {
         let backend = try await ensureBackend(configuration: configuration)
+        let generation = backendGeneration
         await backend.updateSessionOptions(
             id: configuration.sessionID,
             systemPrompt: configuration.systemPrompt,
@@ -117,6 +120,7 @@ public actor AgentCoreSessionRunner {
             thinkingSelection: configuration.thinkingSelection,
             preserveThinking: configuration.preserveThinking
         )
+        try verifyBackendGeneration(generation)
         sessions[configuration.sessionID] = configuration
     }
 
@@ -147,14 +151,17 @@ public actor AgentCoreSessionRunner {
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> String {
         let backend = try await ensureBackend(configuration: configuration)
-        return try await backend.preloadModel(onEvent: onEvent)
+        let generation = backendGeneration
+        let modelID = try await backend.preloadModel(onEvent: onEvent)
+        try verifyBackendGeneration(generation)
+        return modelID
     }
 
     public func preloadModel(
         configuration: AgentCoreSessionConfiguration
     ) -> AsyncThrowingStream<DirectAgentEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<DirectAgentEvent, Error>.makeStream()
-        let task = Task(priority: .userInitiated) {
+        let task = Task(name: "Agent model preload", priority: .userInitiated) {
             #if os(macOS)
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated],
@@ -198,8 +205,8 @@ public actor AgentCoreSessionRunner {
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
         let promptID = UUID()
-        if let authorizeTool {
-            promptAuthorizationHandlers[promptID] = authorizeTool
+        if let authorizationHandler = authorizeTool ?? defaultToolAuthorizationHandler {
+            promptAuthorizationHandlers[promptID] = authorizationHandler
             promptAuthorizationSessionIDs[promptID] = configuration.sessionID
         }
         defer {
@@ -212,9 +219,11 @@ public actor AgentCoreSessionRunner {
             tools: borrowedXcodeTools
         )
         let backend = try await ensureBackend(configuration: configuration)
+        let generation = backendGeneration
         await backend.updateBorrowedSubAgentToolExecutor(
             borrowedSubAgentToolExecutor
         )
+        try verifyBackendGeneration(generation)
         let ownedSkillProvider = promptSkillProvidersBySessionID[configuration.sessionID]?.asToolProvider()
         let nonSkillProviders = toolProviders.filter { provider in
             !provider.tools.contains { PromptSkillToolProvider.toolNames.contains($0.name) }
@@ -224,13 +233,16 @@ public actor AgentCoreSessionRunner {
             effectiveToolProviders,
             sessionID: configuration.sessionID
         )
+        try verifyBackendGeneration(generation)
         try await ensureSession(configuration: configuration)
+        try verifyBackendGeneration(generation)
         // Capture the session incarnation only after the session exists: a later
         // close/reset/rebuild drops this generation and fences the turn's
         // snapshot cache and backend restore.
         let sessionGeneration = currentSessionGeneration(for: configuration.sessionID)
         let initialSnapshot = await backend.snapshotSession(id: configuration.sessionID)
             ?? AgentRuntimeSessionSnapshot(configuration: configuration)
+        try verifyBackendGeneration(generation)
         let turnRecorder = AgentCorePromptTurnRecorder(
             initialSnapshot: initialSnapshot,
             prompt: prompt,
@@ -238,24 +250,28 @@ public actor AgentCoreSessionRunner {
         )
 
         do {
-            let response = try await backend.sendPrompt(
-                sessionID: configuration.sessionID,
-                prompt: prompt,
-                attachments: attachments,
-                onEvent: { event in
-                    await turnRecorder.record(event)
-                    if case let .toolCallStarted(toolCall) = event {
-                        await onToolWillExecute?(toolCall)
+            let response = try await AgentToolAuthorizationContext.$turnID.withValue(promptID) {
+                try await backend.sendPrompt(
+                    sessionID: configuration.sessionID,
+                    prompt: prompt,
+                    attachments: attachments,
+                    onEvent: { event in
+                        await turnRecorder.record(event)
+                        if case let .toolCallStarted(toolCall) = event {
+                            await onToolWillExecute?(toolCall)
+                        }
+                        await onEvent(event)
                     }
-                    await onEvent(event)
-                }
-            )
+                )
+            }
+            try verifyBackendGeneration(generation)
             await finalizeTurn(
                 outcome: .completed,
                 backend: backend,
                 configuration: configuration,
                 recorder: turnRecorder,
                 sessionGeneration: sessionGeneration,
+                backendGeneration: generation,
                 onEvent: onEvent
             )
             return response
@@ -266,6 +282,7 @@ public actor AgentCoreSessionRunner {
                 configuration: configuration,
                 recorder: turnRecorder,
                 sessionGeneration: sessionGeneration,
+                backendGeneration: generation,
                 onEvent: onEvent
             )
             throw CancellationError()
@@ -276,6 +293,7 @@ public actor AgentCoreSessionRunner {
                 configuration: configuration,
                 recorder: turnRecorder,
                 sessionGeneration: sessionGeneration,
+                backendGeneration: generation,
                 onEvent: onEvent
             )
             throw error
@@ -289,20 +307,30 @@ public actor AgentCoreSessionRunner {
         configuration: AgentCoreSessionConfiguration,
         recorder: AgentCorePromptTurnRecorder,
         sessionGeneration: SessionGeneration?,
+        backendGeneration: UInt64,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async {
+        guard self.backendGeneration == backendGeneration else {
+            return
+        }
         let recovery = await recoveredSessionSnapshot(
             backend: backend,
             configuration: configuration,
             recorder: recorder,
             sessionGeneration: sessionGeneration
         )
+        guard self.backendGeneration == backendGeneration else {
+            return
+        }
         await restoreSessionIfNeeded(
             recovery,
             backend: backend,
             baseConfiguration: configuration,
             sessionGeneration: sessionGeneration
         )
+        guard self.backendGeneration == backendGeneration else {
+            return
+        }
         await onEvent(.sessionSnapshot(recovery.snapshot))
         await onEvent(.turnEnded(outcome))
     }
@@ -359,9 +387,13 @@ public actor AgentCoreSessionRunner {
         guard let baseConfiguration = sessions[sessionID] else {
             return false
         }
+        let generation = backendGeneration
         let currentSnapshot = await backend?.snapshotSession(id: sessionID)
             ?? lastKnownSessionSnapshots[sessionID]
             ?? AgentRuntimeSessionSnapshot(configuration: baseConfiguration)
+        guard generation == backendGeneration else {
+            return false
+        }
         let replacement = currentSnapshot.replacingHistory(history)
         let replacementConfiguration = baseConfiguration.replacingRuntimeState(
             with: replacement
@@ -371,6 +403,9 @@ public actor AgentCoreSessionRunner {
         lastKnownSessionSnapshots[sessionID] = replacement
         if let backend {
             await backend.clearSession(id: sessionID)
+            guard generation == backendGeneration else {
+                return false
+            }
             await backend.createSession(
                 id: replacement.sessionID,
                 cwd: replacement.workingDirectoryPath,
@@ -381,6 +416,9 @@ public actor AgentCoreSessionRunner {
                 thinkingSelection: replacement.thinkingSelection,
                 preserveThinking: replacement.preserveThinking
             )
+            guard generation == backendGeneration else {
+                return false
+            }
         }
         return true
     }
@@ -395,12 +433,14 @@ public actor AgentCoreSessionRunner {
             throw AgentCoreSessionRunnerError.cannotCompactDuringActivePrompt(sessionID)
         }
 
+        let generation = backendGeneration
         let result: AgentRuntimeSessionCompactionResult?
         if let backendResult = await backend?.compactSession(
             id: sessionID,
             force: force,
             maxTokensOverride: maxTokensOverride
         ) {
+            try verifyBackendGeneration(generation)
             result = backendResult
         } else {
             result = compactStoredSession(
@@ -413,6 +453,7 @@ public actor AgentCoreSessionRunner {
             return nil
         }
 
+        try verifyBackendGeneration(generation)
         cacheCompactedSessionSnapshot(result.snapshot)
         return result
     }
@@ -440,7 +481,7 @@ public actor AgentCoreSessionRunner {
         let (stream, continuation) = AsyncThrowingStream<DirectAgentEvent, Error>.makeStream()
         let promptID = UUID()
         let outcomeTracker = AgentCorePromptOutcomeTracker()
-        let task = Task(priority: .userInitiated) {
+        let task = Task(name: "Agent prompt stream", priority: .userInitiated) {
             #if os(macOS)
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .latencyCritical],
@@ -479,9 +520,6 @@ public actor AgentCoreSessionRunner {
         promptTaskRegistry.register(task, id: promptID, sessionID: configuration.sessionID)
         continuation.onTermination = { _ in
             task.cancel()
-            Task { [weak self] in
-                await self?.clearActivePromptTask(id: promptID)
-            }
         }
         return stream
     }
@@ -498,8 +536,8 @@ public actor AgentCoreSessionRunner {
             continuation.yield(.turnEnded(.completed))
         } else if error is CancellationError, await outcomeTracker.shouldEmitFallback() {
             continuation.yield(.turnEnded(.cancelled))
-        } else if error != nil, await outcomeTracker.shouldEmitFallback() {
-            continuation.yield(.turnEnded(.failed(message: error!.localizedDescription)))
+        } else if let error, await outcomeTracker.shouldEmitFallback() {
+            continuation.yield(.turnEnded(.failed(message: error.localizedDescription)))
         }
         clearActivePromptTask(id: promptID)
         if let error {
@@ -511,7 +549,6 @@ public actor AgentCoreSessionRunner {
 
     public func cancelActivePrompt() async {
         promptTaskRegistry.cancelAllTasks()
-        promptAuthorizationHandlers.removeAll()
     }
 
     public func cancelPrompt(sessionID: String) async {
@@ -522,6 +559,7 @@ public actor AgentCoreSessionRunner {
     /// task graph for the same session identity.
     public func rebuildSession(id sessionID: String) async {
         promptTaskRegistry.cancelAll(for: sessionID)
+        await waitForPromptTasks(for: sessionID)
         invalidateSessionGeneration(for: sessionID)
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
@@ -530,15 +568,30 @@ public actor AgentCoreSessionRunner {
 
     /// Discards a logical session, including its persisted task graph.
     public func resetSession(id sessionID: String? = nil) async {
+        do {
+            try await resetSessionThrowing(id: sessionID)
+        } catch {
+            ZenLogger.error(
+                .viewModelRuntime,
+                "agent core session runner could not discard task graph: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Throwing counterpart to ``resetSession(id:)`` for callers that need to
+    /// surface a checkpoint-deletion failure instead of treating teardown as
+    /// best-effort. The original non-throwing API remains available.
+    public func resetSessionThrowing(id sessionID: String? = nil) async throws {
         if let sessionID {
             _ = await interruptSubAgents(rootSessionID: sessionID)
             await rebuildSession(id: sessionID)
-            try? await taskOrchestrator.discardSession(id: sessionID)
+            try await taskOrchestrator.discardSession(id: sessionID)
             return
         }
 
-        promptTaskRegistry.cancelAllTasks()
+        await cancelAllPromptTasksAndWait()
         promptAuthorizationHandlers.removeAll()
+        promptAuthorizationSessionIDs.removeAll()
         sessionGenerations.removeAll()
 
         let taskSessionIDs = await taskOrchestrator.registeredSessionIDs()
@@ -552,11 +605,24 @@ public actor AgentCoreSessionRunner {
         for sessionID in sessionIDs {
             _ = await interruptSubAgents(rootSessionID: sessionID)
             await backend?.clearSession(id: sessionID)
-            try? await taskOrchestrator.discardSession(id: sessionID)
+            try await taskOrchestrator.discardSession(id: sessionID)
         }
     }
 
     public func closeSession(id sessionID: String) async {
+        do {
+            try await closeSessionThrowing(id: sessionID)
+        } catch {
+            ZenLogger.error(
+                .viewModelRuntime,
+                "agent core session runner could not flush task graph: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Throwing counterpart to ``closeSession(id:)`` for callers that need to
+    /// report persistence failures before a session is torn down.
+    public func closeSessionThrowing(id sessionID: String) async throws {
         promptTaskRegistry.cancelAll(for: sessionID)
         // Drop the incarnation before any suspension so a prompt that is still
         // winding down cannot cache or restore this session afterwards.
@@ -564,7 +630,7 @@ public actor AgentCoreSessionRunner {
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
         _ = await interruptSubAgents(rootSessionID: sessionID)
-        try? await taskOrchestrator.flush(sessionID: sessionID)
+        try await taskOrchestrator.flush(sessionID: sessionID)
         promptSkillProvidersBySessionID.removeValue(forKey: sessionID)
         await backend?.closeSession(id: sessionID)
         // Re-drop after the suspensions above: a prompt finalization that raced
@@ -591,14 +657,29 @@ public actor AgentCoreSessionRunner {
     /// agent switching, where tearing down MCP connections would force the
     /// user to grant external-tool consents again.
     public func shutdownBackendKeepingExternalTools() async {
-        promptTaskRegistry.cancelAllTasks()
+        do {
+            try await shutdownBackendKeepingExternalToolsThrowing()
+        } catch {
+            ZenLogger.error(
+                .viewModelRuntime,
+                "agent core session runner could not flush task graphs: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Throwing counterpart to ``shutdownBackendKeepingExternalTools()``. It
+    /// retains the compatibility wrapper while making a failed graph flush
+    /// observable to lifecycle owners.
+    public func shutdownBackendKeepingExternalToolsThrowing() async throws {
+        await cancelAllPromptTasksAndWait()
         promptAuthorizationHandlers.removeAll()
+        promptAuthorizationSessionIDs.removeAll()
         // Fence in-flight backend creation and session work before suspending.
         backendGeneration &+= 1
         backendPreparation?.cancel()
         backendPreparation = nil
         sessionGenerations.removeAll()
-        try? await taskOrchestrator.flush()
+        try await taskOrchestrator.flush()
         // Terminate every task-graph event observer so suspended `events(...)`
         // consumers resume instead of waiting forever after shutdown.
         await taskOrchestrator.finishEventStreams()
@@ -623,9 +704,25 @@ public actor AgentCoreSessionRunner {
         promptTaskRegistry.cancelAll(for: sessionID)
     }
 
+    private func waitForPromptTasks(for sessionID: String) async {
+        let tasks = promptTaskRegistry.tasks(for: sessionID)
+        for task in tasks {
+            await task.value
+        }
+    }
+
+    private func cancelAllPromptTasksAndWait() async {
+        promptTaskRegistry.cancelAllTasks()
+        let tasks = promptTaskRegistry.activeTasks
+        for task in tasks {
+            await task.value
+        }
+    }
+
     private func clearActivePromptTask(id promptID: UUID) {
         promptTaskRegistry.clear(id: promptID)
         promptAuthorizationHandlers.removeValue(forKey: promptID)
+        promptAuthorizationSessionIDs.removeValue(forKey: promptID)
     }
 
     private func ensureSession(
@@ -686,7 +783,7 @@ public actor AgentCoreSessionRunner {
             }
 
             let generation = backendGeneration
-            let preparation = Task { [weak self] () throws -> AgentCoreBackend in
+            let preparation = Task(name: "Agent backend preparation") { [weak self] () throws -> AgentCoreBackend in
                 guard let self else {
                     throw BackendInvalidatedError()
                 }
@@ -753,12 +850,17 @@ public actor AgentCoreSessionRunner {
         backendPreparation = nil
         sessions.removeAll()
         lastKnownSessionSnapshots.removeAll()
-        promptSkillProvidersBySessionID.removeAll()
         sessionGenerations.removeAll()
         activeRuntimeConfiguration = nil
         let backendToShutdown = backend
         backend = nil
         await backendToShutdown?.shutdown()
+    }
+
+    private func verifyBackendGeneration(_ generation: UInt64) throws {
+        guard generation == backendGeneration else {
+            throw BackendInvalidatedError()
+        }
     }
 
     @discardableResult
@@ -925,24 +1027,15 @@ public actor AgentCoreSessionRunner {
             return true
         }
 
-        // Route authorization to the handler registered for the session that
-        // owns the tool call, falling back to the first available handler
-        // (for backwards compatibility) and finally the default handler.
-        let sessionID = request.sessionID
-
-        // Explicit session match first.
-        for (promptID, handler) in promptAuthorizationHandlers {
-            if promptAuthorizationSessionIDs[promptID] == sessionID {
-                return await handler(request)
-            }
+        // A request must name the exact live turn and session. Never select an
+        // arbitrary handler from a Dictionary: concurrent prompts in the same
+        // session can have different authorization policies.
+        guard let turnID = request.turnID,
+              let handler = promptAuthorizationHandlers[turnID],
+              let expectedSessionID = promptAuthorizationSessionIDs[turnID],
+              request.sessionID == expectedSessionID else {
+            return false
         }
-        // Fallback: first registered handler (legacy behaviour).
-        if let handler = promptAuthorizationHandlers.first?.value {
-            return await handler(request)
-        }
-        guard let defaultToolAuthorizationHandler else {
-            return true
-        }
-        return await defaultToolAuthorizationHandler(request)
+        return await handler(request)
     }
 }

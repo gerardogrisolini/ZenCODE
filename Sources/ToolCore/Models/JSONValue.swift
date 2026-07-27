@@ -28,7 +28,7 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
             self = .string(string)
         } else if let bool = try? container.decode(Bool.self) {
             self = .bool(bool)
-        } else if let number = try? container.decode(Double.self) {
+        } else if let number = try? container.decode(Double.self), number.isFinite {
             self = .number(number)
         } else {
             throw DecodingError.dataCorruptedError(
@@ -44,6 +44,12 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
         case let .string(value):
             try container.encode(value)
         case let .number(value):
+            guard value.isFinite else {
+                throw EncodingError.invalidValue(
+                    value,
+                    .init(codingPath: encoder.codingPath, debugDescription: "JSON does not support non-finite numbers.")
+                )
+            }
             try container.encode(value)
         case let .object(value):
             try container.encode(value)
@@ -57,7 +63,7 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
     }
 
     public func decode<T: Decodable>(_ type: T.Type) throws -> T {
-        try JSONDecoder().decode(type, from: encoded())
+        try JSONDecoder().decode(type, from: encodedData())
     }
 
     public init(jsonObject value: Any?) {
@@ -65,7 +71,9 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
             self = .null
             return
         }
-        if let jsonValue = value as? JSONValue {
+        if value is NSNull {
+            self = .null
+        } else if let jsonValue = value as? JSONValue {
             self = jsonValue
         } else if let string = value as? String {
             self = .string(string)
@@ -75,41 +83,67 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
             self = .number(Double(int))
         } else if let int64 = value as? Int64 {
             self = .number(Double(int64))
-        } else if let double = value as? Double {
+        } else if let double = value as? Double, double.isFinite {
             self = .number(double)
-        } else if let float = value as? Float {
+        } else if let float = value as? Float, float.isFinite {
             self = .number(Double(float))
         } else if let object = value as? [String: Any] {
             self = .object(object.mapValues { JSONValue(jsonObject: $0) })
         } else if let array = value as? [Any] {
             self = .array(array.map { JSONValue(jsonObject: $0) })
         } else {
-            self = .string(String(describing: value))
+            self = .null
+        }
+    }
+
+    /// Result-returning variant that preserves encoding failures instead of
+    /// silently rendering an unrelated JSON object.
+    public func prettyPrintedResult() -> Result<String, Error> {
+        do {
+            let data = try jsonData(outputFormatting: [
+                .withoutEscapingSlashes,
+                .prettyPrinted,
+                .sortedKeys,
+            ])
+            guard let string = String(data: data, encoding: .utf8) else {
+                throw CocoaError(.fileReadInapplicableStringEncoding)
+            }
+            return .success(string)
+        } catch {
+            return .failure(error)
         }
     }
 
     public func prettyPrinted() -> String {
-        guard let data = try? jsonData(outputFormatting: [
-                  .withoutEscapingSlashes,
-                  .prettyPrinted,
-                  .sortedKeys
-              ]),
-              let string = String(data: data, encoding: .utf8) else {
-            return "{}"
+        switch prettyPrintedResult() {
+        case let .success(string):
+            return string
+        case .failure:
+            return "<invalid JSON value>"
         }
-
-        return string
     }
 
-    public func compactString(sortedKeys: Bool = false) -> String {
+    /// Result-returning compact serialization for callers that need to surface
+    /// a non-finite or otherwise unencodable value to the user.
+    public func compactStringResult(sortedKeys: Bool = false) -> Result<String, Error> {
         var formatting: JSONEncoder.OutputFormatting = [.withoutEscapingSlashes]
         if sortedKeys {
             formatting.insert(.sortedKeys)
         }
-        guard let data = try? jsonData(outputFormatting: formatting) else {
-            return "{}"
+        do {
+            return .success(String(decoding: try jsonData(outputFormatting: formatting), as: UTF8.self))
+        } catch {
+            return .failure(error)
         }
-        return String(decoding: data, as: UTF8.self)
+    }
+
+    public func compactString(sortedKeys: Bool = false) -> String {
+        switch compactStringResult(sortedKeys: sortedKeys) {
+        case let .success(string):
+            return string
+        case .failure:
+            return "<invalid JSON value>"
+        }
     }
 
     public func jsonData(
@@ -135,7 +169,7 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
         case let .bool(value):
             return value
         case .null:
-            return JSONValue.null
+            return NSNull()
         }
     }
 
@@ -148,7 +182,7 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
     }
 
     public var numberValue: Double? {
-        guard case let .number(value) = self else {
+        guard case let .number(value) = self, value.isFinite else {
             return nil
         }
 
@@ -169,7 +203,7 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
             guard value.isFinite, value.rounded(.towardZero) == value else {
                 return nil
             }
-            return Int(value)
+            return Int(exactly: value)
         case let .string(value):
             return Int(value.trimmingCharacters(in: .whitespacesAndNewlines))
         default:
@@ -196,8 +230,9 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
             guard value.isFinite else {
                 return nil
             }
-            if value.rounded(.towardZero) == value {
-                return String(Int(value))
+            if value.rounded(.towardZero) == value,
+               let integer = Int(exactly: value) {
+                return String(integer)
             }
             return String(value)
         case let .bool(value):
@@ -230,8 +265,14 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
         }
     }
 
+    public func encodedData() throws -> Data {
+        try JSONEncoder().encode(self)
+    }
+
+    /// Compatibility wrapper. New callers should use `encodedData()` to retain
+    /// encoding failures; this method never substitutes a different JSON value.
     public func encoded() -> Data {
-        (try? JSONEncoder().encode(self)) ?? Data("null".utf8)
+        (try? encodedData()) ?? Data()
     }
     
     public var objectValue: [String: JSONValue]? {

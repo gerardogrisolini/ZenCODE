@@ -272,13 +272,19 @@ public enum PromptSkillInstaller {
     ) throws -> URL {
         let standardizedURL = url.standardizedFileURL
         let standardizedRootURL = cloneRootURL.standardizedFileURL
-        guard standardizedURL.path == standardizedRootURL.path
-                || standardizedURL.path.hasPrefix(standardizedRootURL.path + "/") else {
-            throw PromptSkillInstallerError.unsafeSkillPath(standardizedURL.path)
+        let resolvedURL = standardizedURL.resolvingSymlinksInPath().standardizedFileURL
+        let resolvedRootURL = standardizedRootURL.resolvingSymlinksInPath().standardizedFileURL
+        guard isContained(standardizedURL, in: standardizedRootURL),
+              isContained(resolvedURL, in: resolvedRootURL) else {
+            throw PromptSkillInstallerError.unsafeSkillPath(resolvedURL.path)
         }
 
         let directSkillURL = standardizedURL.appendingPathComponent("SKILL.md")
         if fileManager.fileExists(atPath: directSkillURL.path) {
+            try validateSkillFile(
+                directSkillURL,
+                containedIn: resolvedRootURL
+            )
             return standardizedURL
         }
 
@@ -293,6 +299,7 @@ public enum PromptSkillInstaller {
               let skillURL = skillURLs.first else {
             throw PromptSkillInstallerError.multipleSkillsFound(standardizedURL.path)
         }
+        try validateSkillFile(skillURL, containedIn: resolvedRootURL)
         return skillURL.deletingLastPathComponent().standardizedFileURL
     }
 
@@ -315,6 +322,14 @@ public enum PromptSkillInstaller {
                 continue
             }
             guard candidate.lastPathComponent == "SKILL.md" else {
+                continue
+            }
+            let values = try? candidate.resourceValues(forKeys: [
+                .isSymbolicLinkKey,
+                .isRegularFileKey
+            ])
+            guard values?.isSymbolicLink != true,
+                  values?.isRegularFile == true else {
                 continue
             }
             urls.append(candidate.standardizedFileURL)
@@ -345,6 +360,14 @@ public enum PromptSkillInstaller {
                 continue
             }
 
+            let values = try sourceChildURL.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isRegularFileKey,
+                .isSymbolicLinkKey
+            ])
+            guard values.isSymbolicLink != true else {
+                throw PromptSkillInstallerError.unsafeSkillPath(sourceChildURL.path)
+            }
             let relativePath = String(
                 sourceChildURL.standardizedFileURL.path.dropFirst(sourceURL.standardizedFileURL.path.count)
             ).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -354,16 +377,40 @@ public enum PromptSkillInstaller {
             let destinationChildURL = destinationURL
                 .appendingPathComponent(relativePath)
                 .standardizedFileURL
-            var isDirectory: ObjCBool = false
-            if fileManager.fileExists(atPath: sourceChildURL.path, isDirectory: &isDirectory),
-               isDirectory.boolValue {
+            if values.isDirectory == true {
                 try fileManager.createDirectory(
                     at: destinationChildURL,
                     withIntermediateDirectories: true
                 )
-            } else {
+            } else if values.isRegularFile == true {
                 try fileManager.copyItem(at: sourceChildURL, to: destinationChildURL)
+            } else {
+                throw PromptSkillInstallerError.unsafeSkillPath(sourceChildURL.path)
             }
+        }
+    }
+
+    private static func isContained(_ candidate: URL, in root: URL) -> Bool {
+        let rootPath = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        return candidate.path == root.path || candidate.path.hasPrefix(rootPath)
+    }
+
+    private static func validateSkillFile(
+        _ skillURL: URL,
+        containedIn rootURL: URL
+    ) throws {
+        let resolvedSkillURL = skillURL.resolvingSymlinksInPath().standardizedFileURL
+        guard isContained(resolvedSkillURL, in: rootURL),
+              let values = try? skillURL.resourceValues(forKeys: [
+                  .isSymbolicLinkKey,
+                  .isRegularFileKey,
+                  .fileSizeKey
+              ]),
+              values.isSymbolicLink != true,
+              values.isRegularFile == true,
+              let size = values.fileSize,
+              size <= PromptSkillMarkdownParser.maximumSkillMarkdownBytes else {
+            throw PromptSkillInstallerError.unsafeSkillPath(skillURL.path)
         }
     }
 

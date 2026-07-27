@@ -87,7 +87,7 @@ public enum ChatGPTSubscriptionAuthError: LocalizedError {
 }
 
 #if os(macOS)
-public final class ChatGPTSubscriptionSignInSession: @unchecked Sendable {
+public final class ChatGPTSubscriptionSignInSession: Sendable {
     public let authorizationURL: URL
 
     private let verifier: String
@@ -105,7 +105,7 @@ public final class ChatGPTSubscriptionSignInSession: @unchecked Sendable {
 
     public func waitForCredentials() async throws -> CodexAgentCredentials {
         defer {
-            Task {
+            Task(name: "ChatGPT authorization background task") {
                 await callbackServer.stop()
             }
         }
@@ -124,7 +124,7 @@ public final class ChatGPTSubscriptionSignInSession: @unchecked Sendable {
     }
 
     public func cancel() {
-        Task {
+        Task(name: "ChatGPT authorization background task") {
             await callbackServer.stop()
         }
     }
@@ -519,7 +519,7 @@ actor ChatGPTSubscriptionRefreshCoordinator {
                 )
             }
         } onCancel: {
-            Task {
+            Task(name: "ChatGPT authorization background task") {
                 await self.cancelWaiter(id: waiterID, for: refreshKey)
             }
         }
@@ -540,7 +540,7 @@ actor ChatGPTSubscriptionRefreshCoordinator {
         }
 
         let flightID = UUID()
-        let refreshTask = Task { [weak self] in
+        let refreshTask = Task(name: "ChatGPT authorization background task") { [weak self] in
             let result: Result<CodexAgentCredentials, Error>
             do {
                 result = .success(try await operation(credentials))

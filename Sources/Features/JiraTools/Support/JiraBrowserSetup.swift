@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Synchronization
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -93,9 +94,8 @@ enum JiraBrowserSetup {
         }
 
         do {
-            let siteURL = try JiraStoredConfiguration.normalizedSiteURL(from: site)
-            let configuration = JiraStoredConfiguration(
-                siteURLString: siteURL.absoluteString,
+            let configuration = try JiraStoredConfiguration(
+                siteURLString: site,
                 email: email
             )
             let service = JiraRESTService(configuration: configuration, apiToken: token)
@@ -200,7 +200,7 @@ final class JiraBrowserSetupServer: Sendable {
 
     func waitForResult(timeout: TimeInterval) async throws -> JiraAuthenticatedConfiguration {
         try await withThrowingTaskGroup(of: JiraAuthenticatedConfiguration.self) { group in
-            group.addTask {
+            group.addTask(name: "JiraBrowserSetup.waitForResult") {
                 try await withTaskCancellationHandler {
                     try await withCheckedThrowingContinuation { continuation in
                         if let buffered = self.state.takeResult(orRegister: continuation) {
@@ -214,7 +214,7 @@ final class JiraBrowserSetupServer: Sendable {
                     self.stop()
                 }
             }
-            group.addTask {
+            group.addTask(name: "JiraBrowserSetup.waitForResult-timeout") {
                 let nanoseconds = UInt64(max(timeout, 1) * 1_000_000_000)
                 try await Task.sleep(nanoseconds: nanoseconds)
                 // Close the admission gate before reporting timeout. This makes
@@ -316,7 +316,7 @@ final class JiraBrowserSetupServer: Sendable {
             }
 
             let validate = self.validate
-            let validationTask = Task { [weak self] in
+            let validationTask = Task(name: "JiraBrowserSetup.validate-submission") { [weak self] in
                 guard let self else {
                     return
                 }
@@ -379,33 +379,38 @@ final class JiraBrowserSetupServer: Sendable {
 
 /// Thread-safe continuation storage for the setup server, shared across the
 /// listener queue and the awaiting task.
-final class JiraBrowserSetupState: @unchecked Sendable {
-    private let lock = NSLock()
-    private var readinessContinuation: CheckedContinuation<Void, Error>?
-    private var resultContinuation: CheckedContinuation<JiraAuthenticatedConfiguration, Error>?
-    private var pendingResult: Result<JiraAuthenticatedConfiguration, Error>?
-    private var didResumeReadiness = false
-    private var didResumeResult = false
-    private var isStopped = false
-    private var isValidatingSubmission = false
-    private var submissionTask: Task<Void, Never>?
+final class JiraBrowserSetupState: Sendable {
+    private struct State: Sendable {
+        var readinessContinuation: CheckedContinuation<Void, Error>?
+        var resultContinuation: CheckedContinuation<JiraAuthenticatedConfiguration, Error>?
+        var pendingResult: Result<JiraAuthenticatedConfiguration, Error>?
+        var didResumeReadiness = false
+        var didResumeResult = false
+        var isStopped = false
+        var isValidatingSubmission = false
+        var submissionTask: Task<Void, Never>?
+    }
+    private let state = Mutex(State())
 
     func setReadiness(_ continuation: CheckedContinuation<Void, Error>) {
-        lock.lock()
-        readinessContinuation = continuation
-        lock.unlock()
+        state.withLock { state in
+            state.readinessContinuation = continuation
+            return
+        }
     }
 
     func resumeReadiness(with result: Result<Void, Error>) {
-        lock.lock()
-        guard !didResumeReadiness, let continuation = readinessContinuation else {
-            lock.unlock()
-            return
+        let continuation: CheckedContinuation<Void, Error>? = state.withLock { state in
+            guard !state.didResumeReadiness, let continuation = state.readinessContinuation else {
+                return nil
+            }
+            state.didResumeReadiness = true
+            state.readinessContinuation = nil
+            return continuation
         }
-        didResumeReadiness = true
-        readinessContinuation = nil
-        lock.unlock()
-        continuation.resume(with: result)
+        if let continuation {
+            continuation.resume(with: result)
+        }
     }
 
     /// Registers the result continuation, or returns a buffered result if the
@@ -413,36 +418,36 @@ final class JiraBrowserSetupState: @unchecked Sendable {
     func takeResult(
         orRegister continuation: CheckedContinuation<JiraAuthenticatedConfiguration, Error>
     ) -> Result<JiraAuthenticatedConfiguration, Error>? {
-        lock.lock()
-        if let pending = pendingResult {
-            pendingResult = nil
-            didResumeResult = true
-            lock.unlock()
-            return pending
+        state.withLock { state in
+            if let pending = state.pendingResult {
+                state.pendingResult = nil
+                state.didResumeResult = true
+                return pending
+            }
+            state.resultContinuation = continuation
+            return nil
         }
-        resultContinuation = continuation
-        lock.unlock()
-        return nil
     }
 
     func resumeResult(with result: Result<JiraAuthenticatedConfiguration, Error>) {
-        lock.lock()
-        guard !didResumeResult else {
-            lock.unlock()
-            return
-        }
-        guard let continuation = resultContinuation else {
-            didResumeResult = true
-            if pendingResult == nil {
-                pendingResult = result
+        let continuation: CheckedContinuation<JiraAuthenticatedConfiguration, Error>? = state.withLock { state in
+            guard !state.didResumeResult else {
+                return nil
             }
-            lock.unlock()
-            return
+            guard let continuation = state.resultContinuation else {
+                state.didResumeResult = true
+                if state.pendingResult == nil {
+                    state.pendingResult = result
+                }
+                return nil
+            }
+            state.didResumeResult = true
+            state.resultContinuation = nil
+            return continuation
         }
-        didResumeResult = true
-        resultContinuation = nil
-        lock.unlock()
-        continuation.resume(with: result)
+        if let continuation {
+            continuation.resume(with: result)
+        }
     }
 
     /// Starts at most one credential validation at a time. The listener queue
@@ -450,11 +455,11 @@ final class JiraBrowserSetupState: @unchecked Sendable {
     /// asynchronously, so this state must be protected independently of that
     /// queue.
     func beginSubmission() -> Bool {
-        lock.withLock {
-            guard !isStopped, !didResumeResult, !isValidatingSubmission else {
+        state.withLock { state in
+            guard !state.isStopped, !state.didResumeResult, !state.isValidatingSubmission else {
                 return false
             }
-            isValidatingSubmission = true
+            state.isValidatingSubmission = true
             return true
         }
     }
@@ -464,11 +469,11 @@ final class JiraBrowserSetupState: @unchecked Sendable {
     /// is requested immediately rather than letting a detached validation outlive
     /// the loopback setup flow.
     func setSubmissionTask(_ task: Task<Void, Never>) {
-        let cancelTask = lock.withLock { () -> Bool in
-            guard !isStopped, isValidatingSubmission else {
+        let cancelTask = state.withLock { state -> Bool in
+            guard !state.isStopped, state.isValidatingSubmission else {
                 return true
             }
-            submissionTask = task
+            state.submissionTask = task
             return false
         }
         if cancelTask {
@@ -482,21 +487,21 @@ final class JiraBrowserSetupState: @unchecked Sendable {
     func finishSubmission(
         with result: Result<JiraAuthenticatedConfiguration, JiraSetupValidationError>
     ) -> Bool {
-        let completion = lock.withLock { () -> (CheckedContinuation<JiraAuthenticatedConfiguration, Error>?, Bool) in
-            isValidatingSubmission = false
-            submissionTask = nil
-            guard !isStopped, !didResumeResult else {
+        let completion = state.withLock { state -> (CheckedContinuation<JiraAuthenticatedConfiguration, Error>?, Bool) in
+            state.isValidatingSubmission = false
+            state.submissionTask = nil
+            guard !state.isStopped, !state.didResumeResult else {
                 return (nil, false)
             }
             switch result {
             case let .success(configuration):
                 let accepted: Result<JiraAuthenticatedConfiguration, Error> = .success(configuration)
-                didResumeResult = true
-                if let continuation = resultContinuation {
-                    resultContinuation = nil
+                state.didResumeResult = true
+                if let continuation = state.resultContinuation {
+                    state.resultContinuation = nil
                     return (continuation, true)
                 }
-                pendingResult = accepted
+                state.pendingResult = accepted
                 return (nil, true)
             case .failure:
                 return (nil, true)
@@ -510,11 +515,12 @@ final class JiraBrowserSetupState: @unchecked Sendable {
     }
 
     func stop() {
-        let task = lock.withLock { () -> Task<Void, Never>? in
-            isStopped = true
-            isValidatingSubmission = false
-            defer { submissionTask = nil }
-            return submissionTask
+        let task = state.withLock { state -> Task<Void, Never>? in
+            state.isStopped = true
+            state.isValidatingSubmission = false
+            let task = state.submissionTask
+            state.submissionTask = nil
+            return task
         }
         task?.cancel()
         resumeResult(with: .failure(CancellationError()))

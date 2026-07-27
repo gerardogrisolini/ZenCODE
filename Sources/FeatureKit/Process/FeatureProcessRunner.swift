@@ -19,7 +19,7 @@ public enum FeatureProcessRunner {
         environment: [String: String]? = nil,
         stdinData: Data? = nil,
         timeout: TimeInterval? = nil,
-        stdoutLineLimit: Int? = nil
+        stdoutLineLimit: Int? = nil,
     ) async throws -> FeatureProcessResult {
         #if os(macOS) || os(Linux)
         try Task.checkCancellation()
@@ -327,14 +327,14 @@ public enum FeatureProcessRunner {
             // Natural exit waiter. `exitObserver.wait()` resumes on process exit
             // OR on cancellation, so this child never stays suspended once the
             // group is asked to stop.
-            group.addTask {
+            group.addTask(name: "Feature process natural exit") {
                 await exitObserver.wait()
                 return .exited
             }
 
             // Escalation trigger: fires when the timeout elapses (if any) or the
             // task is cancelled, whichever happens first.
-            group.addTask {
+            group.addTask(name: "Feature process timeout") {
                 await waitForTimeoutOrCancellation(timeout)
                 return .timeoutOrCancellation
             }
@@ -342,7 +342,7 @@ public enum FeatureProcessRunner {
             // Line-limit trigger: an output reader that exceeded its line budget
             // requested termination. This fires without an external timeout and
             // must still escalate to SIGKILL for a child that ignores SIGTERM.
-            group.addTask {
+            group.addTask(name: "Feature process stdout truncation") {
                 await terminationRequest.wait()
                 return .stdoutTruncated
             }
@@ -373,8 +373,13 @@ public enum FeatureProcessRunner {
     /// and returns by throwing, which `try?` turns into a normal return.
     private static func waitForTimeoutOrCancellation(_ timeout: TimeInterval?) async {
         let nanoseconds: UInt64
-        if let timeout, timeout > 0 {
-            nanoseconds = UInt64(timeout * 1_000_000_000)
+        if let timeout, timeout.isFinite, timeout > 0 {
+            let maximumSleepSeconds = Double(UInt64.max) / 1_000_000_000
+            if timeout >= maximumSleepSeconds {
+                nanoseconds = UInt64.max
+            } else {
+                nanoseconds = UInt64(timeout * 1_000_000_000)
+            }
         } else {
             nanoseconds = UInt64.max
         }
@@ -421,12 +426,12 @@ public enum FeatureProcessRunner {
         exitObserver: FeatureProcessExitObserver
     ) async -> Bool {
         await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
+            group.addTask(name: "Feature process SIGTERM grace exit") {
                 await exitObserver.wait()
                 return true
             }
 
-            group.addTask {
+            group.addTask(name: "Feature process SIGTERM grace timeout") {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 return false
             }

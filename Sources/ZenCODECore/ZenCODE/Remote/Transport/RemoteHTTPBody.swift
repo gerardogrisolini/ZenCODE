@@ -6,8 +6,9 @@
 //
 
 import Foundation
-@preconcurrency import NIOCore
+import NIOCore
 import NIOHTTP1
+import Synchronization
 
 /// A unicast incremental HTTP response body.
 ///
@@ -82,27 +83,30 @@ struct RemoteHTTPResponseHead: Sendable {
 
 /// Allows cancellation and the scoped channel task to race to complete a read
 /// without ever resuming its checked continuation twice.
-private final class RemoteHTTPReadContinuation<Value: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, any Error>?
+private final class RemoteHTTPReadContinuation<Value: Sendable>: Sendable {
+    private struct State: Sendable {
+        var continuation: CheckedContinuation<Value, any Error>?
+    }
+
+    private let state: Mutex<State>
 
     init(_ continuation: CheckedContinuation<Value, any Error>) {
-        self.continuation = continuation
+        state = Mutex(State(continuation: continuation))
     }
 
     func resume(returning value: Value) {
-        lock.lock()
-        let continuation = self.continuation
-        self.continuation = nil
-        lock.unlock()
+        let continuation = state.withLock { state in
+            defer { state.continuation = nil }
+            return state.continuation
+        }
         continuation?.resume(returning: value)
     }
 
     func resume(throwing error: any Error) {
-        lock.lock()
-        let continuation = self.continuation
-        self.continuation = nil
-        lock.unlock()
+        let continuation = state.withLock { state in
+            defer { state.continuation = nil }
+            return state.continuation
+        }
         continuation?.resume(throwing: error)
     }
 }
@@ -187,7 +191,9 @@ actor RemoteHTTPBodyStorage {
             }
         }, onCancel: {
             lease.close()
-            Task { await self.cancelActiveRead() }
+            Task(name: "Remote HTTP body read cancellation") {
+                await self.cancelActiveRead()
+            }
         })
     }
 
@@ -223,6 +229,12 @@ actor RemoteHTTPBodyStorage {
                             )
                             continuation.resume(throwing: error)
                             throw error
+                        @unknown default:
+                            let error = RemoteTransportError.protocolViolation(
+                                "HTTP response contained an unsupported part"
+                            )
+                            continuation.resume(throwing: error)
+                            throw error
                         }
                         if receivedHead {
                             break
@@ -252,6 +264,12 @@ actor RemoteHTTPBodyStorage {
                             await self.finish()
                             continuation.resume(returning: nil)
                             returnedChunk = true
+                        @unknown default:
+                            let error = RemoteTransportError.protocolViolation(
+                                "HTTP response contained an unsupported part"
+                            )
+                            continuation.resume(throwing: error)
+                            throw error
                         }
                         if returnedChunk {
                             break

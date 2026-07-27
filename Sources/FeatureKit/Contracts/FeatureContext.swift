@@ -11,7 +11,7 @@ public struct FeatureContext: Sendable {
 
     public init(
         workingDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
     ) {
         self.workingDirectory = workingDirectory.standardizedFileURL
         self.environment = environment

@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 private struct DetailedToolSnippet {
     let lines: [String]

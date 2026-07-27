@@ -24,6 +24,22 @@ struct SetupSectionConfigurationResult {
     var manifest: AgentSettingsManifest?
 }
 
+/// The terminal result of a setup run, reported to the caller so it can decide
+/// whether to proceed.
+///
+/// Previously `run()` returned `Void`, so a cancellation or a reset was
+/// indistinguishable from a completed configuration at the call site. The CLI
+/// uses this to start the interactive runner only when setup actually produced a
+/// usable configuration.
+public enum SetupOutcome: Sendable, Equatable {
+    /// Setup completed and support files were configured.
+    case configured
+    /// The operator cancelled before completing setup.
+    case cancelled
+    /// Remote configuration was reset to its defaults.
+    case reset
+}
+
 /// Pure, terminal-free state machine for a setup run.
 ///
 /// It owns the manifest as it evolves plus the two bookkeeping flags that decide

@@ -92,6 +92,19 @@ public struct SessionCheckpointTree: Codable, Equatable, Sendable {
         self.activeLeafID = activeLeafID
     }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try container.decode(Int.self, forKey: .version)
+        let sessionID = try container.decode(String.self, forKey: .sessionID)
+        let entries = try container.decode([SessionCheckpointEntry].self, forKey: .entries)
+        let activeLeafID = try container.decode(String.self, forKey: .activeLeafID)
+        try Self.validateLoadedTree(entries: entries, activeLeafID: activeLeafID)
+        self.version = version
+        self.sessionID = sessionID
+        self.entries = entries
+        self.activeLeafID = activeLeafID
+    }
+
     // MARK: - Lookup
 
     /// Returns the entry with the given id, or `nil`.
@@ -383,6 +396,57 @@ public struct SessionCheckpointTree: Codable, Equatable, Sendable {
     public static func generateEntryID() -> String {
         let bytes = (0..<4).map { _ in UInt8.random(in: 0...255) }
         return bytes.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func validateLoadedTree(
+        entries: [SessionCheckpointEntry],
+        activeLeafID: String
+    ) throws {
+        guard !entries.isEmpty else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: [], debugDescription: "A checkpoint tree requires a root entry.")
+            )
+        }
+
+        var entriesByID: [String: SessionCheckpointEntry] = [:]
+        for entry in entries {
+            guard entriesByID.updateValue(entry, forKey: entry.id) == nil else {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: [], debugDescription: "Checkpoint entry ids must be unique.")
+                )
+            }
+        }
+        guard entries.filter({ $0.parentID == nil }).count == 1 else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: [], debugDescription: "A checkpoint tree requires exactly one root entry.")
+            )
+        }
+        guard entriesByID[activeLeafID] != nil else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: [], debugDescription: "The active checkpoint leaf is missing.")
+            )
+        }
+
+        for entry in entries {
+            if let parentID = entry.parentID {
+                guard entriesByID[parentID] != nil else {
+                    throw DecodingError.dataCorrupted(
+                        .init(codingPath: [], debugDescription: "A checkpoint parent is missing.")
+                    )
+                }
+            }
+
+            var visited = Set<String>()
+            var currentID: String? = entry.id
+            while let id = currentID {
+                guard visited.insert(id).inserted else {
+                    throw DecodingError.dataCorrupted(
+                        .init(codingPath: [], debugDescription: "Checkpoint parent links contain a cycle.")
+                    )
+                }
+                currentID = entriesByID[id]?.parentID
+            }
+        }
     }
 }
 

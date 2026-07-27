@@ -128,6 +128,13 @@ public enum AgentConversationCompactionSupport {
         let characterCount = messages.reduce(into: 0) { count, message in
             count += message.role.rawValue.count + 12
             count += message.content.count
+            count += message.reasoningContent?.count ?? 0
+            count += message.thinkingBlocksJSON?.count ?? 0
+            count += message.toolCalls.reduce(into: 0) { toolCallCount, toolCall in
+                toolCallCount += toolCall.id?.count ?? 0
+                toolCallCount += toolCall.name.count
+                toolCallCount += toolCall.argumentsJSON.count
+            }
             count += message.attachments.reduce(into: 0) { attachmentCount, attachment in
                 switch attachment.kind {
                 case .image:

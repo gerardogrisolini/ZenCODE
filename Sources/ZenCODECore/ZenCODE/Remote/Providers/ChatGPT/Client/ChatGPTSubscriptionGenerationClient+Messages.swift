@@ -78,9 +78,7 @@ extension ChatGPTSubscriptionGenerationClient {
                 }
             }
         }
-        let result = try await accumulator.result(
-            toolCatalog: StreamAccumulatorToolCatalog(RemoteToolWireCatalog(descriptors: []))
-        )
+        let result = try await accumulator.result()
         return (
             result.text,
             contentText,

@@ -54,6 +54,8 @@ extension JSONValue {
             return value
         case .null:
             return JSONValue.null
+        @unknown default:
+            return JSONValue.null
         }
     }
 }

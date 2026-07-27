@@ -328,10 +328,10 @@ struct BrowserToolsFeatureTests {
     func fetchRequestDecoderAcceptsOnlyCompleteRequestStageEvents() {
         let paused = BrowserFetchPausedRequest.decode(CDPEvent(
             method: "Fetch.requestPaused",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": "fetch-1",
                 "request": ["url": "https://example.com/redirect"],
-            ],
+            ]),
             sessionID: nil
         ))
         #expect(paused == BrowserFetchPausedRequest(
@@ -340,12 +340,12 @@ struct BrowserToolsFeatureTests {
         ))
         #expect(BrowserFetchPausedRequest.decode(CDPEvent(
             method: "Network.requestWillBeSent",
-            params: [:],
+            paramsData: try! JSONSerialization.data(withJSONObject: [:]),
             sessionID: nil
         )) == nil)
         #expect(BrowserFetchPausedRequest.decode(CDPEvent(
             method: "Fetch.requestPaused",
-            params: ["requestId": "missing-url"],
+            paramsData: try! JSONSerialization.data(withJSONObject: ["requestId": "missing-url"]),
             sessionID: nil
         )) == nil)
     }
@@ -613,29 +613,29 @@ struct BrowserToolsFeatureTests {
         let observer = BrowserNetworkObserver()
         observer.consume(CDPEvent(
             method: "Network.requestWillBeSent",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": "request-1",
                 "type": "Document",
                 "request": ["method": "GET", "url": "https://example.com/"],
-            ],
+            ]),
             sessionID: nil
         ))
         observer.consume(CDPEvent(
             method: "Network.responseReceived",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": "request-1",
                 "type": "Document",
                 "response": ["url": "https://example.com/", "status": 200],
-            ],
+            ]),
             sessionID: nil
         ))
         observer.consume(CDPEvent(
             method: "Network.loadingFailed",
-            params: [
+            paramsData: try! JSONSerialization.data(withJSONObject: [
                 "requestId": "request-1",
                 "type": "Document",
                 "errorText": "net::ERR_ABORTED",
-            ],
+            ]),
             sessionID: nil
         ))
 

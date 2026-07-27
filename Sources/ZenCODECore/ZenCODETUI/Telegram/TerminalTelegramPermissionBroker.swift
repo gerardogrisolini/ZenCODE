@@ -85,13 +85,13 @@ actor TerminalTelegramPermissionBroker {
                         requestID: requestID,
                         request: request
                     )
-                    Task {
+                    Task(name: "ZenCODE.Telegram.permission-request") {
                         await sendMessage(message)
                     }
                 }
             },
             onCancel: {
-                Task {
+                Task(name: "ZenCODE.Telegram.permission-cancellation") {
                     await self.resolveRequest(id: requestID, resolution: .cancelled)
                 }
             }
@@ -229,7 +229,7 @@ actor TerminalTelegramPermissionBroker {
         guard timeoutNanoseconds > 0 else {
             return nil
         }
-        return Task { [weak self] in
+        return Task(name: "ZenCODE.Telegram.permission-timeout") { [weak self] in
             do {
                 try await Task.sleep(nanoseconds: timeoutNanoseconds)
             } catch {
@@ -301,7 +301,7 @@ actor TerminalTelegramPermissionBroker {
     private static func pendingPermissionReminder(requestIDs: [String]) -> String {
         """
         Permission request pending.
-        Reply with /allow \(requestIDs.first ?? "ID"), /always \(requestIDs.first ?? "ID"), or /deny \(requestIDs.first ?? "ID").
+        Reply with /allow \(requestIDs.first, default: "ID"), /always \(requestIDs.first, default: "ID"), or /deny \(requestIDs.first, default: "ID").
         """
     }
 

@@ -8,6 +8,10 @@
 import Foundation
 
 extension JSONValue {
+    public static func acpRequestID(from object: [String: JSONValue]) -> JSONValue? {
+        object["id"]
+    }
+
     public static func acpValue(from value: Any?) -> JSONValue {
         JSONValue(jsonObject: value)
     }

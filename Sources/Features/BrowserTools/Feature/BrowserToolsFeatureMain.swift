@@ -465,7 +465,7 @@ enum BrowserToolsRunner {
     }
 
     private static func closeTabAfterOperation(_ browser: ChromeBrowserManager, id: String) async {
-        await Task.detached { @Sendable in
+        await Task.detached(name: "BrowserTools.closeTab") { @Sendable in
             await browser.closeTab(id: id)
         }.value
     }

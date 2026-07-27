@@ -32,7 +32,7 @@ extension DirectSubAgentRuntime {
             return
         }
 
-        agent.runTask = Task {
+        agent.runTask = Task(name: "Direct sub-agent work loop") {
             await self.runAgentLoop(agentID: agentID)
         }
         agents[agentID] = agent
@@ -187,11 +187,19 @@ extension DirectSubAgentRuntime {
         guard await hasActiveTaskAttempt(agent) else {
             return false
         }
-        return (try? await taskOrchestrator.markAttemptRunning(
-            sessionID: agent.rootSessionID,
-            taskID: taskID,
-            attemptID: attemptID
-        )) ?? false
+        do {
+            return try await taskOrchestrator.markAttemptRunning(
+                sessionID: agent.rootSessionID,
+                taskID: taskID,
+                attemptID: attemptID
+            )
+        } catch {
+            var failedAgent = agent
+            failedAgent.latestError = "Unable to mark task attempt running: \(error.localizedDescription)"
+            failedAgent.updatedAt = .now
+            agents[agentID] = failedAgent
+            return false
+        }
     }
 
     public func recordCompletion(
@@ -239,19 +247,25 @@ extension DirectSubAgentRuntime {
         if let taskID = agent.taskID,
            let attemptID = agent.taskAttemptID,
            let taskOrchestrator {
-            let didComplete = try? await taskOrchestrator.completeAttempt(
-                sessionID: agent.rootSessionID,
-                taskID: taskID,
-                attemptID: attemptID,
-                output: agent.latestOutput,
-                requiresValidation: false
-            )
-            if didComplete == true {
-                finishTaskBoundAttemptWork(for: agentID, error: nil)
-            } else if let currentAgent = agents[agentID] {
-                if !(await hasActiveTaskAttempt(currentAgent)) {
+            do {
+                let didComplete = try await taskOrchestrator.completeAttempt(
+                    sessionID: agent.rootSessionID,
+                    taskID: taskID,
+                    attemptID: attemptID,
+                    output: agent.latestOutput,
+                    requiresValidation: false
+                )
+                if didComplete {
+                    finishTaskBoundAttemptWork(for: agentID, error: nil)
+                } else if let currentAgent = agents[agentID],
+                          !(await hasActiveTaskAttempt(currentAgent)) {
                     discardInactiveTaskAttemptWork(for: agentID)
                 }
+            } catch {
+                finishTaskBoundAttemptWork(
+                    for: agentID,
+                    error: "Unable to complete task attempt: \(error.localizedDescription)"
+                )
             }
         }
         await releaseTasklessDelegationReservation(releasedReservation)
@@ -280,13 +294,19 @@ extension DirectSubAgentRuntime {
         if let taskID = agent.taskID,
            let attemptID = agent.taskAttemptID,
            let taskOrchestrator {
-            _ = try? await taskOrchestrator.failAttempt(
-                sessionID: agent.rootSessionID,
-                taskID: taskID,
-                attemptID: attemptID,
-                error: error.localizedDescription,
-                output: agent.latestOutput
-            )
+            do {
+                _ = try await taskOrchestrator.failAttempt(
+                    sessionID: agent.rootSessionID,
+                    taskID: taskID,
+                    attemptID: attemptID,
+                    error: error.localizedDescription,
+                    output: agent.latestOutput
+                )
+            } catch {
+                agent.latestError = "\(agent.latestError ?? "Failed.")\nUnable to fail task attempt: \(error.localizedDescription)"
+                agent.updatedAt = .now
+                agents[agentID] = agent
+            }
         }
         await releaseTasklessDelegationReservation(releasedReservation)
     }
@@ -311,12 +331,18 @@ extension DirectSubAgentRuntime {
         if let taskID = agent.taskID,
            let attemptID = agent.taskAttemptID,
            let taskOrchestrator {
-            _ = try? await taskOrchestrator.cancelAttempt(
-                sessionID: agent.rootSessionID,
-                taskID: taskID,
-                attemptID: attemptID,
-                reason: "Delegated sub-agent cancelled."
-            )
+            do {
+                _ = try await taskOrchestrator.cancelAttempt(
+                    sessionID: agent.rootSessionID,
+                    taskID: taskID,
+                    attemptID: attemptID,
+                    reason: "Delegated sub-agent cancelled."
+                )
+            } catch {
+                agent.latestError = "\(agent.latestError ?? "Cancelled.")\nUnable to cancel task attempt: \(error.localizedDescription)"
+                agent.updatedAt = .now
+                agents[agentID] = agent
+            }
         }
         await releaseTasklessDelegationReservation(releasedReservation)
     }

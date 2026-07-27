@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 actor TerminalSessionTranscriptTurn {
     var transcriptMessages: [AgentRuntimeMessage]

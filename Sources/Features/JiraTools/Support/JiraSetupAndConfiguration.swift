@@ -66,12 +66,49 @@ struct JiraStoredConfiguration: Codable, Hashable, Sendable {
     let siteURLString: String
     let email: String
 
-    var siteURL: URL {
-        URL(string: siteURLString)!
-    }
+    /// Validated and normalised at construction time so `siteURL` never
+    /// force-unwraps.
+    private let validatedSiteURL: URL
+
+    var siteURL: URL { validatedSiteURL }
 
     var credentialAccount: String {
         "\(siteURL.host ?? siteURLString)|\(email.lowercased())"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case siteURLString, email
+    }
+
+    init(siteURLString: String, email: String) throws {
+        let url = try Self.normalizedSiteURL(from: siteURLString)
+        self.siteURLString = url.absoluteString
+        self.email = email
+        self.validatedSiteURL = url
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let rawURLString = try container.decode(String.self, forKey: .siteURLString)
+        let url: URL
+        do {
+            url = try Self.normalizedSiteURL(from: rawURLString)
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .siteURLString,
+                in: container,
+                debugDescription: "Invalid Jira site URL: \(rawURLString)"
+            )
+        }
+        self.siteURLString = url.absoluteString
+        self.email = try container.decode(String.self, forKey: .email)
+        self.validatedSiteURL = url
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(siteURLString, forKey: .siteURLString)
+        try container.encode(email, forKey: .email)
     }
 
     static func normalizedSiteURL(from rawValue: String) throws -> URL {

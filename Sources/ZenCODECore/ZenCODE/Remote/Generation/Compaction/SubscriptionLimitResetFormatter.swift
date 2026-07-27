@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import Synchronization
 
 public enum SubscriptionLimitResetFormatter {
     /// Resolves a reset `Date` from a value that may be a relative seconds count
@@ -44,10 +45,10 @@ public enum SubscriptionLimitResetFormatter {
         if let seconds = Double(trimmed) {
             return resetDate(fromSecondsValue: seconds, now: now)
         }
-        if let date = httpDateFormatter.date(from: trimmed) {
+        if let date = httpDateFormatter.withLock({ $0.date(from: trimmed) }) {
             return date
         }
-        if let date = ISO8601DateFormatter().date(from: trimmed) {
+        if let date = try? Date(trimmed, strategy: .iso8601) {
             return date
         }
         return nil
@@ -60,14 +61,16 @@ public enum SubscriptionLimitResetFormatter {
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale.current
         if calendar.isDate(resetDate, inSameDayAs: now) {
-            formatter.dateFormat = "HH:mm"
+            return resetDate.formatted(
+                .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)
+            )
         } else {
-            formatter.dateFormat = "dd/MM HH:mm"
+            return resetDate.formatted(
+                .dateTime.day(.twoDigits).month(.twoDigits)
+                    .hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)
+            )
         }
-        return formatter.string(from: resetDate)
     }
 
     /// Builds the full Italian message announcing when the subscription resumes.
@@ -81,11 +84,13 @@ public enum SubscriptionLimitResetFormatter {
         return "Limite \(provider) raggiunto: la sottoscrizione riparte alle \(timeText)."
     }
 
-    static let httpDateFormatter: DateFormatter = {
+    /// RFC 7231 HTTP-date has no Foundation value-type parse strategy. Keep
+    /// the reference formatter private and serialize its non-Sendable use.
+    static let httpDateFormatter = Mutex<DateFormatter>({
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.timeZone = .gmt
         formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
         return formatter
-    }()
+    }())
 }

@@ -18,7 +18,7 @@ struct ZenCODEMain {
         let didRequestSetup = ZenCODESetupMenuRunner.shouldRun(arguments: arguments)
         if didRequestSetup {
             do {
-                try await ZenCODESetupRunner.run()
+                _ = try await ZenCODESetupRunner.run()
             } catch {
                 AgentOutput.standardError.writeString(
                     "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"
@@ -57,7 +57,13 @@ struct ZenCODEMain {
 
         if ZenInspector.status().requiresSetup || requiresRemoteModelSetup() {
             do {
-                try await ZenCODESetupRunner.run()
+                // Start the interactive runner only when setup produced a usable
+                // configuration. A cancellation or a reset leaves the CLI to a
+                // later invocation instead of launching the chat half-configured.
+                let outcome = try await ZenCODESetupRunner.run()
+                guard outcome == .configured else {
+                    Foundation.exit(0)
+                }
             } catch {
                 AgentOutput.standardError.writeString(
                     "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"

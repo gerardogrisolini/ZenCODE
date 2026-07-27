@@ -90,7 +90,11 @@ extension DirectTodoRuntime {
             switch value {
             case let .string(string): return string
             case let .number(number):
-                if floor(number) == number { return String(Int(number)) }
+                if number.isFinite,
+                   floor(number) == number,
+                   let integer = Int(exactly: number) {
+                    return String(integer)
+                }
                 return String(number)
             case let .bool(bool): return bool ? "true" : "false"
             default: continue
@@ -149,7 +153,9 @@ extension DirectTodoRuntime {
         for key in keys {
             guard let value = arguments[key] else { continue }
             switch value {
-            case let .number(number): return Int(number)
+            case let .number(number):
+                guard number.isFinite else { continue }
+                return Int(exactly: number)
             case let .string(string): return Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
             default: continue
             }

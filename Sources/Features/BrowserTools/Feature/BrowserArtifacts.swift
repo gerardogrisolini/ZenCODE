@@ -7,6 +7,7 @@
 
 import Crypto
 import Foundation
+import Synchronization
 
 #if canImport(Darwin)
 import Darwin
@@ -111,6 +112,10 @@ struct BrowserArtifactStore: Sendable {
     static let defaultRetentionAge: TimeInterval = 7 * 24 * 60 * 60
     static let maximumComparableScreenshotBytes = 20 * 1024 * 1024
 
+    /// Serializes concurrent store instances within one feature process;
+    /// `flock` on `lockURL` additionally coordinates across processes.
+    private static let localLock = Mutex(())
+
     let rootDirectory: URL
     let maximumArtifactCount: Int
     let retentionAge: TimeInterval
@@ -183,19 +188,27 @@ struct BrowserArtifactStore: Sendable {
         mimeType: String
     ) throws -> BrowserArtifact {
         guard !data.isEmpty else { throw BrowserArtifactError.emptyArtifact(prefix) }
-        try prepareDirectory()
 
-        let filename = "\(prefix)-\(safePagePrefix(pageID))-\(UUID().uuidString.lowercased()).\(fileExtension)"
-        let destination = rootDirectory.appendingPathComponent(filename, isDirectory: false)
-        try data.write(to: destination, options: .atomic)
-        try setPermissions(0o600, at: destination)
-        try pruneRetainedArtifacts(preserving: destination)
+        return try withExclusiveLock {
+            try prepareDirectory()
 
-        return makeArtifact(
-            path: destination.path,
-            mimeType: mimeType,
-            data: data
-        )
+            let filename = "\(prefix)-\(safePagePrefix(pageID))-\(UUID().uuidString.lowercased()).\(fileExtension)"
+            let destination = rootDirectory.appendingPathComponent(filename, isDirectory: false)
+            try data.write(to: destination, options: .atomic)
+            try setPermissions(0o600, at: destination)
+            try pruneRetainedArtifacts(preserving: destination)
+
+            // Verify the artifact survived pruning before returning it.
+            guard FileManager.default.fileExists(atPath: destination.path) else {
+                throw BrowserArtifactError.emptyArtifact(prefix)
+            }
+
+            return makeArtifact(
+                path: destination.path,
+                mimeType: mimeType,
+                data: data
+            )
+        }
     }
 
     /// Loads a screenshot only after proving that it remains inside Browser's
@@ -327,5 +340,36 @@ struct BrowserArtifactStore: Sendable {
             ofItemAtPath: url.path
         )
         #endif
+    }
+
+    /// Atomically serializes the prepare→write→permissions→prune transaction.
+    /// An in-process `Mutex` prevents two concurrent calls within the same
+    /// feature process from racing; an interprocess `flock` on a stable lock
+    /// file prevents two one-shot feature processes from pruning each other's
+    /// artifacts mid-write.
+    private func withExclusiveLock<T: Sendable>(_ body: () throws -> T) throws -> T {
+        try Self.localLock.withLock { _ in
+            let lockURL = rootDirectory.appendingPathComponent(".store.lock", isDirectory: false)
+            try? FileManager.default.createDirectory(
+                at: rootDirectory,
+                withIntermediateDirectories: true
+            )
+
+            let descriptor = open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+            guard descriptor >= 0 else {
+                throw BrowserArtifactError.emptyArtifact("lock")
+            }
+            defer {
+                _ = flock(descriptor, LOCK_UN)
+                _ = close(descriptor)
+            }
+            guard flock(descriptor, LOCK_EX) == 0 else {
+                throw BrowserArtifactError.emptyArtifact("lock")
+            }
+            #if canImport(Darwin) || canImport(Glibc)
+            try? setPermissions(0o600, at: lockURL)
+            #endif
+            return try body()
+        }
     }
 }

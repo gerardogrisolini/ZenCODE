@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension TerminalChat {
     func handleTelegramCommand(_ command: String) async {
@@ -60,7 +61,7 @@ extension TerminalChat {
         eventQueue: TerminalChatEventQueue
     ) -> Task<Void, Never> {
         let service = telegramControlService
-        return Task { [weak self] in
+        return Task(name: "ZenCODE.Telegram.forwarding") { [weak self] in
             for await message in service.incomingMessages {
                 if Task.isCancelled || self == nil {
                     return
@@ -162,7 +163,7 @@ extension TerminalChat {
         }
 
         await sendTelegramSystemMessage("Voice received. Transcribing...", to: chatID)
-        let task = Task { [weak self] in
+        let task = Task(name: "ZenCODE.Telegram.voice-transcription") { [weak self] in
             defer { transcriptions.release(slot) }
             guard let self else { return }
             do {

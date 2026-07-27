@@ -29,14 +29,17 @@ struct AgentCorePromptTaskRegistry {
         taskIDsBySessionID[sessionID, default: []].insert(promptID)
     }
 
-    /// Cancels and removes every prompt task associated with a session.
+    /// Cancels every prompt task associated with a session.
+    ///
+    /// A cancelled task remains registered until its operation actually exits
+    /// and calls ``clear(id:)``. Treating `Task.cancel()` as completion lets a
+    /// compaction/reset race a still-running prompt.
     mutating func cancelAll(for sessionID: String) {
-        guard let promptIDs = taskIDsBySessionID.removeValue(forKey: sessionID) else {
+        guard let promptIDs = taskIDsBySessionID[sessionID] else {
             return
         }
         for promptID in promptIDs {
-            tasks.removeValue(forKey: promptID)?.cancel()
-            sessionIDsByTaskID.removeValue(forKey: promptID)
+            tasks[promptID]?.cancel()
         }
     }
 
@@ -51,12 +54,20 @@ struct AgentCorePromptTaskRegistry {
         }
     }
 
-    /// Cancels all registered tasks and drops every mapping.
+    /// Cancels all registered tasks. Mappings are retained until each task
+    /// finishes so active-prompt checks remain truthful during teardown.
     mutating func cancelAllTasks() {
         for task in tasks.values {
             task.cancel()
         }
-        removeAll()
+    }
+
+    func tasks(for sessionID: String) -> [Task<Void, Never>] {
+        (taskIDsBySessionID[sessionID] ?? []).compactMap { tasks[$0] }
+    }
+
+    var activeTasks: [Task<Void, Never>] {
+        Array(tasks.values)
     }
 
     mutating func removeAll() {

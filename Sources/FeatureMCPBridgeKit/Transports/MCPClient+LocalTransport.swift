@@ -22,6 +22,15 @@ extension MCPClient {
             return
         }
 
+        try await localConnectFlight.run { [weak self] in
+            guard let self else {
+                throw CancellationError()
+            }
+            try await self.performLocalConnect()
+        }
+    }
+
+    private func performLocalConnect() async throws {
         if let terminalBridgeError {
             throw terminalBridgeError
         }
@@ -52,7 +61,7 @@ extension MCPClient {
         process.standardOutput = standardOutput
         process.standardError = standardError
         process.terminationHandler = { [weak self] terminatedProcess in
-            Task {
+            Task(name: "MCP local process termination") {
                 await self?.handleProcessTermination(
                     terminatedProcess,
                     connectionID: connectionID
@@ -75,7 +84,7 @@ extension MCPClient {
         do {
             try Self.makeNonBlocking(stdinHandle)
         } catch {
-            await disconnect()
+            await disconnectLocalTransport(cancellingConnectFlight: false)
             throw error
         }
         // If a previous connection's writer is still around (e.g. the bridge
@@ -102,10 +111,10 @@ extension MCPClient {
         do {
             try Self.makeNonBlocking(outputHandle)
         } catch {
-            await disconnect()
+            await disconnectLocalTransport(cancellingConnectFlight: false)
             throw error
         }
-        readLoopTask = Task.detached { [self] in
+        readLoopTask = Task.detached(name: "MCP local stdout reader") { [self] in
             await Self.readLoop(
                 from: outputHandle,
                 client: self,
@@ -118,10 +127,10 @@ extension MCPClient {
         do {
             try Self.makeNonBlocking(errorHandle)
         } catch {
-            await disconnect()
+            await disconnectLocalTransport(cancellingConnectFlight: false)
             throw error
         }
-        errorLoopTask = Task.detached { [self] in
+        errorLoopTask = Task.detached(name: "MCP local stderr reader") { [self] in
             await Self.errorLoop(
                 from: errorHandle,
                 client: self,
@@ -176,7 +185,7 @@ extension MCPClient {
                         // so publish it and let onCancel stop the handshake
                         // write instead of leaking it past cancellation.
                         handshakeWriteHandle.adopt(
-                            Task { [self] in
+                            Task(name: "MCP local initialize write") { [self] in
                                 do {
                                     try await self.write(initializePayload)
                                     self.log("Sending initialized notification early")
@@ -192,7 +201,7 @@ extension MCPClient {
                     }
                 } onCancel: {
                     handshakeWriteHandle.cancel()
-                    Task {
+                    Task(name: "MCP local initialize cancellation") {
                         await self.cancelPendingResponse(id: initializeRequestID)
                     }
                 }
@@ -216,7 +225,7 @@ extension MCPClient {
             // readers. On handshake failure or cancellation tear everything down
             // (terminate -> SIGKILL) so a later connect() starts from a clean
             // state instead of returning early because process != nil.
-            await disconnect()
+            await disconnectLocalTransport(cancellingConnectFlight: false)
             throw error
         }
     }
@@ -225,6 +234,16 @@ extension MCPClient {
         if let httpTransport {
             await httpTransport.disconnect()
             return
+        }
+        await disconnectLocalTransport(cancellingConnectFlight: true)
+    }
+
+    private func disconnectLocalTransport(cancellingConnectFlight: Bool) async {
+        if cancellingConnectFlight {
+            // Fence any in-flight process launch/initialize before releasing this
+            // generation's handles, so a late handshake cannot make a disconnected
+            // client appear ready again.
+            localConnectFlight.cancel()
         }
 
         let connectionID = activeConnectionID
@@ -344,7 +363,7 @@ extension MCPClient {
         diagnosticMonitorProcess = monitorProcess
         diagnosticMonitorOutputHandle = outputHandle
         diagnosticMonitorConnectionID = connectionID
-        diagnosticMonitorTask = Task.detached { [self] in
+        diagnosticMonitorTask = Task.detached(name: "MCP local diagnostic reader") { [self] in
             await Self.diagnosticMonitorLoop(
                 from: outputHandle,
                 client: self,
@@ -475,7 +494,7 @@ extension MCPClient {
                 // would still be delivered to the bridge, which would execute a
                 // tool call whose result nobody awaits.
                 writeHandle.adopt(
-                    Task { [self] in
+                    Task(name: "MCP local request write") { [self] in
                         do {
                             try await self.write(payload)
                             onRequestWritten?()
@@ -487,7 +506,7 @@ extension MCPClient {
             }
         } onCancel: {
             writeHandle.cancel()
-            Task {
+            Task(name: "MCP local request cancellation") {
                 await self.cancelPendingResponse(id: requestID)
             }
         }
@@ -592,6 +611,7 @@ struct MCPLocalTransportWriter: Sendable {
     /// open without ever draining it), so the wait must be finite.
     static let defaultTeardownFrameGraceNanoseconds: UInt64 = 500_000_000
     /// Back-pressure poll interval. Deliberately not a busy loop.
+    private static let maxQueuedJobs = 128
     private static let backPressurePollNanoseconds: UInt64 = 1_000_000
 
     private let task: Task<Void, Never>
@@ -610,12 +630,14 @@ struct MCPLocalTransportWriter: Sendable {
         teardownFrameGraceNanoseconds: UInt64 = MCPLocalTransportWriter
             .defaultTeardownFrameGraceNanoseconds
     ) {
-        let (stream, continuation) = AsyncStream<Job>.makeStream()
+        let (stream, continuation) = AsyncStream<Job>.makeStream(
+            bufferingPolicy: .bufferingOldest(Self.maxQueuedJobs)
+        )
         sink = continuation
         let registry = self.registry
         let gate = MCPLocalTransportWriterDescriptorGate(descriptor: fileDescriptor)
         self.gate = gate
-        task = Task.detached {
+        task = Task.detached(name: "MCP local transport writer") {
             var writeFailure: Error?
             for await job in stream {
                 // Claim the job FOR WRITING. `nil` means it is no longer
@@ -712,11 +734,19 @@ struct MCPLocalTransportWriter: Sendable {
                     return
                 }
 
-                // If the stream has already been finished, `yield` discards the job
-                // without delivering it. Claim it back and fail it ourselves so the
-                // awaiting caller cannot hang forever.
-                if case .terminated = sink.yield(Job(id: id, payload: payload)) {
+                switch sink.yield(Job(id: id, payload: payload)) {
+                case .enqueued:
+                    break
+                case let .dropped(droppedJob):
+                    registry.withdrawIfQueued(droppedJob.id)?.resume(
+                        throwing: MCPLocalTransportWriterError.queueFull
+                    )
+                case .terminated:
                     registry.withdrawIfQueued(id)?.resume(throwing: CancellationError())
+                @unknown default:
+                    registry.withdrawIfQueued(id)?.resume(
+                        throwing: MCPLocalTransportWriterError.queueFull
+                    )
                 }
             }
         } onCancel: {
@@ -816,11 +846,11 @@ struct MCPLocalTransportWriter: Sendable {
         // waiter is resumed exactly once and never waits for the loser.
         let outcome = MCPLocalTransportWriterDeadlineBox()
         let consumer = task
-        Task.detached {
+        Task.detached(name: "MCP local writer shutdown consumer") {
             await consumer.value
             outcome.resolve(completed: true)
         }
-        Task.detached {
+        Task.detached(name: "MCP local writer shutdown deadline") {
             await MCPLocalTransportWriter.sleepIgnoringCancellation(
                 nanoseconds: timeoutNanoseconds
             )
@@ -952,6 +982,8 @@ enum MCPLocalTransportWriterError: Error, Equatable {
     case teardownAbandonedFrame
     /// The descriptor was detached (teardown completed) before this write.
     case descriptorClosed
+    /// The bounded writer queue rejected a request before any bytes reached the wire.
+    case queueFull
 }
 
 /// Resolves a bounded wait exactly once, whichever racer wins.

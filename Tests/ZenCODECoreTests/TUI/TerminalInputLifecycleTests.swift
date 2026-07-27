@@ -115,14 +115,14 @@ struct TerminalInputLifecycleTests {
         }
         // The loop publishes its token before entering the blocking read, so its
         // presence is the happens-before edge this test needs.
-        await terminalWaitUntil { reader.withPanelLock { reader.panelReadToken != nil } }
+        await terminalWaitUntil { reader.withPanelLock { $0.panelReadToken != nil } }
 
         // `stopPanelInput` cancels this token before awaiting the loop task, so
         // teardown does not wait out the pending read window.
         let clock = ContinuousClock()
         let start = clock.now
-        reader.withPanelLock {
-            reader.panelReadToken?.cancel()
+        reader.withPanelLock { state in
+            state.panelReadToken?.cancel()
         }
         loop.cancel()
         await loop.value
@@ -163,7 +163,7 @@ struct TerminalInputLifecycleTests {
         // The panel is `stopping`, so the start must park instead of claiming
         // the terminal. Its synchronous probe reports exactly that.
         await terminalWaitUntil {
-            reader.withPanelLock { !reader.panelTransitionWaiters.isEmpty }
+            reader.withPanelLock { !$0.panelTransitionWaiters.isEmpty }
         }
         #expect(admission.withLock { $0 } == nil)
 
@@ -202,7 +202,7 @@ struct TerminalInputLifecycleTests {
         }
 
         await terminalWaitUntil {
-            reader.withPanelLock { !reader.panelTransitionWaiters.isEmpty }
+            reader.withPanelLock { !$0.panelTransitionWaiters.isEmpty }
         }
         #expect(!didStop.isSignalled)
 

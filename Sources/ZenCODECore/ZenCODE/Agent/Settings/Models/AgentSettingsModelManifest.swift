@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(os)
-import os
-#endif
 
 public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {

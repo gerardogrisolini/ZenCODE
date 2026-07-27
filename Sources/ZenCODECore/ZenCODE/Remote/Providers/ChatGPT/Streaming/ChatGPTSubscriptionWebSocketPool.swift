@@ -432,7 +432,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     ) -> Task<Void, Never> {
         let interval = heartbeatIntervalNanoseconds
         let sleep = heartbeatSleep
-        return Task { [weak self] in
+        return Task(name: "ChatGPT WebSocket pool background task") { [weak self] in
             await Self.runHeartbeat(
                 intervalNanoseconds: interval,
                 sleep: sleep,

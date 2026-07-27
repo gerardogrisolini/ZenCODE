@@ -55,9 +55,8 @@ extension ZenCODESetupRunner {
             token = existingToken
         } else {
             printTelegramBotTokenGuide()
-            token = try promptString(
+            token = try promptSecret(
                 "Telegram bot token",
-                defaultValue: nil,
                 allowEmpty: false
             )
         }

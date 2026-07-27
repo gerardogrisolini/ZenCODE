@@ -5,12 +5,6 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
-import Dispatch
 import Foundation
 
 public actor ACPWriter {
@@ -36,6 +30,7 @@ public actor ACPWriter {
     }
 
     public func request(method: String, params: JSONValue) async throws -> JSONValue? {
+        try Task.checkCancellation()
         // A request issued after the fence would suspend forever: the host is
         // gone, so no response can ever resolve the continuation.
         guard !isClosed else {
@@ -57,11 +52,15 @@ public actor ACPWriter {
         let payload = try JSONEncoder().encode(requestObject)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
                 pendingRequests[key] = continuation
                 write(payload)
             }
         } onCancel: {
-            Task {
+            Task(name: "ACPWriter.cancelRequest") {
                 await self.cancelRequest(key)
             }
         }
@@ -166,8 +165,11 @@ public actor ACPWriter {
     private func requestKey(for rawID: JSONValue) -> String {
         switch rawID {
         case let .number(value):
-            let intValue = Int(value)
-            return Double(intValue) == value ? String(intValue) : String(value)
+            guard value.isFinite,
+                  let intValue = Int(exactly: value) else {
+                return String(value)
+            }
+            return String(intValue)
         case let .string(value):
             return value
         default:

@@ -83,16 +83,13 @@ enum TerminalWidth {
         guard isatty(first) == 1, isatty(second) == 1 else {
             return false
         }
-        guard let firstName = ttyname(first) else {
+        guard let firstPath = terminalPath(for: first) else {
             return nil
         }
-        // `ttyname` may reuse static storage, so materialize the first path
-        // before asking for the second descriptor.
-        let firstPath = String(cString: firstName)
-        guard let secondName = ttyname(second) else {
+        guard let secondPath = terminalPath(for: second) else {
             return nil
         }
-        return firstPath == String(cString: secondName)
+        return firstPath == secondPath
     }
 
     private static func measure(descriptors: [Int32]) -> Int? {
@@ -103,5 +100,16 @@ enum TerminalWidth {
             }
         }
         return nil
+    }
+
+    private static func terminalPath(for descriptor: Int32) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard ttyname_r(descriptor, &buffer, buffer.count) == 0 else {
+            return nil
+        }
+        return String(
+            validating: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
+            as: UTF8.self
+        )
     }
 }

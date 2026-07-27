@@ -10,12 +10,6 @@ import Foundation
 /// Stateless HTTP/SSE transport helpers for remote generation streaming.
 public enum RemoteStreamTransport {
 
-    /// Shared decoder reused across the SSE streaming hot path. `jsonObject` is
-    /// invoked once per streamed line, so recreating a `JSONDecoder` each call
-    /// is pure allocation overhead. The decoder is never mutated after creation,
-    /// which makes concurrent `decode` calls safe.
-    public static let sharedStreamJSONDecoder = JSONDecoder()
-
     /// Retrying only a transient failure before the response head keeps the
     /// POST replay boundary deliberately narrower than a body-error allowlist.
     static let maximumStreamOpeningRetries = 2
@@ -174,7 +168,7 @@ public enum RemoteStreamTransport {
 
     public static func jsonObject(from payload: String) -> [String: Any]? {
         guard let data = payload.data(using: .utf8),
-              let value = try? sharedStreamJSONDecoder.decode(JSONValue.self, from: data),
+              let value = try? JSONDecoder().decode(JSONValue.self, from: data),
               let object = value.objectValue else {
             return nil
         }

@@ -11,6 +11,10 @@ import Synchronization
 public enum AgentSettingsManifestStore {
     public static let settingsFilename = "settings.json"
     private static let defaultSettingsCache = DefaultSettingsCache()
+    /// Serializes every settings write and all read-modify-write updates. The
+    /// cache has its own lock, but it cannot protect a file read followed by a
+    /// later atomic replacement from another settings mutation.
+    private static let manifestMutationLock = Mutex<Void>(())
 
     public static func load() -> AgentSettingsManifest? {
         try? loadRequired()
@@ -69,6 +73,15 @@ public enum AgentSettingsManifestStore {
         _ manifest: AgentSettingsManifest,
         to url: URL = settingsURL()
     ) throws {
+        try manifestMutationLock.withLock { _ in
+            try saveUnlocked(manifest, to: url)
+        }
+    }
+
+    private static func saveUnlocked(
+        _ manifest: AgentSettingsManifest,
+        to url: URL
+    ) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted]
         let data = try encoder.encode(manifest)
@@ -82,109 +95,124 @@ public enum AgentSettingsManifestStore {
         modelID: String,
         thinkingSelection: AgentThinkingSelection?
     ) throws {
-        let current = try loadRequired(from: settingsURL())
-        try save(
-            AgentSettingsManifest(
-                version: current.version,
-                providers: current.providers,
-                models: current.models,
-                selectedModelID: modelID,
-                selectedThinkingSelection: thinkingSelection,
-                telegram: current.telegram,
-                voice: current.voice,
-                remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
-                localExecAllowedCommands: current.localExecAllowedCommands,
-                chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
-                anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
-                responseLanguage: current.responseLanguage
+        try manifestMutationLock.withLock { _ in
+            let current = try loadRequired(from: settingsURL())
+            try saveUnlocked(
+                AgentSettingsManifest(
+                    version: current.version,
+                    providers: current.providers,
+                    models: current.models,
+                    selectedModelID: modelID,
+                    selectedThinkingSelection: thinkingSelection,
+                    telegram: current.telegram,
+                    voice: current.voice,
+                    remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
+                    localExecAllowedCommands: current.localExecAllowedCommands,
+                    chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
+                    anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
+                    responseLanguage: current.responseLanguage
+                ),
+                to: settingsURL()
             )
-        )
+        }
     }
 
     public static func saveSelectedThinkingSelection(
         _ thinkingSelection: AgentThinkingSelection?
     ) throws {
-        let current = try loadRequired(from: settingsURL())
-        try save(
-            AgentSettingsManifest(
-                version: current.version,
-                providers: current.providers,
-                models: current.models,
-                selectedModelID: current.selectedModelID,
-                selectedThinkingSelection: thinkingSelection,
-                telegram: current.telegram,
-                voice: current.voice,
-                remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
-                localExecAllowedCommands: current.localExecAllowedCommands,
-                chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
-                anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
-                responseLanguage: current.responseLanguage
+        try manifestMutationLock.withLock { _ in
+            let current = try loadRequired(from: settingsURL())
+            try saveUnlocked(
+                AgentSettingsManifest(
+                    version: current.version,
+                    providers: current.providers,
+                    models: current.models,
+                    selectedModelID: current.selectedModelID,
+                    selectedThinkingSelection: thinkingSelection,
+                    telegram: current.telegram,
+                    voice: current.voice,
+                    remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
+                    localExecAllowedCommands: current.localExecAllowedCommands,
+                    chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
+                    anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
+                    responseLanguage: current.responseLanguage
+                ),
+                to: settingsURL()
             )
-        )
+        }
     }
 
     public static func saveChatGPTSubscriptionCredentials(
         _ credentials: CodexAgentCredentials?
     ) throws {
-        let current = try manifestForCredentialUpdate()
-        try save(
-            AgentSettingsManifest(
-                version: current.version,
-                providers: current.providers,
-                models: current.models,
-                selectedModelID: current.selectedModelID,
-                selectedThinkingSelection: current.selectedThinkingSelection,
-                telegram: current.telegram,
-                voice: current.voice,
-                remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
-                localExecAllowedCommands: current.localExecAllowedCommands,
-                chatGPTSubscriptionCredentials: credentials,
-                anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
-                responseLanguage: current.responseLanguage
+        try manifestMutationLock.withLock { _ in
+            let current = try manifestForCredentialUpdate()
+            try saveUnlocked(
+                AgentSettingsManifest(
+                    version: current.version,
+                    providers: current.providers,
+                    models: current.models,
+                    selectedModelID: current.selectedModelID,
+                    selectedThinkingSelection: current.selectedThinkingSelection,
+                    telegram: current.telegram,
+                    voice: current.voice,
+                    remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
+                    localExecAllowedCommands: current.localExecAllowedCommands,
+                    chatGPTSubscriptionCredentials: credentials,
+                    anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
+                    responseLanguage: current.responseLanguage
+                ),
+                to: settingsURL()
             )
-        )
+        }
     }
 
     public static func saveAnthropicSubscriptionCredentials(
         _ credentials: AnthropicSubscriptionCredentials?
     ) throws {
-        let current = try manifestForCredentialUpdate()
-        try save(
-            AgentSettingsManifest(
-                version: current.version,
-                providers: current.providers,
-                models: current.models,
-                selectedModelID: current.selectedModelID,
-                selectedThinkingSelection: current.selectedThinkingSelection,
-                telegram: current.telegram,
-                voice: current.voice,
-                remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
-                localExecAllowedCommands: current.localExecAllowedCommands,
-                chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
-                anthropicSubscriptionCredentials: credentials,
-                responseLanguage: current.responseLanguage
+        try manifestMutationLock.withLock { _ in
+            let current = try manifestForCredentialUpdate()
+            try saveUnlocked(
+                AgentSettingsManifest(
+                    version: current.version,
+                    providers: current.providers,
+                    models: current.models,
+                    selectedModelID: current.selectedModelID,
+                    selectedThinkingSelection: current.selectedThinkingSelection,
+                    telegram: current.telegram,
+                    voice: current.voice,
+                    remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
+                    localExecAllowedCommands: current.localExecAllowedCommands,
+                    chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
+                    anthropicSubscriptionCredentials: credentials,
+                    responseLanguage: current.responseLanguage
+                ),
+                to: settingsURL()
             )
-        )
+        }
     }
 
     public static func saveResponseLanguage(_ languageCode: String?) throws {
-        let current = try manifestForCredentialUpdate()
-        try save(
-            AgentSettingsManifest(
-                version: current.version,
-                providers: current.providers,
-                models: current.models,
-                selectedModelID: current.selectedModelID,
-                selectedThinkingSelection: current.selectedThinkingSelection,
-                telegram: current.telegram,
-                voice: current.voice,
-                remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
-                localExecAllowedCommands: current.localExecAllowedCommands,
-                chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
-                anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
-                responseLanguage: languageCode
+        try manifestMutationLock.withLock { _ in
+            let current = try manifestForCredentialUpdate()
+            try saveUnlocked(
+                AgentSettingsManifest(
+                    version: current.version,
+                    providers: current.providers,
+                    models: current.models,
+                    selectedModelID: current.selectedModelID,
+                    selectedThinkingSelection: current.selectedThinkingSelection,
+                    telegram: current.telegram,
+                    voice: current.voice,
+                    remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
+                    localExecAllowedCommands: current.localExecAllowedCommands,
+                    chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
+                    anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
+                    responseLanguage: languageCode
+                ),
+                to: settingsURL()
             )
-        )
+        }
     }
 
     private static func manifestForCredentialUpdate() throws -> AgentSettingsManifest {

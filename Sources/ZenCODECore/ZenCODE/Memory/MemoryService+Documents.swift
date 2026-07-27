@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Synchronization
 
 extension MemoryService {
     func memoryDocuments(workspaceRootURL: URL?) -> [MemoryDocument] {
@@ -34,9 +35,56 @@ extension MemoryService {
     }
 
     func readEntries(from document: MemoryDocument) -> [MemoryEntry] {
-        guard fileManager.fileExists(atPath: document.fileURL.path),
-              let content = try? String(contentsOf: document.fileURL, encoding: .utf8) else {
+        guard case let .loaded(entries) = readState(from: document) else {
             return []
+        }
+        return entries
+    }
+
+    /// Mutation paths must not treat an unreadable or malformed journal as an
+    /// empty one. Doing so would atomically replace the user's journal with a
+    /// newly rendered empty document.
+    func readEntriesForMutation(from document: MemoryDocument) throws -> [MemoryEntry] {
+        switch readState(from: document) {
+        case .missing:
+            return []
+        case let .loaded(entries):
+            return entries
+        case .unreadable:
+            throw MemoryServiceError.documentUnreadable(document.fileURL.path)
+        case .invalid:
+            throw MemoryServiceError.invalidDocument(document.fileURL.path)
+        }
+    }
+
+    private func readState(from document: MemoryDocument) -> MemoryDocumentReadState {
+        guard fileManager.fileExists(atPath: document.fileURL.path) else {
+            return .missing
+        }
+        let content: String
+        do {
+            content = try String(contentsOf: document.fileURL, encoding: .utf8)
+        } catch {
+            return .unreadable
+        }
+        guard let entries = parseEntries(from: content, document: document) else {
+            return .invalid
+        }
+        return .loaded(entries)
+    }
+
+    private func parseEntries(
+        from content: String,
+        document: MemoryDocument
+    ) -> [MemoryEntry]? {
+        let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedContent.isEmpty
+                || content.components(separatedBy: .newlines).contains(where: { line in
+                    let normalizedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                    return normalizedLine == "## active" || normalizedLine == "## archived"
+                }) else {
+            return nil
         }
 
         var entries: [MemoryEntry] = []
@@ -236,6 +284,8 @@ public enum MemoryServiceError: LocalizedError {
     case scopeUnavailable(String)
     case invalidIdentifier(String)
     case entryNotFound(String)
+    case documentUnreadable(String)
+    case invalidDocument(String)
 
     public var errorDescription: String? {
         switch self {
@@ -247,6 +297,48 @@ public enum MemoryServiceError: LocalizedError {
             return "Invalid memory identifier: \(identifier)."
         case let .entryNotFound(identifier):
             return "No active memory entry was found for \(identifier)."
+        case let .documentUnreadable(path):
+            return "MEMORY.md could not be read safely at \(path); it was left unchanged."
+        case let .invalidDocument(path):
+            return "MEMORY.md has an unrecognized format at \(path); it was left unchanged."
         }
+    }
+}
+
+private enum MemoryDocumentReadState {
+    case missing
+    case loaded([MemoryEntry])
+    case unreadable
+    case invalid
+}
+
+/// Coordinates a complete read-modify-write transaction by standardized file
+/// URL. It is shared by every `MemoryService` instance in this process.
+final class MemoryDocumentWriteCoordinator: @unchecked Sendable {
+    static let shared = MemoryDocumentWriteCoordinator()
+
+    private final class DocumentLock: @unchecked Sendable {
+        private let mutex = Mutex(())
+
+        func withLock<T>(_ body: () throws -> T) rethrows -> T {
+            try mutex.withLock { _ in
+                try body()
+            }
+        }
+    }
+
+    private let locks = Mutex<[URL: DocumentLock]>([:])
+
+    func withLock<T>(for fileURL: URL, _ body: () throws -> T) rethrows -> T {
+        let standardizedURL = fileURL.standardizedFileURL
+        let documentLock = locks.withLock { locks in
+            if let existingLock = locks[standardizedURL] {
+                return existingLock
+            }
+            let newLock = DocumentLock()
+            locks[standardizedURL] = newLock
+            return newLock
+        }
+        return try documentLock.withLock(body)
     }
 }

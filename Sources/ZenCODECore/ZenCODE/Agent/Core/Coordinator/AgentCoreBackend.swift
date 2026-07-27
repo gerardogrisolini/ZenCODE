@@ -24,6 +24,9 @@ public actor AgentCoreBackend {
     private let configuration: AgentRuntimeConfiguration
     private let mcpRuntime: DirectMCPToolRuntime
     private var activeBackend: (any AgentRuntimeBackend)?
+    /// Fences an in-flight backend installation when shutdown releases the
+    /// runtime while one of its asynchronous setup calls is suspended.
+    private var backendGeneration: UInt64 = 0
     // AgentCoreSessionRunner owns application/session persistence snapshots.
     // AgentCoreBackend owns only transient seed state used to hydrate its active runtime backend.
     private var sessions: [String: SessionSeed] = [:]
@@ -211,12 +214,14 @@ public actor AgentCoreBackend {
     }
 
     public func shutdown() async {
+        backendGeneration &+= 1
         sessions.removeAll()
         toolProvidersBySessionID.removeAll()
-        if let backend = activeBackend {
+        let backend = activeBackend
+        activeBackend = nil
+        if let backend {
             await backend.shutdown()
         }
-        activeBackend = nil
     }
 
     public func preloadModel(
@@ -294,26 +299,17 @@ public actor AgentCoreBackend {
         if let activeBackend {
             return activeBackend
         }
+        let generation = backendGeneration
 
         if let backendFactory {
             let backend = try backendFactory(configuration, mcpRuntime)
-            activeBackend = backend
-            await applyTaskOrchestrator(to: backend)
-            await applyBorrowedSubAgentToolExecutor(to: backend)
-            await applyToolProviders(to: backend)
-            for (sessionID, seed) in sessions {
-                await backend.createSession(
-                    id: sessionID,
-                    cwd: seed.cwd,
-                    systemPrompt: seed.systemPrompt,
-                    history: seed.history,
-                    cacheKey: seed.cacheKey,
-                    allowedToolNames: seed.allowedToolNames,
-                    thinkingSelection: seed.thinkingSelection,
-                    preserveThinking: seed.preserveThinking
-                )
+            do {
+                try await installResolvedBackend(backend, generation: generation)
+                return backend
+            } catch {
+                await backend.shutdown()
+                throw error
             }
-            return backend
         }
 
         let selection = AgentSettingsStore.defaultSelection(
@@ -326,12 +322,31 @@ public actor AgentCoreBackend {
         if !configuration.appMode,
            let provider = selection?.remoteProvider {
             await onEvent(.status("Using remote provider \(provider.displayTitle)."))
+            try verifyBackendGeneration(generation)
         }
 
-        activeBackend = backend
+        do {
+            try await installResolvedBackend(backend, generation: generation)
+            return backend
+        } catch {
+            await backend.shutdown()
+            throw error
+        }
+    }
+
+    /// Hydrates a backend completely before making it observable through
+    /// `activeBackend`. Publishing earlier lets another caller use a runtime
+    /// without its task orchestrator, borrowed executor, providers, or sessions.
+    private func installResolvedBackend(
+        _ backend: any AgentRuntimeBackend,
+        generation: UInt64
+    ) async throws {
         await applyTaskOrchestrator(to: backend)
+        try verifyBackendGeneration(generation)
         await applyBorrowedSubAgentToolExecutor(to: backend)
+        try verifyBackendGeneration(generation)
         await applyToolProviders(to: backend)
+        try verifyBackendGeneration(generation)
         for (sessionID, seed) in sessions {
             await backend.createSession(
                 id: sessionID,
@@ -343,8 +358,15 @@ public actor AgentCoreBackend {
                 thinkingSelection: seed.thinkingSelection,
                 preserveThinking: seed.preserveThinking
             )
+            try verifyBackendGeneration(generation)
         }
-        return backend
+        activeBackend = backend
+    }
+
+    private func verifyBackendGeneration(_ generation: UInt64) throws {
+        guard generation == backendGeneration else {
+            throw CancellationError()
+        }
     }
 
     private func applyTaskOrchestrator(

@@ -46,7 +46,9 @@ public actor DirectSubAgentRuntime {
         }
     }
 
-    public struct AgentRecord {
+    /// Actor-internal mutable storage. External callers receive
+    /// `AgentSnapshot`, which is a Sendable value projection.
+    struct AgentRecord {
         public let id: String
         public let sessionID: String
         public let rootSessionID: String
@@ -299,7 +301,14 @@ public actor DirectSubAgentRuntime {
     public let backendFactory: DirectSubAgentContextualBackendFactory
     public let profileResolver: DirectSubAgentProfileResolver
     public var taskOrchestrator: SessionTaskOrchestrator?
-    public var agents: [String: AgentRecord] = [:]
+    private var agentStorage: [String: AgentRecord] = [:]
+    /// Lifecycle-transition failures that happen during global shutdown, when
+    /// no individual agent record remains available to carry the error.
+    public private(set) var lastLifecycleErrors: [String] = []
+    var agents: [String: AgentRecord] {
+        get { agentStorage }
+        set { agentStorage = newValue }
+    }
     var latestOverviewBatchID: UUID?
 
     public init(
@@ -356,12 +365,18 @@ public actor DirectSubAgentRuntime {
             for record in records {
                 if let taskID = record.taskID,
                    let attemptID = record.taskAttemptID {
-                    _ = try? await taskOrchestrator.interruptAttempt(
-                        sessionID: record.rootSessionID,
-                        taskID: taskID,
-                        attemptID: attemptID,
-                        reason: "delegated backend shutdown interrupted execution"
-                    )
+                    do {
+                        _ = try await taskOrchestrator.interruptAttempt(
+                            sessionID: record.rootSessionID,
+                            taskID: taskID,
+                            attemptID: attemptID,
+                            reason: "delegated backend shutdown interrupted execution"
+                        )
+                    } catch {
+                        lastLifecycleErrors.append(
+                            "Unable to interrupt task \(taskID) during shutdown: \(error.localizedDescription)"
+                        )
+                    }
                 }
                 await taskOrchestrator.unregisterExecutionScope(
                     executionSessionID: record.sessionID

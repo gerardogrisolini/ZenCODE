@@ -150,7 +150,7 @@ extension TerminalInteractiveLineReader {
     }
 
     func tildeTerminatedKey(_ bytes: [UInt8]) -> Key {
-        guard let sequence = String(bytes: bytes.dropLast(), encoding: .utf8) else {
+        guard let sequence = String(validating: bytes.dropLast(), as: UTF8.self) else {
             return .unknown
         }
         let components = sequence.split(separator: ";").map(String.init)
@@ -179,7 +179,7 @@ extension TerminalInteractiveLineReader {
     }
 
     func csiUKey(_ bytes: [UInt8]) -> Key {
-        guard let sequence = String(bytes: bytes.dropLast(), encoding: .utf8) else {
+        guard let sequence = String(validating: bytes.dropLast(), as: UTF8.self) else {
             return .unknown
         }
         let components = sequence.split(separator: ";").map(String.init)
@@ -316,7 +316,7 @@ extension TerminalInteractiveLineReader {
             return nil
         }
         guard byteCount > 1 else {
-            return String(bytes: [firstByte], encoding: .utf8)
+            return String(validating: [firstByte], as: UTF8.self)
         }
 
         var bytes = [firstByte]
@@ -326,7 +326,7 @@ extension TerminalInteractiveLineReader {
             }
             bytes.append(byte)
         }
-        return String(bytes: bytes, encoding: .utf8)
+        return String(validating: bytes, as: UTF8.self)
     }
 
     func utf8ByteCount(startingWith byte: UInt8) -> Int {

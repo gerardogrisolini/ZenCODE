@@ -210,7 +210,7 @@ public final class TerminalRawInput: Sendable {
             return true
         }
 
-        guard withSIGTTOUIgnored({ tcsetpgrp(fileDescriptor, currentProcessGroup) == 0 }) else {
+        guard withSIGTTOUBlocked({ tcsetpgrp(fileDescriptor, currentProcessGroup) == 0 }) else {
             return false
         }
         return tcgetpgrp(fileDescriptor) == currentProcessGroup
@@ -249,7 +249,7 @@ public final class TerminalRawInput: Sendable {
         }
 
         var rawAttributes = Self.rawTerminalAttributes(from: attributes)
-        let didSetAttributes = Self.withSIGTTOUIgnored {
+        let didSetAttributes = Self.withSIGTTOUBlocked {
             tcsetattr(fileDescriptor, TCSANOW, &rawAttributes) == 0
         }
         guard didSetAttributes else {
@@ -264,12 +264,19 @@ public final class TerminalRawInput: Sendable {
     }
 
     private static func terminalPath(for fileDescriptor: Int32) -> String? {
-        guard isatty(fileDescriptor) == 1,
-              let path = ttyname(fileDescriptor) else {
+        guard isatty(fileDescriptor) == 1 else {
             return nil
         }
-        let value = String(cString: path)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard ttyname_r(fileDescriptor, &buffer, buffer.count) == 0 else {
+            return nil
+        }
+        guard let value = String(
+            validating: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
+            as: UTF8.self
+        )?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return nil
+        }
         return value.isEmpty ? nil : value
     }
 
@@ -280,7 +287,7 @@ public final class TerminalRawInput: Sendable {
             }
             disableBracketedPasteLocked(state: &state)
             restoreEnhancedKeyboardProtocolLocked(state: &state)
-            _ = Self.withSIGTTOUIgnored {
+            _ = Self.withSIGTTOUBlocked {
                 tcsetattr(fileDescriptor, TCSANOW, &attributes)
             }
             state.originalAttributes = nil
@@ -338,10 +345,16 @@ public final class TerminalRawInput: Sendable {
         return rawAttributes
     }
 
-    private static func withSIGTTOUIgnored<T>(_ body: () -> T) -> T {
-        let previousSIGTTOUHandler = signal(SIGTTOU, SIG_IGN)
+    private static func withSIGTTOUBlocked<T>(_ body: () -> T) -> T {
+        var signalSet = sigset_t()
+        sigemptyset(&signalSet)
+        sigaddset(&signalSet, SIGTTOU)
+        var previousSignalSet = sigset_t()
+        guard pthread_sigmask(SIG_BLOCK, &signalSet, &previousSignalSet) == 0 else {
+            return body()
+        }
         defer {
-            signal(SIGTTOU, previousSIGTTOUHandler)
+            _ = pthread_sigmask(SIG_SETMASK, &previousSignalSet, nil)
         }
         return body()
     }

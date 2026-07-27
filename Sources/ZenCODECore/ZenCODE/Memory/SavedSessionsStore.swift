@@ -54,8 +54,10 @@ public final class SavedSessionsStore {
     /// Returns all saved-session entries, most recently saved first.
     public func sessions() -> [SavedSessionIndexEntry] {
         writeLock.withLock {
-            readIndexFile().sessions
-                .sorted { $0.savedAt > $1.savedAt }
+            guard let index = try? readIndexFile() else {
+                return []
+            }
+            return index.sessions.sorted { $0.savedAt > $1.savedAt }
         }
     }
 
@@ -93,7 +95,7 @@ public final class SavedSessionsStore {
         )
 
         return try writeLock.withLock {
-            var index = readIndexFile()
+            var index = try readIndexFile()
             index.sessions.removeAll { $0.projectPath == normalizedProjectPath }
             index.sessions.insert(entry, at: 0)
             index.sessions.sort { $0.savedAt > $1.savedAt }
@@ -111,17 +113,26 @@ public final class SavedSessionsStore {
         return AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
     }
 
-    private func readIndexFile() -> IndexFile {
+    private func readIndexFile() throws -> IndexFile {
         let fileURL = sessionsFileURL()
-        guard fileManager.fileExists(atPath: fileURL.path),
-              let data = try? Data(contentsOf: fileURL) else {
+        guard fileManager.fileExists(atPath: fileURL.path) else {
             return IndexFile(version: 1, sessions: [])
+        }
+
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            throw SavedSessionsStoreError.unreadableIndex(fileURL.path)
         }
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode(IndexFile.self, from: data))
-            ?? IndexFile(version: 1, sessions: [])
+        do {
+            return try decoder.decode(IndexFile.self, from: data)
+        } catch {
+            throw SavedSessionsStoreError.invalidIndex(fileURL.path)
+        }
     }
 
     private func writeIndexFile(_ index: IndexFile) throws {
@@ -134,5 +145,19 @@ public final class SavedSessionsStore {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(index).write(to: fileURL, options: .atomic)
+    }
+}
+
+public enum SavedSessionsStoreError: LocalizedError {
+    case unreadableIndex(String)
+    case invalidIndex(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .unreadableIndex(path):
+            return "Saved sessions index could not be read at \(path); it was left unchanged."
+        case let .invalidIndex(path):
+            return "Saved sessions index is invalid at \(path); it was left unchanged."
+        }
     }
 }

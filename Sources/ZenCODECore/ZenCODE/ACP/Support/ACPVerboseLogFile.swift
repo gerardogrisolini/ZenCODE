@@ -35,7 +35,7 @@ public actor ACPVerboseLogFile {
                 _ = fileManager.createFile(atPath: url.path, contents: nil)
             }
             let handle = try FileHandle(forWritingTo: url)
-            handle.seekToEndOfFile()
+            try handle.seekToEnd()
             return ACPVerboseLogFile(url: url, handle: handle)
         } catch {
             return nil
@@ -47,12 +47,17 @@ public actor ACPVerboseLogFile {
         guard let data = line.data(using: .utf8) else {
             return
         }
-        handle.write(data)
-        handle.synchronizeFile()
+        do {
+            try handle.write(contentsOf: data)
+            try handle.synchronize()
+        } catch {
+            // ACP verbose logging is deliberately best-effort: a disk failure
+            // must not interrupt protocol traffic or an active agent turn.
+        }
     }
 
     deinit {
-        handle.closeFile()
+        try? handle.close()
     }
 
     private static func filenameTimestamp() -> String {

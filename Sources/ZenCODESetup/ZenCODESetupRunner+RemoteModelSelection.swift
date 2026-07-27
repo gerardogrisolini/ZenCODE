@@ -13,7 +13,7 @@ extension ZenCODESetupRunner {
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint,
         apiKey: String?,
-        existingModels: [AgentSettingsModelManifest]
+        existingModels: [AgentSettingsModelManifest],
     ) async throws -> [AgentSettingsModelManifest] {
         var models: [AgentSettingsModelManifest] = existingModels.map { model in
             modelWithProvider(
@@ -179,7 +179,7 @@ extension ZenCODESetupRunner {
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint,
         apiKey: String?,
-        existingModels: [AgentSettingsModelManifest]
+        existingModels: [AgentSettingsModelManifest],
     ) async throws -> [AgentSettingsModelManifest] {
         let existingModelIDs = Set(
             existingModels.map { normalizedRemoteModelID($0.modelID) }
@@ -285,6 +285,10 @@ extension ZenCODESetupRunner {
         do {
             _ = try await CodexAgentModel.loadValidCredentials()
             return
+        } catch is CancellationError {
+            // A cooperative cancellation must not be mistaken for "not signed
+            // in"; propagate it so the surrounding setup task unwinds.
+            throw CancellationError()
         } catch {
             AgentOutput.standardError.writeString(
                 "ChatGPT Subscription is not connected. Opening ChatGPT login in the browser.\n"
@@ -336,10 +340,21 @@ extension ZenCODESetupRunner {
         do {
             _ = try await AnthropicSubscriptionAuthService.loadValidCredentials()
             return
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as AnthropicSubscriptionAuthError {
+            // Only missing/invalid credentials are recoverable by starting a new
+            // sign-in; structural or transport errors must surface unchanged.
+            switch error {
+            case .missingCredentials, .invalidCredentials:
+                AgentOutput.standardError.writeString(
+                    "Claude Subscription is not connected. Opening Claude login in the browser.\n"
+                )
+            default:
+                throw error
+            }
         } catch {
-            AgentOutput.standardError.writeString(
-                "Claude Subscription is not connected. Opening Claude login in the browser.\n"
-            )
+            throw error
         }
 
         let session = try await AnthropicSubscriptionAuthService.startSignIn()
@@ -361,9 +376,8 @@ extension ZenCODESetupRunner {
             )
         }
 
-        let authorizationInput = try promptString(
+        let authorizationInput = try promptSecret(
             "Authorization code",
-            defaultValue: nil,
             allowEmpty: false
         )
         try session.submitAuthorizationInput(authorizationInput)
@@ -380,14 +394,27 @@ extension ZenCODESetupRunner {
         apiKey: String?
     ) async throws -> [AgentSettingsModelManifest] {
         if try promptYesNo("Load the model list from the server /models endpoint?", defaultValue: true) {
+            // Narrow the recoverable catch to the remote request only: a
+            // cancellation or an error raised later (model selection, metadata
+            // prompts) must not be swallowed as "could not load models".
+            let catalogModels: [OpenRouterModelInfo]
             do {
-                let catalogModels = try await RemoteModelCatalogClient()
+                catalogModels = try await RemoteModelCatalogClient()
                     .fetchModels(baseURL: baseURL, apiKey: apiKey)
                     .sorted(by: remoteModelSort)
-                guard !catalogModels.isEmpty else {
-                    throw ZenCODESetupError.noRemoteModelsReturned
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                AgentOutput.standardError.writeString(
+                    "Unable to load /models: \(error.localizedDescription)\n"
+                )
+                guard try promptYesNo("Enter models manually?", defaultValue: true) else {
+                    throw error
                 }
+                catalogModels = []
+            }
 
+            if !catalogModels.isEmpty {
                 let selectedModels = try selectRemoteModels(from: catalogModels)
                 let manifests = selectedModels.map {
                     remoteModelManifest(
@@ -402,13 +429,6 @@ extension ZenCODESetupRunner {
                     providerName: providerName,
                     models: manifests
                 )
-            } catch {
-                AgentOutput.standardError.writeString(
-                    "Unable to load /models: \(error.localizedDescription)\n"
-                )
-                guard try promptYesNo("Enter models manually?", defaultValue: true) else {
-                    throw error
-                }
             }
         }
 

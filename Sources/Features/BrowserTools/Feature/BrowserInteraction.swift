@@ -9,6 +9,7 @@
 
 import FeatureKit
 import Foundation
+import Synchronization
 
 // MARK: - Errors and output
 
@@ -167,9 +168,11 @@ private enum BrowserInteractionText {
     }
 }
 
-private final class BrowserDialogObserver: @unchecked Sendable {
-    private let lock = NSLock()
-    private var latestDialog: BrowserDialogInfo?
+private final class BrowserDialogObserver: Sendable {
+    private struct State: Sendable {
+        var latestDialog: BrowserDialogInfo?
+    }
+    private let state = Mutex(State())
 
     func consume(_ event: CDPEvent) {
         guard event.method == "Page.javascriptDialogOpening" else { return }
@@ -180,15 +183,16 @@ private final class BrowserDialogObserver: @unchecked Sendable {
             defaultPrompt: BrowserInteractionText.clipped(params["defaultPrompt"] as? String),
             url: BrowserInteractionText.clipped(params["url"] as? String)
         )
-        lock.lock()
-        latestDialog = dialog
-        lock.unlock()
+        state.withLock { state in
+            state.latestDialog = dialog
+            return
+        }
     }
 
     var dialog: BrowserDialogInfo? {
-        lock.lock()
-        defer { lock.unlock() }
-        return latestDialog
+        state.withLock { state in
+            state.latestDialog
+        }
     }
 }
 

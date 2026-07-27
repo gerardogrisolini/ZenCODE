@@ -13,7 +13,7 @@ import Foundation
 public typealias DirectTodoTaskRuntime = DirectTodoRuntime
 
 public actor DirectTodoRuntime {
-    public enum TodoStatus: String {
+    public enum TodoStatus: String, Sendable {
         case pending
         case inProgress = "in_progress"
         case completed
@@ -37,7 +37,7 @@ public actor DirectTodoRuntime {
         }
     }
 
-    public enum TodoWriteMode: String {
+    public enum TodoWriteMode: String, Sendable {
         case replace
         case append
         case upsert
@@ -51,18 +51,23 @@ public actor DirectTodoRuntime {
         }
     }
 
-    public struct Todo {
+    public struct Todo: Sendable {
         public let id: String
         public var content: String
         public var status: TodoStatus
         public var dependsOn: [String]? = nil
     }
 
-    public struct SessionState {
+    struct SessionState: Sendable {
         public var todos: [Todo] = []
     }
 
-    public var sessions: [String: SessionState] = [:]
+    private var sessions: [String: SessionState] = [:]
+
+    /// Sendable value projection of one session's todo storage.
+    public func todosSnapshot(sessionID: String? = nil) -> [Todo] {
+        sessions[sessionID?.nilIfBlank ?? "default"]?.todos ?? []
+    }
 
     public static func isTodoToolName(_ rawName: String) -> Bool {
         SubAgentToolRequestCompatibility.canonicalToolName(for: rawName)?.hasPrefix("todo.") == true

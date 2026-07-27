@@ -61,7 +61,7 @@ extension TerminalChat {
             activeVoiceRecordingSession = nil
             await clearVoicePanelMode()
             await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            return Task {}
+            return Task(name: "ZenCODE.TUI.empty-voice-transcription") {}
         }
     }
 
@@ -104,7 +104,7 @@ extension TerminalChat {
         origin: TerminalPromptOrigin,
         eventQueue: TerminalChatEventQueue
     ) -> Task<Void, Never> {
-        Task {
+        Task(name: "ZenCODE.TUI.voice-transcription") {
             do {
                 let transcript = try await AgentVoiceTranscriptionService()
                     .transcribe(audio) { message in

@@ -5,24 +5,18 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
-import Dispatch
 import Foundation
 
 extension ZenCODEACPBridge {
     public func sendUserMessageChunk(sessionID: String, text: String) async {
         await writer.sendSessionUpdate(
             sessionID: sessionID,
-            update: JSONValue.acpValue(from: [
-                "sessionUpdate": "user_message_chunk",
-                "content": [
-                    "type": "text",
-                    "text": text
-                ]
+            update: .object([
+                "sessionUpdate": .string("user_message_chunk"),
+                "content": .object([
+                    "type": .string("text"),
+                    "text": .string(text)
+                ])
             ])
         )
     }
@@ -30,10 +24,10 @@ extension ZenCODEACPBridge {
     public func sendSessionInfoUpdate(sessionID: String, title: String) async {
         await writer.sendSessionUpdate(
             sessionID: sessionID,
-            update: JSONValue.acpValue(from: [
-                "sessionUpdate": "session_info_update",
-                "title": title,
-                "updatedAt": ISO8601DateFormatter().string(from: Date())
+            update: .object([
+                "sessionUpdate": .string("session_info_update"),
+                "title": .string(title),
+                "updatedAt": .string(ISO8601DateFormatter().string(from: Date()))
             ])
         )
     }
@@ -65,6 +59,22 @@ extension ZenCODEACPBridge {
         ]
     }
 
+    /// Sendable ACP wire representation used by prompt event callbacks.
+    public static func toolCallCreateJSONUpdate(
+        for toolCall: DirectAgentToolCall
+    ) -> JSONValue {
+        .object([
+            "sessionUpdate": .string("tool_call"),
+            "toolCallId": .string(toolCall.id),
+            "title": .string(toolTitle(for: toolCall)),
+            "kind": .string(toolKind(for: toolCall.name)),
+            "status": .string("pending"),
+            "rawInput": toolArgumentsJSONValue(for: toolCall),
+            "content": .array([]),
+            "locations": .array(toolLocations(for: toolCall).map { JSONValue.acpValue(from: $0) })
+        ])
+    }
+
     public static func usageUpdate(
         for status: DirectAgentContextWindowStatus
     ) -> [String: Any]? {
@@ -84,6 +94,26 @@ extension ZenCODEACPBridge {
             ]
         ]
         return update
+    }
+
+    public static func usageJSONUpdate(
+        for status: DirectAgentContextWindowStatus
+    ) -> JSONValue? {
+        guard let usedTokens = status.usedTokens,
+              let maxTokens = status.maxTokens else {
+            return nil
+        }
+        let used = max(0, usedTokens)
+        let size = max(used, maxTokens)
+        return .object([
+            "sessionUpdate": .string("usage_update"),
+            "used": .number(Double(used)),
+            "size": .number(Double(size)),
+            "_meta": .object([
+                "modelID": .string(status.modelID),
+                "isApproximate": .bool(status.isApproximate)
+            ])
+        ])
     }
 
     public static func subscriptionUsageUpdate(
@@ -111,6 +141,31 @@ extension ZenCODEACPBridge {
         ]
     }
 
+    public static func subscriptionUsageJSONUpdate(
+        for status: DirectAgentSubscriptionUsageStatus
+    ) -> JSONValue? {
+        guard status.hasValues else {
+            return nil
+        }
+        var meta: [String: JSONValue] = ["provider": .string(status.provider)]
+        if let dailyUsedPercent = status.dailyUsedPercent, dailyUsedPercent.isFinite {
+            meta["dailyUsedPercent"] = .number(dailyUsedPercent)
+        }
+        if let weeklyUsedPercent = status.weeklyUsedPercent, weeklyUsedPercent.isFinite {
+            meta["weeklyUsedPercent"] = .number(weeklyUsedPercent)
+        }
+        if let dailyResetsInSeconds = status.dailyResetsInSeconds {
+            meta["dailyResetsInSeconds"] = .number(Double(dailyResetsInSeconds))
+        }
+        if let weeklyResetsInSeconds = status.weeklyResetsInSeconds {
+            meta["weeklyResetsInSeconds"] = .number(Double(weeklyResetsInSeconds))
+        }
+        return .object([
+            "sessionUpdate": .string("subscription_usage_update"),
+            "_meta": .object(meta)
+        ])
+    }
+
     public static func toolCallProgressUpdate(
         for toolCall: DirectAgentToolCall
     ) -> [String: Any] {
@@ -123,6 +178,20 @@ extension ZenCODEACPBridge {
             "rawInput": toolCall.argumentsObject,
             "locations": toolLocations(for: toolCall)
         ]
+    }
+
+    public static func toolCallProgressJSONUpdate(
+        for toolCall: DirectAgentToolCall
+    ) -> JSONValue {
+        .object([
+            "sessionUpdate": .string("tool_call_update"),
+            "toolCallId": .string(toolCall.id),
+            "title": .string(toolTitle(for: toolCall)),
+            "kind": .string(toolKind(for: toolCall.name)),
+            "status": .string("in_progress"),
+            "rawInput": toolArgumentsJSONValue(for: toolCall),
+            "locations": .array(toolLocations(for: toolCall).map { JSONValue.acpValue(from: $0) })
+        ])
     }
 
     public static func toolCallCompletionUpdate(
@@ -151,6 +220,55 @@ extension ZenCODEACPBridge {
             ],
             "locations": toolLocations(for: toolCall)
         ]
+    }
+
+    public static func toolCallCompletionJSONUpdate(
+        for toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult
+    ) -> JSONValue {
+        .object([
+            "sessionUpdate": .string("tool_call_update"),
+            "toolCallId": .string(toolCall.id),
+            "title": .string(toolTitle(for: toolCall)),
+            "kind": .string(toolKind(for: toolCall.name)),
+            "status": .string(result.isFailure ? "failed" : "completed"),
+            "rawInput": toolArgumentsJSONValue(for: toolCall),
+            "rawOutput": .object([
+                "output": .string(result.output),
+                "summary": .string(result.summary)
+            ]),
+            "content": .array([
+                .object([
+                    "type": .string("content"),
+                    "content": .object([
+                        "type": .string("text"),
+                        "text": .string(result.output)
+                    ])
+                ])
+            ]),
+            "locations": .array(toolLocations(for: toolCall).map { JSONValue.acpValue(from: $0) })
+        ])
+    }
+
+    static func textChunkJSONUpdate(kind: String, text: String) -> JSONValue {
+        .object([
+            "sessionUpdate": .string(kind),
+            "content": .object([
+                "type": .string("text"),
+                "text": .string(text)
+            ])
+        ])
+    }
+
+    private static func toolArgumentsJSONValue(
+        for toolCall: DirectAgentToolCall
+    ) -> JSONValue {
+        guard let data = toolCall.argumentsJSON.data(using: .utf8),
+              let value = try? JSONDecoder().decode(JSONValue.self, from: data),
+              let arguments = value.objectValue else {
+            return .object([:])
+        }
+        return .object(arguments)
     }
 
     // Kept as forwarding APIs for ACP clients that previously used these helpers.

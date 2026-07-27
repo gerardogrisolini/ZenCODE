@@ -347,6 +347,8 @@ extension ZenCODESetupRunner {
             defaultChoice = 0
         case .responses:
             defaultChoice = 1
+        @unknown default:
+            defaultChoice = 0
         }
         let choice = try promptMenuChoice(
             title: "Endpoint",

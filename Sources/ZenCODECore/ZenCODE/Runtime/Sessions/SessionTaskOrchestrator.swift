@@ -158,6 +158,12 @@ public actor SessionTaskOrchestrator {
     ) throws {
         let sessionID = try normalizedSessionID(rawSessionID)
         let workingDirectory = workingDirectory.standardizedFileURL
+        if let existingWorkingDirectory = workingDirectories[sessionID],
+           existingWorkingDirectory != workingDirectory {
+            throw SessionTaskOrchestratorError.invalidSnapshot(
+                "session \(sessionID) is already registered for \(existingWorkingDirectory.path), not \(workingDirectory.path)"
+            )
+        }
         workingDirectories[sessionID] = workingDirectory
 
         guard restoreIfAvailable,

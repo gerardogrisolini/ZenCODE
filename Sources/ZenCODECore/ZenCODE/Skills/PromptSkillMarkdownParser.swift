@@ -14,6 +14,11 @@ import Crypto
 import Foundation
 
 public enum PromptSkillMarkdownParser {
+    /// Keep remote/local skill parsing bounded before `Data(contentsOf:)`; a
+    /// repository-controlled SKILL.md must not turn installation into an
+    /// unbounded read from a device or a huge regular file.
+    public static let maximumSkillMarkdownBytes = 1_000_000
+
     public static func parse(url: URL) throws -> PromptSkillPayload {
         #if os(macOS)
         let didStartAccessing = url.startAccessingSecurityScopedResource()
@@ -23,6 +28,27 @@ public enum PromptSkillMarkdownParser {
             }
         }
         #endif
+
+        let values: URLResourceValues
+        do {
+            values = try url.resourceValues(forKeys: [
+                .isSymbolicLinkKey,
+                .isRegularFileKey,
+                .fileSizeKey
+            ])
+        } catch {
+            throw PromptSkillError.unreadableFile(url)
+        }
+        guard values.isSymbolicLink != true, values.isRegularFile == true else {
+            throw PromptSkillError.unsafeFile(url)
+        }
+        guard let fileSize = values.fileSize,
+              fileSize <= maximumSkillMarkdownBytes else {
+            throw PromptSkillError.fileTooLarge(
+                url,
+                maximumBytes: maximumSkillMarkdownBytes
+            )
+        }
 
         guard let markdownData = try? Data(contentsOf: url),
               let markdown = String(data: markdownData, encoding: .utf8) else {
@@ -127,13 +153,18 @@ public enum PromptSkillMarkdownParser {
         }
 
         var metadata: [String: String] = [:]
-        for rawLine in rawFrontMatter.components(separatedBy: "\n") {
+        let lines = rawFrontMatter.components(separatedBy: "\n")
+        var index = 0
+        while index < lines.count {
+            let rawLine = lines[index]
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !line.isEmpty, !line.hasPrefix("#") else {
+                index += 1
                 continue
             }
 
             guard let separatorIndex = line.firstIndex(of: ":") else {
+                index += 1
                 continue
             }
 
@@ -141,13 +172,71 @@ public enum PromptSkillMarkdownParser {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let value = line[line.index(after: separatorIndex)...]
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let unquotedValue = unquote(value)
-
-            guard !key.isEmpty, !unquotedValue.isEmpty else {
+            guard !key.isEmpty else {
+                index += 1
                 continue
             }
 
-            metadata[key] = unquotedValue
+            // YAML block scalar, limited deliberately to front-matter scalar
+            // values. Continuation lines must be more indented than the key.
+            // `|` retains line breaks; `>` folds ordinary continuation lines.
+            let blockStyle = value.first
+            if blockStyle == "|" || blockStyle == ">" {
+                let keyIndent = rawLine.prefix { $0 == " " || $0 == "\t" }.count
+                var blockLines: [String] = []
+                index += 1
+                while index < lines.count {
+                    let continuation = lines[index]
+                    let continuationIndent = continuation.prefix {
+                        $0 == " " || $0 == "\t"
+                    }.count
+                    if !continuation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       continuationIndent <= keyIndent {
+                        break
+                    }
+                    if continuation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        blockLines.append("")
+                    } else {
+                        let dropCount = min(continuation.count, keyIndent + 1)
+                        blockLines.append(String(continuation.dropFirst(dropCount)))
+                    }
+                    index += 1
+                }
+                let normalizedLines = blockLines.map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                let scalar: String
+                if blockStyle == "|" {
+                    scalar = normalizedLines.joined(separator: "\n")
+                } else {
+                    scalar = normalizedLines.reduce(into: "") { result, next in
+                        if next.isEmpty {
+                            result += "\n"
+                        } else if result.isEmpty || result.hasSuffix("\n") {
+                            result += next
+                        } else {
+                            result += " " + next
+                        }
+                    }
+                }
+                let chomp = value.dropFirst().first
+                let finalValue = chomp == "-"
+                    ? scalar.trimmingCharacters(in: .newlines)
+                    : scalar
+                if !finalValue.isEmpty {
+                    metadata[String(key)] = finalValue
+                }
+                continue
+            }
+
+            let unquotedValue = unquote(value)
+            guard !unquotedValue.isEmpty else {
+                index += 1
+                continue
+            }
+
+            metadata[String(key)] = unquotedValue
+            index += 1
         }
 
         return metadata

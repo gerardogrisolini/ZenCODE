@@ -95,6 +95,9 @@ extension RemoteModelCatalogClient {
 
             return metadata.isEmpty ? nil : metadata
         } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                throw error
+            }
             return nil
         }
     }
@@ -124,6 +127,9 @@ extension RemoteModelCatalogClient {
             )
             return try decodeJSON(JSONValue.self, from: data)
         } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                throw error
+            }
             return nil
         }
     }
@@ -139,6 +145,9 @@ extension RemoteModelCatalogClient {
             )
             return String(data: data, encoding: .utf8)?.nilIfBlank
         } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                throw error
+            }
             return nil
         }
     }

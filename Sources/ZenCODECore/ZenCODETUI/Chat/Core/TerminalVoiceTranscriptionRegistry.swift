@@ -51,7 +51,7 @@ final class TerminalVoiceTranscriptionRegistry: Sendable {
             let id = UUID()
             // Placeholder claim so a concurrent reservation cannot exceed the
             // bound between reserving and registering the task.
-            state.tasks[id] = Task {}
+            state.tasks[id] = Task(name: "ZenCODE.Telegram.transcription-slot") {}
             return id
         }
     }

@@ -23,7 +23,7 @@ extension TerminalStatusBar {
         }
         state.spinnerGeneration &+= 1
         let generation = state.spinnerGeneration
-        state.spinnerTask = Task { [weak self] in
+        state.spinnerTask = Task(name: "ZenCODE.TUI.status-spinner") { [weak self] in
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: .milliseconds(120))
@@ -64,7 +64,7 @@ extension TerminalStatusBar {
             queue: .global(qos: .userInteractive)
         )
         source.setEventHandler { [weak self] in
-            Task {
+            Task(name: "ZenCODE.TUI.terminal-resize-signal") {
                 await self?.scheduleTerminalResize()
             }
         }
@@ -90,7 +90,7 @@ extension TerminalStatusBar {
         state.isResizePending = true
         let generation = state.resizeGeneration
         state.resizeTask?.cancel()
-        state.resizeTask = Task { [weak self] in
+        state.resizeTask = Task(name: "ZenCODE.TUI.terminal-resize") { [weak self] in
             do {
                 try await Task.sleep(for: .milliseconds(80))
             } catch {

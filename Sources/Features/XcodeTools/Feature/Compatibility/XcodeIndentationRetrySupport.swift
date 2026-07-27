@@ -155,8 +155,8 @@ nonisolated func xcodeMutationResultObject(
 nonisolated func xcodeMutationResultNeedsIndentationRetry(
     _ object: [String: JSONValue]
 ) -> Bool {
-    let editsApplied = Int(object["editsApplied"]?.numberValue ?? 0)
-    if editsApplied > 0 {
+    let rawEditsApplied = object["editsApplied"]?.numberValue ?? 0
+    if rawEditsApplied.isFinite, rawEditsApplied > 0 {
         return false
     }
 

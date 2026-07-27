@@ -98,8 +98,12 @@ nonisolated func firstStringValue(
         case let .string(string):
             return string
         case let .number(number):
-            if floor(number) == number {
-                return String(Int(number))
+            guard number.isFinite else {
+                continue
+            }
+            if floor(number) == number,
+               let integer = Int(exactly: number) {
+                return String(integer)
             }
             return String(number)
         case let .bool(bool):

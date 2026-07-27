@@ -211,7 +211,7 @@ extension DirectSubAgentRuntime {
                     )
                 }
                 for receipt in claimReceipts {
-                    _ = try? await taskOrchestrator.interruptAttempt(
+                    _ = try await taskOrchestrator.interruptAttempt(
                         sessionID: rootSessionID,
                         taskID: receipt.taskID,
                         attemptID: receipt.attemptID,
@@ -445,10 +445,13 @@ extension DirectSubAgentRuntime {
     }
 
     public func waitForAgents(arguments: [String: JSONValue]) async -> String {
-        let timeoutSeconds = min(
-            max(Int(Self.firstNumber(["timeoutSeconds", "timeout_seconds", "timeout"], in: arguments) ?? 90), 1),
-            900
-        )
+        let requestedTimeout = Self.firstNumber(
+            ["timeoutSeconds", "timeout_seconds", "timeout"],
+            in: arguments
+        ) ?? 90
+        // Clamp before converting: a finite value such as 1e100 would trap in
+        // `Int(_)`, while the bounded value is always representable.
+        let timeoutSeconds = Int(min(max(requestedTimeout, 1), 900))
         let pollInterval = min(
             max(Self.firstNumber(["pollIntervalSeconds", "poll_interval_seconds", "pollInterval"], in: arguments) ?? 1, 0.2),
             5
@@ -471,9 +474,7 @@ extension DirectSubAgentRuntime {
             }
 
             do {
-                try await Task.sleep(
-                    nanoseconds: UInt64(pollInterval * 1_000_000_000)
-                )
+                try await Task.sleep(for: .seconds(pollInterval))
             } catch {
                 // Cooperative cancellation: `try?` would swallow the
                 // CancellationError and busy-loop on the immediately-returning
@@ -488,8 +489,17 @@ extension DirectSubAgentRuntime {
     @discardableResult
     public func closeAgent(id: String) async -> Bool {
         guard agents[id] != nil else { return false }
-        _ = try? await closeAgent(arguments: ["id": .string(id)])
-        return agents[id]?.status == .closed
+        do {
+            _ = try await closeAgent(arguments: ["id": .string(id)])
+            return agents[id]?.status == .closed
+        } catch {
+            if var agent = agents[id] {
+                agent.latestError = "Unable to close delegated task attempt: \(error.localizedDescription)"
+                agent.updatedAt = .now
+                agents[id] = agent
+            }
+            return false
+        }
     }
 
     @discardableResult
@@ -533,12 +543,18 @@ extension DirectSubAgentRuntime {
             if let taskID = agent.taskID,
                let attemptID = agent.taskAttemptID,
                let taskOrchestrator {
-                _ = try? await taskOrchestrator.interruptAttempt(
-                    sessionID: rootSessionID,
-                    taskID: taskID,
-                    attemptID: attemptID,
-                    reason: "Root session closed during delegated execution."
-                )
+                do {
+                    _ = try await taskOrchestrator.interruptAttempt(
+                        sessionID: rootSessionID,
+                        taskID: taskID,
+                        attemptID: attemptID,
+                        reason: "Root session closed during delegated execution."
+                    )
+                } catch {
+                    agent.latestError = "Delegated execution interrupted with its root session.\nUnable to interrupt task attempt: \(error.localizedDescription)"
+                    agent.updatedAt = .now
+                    agents[id] = agent
+                }
                 await taskOrchestrator.unregisterExecutionScope(
                     executionSessionID: agent.sessionID
                 )
@@ -572,7 +588,7 @@ extension DirectSubAgentRuntime {
         if let taskID = agent.taskID,
            let attemptID = agent.taskAttemptID,
            let taskOrchestrator {
-            _ = try? await taskOrchestrator.cancelAttempt(
+            _ = try await taskOrchestrator.cancelAttempt(
                 sessionID: agent.rootSessionID,
                 taskID: taskID,
                 attemptID: attemptID,

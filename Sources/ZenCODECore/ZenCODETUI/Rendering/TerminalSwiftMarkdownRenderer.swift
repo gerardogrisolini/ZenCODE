@@ -537,13 +537,17 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
         let visible = TerminalANSIText.visibleWidth(cell)
         let padding = max(0, width - visible)
         switch alignment {
+        case .left:
+            return cell + String(repeating: " ", count: padding)
         case .right:
             return String(repeating: " ", count: padding) + cell
         case .center:
             let left = padding / 2
             let right = padding - left
             return String(repeating: " ", count: left) + cell + String(repeating: " ", count: right)
-        default:
+        case nil:
+            return cell + String(repeating: " ", count: padding)
+        @unknown default:
             return cell + String(repeating: " ", count: padding)
         }
     }

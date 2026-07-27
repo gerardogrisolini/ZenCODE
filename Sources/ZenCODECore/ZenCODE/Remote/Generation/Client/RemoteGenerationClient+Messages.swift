@@ -531,7 +531,7 @@ extension RemoteGenerationClient {
                 }
             default:
                 throw RemoteGenerationClientError.invalidRequestPayload(
-                    "Unsupported Responses content item type '\(type ?? "<missing>")' for role '\(role)'."
+                    "Unsupported Responses content item type '\(type, default: "<missing>")' for role '\(role)'."
                 )
             }
         }

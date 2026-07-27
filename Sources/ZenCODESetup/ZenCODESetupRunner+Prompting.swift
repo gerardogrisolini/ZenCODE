@@ -5,6 +5,11 @@
 //  Created by Gerardo Grisolini on 14/06/26.
 //
 
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import Foundation
 import ZenCODECore
 
@@ -24,6 +29,39 @@ extension ZenCODESetupRunner {
                 help: help
             ) else {
                 throw ZenCODESetupError.cancelled
+            }
+            if value.isEmpty, !allowEmpty {
+                AgentOutput.standardError.writeString("\(label) is required. Enter ? for help.\n")
+                continue
+            }
+            return value
+        }
+    }
+
+    /// Prompts for a sensitive value (API key, token, authorization code) whose
+    /// typed text must never be echoed to the terminal.
+    ///
+    /// Unlike ``promptString``, which uses the full TUI line editor and reflects
+    /// every keystroke, this disables terminal echo via termios while a single
+    /// line is read, so the secret stays hidden. Esc/EOF is treated as a cancel.
+    static func promptSecret(
+        _ label: String,
+        allowEmpty: Bool,
+        help: String? = nil
+    ) throws -> String {
+        while true {
+            let helpHint = help != nil ? " (enter ? for help)" : ""
+            AgentOutput.standardError.writeString("\(label)\(helpHint): ")
+            guard let rawValue = SecretLineReader.read() else {
+                AgentOutput.standardError.writeString("\n")
+                throw ZenCODESetupError.cancelled
+            }
+            AgentOutput.standardError.writeString("\n")
+
+            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value == "?", let help {
+                AgentOutput.standardError.writeString("\(help)\n")
+                continue
             }
             if value.isEmpty, !allowEmpty {
                 AgentOutput.standardError.writeString("\(label) is required. Enter ? for help.\n")
@@ -135,5 +173,29 @@ extension ZenCODESetupRunner {
         if settingsWasWritten && !result.createdFilenames.contains(AgentSettingsManifestStore.settingsFilename) {
             AgentOutput.standardError.writeString("Updated: settings.json\n")
         }
+    }
+}
+
+/// Reads a single line from stdin with terminal echo disabled, so typed secrets
+/// are not reflected. When stdin is not an interactive terminal (piped input,
+/// tests), masking is moot and a plain line read is used instead.
+private enum SecretLineReader {
+    static func read() -> String? {
+        var settings = termios()
+        guard tcgetattr(STDIN_FILENO, &settings) == 0 else {
+            return Swift.readLine()
+        }
+
+        let original = settings
+        settings.c_lflag &= ~tcflag_t(ECHO)
+        settings.c_lflag |= tcflag_t(ECHONL)
+        let didApply = tcsetattr(STDIN_FILENO, TCSANOW, &settings) == 0
+        defer {
+            if didApply {
+                var restored = original
+                tcsetattr(STDIN_FILENO, TCSANOW, &restored)
+            }
+        }
+        return Swift.readLine()
     }
 }

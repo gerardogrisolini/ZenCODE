@@ -100,11 +100,13 @@ extension SessionTaskOrchestrator {
     @discardableResult
     public func markAttemptRunning(
         sessionID rawSessionID: String,
+        graphID: String? = nil,
         taskID: String,
         attemptID: String
     ) throws -> Bool {
         try mutateActiveAttempt(
             sessionID: rawSessionID,
+            graphID: graphID,
             taskID: taskID,
             attemptID: attemptID
         ) { task, attempt, _ in
@@ -117,6 +119,7 @@ extension SessionTaskOrchestrator {
     @discardableResult
     public func recordAttemptProgress(
         sessionID rawSessionID: String,
+        graphID: String? = nil,
         taskID: String,
         attemptID: String,
         output: String
@@ -131,6 +134,7 @@ extension SessionTaskOrchestrator {
         )
         return try mutateActiveAttempt(
             sessionID: rawSessionID,
+            graphID: graphID,
             taskID: taskID,
             attemptID: attemptID
         ) { _, attempt, _ in
@@ -141,6 +145,7 @@ extension SessionTaskOrchestrator {
     @discardableResult
     public func completeAttempt(
         sessionID rawSessionID: String,
+        graphID: String? = nil,
         taskID: String,
         attemptID: String,
         output: String?,
@@ -155,6 +160,7 @@ extension SessionTaskOrchestrator {
         }
         return try finishAttempt(
             sessionID: rawSessionID,
+            graphID: graphID,
             taskID: taskID,
             attemptID: attemptID,
             attemptStatus: .completed,
@@ -168,6 +174,7 @@ extension SessionTaskOrchestrator {
     @discardableResult
     public func failAttempt(
         sessionID rawSessionID: String,
+        graphID: String? = nil,
         taskID: String,
         attemptID: String,
         error: String,
@@ -179,6 +186,7 @@ extension SessionTaskOrchestrator {
         }
         return try finishAttempt(
             sessionID: rawSessionID,
+            graphID: graphID,
             taskID: taskID,
             attemptID: attemptID,
             attemptStatus: .failed,
@@ -192,12 +200,14 @@ extension SessionTaskOrchestrator {
     @discardableResult
     public func cancelAttempt(
         sessionID rawSessionID: String,
+        graphID: String? = nil,
         taskID: String,
         attemptID: String,
         reason: String = "Cancelled."
     ) throws -> Bool {
         try finishAttempt(
             sessionID: rawSessionID,
+            graphID: graphID,
             taskID: taskID,
             attemptID: attemptID,
             attemptStatus: .cancelled,
@@ -211,12 +221,14 @@ extension SessionTaskOrchestrator {
     @discardableResult
     public func interruptAttempt(
         sessionID rawSessionID: String,
+        graphID: String? = nil,
         taskID: String,
         attemptID: String,
         reason: String = "Execution interrupted."
     ) throws -> Bool {
         try finishAttempt(
             sessionID: rawSessionID,
+            graphID: graphID,
             taskID: taskID,
             attemptID: attemptID,
             attemptStatus: .interrupted,
@@ -231,6 +243,7 @@ extension SessionTaskOrchestrator {
     public func validateTaskResult(
         sessionID rawSessionID: String,
         taskID: String,
+        graphID: String? = nil,
         succeeded: Bool,
         evidence: [TaskEvidence] = [],
         failureReason: String? = nil,
@@ -240,7 +253,7 @@ extension SessionTaskOrchestrator {
         let sessionID = try requireRootAccess(rawSessionID)
         var (sessionState, graph, taskIndex) = try mutableTaskLocation(
             sessionID: sessionID,
-            graphID: nil,
+            graphID: graphID,
             taskID: taskID
         )
         var task = graph.tasks[taskIndex]
@@ -298,16 +311,31 @@ extension SessionTaskOrchestrator {
 
     private func mutateActiveAttempt(
         sessionID rawSessionID: String,
+        graphID requestedGraphID: String?,
         taskID: String,
         attemptID: String,
         mutation: (inout TaskRecord, inout TaskAttempt, Date) -> Void
     ) throws -> Bool {
-        let sessionID = try resolvedRootSessionID(rawSessionID)
-        guard var sessionState = sessionStates[sessionID],
-              let graphID = sessionState.currentGraphID,
+        let executionSessionID = try normalizedSessionID(rawSessionID)
+        let scope = executionScopes[executionSessionID]
+        let sessionID = scope?.rootSessionID ?? executionSessionID
+        guard var sessionState = sessionStates[sessionID] else {
+            throw SessionTaskOrchestratorError.taskNotFound(taskID)
+        }
+        guard let graphID = try resolvedAttemptGraphID(
+                  requestedGraphID,
+                  scope: scope,
+                  sessionState: sessionState
+              ),
               var graph = sessionState.graphs[graphID],
               let taskIndex = graph.tasks.firstIndex(where: { $0.id == taskID }) else {
             throw SessionTaskOrchestratorError.taskNotFound(taskID)
+        }
+        if let scope,
+           (scope.taskID != taskID || scope.attemptID != attemptID) {
+            throw SessionTaskOrchestratorError.permissionDenied(
+                "A delegated sub-agent may only update its assigned task attempt."
+            )
         }
         var task = graph.tasks[taskIndex]
         guard task.activeAttemptID == attemptID,
@@ -334,6 +362,7 @@ extension SessionTaskOrchestrator {
 
     private func finishAttempt(
         sessionID rawSessionID: String,
+        graphID requestedGraphID: String?,
         taskID: String,
         attemptID: String,
         attemptStatus: TaskAttemptStatus,
@@ -342,14 +371,28 @@ extension SessionTaskOrchestrator {
         error: String?,
         statusReason: String?
     ) throws -> Bool {
-        let sessionID = try resolvedRootSessionID(rawSessionID)
+        let executionSessionID = try normalizedSessionID(rawSessionID)
+        let scope = executionScopes[executionSessionID]
+        let sessionID = scope?.rootSessionID ?? executionSessionID
         let output = output?.nilIfBlank.map(sanitizedPersistedText)
         let error = error?.nilIfBlank.map(sanitizedPersistedText)
-        guard var sessionState = sessionStates[sessionID],
-              let graphID = sessionState.currentGraphID,
+        guard var sessionState = sessionStates[sessionID] else {
+            throw SessionTaskOrchestratorError.taskNotFound(taskID)
+        }
+        guard let graphID = try resolvedAttemptGraphID(
+                  requestedGraphID,
+                  scope: scope,
+                  sessionState: sessionState
+              ),
               var graph = sessionState.graphs[graphID],
               let taskIndex = graph.tasks.firstIndex(where: { $0.id == taskID }) else {
             throw SessionTaskOrchestratorError.taskNotFound(taskID)
+        }
+        if let scope,
+           (scope.taskID != taskID || scope.attemptID != attemptID) {
+            throw SessionTaskOrchestratorError.permissionDenied(
+                "A delegated sub-agent may only finish its assigned task attempt."
+            )
         }
         var task = graph.tasks[taskIndex]
         guard task.activeAttemptID == attemptID,
@@ -396,5 +439,22 @@ extension SessionTaskOrchestrator {
             graphID: graph.id
         )
         return true
+    }
+
+    private func resolvedAttemptGraphID(
+        _ requestedGraphID: String?,
+        scope: TaskExecutionScope?,
+        sessionState: SessionState
+    ) throws -> String? {
+        let requestedGraphID = requestedGraphID?.nilIfBlank
+        if let scope {
+            if let requestedGraphID, requestedGraphID != scope.graphID {
+                throw SessionTaskOrchestratorError.permissionDenied(
+                    "A delegated sub-agent may only control its assigned task graph."
+                )
+            }
+            return scope.graphID
+        }
+        return requestedGraphID ?? sessionState.currentGraphID
     }
 }

@@ -90,8 +90,8 @@ extension DirectSubAgentRuntime {
         from arguments: [String: JSONValue]
     ) throws -> [RequestedAgentPayload] {
         if let values = firstArray(["agents", "items"], in: arguments) {
-            return values.enumerated().map { offset, value in
-                requestedAgentPayload(from: value, fallbackIndex: offset)
+            return try values.enumerated().map { offset, value in
+                try requestedAgentPayload(from: value, fallbackIndex: offset)
             }
         }
 
@@ -100,7 +100,7 @@ extension DirectSubAgentRuntime {
         }
 
         return [
-            requestedAgentPayload(
+            try requestedAgentPayload(
                 from: .object(arguments),
                 fallbackIndex: 0
             )
@@ -110,7 +110,7 @@ extension DirectSubAgentRuntime {
     public static func requestedAgentPayload(
         from value: JSONValue,
         fallbackIndex: Int
-    ) -> RequestedAgentPayload {
+    ) throws -> RequestedAgentPayload {
         let object: [String: JSONValue]
         if case let .object(decodedObject) = value {
             object = decodedObject
@@ -127,32 +127,37 @@ extension DirectSubAgentRuntime {
             )?.nilIfBlank,
             taskID: firstString(["taskID", "task_id"], in: object)?.nilIfBlank,
             prompt: firstString(["prompt", "message", "initialPrompt", "initial_prompt"], in: object)?.nilIfBlank,
-            allowedToolNames: explicitAllowedToolNames(from: object),
+            allowedToolNames: try explicitAllowedToolNames(from: object),
             modelID: firstString(["modelID", "model_id", "model"], in: object)?.nilIfBlank
         )
     }
 
     public static func explicitAllowedToolNames(
         from arguments: [String: JSONValue]
-    ) -> Set<String>? {
-        let rawToolNames =
-            firstStringList(["allowedTools", "allowed_tools", "toolNames", "tool_names"], in: arguments)
-            ?? firstStringList(["toolKinds", "tool_kinds", "tools"], in: arguments)
-            ?? []
-        let toolNames = rawToolNames.compactMap { rawValue -> String? in
+    ) throws -> Set<String>? {
+        let keys = ["allowedTools", "allowed_tools", "toolNames", "tool_names", "toolKinds", "tool_kinds", "tools"]
+        guard let key = keys.first(where: { arguments[$0] != nil }) else {
+            // Omitted means inherit from the resolved parent/profile.
+            return nil
+        }
+        guard let rawToolNames = firstStringList([key], in: arguments) else {
+            throw DirectSubAgentRuntimeError.invalidArgument("\(key) must be a string or an array of strings")
+        }
+        let toolNames = try rawToolNames.map { rawValue -> String in
             let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedValue.isEmpty else {
-                return nil
+                throw DirectSubAgentRuntimeError.invalidArgument("\(key) contains an empty tool name")
             }
             if let canonicalSubAgentToolName = canonicalSubAgentToolName(for: trimmedValue) {
                 return canonicalSubAgentToolName
             }
             guard trimmedValue.contains(".") else {
-                return nil
+                throw DirectSubAgentRuntimeError.invalidArgument("\(key) contains invalid tool name '\(trimmedValue)'")
             }
             return trimmedValue
         }
-        return toolNames.isEmpty ? nil : Set(toolNames)
+        // A present empty array is an explicit zero-tool grant, not inheritance.
+        return Set(toolNames)
     }
 
     public static func resolvedAllowedToolNames(
@@ -240,8 +245,10 @@ extension DirectSubAgentRuntime {
                 case let .number(number):
                     // Render whole numbers without a trailing ".0" so an id like
                     // 3 becomes "3" instead of "3.0".
-                    if number == number.rounded(), abs(number) < 9_007_199_254_740_992 {
-                        return String(Int64(number))
+                    if number.isFinite,
+                       number == number.rounded(),
+                       let integer = Int64(exactly: number) {
+                        return String(integer)
                     }
                     return String(number)
                 case let .bool(bool):
@@ -264,9 +271,13 @@ extension DirectSubAgentRuntime {
             }
             switch value {
             case let .number(number):
-                return number
+                return number.isFinite ? number : nil
             case let .string(string):
-                return Double(string.trimmingCharacters(in: .whitespacesAndNewlines))
+                guard let number = Double(string.trimmingCharacters(in: .whitespacesAndNewlines)),
+                      number.isFinite else {
+                    continue
+                }
+                return number
             default:
                 continue
             }

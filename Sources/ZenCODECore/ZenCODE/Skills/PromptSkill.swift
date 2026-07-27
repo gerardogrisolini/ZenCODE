@@ -107,6 +107,8 @@ public struct PromptSkill: Identifiable, Hashable, Sendable {
 
 public enum PromptSkillError: LocalizedError {
     case unreadableFile(URL)
+    case unsafeFile(URL)
+    case fileTooLarge(URL, maximumBytes: Int)
     case invalidFrontMatter(String)
     case emptySkillBody(String)
 
@@ -114,6 +116,10 @@ public enum PromptSkillError: LocalizedError {
         switch self {
         case let .unreadableFile(url):
             return "Unable to read skill file \(url.lastPathComponent)."
+        case let .unsafeFile(url):
+            return "Refusing to read unsafe skill file \(url.lastPathComponent)."
+        case let .fileTooLarge(url, maximumBytes):
+            return "Skill file \(url.lastPathComponent) exceeds the \(maximumBytes)-byte limit."
         case let .invalidFrontMatter(filename):
             return "The file \(filename) has invalid front matter."
         case let .emptySkillBody(filename):

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension TerminalChat {
     public func handleAttachCommand(_ command: String) async throws {

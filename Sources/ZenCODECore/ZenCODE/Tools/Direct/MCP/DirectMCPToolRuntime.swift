@@ -85,6 +85,10 @@ public actor DirectMCPToolRuntime {
 
     var didAttemptXcodeDiscovery = false
     var didAttemptFigmaDiscovery = false
+    /// Per-family single-flight latch. Actor reentrancy permits another caller
+    /// to enter while discovery awaits I/O, so booleans alone cannot prevent
+    /// duplicate executor/process creation.
+    var discoveringFamilies: Set<ServerFamily> = []
     var servers: [Server] = []
     /// Bumped by every `shutdown()`. Any install or discovery that was already
     /// suspended compares against the generation it captured before the await
@@ -124,7 +128,7 @@ public actor DirectMCPToolRuntime {
 
     deinit {
         let servers = self.servers
-        Task {
+        Task(name: "Direct MCP runtime deinit disconnect") {
             for server in servers {
                 await server.disconnectIfOwned()
             }

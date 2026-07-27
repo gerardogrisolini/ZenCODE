@@ -27,7 +27,23 @@ public enum AgentLocalExecAccessMode: CaseIterable, Equatable, Sendable {
     }
 }
 
+/// Dynamic turn context propagated while a runtime backend executes one prompt.
+///
+/// Tool executors construct ``AgentToolAuthorizationRequest`` values in several
+/// modules. Keeping the turn identity in a task-local lets those existing call
+/// sites remain source compatible while still binding every authorization
+/// request to the prompt that initiated it.
+public enum AgentToolAuthorizationContext {
+    @TaskLocal public static var turnID: UUID? = nil
+}
+
 public struct AgentToolAuthorizationRequest: Sendable {
+    /// The unique prompt/turn that owns this authorization request.
+    ///
+    /// This is optional only for source compatibility with callers that build a
+    /// request outside a running agent turn. The runner fails such requests
+    /// closed rather than guessing a concurrent prompt handler.
+    public let turnID: UUID?
     public let sessionID: String?
     public let toolCallID: String
     public let toolName: String
@@ -35,6 +51,26 @@ public struct AgentToolAuthorizationRequest: Sendable {
     public let kind: String
     public let command: String
     public let workingDirectory: String
+
+    public init(
+        turnID: UUID? = AgentToolAuthorizationContext.turnID,
+        sessionID: String?,
+        toolCallID: String,
+        toolName: String,
+        title: String,
+        kind: String,
+        command: String,
+        workingDirectory: String
+    ) {
+        self.turnID = turnID
+        self.sessionID = sessionID
+        self.toolCallID = toolCallID
+        self.toolName = toolName
+        self.title = title
+        self.kind = kind
+        self.command = command
+        self.workingDirectory = workingDirectory
+    }
 }
 
 public typealias AgentToolAuthorizationHandler = @Sendable (AgentToolAuthorizationRequest) async -> Bool

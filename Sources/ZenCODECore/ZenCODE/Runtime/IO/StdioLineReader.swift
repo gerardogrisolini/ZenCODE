@@ -34,6 +34,10 @@ public final class StdioLineReader: Sendable {
     private static let pollTimeoutMilliseconds: Int32 = 200
 
     private let fileDescriptor: Int32
+    /// Serializes complete poll/read transactions. A descriptor has one shared
+    /// cursor, so protecting only the byte buffer still lets concurrent callers
+    /// steal each other's ready byte between `poll(2)` and `read(2)`.
+    private let readOperation = Mutex<Void>(())
     private let buffer = Mutex<[UInt8]>([])
     /// Latches once the descriptor reports EOF/HUP/ERR so later `readLine`
     /// calls drain the remainder and stop instead of polling a dead fd.
@@ -67,7 +71,9 @@ public final class StdioLineReader: Sendable {
     }
 
     public func readLine() -> String? {
-        readLineInternal(shouldCancel: nil)
+        readOperation.withLock { _ in
+            readLineInternal(shouldCancel: nil)
+        }
     }
 
     /// Cancellation-aware variant used by the off-actor bridges.
@@ -79,7 +85,9 @@ public final class StdioLineReader: Sendable {
     /// caller supplies the bridge's token so the poll loop unwinds at its next
     /// timeout boundary and the awaiting side can resume.
     func readLine(shouldCancel: @escaping @Sendable () -> Bool) -> String? {
-        readLineInternal(shouldCancel: shouldCancel)
+        readOperation.withLock { _ in
+            readLineInternal(shouldCancel: shouldCancel)
+        }
     }
 
     private func readLineInternal(
@@ -154,7 +162,12 @@ public final class StdioLineReader: Sendable {
     }
 
     public func drainBufferedLines(waitMilliseconds: Int32 = 0) -> [String] {
-        drainBufferedLines(waitMilliseconds: waitMilliseconds, shouldCancel: nil)
+        readOperation.withLock { _ in
+            drainBufferedLinesInternal(
+                waitMilliseconds: waitMilliseconds,
+                shouldCancel: nil
+            )
+        }
     }
 
     /// Cancellation-aware drain used by the off-actor paste path.
@@ -169,6 +182,18 @@ public final class StdioLineReader: Sendable {
     /// land, and converting that backlog into lines the caller will throw away
     /// would defeat the prompt return the cancellation promised.
     func drainBufferedLines(
+        waitMilliseconds: Int32,
+        shouldCancel: (@Sendable () -> Bool)?
+    ) -> [String] {
+        readOperation.withLock { _ in
+            drainBufferedLinesInternal(
+                waitMilliseconds: waitMilliseconds,
+                shouldCancel: shouldCancel
+            )
+        }
+    }
+
+    private func drainBufferedLinesInternal(
         waitMilliseconds: Int32,
         shouldCancel: (@Sendable () -> Bool)?
     ) -> [String] {

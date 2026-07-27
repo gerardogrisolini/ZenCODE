@@ -16,47 +16,68 @@ import os
 
 extension TerminalInteractiveLineReader {
     func recordHistory(_ line: String) {
+        withPanelLock { state in
+            recordHistoryLocked(line, state: &state)
+        }
+    }
+
+    func recordHistoryLocked(_ line: String, state: inout State) {
         let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedLine.isEmpty,
-              history.last != trimmedLine else {
+              state.history.last != trimmedLine else {
             return
         }
-        history.append(trimmedLine)
+        state.history.append(trimmedLine)
     }
 
     func previousHistory(currentBuffer: [Character]) -> [Character]? {
-        guard !history.isEmpty else {
+        withPanelLock { state in
+            previousHistoryLocked(currentBuffer: currentBuffer, state: &state)
+        }
+    }
+
+    func previousHistoryLocked(
+        currentBuffer: [Character],
+        state: inout State
+    ) -> [Character]? {
+        guard !state.history.isEmpty else {
             return nil
         }
 
-        if let index = historyIndex {
+        if let index = state.historyIndex {
             guard index > 0 else {
-                return Array(history[0])
+                return Array(state.history[0])
             }
             let previousIndex = index - 1
-            historyIndex = previousIndex
-            return Array(history[previousIndex])
+            state.historyIndex = previousIndex
+            return Array(state.history[previousIndex])
         }
 
-        draftBeforeHistory = currentBuffer
-        let previousIndex = history.count - 1
-        historyIndex = previousIndex
-        return Array(history[previousIndex])
+        state.draftBeforeHistory = currentBuffer
+        let previousIndex = state.history.count - 1
+        state.historyIndex = previousIndex
+        return Array(state.history[previousIndex])
     }
 
     func nextHistory() -> [Character]? {
-        guard let index = historyIndex else {
+        withPanelLock { state in
+            nextHistoryLocked(state: &state)
+        }
+    }
+
+    func nextHistoryLocked(state: inout State) -> [Character]? {
+        guard let index = state.historyIndex else {
             return nil
         }
 
         let nextIndex = index + 1
-        guard nextIndex < history.count else {
-            historyIndex = nil
-            return draftBeforeHistory
+        guard nextIndex < state.history.count else {
+            state.historyIndex = nil
+            return state.draftBeforeHistory
         }
 
-        historyIndex = nextIndex
-        return Array(history[nextIndex])
+        state.historyIndex = nextIndex
+        return Array(state.history[nextIndex])
     }
 
     static func redrawSequence(prompt: String, buffer: [Character], cursorIndex: Int) -> String {

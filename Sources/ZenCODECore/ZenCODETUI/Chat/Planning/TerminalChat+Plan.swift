@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension TerminalChat {
     /// Read-only canonical tool names a Planner sub-agent may use while preparing

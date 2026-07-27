@@ -382,9 +382,8 @@ extension ZenCODESetupRunner {
         providerName: String
     ) throws -> String {
         guard existingAPIKey?.nilIfBlank != nil else {
-            return try promptString(
+            return try promptSecret(
                 "API key (optional)",
-                defaultValue: nil,
                 allowEmpty: true,
                 help: "Leave empty only for local providers or servers that do not require authentication. Hosted providers usually require an API key."
             )
@@ -397,9 +396,8 @@ extension ZenCODESetupRunner {
             return existingAPIKey ?? ""
         }
 
-        return try promptString(
+        return try promptSecret(
             "New API key (empty clears it)",
-            defaultValue: nil,
             allowEmpty: true
         )
     }

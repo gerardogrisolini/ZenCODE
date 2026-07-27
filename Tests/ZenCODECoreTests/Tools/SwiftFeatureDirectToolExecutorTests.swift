@@ -211,7 +211,7 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
-    func directToolExecutorMarksSwiftFeaturePermissionFailures() async throws {
+    func directToolExecutorMarksSwiftFeatureReportedFailuresAsFailed() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-feature-permission-denied-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -264,8 +264,8 @@ extension SwiftFeatureRuntimeTests {
             allowedToolNames: ["denied.fixture"]
         )
 
-        #expect(result.status == .permissionDenied)
-        #expect(result.isPermissionDenied)
+        #expect(result.status == .failed)
+        #expect(!result.isPermissionDenied)
         #expect(result.output == "Tool error: Consent denied")
     }
 

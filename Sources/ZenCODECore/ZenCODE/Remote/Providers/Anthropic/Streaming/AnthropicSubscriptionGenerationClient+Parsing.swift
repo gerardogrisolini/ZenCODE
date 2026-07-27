@@ -195,7 +195,7 @@ extension AnthropicSubscriptionGenerationClient {
                    now: now
                ) {
                 resetDates.append(date)
-            } else if let date = sharedISO8601Formatter.date(from: raw) {
+            } else if let date = try? Date(raw, strategy: .iso8601) {
                 resetDates.append(date)
             }
         }
@@ -227,17 +227,13 @@ extension AnthropicSubscriptionGenerationClient {
                 }
                 return Int(max(absolute, 0))
             }
-            if let date = sharedISO8601Formatter.date(from: raw) {
+            if let date = try? Date(raw, strategy: .iso8601) {
                 let delta = date.timeIntervalSinceNow
                 return delta > 0 ? Int(delta) : 0
             }
         }
         return nil
     }
-
-    /// `ISO8601DateFormatter` is expensive to initialize and its `date(from:)`
-    /// parsing is thread-safe for read-only use, so reuse a single instance.
-    private nonisolated(unsafe) static let sharedISO8601Formatter = ISO8601DateFormatter()
 
     static func stringValue(_ value: Any?) -> String? {
         RemoteGenerationClient.stringValue(value)

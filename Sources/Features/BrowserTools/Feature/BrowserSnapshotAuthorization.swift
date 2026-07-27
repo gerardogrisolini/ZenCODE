@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import Synchronization
 
 #if canImport(Darwin)
 import Darwin
@@ -113,7 +114,7 @@ struct BrowserSnapshotStateStore: Sendable {
 
     /// `flock` coordinates processes; this lock additionally serializes two
     /// store instances created by concurrent tasks within one feature process.
-    private static let localLock = NSLock()
+    private static let localLock = Mutex(())
 
     private let stateURL: URL
     private let lockURL: URL
@@ -223,38 +224,37 @@ struct BrowserSnapshotStateStore: Sendable {
         }
     }
 
-    private func withExclusiveLock<T>(_ body: () throws -> T) throws -> T {
-        Self.localLock.lock()
-        defer { Self.localLock.unlock() }
+    private func withExclusiveLock<T: Sendable>(_ body: () throws -> T) throws -> T {
+        try Self.localLock.withLock { _ in
+            let directory = stateURL.deletingLastPathComponent()
+            do {
+                try FileManager.default.createDirectory(
+                    at: directory,
+                    withIntermediateDirectories: true
+                )
+            } catch {
+                throw BrowserSnapshotStateStoreError.unavailable
+            }
 
-        let directory = stateURL.deletingLastPathComponent()
-        do {
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true
+            let descriptor = open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+            guard descriptor >= 0 else {
+                throw BrowserSnapshotStateStoreError.unavailable
+            }
+            defer {
+                _ = flock(descriptor, LOCK_UN)
+                _ = close(descriptor)
+            }
+            guard flock(descriptor, LOCK_EX) == 0 else {
+                throw BrowserSnapshotStateStoreError.unavailable
+            }
+            #if canImport(Darwin) || canImport(Glibc)
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: lockURL.path
             )
-        } catch {
-            throw BrowserSnapshotStateStoreError.unavailable
+            #endif
+            return try body()
         }
-
-        let descriptor = open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
-        guard descriptor >= 0 else {
-            throw BrowserSnapshotStateStoreError.unavailable
-        }
-        defer {
-            _ = flock(descriptor, LOCK_UN)
-            _ = close(descriptor)
-        }
-        guard flock(descriptor, LOCK_EX) == 0 else {
-            throw BrowserSnapshotStateStoreError.unavailable
-        }
-        #if canImport(Darwin) || canImport(Glibc)
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: lockURL.path
-        )
-        #endif
-        return try body()
     }
 
     /// Disk state is treated as untrusted. Invalid or oversized JSON produces

@@ -18,7 +18,7 @@ public struct ZenBundledFeatureMetadata: Sendable, Equatable, Hashable {
         id: String,
         productName: String,
         sourceRelativePath: String,
-        isInstalledOnLinux: Bool
+        isInstalledOnLinux: Bool,
     ) {
         self.id = id
         self.productName = productName
@@ -39,31 +39,31 @@ public enum ZenBundledFeatureCatalog {
             id: "search-tools",
             productName: "search-tools-feature",
             sourceRelativePath: "Sources/Features/SearchTools",
-            isInstalledOnLinux: true
+            isInstalledOnLinux: true,
         ),
         ZenBundledFeatureMetadata(
             id: "web-tools",
             productName: "web-tools-feature",
             sourceRelativePath: "Sources/Features/WebTools",
-            isInstalledOnLinux: true
+            isInstalledOnLinux: true,
         ),
         ZenBundledFeatureMetadata(
             id: "browser-tools",
             productName: "browser-tools-feature",
             sourceRelativePath: "Sources/Features/BrowserTools",
-            isInstalledOnLinux: true
+            isInstalledOnLinux: true,
         ),
         ZenBundledFeatureMetadata(
             id: "git-tools",
             productName: "git-tools-feature",
             sourceRelativePath: "Sources/Features/GitTools",
-            isInstalledOnLinux: true
+            isInstalledOnLinux: true,
         ),
         ZenBundledFeatureMetadata(
             id: "swift-tools",
             productName: "swift-tools-feature",
             sourceRelativePath: "Sources/Features/SwiftTools",
-            isInstalledOnLinux: true
+            isInstalledOnLinux: true,
         ),
         ZenBundledFeatureMetadata(
             id: "xcode-tools",
@@ -72,19 +72,19 @@ public enum ZenBundledFeatureCatalog {
             // Xcode's MCP service is only available on macOS. Keep the SwiftPM
             // product portable for shared runtime compatibility, but do not
             // distribute its executable through the Linux installer.
-            isInstalledOnLinux: false
+            isInstalledOnLinux: false,
         ),
         ZenBundledFeatureMetadata(
             id: "figma-tools",
             productName: "figma-tools-feature",
             sourceRelativePath: "Sources/Features/FigmaTools",
-            isInstalledOnLinux: true
+            isInstalledOnLinux: true,
         ),
         ZenBundledFeatureMetadata(
             id: "jira-tools",
             productName: "jira-tools-feature",
             sourceRelativePath: "Sources/Features/JiraTools",
-            isInstalledOnLinux: true
+            isInstalledOnLinux: true,
         )
     ]
 

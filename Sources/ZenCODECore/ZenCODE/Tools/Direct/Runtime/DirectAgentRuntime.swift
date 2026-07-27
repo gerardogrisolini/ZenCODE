@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public struct DirectAgentResponse: Sendable {
     public let text: String
@@ -29,6 +30,20 @@ public struct DirectAgentResponse: Sendable {
 /// The previous `[String: Any]` storage required `@unchecked Sendable` and could
 /// not prove the absence of shared mutable references; storing `JSONValue` makes
 /// the conformance sound without changing the public surface.
+public enum DirectAgentToolCallError: LocalizedError, Sendable {
+    case mismatchedArguments
+    case invalidArgumentsJSON
+
+    public var errorDescription: String? {
+        switch self {
+        case .mismatchedArguments:
+            return "argumentsObject and argumentsJSON describe different tool arguments."
+        case .invalidArgumentsJSON:
+            return "argumentsJSON must encode a JSON object."
+        }
+    }
+}
+
 public struct DirectAgentToolCall: Sendable {
     public let id: String
     public let name: String
@@ -44,13 +59,44 @@ public struct DirectAgentToolCall: Sendable {
         self.id = id
         self.name = name
         self.arguments = argumentsObject.mapValues { JSONValue(jsonObject: $0) }
-        self.argumentsJSON = argumentsJSON
+        // The legacy non-throwing initializer remains source compatible, but
+        // execution now always receives the exact representation inspected by
+        // authorization gates.  Do not retain an untrusted parallel JSON blob.
+        self.argumentsJSON = Self.canonicalArgumentsJSON(for: self.arguments)
+    }
+
+    /// Strict initializer for ingress points that require the supplied JSON to
+    /// be rejected rather than canonicalized. It verifies semantic equality,
+    /// not byte equality, so harmless JSON whitespace/key ordering differs are
+    /// accepted.
+    public init(
+        validating id: String,
+        name: String,
+        argumentsObject: [String: Any],
+        argumentsJSON: String
+    ) throws {
+        let arguments = argumentsObject.mapValues { JSONValue(jsonObject: $0) }
+        guard let data = argumentsJSON.data(using: .utf8),
+              let supplied = try? JSONDecoder().decode([String: JSONValue].self, from: data) else {
+            throw DirectAgentToolCallError.invalidArgumentsJSON
+        }
+        guard supplied == arguments else {
+            throw DirectAgentToolCallError.mismatchedArguments
+        }
+        self.id = id
+        self.name = name
+        self.arguments = arguments
+        self.argumentsJSON = Self.canonicalArgumentsJSON(for: arguments)
     }
 
     /// The tool arguments as a JSON-compatible `[String: Any]` dictionary,
     /// materialized on demand from the stored `JSONValue` payload.
     public var argumentsObject: [String: Any] {
         arguments.mapValues { $0.jsonObject }
+    }
+
+    private static func canonicalArgumentsJSON(for arguments: [String: JSONValue]) -> String {
+        JSONValue.object(arguments).compactString(sortedKeys: true)
     }
 }
 

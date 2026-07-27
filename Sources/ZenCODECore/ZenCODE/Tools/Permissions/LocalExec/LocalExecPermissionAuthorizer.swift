@@ -243,7 +243,7 @@ public actor LocalExecPermissionAuthorizer {
                 }
             }
         } onCancel: {
-            Task {
+            Task(name: "local.exec permission dialog cancellation") {
                 await self.cancelDialogWaiter(id: waiterID)
             }
         }

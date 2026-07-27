@@ -8,6 +8,7 @@
 
 import FeatureKit
 import Foundation
+import Synchronization
 
 #if os(macOS)
 import Darwin
@@ -40,16 +41,19 @@ public enum DirectExecJobError: LocalizedError {
 /// the runtime actor, so access is lock-protected. Retains a bounded tail of
 /// the transcript; earlier bytes are dropped but remain accounted for so poll
 /// offsets stay stable.
-final class DirectExecJobTranscript: @unchecked Sendable {
+final class DirectExecJobTranscript: Sendable {
     struct Snapshot: Sendable {
         let text: String
         let nextOffset: Int
         let outputWasDropped: Bool
     }
 
-    private let lock = NSLock()
-    private var data = Data()
-    private var droppedBytes = 0
+    private struct State: Sendable {
+        var data = Data()
+        var droppedBytes = 0
+    }
+
+    private let state = Mutex(State())
     private let maxRetainedBytes: Int
 
     init(maxRetainedBytes: Int) {
@@ -60,13 +64,13 @@ final class DirectExecJobTranscript: @unchecked Sendable {
         guard !chunk.isEmpty else {
             return
         }
-        lock.lock()
-        defer { lock.unlock() }
-        data.append(chunk)
-        if data.count > maxRetainedBytes {
-            let overflow = data.count - maxRetainedBytes
-            data = Data(data.dropFirst(overflow))
-            droppedBytes += overflow
+        state.withLock { state in
+            state.data.append(chunk)
+            if state.data.count > maxRetainedBytes {
+                let overflow = state.data.count - maxRetainedBytes
+                state.data = Data(state.data.dropFirst(overflow))
+                state.droppedBytes += overflow
+            }
         }
     }
 
@@ -74,18 +78,18 @@ final class DirectExecJobTranscript: @unchecked Sendable {
     /// the job's full output), the next offset to poll from, and whether any
     /// requested bytes were already dropped from the retained tail.
     func read(from offset: Int) -> Snapshot {
-        lock.lock()
-        defer { lock.unlock() }
-        let total = droppedBytes + data.count
-        let clamped = min(max(offset, 0), total)
-        let outputWasDropped = clamped < droppedBytes
-        let localStart = max(clamped - droppedBytes, 0)
-        let chunk = Data(data.dropFirst(localStart))
-        return Snapshot(
-            text: String(decoding: chunk, as: UTF8.self),
-            nextOffset: total,
-            outputWasDropped: outputWasDropped
-        )
+        state.withLock { state in
+            let total = state.droppedBytes + state.data.count
+            let clamped = min(max(offset, 0), total)
+            let outputWasDropped = clamped < state.droppedBytes
+            let localStart = max(clamped - state.droppedBytes, 0)
+            let chunk = Data(state.data.dropFirst(localStart))
+            return Snapshot(
+                text: String(decoding: chunk, as: UTF8.self),
+                nextOffset: total,
+                outputWasDropped: outputWasDropped
+            )
+        }
     }
 }
 
@@ -122,6 +126,8 @@ public actor DirectExecJobRuntime {
         var finishedAt: Date?
         var killRequested = false
         var killReason: String?
+        var timeoutTask: Task<Void, Never>?
+        var terminationTask: Task<Void, Never>?
         /// True when Foundation launched the shell as its process-group leader.
         /// Signals are then delivered to the whole group (`kill(-pid)`) so
         /// descendants (pipes, subshells, dev servers) are reached; otherwise
@@ -204,7 +210,7 @@ public actor DirectExecJobRuntime {
         }
 
         let exitMonitor = FeatureProcessExitMonitor { [weak self] exitCode in
-            Task {
+            Task(name: "local.exec background job exit monitor") {
                 await self?.markFinished(jobID: jobID, exitCode: exitCode)
             }
         }
@@ -241,10 +247,20 @@ public actor DirectExecJobRuntime {
         jobOrder.append(jobID)
         exitMonitor.startMonitoring(processID: process.processIdentifier)
 
-        if let timeout, timeout > 0 {
-            Task { [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                await self?.killIfRunning(jobID: jobID, reason: "timeout after \(Int(timeout))s")
+        if let timeout, timeout.isFinite, timeout > 0 {
+            // An unbounded duration is not useful for a background tool and
+            // would risk conversion overflow in lower-level clock APIs.
+            let boundedTimeout = min(timeout, 86_400)
+            job.timeoutTask = Task(name: "local.exec background job timeout") { [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(boundedTimeout))
+                } catch {
+                    return
+                }
+                await self?.killIfRunning(
+                    jobID: jobID,
+                    reason: "timeout after \(Int(boundedTimeout))s"
+                )
             }
         }
 
@@ -311,13 +327,8 @@ public actor DirectExecJobRuntime {
         guard job.status == .running else {
             return "Job \(jobID) already finished: \(statusLine(for: job))"
         }
-        job.killRequested = true
         let pid = job.process.processIdentifier
-        sendSignal(SIGTERM, to: job)
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            await self?.forceKillIfStillRunning(jobID: jobID, pid: pid)
-        }
+        terminate(jobID: jobID, reason: "requested by user")
         return "Requested termination of job \(jobID) (pid \(pid)). Final output remains readable with exec.job {\"action\":\"poll\",\"id\":\"\(jobID)\"}."
     }
 
@@ -339,9 +350,7 @@ public actor DirectExecJobRuntime {
 
     public func shutdown() {
         for job in jobsByID.values where job.status == .running {
-            job.killRequested = true
-            job.killReason = "session shutdown"
-            sendSignal(SIGTERM, to: job)
+            terminate(jobID: job.id, reason: "session shutdown")
         }
     }
 
@@ -370,16 +379,37 @@ public actor DirectExecJobRuntime {
         job.exitCode = exitCode
         job.finishedAt = Date()
         job.process.terminationHandler = nil
+        job.timeoutTask?.cancel()
+        job.timeoutTask = nil
+        job.terminationTask?.cancel()
+        job.terminationTask = nil
         pruneFinishedJobs()
     }
 
     private func killIfRunning(jobID: String, reason: String) {
+        terminate(jobID: jobID, reason: reason)
+    }
+
+    /// Centralized, idempotent process-group termination. Every exit path
+    /// follows SIGTERM -> bounded grace -> SIGKILL; the exit monitor performs
+    /// the corresponding wait/reap and `markFinished` cancels both timers.
+    private func terminate(jobID: String, reason: String) {
         guard let job = jobsByID[jobID], job.status == .running else {
             return
         }
         job.killRequested = true
         job.killReason = reason
         sendSignal(SIGTERM, to: job)
+        job.terminationTask?.cancel()
+        let pid = job.process.processIdentifier
+        job.terminationTask = Task(name: "local.exec background job SIGKILL fallback") { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(2))
+            } catch {
+                return
+            }
+            await self?.forceKillIfStillRunning(jobID: jobID, pid: pid)
+        }
     }
 
     private func forceKillIfStillRunning(jobID: String, pid: Int32) {

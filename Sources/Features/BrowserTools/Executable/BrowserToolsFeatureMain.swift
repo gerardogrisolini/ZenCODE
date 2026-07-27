@@ -1,4 +1,4 @@
-import BrowserToolsFeature
+internal import BrowserToolsFeature
 
 @main
 struct BrowserToolsFeatureMain {

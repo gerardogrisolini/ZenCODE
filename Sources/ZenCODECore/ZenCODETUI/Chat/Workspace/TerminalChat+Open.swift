@@ -320,31 +320,35 @@ extension TerminalChat {
     }
 
     private static func runOpen(target: String) async throws {
-        try await Task.detached(priority: .userInitiated) {
-            let openURL = URL(fileURLWithPath: "/usr/bin/open")
-            guard FileManager.default.isExecutableFile(atPath: openURL.path) else {
-                throw TerminalOpenCommandError.openUnavailable
-            }
-            let process = Process()
-            process.executableURL = openURL
-            process.arguments = [target]
-            try process.run()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else {
-                throw TerminalOpenCommandError.openFailed(process.terminationStatus)
-            }
-        }.value
+        let openURL = URL(fileURLWithPath: "/usr/bin/open")
+        guard FileManager.default.isExecutableFile(atPath: openURL.path) else {
+            throw TerminalOpenCommandError.openUnavailable
+        }
+        let result = try await AsyncProcessRunner.run(
+            executableURL: openURL,
+            arguments: [target],
+            timeout: 15
+        )
+        guard !result.timedOut else {
+            throw TerminalOpenCommandError.openTimedOut
+        }
+        guard result.exitCode == 0 else {
+            throw TerminalOpenCommandError.openFailed(result.exitCode)
+        }
     }
 }
 
 private enum TerminalOpenCommandError: LocalizedError {
     case openUnavailable
+    case openTimedOut
     case openFailed(Int32)
 
     var errorDescription: String? {
         switch self {
         case .openUnavailable:
             return "Opening files requires /usr/bin/open on macOS."
+        case .openTimedOut:
+            return "open did not finish before the timeout."
         case let .openFailed(exitCode):
             return "open failed with exit code \(exitCode)."
         }

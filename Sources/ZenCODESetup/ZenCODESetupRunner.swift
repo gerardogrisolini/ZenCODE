@@ -9,7 +9,7 @@ import Foundation
 import ZenCODECore
 
 public enum ZenCODESetupRunner {
-    public static func run() async throws {
+    public static func run() async throws -> SetupOutcome {
         guard TerminalRawInput.supportsInteractiveInput() else {
             throw ZenCODESetupError.nonInteractiveTerminal
         }
@@ -70,7 +70,7 @@ public enum ZenCODESetupRunner {
             }
             if section == .cancel {
                 AgentOutput.standardError.writeString("Setup changes were not saved.\n")
-                return
+                return .cancelled
             }
             if section == .resetRemoteConfiguration {
                 guard try confirmRemoteConfigurationReset() else {
@@ -78,7 +78,7 @@ public enum ZenCODESetupRunner {
                 }
                 try resetRemoteConfiguration()
                 printCompletion()
-                return
+                return .reset
             }
 
             let result = try await configureSetupSection(
@@ -102,6 +102,7 @@ public enum ZenCODESetupRunner {
             )
             printResult(result, settingsWasWritten: shouldWriteSettings)
             printCompletion()
+            return .configured
         }
     }
 

@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import FeatureMCPBridgeKit
+public import FeatureMCPBridgeKit
 import ToolCore
 
 public actor XcodeToolExecutor {

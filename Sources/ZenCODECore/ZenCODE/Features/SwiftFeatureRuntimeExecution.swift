@@ -39,6 +39,11 @@ extension SwiftFeatureRuntime {
         toolName: String,
         allowedToolNames: Set<String>?
     ) -> Bool {
+        // Kernel feature-management commands are never feature-owned, even if
+        // an invalid manifest advertises the broad `feature.` prefix.
+        guard !Self.isFeatureManagementToolName(toolName) else {
+            return false
+        }
         guard let feature = features.first(where: { $0.contains(toolName: toolName) }) else {
             return false
         }

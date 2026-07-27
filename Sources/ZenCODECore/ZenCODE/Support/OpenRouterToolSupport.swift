@@ -232,8 +232,8 @@ public nonisolated enum OpenRouterToolCatalogBuilder {
     }
 }
 
-public nonisolated struct RemoteToolWireCatalog {
-    public nonisolated struct Binding {
+public nonisolated struct RemoteToolWireCatalog: Sendable {
+    public nonisolated struct Binding: Sendable {
         public let descriptor: DirectToolDescriptor
         public let wireName: String
 

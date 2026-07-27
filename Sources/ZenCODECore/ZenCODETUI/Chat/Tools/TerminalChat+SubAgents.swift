@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension TerminalChat {
     private struct SubAgentOverviewLine {
@@ -85,7 +86,7 @@ extension TerminalChat {
         guard subAgentOverviewRefreshTask == nil else { return }
         let interval = subAgentOverviewRefreshInterval
         let tickHook = onSubAgentOverviewTick
-        subAgentOverviewRefreshTask = Task { [weak self] in
+        subAgentOverviewRefreshTask = Task(name: "ZenCODE.TUI.sub-agent-overview-refresh") { [weak self] in
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: interval)
@@ -131,13 +132,16 @@ extension TerminalChat {
         }
         let signature = Self.subAgentOverviewSignature(snapshots)
         let resolver = subAgentModelTitleResolver()
+        let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
         let overview = Self.renderSubAgentOverview(
             snapshots,
             modelTitleResolver: resolver,
-            includesFinalResponses: false
+            includesFinalResponses: false,
+            rowBudget: Self.subAgentOverviewRowBudget(
+                forInPlaceRows: maximumInPlaceRows
+            )
         ) + "\n\n"
         let responses = Self.subAgentMarkdownResponses(snapshots)
-        let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
         _ = await renderCoordinator.renderSubAgentOverview(
             signature: signature,
             text: overview,
@@ -159,54 +163,238 @@ extension TerminalChat {
         )
     }
 
+    /// Presentation density of the sub-agent section.
+    ///
+    /// The live section is replaced in place on every refresh, which is only
+    /// possible while it fits the terminal's scrolling region. When many agents
+    /// run at once the full presentation no longer fits: without a denser
+    /// variant the section would lose its rewrite slot and every refresh would
+    /// append another full copy to the transcript instead of overwriting the
+    /// previous one.
+    private enum SubAgentOverviewDensity: CaseIterable {
+        /// Every metadata line, with multi-row activity and detail text.
+        case full
+        /// Status header plus capped activity lines, without metadata.
+        case compact
+        /// Status header plus a single activity line, without separators.
+        case dense
+        /// One row per agent: status header with an inline activity fragment.
+        case inline
+
+        var includesSeparators: Bool {
+            switch self {
+            case .full, .compact:
+                return true
+            case .dense, .inline:
+                return false
+            }
+        }
+
+        var includesMetadata: Bool {
+            self == .full
+        }
+
+        /// Rows a single activity or detail entry may occupy.
+        var maximumEntryRows: Int {
+            self == .full ? .max : 1
+        }
+
+        /// Activity lines kept per agent, or `nil` when all are kept.
+        var activityLineLimit: Int? {
+            switch self {
+            case .full:
+                return nil
+            case .compact:
+                return 2
+            case .dense, .inline:
+                return 1
+            }
+        }
+    }
+
+    /// Physical rows the surrounding chat output adds to the section: the
+    /// leading blank row, the trailing blank row kept by the `"\n\n"`
+    /// terminator, and one spare row so a section sized exactly like the
+    /// scrolling region still leaves the cursor inside it.
+    private nonisolated static let subAgentOverviewReservedRows = 3
+
+    /// Converts the rows available for an in-place replacement into the row
+    /// budget the section content may occupy. `nil` (no terminal, or no started
+    /// status bar) leaves the presentation unbounded.
+    nonisolated static func subAgentOverviewRowBudget(
+        forInPlaceRows rows: Int?
+    ) -> Int? {
+        guard let rows else {
+            return nil
+        }
+        return max(1, rows - subAgentOverviewReservedRows)
+    }
+
     private nonisolated static func renderSubAgentOverview(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
         modelTitleResolver: (String) -> String,
-        includesFinalResponses: Bool
+        includesFinalResponses: Bool,
+        rowBudget: Int? = nil
     ) -> String {
-        var lines = [SubAgentOverviewLine.summary(renderSubAgentSummary(snapshots))]
-
-        if snapshots.isEmpty {
-            lines.append(.regular("No delegated sub-agents."))
-            return renderSubAgentOverviewLines(lines)
+        guard !snapshots.isEmpty else {
+            return renderSubAgentOverviewLines([
+                .summary(renderSubAgentSummary(snapshots)),
+                .regular("No delegated sub-agents.")
+            ])
         }
 
+        // Step down through the density variants until the section fits the
+        // rows it may replace in place. An unbounded budget always keeps the
+        // richest presentation.
+        var rows: [String] = []
+        for density in SubAgentOverviewDensity.allCases {
+            rows = subAgentOverviewRows(
+                subAgentOverviewLines(
+                    snapshots,
+                    modelTitleResolver: modelTitleResolver,
+                    includesFinalResponses: includesFinalResponses,
+                    density: density
+                )
+            )
+            guard let rowBudget, rows.count > rowBudget else {
+                break
+            }
+        }
+
+        if let rowBudget {
+            rows = elidedSubAgentOverviewRows(rows, rowBudget: rowBudget)
+        }
+        return joinedSubAgentOverviewRows(rows)
+    }
+
+    /// Physical rows the live section would occupy for `rowBudget`, exposed so
+    /// tests can assert the in-place invariants (row count and visible width)
+    /// without driving a terminal.
+    nonisolated static func renderSubAgentOverviewRowsForTesting(
+        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
+        rowBudget: Int?
+    ) -> [String] {
+        let rendered = renderSubAgentOverview(
+            snapshots,
+            modelTitleResolver: { $0 },
+            includesFinalResponses: false,
+            rowBudget: rowBudget
+        )
+        return rendered
+            .components(separatedBy: "\n")
+            .filter { !$0.isEmpty }
+    }
+
+    private nonisolated static func subAgentOverviewLines(
+        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
+        modelTitleResolver: (String) -> String,
+        includesFinalResponses: Bool,
+        density: SubAgentOverviewDensity
+    ) -> [SubAgentOverviewLine] {
+        var lines = [SubAgentOverviewLine.summary(renderSubAgentSummary(snapshots))]
+
         for snapshot in snapshots {
-            lines.append(.regular("", maxWrappedLines: 1))
+            if density.includesSeparators {
+                lines.append(.regular("", maxWrappedLines: 1))
+            }
+
+            if density == .inline {
+                lines.append(
+                    .regular(renderSubAgentInlineEntry(snapshot), maxWrappedLines: 1)
+                )
+                continue
+            }
+
             lines.append(.regular(renderSubAgentHeader(snapshot)))
-            lines.append(.regular(dimText("id: \(snapshot.id)"), maxWrappedLines: 1))
-            if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                lines.append(.regular("\(dimText("role:")) \(snapshot.role)"))
-            }
-            if let profileName = snapshot.profileName?.nilIfBlank {
-                lines.append(.regular("\(dimText("agent:")) \(profileName)"))
-            }
-            if let taskID = snapshot.taskID?.nilIfBlank {
-                var taskText = "\(dimText("task:")) \(inlineText(taskID))"
-                if let attempt = snapshot.taskAttemptOrdinal {
-                    taskText += " · \(dimText("attempt:")) \(attempt)"
+            if density.includesMetadata {
+                lines.append(.regular(dimText("id: \(snapshot.id)"), maxWrappedLines: 1))
+                if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    lines.append(.regular("\(dimText("role:")) \(snapshot.role)"))
                 }
-                lines.append(.regular(taskText, maxWrappedLines: 2))
+                if let profileName = snapshot.profileName?.nilIfBlank {
+                    lines.append(.regular("\(dimText("agent:")) \(profileName)"))
+                }
+                if let taskID = snapshot.taskID?.nilIfBlank {
+                    var taskText = "\(dimText("task:")) \(inlineText(taskID))"
+                    if let attempt = snapshot.taskAttemptOrdinal {
+                        taskText += " · \(dimText("attempt:")) \(attempt)"
+                    }
+                    lines.append(.regular(taskText, maxWrappedLines: 2))
+                }
+                if let model = renderSubAgentModel(
+                    snapshot,
+                    modelTitleResolver: modelTitleResolver
+                ) {
+                    lines.append(.regular(model))
+                }
             }
-            if let model = renderSubAgentModel(
+            let activityLines = renderSubAgentActivityLines(
                 snapshot,
-                modelTitleResolver: modelTitleResolver
-            ) {
-                lines.append(.regular(model))
-            }
-            let activityLines = renderSubAgentActivityLines(snapshot)
+                density: density
+            )
             if !activityLines.isEmpty {
                 lines.append(contentsOf: activityLines)
             }
             if let detail = renderSubAgentDetail(
                 snapshot,
-                includesFinalResponse: includesFinalResponses
+                includesFinalResponse: includesFinalResponses,
+                density: density
             ) {
                 lines.append(detail)
             }
         }
 
-        return renderSubAgentOverviewLines(lines)
+        return lines
+    }
+
+    /// Folds one agent into a single row: status header plus the most
+    /// significant progress fragment.
+    private nonisolated static func renderSubAgentInlineEntry(
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
+    ) -> String {
+        let header = renderSubAgentHeader(snapshot)
+        guard let fragment = subAgentInlineFragment(snapshot) else {
+            return header
+        }
+        return "\(header)  \(dimText("·")) \(fragment)"
+    }
+
+    private nonisolated static func subAgentInlineFragment(
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
+    ) -> String? {
+        if let latestError = snapshot.latestError?.nilIfBlank {
+            return "❌ \(inlineText(latestError))"
+        }
+        return renderSubAgentActivityLines(snapshot, density: .inline).first?.text
+    }
+
+    /// Trims a section that cannot fit even at the densest presentation,
+    /// keeping the title, the aggregate summary, and as many agents as the
+    /// budget allows followed by a count of the hidden ones.
+    private nonisolated static func elidedSubAgentOverviewRows(
+        _ rows: [String],
+        rowBudget: Int
+    ) -> [String] {
+        guard rows.count > rowBudget else {
+            return rows
+        }
+        // Title, summary and the elision notice need three rows; below that
+        // there is nothing meaningful left to elide.
+        guard rowBudget > 3 else {
+            return Array(rows.prefix(max(1, rowBudget)))
+        }
+
+        let header = Array(rows.prefix(2))
+        let entries = rows.dropFirst(2)
+        let kept = Array(entries.prefix(max(0, rowBudget - header.count - 1)))
+        let hiddenCount = entries.count - kept.count
+        guard hiddenCount > 0 else {
+            return header + kept
+        }
+        let columns = terminalColumnCount()
+        let notice = "\(String(repeating: " ", count: terminalBoxHorizontalInset(columns: columns)))"
+            + "\(String(repeating: " ", count: 3))\(dimText("… \(hiddenCount) more"))"
+        return header + kept + [notice]
     }
 
     private nonisolated static func renderSubAgentSummary(
@@ -332,7 +520,8 @@ extension TerminalChat {
     }
 
     private nonisolated static func renderSubAgentActivityLines(
-        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
+        density: SubAgentOverviewDensity = .full
     ) -> [SubAgentOverviewLine] {
         let currentToolName = snapshot.currentToolName?.nilIfBlank
         let currentActivity = snapshot.currentActivity?.nilIfBlank
@@ -342,29 +531,60 @@ extension TerminalChat {
             if currentActivity == "🤔 Thinking…" {
                 lines.append(.regular(currentActivity, maxWrappedLines: 1))
             } else {
-                lines.append(.complete("💬 \(inlineText(currentActivity))"))
+                lines.append(
+                    subAgentOverviewEntryLine(
+                        "💬 \(inlineText(currentActivity))",
+                        density: density
+                    )
+                )
             }
         }
 
         if let currentToolName {
             let target = snapshot.currentToolTarget?.nilIfBlank
             let title = target.map { "\(currentToolName) \($0)" } ?? currentToolName
-            lines.append(.complete("🛠️  \(inlineText(title))"))
+            lines.append(
+                subAgentOverviewEntryLine(
+                    "🛠️  \(inlineText(title))",
+                    density: density
+                )
+            )
         }
 
         if lines.isEmpty, snapshot.pending {
             lines.append(.regular("🤔 Thinking…", maxWrappedLines: 1))
         }
 
+        // The most specific entry is appended last, so a capped presentation
+        // keeps the running tool rather than the older activity line.
+        if let limit = density.activityLineLimit, lines.count > limit {
+            lines = Array(lines.suffix(limit))
+        }
+
         return lines
+    }
+
+    /// Builds one activity or detail line at the requested density: unbounded
+    /// for the full presentation, single-row for the denser variants.
+    private nonisolated static func subAgentOverviewEntryLine(
+        _ text: String,
+        density: SubAgentOverviewDensity
+    ) -> SubAgentOverviewLine {
+        density.maximumEntryRows == .max
+            ? .complete(text)
+            : .regular(text, maxWrappedLines: density.maximumEntryRows)
     }
 
     private nonisolated static func renderSubAgentDetail(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
-        includesFinalResponse: Bool
+        includesFinalResponse: Bool,
+        density: SubAgentOverviewDensity = .full
     ) -> SubAgentOverviewLine? {
         if let latestError = snapshot.latestError?.nilIfBlank {
-            return .complete("❌ \(inlineText(latestError))", indentation: 3)
+            return subAgentOverviewEntryLine(
+                "❌ \(inlineText(latestError))",
+                density: density
+            )
         }
 
         guard includesFinalResponse,
@@ -373,7 +593,10 @@ extension TerminalChat {
                 ?? snapshot.latestOutput?.nilIfBlank else {
             return nil
         }
-        return .complete("✅ \(inlineText(latestOutput))", indentation: 3)
+        return subAgentOverviewEntryLine(
+            "✅ \(inlineText(latestOutput))",
+            density: density
+        )
     }
 
     /// Extracts completed model responses from the snapshot presentation. The
@@ -496,9 +719,24 @@ extension TerminalChat {
     }
 
     private nonisolated static func renderSubAgentOverviewLines(_ lines: [SubAgentOverviewLine]) -> String {
+        joinedSubAgentOverviewRows(subAgentOverviewRows(lines))
+    }
+
+    private nonisolated static func joinedSubAgentOverviewRows(_ rows: [String]) -> String {
+        "\n\(rows.joined(separator: "\n"))\n"
+    }
+
+    /// Physical rows of the section, title first, so a caller can measure the
+    /// presentation before publishing it.
+    private nonisolated static func subAgentOverviewRows(
+        _ lines: [SubAgentOverviewLine]
+    ) -> [String] {
         let columns = terminalColumnCount()
         let horizontalInset = terminalBoxHorizontalInset(columns: columns)
-        let contentWidth = max(40, columns - horizontalInset)
+        let contentWidth = max(
+            40,
+            columns - horizontalInset - subAgentOverviewReservedColumns
+        )
         let linePrefix = String(repeating: " ", count: horizontalInset)
         let orange = "\u{1B}[38;5;208m"
         let dim = "\u{1B}[90m"
@@ -528,8 +766,23 @@ extension TerminalChat {
                 output.append("\(linePrefix)\(prefix)\(wrappedLine)")
             }
         }
-        return "\n\(output.joined(separator: "\n"))\n"
+        return output
     }
+
+    /// Columns left unused on every row so the section keeps its in-place
+    /// rewrite slot.
+    ///
+    /// One column is taken by the inset the chat renderer prepends to each
+    /// physical row, one is left free because a row reaching the final column
+    /// wraps in a terminal-dependent way, and one absorbs a single
+    /// double-width glyph: rows are wrapped by grapheme count, while the
+    /// rewrite invariant is measured in visible columns, and every row of this
+    /// section carries at most one emoji marker. A row that still exceeds the
+    /// terminal width (for example wide CJK content) is left untouched and the
+    /// coordinator falls back to appending that refresh, which is the existing
+    /// fail-safe. Truncating here instead would corrupt the full presentation,
+    /// where complete activity, tool, and response text must stay intact.
+    private nonisolated static let subAgentOverviewReservedColumns = 3
 
     nonisolated static func subAgentOverviewSignature(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]

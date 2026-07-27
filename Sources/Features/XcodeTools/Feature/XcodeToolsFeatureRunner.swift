@@ -9,7 +9,7 @@
 
 import Foundation
 import FeatureKit
-import FeatureMCPBridgeKit
+internal import FeatureMCPBridgeKit
 import ToolCore
 
 public enum XcodeToolsFeatureRunner {

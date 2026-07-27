@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension TerminalChat {
     func runFeatureWizard() async -> TerminalFeatureCommandResult {

@@ -56,8 +56,7 @@ public struct ProjectContextFileService {
     ) -> ProjectContextDocument? {
         let standardizedRootURL = rootURL.standardizedFileURL
         let fileURL = standardizedRootURL.appendingPathComponent(kind.filename)
-        guard fileManager.fileExists(atPath: fileURL.path),
-              let content = try? String(contentsOf: fileURL, encoding: .utf8) else {
+        guard case let .loaded(content) = readFile(at: fileURL) else {
             return nil
         }
 
@@ -82,8 +81,17 @@ public struct ProjectContextFileService {
         projectName: String
     ) throws -> ProjectContextDocument {
         let standardizedRootURL = rootURL.standardizedFileURL
-        if let existingDocument = document(kind: kind, at: standardizedRootURL) {
-            return existingDocument
+        let fileURL = standardizedRootURL.appendingPathComponent(kind.filename)
+        switch readFile(at: fileURL) {
+        case .missing:
+            break
+        case .unreadable:
+            throw ProjectContextFileServiceError.unreadableDocument(fileURL)
+        case .loaded:
+            if let existingDocument = document(kind: kind, at: standardizedRootURL) {
+                return existingDocument
+            }
+            throw ProjectContextFileServiceError.emptyDocument(fileURL)
         }
 
         return try writeDefaultDocument(
@@ -198,6 +206,17 @@ public struct ProjectContextFileService {
         return document
     }
 
+    private func readFile(at fileURL: URL) -> ProjectContextFileReadState {
+        guard fileManager.fileExists(atPath: fileURL.path) else {
+            return .missing
+        }
+        do {
+            return .loaded(try String(contentsOf: fileURL, encoding: .utf8))
+        } catch {
+            return .unreadable
+        }
+    }
+
     private static func headingTitle(from line: String) -> String? {
         let trimmedLine = line.trimmingCharacters(in: .whitespaces)
         guard trimmedLine.hasPrefix("#") else {
@@ -225,5 +244,25 @@ public struct ProjectContextFileService {
             hash &*= prime
         }
         return String(format: "%016llx", hash)
+    }
+}
+
+private enum ProjectContextFileReadState {
+    case missing
+    case loaded(String)
+    case unreadable
+}
+
+public enum ProjectContextFileServiceError: LocalizedError {
+    case unreadableDocument(URL)
+    case emptyDocument(URL)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .unreadableDocument(url):
+            return "Context file could not be read safely at \(url.path); it was left unchanged."
+        case let .emptyDocument(url):
+            return "Context file already exists but is empty at \(url.path); it was left unchanged."
+        }
     }
 }

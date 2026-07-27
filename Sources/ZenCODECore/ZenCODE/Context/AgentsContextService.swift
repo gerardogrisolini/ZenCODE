@@ -138,12 +138,18 @@ public final class AgentsContextService {
     public func ensureGlobalAgentsFileExists() -> URL? {
         let fileURL = globalAgentsFileURL()
 
-        if fileManager.fileExists(atPath: fileURL.path),
-           let content = try? String(contentsOf: fileURL, encoding: .utf8) {
-            let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !normalizedContent.isEmpty {
-                return fileURL
-            }
+        switch readFile(at: fileURL) {
+        case .loaded:
+            // A readable existing file is owned by the user, including an
+            // intentionally empty one. Defaults are created only for missing
+            // files, never used to replace existing content.
+            return fileURL
+        case .unreadable:
+            // An existing file that cannot be read is never a signal to replace
+            // it with defaults; that would destroy recoverable user context.
+            return nil
+        case .missing:
+            break
         }
 
         do {
@@ -179,8 +185,7 @@ public final class AgentsContextService {
         scope: AgentsContextDocument.Scope
     ) -> AgentsContextDocument? {
         let standardizedFileURL = fileURL.standardizedFileURL
-        guard fileManager.fileExists(atPath: standardizedFileURL.path),
-              let content = try? String(contentsOf: standardizedFileURL, encoding: .utf8) else {
+        guard case let .loaded(content) = readFile(at: standardizedFileURL) else {
             return nil
         }
 
@@ -195,6 +200,17 @@ public final class AgentsContextService {
             content: normalizedContent,
             digest: Self.digest(normalizedContent)
         )
+    }
+
+    private func readFile(at fileURL: URL) -> ContextFileReadState {
+        guard fileManager.fileExists(atPath: fileURL.path) else {
+            return .missing
+        }
+        do {
+            return .loaded(try String(contentsOf: fileURL, encoding: .utf8))
+        } catch {
+            return .unreadable
+        }
     }
 
     private func renderDocument(_ document: AgentsContextDocument) -> String? {
@@ -338,4 +354,10 @@ public final class AgentsContextService {
         }
         return String(hash, radix: 16)
     }
+}
+
+private enum ContextFileReadState {
+    case missing
+    case loaded(String)
+    case unreadable
 }

@@ -54,7 +54,10 @@ private nonisolated func firstXcodeStringValue(
         case let .string(string):
             return string
         case let .number(number):
-            return number.rounded() == number ? String(Int(number)) : String(number)
+            if number.isFinite, number.rounded() == number, let intValue = Int(exactly: number) {
+                return String(intValue)
+            }
+            return String(number)
         case let .bool(bool):
             return bool ? "true" : "false"
         default:

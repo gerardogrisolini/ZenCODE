@@ -92,7 +92,7 @@ extension TerminalChat {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.withoutEscapingSlashes]
         guard let data = try? encoder.encode(value),
-              let literal = String(data: data, encoding: .utf8) else {
+              let literal = String(validating: data, as: UTF8.self) else {
             return "\"\""
         }
         return literal

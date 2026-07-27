@@ -123,7 +123,7 @@ extension DirectSubAgentRuntime {
         }
     }
 
-    public func snapshot(from agent: AgentRecord) -> AgentSnapshot {
+    func snapshot(from agent: AgentRecord) -> AgentSnapshot {
         AgentSnapshot(
             id: agent.id,
             rootSessionID: agent.rootSessionID,

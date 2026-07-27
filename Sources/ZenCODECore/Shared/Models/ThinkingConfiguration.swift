@@ -70,24 +70,32 @@ public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identi
         }
     }
 
-    public var openRouterReasoningPayload: [String: Any] {
+    /// Sendable JSON representation used by concurrent request construction.
+    public var openRouterReasoningJSON: [String: JSONValue] {
         switch self {
         case .off:
             [
-                "effort": "none",
-                "exclude": false
+                "effort": .string("none"),
+                "exclude": .bool(false)
             ]
         case .enabled:
             [
-                "enabled": true,
-                "exclude": false
+                "enabled": .bool(true),
+                "exclude": .bool(false)
             ]
         case .minimal, .low, .medium, .high, .xhigh, .max, .ultra:
             [
-                "effort": rawValue,
-                "exclude": false
+                "effort": .string(rawValue),
+                "exclude": .bool(false)
             ]
         }
+    }
+
+    /// Compatibility materialization for legacy request builders that still
+    /// require Foundation JSON objects. New concurrent paths should use
+    /// `openRouterReasoningJSON` instead.
+    public var openRouterReasoningPayload: [String: Any] {
+        openRouterReasoningJSON.mapValues(\.jsonObject)
     }
 
     public static func openRouterReasoningSelection(from value: JSONValue?) -> ThinkingSelection? {

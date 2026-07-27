@@ -153,7 +153,7 @@ extension SwiftFeatureRuntime {
         destinationDirectoryURL: URL,
         overwrite: Bool
     ) throws -> Bool {
-        let sourceURL = sourceDirectoryURL.standardizedFileURL
+        let sourceURL = sourceDirectoryURL.resolvingSymlinksInPath().standardizedFileURL
         let destinationURL = destinationDirectoryURL.standardizedFileURL
         guard sourceURL.path != destinationURL.path else {
             return false
@@ -170,17 +170,36 @@ extension SwiftFeatureRuntime {
                     "Feature already exists at \(destinationURL.path). Pass overwrite=true to replace it."
                 )
             }
-            try fileManager.removeItem(at: destinationURL)
         }
 
+        // Build a complete sibling staging directory first. The visible
+        // destination is only replaced after copying succeeds, avoiding a
+        // partially written feature package when an overwrite fails midway.
+        let parentURL = destinationURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+        let stagingURL = parentURL.appendingPathComponent(
+            ".zencode-feature-staging-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? fileManager.removeItem(at: stagingURL) }
         try fileManager.createDirectory(
-            at: destinationURL,
+            at: stagingURL,
             withIntermediateDirectories: true
         )
         try copyFeatureDirectoryContents(
             from: sourceURL,
-            to: destinationURL
+            to: stagingURL
         )
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            _ = try fileManager.replaceItemAt(
+                destinationURL,
+                withItemAt: stagingURL,
+                backupItemName: nil,
+                options: []
+            )
+        } else {
+            try fileManager.moveItem(at: stagingURL, to: destinationURL)
+        }
         return true
     }
 
@@ -198,7 +217,16 @@ extension SwiftFeatureRuntime {
                 continue
             }
             let destinationEntryURL = destinationURL.appendingPathComponent(entryURL.lastPathComponent)
-            let values = try entryURL.resourceValues(forKeys: [.isDirectoryKey])
+            let values = try entryURL.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isRegularFileKey,
+                .isSymbolicLinkKey
+            ])
+            guard values.isSymbolicLink != true else {
+                throw DirectToolError.permissionDenied(
+                    "Refusing to copy a symbolic link from feature package: \(entryURL.path)"
+                )
+            }
             if values.isDirectory == true {
                 try fileManager.createDirectory(
                     at: destinationEntryURL,
@@ -208,10 +236,14 @@ extension SwiftFeatureRuntime {
                     from: entryURL,
                     to: destinationEntryURL
                 )
-            } else {
+            } else if values.isRegularFile == true {
                 try fileManager.copyItem(
                     at: entryURL,
                     to: destinationEntryURL
+                )
+            } else {
+                throw DirectToolError.permissionDenied(
+                    "Refusing to copy a non-regular feature package entry: \(entryURL.path)"
                 )
             }
         }

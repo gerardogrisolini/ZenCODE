@@ -65,7 +65,7 @@ public final class FeatureProcessExitMonitor: Sendable {
 
         #if os(Linux)
         if action.shouldMonitor, processID > 0 {
-            Task.detached(priority: .utility) { [self] in
+            Task.detached(name: "Feature process Linux exit monitor", priority: .utility) { [self] in
                 await monitorLinuxProcess(processID)
             }
         }

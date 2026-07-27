@@ -72,14 +72,15 @@ enum LocalToolsSupport {
     static func readFile(_ url: URL, offset: Int?, limit: Int?) throws -> String {
         let text = try String(contentsOf: url, encoding: .utf8)
         let lines = text.components(separatedBy: .newlines)
-        let startIndex = max((offset ?? 1) - 1, 0)
-        let endIndex = min(
-            lines.count,
-            startIndex + max(limit ?? min(lines.count, 240), 1)
-        )
-        guard startIndex < endIndex else {
+        let requestedOffset = offset ?? 1
+        let startIndex = requestedOffset > 1 ? requestedOffset - 1 : 0
+        guard startIndex < lines.count else {
             return "<empty>"
         }
+        let requestedLimit = limit ?? min(lines.count, 240)
+        let safeLimit = max(requestedLimit, 1)
+        let availableLines = lines.count - startIndex
+        let endIndex = startIndex + min(safeLimit, availableLines)
         return (startIndex..<endIndex)
             .map { index in "\(index + 1)\t\(lines[index])" }
             .joined(separator: "\n")
@@ -229,8 +230,13 @@ enum LocalToolsSupport {
             return "<empty>"
         }
         var matches: [String] = []
+        var visited = 0
         let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
         for case let url as URL in enumerator {
+            visited += 1
+            if visited.isMultiple(of: 64) {
+                try Task.checkCancellation()
+            }
             let relative: String
             if url.path.hasPrefix(rootPrefix) {
                 relative = String(url.path.dropFirst(rootPrefix.count))

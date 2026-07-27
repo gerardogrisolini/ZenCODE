@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -41,10 +42,25 @@ enum CDPError: LocalizedError {
 
 /// A protocol notification emitted by Chrome. Responses carry an `id`; events
 /// do not, so they must be routed separately from pending command continuations.
-struct CDPEvent: @unchecked Sendable {
+/// The raw params JSON is stored as `Data` (Sendable) rather than
+/// `[String: Any]` so the struct is naturally Sendable without `@unchecked`.
+struct CDPEvent: Sendable {
     let method: String
-    let params: [String: Any]
+    private let paramsData: Data
     let sessionID: String?
+
+    init(method: String, paramsData: Data, sessionID: String?) {
+        self.method = method
+        self.paramsData = paramsData
+        self.sessionID = sessionID
+    }
+
+    /// Parses the raw params JSON payload into a dictionary. Re-parses on each
+    /// access, so callers that need multiple fields should store the result in
+    /// a local variable.
+    var params: [String: Any] {
+        (try? JSONSerialization.jsonObject(with: paramsData) as? [String: Any]) ?? [:]
+    }
 }
 
 /// Limits for a single CDP page session. They are host configuration, never
@@ -85,28 +101,35 @@ struct CDPSessionConfiguration: Sendable {
 
 // MARK: - CDP WebSocket session
 
+/// All mutable routing state guarded by `routingState`. Carrying the CDP
+/// response as raw `Data` (Sendable) instead of `[String: Any]` lets the
+/// `Mutex<CDPRoutingState>` protect the continuation store while keeping the
+/// session Sendable without `@unchecked`.
+private struct CDPRoutingState: Sendable {
+    var nextID: Int = 1
+    var pending: [Int: CheckedContinuation<Data, Error>] = [:]
+    /// Terminal outcomes that arrived before a command's continuation was
+    /// registered (timeout, response, send error, cancellation, disconnect).
+    var earlyResults: [Int: Result<Data, Error>] = [:]
+    /// IDs whose outcome has been delivered (continuation resumed or early
+    /// result consumed). Late outcomes for completed IDs are ignored so a
+    /// timed-out command cannot be superseded by a delayed response.
+    var completedIDs: Set<Int> = []
+    var eventHandlers: [UUID: @Sendable (CDPEvent) -> Void] = [:]
+    var receiveTask: Task<Void, Never>?
+}
+
 /// Manages a single WebSocket connection to a Chrome DevTools Protocol target
 /// (a page tab) and provides high-level helpers for page navigation, readiness
 /// polling, dynamic scrolling, and JavaScript-based content extraction.
-final class CDPSession: @unchecked Sendable {
+final class CDPSession: Sendable {
     private let webSocket: URLSessionWebSocketTask
     private let session: URLSession
     private let configuration: CDPSessionConfiguration
     /// Durable Browser-owned state is injected from the runner so one-shot
     /// feature invocations use the same private Chrome profile as their page.
     let snapshotStateStore: BrowserSnapshotStateStore
-    private let lock = NSLock()
-    private var nextIDCounter = 1
-    private var pending: [Int: CheckedContinuation<[String: Any], Error>] = [:]
-    /// Terminal outcomes that arrived before a command's continuation was
-    /// registered (timeout, response, send error, cancellation, disconnect).
-    /// Routing every outcome through `resolve(id:with:)` makes the ordering
-    /// between registration and resolution irrelevant: whichever runs second
-    /// consumes the state left by the first, so no outcome is lost and no
-    /// continuation is resumed twice.
-    private var earlyResults: [Int: Result<[String: Any], Error>] = [:]
-    private var eventHandlers: [UUID: @Sendable (CDPEvent) -> Void] = [:]
-    private var receiveTask: Task<Void, Never>?
+    private let routingState = Mutex(CDPRoutingState())
 
     /// Connects to the given page-target WebSocket URL.
     init(
@@ -136,7 +159,7 @@ final class CDPSession: @unchecked Sendable {
         // avoid retaining self for the full duration of the indefinite receive
         // loop. The Task body only holds a strong reference for the duration
         // of each individual receive() call.
-        let task = Task { [weak self] in
+        let task = Task(name: "CDPSession.receive-loop") { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
                 guard await self.receiveOnce() else { return }
@@ -163,16 +186,17 @@ final class CDPSession: @unchecked Sendable {
         _ handler: @escaping @Sendable (CDPEvent) -> Void
     ) -> UUID {
         let token = UUID()
-        lock.lock()
-        eventHandlers[token] = handler
-        lock.unlock()
+        routingState.withLock { state in
+            state.eventHandlers[token] = handler
+        }
         return token
     }
 
     func removeEventHandler(_ token: UUID) {
-        lock.lock()
-        eventHandlers.removeValue(forKey: token)
-        lock.unlock()
+        routingState.withLock { state in
+            state.eventHandlers.removeValue(forKey: token)
+            return
+        }
     }
 
     // MARK: - Command dispatch
@@ -191,7 +215,7 @@ final class CDPSession: @unchecked Sendable {
         // Register a timeout that will fail the command if no response arrives.
         let timeoutNanoseconds = configuration.commandTimeoutNanoseconds
         let timeoutSeconds = timeoutNanoseconds / 1_000_000_000
-        let timeoutTask = Task { [weak self, timeoutNanoseconds, timeoutSeconds] in
+        let timeoutTask = Task(name: "CDPSession.command-timeout") { [weak self, timeoutNanoseconds, timeoutSeconds] in
             try? await Task.sleep(nanoseconds: timeoutNanoseconds)
             guard !Task.isCancelled else { return }
             self?.resolve(
@@ -201,8 +225,11 @@ final class CDPSession: @unchecked Sendable {
         }
         defer { timeoutTask.cancel() }
 
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[String: Any], Error>) in
+        // The continuation carries raw `Data` (Sendable) so the routing state
+        // can live in a Mutex without @unchecked. The JSON is parsed back into
+        // `[String: Any]` here for the caller-facing return type.
+        let responseData = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data, Error>) in
                 registerPending(id: id, continuation: cont)
 
                 webSocket.send(.string(text)) { [weak self] sendError in
@@ -216,6 +243,8 @@ final class CDPSession: @unchecked Sendable {
             // immediately instead of waiting for a response that never arrives.
             resolve(id: id, with: .failure(CancellationError()))
         }
+
+        return (try? JSONSerialization.jsonObject(with: responseData) as? [String: Any]) ?? [:]
     }
 
     /// Evaluates a JavaScript expression that returns a string.
@@ -391,90 +420,67 @@ final class CDPSession: @unchecked Sendable {
     // MARK: - Private
 
     private func allocateID() -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        let id = nextIDCounter
-        nextIDCounter += 1
-        return id
+        routingState.withLock { state in
+            let id = state.nextID
+            state.nextID += 1
+            return id
+        }
     }
 
-    private func registerPending(id: Int, continuation: CheckedContinuation<[String: Any], Error>) {
-        lock.lock()
-        // If an outcome (response, timeout, cancellation, send error, or
-        // disconnect) already arrived, consume it and resume immediately
-        // instead of registering a continuation that nothing will resume.
-        let early = earlyResults.removeValue(forKey: id)
-        if early == nil {
-            pending[id] = continuation
+    private func registerPending(id: Int, continuation: CheckedContinuation<Data, Error>) {
+        let earlyResult: Result<Data, Error>? = routingState.withLock { state in
+            // If an outcome already arrived, consume it and mark completed so
+            // a later resolve for the same ID is ignored.
+            if let early = state.earlyResults.removeValue(forKey: id) {
+                state.completedIDs.insert(id)
+                return early
+            }
+            // Otherwise register the continuation for a future outcome.
+            state.pending[id] = continuation
+            return nil
         }
-        lock.unlock()
-        if let early {
-            continuation.resume(with: early)
+        if let earlyResult {
+            continuation.resume(with: earlyResult)
         }
     }
 
     /// Single terminal path for every pending-command outcome: timeout,
-    /// cancellation, send error, response, and disconnect. Serialised through
-    /// `lock`, it removes the registered continuation (if any) and resumes it;
-    /// otherwise it stashes the outcome in `earlyResults` so the eventual
-    /// `registerPending` resumes immediately. Because the continuation is only
-    /// ever removed once, exactly one caller resumes it, so registration and
-    /// resolution can happen in either order without losing or double-firing
-    /// the outcome. First-write-wins keeps the earliest cause when two outcomes
-    /// race before registration.
-    private func resolve(id: Int, with result: Result<[String: Any], Error>) {
-        let continuation = removePendingContinuation(id)
-        guard let continuation else {
-            stashEarlyResult(id, result: result)
-            return
-        }
-        // Route the outcome through the unchecked early-results store and read
-        // it back via a separate function. The non-Sendable `[String: Any]`
-        // payload is not tracked as caller task-isolated across the function
-        // boundary (the same reason `registerPending` resumes safely from that
-        // store), so it can cross the continuation resume boundary.
-        stashEarlyResult(id, result: result)
-        guard let outcome = takeEarlyResult(id) else {
-            return
-        }
-        switch outcome {
-        case let .success(value):
-            continuation.resume(returning: value)
-        case let .failure(error):
-            continuation.resume(throwing: error)
-        }
-    }
+    /// cancellation, send error, response, and disconnect. The Mutex makes the
+    /// lifecycle check, continuation removal, and completion marking atomic, so
+    /// no outcome is lost, no continuation is resumed twice, and late outcomes
+    /// for already-completed IDs are ignored. First-write-wins keeps the
+    /// earliest cause when two outcomes race before registration.
+    private func resolve(id: Int, with result: Result<Data, Error>) {
+        let continuation: CheckedContinuation<Data, Error>? = routingState.withLock { state in
+            // Ignore outcomes for IDs that already delivered a result.
+            guard !state.completedIDs.contains(id) else { return nil }
 
-    private func removePendingContinuation(_ id: Int) -> CheckedContinuation<[String: Any], Error>? {
-        lock.lock()
-        defer { lock.unlock() }
-        return pending.removeValue(forKey: id)
-    }
-
-    private func stashEarlyResult(_ id: Int, result: Result<[String: Any], Error>) {
-        lock.lock()
-        if earlyResults[id] == nil {
-            earlyResults[id] = result
+            if let cont = state.pending.removeValue(forKey: id) {
+                // Continuation registered → mark completed; resume outside lock.
+                state.completedIDs.insert(id)
+                return cont
+            }
+            // Continuation not yet registered → stash for registerPending.
+            if state.earlyResults[id] == nil {
+                state.earlyResults[id] = result
+            }
+            return nil
         }
-        lock.unlock()
-    }
-
-    private func takeEarlyResult(_ id: Int) -> Result<[String: Any], Error>? {
-        lock.lock()
-        defer { lock.unlock() }
-        return earlyResults.removeValue(forKey: id)
+        if let continuation {
+            continuation.resume(with: result)
+        }
     }
 
     private func setReceiveTask(_ task: Task<Void, Never>) {
-        lock.lock()
-        receiveTask = task
-        lock.unlock()
+        routingState.withLock { state in
+            state.receiveTask = task
+        }
     }
 
     private func currentReceiveTask() -> Task<Void, Never>? {
-        lock.lock()
-        defer { lock.unlock() }
-        return receiveTask
+        routingState.withLock { state in
+            state.receiveTask
+        }
     }
 
     /// Processes a single WebSocket message. On transport error, fails all
@@ -510,15 +516,16 @@ final class CDPSession: @unchecked Sendable {
                     ?? String(describing: error)
                 resolve(id: id, with: .failure(CDPError.commandFailed(message)))
             } else {
-                resolve(id: id, with: .success(json))
+                resolve(id: id, with: .success(data))
             }
             return
         }
 
         guard let method = json["method"] as? String else { return }
+        let paramsData = (try? JSONSerialization.data(withJSONObject: json["params"] ?? [:])) ?? Data()
         let event = CDPEvent(
             method: method,
-            params: json["params"] as? [String: Any] ?? [:],
+            paramsData: paramsData,
             sessionID: json["sessionId"] as? String
         )
         let handlers = currentEventHandlers()
@@ -526,26 +533,26 @@ final class CDPSession: @unchecked Sendable {
     }
 
     private func failAll(_ error: Error) {
-        let failure = Result<[String: Any], Error>.failure(error)
-        lock.lock()
-        let allPending = pending
-        pending.removeAll()
-        // Supersede any not-yet-registered outcomes with the terminal failure
-        // so a later registerPending cannot resume a command with a stale
-        // per-command result once the session is gone.
-        for id in earlyResults.keys {
-            earlyResults[id] = failure
+        let allPending: [(Int, CheckedContinuation<Data, Error>)] = routingState.withLock { state in
+            let pending = state.pending
+            state.pending.removeAll()
+            // Mark all known IDs as completed and supersede any not-yet-registered
+            // outcomes with the terminal failure so a later registerPending cannot
+            // resume a command with a stale per-command result once the session is gone.
+            state.completedIDs.formUnion(pending.keys)
+            state.completedIDs.formUnion(state.earlyResults.keys)
+            state.earlyResults = state.earlyResults.mapValues { _ in .failure(error) }
+            return pending.map { (key, value) in (key, value) }
         }
-        lock.unlock()
         for (_, continuation) in allPending {
             continuation.resume(throwing: error)
         }
     }
 
     private func currentEventHandlers() -> [@Sendable (CDPEvent) -> Void] {
-        lock.lock()
-        defer { lock.unlock() }
-        return Array(eventHandlers.values)
+        routingState.withLock { state in
+            Array(state.eventHandlers.values)
+        }
     }
 
     private func sleep(milliseconds ms: Int) async throws {

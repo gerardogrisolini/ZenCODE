@@ -214,7 +214,7 @@ extension TerminalChat {
             await statusBar.beginRequest()
             await statusBar.setProcessing(true)
             await interactiveReader.setPanelProcessing(true)
-            generationTask = Task {
+            generationTask = Task(name: "ZenCODE.TUI.queued-prompt-generation") {
                 let result: TerminalChatGenerationResult
                 do {
                     result = .success(try await self.generateResponse(attempt: attempt))

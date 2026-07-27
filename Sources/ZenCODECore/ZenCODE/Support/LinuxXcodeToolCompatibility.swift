@@ -6,8 +6,8 @@
 //
 
 #if !os(macOS)
-import FeatureMCPBridgeKit
 import Foundation
+import FeatureMCPBridgeKit
 import ToolCore
 
 /// Source-compatible Xcode types used by shared session APIs on platforms

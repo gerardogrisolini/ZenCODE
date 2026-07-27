@@ -106,6 +106,8 @@ struct LocalReadFilesTool: FeatureTool {
                     try LocalToolsSupport.readFile(url, offset: offset, limit: limit)
                 }
                 sections.append("===== \(url.path) =====\n\(body)")
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 sections.append("===== \(url.path) =====\n<error: \(error.localizedDescription)>")
             }
@@ -155,7 +157,9 @@ struct LocalWriteFileTool: FeatureTool {
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
-        let content = input.content ?? ""
+        guard let content = input.content else {
+            throw LocalToolsFeatureError.missingArgument("content")
+        }
         let createDirectories = input.createDirectories == true
         let byteCount = content.utf8.count
         return try await LocalIOOffloader.run {
@@ -191,7 +195,9 @@ struct LocalReplaceTool: FeatureTool {
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
         let oldString = try LocalToolsSupport.requiredRawString(input.oldString, input.old_string, name: "oldString")
-        let newString = input.newString ?? input.new_string ?? ""
+        guard let newString = input.newString ?? input.new_string else {
+            throw LocalToolsFeatureError.missingArgument("newString")
+        }
         return try await LocalIOOffloader.run {
             let original = try String(contentsOf: path, encoding: .utf8)
             // Count without materializing the full split array.
@@ -229,7 +235,9 @@ struct LocalEditFileTool: FeatureTool {
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
         let oldString = try LocalToolsSupport.requiredRawString(input.oldString, input.old_string, name: "oldString")
-        let newString = input.newString ?? input.new_string ?? ""
+        guard let newString = input.newString ?? input.new_string else {
+            throw LocalToolsFeatureError.missingArgument("newString")
+        }
         let replaceAll = input.replaceAll ?? input.replace_all ?? false
         return try await LocalIOOffloader.run {
             let original = try String(contentsOf: path, encoding: .utf8)
@@ -293,7 +301,9 @@ struct LocalMultiEditTool: FeatureTool {
                 edit.old_string,
                 name: "edits[\(index)].oldString"
             )
-            let newString = edit.newString ?? edit.new_string ?? ""
+            guard let newString = edit.newString ?? edit.new_string else {
+                throw LocalToolsFeatureError.missingArgument("edits[\(index)].newString")
+            }
             let replaceAll = edit.replaceAll ?? edit.replace_all ?? false
             let occurrences = contents.components(separatedBy: oldString).count - 1
             guard occurrences > 0 else {
@@ -331,17 +341,20 @@ struct LocalAppendTool: FeatureTool {
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
-        let content = input.content ?? ""
+        guard let content = input.content else {
+            throw LocalToolsFeatureError.missingArgument("content")
+        }
         let data = Data(content.utf8)
         return try await LocalIOOffloader.run {
-            if FileManager.default.fileExists(atPath: path.path) {
-                let handle = try FileHandle(forWritingTo: path)
-                defer { try? handle.close() }
-                try handle.seekToEnd()
-                try handle.write(contentsOf: data)
-            } else {
-                try data.write(to: path)
+            let descriptor = path.path.withCString {
+                open($0, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR)
             }
+            guard descriptor >= 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            defer { try? handle.close() }
+            try handle.write(contentsOf: data)
             return "Appended \(data.count) bytes to \(path.path)."
         }
     }
@@ -426,14 +439,45 @@ struct LocalMoveTool: FeatureTool {
         let destinationURL = context.resolvePath(destinationPath)
         let overwriteExisting = input.overwriteExisting == true
         return try await LocalIOOffloader.run {
-            if FileManager.default.fileExists(atPath: destinationURL.path) {
-                guard overwriteExisting else {
-                    throw LocalToolsFeatureError.permissionDenied("Destination exists. Set overwriteExisting=true.")
-                }
-                try FileManager.default.removeItem(at: destinationURL)
+            let manager = FileManager.default
+            guard manager.fileExists(atPath: sourceURL.path) else {
+                throw LocalToolsFeatureError.permissionDenied("Source does not exist: \(sourceURL.path).")
             }
-            try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
-            return "Moved \(sourceURL.path) to \(destinationURL.path)."
+            guard manager.fileExists(atPath: destinationURL.path) else {
+                try manager.moveItem(at: sourceURL, to: destinationURL)
+                return "Moved \(sourceURL.path) to \(destinationURL.path)."
+            }
+            guard overwriteExisting else {
+                throw LocalToolsFeatureError.permissionDenied("Destination exists. Set overwriteExisting=true.")
+            }
+
+            // `moveItem` cannot promise replacement semantics. Preserve the old
+            // destination beside itself first, then restore it if moving the
+            // source fails; the destination is never eagerly discarded.
+            let backupURL = destinationURL.deletingLastPathComponent()
+                .appendingPathComponent(".zencode-move-backup-\(UUID().uuidString)")
+            try manager.moveItem(at: destinationURL, to: backupURL)
+            do {
+                try manager.moveItem(at: sourceURL, to: destinationURL)
+                try? manager.removeItem(at: backupURL)
+                return "Moved \(sourceURL.path) to \(destinationURL.path)."
+            } catch {
+                var restorationError: Error?
+                do {
+                    if manager.fileExists(atPath: destinationURL.path) {
+                        try manager.removeItem(at: destinationURL)
+                    }
+                    try manager.moveItem(at: backupURL, to: destinationURL)
+                } catch {
+                    restorationError = error
+                }
+                if let restorationError {
+                    throw LocalToolsFeatureError.permissionDenied(
+                        "Move failed and the destination backup could not be restored. Backup: \(backupURL.path). Move error: \(error.localizedDescription). Restore error: \(restorationError.localizedDescription)"
+                    )
+                }
+                throw error
+            }
         }
     }
 }

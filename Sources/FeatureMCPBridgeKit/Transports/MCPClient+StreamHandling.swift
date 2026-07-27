@@ -14,7 +14,9 @@ import ToolCore
 
 #if os(macOS)
 extension MCPClient {
-    public nonisolated static func readLoop(from handle: FileHandle, client: MCPClient) async {
+    private static let maxDiagnosticBytes = 65_536
+
+    nonisolated static func readLoop(from handle: FileHandle, client: MCPClient) async {
         await runReadLoop(from: handle, client: client, connectionID: nil)
     }
 
@@ -95,7 +97,7 @@ extension MCPClient {
         }
     }
 
-    public nonisolated static func errorLoop(from handle: FileHandle, client: MCPClient) async {
+    nonisolated static func errorLoop(from handle: FileHandle, client: MCPClient) async {
         await runErrorLoop(from: handle, client: client, connectionID: nil)
     }
 
@@ -183,6 +185,11 @@ extension MCPClient {
                 let bytesRead = Darwin.read(fileDescriptor, &rawBuffer, rawBuffer.count)
                 if bytesRead > 0 {
                     lineBuffer.append(contentsOf: rawBuffer.prefix(bytesRead))
+                    // Diagnostic commands are untrusted peers too. Preserve only
+                    // a bounded tail when they emit a never-terminated line.
+                    if lineBuffer.count > Self.maxDiagnosticBytes {
+                        lineBuffer = Data(lineBuffer.suffix(Self.maxDiagnosticBytes))
+                    }
                     while let newlineIndex = lineBuffer.firstIndex(of: 0x0A) {
                         let lineData = lineBuffer.subdata(in: lineBuffer.startIndex ..< newlineIndex)
                         lineBuffer.removeSubrange(lineBuffer.startIndex ... newlineIndex)
@@ -229,13 +236,13 @@ extension MCPClient {
         }
     }
 
-    public func handleStdoutChunk(_ chunk: Data) {
+    func handleStdoutChunk(_ chunk: Data) {
         log("stdout <- \(chunk.count) bytes")
         persistStdoutChunkTrace(chunk)
         append(chunk)
     }
 
-    public func handleStdoutReadFailure(_ error: Error) {
+    func handleStdoutReadFailure(_ error: Error) {
         log("stdout read failed: \(error.localizedDescription)")
         guard terminatingConnectionID == nil else {
             return
@@ -257,7 +264,7 @@ extension MCPClient {
         handleStdoutReadFailure(error)
     }
 
-    public func handleStdoutClosed() {
+    func handleStdoutClosed() {
         log("stdout closed")
         guard terminatingConnectionID == nil else {
             return
@@ -308,8 +315,8 @@ extension MCPClient {
         }
     }
 
-    public func handleStderrChunk(_ chunk: Data) {
-        stderrBuffer.append(chunk)
+    func handleStderrChunk(_ chunk: Data) {
+        appendDiagnostic(chunk, to: &stderrBuffer)
         if let text = String(data: chunk, encoding: .utf8), !text.isEmpty {
             log("stderr <- \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
         } else {
@@ -341,8 +348,8 @@ extension MCPClient {
         handleStderrChunk(chunk)
     }
 
-    public func handleStderrReadFailure(_ error: Error) {
-        stderrBuffer.append(Data(error.localizedDescription.utf8))
+    func handleStderrReadFailure(_ error: Error) {
+        appendDiagnostic(Data(error.localizedDescription.utf8), to: &stderrBuffer)
         log("stderr read failed: \(error.localizedDescription)")
     }
 
@@ -363,11 +370,11 @@ extension MCPClient {
             || terminatingConnectionID == connectionID
     }
 
-    public func handleProcessTermination(_ terminatedProcess: Process) {
+    func handleProcessTermination(_ terminatedProcess: Process) {
         guard let activeConnectionID else {
             return
         }
-        Task { [weak self] in
+        Task(name: "MCP local process termination forwarding") { [weak self] in
             await self?.handleProcessTermination(
                 terminatedProcess,
                 connectionID: activeConnectionID
@@ -441,7 +448,14 @@ extension MCPClient {
         resumeAllPending(with: detectedError)
     }
 
-    public func append(_ chunk: Data) {
+    func append(_ chunk: Data) {
+        // `buffer` only contains incomplete frames. Refuse a peer that exceeds
+        // its residual-frame budget rather than repeatedly reallocating memory.
+        guard chunk.count <= MCPTransportCodec.maxFrameBytes,
+              buffer.count <= MCPTransportCodec.maxFrameBytes - chunk.count else {
+            handleMalformedTransport(.frameTooLarge(limit: MCPTransportCodec.maxFrameBytes))
+            return
+        }
         buffer.append(chunk)
 
         if let error = classifiedPolicyError(
@@ -455,13 +469,20 @@ extension MCPClient {
         }
 
         var parsedMessageCount = 0
-        while let body = nextMessageBody() {
-            guard !body.isEmpty else {
-                continue
+        parseLoop: while true {
+            switch MCPTransportCodec.nextMessage(from: &buffer) {
+            case let .message(body):
+                guard !body.isEmpty else {
+                    continue
+                }
+                parsedMessageCount += 1
+                handleMessage(body)
+            case .needMoreData:
+                break parseLoop
+            case let .malformed(error):
+                handleMalformedTransport(error)
+                return
             }
-
-            parsedMessageCount += 1
-            handleMessage(body)
         }
 
         if parsedMessageCount == 0, !buffer.isEmpty {
@@ -471,11 +492,39 @@ extension MCPClient {
         persistReassembledBufferSnapshotIfNeeded()
     }
 
-    public func nextMessageBody() -> Data? {
+    func nextMessageBody() -> Data? {
         MCPTransportCodec.nextMessageBody(from: &buffer)
     }
 
-    public func handleMessage(_ body: Data) {
+    private func appendDiagnostic(_ chunk: Data, to buffer: inout Data) {
+        guard chunk.count < Self.maxDiagnosticBytes else {
+            buffer = Data(chunk.suffix(Self.maxDiagnosticBytes))
+            return
+        }
+        let overflow = buffer.count.addingReportingOverflow(chunk.count)
+        if overflow.overflow || overflow.partialValue > Self.maxDiagnosticBytes {
+            let bytesToRemove = min(
+                buffer.count,
+                overflow.overflow
+                    ? buffer.count
+                    : overflow.partialValue - Self.maxDiagnosticBytes
+            )
+            buffer.removeFirst(bytesToRemove)
+        }
+        buffer.append(chunk)
+    }
+
+    private func handleMalformedTransport(_ error: MCPTransportCodecError) {
+        let clientError = MCPClientError.malformedTransport(error.localizedDescription)
+        buffer.removeAll(keepingCapacity: false)
+        terminalBridgeError = clientError
+        resumeAllPending(with: clientError)
+        // Framing cannot be safely re-synchronized. Always close the local
+        // transport; this is intentionally independent of optional policy hooks.
+        terminateLocalProcessAfterPolicyError(clientError)
+    }
+
+    func handleMessage(_ body: Data) {
         log("message <- \(String(data: body, encoding: .utf8) ?? "<non-utf8>")")
         guard let message = try? JSONDecoder().decode(MCPIncomingMessage.self, from: body) else {
             if let error = classifiedPolicyError(
@@ -551,7 +600,7 @@ extension MCPClient {
         continuation.resume(returning: result)
     }
 
-    public func resumeAllPending(with error: Error) {
+    func resumeAllPending(with error: Error) {
         let continuations = pendingResponses.values
         pendingResponses.removeAll()
         pendingRequestMethods.removeAll()
@@ -561,7 +610,7 @@ extension MCPClient {
         }
     }
 
-    public func cancelPendingResponse(id requestID: Int) {
+    func cancelPendingResponse(id requestID: Int) {
         guard let continuation = pendingResponses.removeValue(forKey: requestID) else {
             return
         }
@@ -569,7 +618,7 @@ extension MCPClient {
         continuation.resume(throwing: CancellationError())
     }
 
-    public func exitError(for process: Process) -> MCPClientError {
+    func exitError(for process: Process) -> MCPClientError {
         let stderrMessage = currentStderrMessage()
         if let policyError = classifiedPolicyError(
             kind: .processExited,
@@ -588,12 +637,12 @@ extension MCPClient {
         return .serverExited(status: process.terminationStatus, message: message)
     }
 
-    public func currentStderrMessage() -> String {
+    func currentStderrMessage() -> String {
         String(data: stderrBuffer, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
-    public func serverError(
+    func serverError(
         _ error: MCPErrorResponse,
         requestMethod: String?
     ) -> MCPClientError {
@@ -721,11 +770,11 @@ extension MCPClient {
         }
     }
 
-    public func importantLog(_ message: String) {
+    func importantLog(_ message: String) {
         log(message)
     }
 
-    public func logBufferedPrefixIfNeeded() {
+    func logBufferedPrefixIfNeeded() {
         let prefixData = buffer.prefix(200)
         let utf8Preview = String(data: prefixData, encoding: .utf8) ?? "<non-utf8>"
         let escapedPreview = utf8Preview
@@ -742,7 +791,7 @@ extension MCPClient {
         log("buffered stdout prefix \(snapshot)")
     }
 
-    public func log(_ message: String) {
+    func log(_ message: String) {
         guard isDebugLoggingEnabled else {
             return
         }
@@ -750,7 +799,7 @@ extension MCPClient {
         appendDebugLogLine(message)
     }
 
-    public func prepareStdoutTracingFiles() {
+    func prepareStdoutTracingFiles() {
         guard isDebugLoggingEnabled else {
             return
         }
@@ -772,20 +821,20 @@ extension MCPClient {
         }
     }
 
-    public nonisolated static func traceSessionTag() -> String {
+    nonisolated static func traceSessionTag() -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
         return "\(formatter.string(from: Date()))-pid\(ProcessInfo.processInfo.processIdentifier)"
     }
 
-    public func traceURLs(fileName: String) -> [URL] {
+    func traceURLs(fileName: String) -> [URL] {
         let homeLogsDirectory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/FeatureMCPBridgeKit", isDirectory: true)
         return [homeLogsDirectory.appendingPathComponent(fileName)]
     }
 
-    public func persistStdoutChunkTrace(_ chunk: Data) {
+    func persistStdoutChunkTrace(_ chunk: Data) {
         guard isDebugLoggingEnabled, !stdoutChunkTraceURLs.isEmpty else {
             return
         }
@@ -795,7 +844,7 @@ extension MCPClient {
         }
     }
 
-    public func persistReassembledBufferSnapshotIfNeeded() {
+    func persistReassembledBufferSnapshotIfNeeded() {
         guard isDebugLoggingEnabled, !stdoutReassembledBufferURLs.isEmpty else {
             return
         }
@@ -810,7 +859,7 @@ extension MCPClient {
         }
     }
 
-    public func appendDebugLogLine(_ message: String) {
+    func appendDebugLogLine(_ message: String) {
         let formatter = ISO8601DateFormatter()
         let timestamp = formatter.string(from: Date())
         let line = "[\(timestamp)] [pid:\(ProcessInfo.processInfo.processIdentifier)] [MCPClient] \(message)\n"
@@ -821,13 +870,13 @@ extension MCPClient {
         }
     }
 
-    public func debugLogURLs() -> [URL] {
+    func debugLogURLs() -> [URL] {
         let homeLogsDirectory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/FeatureMCPBridgeKit", isDirectory: true)
         return [homeLogsDirectory.appendingPathComponent("mcpclient.log")]
     }
 
-    public func append(line: String, to logURL: URL) {
+    func append(line: String, to logURL: URL) {
         let fileManager = FileManager.default
         let directoryURL = logURL.deletingLastPathComponent()
         try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
@@ -853,7 +902,7 @@ extension MCPClient {
         }
     }
 
-    public func append(data: Data, to logURL: URL) {
+    func append(data: Data, to logURL: URL) {
         let fileManager = FileManager.default
         let directoryURL = logURL.deletingLastPathComponent()
         try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
@@ -879,7 +928,7 @@ extension MCPClient {
         }
     }
 
-    public func overwrite(data: Data, to logURL: URL) {
+    func overwrite(data: Data, to logURL: URL) {
         let fileManager = FileManager.default
         let directoryURL = logURL.deletingLastPathComponent()
         try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)

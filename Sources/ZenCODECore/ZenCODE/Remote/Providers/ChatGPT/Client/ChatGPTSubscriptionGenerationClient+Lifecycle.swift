@@ -27,7 +27,7 @@ extension ChatGPTSubscriptionGenerationClient {
             history: history,
             allowedToolNames: allowedToolNames
         )
-        sessions[id] = AgentSession(
+        installSession(AgentSession(
             id: id,
             cwd: cwd,
             systemPrompt: systemPrompt,
@@ -38,7 +38,7 @@ extension ChatGPTSubscriptionGenerationClient {
             preserveThinking: preserveThinking,
             continuation: Self.restoredContinuation(from: messages),
             chatGPTSessionID: nil
-        )
+        ), id: id)
     }
 
     public func createSessionIfNeeded(
@@ -101,7 +101,7 @@ extension ChatGPTSubscriptionGenerationClient {
     }
 
     public func closeSession(id: String) async {
-        let session = sessions.removeValue(forKey: id)
+        let session = invalidateSession(id: id)
         await toolExecutor.removeToolProviders(sessionID: id)
         if let chatGPTSessionID = session?.chatGPTSessionID {
             webSocketPool.closeSession(sessionID: chatGPTSessionID)
@@ -111,6 +111,7 @@ extension ChatGPTSubscriptionGenerationClient {
     public func shutdown() async {
         let sessionIDs = sessions.values.compactMap(\.chatGPTSessionID)
         sessions.removeAll()
+        sessionGenerations.removeAll()
         if ownsWebSocketPool {
             await webSocketPool.shutdown()
         } else {

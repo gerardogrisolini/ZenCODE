@@ -101,7 +101,7 @@ public enum AnthropicSubscriptionAuthError: LocalizedError {
     }
 }
 
-public final class AnthropicSubscriptionSignInSession: @unchecked Sendable {
+public final class AnthropicSubscriptionSignInSession: Sendable {
     public let authorizationURL: URL
 
     private let verifier: String
@@ -135,7 +135,7 @@ public final class AnthropicSubscriptionSignInSession: @unchecked Sendable {
     }
 
     public func cancel() {
-        Task {
+        Task(name: "Anthropic authorization background task") {
             let continuation = await authorizationState.cancel()
             continuation?.resume(throwing: AnthropicSubscriptionAuthError.callbackCancelled)
         }
@@ -235,7 +235,7 @@ public final class AnthropicSubscriptionSignInSession: @unchecked Sendable {
     }
 
     private func complete(_ result: Result<AnthropicSubscriptionAuthorizationResult, Error>) {
-        Task {
+        Task(name: "Anthropic authorization background task") {
             let continuation = await authorizationState.complete(result)
             continuation?.resume(with: result)
         }
@@ -543,7 +543,7 @@ private actor AnthropicSubscriptionRefreshCoordinator {
             return try await inFlightRefresh.value
         }
 
-        let task = Task {
+        let task = Task(name: "Anthropic authorization background task") {
             try await operation(credentials)
         }
         inFlightRefreshes[refreshKey] = task

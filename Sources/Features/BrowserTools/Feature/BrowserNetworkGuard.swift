@@ -9,6 +9,7 @@
 
 import Dispatch
 import Foundation
+import Synchronization
 
 #if canImport(Darwin)
 import Darwin
@@ -120,32 +121,38 @@ struct BrowserSystemHostResolver: BrowserHostResolving {
 /// DNS resolver to async Swift code. Exactly one of the resolver result or a
 /// cancellation error resumes the continuation, regardless of arrival order, so
 /// a blocking resolver can be abandoned on cancellation without a double resume.
-private final class BrowserOffloadResolutionBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<[String], Error>?
-    private var pending: Result<[String], Error>?
+private final class BrowserOffloadResolutionBox: Sendable {
+    private struct State: Sendable {
+        var continuation: CheckedContinuation<[String], Error>?
+        var pending: Result<[String], Error>?
+    }
+    private let state = Mutex(State())
 
     func attach(_ continuation: CheckedContinuation<[String], Error>) {
-        lock.lock()
-        if let early = pending {
-            pending = nil
-            lock.unlock()
+        let early: Result<[String], Error>? = state.withLock { state in
+            if let pending = state.pending {
+                state.pending = nil
+                return pending
+            }
+            state.continuation = continuation
+            return nil
+        }
+        if let early {
             continuation.resume(with: early)
-        } else {
-            self.continuation = continuation
-            lock.unlock()
         }
     }
 
     func resume(with result: Result<[String], Error>) {
-        lock.lock()
+        let continuation: CheckedContinuation<[String], Error>? = state.withLock { state in
+            if let continuation = state.continuation {
+                state.continuation = nil
+                return continuation
+            }
+            state.pending = result
+            return nil
+        }
         if let continuation {
-            self.continuation = nil
-            lock.unlock()
             continuation.resume(with: result)
-        } else {
-            pending = result
-            lock.unlock()
         }
     }
 
@@ -316,9 +323,10 @@ struct BrowserFetchPausedRequest: Sendable, Equatable {
     let url: String
 
     static func decode(_ event: CDPEvent) -> Self? {
+        let params = event.params
         guard event.method == "Fetch.requestPaused",
-              let requestID = event.params["requestId"] as? String,
-              let request = event.params["request"] as? [String: Any],
+              let requestID = params["requestId"] as? String,
+              let request = params["request"] as? [String: Any],
               let url = request["url"] as? String,
               !requestID.isEmpty,
               !url.isEmpty
@@ -332,17 +340,20 @@ struct BrowserFetchPausedRequest: Sendable, Equatable {
 /// Fetch request-stage interception blocks policy-violating redirects,
 /// documents, frames, and ordinary subresources before the request is sent for
 /// as long as a Browser tool invocation has its CDP session open.
-final class BrowserNetworkGuard: @unchecked Sendable {
+final class BrowserNetworkGuard: Sendable {
     private static let maximumConcurrentDecisions = 4
+
+    private struct State: Sendable {
+        var handlerToken: UUID?
+        var firstViolation: BrowserNetworkGuardViolation?
+        var queuedRequests: [BrowserFetchPausedRequest] = []
+        var decisionTasks: [UUID: Task<Void, Never>] = [:]
+        var isStopped = false
+    }
 
     private let session: CDPSession
     private let requestPolicy: BrowserNetworkRequestPolicy
-    private let lock = NSLock()
-    private var handlerToken: UUID?
-    private var firstViolation: BrowserNetworkGuardViolation?
-    private var queuedRequests: [BrowserFetchPausedRequest] = []
-    private var decisionTasks: [UUID: Task<Void, Never>] = [:]
-    private var isStopped = false
+    private let state = Mutex(State())
 
     init(session: CDPSession, requestPolicy: BrowserNetworkRequestPolicy) {
         self.session = session
@@ -350,13 +361,13 @@ final class BrowserNetworkGuard: @unchecked Sendable {
     }
 
     deinit {
-        let (token, tasks) = lock.withLock { () -> (UUID?, [Task<Void, Never>]) in
-            isStopped = true
-            queuedRequests.removeAll()
-            let token = handlerToken
-            handlerToken = nil
-            let tasks = Array(decisionTasks.values)
-            decisionTasks.removeAll()
+        let (token, tasks) = state.withLock { state -> (UUID?, [Task<Void, Never>]) in
+            state.isStopped = true
+            state.queuedRequests.removeAll()
+            let token = state.handlerToken
+            state.handlerToken = nil
+            let tasks = Array(state.decisionTasks.values)
+            state.decisionTasks.removeAll()
             return (token, tasks)
         }
         if let token {
@@ -366,9 +377,10 @@ final class BrowserNetworkGuard: @unchecked Sendable {
     }
 
     func install() async throws {
-        lock.withLock {
-            isStopped = false
-            firstViolation = nil
+        state.withLock { state in
+            state.isStopped = false
+            state.firstViolation = nil
+            return
         }
         let token = session.addEventHandler { [weak self] event in
             self?.consume(event)
@@ -383,8 +395,9 @@ final class BrowserNetworkGuard: @unchecked Sendable {
                     ]],
                 ]
             )
-            lock.withLock {
-                handlerToken = token
+            state.withLock { state in
+                state.handlerToken = token
+                return
             }
         } catch {
             session.removeEventHandler(token)
@@ -393,13 +406,13 @@ final class BrowserNetworkGuard: @unchecked Sendable {
     }
 
     func stop() async {
-        let (token, tasks) = lock.withLock { () -> (UUID?, [Task<Void, Never>]) in
-            isStopped = true
-            queuedRequests.removeAll()
-            let token = handlerToken
-            handlerToken = nil
-            let tasks = Array(decisionTasks.values)
-            decisionTasks.removeAll()
+        let (token, tasks) = state.withLock { state -> (UUID?, [Task<Void, Never>]) in
+            state.isStopped = true
+            state.queuedRequests.removeAll()
+            let token = state.handlerToken
+            state.handlerToken = nil
+            let tasks = Array(state.decisionTasks.values)
+            state.decisionTasks.removeAll()
             return (token, tasks)
         }
         if let token {
@@ -415,9 +428,9 @@ final class BrowserNetworkGuard: @unchecked Sendable {
     }
 
     func throwIfBlocked() throws {
-        lock.lock()
-        let violation = firstViolation
-        lock.unlock()
+        let violation = state.withLock { state in
+            state.firstViolation
+        }
         if let violation {
             throw BrowserNetworkGuardError.blockedRequest(violation.redactedURL)
         }
@@ -425,35 +438,37 @@ final class BrowserNetworkGuard: @unchecked Sendable {
 
     private func consume(_ event: CDPEvent) {
         guard let request = BrowserFetchPausedRequest.decode(event) else { return }
-        lock.withLock {
-            guard !isStopped else { return }
-            queuedRequests.append(request)
-            startQueuedDecisionsLocked()
+        state.withLock { state in
+            guard !state.isStopped else { return }
+            state.queuedRequests.append(request)
+            startQueuedDecisions(&state)
+            return
         }
     }
 
-    /// Must be called with `lock` held. The tasks are recorded before the lock
-    /// is released, so teardown can always find and cancel every decision.
-    private func startQueuedDecisionsLocked() {
-        while !isStopped,
-              decisionTasks.count < Self.maximumConcurrentDecisions,
-              !queuedRequests.isEmpty
+    /// Must be called with the Mutex held. The tasks are recorded before the
+    /// lock is released, so teardown can always find and cancel every decision.
+    private func startQueuedDecisions(_ state: inout State) {
+        while !state.isStopped,
+              state.decisionTasks.count < Self.maximumConcurrentDecisions,
+              !state.queuedRequests.isEmpty
         {
-            let request = queuedRequests.removeFirst()
+            let request = state.queuedRequests.removeFirst()
             let identifier = UUID()
-            let task = Task { [weak self] in
+            let task = Task(name: "BrowserNetworkGuard.request-decision") { [weak self] in
                 guard let self else { return }
                 await self.decide(requestID: request.requestID, url: request.url)
                 self.finishDecision(identifier)
             }
-            decisionTasks[identifier] = task
+            state.decisionTasks[identifier] = task
         }
     }
 
     private func finishDecision(_ identifier: UUID) {
-        lock.withLock {
-            decisionTasks.removeValue(forKey: identifier)
-            startQueuedDecisionsLocked()
+        state.withLock { state in
+            state.decisionTasks.removeValue(forKey: identifier)
+            startQueuedDecisions(&state)
+            return
         }
     }
 
@@ -485,15 +500,18 @@ final class BrowserNetworkGuard: @unchecked Sendable {
     }
 
     private var acceptsDecisions: Bool {
-        lock.withLock { !isStopped }
+        state.withLock { state in
+            !state.isStopped
+        }
     }
 
     private func recordViolation(url: String) {
         let redactedURL = BrowserNetworkURLRedaction.apply(to: url)
-        lock.lock()
-        if firstViolation == nil {
-            firstViolation = BrowserNetworkGuardViolation(redactedURL: redactedURL)
+        state.withLock { state in
+            if state.firstViolation == nil {
+                state.firstViolation = BrowserNetworkGuardViolation(redactedURL: redactedURL)
+            }
+            return
         }
-        lock.unlock()
     }
 }

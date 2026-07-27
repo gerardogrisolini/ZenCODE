@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension TerminalChat {
     nonisolated static func savedSessionCommandAction(

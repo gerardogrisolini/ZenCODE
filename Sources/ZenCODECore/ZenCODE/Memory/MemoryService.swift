@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 
 public final class MemoryService {
     public static let filename = "MEMORY.md"
@@ -39,10 +40,10 @@ public final class MemoryService {
     """
 
     let fileManager: FileManager
-    /// Serializes read-modify-write operations on MEMORY.md files so concurrent
-    /// writes cannot clobber each other (lost update). Recursive so root methods
-    /// can call one another without deadlocking.
-    private let writeLock = NSRecursiveLock()
+    /// A process-wide coordinator is required because callers commonly create a
+    /// fresh `MemoryService` per tool execution. An instance lock would still
+    /// permit two instances to lose one another's read-modify-write update.
+    static let documentWriteCoordinator = MemoryDocumentWriteCoordinator.shared
 
     public init(
         fileManager: FileManager = .default
@@ -223,9 +224,9 @@ public final class MemoryService {
             throw MemoryServiceError.missingField("content")
         }
 
-        return try writeLock.withLock {
-            let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-            var entries = readEntries(from: document)
+        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
+        return try Self.documentWriteCoordinator.withLock(for: document.fileURL) {
+            var entries = try readEntriesForMutation(from: document)
             if let existingEntry = entries.first(where: {
                 !$0.isArchived && $0.content.localizedCaseInsensitiveCompare(normalizedContent) == .orderedSame
             }) {
@@ -255,9 +256,9 @@ public final class MemoryService {
             throw MemoryServiceError.missingField("content")
         }
 
-        return try writeLock.withLock {
-            let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-            var entries = readEntries(from: document)
+        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
+        return try Self.documentWriteCoordinator.withLock(for: document.fileURL) {
+            var entries = try readEntriesForMutation(from: document)
             guard let index = entries.firstIndex(where: { $0.id == id }) else {
                 throw MemoryServiceError.entryNotFound(id.uuidString)
             }
@@ -305,13 +306,13 @@ public final class MemoryService {
             throw MemoryServiceError.invalidIdentifier(rawIdentifier)
         }
 
-        return try writeLock.withLock {
-            let documents = memoryDocuments(workspaceRootURL: workspaceRootURL)
-                .filter { scope == nil || $0.scope == scope }
-            for document in documents {
-                var entries = readEntries(from: document)
+        let documents = memoryDocuments(workspaceRootURL: workspaceRootURL)
+            .filter { scope == nil || $0.scope == scope }
+        for document in documents {
+            let archivedEntry: MemoryEntry? = try Self.documentWriteCoordinator.withLock(for: document.fileURL) {
+                var entries = try readEntriesForMutation(from: document)
                 guard let index = entries.firstIndex(where: { $0.id == id }) else {
-                    continue
+                    return nil
                 }
 
                 entries[index].isArchived = true
@@ -319,9 +320,11 @@ public final class MemoryService {
                 Self.notifyMemoryEntriesChanged()
                 return entries[index]
             }
-
-            throw MemoryServiceError.entryNotFound(rawIdentifier)
+            if let archivedEntry {
+                return archivedEntry
+            }
         }
+        throw MemoryServiceError.entryNotFound(rawIdentifier)
     }
 
     @discardableResult
@@ -331,9 +334,9 @@ public final class MemoryService {
         scope: MemoryScope,
         workspaceRootURL: URL?
     ) throws -> MemoryEntry {
-        return try writeLock.withLock {
-            let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-            var entries = readEntries(from: document)
+        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
+        return try Self.documentWriteCoordinator.withLock(for: document.fileURL) {
+            var entries = try readEntriesForMutation(from: document)
             guard let index = entries.firstIndex(where: { $0.id == id }) else {
                 throw MemoryServiceError.entryNotFound(id.uuidString)
             }
@@ -349,9 +352,9 @@ public final class MemoryService {
         scope: MemoryScope,
         workspaceRootURL: URL?
     ) throws {
-        try writeLock.withLock {
-            let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-            var entries = readEntries(from: document)
+        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
+        try Self.documentWriteCoordinator.withLock(for: document.fileURL) {
+            var entries = try readEntriesForMutation(from: document)
             guard let index = entries.firstIndex(where: { $0.id == id }) else {
                 throw MemoryServiceError.entryNotFound(id.uuidString)
             }

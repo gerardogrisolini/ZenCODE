@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -156,16 +157,19 @@ private struct CDPHTTPPageInfo: Decodable {
 /// Discovers and manages the dedicated Chrome/Chromium instance used by the
 /// opt-in Browser feature. Pages are persistent Chrome targets, so successive
 /// one-shot feature invocations can reconnect through their target ids.
-final class ChromeBrowserManager: @unchecked Sendable {
+final class ChromeBrowserManager: Sendable {
     static let connectTimeout: TimeInterval = 3
     static let cdpReadyPollIterations = 80
     static let cdpReadyPollInterval: UInt64 = 250_000_000 // 250 ms
 
+    private struct State: Sendable {
+        var spawnedProcess: Process?
+        var spawnInFlight = false
+        var resolvedPort: Int?
+    }
+
     private let configuration: ChromeBrowserConfiguration
-    private let lock = NSLock()
-    private var spawnedProcess: Process?
-    private var spawnInFlight = false
-    private var resolvedPort: Int?
+    private let state = Mutex(State())
     private let urlSession: URLSession
 
     init(configuration: ChromeBrowserConfiguration = .init()) {
@@ -225,36 +229,39 @@ final class ChromeBrowserManager: @unchecked Sendable {
     }
 
     private func acquireSpawnLease() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !spawnInFlight else { return false }
-        spawnInFlight = true
-        return true
+        state.withLock { state in
+            guard !state.spawnInFlight else { return false }
+            state.spawnInFlight = true
+            return true
+        }
     }
 
     private func releaseSpawnLease() {
-        lock.lock()
-        spawnInFlight = false
-        lock.unlock()
+        state.withLock { state in
+            state.spawnInFlight = false
+            return
+        }
     }
 
     private func setResolvedPort(_ port: Int) {
-        lock.lock()
-        resolvedPort = port
-        lock.unlock()
+        state.withLock { state in
+            state.resolvedPort = port
+            return
+        }
     }
 
     private func currentResolvedPort() -> Int? {
-        lock.lock()
-        defer { lock.unlock() }
-        return resolvedPort
+        state.withLock { state in
+            state.resolvedPort
+        }
     }
 
     private func reapExitedProcess() {
-        lock.lock()
-        defer { lock.unlock() }
-        if let process = spawnedProcess, !process.isRunning {
-            spawnedProcess = nil
+        state.withLock { state in
+            if let process = state.spawnedProcess, !process.isRunning {
+                state.spawnedProcess = nil
+            }
+            return
         }
     }
 
@@ -532,9 +539,10 @@ final class ChromeBrowserManager: @unchecked Sendable {
     }
 
     private func rememberSpawnedProcess(_ process: Process) {
-        lock.lock()
-        spawnedProcess = process
-        lock.unlock()
+        state.withLock { state in
+            state.spawnedProcess = process
+            return
+        }
     }
 
     // MARK: - Helpers

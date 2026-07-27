@@ -82,11 +82,17 @@ extension ZenCODEAgentProfileSetupRunner {
             TerminalCheckboxMenuItem(value: true, title: "Yes", detail: nil),
             TerminalCheckboxMenuItem(value: false, title: "No", detail: nil)
         ]
-        return TerminalCheckboxMenu.selectOne(
+        // Esc/EOF must never be silently folded into the highlighted default:
+        // the "Rewrite it?" prompt used default == true, so cancelling would
+        // confirm a destructive overwrite. Treat a closed input as an error.
+        guard let value = TerminalCheckboxMenu.selectOne(
             title: prompt,
             items: items,
             selected: defaultValue
-        ) ?? defaultValue
+        ) else {
+            throw ZenCODEAgentProfileSetupError.inputClosed
+        }
+        return value
     }
 
 

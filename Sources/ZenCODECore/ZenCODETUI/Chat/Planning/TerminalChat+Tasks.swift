@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension TerminalChat {
     func startTaskGraphObserver() async {
@@ -12,7 +13,7 @@ extension TerminalChat {
         let observedSessionID = sessionID
         let runner = sessionRunner
 
-        taskGraphObserverTask = Task { [weak self] in
+        taskGraphObserverTask = Task(name: "ZenCODE.TUI.task-graph-observer") { [weak self] in
             let orchestrator = runner.taskOrchestrator
             let stream = await orchestrator.events(sessionID: observedSessionID)
             var pendingRender: Task<Void, Never>?
@@ -25,7 +26,7 @@ extension TerminalChat {
                 let publicationRevision = await coordinator.beginOverviewPublication(.taskGraph)
                 let previousRender = pendingRender
                 previousRender?.cancel()
-                pendingRender = Task { [weak self] in
+                pendingRender = Task(name: "ZenCODE.TUI.task-graph-render") { [weak self] in
                     try? await Task.sleep(nanoseconds: 150_000_000)
                     await previousRender?.value
                     guard !Task.isCancelled, let self else { return }
@@ -117,7 +118,7 @@ extension TerminalChat {
             let attempts = task.attempts.map {
                 "\($0.id):\($0.status.rawValue)"
             }.joined(separator: ",")
-            return "\(task.id):\(task.revision):\(task.status.rawValue):\(task.activeAttemptID ?? "-"):\(attempts)"
+            return "\(task.id):\(task.revision):\(task.status.rawValue):\(task.activeAttemptID, default: "-"):\(attempts)"
         }.joined(separator: "|")
         return "\(graph.id):\(graph.revision):\(graph.state.rawValue):\(tasks)"
     }

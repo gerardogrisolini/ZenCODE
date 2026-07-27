@@ -3,7 +3,7 @@
 //  ZenCODE
 //
 
-import FeatureMCPBridgeKit
+public import FeatureMCPBridgeKit
 import Foundation
 import ToolCore
 

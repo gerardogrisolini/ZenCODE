@@ -70,7 +70,7 @@ extension TerminalInteractiveLineReader {
             return false
         }
 
-        let task = Task { [weak self] in
+        let task = Task(name: "ZenCODE.TUI.panel-input") { [weak self] in
             guard let self else {
                 return
             }
@@ -85,7 +85,7 @@ extension TerminalInteractiveLineReader {
     /// Waits out any in-flight panel transition, then tries to claim the panel
     /// for a new start.
     ///
-    /// Waiting is what makes the hand-over safe: `panelTask == nil` says only
+    /// Waiting is what makes the hand-over safe: `state.panelTask == nil` says only
     /// that a stop has *begun*, not that the terminal is free. The stop still
     /// has to await its loop task and restore raw mode, and a start admitted in
     /// between would observe `beginRawMode() == true` merely because the
@@ -114,8 +114,8 @@ extension TerminalInteractiveLineReader {
         commandSuggestions: [TerminalCommandSuggestion],
         preservingState: Bool
     ) -> PanelStartAdmission {
-        withPanelLock { () -> PanelStartAdmission in
-            switch panelLifecycle {
+        withPanelLock { state -> PanelStartAdmission in
+            switch state.panelLifecycle {
             case .running, .starting:
                 // Another reader already owns (or is acquiring) the terminal.
                 return .alreadyActive
@@ -125,20 +125,20 @@ extension TerminalInteractiveLineReader {
                 break
             }
 
-            panelLifecycle = .starting
-            panelStatusBar = statusBar
-            panelCommandSuggestions = commandSuggestions
+            state.panelLifecycle = .starting
+            state.panelStatusBar = statusBar
+            state.panelCommandSuggestions = commandSuggestions
             if preservingState {
-                panelCommandSuggestionIndex = commandSuggestions.isEmpty
+                state.panelCommandSuggestionIndex = commandSuggestions.isEmpty
                     ? 0
-                    : min(panelCommandSuggestionIndex, commandSuggestions.count - 1)
+                    : min(state.panelCommandSuggestionIndex, commandSuggestions.count - 1)
             } else {
-                panelCommandSuggestionIndex = 0
-                panelBuffer.removeAll()
-                panelCursorIndex = 0
-                panelOverlayOverride = nil
-                historyIndex = nil
-                draftBeforeHistory.removeAll()
+                state.panelCommandSuggestionIndex = 0
+                state.panelBuffer.removeAll()
+                state.panelCursorIndex = 0
+                state.panelOverlayOverride = nil
+                state.historyIndex = nil
+                state.draftBeforeHistory.removeAll()
             }
             return .admitted
         }
@@ -146,19 +146,19 @@ extension TerminalInteractiveLineReader {
 
     /// Publishes the running panel and releases anyone waiting on the start.
     func finishPanelStart(task: Task<Void, Never>) {
-        resumePanelTransitionWaiters {
-            panelTask = task
-            panelLifecycle = .running
+        resumePanelTransitionWaiters { state in
+            state.panelTask = task
+            state.panelLifecycle = .running
         }
     }
 
     /// Rolls a failed start back to `idle` so a later start (or a stop) is not
     /// blocked behind a transition that will never complete.
     func abandonPanelStart() {
-        resumePanelTransitionWaiters {
-            panelTask = nil
-            panelLifecycle = .idle
-            panelStatusBar = nil
+        resumePanelTransitionWaiters { state in
+            state.panelTask = nil
+            state.panelLifecycle = .idle
+            state.panelStatusBar = nil
         }
     }
 
@@ -173,9 +173,9 @@ extension TerminalInteractiveLineReader {
         // TTY before this restore has run.
         rawInput.restoreRawMode()
         if clearPanel {
-            let revision = withPanelLock { () -> UInt64 in
-                panelRenderRevision &+= 1
-                return panelRenderRevision
+            let revision = withPanelLock { state -> UInt64 in
+                state.panelRenderRevision &+= 1
+                return state.panelRenderRevision
             }
             await stopState.statusBar?.clearInputPanel(revision: revision)
         }
@@ -206,39 +206,39 @@ extension TerminalInteractiveLineReader {
         task: Task<Void, Never>?,
         statusBar: TerminalStatusBar?
     )? {
-        withPanelLock { () -> (task: Task<Void, Never>?, statusBar: TerminalStatusBar?)? in
-            switch panelLifecycle {
+        withPanelLock { state -> (task: Task<Void, Never>?, statusBar: TerminalStatusBar?)? in
+            switch state.panelLifecycle {
             case .starting, .stopping:
                 return nil
             case .idle, .running:
                 break
             }
 
-            let state = (task: panelTask, statusBar: panelStatusBar)
-            panelLifecycle = .stopping
-            panelTask = nil
+            let panelState = (task: state.panelTask, statusBar: state.panelStatusBar)
+            state.panelLifecycle = .stopping
+            state.panelTask = nil
             // Unblock the in-flight terminal read before awaiting the task, so
             // the stop does not wait out the remainder of the read window.
-            panelReadToken?.cancel()
-            panelReadToken = nil
-            return state
+            state.panelReadToken?.cancel()
+            state.panelReadToken = nil
+            return panelState
         }
     }
 
     func finishPanelStop(clearPanel: Bool) {
-        resumePanelTransitionWaiters {
+        resumePanelTransitionWaiters { state in
             if clearPanel {
-                panelStatusBar = nil
-                panelBuffer.removeAll()
-                panelCursorIndex = 0
-                panelOverlayOverride = nil
-                panelCommandSuggestions.removeAll()
-                panelCommandSuggestionIndex = 0
-                historyIndex = nil
-                draftBeforeHistory.removeAll()
+                state.panelStatusBar = nil
+                state.panelBuffer.removeAll()
+                state.panelCursorIndex = 0
+                state.panelOverlayOverride = nil
+                state.panelCommandSuggestions.removeAll()
+                state.panelCommandSuggestionIndex = 0
+                state.historyIndex = nil
+                state.draftBeforeHistory.removeAll()
             }
-            panelTask = nil
-            panelLifecycle = .idle
+            state.panelTask = nil
+            state.panelLifecycle = .idle
         }
     }
 
@@ -249,12 +249,12 @@ extension TerminalInteractiveLineReader {
     /// the waiter.
     private func awaitPanelTransition() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let isSettled = withPanelLock { () -> Bool in
-                switch panelLifecycle {
+            let isSettled = withPanelLock { state -> Bool in
+                switch state.panelLifecycle {
                 case .idle, .running:
                     return true
                 case .starting, .stopping:
-                    panelTransitionWaiters.append(continuation)
+                    state.panelTransitionWaiters.append(continuation)
                     return false
                 }
             }
@@ -269,12 +269,12 @@ extension TerminalInteractiveLineReader {
     /// The waiters are resumed outside the panel lock: resuming re-enters the
     /// caller, which immediately reaches for the same lock.
     private func resumePanelTransitionWaiters(
-        _ settle: @Sendable () -> Void
+        _ settle: @Sendable (inout State) -> Void
     ) {
-        let waiters = withPanelLock { () -> [CheckedContinuation<Void, Never>] in
-            settle()
-            let waiters = panelTransitionWaiters
-            panelTransitionWaiters.removeAll()
+        let waiters = withPanelLock { state -> [CheckedContinuation<Void, Never>] in
+            settle(&state)
+            let waiters = state.panelTransitionWaiters
+            state.panelTransitionWaiters.removeAll()
             return waiters
         }
         for waiter in waiters {
@@ -283,23 +283,23 @@ extension TerminalInteractiveLineReader {
     }
 
     public func setPanelProcessing(_ isProcessing: Bool) async {
-        withPanelLock {
-            panelIsProcessing = isProcessing
+        withPanelLock { state in
+            state.panelIsProcessing = isProcessing
         }
         await renderPanel()
     }
 
     public func setPanelCommandSuggestions(_ suggestions: [TerminalCommandSuggestion]) async {
-        withPanelLock {
-            panelCommandSuggestions = suggestions
-            panelCommandSuggestionIndex = 0
+        withPanelLock { state in
+            state.panelCommandSuggestions = suggestions
+            state.panelCommandSuggestionIndex = 0
         }
         await renderPanel()
     }
 
     public func setQueuedPromptCount(_ count: Int) async {
-        withPanelLock {
-            panelQueuedPromptCount = max(0, count)
+        withPanelLock { state in
+            state.panelQueuedPromptCount = max(0, count)
         }
         await renderPanel()
     }
@@ -312,23 +312,23 @@ extension TerminalInteractiveLineReader {
         _ override: TerminalPanelModeOverride?,
         isProcessing: Bool? = nil
     ) async {
-        withPanelLock {
-            panelOverlayOverride = override
+        withPanelLock { state in
+            state.panelOverlayOverride = override
             if let isProcessing {
-                panelIsProcessing = isProcessing
+                state.panelIsProcessing = isProcessing
             }
-            panelCommandSuggestionIndex = 0
+            state.panelCommandSuggestionIndex = 0
         }
         await renderPanel()
     }
 
     public func setPanelText(_ text: String, cursorIndex: Int? = nil) async {
-        withPanelLock {
-            panelBuffer = Array(text)
-            panelCursorIndex = min(max(0, cursorIndex ?? panelBuffer.count), panelBuffer.count)
-            panelCommandSuggestionIndex = 0
-            historyIndex = nil
-            draftBeforeHistory.removeAll()
+        withPanelLock { state in
+            state.panelBuffer = Array(text)
+            state.panelCursorIndex = min(max(0, cursorIndex ?? state.panelBuffer.count), state.panelBuffer.count)
+            state.panelCommandSuggestionIndex = 0
+            state.historyIndex = nil
+            state.draftBeforeHistory.removeAll()
         }
         await renderPanel()
     }
@@ -351,15 +351,15 @@ extension TerminalInteractiveLineReader {
         onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
     ) async {
         let token = TerminalBlockingReadToken()
-        withPanelLock {
-            panelReadToken?.cancel()
-            panelReadToken = token
+        withPanelLock { state in
+            state.panelReadToken?.cancel()
+            state.panelReadToken = token
         }
         defer {
             token.cancel()
-            withPanelLock {
-                if panelReadToken === token {
-                    panelReadToken = nil
+            withPanelLock { state in
+                if state.panelReadToken === token {
+                    state.panelReadToken = nil
                 }
             }
         }
@@ -426,16 +426,17 @@ extension TerminalInteractiveLineReader {
             guard !characters.isEmpty else {
                 return
             }
-            withPanelLock {
-                panelBuffer.insert(contentsOf: characters, at: panelCursorIndex)
-                panelCursorIndex += characters.count
-                historyIndex = nil
+            withPanelLock { state in
+                state.panelBuffer.insert(contentsOf: characters, at: state.panelCursorIndex)
+                state.panelCursorIndex += characters.count
+                state.historyIndex = nil
             }
             await renderPanel()
         case .enter:
-            if let submission = withPanelLock({ () -> CommandSuggestionSelection? in
+            if let submission = withPanelLock({ state -> CommandSuggestionSelection? in
                 acceptPanelCommandSuggestionLocked(
-                    submitCommandWithoutArguments: true
+                    submitCommandWithoutArguments: true,
+                    state: &state
                 )
             }) {
                 if let submittedLine = submission.submittedLine {
@@ -446,12 +447,12 @@ extension TerminalInteractiveLineReader {
                 return
             }
 
-            let line = withPanelLock { () -> String in
-                let line = String(panelBuffer)
-                panelBuffer.removeAll()
-                panelCursorIndex = 0
-                historyIndex = nil
-                draftBeforeHistory.removeAll()
+            let line = withPanelLock { state -> String in
+                let line = String(state.panelBuffer)
+                state.panelBuffer.removeAll()
+                state.panelCursorIndex = 0
+                state.historyIndex = nil
+                state.draftBeforeHistory.removeAll()
                 return line
             }
 
@@ -461,108 +462,112 @@ extension TerminalInteractiveLineReader {
             onEvent(.submitted(line))
             await renderPanel()
         case .tab:
-            let accepted = withPanelLock { () -> Bool in
+            let accepted = withPanelLock { state -> Bool in
                 acceptPanelCommandSuggestionLocked(
-                    submitCommandWithoutArguments: false
+                    submitCommandWithoutArguments: false,
+                    state: &state
                 ) != nil
             }
             if accepted {
                 await renderPanel()
             }
         case .newline:
-            withPanelLock {
-                panelBuffer.insert("\n", at: panelCursorIndex)
-                panelCursorIndex += 1
-                panelCommandSuggestionIndex = 0
-                historyIndex = nil
+            withPanelLock { state in
+                state.panelBuffer.insert("\n", at: state.panelCursorIndex)
+                state.panelCursorIndex += 1
+                state.panelCommandSuggestionIndex = 0
+                state.historyIndex = nil
             }
             await renderPanel()
         case .backspace:
-            let didChange = withPanelLock { () -> Bool in
-                guard panelCursorIndex > 0 else {
+            let didChange = withPanelLock { state -> Bool in
+                guard state.panelCursorIndex > 0 else {
                     return false
                 }
-                panelBuffer.remove(at: panelCursorIndex - 1)
-                panelCursorIndex -= 1
+                state.panelBuffer.remove(at: state.panelCursorIndex - 1)
+                state.panelCursorIndex -= 1
                 return true
             }
             if didChange {
                 await renderPanel()
             }
         case .delete:
-            let didChange = withPanelLock { () -> Bool in
-                guard panelCursorIndex < panelBuffer.count else {
+            let didChange = withPanelLock { state -> Bool in
+                guard state.panelCursorIndex < state.panelBuffer.count else {
                     return false
                 }
-                panelBuffer.remove(at: panelCursorIndex)
+                state.panelBuffer.remove(at: state.panelCursorIndex)
                 return true
             }
             if didChange {
                 await renderPanel()
             }
         case .left:
-            withPanelLock {
-                if panelCursorIndex > 0 {
-                    panelCursorIndex -= 1
+            withPanelLock { state in
+                if state.panelCursorIndex > 0 {
+                    state.panelCursorIndex -= 1
                 }
-                panelCommandSuggestionIndex = 0
+                state.panelCommandSuggestionIndex = 0
             }
             await renderPanel()
         case .right:
-            withPanelLock {
-                if panelCursorIndex < panelBuffer.count {
-                    panelCursorIndex += 1
+            withPanelLock { state in
+                if state.panelCursorIndex < state.panelBuffer.count {
+                    state.panelCursorIndex += 1
                 }
-                panelCommandSuggestionIndex = 0
+                state.panelCommandSuggestionIndex = 0
             }
             await renderPanel()
         case .up:
-            withPanelLock {
-                if hasActiveCommandSuggestionsLocked() {
-                    movePanelCommandSuggestionSelectionLocked(delta: -1)
-                } else if let previous = previousHistory(currentBuffer: panelBuffer) {
-                    panelBuffer = previous
-                    panelCursorIndex = panelBuffer.count
+            withPanelLock { state in
+                if hasActiveCommandSuggestionsLocked(state: state) {
+                    movePanelCommandSuggestionSelectionLocked(delta: -1, state: &state)
+                } else if let previous = previousHistoryLocked(
+                    currentBuffer: state.panelBuffer,
+                    state: &state
+                ) {
+                    state.panelBuffer = previous
+                    state.panelCursorIndex = state.panelBuffer.count
                 }
             }
             await renderPanel()
         case .down:
-            withPanelLock {
-                if hasActiveCommandSuggestionsLocked() {
-                    movePanelCommandSuggestionSelectionLocked(delta: 1)
-                } else if let next = nextHistory() {
-                    panelBuffer = next
-                    panelCursorIndex = panelBuffer.count
+            withPanelLock { state in
+                if hasActiveCommandSuggestionsLocked(state: state) {
+                    movePanelCommandSuggestionSelectionLocked(delta: 1, state: &state)
+                } else if let next = nextHistoryLocked(state: &state) {
+                    state.panelBuffer = next
+                    state.panelCursorIndex = state.panelBuffer.count
                 }
             }
             await renderPanel()
         case .home:
-            withPanelLock {
-                panelCursorIndex = 0
-                panelCommandSuggestionIndex = 0
+            withPanelLock { state in
+                state.panelCursorIndex = 0
+                state.panelCommandSuggestionIndex = 0
             }
             await renderPanel()
         case .end:
-            withPanelLock {
-                panelCursorIndex = panelBuffer.count
-                panelCommandSuggestionIndex = 0
+            withPanelLock { state in
+                state.panelCursorIndex = state.panelBuffer.count
+                state.panelCommandSuggestionIndex = 0
             }
             await renderPanel()
         case .clearBeforeCursor:
-            withPanelLock {
-                if panelCursorIndex > 0 {
-                    panelBuffer.removeSubrange(0..<panelCursorIndex)
-                    panelCursorIndex = 0
+            withPanelLock { state in
+                if state.panelCursorIndex > 0 {
+                    state.panelBuffer.removeSubrange(0..<state.panelCursorIndex)
+                    state.panelCursorIndex = 0
                 }
-                panelCommandSuggestionIndex = 0
+                state.panelCommandSuggestionIndex = 0
             }
             await renderPanel()
         case .clearAfterCursor:
-            withPanelLock {
-                if panelCursorIndex < panelBuffer.count {
-                    panelBuffer.removeSubrange(panelCursorIndex..<panelBuffer.count)
+            withPanelLock { state in
+                if state.panelCursorIndex < state.panelBuffer.count {
+                    state.panelBuffer.removeSubrange(state.panelCursorIndex..<state.panelBuffer.count)
                 }
-                panelCommandSuggestionIndex = 0
+                state.panelCommandSuggestionIndex = 0
             }
             await renderPanel()
         case .toggleToolDetails:
@@ -572,14 +577,14 @@ extension TerminalInteractiveLineReader {
             onEvent(.toggleAccessModeRequested)
             await renderPanel()
         case .cancel:
-            let isProcessing = withPanelLock { () -> Bool in
-                let isProcessing = panelIsProcessing
+            let isProcessing = withPanelLock { state -> Bool in
+                let isProcessing = state.panelIsProcessing
                 if !isProcessing {
-                    panelBuffer.removeAll()
-                    panelCursorIndex = 0
-                    panelCommandSuggestionIndex = 0
-                    historyIndex = nil
-                    draftBeforeHistory.removeAll()
+                    state.panelBuffer.removeAll()
+                    state.panelCursorIndex = 0
+                    state.panelCommandSuggestionIndex = 0
+                    state.historyIndex = nil
+                    state.draftBeforeHistory.removeAll()
                 }
                 return isProcessing
             }
@@ -588,8 +593,8 @@ extension TerminalInteractiveLineReader {
             }
             await renderPanel()
         case .endOfInput:
-            let isEmpty = withPanelLock {
-                panelBuffer.isEmpty
+            let isEmpty = withPanelLock { state in
+                state.panelBuffer.isEmpty
             }
             if isEmpty {
                 onEvent(.endOfInput)
@@ -600,7 +605,7 @@ extension TerminalInteractiveLineReader {
     }
 
     func renderPanel() async {
-        let snapshot = withPanelLock { () -> (
+        let snapshot = withPanelLock { state -> (
             statusBar: TerminalStatusBar?,
             text: String,
             cursorIndex: Int,
@@ -610,16 +615,16 @@ extension TerminalInteractiveLineReader {
             suggestionLines: [String],
             revision: UInt64
         ) in
-            panelRenderRevision &+= 1
+            state.panelRenderRevision &+= 1
             return (
-                statusBar: panelStatusBar,
-                text: String(panelBuffer),
-                cursorIndex: panelCursorIndex,
-                modeText: panelModeTextLocked(),
-                helpText: panelHelpTextLocked(),
-                compactHelpText: panelCompactHelpTextLocked(),
-                suggestionLines: panelCommandSuggestionLinesLocked(),
-                revision: panelRenderRevision
+                statusBar: state.panelStatusBar,
+                text: String(state.panelBuffer),
+                cursorIndex: state.panelCursorIndex,
+                modeText: panelModeTextLocked(state: state),
+                helpText: panelHelpTextLocked(state: state),
+                compactHelpText: panelCompactHelpTextLocked(state: state),
+                suggestionLines: panelCommandSuggestionLinesLocked(state: &state),
+                revision: state.panelRenderRevision
             )
         }
 
@@ -634,32 +639,32 @@ extension TerminalInteractiveLineReader {
         )
     }
 
-    func panelModeTextLocked() -> String {
-        if let modeText = panelOverlayOverride?.modeText {
+    func panelModeTextLocked(state: State) -> String {
+        if let modeText = state.panelOverlayOverride?.modeText {
             return modeText
         }
 
-        var modeText = panelIsProcessing ? "Next prompt" : "Prompt"
-        if panelQueuedPromptCount > 0 {
-            modeText += " · queued \(panelQueuedPromptCount)"
+        var modeText = state.panelIsProcessing ? "Next prompt" : "Prompt"
+        if state.panelQueuedPromptCount > 0 {
+            modeText += " · queued \(state.panelQueuedPromptCount)"
         }
         return modeText
     }
 
-    func panelHelpTextLocked() -> String {
-        if let helpText = panelOverlayOverride?.helpText {
+    func panelHelpTextLocked(state: State) -> String {
+        if let helpText = state.panelOverlayOverride?.helpText {
             return helpText
         }
 
-        if hasActiveCommandSuggestionsLocked() {
+        if hasActiveCommandSuggestionsLocked(state: state) {
             return "↑/↓ select · Tab complete · Enter choose"
         }
         return "Enter queue · Option+Enter newline · Ctrl+T tools · Ctrl+A access · Esc stop"
     }
 
-    func panelCompactHelpTextLocked() -> String? {
-        guard panelOverlayOverride == nil,
-              !hasActiveCommandSuggestionsLocked() else {
+    func panelCompactHelpTextLocked(state: State) -> String? {
+        guard state.panelOverlayOverride == nil,
+              !hasActiveCommandSuggestionsLocked(state: state) else {
             return nil
         }
         return "Ctrl+T · Ctrl+A access"
@@ -670,77 +675,78 @@ extension TerminalInteractiveLineReader {
     }
 
     func acceptPanelCommandSuggestionLocked(
-        submitCommandWithoutArguments: Bool
+        submitCommandWithoutArguments: Bool,
+        state: inout State
     ) -> CommandSuggestionSelection? {
-        guard let selectedSuggestion = selectedPanelCommandSuggestionLocked() else {
+        guard let selectedSuggestion = selectedPanelCommandSuggestionLocked(state: &state) else {
             return nil
         }
 
         let replacement = selectedSuggestion.requiresArgument
             ? "\(selectedSuggestion.command) "
             : selectedSuggestion.command
-        panelBuffer = Array(replacement)
-        panelCursorIndex = panelBuffer.count
-        panelCommandSuggestionIndex = 0
-        historyIndex = nil
-        draftBeforeHistory.removeAll()
+        state.panelBuffer = Array(replacement)
+        state.panelCursorIndex = state.panelBuffer.count
+        state.panelCommandSuggestionIndex = 0
+        state.historyIndex = nil
+        state.draftBeforeHistory.removeAll()
 
         guard submitCommandWithoutArguments,
               !selectedSuggestion.requiresArgument else {
             return CommandSuggestionSelection(submittedLine: nil)
         }
 
-        let submittedLine = String(panelBuffer)
-        panelBuffer.removeAll()
-        panelCursorIndex = 0
+        let submittedLine = String(state.panelBuffer)
+        state.panelBuffer.removeAll()
+        state.panelCursorIndex = 0
         return CommandSuggestionSelection(submittedLine: submittedLine)
     }
 
-    func selectedPanelCommandSuggestionLocked() -> TerminalCommandSuggestion? {
-        let suggestions = activeCommandSuggestionsLocked()
+    func selectedPanelCommandSuggestionLocked(state: inout State) -> TerminalCommandSuggestion? {
+        let suggestions = activeCommandSuggestionsLocked(state: state)
         guard !suggestions.isEmpty else {
             return nil
         }
-        panelCommandSuggestionIndex = min(
-            max(0, panelCommandSuggestionIndex),
+        state.panelCommandSuggestionIndex = min(
+            max(0, state.panelCommandSuggestionIndex),
             suggestions.count - 1
         )
-        return suggestions[panelCommandSuggestionIndex]
+        return suggestions[state.panelCommandSuggestionIndex]
     }
 
-    func hasActiveCommandSuggestionsLocked() -> Bool {
-        !activeCommandSuggestionsLocked().isEmpty
+    func hasActiveCommandSuggestionsLocked(state: State) -> Bool {
+        !activeCommandSuggestionsLocked(state: state).isEmpty
     }
 
-    func movePanelCommandSuggestionSelectionLocked(delta: Int) {
-        let suggestions = activeCommandSuggestionsLocked()
+    func movePanelCommandSuggestionSelectionLocked(delta: Int, state: inout State) {
+        let suggestions = activeCommandSuggestionsLocked(state: state)
         guard !suggestions.isEmpty else {
-            panelCommandSuggestionIndex = 0
+            state.panelCommandSuggestionIndex = 0
             return
         }
         let count = suggestions.count
-        panelCommandSuggestionIndex = (panelCommandSuggestionIndex + delta + count) % count
+        state.panelCommandSuggestionIndex = (state.panelCommandSuggestionIndex + delta + count) % count
     }
 
-    func panelCommandSuggestionLinesLocked() -> [String] {
-        let suggestions = activeCommandSuggestionsLocked()
+    func panelCommandSuggestionLinesLocked(state: inout State) -> [String] {
+        let suggestions = activeCommandSuggestionsLocked(state: state)
         guard !suggestions.isEmpty else {
-            panelCommandSuggestionIndex = 0
+            state.panelCommandSuggestionIndex = 0
             return []
         }
 
-        panelCommandSuggestionIndex = min(
-            max(0, panelCommandSuggestionIndex),
+        state.panelCommandSuggestionIndex = min(
+            max(0, state.panelCommandSuggestionIndex),
             suggestions.count - 1
         )
 
         let visibleSuggestions = Self.visiblePanelCommandSuggestionWindow(
             suggestions: suggestions,
-            selectedIndex: panelCommandSuggestionIndex,
+            selectedIndex: state.panelCommandSuggestionIndex,
             maximumLineCount: Self.maximumPanelCommandSuggestionLines
         )
         return visibleSuggestions.map { item in
-            let marker = item.index == panelCommandSuggestionIndex ? "›" : " "
+            let marker = item.index == state.panelCommandSuggestionIndex ? "›" : " "
             return "\(marker) \(item.suggestion.command)  \(item.suggestion.summary)"
         }
     }
@@ -795,15 +801,15 @@ extension TerminalInteractiveLineReader {
         }
     }
 
-    func activeCommandSuggestionsLocked() -> [TerminalCommandSuggestion] {
-        guard panelOverlayOverride == nil else {
+    func activeCommandSuggestionsLocked(state: State) -> [TerminalCommandSuggestion] {
+        guard state.panelOverlayOverride == nil else {
             return []
         }
 
         return Self.matchingPanelCommandSuggestions(
-            text: String(panelBuffer),
-            cursorIndex: panelCursorIndex,
-            suggestions: panelCommandSuggestions
+            text: String(state.panelBuffer),
+            cursorIndex: state.panelCursorIndex,
+            suggestions: state.panelCommandSuggestions
         )
     }
 

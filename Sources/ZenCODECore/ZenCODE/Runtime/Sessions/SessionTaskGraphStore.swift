@@ -66,12 +66,8 @@ public struct SessionTaskGraphStore: Sendable {
             workingDirectory: workingDirectory,
             fileManager: fileManager
         )
-        try fileManager.createDirectory(
-            at: fileURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
         try withLock(for: fileURL, exclusive: true, fileManager: fileManager) {
-            try data.write(to: fileURL, options: .atomic)
+            try SensitiveFilePermissions.write(data, to: fileURL, fileManager: fileManager)
         }
     }
 
@@ -88,6 +84,7 @@ public struct SessionTaskGraphStore: Sendable {
         guard fileManager.fileExists(atPath: fileURL.path) else {
             return nil
         }
+        try SensitiveFilePermissions.hardenExistingFile(at: fileURL, fileManager: fileManager)
 
         return try withLock(for: fileURL, exclusive: false, fileManager: fileManager) {
             let attributes = try fileManager.attributesOfItem(atPath: fileURL.path)
@@ -144,6 +141,7 @@ public struct SessionTaskGraphStore: Sendable {
         guard fileManager.fileExists(atPath: fileURL.path) else {
             return false
         }
+        try SensitiveFilePermissions.hardenExistingFile(at: fileURL, fileManager: fileManager)
         return try withLock(for: fileURL, exclusive: true, fileManager: fileManager) {
             guard fileManager.fileExists(atPath: fileURL.path) else {
                 return false
@@ -187,7 +185,12 @@ public struct SessionTaskGraphStore: Sendable {
         let lockURL = fileURL.appendingPathExtension("lock")
         try fileManager.createDirectory(
             at: lockURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: NSNumber(value: 0o700)]
+        )
+        try fileManager.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o700)],
+            ofItemAtPath: lockURL.deletingLastPathComponent().path
         )
 
 #if canImport(Darwin) || canImport(Glibc)

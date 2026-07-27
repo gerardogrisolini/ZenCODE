@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension TerminalChat {
     public nonisolated static func renderFeatureCommandUsage() -> String {

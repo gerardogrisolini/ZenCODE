@@ -70,24 +70,29 @@ extension ZenCODEAgentProfileSetupRunner {
                 )
             })
 
-            let choice = TerminalCheckboxMenu.selectOne(
+            switch TerminalCheckboxMenu.selectOne(
                 title: "Agent model bindings",
                 items: items,
                 selected: 0
-            ) ?? 0
-
-            if choice == 0 {
+            ) {
+            case nil:
+                // Esc/EOF: discard unsaved edits and leave without persisting.
+                AgentOutput.standardError.writeString(
+                    "\nAgent model bindings not saved.\n\n"
+                )
+                return
+            case 0?:
                 let normalized = AgentProfileStore.normalizedAgentsForSave(agents)
                 try AgentProfileStore.save(normalized)
                 AgentOutput.standardError.writeString(
                     "\nUpdated: agents.json (\(normalized.count) agents)\n\n"
                 )
                 return
+            case let choice?:
+                let index = choice - 1
+                guard agents.indices.contains(index) else { continue }
+                agents[index] = try configureModelBindingsForAgent(agents[index], models: models)
             }
-
-            let index = choice - 1
-            guard agents.indices.contains(index) else { continue }
-            agents[index] = try configureModelBindingsForAgent(agents[index], models: models)
         }
     }
 

@@ -19,9 +19,23 @@ extension DirectToolExecutor {
             return nil
         }
 
-        let candidates = LocalExecCommandParser.authorizationCandidates(in: command)
-        guard !candidates.isEmpty else {
+        let analysis = LocalExecCommandParser.authorizationAnalysis(in: command)
+        let candidates: [LocalExecCommandParser.AuthorizationCandidate]
+        switch analysis {
+        case .safe:
             return nil
+        case let .candidates(parsedCandidates):
+            candidates = parsedCandidates
+        case let .incomplete(reason):
+            // Consent is mandatory when the parser cannot prove its inventory
+            // complete. Use an exact, non-persistable fallback identity only
+            // for request presentation/cache scoping.
+            candidates = [
+                .init(
+                    identity: LocalExecCommandParser.analysisDepthLimitIdentity,
+                    invocation: "[analysis incomplete: \(reason)] \(command)"
+                )
+            ]
         }
 
         // A tool call is one consent decision. The parser still inventories all

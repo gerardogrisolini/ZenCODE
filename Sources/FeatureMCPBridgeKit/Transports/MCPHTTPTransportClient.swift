@@ -19,6 +19,11 @@ public actor MCPHTTPTransportClient {
     public var sessionIdentifier: String?
     public var isInitialized = false
     public var nextRequestID = 1
+    /// Monotonically fences all request completions from a previous session.
+    var sessionGeneration: UInt64 = 0
+    /// URLSession work has to be cancelled explicitly: cancelling only the
+    /// waiter does not stop an already-scheduled HTTP request.
+    var requestTasks: [UUID: URLSessionDataTask] = [:]
     /// Coalesces concurrent `connect()` calls. Unlike a bare `Task` handle it is
     /// cancellation-aware for every joiner and fences a late handshake result
     /// after `disconnect()`.

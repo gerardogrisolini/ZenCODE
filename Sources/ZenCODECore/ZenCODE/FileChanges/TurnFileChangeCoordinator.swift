@@ -62,12 +62,26 @@ public actor TurnFileChangeCoordinator {
 
     @discardableResult
     public func undoLatestChanges() async throws -> TurnFileChangeSummary {
-        let summary = try await TurnFileChangeUndoService.undoLatest(
-            summary: latestSummary,
-            baseDirectoryURL: baseDirectoryURL
-        )
+        // Reserve synchronously before the first suspension. Without clearing
+        // the snapshot here, two actor calls can both read `latestSummary`,
+        // suspend in the undo service and apply the same undo twice.
+        guard let summary = latestSummary else {
+            throw TurnFileChangeUndoError.noTrackedFileChanges
+        }
         latestSummary = nil
-        return summary
+        do {
+            return try await TurnFileChangeUndoService.undoLatest(
+                summary: summary,
+                baseDirectoryURL: baseDirectoryURL
+            )
+        } catch {
+            // Restore only when no newer summary was published while undo was
+            // suspended; a newer turn always wins over the failed reservation.
+            if latestSummary == nil {
+                latestSummary = summary
+            }
+            throw error
+        }
     }
 }
 

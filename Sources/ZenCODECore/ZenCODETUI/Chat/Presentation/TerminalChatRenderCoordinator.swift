@@ -1525,7 +1525,7 @@ actor TerminalChatRenderCoordinator {
 
         streamingFlushGeneration &+= 1
         let generation = streamingFlushGeneration
-        scheduledStreamingFlush = Task { [weak self] in
+        scheduledStreamingFlush = Task(name: "ZenCODE.TUI.streaming-flush") { [weak self] in
             try? await Task.sleep(for: streamingFlushDelay)
             guard !Task.isCancelled else {
                 return

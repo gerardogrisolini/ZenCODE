@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(os)
-import os
-#endif
 
 public struct AgentStructuredOutputFormat: Codable, Equatable, Hashable, Sendable {
     public static let defaultName = "structured_output"

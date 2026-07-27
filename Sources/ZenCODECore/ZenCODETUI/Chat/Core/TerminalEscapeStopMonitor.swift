@@ -29,7 +29,7 @@ enum TerminalEscapeStopMonitor {
             return nil
         }
 
-        return Task {
+        return Task(name: "ZenCODE.TUI.escape-stop-monitor") {
             _ = await TerminalBlockingRead.run { token in
                 watchForEscape(token: token, onStop: onStop)
             }

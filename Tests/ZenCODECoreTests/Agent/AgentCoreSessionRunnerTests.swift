@@ -749,7 +749,19 @@ private actor AuthorizationInvokingBackend: AgentRuntimeBackend {
         onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
         var results: [Bool] = []
-        for request in box.authorizationRequests() {
+        for template in box.authorizationRequests() {
+            // Production tool executors create authorization requests while the
+            // prompt's TaskLocal turn is active. Rebuild the recorded template
+            // here so the fixture exercises the same turn-bound routing.
+            let request = AgentToolAuthorizationRequest(
+                sessionID: template.sessionID,
+                toolCallID: template.toolCallID,
+                toolName: template.toolName,
+                title: template.title,
+                kind: template.kind,
+                command: template.command,
+                workingDirectory: template.workingDirectory
+            )
             results.append(await handler?(request) ?? true)
         }
         box.setAuthorizationResults(results)

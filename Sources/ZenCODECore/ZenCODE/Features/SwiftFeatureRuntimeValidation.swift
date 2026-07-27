@@ -18,8 +18,11 @@ extension SwiftFeatureRuntime {
     }
 
     static func path(_ candidate: URL, isDescendantOf root: URL) -> Bool {
-        let rootPath = root.standardizedFileURL.path
-        let candidatePath = candidate.standardizedFileURL.path
+        // `standardizedFileURL` is lexical only; resolve symlinks on both
+        // operands before comparing so a symlink under a feature root cannot
+        // redirect scaffold/delete/install outside that root.
+        let rootPath = root.resolvingSymlinksInPath().standardizedFileURL.path
+        let candidatePath = candidate.resolvingSymlinksInPath().standardizedFileURL.path
         return candidatePath == rootPath
             || candidatePath.hasPrefix(rootPath.hasSuffix("/") ? rootPath : "\(rootPath)/")
     }
@@ -78,6 +81,27 @@ extension SwiftFeatureRuntime {
                 errors.append("Tool namespace 'feature.' is reserved for kernel feature management: \(toolName).")
             } else if reservedToolNames.contains(toolName) {
                 errors.append("Tool name '\(toolName)' already exists in the core catalog.")
+            }
+        }
+        return errors
+    }
+
+    static func validationErrorsForRouting(
+        toolNamePrefixes: [String],
+        toolNameAliases: [String]
+    ) -> [String] {
+        var errors: [String] = []
+        for prefix in toolNamePrefixes {
+            let normalized = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+            if normalized.isEmpty {
+                errors.append("Feature contains an empty tool name prefix.")
+            } else if normalized.hasPrefix("feature.") {
+                errors.append("Tool prefix 'feature.' is reserved for kernel feature management: \(prefix).")
+            }
+        }
+        for alias in toolNameAliases {
+            if SwiftFeatureRuntime.isFeatureManagementToolName(alias) {
+                errors.append("Tool alias '\(alias)' is reserved for kernel feature management.")
             }
         }
         return errors

@@ -10,6 +10,7 @@ import Foundation
 public enum DirectSubAgentRuntimeError: LocalizedError {
     case unknownTool(String)
     case missingArgument(String)
+    case invalidArgument(String)
     case agentNotFound(String)
     case agentClosed(String)
     case agentLimitExceeded(Int)
@@ -24,6 +25,8 @@ public enum DirectSubAgentRuntimeError: LocalizedError {
             return "Unknown sub-agent tool: \(name)"
         case let .missingArgument(argument):
             return "Missing required argument: \(argument)"
+        case let .invalidArgument(argument):
+            return "Invalid argument: \(argument)"
         case let .agentNotFound(identifier):
             return "No delegated sub-agent matched '\(identifier)'."
         case let .agentClosed(name):

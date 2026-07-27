@@ -8,29 +8,98 @@
 import Foundation
 import ToolCore
 
+/// Errors produced while decoding the byte-oriented MCP transport framing.
+/// They are deliberately separate from JSON-RPC errors: a malformed frame means
+/// the stream can no longer be safely re-synchronized and must be closed.
+public nonisolated enum MCPTransportCodecError: Error, Equatable, LocalizedError, Sendable {
+    case malformedHeader
+    case invalidContentLength
+    case frameTooLarge(limit: Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .malformedHeader:
+            return "Malformed MCP transport header."
+        case .invalidContentLength:
+            return "Invalid MCP Content-Length header."
+        case let .frameTooLarge(limit):
+            return "MCP transport frame exceeds the \(limit)-byte limit."
+        }
+    }
+}
+
+/// The non-throwing state produced while incrementally parsing an MCP stream.
+public nonisolated enum MCPTransportCodecResult: Sendable {
+    case message(Data)
+    case needMoreData
+    case malformed(MCPTransportCodecError)
+}
+
 public nonisolated enum MCPTransportCodec {
+    /// Upper bound for one complete JSON-RPC message and for undecoded stream
+    /// residue. Keeping both bounded prevents peers from growing a process-wide
+    /// buffer simply by never terminating a frame.
+    public static let maxFrameBytes = 1_048_576
+    /// Headers have no reason to approach a message-sized budget. This also
+    /// bounds an incomplete `Content-Length` prefix before a terminator arrives.
+    public static let maxHeaderBytes = 16_384
+
     public static func frame(_ payload: Data) -> Data {
         var framedPayload = payload
         framedPayload.append(0x0A)
         return framedPayload
     }
 
-    public static func nextMessageBody(from buffer: inout Data) -> Data? {
-        if let contentLengthBody = extractContentLengthBody(from: &buffer) {
-            return contentLengthBody
+    /// Incrementally extracts one message, reports that more bytes are needed,
+    /// or identifies framing that cannot safely be recovered from.
+    public static func nextMessage(from buffer: inout Data) -> MCPTransportCodecResult {
+        guard !buffer.isEmpty else {
+            return .needMoreData
         }
 
-        // If the stream starts with transport headers (possibly partial),
-        // wait for the full header/body instead of treating header lines as NDJSON.
+        // A partial header must not be mistaken for NDJSON. Bound it while waiting
+        // for its terminator, otherwise an attacker can hold the connection open
+        // while continuously extending the header.
         if looksLikeHeaderPrefix(buffer) {
+            if let headerRange = headerTerminatorRange(in: buffer) {
+                return extractContentLengthBody(from: &buffer, headerRange: headerRange)
+            }
+            return buffer.count > maxHeaderBytes
+                ? .malformed(.frameTooLarge(limit: maxHeaderBytes))
+                : .needMoreData
+        }
+
+        if let newlineIndex = buffer.firstIndex(of: 0x0A) {
+            let lineRange = buffer.startIndex ..< newlineIndex
+            guard lineRange.count <= maxFrameBytes else {
+                return .malformed(.frameTooLarge(limit: maxFrameBytes))
+            }
+            var line = buffer.subdata(in: lineRange)
+            buffer.removeSubrange(buffer.startIndex ... newlineIndex)
+            if line.last == 0x0D {
+                line.removeLast()
+            }
+            return .message(line)
+        }
+
+        guard buffer.count <= maxFrameBytes else {
+            return .malformed(.frameTooLarge(limit: maxFrameBytes))
+        }
+
+        if let body = extractUndelimitedJSONBody(from: &buffer) {
+            return .message(body)
+        }
+        return .needMoreData
+    }
+
+    /// Compatibility wrapper for existing callers. New transport code must use
+    /// `nextMessage(from:)` so malformed framing closes the connection instead of
+    /// being indistinguishable from an incomplete frame.
+    public static func nextMessageBody(from buffer: inout Data) -> Data? {
+        guard case let .message(body) = nextMessage(from: &buffer) else {
             return nil
         }
-
-        if let lineDelimitedBody = extractLineDelimitedBody(from: &buffer) {
-            return lineDelimitedBody
-        }
-
-        return extractUndelimitedJSONBody(from: &buffer)
+        return body
     }
 
     private static func looksLikeHeaderPrefix(_ buffer: Data) -> Bool {
@@ -38,7 +107,7 @@ public nonisolated enum MCPTransportCodec {
             return false
         }
 
-        let probeData = buffer.prefix(160)
+        let probeData = buffer.prefix(min(buffer.count, maxHeaderBytes))
         guard let probeString = String(data: probeData, encoding: .utf8) else {
             return false
         }
@@ -74,49 +143,67 @@ public nonisolated enum MCPTransportCodec {
         }
     }
 
-    private static func extractContentLengthBody(from buffer: inout Data) -> Data? {
-        guard let headerRange = headerTerminatorRange(in: buffer) else {
-            return nil
+    private static func extractContentLengthBody(
+        from buffer: inout Data,
+        headerRange: Range<Data.Index>
+    ) -> MCPTransportCodecResult {
+        guard headerRange.lowerBound <= maxHeaderBytes else {
+            return .malformed(.frameTooLarge(limit: maxHeaderBytes))
         }
 
         let headerData = buffer.subdata(in: buffer.startIndex ..< headerRange.lowerBound)
         guard let headers = String(data: headerData, encoding: .utf8) else {
-            return nil
+            return .malformed(.malformedHeader)
         }
 
-        let contentLength = headers
-            .split(whereSeparator: { $0.isNewline || $0 == "\n" })
-            .compactMap { line -> Int? in
-                let components = line.split(separator: ":", maxSplits: 1).map(String.init)
-                guard components.count == 2,
-                      components[0].trimmingCharacters(in: .whitespaces).caseInsensitiveCompare("Content-Length") == .orderedSame else {
-                    return nil
-                }
-
-                return Int(components[1].trimmingCharacters(in: .whitespaces))
+        var contentLength: Int?
+        for line in headers.split(whereSeparator: { $0.isNewline }) {
+            let components = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+            guard components.count == 2 else {
+                continue
             }
-            .first
+            guard components[0].trimmingCharacters(in: .whitespaces)
+                .caseInsensitiveCompare("Content-Length") == .orderedSame else {
+                continue
+            }
+
+            let rawLength = components[1].trimmingCharacters(in: .whitespaces)
+            guard !rawLength.isEmpty,
+                  rawLength.utf8.allSatisfy({ $0 >= 0x30 && $0 <= 0x39 }),
+                  let parsed = Int(rawLength) else {
+                return .malformed(.invalidContentLength)
+            }
+            guard parsed <= maxFrameBytes else {
+                return .malformed(.frameTooLarge(limit: maxFrameBytes))
+            }
+            guard contentLength == nil else {
+                return .malformed(.malformedHeader)
+            }
+            contentLength = parsed
+        }
 
         guard let contentLength else {
-            return nil
+            return .malformed(.malformedHeader)
         }
 
         let bodyStart = headerRange.upperBound
-        let bodyEnd = bodyStart + contentLength
-
+        let (bodyEnd, overflow) = bodyStart.addingReportingOverflow(contentLength)
+        guard !overflow else {
+            return .malformed(.invalidContentLength)
+        }
         guard buffer.count >= bodyEnd else {
-            return nil
+            return .needMoreData
         }
 
         let body = buffer.subdata(in: bodyStart ..< bodyEnd)
         buffer.removeSubrange(buffer.startIndex ..< bodyEnd)
-        return body
+        return .message(body)
     }
 
     private static func headerTerminatorRange(in buffer: Data) -> Range<Data.Index>? {
         let patterns = [
             Data("\r\n\r\n".utf8),
-            Data("\n\n".utf8)
+            Data("\n\n".utf8),
         ]
 
         var selectedRange: Range<Data.Index>?
@@ -137,29 +224,9 @@ public nonisolated enum MCPTransportCodec {
         return selectedRange
     }
 
-    private static func extractLineDelimitedBody(from buffer: inout Data) -> Data? {
-        guard let newlineIndex = buffer.firstIndex(of: 0x0A) else {
-            return nil
-        }
-
-        let lineRange = buffer.startIndex ..< newlineIndex
-        var line = buffer.subdata(in: lineRange)
-        buffer.removeSubrange(buffer.startIndex ... newlineIndex)
-
-        if line.last == 0x0D {
-            line.removeLast()
-        }
-
-        return line
-    }
-
     private static func extractUndelimitedJSONBody(from buffer: inout Data) -> Data? {
         if let wholeBufferBody = extractWholeBufferJSONObjectIfComplete(from: &buffer) {
             return wholeBufferBody
-        }
-
-        guard !buffer.isEmpty else {
-            return nil
         }
 
         var start = buffer.startIndex

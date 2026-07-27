@@ -11,6 +11,7 @@ import NIOHTTP1
 import NIOPosix
 import NIOSSL
 import NIOWebSocket
+import Synchronization
 
 /// Shared cross-platform SwiftNIO transport for remote generation clients.
 ///
@@ -120,7 +121,7 @@ public final class RemoteTransportCore: Sendable {
                     // task forming a retain cycle back to it. The token cancels
                     // this task and abandons the driver when the last handle is
                     // released, which is what unblocks `nextRequest()`.
-                    let runTask = Task<Void, Never> { [weak lifetime] in
+                    let runTask = Task<Void, Never>(name: "Remote transport background task") { [weak lifetime] in
                         do {
                             try await asyncChannel.executeThenClose(
                                 isolation: bodyStorage
@@ -276,7 +277,7 @@ public final class RemoteTransportCore: Sendable {
                         lease: lease
                     )
                     let lifetime = RemoteTransportLifetimeToken(lease: lease)
-                    let runTask = Task<Void, Never> { [weak lifetime] in
+                    let runTask = Task<Void, Never>(name: "Remote transport background task") { [weak lifetime] in
                         do {
                             try await asyncChannel.executeThenClose(
                                 isolation: driver
@@ -583,7 +584,7 @@ actor RemoteTransportLifecycle {
         state = .shuttingDown
         let channelsToClose = Array(channels.values)
         channels.removeAll()
-        let task = Task<Void, Error> {
+        let task = Task<Void, Error>(name: "Remote transport shutdown") {
             for channel in channelsToClose {
                 _ = try? await channel.close().get()
             }
@@ -602,26 +603,29 @@ actor RemoteTransportLifecycle {
     }
 }
 
-private final class RemotePendingConnection: @unchecked Sendable {
-    private let lock = NSLock()
-    private var channel: (any Channel)?
-    private var cancelled = false
+private final class RemotePendingConnection: Sendable {
+    private struct State {
+        var channel: (any Channel)?
+        var cancelled = false
+    }
+
+    private let state = Mutex(State())
 
     func attach(_ channel: any Channel) {
-        lock.lock()
-        self.channel = channel
-        let shouldClose = cancelled
-        lock.unlock()
+        let shouldClose = state.withLock { state in
+            state.channel = channel
+            return state.cancelled
+        }
         if shouldClose {
             channel.close(promise: nil)
         }
     }
 
     func cancel() {
-        lock.lock()
-        cancelled = true
-        let channel = self.channel
-        lock.unlock()
+        let channel = state.withLock { state in
+            state.cancelled = true
+            return state.channel
+        }
         channel?.close(promise: nil)
     }
 }
@@ -687,6 +691,12 @@ private final class RemoteWebSocketHandshakeRequestHandler:
             }
         case .end:
             failUpgradeRejected()
+        @unknown default:
+            upgradeState.fail(
+                RemoteTransportError.protocolViolation(
+                    "Unsupported HTTP response part during WebSocket upgrade"
+                )
+            )
         }
         context.fireChannelRead(data)
     }
@@ -717,28 +727,34 @@ private final class RemoteWebSocketHandshakeRequestHandler:
     }
 }
 
-final class RemoteChannelLease: @unchecked Sendable {
-    private let lock = NSLock()
-    private var isClosed = false
-    private let channel: any Channel
+final class RemoteChannelLease: Sendable {
+    private struct State {
+        var isClosed = false
+        let channel: any Channel
+    }
+
+    private let state: Mutex<State>
     private let lifecycle: RemoteTransportLifecycle
 
     fileprivate init(channel: any Channel, lifecycle: RemoteTransportLifecycle) {
-        self.channel = channel
+        state = Mutex(State(channel: channel))
         self.lifecycle = lifecycle
     }
 
     func close() {
-        lock.lock()
-        guard !isClosed else {
-            lock.unlock()
+        let channel = state.withLock { state -> (any Channel)? in
+            guard !state.isClosed else {
+                return nil
+            }
+            state.isClosed = true
+            return state.channel
+        }
+        guard let channel else {
             return
         }
-        isClosed = true
-        lock.unlock()
 
         channel.close(promise: nil)
-        Task { [lifecycle, channel] in
+        Task(name: "Remote channel lease cleanup") { [lifecycle, channel] in
             await lifecycle.unregister(channel)
         }
     }
@@ -748,27 +764,31 @@ final class RemoteChannelLease: @unchecked Sendable {
     }
 }
 
-private final class RemoteWebSocketUpgradeState: @unchecked Sendable {
-    private let lock = NSLock()
-    private var result: Result<
-        NIOAsyncChannel<WebSocketFrame, WebSocketFrame>,
-        Error
-    >?
-    private var continuation: CheckedContinuation<
-        NIOAsyncChannel<WebSocketFrame, WebSocketFrame>,
-        Error
-    >?
+private final class RemoteWebSocketUpgradeState: Sendable {
+    private struct State {
+        var result: Result<NIOAsyncChannel<WebSocketFrame, WebSocketFrame>, Error>?
+        var continuation: CheckedContinuation<
+            NIOAsyncChannel<WebSocketFrame, WebSocketFrame>,
+            Error
+        >?
+    }
+
+    private let state = Mutex(State())
 
     func wait() async throws -> NIOAsyncChannel<WebSocketFrame, WebSocketFrame> {
         try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            if let result {
-                lock.unlock()
-                continuation.resume(with: result)
-                return
+            let result = state.withLock { state -> Result<
+                NIOAsyncChannel<WebSocketFrame, WebSocketFrame>, Error
+            >? in
+                if let result = state.result {
+                    return result
+                }
+                state.continuation = continuation
+                return nil
             }
-            self.continuation = continuation
-            lock.unlock()
+            if let result {
+                continuation.resume(with: result)
+            }
         }
     }
 
@@ -783,15 +803,16 @@ private final class RemoteWebSocketUpgradeState: @unchecked Sendable {
     private func resolve(
         _ newResult: Result<NIOAsyncChannel<WebSocketFrame, WebSocketFrame>, Error>
     ) {
-        lock.lock()
-        guard result == nil else {
-            lock.unlock()
-            return
+        let continuation = state.withLock { state -> CheckedContinuation<
+            NIOAsyncChannel<WebSocketFrame, WebSocketFrame>, Error
+        >? in
+            guard state.result == nil else {
+                return nil
+            }
+            state.result = newResult
+            defer { state.continuation = nil }
+            return state.continuation
         }
-        result = newResult
-        let continuation = self.continuation
-        self.continuation = nil
-        lock.unlock()
         continuation?.resume(with: newResult)
     }
 }

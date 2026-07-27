@@ -53,7 +53,7 @@ enum ChatGPTSubscriptionWebSocketCloseCode {
 /// acquisition synchronous while all I/O remains cancellation-aware async NIO.
 final class ChatGPTSubscriptionNIOWebSocketTask:
     ChatGPTSubscriptionWebSocketTask,
-    @unchecked Sendable
+    Sendable
 {
     private enum Lifecycle {
         case suspended
@@ -123,7 +123,7 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
             return
         }
 
-        let task = Task { [weak self] in
+        let task = Task(name: "ChatGPT WebSocket connection") { [weak self] in
             guard let self else {
                 return
             }
@@ -220,7 +220,7 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
             waiter.resume(throwing: CancellationError())
         }
         if let driver = result.driver {
-            Task {
+            Task(name: "ChatGPT WebSocket cancellation") {
                 await driver.close(code: closeCode, reason: reason)
             }
         }
@@ -291,7 +291,7 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
         connectionTaskStorage.withLock { $0 = nil }
 
         if result.shouldClose {
-            Task {
+            Task(name: "ChatGPT WebSocket rejected connection") {
                 await driver.close(
                     code: ChatGPTSubscriptionWebSocketCloseCode.goingAway,
                     reason: nil
@@ -422,7 +422,7 @@ actor ChatGPTSubscriptionNIOWebSocketDriver {
         guard readerTask == nil else {
             return
         }
-        readerTask = Task { [weak self] in
+        readerTask = Task(name: "ChatGPT WebSocket background task") { [weak self] in
             await self?.readLoop()
         }
     }
@@ -464,7 +464,7 @@ actor ChatGPTSubscriptionNIOWebSocketDriver {
                 }
             }
         } onCancel: {
-            Task {
+            Task(name: "ChatGPT WebSocket background task") {
                 await cancel()
             }
         }
@@ -485,7 +485,7 @@ actor ChatGPTSubscriptionNIOWebSocketDriver {
             // waiting for the pong. Readiness pings deliberately use the normal
             // cancellable path so their timeout can still force-close a stall.
             let sendFrame = self.sendFrame
-            let writeTask = Task {
+            let writeTask = Task(name: "ChatGPT WebSocket background task") {
                 try await sendFrame(.ping(payload))
             }
             try await writeTask.value
@@ -531,7 +531,7 @@ actor ChatGPTSubscriptionNIOWebSocketDriver {
                 }
             }
         } onCancel: {
-            Task {
+            Task(name: "ChatGPT WebSocket background task") {
                 await cancelPing(payload)
             }
         }

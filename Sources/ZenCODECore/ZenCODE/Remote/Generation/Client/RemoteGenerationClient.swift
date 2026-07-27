@@ -31,7 +31,15 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
     public let transport: RemoteTransportCore
     private let ownsTransport: Bool
     public let toolExecutor: DirectToolExecutor
-    public var sessions: [String: AgentSession] = [:]
+    /// `AgentSession` contains JSON bridge values and must never cross the
+    /// actor boundary. Public callers use `snapshotSession(id:)`, whose result
+    /// is Sendable, rather than observing this mutable implementation detail.
+    private var sessions: [String: AgentSession] = [:]
+    /// A generation is a lease on a particular lifetime of a session ID. It is
+    /// deliberately retained after removal so an operation suspended on an old
+    /// session cannot recreate it when it resumes.
+    private var sessionGenerations: [String: UInt64] = [:]
+    private var nextSessionGeneration: UInt64 = 0
     public var didEmitLoadedModel = false
     let streamEndpointBaseURLOverride: URL?
 
@@ -95,7 +103,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         preserveThinking: Bool = false
     ) {
         let cwdURL = URL(fileURLWithPath: cwd).standardizedFileURL
-        sessions[id] = AgentSession(
+        installSession(AgentSession(
             id: id,
             cwd: cwdURL,
             systemPrompt: systemPrompt,
@@ -108,8 +116,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                 systemPrompt: systemPrompt,
                 history: history,
                 allowedToolNames: allowedToolNames
-            )
-        )
+            )), id: id)
     }
 
     public func createSessionIfNeeded(
@@ -138,7 +145,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
     }
 
     public func closeSession(id: String) async {
-        sessions.removeValue(forKey: id)
+        invalidateSession(id: id)
         await toolExecutor.removeToolProviders(sessionID: id)
     }
 
@@ -180,6 +187,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
 
     public func shutdown() async {
         sessions.removeAll()
+        sessionGenerations.removeAll()
         await toolExecutor.shutdown()
         if ownsTransport {
             try? await transport.shutdown()
@@ -272,7 +280,6 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             throw RemoteGenerationClientError.missingSession
         }
 
-        _ = try await preloadModel(onEvent: onEvent)
         session.messages.append(
             Self.remoteMessage(
                 role: "user",
@@ -284,6 +291,14 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         // option updates) observe and build on the latest messages instead of
         // being silently overwritten by the local copy at the end of the loop.
         sessions[sessionID] = session
+        guard let lease = sessionLease(for: sessionID) else {
+            throw RemoteGenerationClientError.missingSession
+        }
+
+        _ = try await preloadModel(onEvent: onEvent)
+        guard currentSession(for: lease) != nil else {
+            throw RemoteGenerationClientError.missingSession
+        }
 
         var accumulatedText = ""
         var generationStats: [RemoteGenerationStats] = []
@@ -291,8 +306,8 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         for round in 0..<configuration.maxToolRounds {
             // Re-read shared state at the start of each round so changes applied
             // by concurrent operations between rounds are not lost.
-            if let latestSession = sessions[sessionID] {
-                session = latestSession
+            guard let session = currentSession(for: lease) else {
+                throw RemoteGenerationClientError.missingSession
             }
             let expectsPromptCache = Self.messagesExpectPromptCache(session.messages)
             let streamResult: RemoteStreamResult
@@ -324,10 +339,13 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                        Self.isImageContentRejectedError(error),
                        Self.messagesContainImageContent(session.messages) {
                         didRetryWithoutImages = true
-                        session.messages = Self.messagesStrippingImageContent(
-                            from: session.messages
-                        )
-                        sessions[sessionID] = session
+                        guard mutateSession(for: lease, { session in
+                            session.messages = Self.messagesStrippingImageContent(
+                                from: session.messages
+                            )
+                        }) else {
+                            throw RemoteGenerationClientError.missingSession
+                        }
                         await onEvent(.diagnostic(
                             "\(provider.displayTitle) does not support image input with the selected model. Retrying without attached images."
                         ))
@@ -353,11 +371,14 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                ) {
                 await onEvent(.diagnostic(cacheDiagnostic))
             }
-            appendAssistantMessage(
-                streamResult: streamResult,
-                to: &session.messages
-            )
-            sessions[sessionID] = session
+            guard mutateSession(for: lease, { session in
+                appendAssistantMessage(
+                    streamResult: streamResult,
+                    to: &session.messages
+                )
+            }) else {
+                throw RemoteGenerationClientError.missingSession
+            }
             if let metrics = Self.generationMetrics(
                 generationStats,
                 estimateMissingRates: Self.shouldEstimateStreamingRates(
@@ -382,7 +403,6 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                    ) {
                     await onEvent(.diagnostic(summary))
                 }
-                sessions[sessionID] = session
                 return DirectAgentResponse(
                     text: accumulatedText,
                     stopReason: streamResult.stopReason,
@@ -392,30 +412,80 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
 
             for toolCall in streamResult.toolCalls {
                 await onEvent(.toolCallStarted(toolCall))
+                guard let activeSession = currentSession(for: lease) else {
+                    throw RemoteGenerationClientError.missingSession
+                }
                 let result = await toolExecutor.execute(
-                    sessionID: session.id,
+                    sessionID: activeSession.id,
                     toolCall: toolCall,
-                    workingDirectory: session.cwd,
-                    allowedToolNames: session.allowedToolNames
+                    workingDirectory: activeSession.cwd,
+                    allowedToolNames: activeSession.allowedToolNames
                 )
                 await onEvent(.toolCallCompleted(toolCall, result))
-                session.messages.append([
-                    "role": "tool",
-                    "tool_call_id": toolCall.id,
-                    "name": toolCall.name,
-                    "content": result.modelOutput
-                ])
-                sessions[sessionID] = session
+                guard mutateSession(for: lease, { session in
+                    session.messages.append([
+                        "role": "tool",
+                        "tool_call_id": toolCall.id,
+                        "name": toolCall.name,
+                        "content": result.modelOutput
+                    ])
+                }) else {
+                    throw RemoteGenerationClientError.missingSession
+                }
             }
 
             if round == configuration.maxToolRounds - 1 {
-                sessions[sessionID] = session
                 throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)
             }
         }
-        sessions[sessionID] = session
-
         throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)
+    }
+
+    private struct SessionLease: Sendable {
+        let id: String
+        let generation: UInt64
+    }
+
+    private func installSession(_ session: AgentSession, id: String) {
+        nextSessionGeneration &+= 1
+        sessionGenerations[id] = nextSessionGeneration
+        sessions[id] = session
+    }
+
+    private func invalidateSession(id: String) {
+        // Advance even when the value was already absent: this invalidates any
+        // in-flight lease before asynchronous cleanup starts.
+        nextSessionGeneration &+= 1
+        sessionGenerations[id] = nextSessionGeneration
+        sessions.removeValue(forKey: id)
+    }
+
+    private func sessionLease(for id: String) -> SessionLease? {
+        guard sessions[id] != nil, let generation = sessionGenerations[id] else {
+            return nil
+        }
+        return SessionLease(id: id, generation: generation)
+    }
+
+    private func currentSession(for lease: SessionLease) -> AgentSession? {
+        guard sessionGenerations[lease.id] == lease.generation else {
+            return nil
+        }
+        return sessions[lease.id]
+    }
+
+    @discardableResult
+    private func mutateSession(
+        for lease: SessionLease,
+        _ mutation: (inout AgentSession) -> Void
+    ) -> Bool {
+        guard sessionGenerations[lease.id] == lease.generation,
+              var session = sessions[lease.id] else {
+            return false
+        }
+        mutation(&session)
+        sessions[lease.id] = session
+        return true
     }
 
     public static func agentRuntimeMessages(

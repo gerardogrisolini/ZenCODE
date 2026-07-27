@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import FeatureMCPBridgeKit
+public import FeatureMCPBridgeKit
 
 /// Supplies the mcpbridge-specific exception handling without making the MCP
 /// transport itself aware of Xcode, its consent UI, or Unified Logging.
@@ -94,6 +94,9 @@ public nonisolated enum XcodeMCPTransportPolicy {
                 || (lowered.contains("bridgeerror") && lowered.contains("code=1"))
                 ? XcodeMCPServerConfiguration.authorizationError()
                 : nil
+
+        @unknown default:
+            return nil
         }
     }
 

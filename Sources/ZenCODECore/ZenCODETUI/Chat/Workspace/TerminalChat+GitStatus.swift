@@ -10,6 +10,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import ToolCore
 
 extension TerminalChat {
     func refreshStatusBarGitStatusSummaryForFileMutation() async {
@@ -61,7 +62,7 @@ extension TerminalChat {
         let workingDirectory = configuration.workingDirectory
         let statusBar = statusBar
         let refreshGeneration = await statusBar.beginGitStatusRefresh()
-        Task {
+        Task(name: "ZenCODE.TUI.git-status-refresh") {
             let summary = await Self.gitStatusSummary(in: workingDirectory)
             _ = await statusBar.update(
                 gitStatusSummary: summary,

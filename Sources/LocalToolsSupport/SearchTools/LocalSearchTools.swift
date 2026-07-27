@@ -33,7 +33,9 @@ struct SearchGlobTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        try LocalToolsSupport.glob(input: input, context: context)
+        try await LocalIOOffloader.run {
+            try LocalToolsSupport.glob(input: input, context: context)
+        }
     }
 }
 

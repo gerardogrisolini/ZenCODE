@@ -21,11 +21,6 @@ extension AnthropicSubscriptionGenerationClient {
             throw RemoteGenerationClientError.missingSession
         }
 
-        let credentials = try await AnthropicSubscriptionAuthService.loadValidCredentials()
-        let modelLLMID = modelLLMID()
-        let modelID = AnthropicSubscriptionModel.modelID(fromLLMID: modelLLMID)
-        await onEvent(.modelLoaded(AnthropicSubscriptionModel.selectionTitle(forLLMID: modelLLMID)))
-
         session.messages.append(
             RemoteGenerationClient.remoteMessage(
                 role: AgentRuntimeMessage.Role.user.rawValue,
@@ -33,6 +28,20 @@ extension AnthropicSubscriptionGenerationClient {
                 attachments: attachments
             )
         )
+        // Persist before the first suspension. A session lease keeps a later
+        // close/recreate from being overwritten by this in-flight turn.
+        sessions[sessionID] = session
+        guard let lease = sessionLease(for: sessionID) else {
+            throw RemoteGenerationClientError.missingSession
+        }
+
+        let credentials = try await AnthropicSubscriptionAuthService.loadValidCredentials()
+        guard currentSession(for: lease) != nil else {
+            throw RemoteGenerationClientError.missingSession
+        }
+        let modelLLMID = modelLLMID()
+        let modelID = AnthropicSubscriptionModel.modelID(fromLLMID: modelLLMID)
+        await onEvent(.modelLoaded(AnthropicSubscriptionModel.selectionTitle(forLLMID: modelLLMID)))
 
         var accumulatedText = ""
         var generationStats: [RemoteGenerationStats] = []
@@ -40,14 +49,23 @@ extension AnthropicSubscriptionGenerationClient {
         var didRetryAfterThinkingReplayRejection = false
 
         for round in 0..<configuration.maxToolRounds {
+            guard var session = currentSession(for: lease) else {
+                throw RemoteGenerationClientError.missingSession
+            }
             if let result = compactSessionIfNeeded(
                 &session,
                 modelLLMID: modelLLMID
             ) {
+                guard mutateSession(for: lease, { $0.messages = session.messages }) else {
+                    throw RemoteGenerationClientError.missingSession
+                }
                 await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
             }
 
             while true {
+                guard var session = currentSession(for: lease) else {
+                    throw RemoteGenerationClientError.missingSession
+                }
                 let streamResult: RemoteStreamResult
                 do {
                     streamResult = try await streamAnthropicMessages(
@@ -62,8 +80,13 @@ extension AnthropicSubscriptionGenerationClient {
                     if !didRetryAfterThinkingReplayRejection,
                        Self.isThinkingReplayRejected(error) {
                         didRetryAfterThinkingReplayRejection = true
-                        session.messages = Self.removingThinkingBlocks(from: session.messages)
-                        sessions[sessionID] = session
+                        guard mutateSession(for: lease, { session in
+                            session.messages = Self.removingThinkingBlocks(
+                                from: session.messages
+                            )
+                        }) else {
+                            throw RemoteGenerationClientError.missingSession
+                        }
                         await onEvent(
                             .diagnostic(
                                 "Anthropic rejected saved thinking blocks; retrying without replaying prior thinking blocks."
@@ -74,22 +97,29 @@ extension AnthropicSubscriptionGenerationClient {
                     guard Self.isContextLimitError(error), !didRetryAfterContextLimit else {
                         throw error
                     }
-                    guard let result = compactSessionForContextLimitRetry(
-                        &session,
-                        modelLLMID: modelLLMID
-                    ) else {
+                    guard var currentSession = currentSession(for: lease),
+                          let result = compactSessionForContextLimitRetry(
+                              &currentSession,
+                              modelLLMID: modelLLMID
+                          ) else {
                         await onEvent(.diagnostic(Self.contextLimitRetryUnavailableDiagnostic()))
                         throw error
                     }
                     didRetryAfterContextLimit = true
-                    sessions[sessionID] = session
+                    guard mutateSession(for: lease, { $0.messages = currentSession.messages }) else {
+                        throw RemoteGenerationClientError.missingSession
+                    }
                     await onEvent(.diagnostic(Self.contextLimitRetryDiagnostic(from: result)))
                     continue
                 }
 
                 accumulatedText.append(streamResult.text)
                 generationStats.append(streamResult.stats)
-                appendAssistantMessage(streamResult: streamResult, to: &session.messages)
+                guard mutateSession(for: lease, { session in
+                    appendAssistantMessage(streamResult: streamResult, to: &session.messages)
+                }) else {
+                    throw RemoteGenerationClientError.missingSession
+                }
                 if let metrics = RemoteGenerationClient.generationMetrics(generationStats) {
                     await Self.publishAnthropicSubscriptionMetrics(
                         metrics,
@@ -104,7 +134,6 @@ extension AnthropicSubscriptionGenerationClient {
                        let summary = RemoteGenerationClient.generationSummary(generationStats) {
                         await onEvent(.diagnostic(summary))
                     }
-                    sessions[sessionID] = session
                     return DirectAgentResponse(
                         text: accumulatedText,
                         stopReason: streamResult.stopReason,
@@ -114,29 +143,34 @@ extension AnthropicSubscriptionGenerationClient {
 
                 for toolCall in streamResult.toolCalls {
                     await onEvent(.toolCallStarted(toolCall))
+                    guard let activeSession = currentSession(for: lease) else {
+                        throw RemoteGenerationClientError.missingSession
+                    }
                     let result = await toolExecutor.execute(
-                        sessionID: session.id,
+                        sessionID: activeSession.id,
                         toolCall: toolCall,
-                        workingDirectory: session.cwd,
-                        allowedToolNames: session.allowedToolNames
+                        workingDirectory: activeSession.cwd,
+                        allowedToolNames: activeSession.allowedToolNames
                     )
                     await onEvent(.toolCallCompleted(toolCall, result))
-                    session.messages.append([
-                        "role": "tool",
-                        "tool_call_id": toolCall.id,
-                        "name": toolCall.name,
-                        "content": result.modelOutput
-                    ])
+                    guard mutateSession(for: lease, { session in
+                        session.messages.append([
+                            "role": "tool",
+                            "tool_call_id": toolCall.id,
+                            "name": toolCall.name,
+                            "content": result.modelOutput
+                        ])
+                    }) else {
+                        throw RemoteGenerationClientError.missingSession
+                    }
                 }
 
                 if round == configuration.maxToolRounds - 1 {
-                    sessions[sessionID] = session
                     throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)
                 }
                 break
             }
         }
-        sessions[sessionID] = session
         throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)
     }
 

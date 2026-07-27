@@ -10,6 +10,7 @@
 
 import FeatureKit
 import Foundation
+import Synchronization
 
 // MARK: - Viewport presets
 
@@ -94,41 +95,93 @@ struct BrowserViewportStateStore: Sendable {
     }
 
     static let maximumStoredPages = 100
+    /// Serializes concurrent store instances within one feature process;
+    /// `flock` on `lockURL` additionally coordinates across processes.
+    private static let localLock = Mutex(())
     private let stateURL: URL
+    private let lockURL: URL
 
     init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         stateURL: URL? = nil
     ) {
-        self.stateURL = stateURL ?? ChromeBrowserConfiguration(environment: environment)
+        let resolvedStateURL = stateURL ?? ChromeBrowserConfiguration(environment: environment)
             .profileDirectory
             .appendingPathComponent("viewport-presets.json", isDirectory: false)
+        self.stateURL = resolvedStateURL
+        self.lockURL = resolvedStateURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("viewport-presets.lock", isDirectory: false)
     }
 
     func preset(for pageID: String) -> BrowserViewportPreset {
-        guard let pageID = normalizedPageID(pageID),
-              let rawValue = readState().presetsByPageID[pageID]
-        else {
+        guard let pageID = normalizedPageID(pageID) else {
             return .desktop
         }
-        return BrowserViewportPreset.resolveUntrustedMarker(rawValue)
+        do {
+            let rawValue = try withExclusiveLock { readState().presetsByPageID[pageID] }
+            return BrowserViewportPreset.resolveUntrustedMarker(rawValue)
+        } catch {
+            return .desktop
+        }
     }
 
     func set(_ preset: BrowserViewportPreset, for pageID: String) throws {
         guard let pageID = normalizedPageID(pageID) else {
             throw BrowserToolsFeatureError.browserError("Browser page id is invalid for viewport state.")
         }
-        var state = readState()
-        state.presetsByPageID[pageID] = preset.rawValue
-        trim(&state, preserving: pageID)
-        try writeState(state)
+        try withExclusiveLock {
+            var state = readState()
+            state.presetsByPageID[pageID] = preset.rawValue
+            trim(&state, preserving: pageID)
+            try writeState(state)
+        }
     }
 
     func remove(pageID: String) {
         guard let pageID = normalizedPageID(pageID) else { return }
-        var state = readState()
-        guard state.presetsByPageID.removeValue(forKey: pageID) != nil else { return }
-        try? writeState(state)
+        try? withExclusiveLock {
+            var state = readState()
+            guard state.presetsByPageID.removeValue(forKey: pageID) != nil else { return }
+            try writeState(state)
+        }
+    }
+
+    /// Atomically serializes the read-modify-write transaction. An in-process
+    /// `Mutex` prevents two concurrent calls within the same feature process
+    /// from racing; an interprocess `flock` on a stable sibling lock file
+    /// prevents two one-shot feature processes from clobbering each other.
+    private func withExclusiveLock<T>(_ body: () throws -> T) throws -> T {
+        try Self.localLock.withLock { _ in
+            let directory = stateURL.deletingLastPathComponent()
+            do {
+                try FileManager.default.createDirectory(
+                    at: directory,
+                    withIntermediateDirectories: true
+                )
+            } catch {
+                throw BrowserToolsFeatureError.browserError("Viewport state directory unavailable.")
+            }
+
+            let descriptor = open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+            guard descriptor >= 0 else {
+                throw BrowserToolsFeatureError.browserError("Viewport state lock unavailable.")
+            }
+            defer {
+                _ = flock(descriptor, LOCK_UN)
+                _ = close(descriptor)
+            }
+            guard flock(descriptor, LOCK_EX) == 0 else {
+                throw BrowserToolsFeatureError.browserError("Viewport state lock unavailable.")
+            }
+            #if canImport(Darwin) || canImport(Glibc)
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: lockURL.path
+            )
+            #endif
+            return try body()
+        }
     }
 
     private func readState() -> State {
@@ -141,11 +194,6 @@ struct BrowserViewportStateStore: Sendable {
     }
 
     private func writeState(_ state: State) throws {
-        let directory = stateURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
         let data = try JSONEncoder().encode(state)
         try data.write(to: stateURL, options: .atomic)
         #if canImport(Darwin) || canImport(Glibc)
@@ -913,8 +961,9 @@ extension CDPSession {
         literal: BrowserConditionLiteral?,
         timeoutSeconds: Int
     ) async throws -> BrowserWaitResult {
-        let start = Date()
-        let deadline = start.addingTimeInterval(TimeInterval(timeoutSeconds))
+        let clock = ContinuousClock()
+        let start = clock.now
+        let deadline = start.advanced(by: .seconds(timeoutSeconds))
         var latestEvaluation: BrowserPageConditionEvaluation?
 
         while true {
@@ -929,7 +978,7 @@ extension CDPSession {
                     return BrowserWaitResult(
                         evaluation: evaluation,
                         timedOut: false,
-                        elapsedMilliseconds: elapsedMilliseconds(since: start)
+                        elapsedMilliseconds: elapsedMilliseconds(from: start, to: clock.now)
                     )
                 }
             } catch is CancellationError {
@@ -939,11 +988,11 @@ extension CDPSession {
                 // turn that routine wait race into a tool crash.
             }
 
-            if Date() >= deadline {
+            if clock.now >= deadline {
                 return BrowserWaitResult(
                     evaluation: latestEvaluation,
                     timedOut: true,
-                    elapsedMilliseconds: elapsedMilliseconds(since: start)
+                    elapsedMilliseconds: elapsedMilliseconds(from: start, to: clock.now)
                 )
             }
             try await Task.sleep(
@@ -952,8 +1001,13 @@ extension CDPSession {
         }
     }
 
-    private func elapsedMilliseconds(since start: Date) -> Int {
-        max(0, Int(Date().timeIntervalSince(start) * 1_000))
+    private func elapsedMilliseconds(
+        from start: ContinuousClock.Instant,
+        to end: ContinuousClock.Instant
+    ) -> Int {
+        let elapsed = start.duration(to: end)
+        let (seconds, attoseconds) = elapsed.components
+        return max(0, Int(seconds) * 1_000 + Int(attoseconds / 1_000_000_000_000_000))
     }
 }
 
