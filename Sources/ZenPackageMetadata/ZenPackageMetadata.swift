@@ -14,4 +14,3 @@ public enum ZenPackageMetadata {
         "\(executableName) \(version)"
     }
 }
-
