@@ -4,6 +4,11 @@
 //
 
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import NIOCore
 import NIOHTTP1
 import NIOPosix
@@ -187,6 +192,62 @@ struct RemoteTransportCoreTests {
 
             try await socket.send(.close(code: 1000, reason: "done"))
             #expect(try await socket.receive() == .close(code: 1000, reason: "done"))
+        } catch {
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            throw error
+        }
+
+        try await transport.shutdown()
+        await server.shutdown()
+    }
+
+    @Test("A WebSocket peer reset surfaces as a recoverable transport failure")
+    func webSocketPeerResetIsRecoverable() async throws {
+        let server = try await LocalWebSocketTestServer.start(
+            resetOnText: "reset-connection"
+        )
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+
+        do {
+            let socket = try await transport.connectWebSocket(
+                RemoteWebSocketRequest(url: server.url(path: "/reset"))
+            )
+            try await socket.send(.text("reset-connection"))
+
+            do {
+                _ = try await withThrowingTaskGroup(
+                    of: RemoteWebSocketFrame?.self
+                ) { group in
+                    group.addTask {
+                        try await socket.receive()
+                    }
+                    group.addTask {
+                        try await Task.sleep(for: .seconds(2))
+                        throw RemoteTransportError.timeout
+                    }
+                    defer { group.cancelAll() }
+                    return try await group.next() ?? nil
+                }
+                Issue.record(
+                    "The reset WebSocket unexpectedly returned a frame or clean EOF."
+                )
+            } catch let error as RemoteTransportError {
+                if case .connectionFailure = error {
+                    // Expected: the TCP reset is mapped into a recoverable error.
+                } else {
+                    Issue.record("Expected connectionFailure, got \(error).")
+                }
+            }
+
+            do {
+                try await socket.send(.text("after-reset"))
+                Issue.record(
+                    "A send on the reset WebSocket unexpectedly succeeded."
+                )
+            } catch let error as RemoteTransportError {
+                #expect(error == .closed)
+            }
         } catch {
             await transport.shutdownIgnoringError()
             await server.shutdown()
@@ -672,7 +733,9 @@ private final class LocalWebSocketTestServer: @unchecked Sendable {
         self.channel = channel
     }
 
-    static func start() async throws -> LocalWebSocketTestServer {
+    static func start(
+        resetOnText: String? = nil
+    ) async throws -> LocalWebSocketTestServer {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let upgrader = NIOWebSocketServerUpgrader(
             maxFrameSize: 1_024 * 1_024,
@@ -680,7 +743,9 @@ private final class LocalWebSocketTestServer: @unchecked Sendable {
                 channel.eventLoop.makeSucceededFuture(HTTPHeaders())
             },
             upgradePipelineHandler: { channel, _ in
-                channel.pipeline.addHandler(LocalWebSocketEchoHandler())
+                channel.pipeline.addHandler(
+                    LocalWebSocketEchoHandler(resetOnText: resetOnText)
+                )
             }
         )
 
@@ -729,10 +794,35 @@ private final class LocalWebSocketEchoHandler:
     typealias InboundIn = WebSocketFrame
     typealias OutboundOut = WebSocketFrame
 
+    private let resetOnText: String?
+
+    init(resetOnText: String?) {
+        self.resetOnText = resetOnText
+    }
+
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         var frame = Self.unwrapInboundIn(data)
         if let key = frame.maskKey {
             frame.data.webSocketUnmask(key)
+        }
+
+        if frame.opcode == .text,
+           let resetOnText,
+           frame.data.getString(
+               at: frame.data.readerIndex,
+               length: frame.data.readableBytes
+           ) == resetOnText {
+            // SO_LINGER(0) makes close emit a TCP RST instead of a graceful FIN,
+            // reproducing Wi-Fi loss / peer reset rather than an RFC 6455 close.
+            if let socket = context.channel as? SocketOptionProvider {
+                socket.setSoLinger(linger(l_onoff: 1, l_linger: 0))
+                    .whenComplete { _ in
+                        context.close(promise: nil)
+                    }
+            } else {
+                context.close(promise: nil)
+            }
+            return
         }
 
         let response: WebSocketFrame

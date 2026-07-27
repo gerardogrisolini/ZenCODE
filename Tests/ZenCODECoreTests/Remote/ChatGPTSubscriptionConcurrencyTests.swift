@@ -255,6 +255,61 @@ struct ChatGPTSubscriptionConcurrencyTests {
     }
 
     @Test
+    func chatGPTWebSocketHeartbeatCancellationDoesNotCancelFrameWrite() async {
+        let sendStarted = ChatGPTSubscriptionTestGate()
+        let allowSendToFinish = ChatGPTSubscriptionTestGate()
+        let frameWriteWasCancelled = Mutex(false)
+        let driver = ChatGPTSubscriptionNIOWebSocketDriver(
+            maximumQueuedApplicationMessages: 1,
+            receiveFrame: {
+                throw RemoteTransportError.closed
+            },
+            sendFrame: { frame in
+                guard case .ping = frame else {
+                    throw RemoteTransportError.protocolViolation(
+                        "Expected the heartbeat to send a ping frame"
+                    )
+                }
+                await sendStarted.open()
+                try await withTaskCancellationHandler {
+                    await allowSendToFinish.wait()
+                    try Task.checkCancellation()
+                } onCancel: {
+                    frameWriteWasCancelled.withLock { $0 = true }
+                }
+            },
+            closeConnection: { _, _ in }
+        )
+
+        let heartbeat = Task {
+            try await driver.sendPing(
+                preservingConnectionOnWriteCancellation: true
+            )
+        }
+        await sendStarted.wait()
+
+        // This mirrors pool acquisition cancelling an idle heartbeat exactly
+        // while its control frame is inside the low-level socket write.
+        heartbeat.cancel()
+        await allowSendToFinish.open()
+
+        do {
+            try await heartbeat.value
+            Issue.record("The cancelled heartbeat unexpectedly completed.")
+        } catch is CancellationError {
+            // Expected: cancel the heartbeat operation, not its shared socket.
+        } catch {
+            Issue.record("Expected CancellationError, got \(error).")
+        }
+
+        #expect(!frameWriteWasCancelled.withLock { $0 })
+        await driver.close(
+            code: ChatGPTSubscriptionWebSocketCloseCode.normalClosure,
+            reason: nil
+        )
+    }
+
+    @Test
     func chatGPTWebSocketDispatcherDrainsBufferedTextBeforeRemoteError() async throws {
         let source = ChatGPTSubscriptionFrameSource()
         let applicationFrameDelivered = ChatGPTSubscriptionTestGate()

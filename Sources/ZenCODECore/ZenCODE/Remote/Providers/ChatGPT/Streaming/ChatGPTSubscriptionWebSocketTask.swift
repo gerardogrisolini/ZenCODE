@@ -36,6 +36,9 @@ protocol ChatGPTSubscriptionWebSocketTask: AnyObject, Sendable {
     func receive() async throws -> ChatGPTSubscriptionWebSocketMessage
     /// Sends an RFC 6455 ping and completes only after its matching pong.
     func sendPing() async throws
+    /// Heartbeat variant whose in-flight control-frame write survives a pool
+    /// handoff cancellation without closing the shared connection.
+    func sendHeartbeatPing() async throws
     func cancel(with closeCode: UInt16?, reason: Data?)
 }
 
@@ -163,10 +166,23 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
     }
 
     func sendPing() async throws {
+        try await sendPing(preservingConnectionOnWriteCancellation: false)
+    }
+
+    func sendHeartbeatPing() async throws {
+        try await sendPing(preservingConnectionOnWriteCancellation: true)
+    }
+
+    private func sendPing(
+        preservingConnectionOnWriteCancellation: Bool
+    ) async throws {
         try Task.checkCancellation()
         let driver = try await readyDriver()
         do {
-            try await driver.sendPing()
+            try await driver.sendPing(
+                preservingConnectionOnWriteCancellation:
+                    preservingConnectionOnWriteCancellation
+            )
         } catch {
             recordTerminalFailure(error)
             throw error
@@ -214,21 +230,16 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
         try await waitUntilReady()
         try Task.checkCancellation()
         return try stateStorage.withLock { state in
-            guard case let .ready(driver) = state.lifecycle else {
-                switch state.lifecycle {
-                case let .failed(error):
-                    throw error
-                case .cancelled:
-                    throw CancellationError()
-                case .completed:
-                    throw RemoteTransportError.closed
-                case .suspended, .connecting:
-                    throw RemoteTransportError.closed
-                case .ready:
-                    fatalError("Ready WebSocket task lost its driver")
-                }
+            switch state.lifecycle {
+            case let .ready(driver):
+                return driver
+            case let .failed(error):
+                throw error
+            case .cancelled:
+                throw CancellationError()
+            case .completed, .suspended, .connecting:
+                throw RemoteTransportError.closed
             }
-            return driver
         }
     }
 
@@ -459,10 +470,29 @@ actor ChatGPTSubscriptionNIOWebSocketDriver {
         }
     }
 
-    func sendPing() async throws {
+    func sendPing(
+        preservingConnectionOnWriteCancellation: Bool = false
+    ) async throws {
         try throwIfTerminal()
         let payload = Self.makePingPayload()
-        try await sendFrame(.ping(payload))
+
+        if preservingConnectionOnWriteCancellation {
+            // The pool cancels an idle heartbeat when leasing its socket. If
+            // cancellation reaches RemoteWebSocketConnection.send while this
+            // frame is in flight, its low-level cancellation handler closes the
+            // channel. Let only the already-started control-frame write finish
+            // in a child that does not inherit cancellation, then stop before
+            // waiting for the pong. Readiness pings deliberately use the normal
+            // cancellable path so their timeout can still force-close a stall.
+            let sendFrame = self.sendFrame
+            let writeTask = Task {
+                try await sendFrame(.ping(payload))
+            }
+            try await writeTask.value
+            try Task.checkCancellation()
+        } else {
+            try await sendFrame(.ping(payload))
+        }
         try await waitForPong(payload)
     }
 
@@ -626,10 +656,17 @@ actor ChatGPTSubscriptionNIOWebSocketDriver {
                     continuation.resume(throwing: terminalError)
                 } else if queuedMessages.count < maximumQueuedApplicationMessages {
                     continuation.resume()
+                } else if queueSpaceWaiter != nil {
+                    continuation.resume(
+                        throwing: RemoteTransportError.protocolViolation(
+                            "WebSocket dispatcher registered more than one queue-space waiter"
+                        )
+                    )
                 } else {
                     // `readLoop` is the sole reader, so there can be only one
-                    // capacity waiter. Replacing it would lose a frame.
-                    precondition(queueSpaceWaiter == nil)
+                    // capacity waiter. Treat any future invariant violation as
+                    // a recoverable transport error rather than terminating the
+                    // whole process from a networking task.
                     queueSpaceWaiter = continuation
                 }
             }

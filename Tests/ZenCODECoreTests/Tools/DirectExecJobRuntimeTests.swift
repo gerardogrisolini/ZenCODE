@@ -217,8 +217,9 @@ struct DirectExecJobRuntimeTests {
     /// Regression test: killing a background job must terminate the whole
     /// process tree, not just the outer shell. A descendant that survives the
     /// shell's SIGTERM gets reparented to init and keeps running as an orphan.
-    /// The runtime launches jobs through `setsid` on Linux so `kill(-pgid)`
-    /// reaches every descendant (pipes, subshells, long-running servers).
+    /// The runtime uses the isolated process group created by Foundation on
+    /// Linux so `kill(-pgid)` reaches every descendant (pipes, subshells,
+    /// long-running servers).
     @Test
     func killReachesChildProcessesNotJustTheShell() async throws {
         let runtime = DirectExecJobRuntime()
@@ -249,19 +250,49 @@ struct DirectExecJobRuntimeTests {
         }
         try #require(childPID > 0)
 
-        try await runtime.kill(jobID: "job-1")
+        _ = try await runtime.kill(jobID: "job-1")
         _ = try await pollUntil(runtime: runtime, jobID: "job-1") {
             $0.contains("killed")
         }
 
-        // Allow time for the SIGTERM → 2s grace → SIGKILL escalation to reap the
-        // whole group, then confirm the recorded child no longer exists.
+        // Allow time for the SIGTERM → 2s grace → SIGKILL escalation to stop the
+        // whole group. Minimal CI containers do not always run an init process
+        // that promptly reaps orphaned zombies; `kill(pid, 0)` still succeeds for
+        // those already-dead processes, so inspect the Linux process state too.
         let reapDeadline = Date().addingTimeInterval(6)
         while Date() < reapDeadline {
-            if Glibc.kill(childPID, 0) != 0 { break }
+            if !linuxProcessIsRunning(childPID) { break }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        #expect(Glibc.kill(childPID, 0) != 0, "child process survived the job kill")
+        #expect(
+            !linuxProcessIsRunning(childPID),
+            "child process remained running after the job kill"
+        )
+    }
+
+    /// Returns false once a process is absent or can no longer execute. Linux
+    /// keeps an exited-but-unreaped process in `/proc` as a zombie, and
+    /// `kill(pid, 0)` reports that PID as existing until its parent reaps it.
+    private func linuxProcessIsRunning(_ processID: Int32) -> Bool {
+        guard Glibc.kill(processID, 0) == 0 else {
+            return false
+        }
+
+        let statusURL = URL(fileURLWithPath: "/proc/\(processID)/status")
+        guard let status = try? String(contentsOf: statusURL, encoding: .utf8),
+              let stateLine = status.split(separator: "\n").first(where: {
+                  $0.hasPrefix("State:")
+              }) else {
+            // `/proc` may be unavailable or restricted. Retain the portable
+            // existence check rather than incorrectly declaring a live child dead.
+            return Glibc.kill(processID, 0) == 0
+        }
+
+        let fields = stateLine.split(whereSeparator: { $0.isWhitespace })
+        guard fields.count >= 2 else {
+            return true
+        }
+        return fields[1] != "Z" && fields[1] != "X" && fields[1] != "x"
     }
 #endif
 }

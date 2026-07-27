@@ -1919,6 +1919,10 @@ private final class ChatGPTSubscriptionTestWebSocketTask:
         try result.get()
     }
 
+    func sendHeartbeatPing() async throws {
+        try await sendPing()
+    }
+
     func cancel(with closeCode: UInt16?, reason _: Data?) {
         let waiter = stateStorage.withLock {
             state -> CheckedContinuation<ChatGPTSubscriptionWebSocketMessage, Error>? in

@@ -447,7 +447,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                     )
                 },
                 ping: {
-                    try await Self.sendPing(to: webSocketTask)
+                    try await Self.sendHeartbeatPing(to: webSocketTask)
                 },
                 onExpiration: { [weak self] in
                     self?.discardIdleEntry(
@@ -494,6 +494,9 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
             } catch is CancellationError {
                 return
             } catch {
+                guard !Task.isCancelled else {
+                    return
+                }
                 onFailure(error)
                 return
             }
@@ -522,10 +525,10 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         }
     }
 
-    private static func sendPing(
+    private static func sendHeartbeatPing(
         to task: any ChatGPTSubscriptionWebSocketTask
     ) async throws {
-        try await task.sendPing()
+        try await task.sendHeartbeatPing()
     }
 
     /// Runs before every response payload, including a reused pooled socket.
@@ -576,7 +579,9 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     ) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
-                try await sendPing(to: task)
+                // Unlike an idle heartbeat, readiness owns the connection and
+                // must let timeout cancellation force-close a stuck write.
+                try await task.sendPing()
             }
             group.addTask {
                 try await Task.sleep(

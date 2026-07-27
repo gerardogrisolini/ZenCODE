@@ -8,6 +8,7 @@
 import Foundation
 import ZenCODECore
 import ZenCODESetup
+import ZenPackageMetadata
 
 @main
 struct ZenCODEMain {
@@ -29,6 +30,14 @@ struct ZenCODEMain {
 
         if arguments.dropFirst().contains(where: { $0 == "--help" || $0 == "-h" }) {
             AgentOutput.standardOutput.writeString(ZenCODEStandaloneHelp.text)
+            return
+        }
+
+        if arguments.dropFirst().contains("--version") {
+            // Must short-circuit before the setup gate: CI and fresh installs
+            // have no ~/.zencode configuration, so the status check below would
+            // launch the interactive setup flow instead of printing the version.
+            AgentOutput.standardOutput.writeString("ZenCODE \(ZenPackageMetadata.version)\n")
             return
         }
 

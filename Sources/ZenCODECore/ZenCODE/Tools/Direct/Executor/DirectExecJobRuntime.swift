@@ -97,22 +97,6 @@ public actor DirectExecJobRuntime {
     public static let defaultMaxRunningJobs = 8
     static let maxRetainedTranscriptBytes = 2_000_000
     static let maxRetainedFinishedJobs = 16
-    /// Absolute path to the `setsid` launcher when available (Linux). Launching
-    /// a job through `setsid` puts the shell in its own session/process group so
-    /// `kill(-pgid)` reaches the whole process tree instead of only the shell,
-    /// which would orphan descendant processes (pipes, subshells, dev servers).
-    #if os(Linux)
-    private static let setsidExecutablePath: String? = {
-        let pathEnvironment = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        for directory in pathEnvironment.split(separator: ":") where !directory.isEmpty {
-            let candidate = "\(directory)/setsid"
-            if FileManager.default.isExecutableFile(atPath: candidate) {
-                return candidate
-            }
-        }
-        return nil
-    }()
-    #endif
 
     public enum JobStatus: String, Sendable {
         case running
@@ -138,12 +122,11 @@ public actor DirectExecJobRuntime {
         var finishedAt: Date?
         var killRequested = false
         var killReason: String?
-        /// True when the job was launched through `setsid`, making the shell a
-        /// session/group leader. Signals are then delivered to the whole group
-        /// (`kill(-pid)`) so descendants (pipes, subshells, dev servers) are
-        /// reached; otherwise descendants survive the shell and are reparented
-        /// to init, leaving orphaned processes running after a kill.
-        var sessionLeader = false
+        /// True when Foundation launched the shell as its process-group leader.
+        /// Signals are then delivered to the whole group (`kill(-pid)`) so
+        /// descendants (pipes, subshells, dev servers) are reached; otherwise
+        /// descendants could survive the shell and become orphaned processes.
+        var processGroupLeader = false
 
         init(
             id: String,
@@ -191,23 +174,8 @@ public actor DirectExecJobRuntime {
         nextJobNumber += 1
 
         let process = Process()
-        var sessionLeader = false
-        #if os(Linux)
-        if let setsidPath = Self.setsidExecutablePath {
-            // Launch through setsid so the shell becomes a session/group
-            // leader: `kill(-pid)` then reaches every descendant (pipes,
-            // subshells, dev servers) instead of orphaning them.
-            process.executableURL = URL(fileURLWithPath: setsidPath)
-            process.arguments = [shellPath, "-lc", command]
-            sessionLeader = true
-        } else {
-            process.executableURL = URL(fileURLWithPath: shellPath)
-            process.arguments = ["-lc", command]
-        }
-        #else
         process.executableURL = URL(fileURLWithPath: shellPath)
         process.arguments = ["-lc", command]
-        #endif
         process.currentDirectoryURL = workingDirectory
         if let environment {
             process.environment = environment
@@ -259,7 +227,16 @@ public actor DirectExecJobRuntime {
             exitMonitor: exitMonitor,
             transcript: transcript
         )
-        job.sessionLeader = sessionLeader
+        #if os(Linux)
+        // swift-corelibs-foundation launches Process children with
+        // POSIX_SPAWN_SETPGROUP. Verify the resulting group before relying on
+        // a negative PID for group-wide termination. Do not wrap the command in
+        // `setsid`: because the spawned process is already a group leader,
+        // `setsid` forks and Foundation would track the short-lived parent PID
+        // instead of the actual shell/session leader.
+        job.processGroupLeader = Glibc.getpgid(process.processIdentifier)
+            == process.processIdentifier
+        #endif
         jobsByID[jobID] = job
         jobOrder.append(jobID)
         exitMonitor.startMonitoring(processID: process.processIdentifier)
@@ -371,13 +348,13 @@ public actor DirectExecJobRuntime {
     // MARK: - Internal state transitions
 
     /// Delivers `signal` to a running job, targeting the whole process group
-    /// (`kill(-pgid)`) when the job is a session leader so descendants are
+    /// (`kill(-pgid)`) when the shell is its group leader so descendants are
     /// reached, otherwise the shell PID alone. A negative ID directs the
-    /// signal to every process in the group created by the session leader.
+    /// signal to every process in the shell's process group.
     private func sendSignal(_ signal: Int32, to job: Job) {
         let pid = job.process.processIdentifier
         guard pid > 0 else { return }
-        let target = job.sessionLeader ? -pid : pid
+        let target = job.processGroupLeader ? -pid : pid
         #if os(Linux)
         _ = Glibc.kill(target, signal)
         #else
