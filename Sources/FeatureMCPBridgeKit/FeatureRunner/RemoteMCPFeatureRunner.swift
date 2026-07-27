@@ -24,8 +24,25 @@ public protocol MCPFeatureConfiguration {
     /// CLI usage text for `--usage`.
     var usageText: String { get }
 
+    /// Prefix prepended to tool names exposed by this feature.
+    var toolNamePrefix: String { get }
+
+    /// Prefix prepended to tool descriptions exposed by this feature.
+    var descriptionPrefix: String { get }
+
     /// Returns `true` when the target application / server is reachable.
     func isAvailable(environment: [String: String]) async -> Bool
+
+    /// Builds the executor used to load and invoke tools through this
+    /// feature's MCP server. Every conforming feature must supply its own
+    /// executor; the default `listTools`/`invoke` implementations route
+    /// through it.
+    ///
+    /// This is a protocol *requirement* (not an extension default) so it is
+    /// dynamically dispatched. A `fatalError` default in an extension would be
+    /// statically dispatched and trap even when a conformance provides its own
+    /// implementation.
+    func makeExecutor(environment: [String: String]) async throws -> RemoteMCPToolExecutor
 
     /// Lists tools available through this feature's MCP server.
     /// Default implementation uses `RemoteMCPToolExecutor`.
@@ -47,14 +64,11 @@ public protocol MCPFeatureConfiguration {
 
 /// Defaults that work for standard MCP features backed by `RemoteMCPToolExecutor`.
 extension MCPFeatureConfiguration {
-    /// Must override — provides the prefix and description prefix.
+    /// Default empty prefixes for features that do not need a name/description
+    /// namespace. These are protocol requirements, so a conformance that sets
+    /// its own `toolNamePrefix`/`descriptionPrefix` is dynamically dispatched.
     var toolNamePrefix: String { "" }
     var descriptionPrefix: String { "" }
-
-    /// Must override — builds the appropriate `RemoteMCPToolExecutor`.
-    func makeExecutor(environment: [String: String]) async throws -> RemoteMCPToolExecutor {
-        fatalError("MCPFeatureConfiguration.makeExecutor(environment:) must be overridden")
-    }
 
     public func listTools(
         environment: [String: String]
