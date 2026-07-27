@@ -202,9 +202,41 @@ struct LocalApplyPatchTool: FeatureTool {
             throw LocalToolsFeatureError.permissionDenied("Patch staging failed for \(url.path).")
         }
         if manager.fileExists(atPath: url.path) {
-            _ = try manager.replaceItemAt(url, withItemAt: temporaryURL, backupItemName: nil)
+            // Atomically replace the destination with the staged file. The
+            // temporary file lives in the destination's own directory, so both
+            // paths share a filesystem and POSIX `rename` swaps a regular file
+            // in place without a window in which the destination is missing.
+            // `FileManager.replaceItemAt` is avoided because its Linux
+            // (corelibs-foundation) implementation throws a "file doesn't exist"
+            // error even when both paths exist.
+            try atomicSwap(temporaryURL: temporaryURL, destination: url)
         } else {
             try manager.moveItem(at: temporaryURL, to: url)
+        }
+    }
+
+    /// Atomically moves `temporaryURL` onto `destination`, overwriting it. The
+    /// caller guarantees the two paths share a directory (hence a filesystem),
+    /// so `rename` never fails with `EXDEV` and atomically replaces an existing
+    /// regular file. `errno` is captured inside the closure, immediately after
+    /// the failing call, before any other library code can overwrite it.
+    private func atomicSwap(temporaryURL: URL, destination: URL) throws {
+        var capturedErrno: Int32 = 0
+        let status = temporaryURL.path.withCString { source -> Int32 in
+            destination.path.withCString { target -> Int32 in
+                let result = rename(source, target)
+                if result != 0 { capturedErrno = errno }
+                return result
+            }
+        }
+        guard status == 0 else {
+            throw NSError(
+                domain: NSPOSIXErrorDomain,
+                code: Int(capturedErrno),
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Could not replace \(destination.path) with the staged patch file (errno \(capturedErrno))."
+                ]
+            )
         }
     }
 

@@ -64,24 +64,43 @@ public enum SubscriptionLimitResetFormatter {
     /// `calendar` — the same `calendar` used to decide whether the reset falls on
     /// the same day as `now` — so the displayed time and the day comparison always
     /// agree. The date is included only when the reset is not on `now`'s day.
+    ///
+    /// Formatting uses an explicit `HH` pattern rather than `Date.FormatStyle`'s
+    /// `.twoDigits(amPM: .omitted)` hour symbol. On Linux's corelibs-foundation
+    /// that symbol does not force a 24-hour cycle: the hour cycle is inherited
+    /// from the locale, so a 12-hour locale renders 14:30 as "02:30". The fixed
+    /// `HH` pattern is 24-hour on every platform.
     public static func resumeTimeText(
         for resetDate: Date,
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> String {
         if calendar.isDate(resetDate, inSameDayAs: now) {
-            var format = Date.FormatStyle.dateTime
-                .hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)
-            format.timeZone = calendar.timeZone
-            return resetDate.formatted(format)
+            return formatLocal(resetDate, pattern: "HH:mm", timeZone: calendar.timeZone)
         } else {
-            var format = Date.FormatStyle.dateTime
-                .day(.twoDigits).month(.twoDigits)
-                .hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)
-            format.timeZone = calendar.timeZone
-            return resetDate.formatted(format)
+            return formatLocal(resetDate, pattern: "dd/MM HH:mm", timeZone: calendar.timeZone)
         }
     }
+
+    /// Renders `resetDate` with a fixed pattern in the given time zone. Uses the
+    /// `en_US_POSIX` locale so the digits and separators are stable regardless of
+    /// the process locale. `DateFormatter` is not Sendable, so access is
+    /// serialized through `localDateFormatter`.
+    static func formatLocal(
+        _ date: Date,
+        pattern: String,
+        timeZone: TimeZone
+    ) -> String {
+        localDateFormatter.withLock { formatter in
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = timeZone
+            formatter.dateFormat = pattern
+            return formatter.string(from: date)
+        }
+    }
+
+    /// Mutable, non-Sendable formatter reused across calls; access is serialized.
+    static let localDateFormatter = Mutex<DateFormatter>(DateFormatter())
 
     /// Builds the full Italian message announcing when the subscription resumes.
     public static func limitReachedMessage(
