@@ -186,32 +186,54 @@ struct ZenCODEAgentProfileSetupRunnerTests {
     }
 
     @Test
-    func instructionEditorCommandUsesTextEditOpenCommand() {
+    func instructionEditorCommandUsesPlatformEditorCommand() {
         let command = ZenCODEAgentProfileSetupRunner.instructionEditorCommand()
 
+        #if os(macOS)
         #expect(command.executable == "/usr/bin/open")
         #expect(command.arguments == ["-W", "-t"])
+        #else
+        let environment = ProcessInfo.processInfo.environment
+        let configuredEditor = [environment["VISUAL"], environment["EDITOR"]]
+            .compactMap { value -> String? in
+                guard let value,
+                      !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return nil
+                }
+                return value
+            }
+            .first ?? "vi"
+        let parts = configuredEditor.split(
+            separator: " ",
+            omittingEmptySubsequences: true
+        ).map(String.init)
+
+        #expect(command.executable == (parts.first ?? "vi"))
+        #expect(command.arguments == Array(parts.dropFirst()))
+        #endif
     }
 
     @Test
-    func instructionEditChoiceItemsOfferKeepOrTextEditForExistingInstructions() {
+    func instructionEditChoiceItemsOfferKeepOrPlatformEditorForExistingInstructions() {
+        let command = ZenCODEAgentProfileSetupRunner.instructionEditorCommand()
         let items = ZenCODEAgentProfileSetupRunner.instructionEditChoiceItems(
             hasExistingInstructions: true
         )
 
         #expect(items.map(\.value) == [.keep, .editInEditor])
         #expect(items[0].title == "Keep current instructions")
-        #expect(items[1].detail?.contains("/usr/bin/open -W -t") == true)
+        #expect(items[1].detail?.contains(command.displayText) == true)
     }
 
     @Test
-    func instructionEditChoiceItemsOnlyOfferTextEditForNewInstructions() {
+    func instructionEditChoiceItemsOnlyOfferPlatformEditorForNewInstructions() {
+        let editorName = ZenCODEAgentProfileSetupRunner.instructionEditorDisplayName()
         let items = ZenCODEAgentProfileSetupRunner.instructionEditChoiceItems(
             hasExistingInstructions: false
         )
 
         #expect(items.map(\.value) == [.editInEditor])
-        #expect(items.first?.title == "Enter in TextEdit")
+        #expect(items.first?.title == "Enter in \(editorName)")
     }
 
     @Test

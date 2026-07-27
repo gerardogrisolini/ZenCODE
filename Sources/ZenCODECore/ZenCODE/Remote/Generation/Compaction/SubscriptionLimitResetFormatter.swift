@@ -13,7 +13,10 @@ import Synchronization
 public enum SubscriptionLimitResetFormatter {
     /// Resolves a reset `Date` from a value that may be a relative seconds count
     /// or an absolute unix timestamp. Values above this threshold are treated as
-    /// absolute unix timestamps (seconds since 1970).
+    /// absolute unix timestamps (seconds since 1970); smaller, non-negative values
+    /// are interpreted as seconds-until-reset and resolved to the absolute instant
+    /// `now + value`. A `Date` is a timezone-independent instant, so this sum does
+    /// not depend on any calendar or time zone.
     static let absoluteTimestampThreshold: Double = 1_000_000_000
 
     public static func resetDate(
@@ -54,22 +57,29 @@ public enum SubscriptionLimitResetFormatter {
         return nil
     }
 
-    /// Formats the absolute local time at which the subscription becomes
-    /// available again. Includes the date when the reset is not today.
+    /// Formats the absolute reset instant as a local wall-clock time.
+    ///
+    /// `resetDate` is an absolute instant (typically `now + relative seconds`, or
+    /// an absolute unix timestamp). It is rendered in the time zone carried by
+    /// `calendar` — the same `calendar` used to decide whether the reset falls on
+    /// the same day as `now` — so the displayed time and the day comparison always
+    /// agree. The date is included only when the reset is not on `now`'s day.
     public static func resumeTimeText(
         for resetDate: Date,
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> String {
         if calendar.isDate(resetDate, inSameDayAs: now) {
-            return resetDate.formatted(
-                .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)
-            )
+            var format = Date.FormatStyle.dateTime
+                .hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)
+            format.timeZone = calendar.timeZone
+            return resetDate.formatted(format)
         } else {
-            return resetDate.formatted(
-                .dateTime.day(.twoDigits).month(.twoDigits)
-                    .hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)
-            )
+            var format = Date.FormatStyle.dateTime
+                .day(.twoDigits).month(.twoDigits)
+                .hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)
+            format.timeZone = calendar.timeZone
+            return resetDate.formatted(format)
         }
     }
 
