@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-07-27
+
 ### Added
 
 - Continuous integration workflow running the full build, test, and release
@@ -22,6 +24,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 ### Changed
 
 - Expanded project documentation.
+
+### Fixed
+
+- Linux CI deadlock in `FeatureProcessRunner`: Foundation's global process
+  reaper could suppress a child's terminationHandler after SIGKILL, hanging the
+  cooperative thread pool and cascading test timeouts; added a bounded reaping
+  fallback and an explicit exit monitor.
+- Cross-platform Xcode MCP candidate detection on Linux, replacing the no-op
+  shim that misclassified ACP-provided servers.
+- `exec.job` tool handling.
 
 ## [1.0.2] - 2026-07-26
 
@@ -78,7 +90,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/gerardogrisolini/ZenCODE/releases/tag/v1.0.0

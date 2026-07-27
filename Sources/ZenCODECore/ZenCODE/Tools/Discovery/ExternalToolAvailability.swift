@@ -7,7 +7,7 @@
 
 import FeatureMCPBridgeKit
 import Foundation
-#if canImport(XcodeToolsFeature)
+#if os(macOS)
 import XcodeToolsFeature
 #endif
 

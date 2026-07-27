@@ -12,7 +12,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
-#if canImport(XcodeToolsFeature)
+#if os(macOS)
 import XcodeToolsFeature
 #endif
 

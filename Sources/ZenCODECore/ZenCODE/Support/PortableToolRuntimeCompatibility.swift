@@ -7,7 +7,7 @@
 
 import FeatureMCPBridgeKit
 import ToolCore
-#if canImport(XcodeToolsFeature)
+#if os(macOS)
 import XcodeToolsFeature
 #endif
 
@@ -36,7 +36,7 @@ public typealias MCPServerConfiguration = FeatureMCPBridgeKit.MCPServerConfigura
 public typealias MCPToolResultRenderer = FeatureMCPBridgeKit.MCPToolResultRenderer
 public typealias MCPTransportCodec = FeatureMCPBridgeKit.MCPTransportCodec
 public typealias RemoteMCPToolExecutor = FeatureMCPBridgeKit.RemoteMCPToolExecutor
-#if canImport(XcodeToolsFeature)
+#if os(macOS)
 public typealias XcodeWorkspaceContext = XcodeToolsFeature.XcodeWorkspaceContext
 public typealias XcodeToolRequestCompatibility = XcodeToolsFeature.XcodeToolRequestCompatibility
 public typealias XcodeToolExecutor = XcodeToolsFeature.XcodeToolExecutor
