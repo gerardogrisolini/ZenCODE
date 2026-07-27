@@ -6,6 +6,12 @@
 //
 
 import Foundation
+import Synchronization
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
 #if canImport(os)
 import os
 #endif
@@ -41,6 +47,31 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
     }
 
     struct SessionIdentity: Codable, Hashable, Sendable {
+        private struct PersistenceRepresentation: Encodable {
+            let sessionKey: String
+            let modelID: String
+            let workingDirectory: String
+            let systemPrompt: String
+            let toolSelection: String?
+            let appMode: Bool
+            let connectionScopeID: String?
+
+            init(identity: SessionIdentity) {
+                sessionKey = identity.sessionKey.precomposedStringWithCanonicalMapping
+                modelID = identity.modelID.precomposedStringWithCanonicalMapping
+                workingDirectory = identity.workingDirectory
+                    .precomposedStringWithCanonicalMapping
+                systemPrompt = identity.systemPrompt.precomposedStringWithCanonicalMapping
+                toolSelection = identity.toolSelection?
+                    .precomposedStringWithCanonicalMapping
+                appMode = identity.appMode
+                connectionScopeID = identity.connectionScopeID?
+                    .precomposedStringWithCanonicalMapping
+            }
+        }
+
+        private static let promptCachePersistenceKeyPrefix = "sha256:"
+
         let sessionKey: String
         let modelID: String
         let workingDirectory: String
@@ -77,7 +108,7 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         }
 
         var storageKey: String {
-            guard let data = try? JSONEncoder().encode(self) else {
+            guard let data = canonicalData else {
                 return [
                     sessionKey,
                     modelID,
@@ -89,6 +120,69 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
                 ].joined(separator: "\u{1f}")
             }
             return data.base64EncodedString()
+        }
+
+        /// Compact, privacy-preserving key used only for persistence.
+        ///
+        /// `storageKey` remains the reversible compatibility representation of
+        /// the identity, but it embeds the full system prompt and can be tens of
+        /// kilobytes long. Persisting hundreds of those keys in `UserDefaults`
+        /// crosses macOS's 4 MiB preference limit. Hashing a canonical
+        /// fixed-field encoding preserves the exact cache identity while keeping
+        /// every on-disk key a fixed size and avoiding prompt text in the
+        /// preferences plist.
+        var promptCachePersistenceKey: String {
+            let digest = SHA256.hash(data: promptCacheIdentityData)
+            return Self.promptCachePersistenceKeyPrefix
+                + digest.map { String(format: "%02x", $0) }.joined()
+        }
+
+        static func isPromptCachePersistenceKey(_ value: String) -> Bool {
+            guard value.hasPrefix(promptCachePersistenceKeyPrefix) else {
+                return false
+            }
+            let digestBytes = value.dropFirst(promptCachePersistenceKeyPrefix.count).utf8
+            return digestBytes.count == 64 && digestBytes.allSatisfy { byte in
+                (48...57).contains(byte) || (97...102).contains(byte)
+            }
+        }
+
+        /// Stable binary encoding for the persisted digest. Length prefixes and
+        /// optional-value markers avoid delimiter ambiguity, while NFC brings
+        /// canonically equivalent Swift strings to identical bytes.
+        private var promptCacheIdentityData: Data {
+            let representation = PersistenceRepresentation(identity: self)
+            var data = Data("ZenCODE.prompt-cache-identity.v2".utf8)
+            Self.append(representation.sessionKey, to: &data)
+            Self.append(representation.modelID, to: &data)
+            Self.append(representation.workingDirectory, to: &data)
+            Self.append(representation.systemPrompt, to: &data)
+            Self.append(representation.toolSelection, to: &data)
+            data.append(representation.appMode ? 1 : 0)
+            Self.append(representation.connectionScopeID, to: &data)
+            return data
+        }
+
+        private static func append(_ value: String, to data: inout Data) {
+            let bytes = Data(value.utf8)
+            var length = UInt64(bytes.count).bigEndian
+            withUnsafeBytes(of: &length) { data.append(contentsOf: $0) }
+            data.append(bytes)
+        }
+
+        private static func append(_ value: String?, to data: inout Data) {
+            guard let value else {
+                data.append(0)
+                return
+            }
+            data.append(1)
+            append(value, to: &data)
+        }
+
+        private var canonicalData: Data? {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            return try? encoder.encode(PersistenceRepresentation(identity: self))
         }
 
         private static func toolSelectionSignature(_ allowedToolNames: Set<String>?) -> String? {
@@ -105,12 +199,15 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
             }
             return "tools:\(names.joined(separator: "\u{1e}"))"
         }
-        }
+    }
 
     // Keep the existing storage key so installed sessions retain their warm
     // prompt-cache identity after this state is separated from transport IDs.
     static let promptCacheKeyStoreUserDefaultsKey =
         "ChatGPTSubscriptionGenerationClient.sessionIDsByIdentity.v1"
+    static let maximumStoredPromptCacheKeyCount = 256
+    static let maximumStoredPromptCacheValueByteCount = 256
+    static let promptCachePersistenceLock = Mutex<Void>(())
     static let compactionReserveTokenCount = 20_000
 
     let configuration: AgentRuntimeConfiguration
@@ -124,7 +221,9 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
     var sessions: [String: AgentSession] = [:]
     var sessionGenerations: [String: UInt64] = [:]
     var nextSessionGeneration: UInt64 = 0
-    var promptCacheKeysByIdentity = ChatGPTSubscriptionGenerationClient.loadStoredPromptCacheKeys()
+    var promptCacheKeysByIdentity: [SessionIdentity: String] = [:]
+    var storedPromptCacheKeysByIdentity =
+        ChatGPTSubscriptionGenerationClient.loadStoredPromptCacheKeys()
 
     public init(
         configuration: AgentRuntimeConfiguration,

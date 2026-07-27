@@ -195,6 +195,37 @@ public final class TerminalRawInput: Sendable {
         return true
     }
 
+    private static func setForegroundProcessGroup(
+        _ processGroup: Int32,
+        fileDescriptor: Int32
+    ) -> Bool {
+        guard withSIGTTOUBlocked({ tcsetpgrp(fileDescriptor, processGroup) == 0 }) == true else {
+            return false
+        }
+        return tcgetpgrp(fileDescriptor) == processGroup
+    }
+
+    static func shouldReclaimForegroundTerminal(
+        foregroundProcessGroup: Int32,
+        currentProcessGroup: Int32,
+        foregroundProcessGroupExists: Bool
+    ) -> Bool {
+        foregroundProcessGroup != currentProcessGroup
+            && !foregroundProcessGroupExists
+    }
+
+    private static func processGroupExists(_ processGroup: Int32) -> Bool {
+        guard processGroup > 0 else {
+            return false
+        }
+        if kill(-processGroup, 0) == 0 {
+            return true
+        }
+        // EPERM still proves that the process group exists. Only ESRCH makes a
+        // foreground owner stale enough for ZenCODE to reclaim safely.
+        return errno != ESRCH
+    }
+
     private static func ensureForegroundTerminal(fileDescriptor: Int32) -> Bool {
         guard isTerminalDevice(fileDescriptor: fileDescriptor) else {
             return false
@@ -209,11 +240,44 @@ public final class TerminalRawInput: Sendable {
         guard foregroundProcessGroup != currentProcessGroup else {
             return true
         }
-
-        guard withSIGTTOUBlocked({ tcsetpgrp(fileDescriptor, currentProcessGroup) == 0 }) else {
+        guard shouldReclaimForegroundTerminal(
+            foregroundProcessGroup: foregroundProcessGroup,
+            currentProcessGroup: currentProcessGroup,
+            foregroundProcessGroupExists: processGroupExists(foregroundProcessGroup)
+        ) else {
+            // A live process group owns the terminal. Job control requires this
+            // background reader to stand down rather than stealing foreground.
             return false
         }
-        return tcgetpgrp(fileDescriptor) == currentProcessGroup
+        return setForegroundProcessGroup(
+            currentProcessGroup,
+            fileDescriptor: fileDescriptor
+        )
+    }
+
+    /// Recovers only a foreground process group that no longer has any members.
+    /// Callers gate this behind EIO so an ordinary hand-off to a live child is
+    /// never pre-empted by the TUI's polling loop.
+    private static func reclaimStaleForegroundTerminalIfNeeded(fileDescriptor: Int32) -> Bool {
+        guard isTerminalDevice(fileDescriptor: fileDescriptor) else {
+            return false
+        }
+        let foregroundProcessGroup = tcgetpgrp(fileDescriptor)
+        guard foregroundProcessGroup >= 0 else {
+            return false
+        }
+        let currentProcessGroup = getpgrp()
+        guard shouldReclaimForegroundTerminal(
+            foregroundProcessGroup: foregroundProcessGroup,
+            currentProcessGroup: currentProcessGroup,
+            foregroundProcessGroupExists: processGroupExists(foregroundProcessGroup)
+        ) else {
+            return false
+        }
+        return setForegroundProcessGroup(
+            currentProcessGroup,
+            fileDescriptor: fileDescriptor
+        )
     }
 
     @discardableResult
@@ -230,7 +294,10 @@ public final class TerminalRawInput: Sendable {
                 return false
             }
 
-            _ = Self.ensureForegroundTerminal(fileDescriptor: fileDescriptor)
+            guard Self.ensureForegroundTerminal(fileDescriptor: fileDescriptor) else {
+                state.rawModeFailureDescription = "\(inputFileDescriptorLabel): not the foreground process group"
+                return false
+            }
 
             if activateRawModeLocked(fileDescriptor: fileDescriptor, state: &state) {
                 state.rawModeFailureDescription = nil
@@ -251,7 +318,7 @@ public final class TerminalRawInput: Sendable {
         var rawAttributes = Self.rawTerminalAttributes(from: attributes)
         let didSetAttributes = Self.withSIGTTOUBlocked {
             tcsetattr(fileDescriptor, TCSANOW, &rawAttributes) == 0
-        }
+        } ?? false
         guard didSetAttributes else {
             state.rawModeFailureDescription = "\(inputFileDescriptorLabel): tcsetattr failed: \(Self.errnoDescription())"
             return false
@@ -287,10 +354,12 @@ public final class TerminalRawInput: Sendable {
             }
             disableBracketedPasteLocked(state: &state)
             restoreEnhancedKeyboardProtocolLocked(state: &state)
-            _ = Self.withSIGTTOUBlocked {
-                tcsetattr(fileDescriptor, TCSANOW, &attributes)
+            let didRestoreAttributes = Self.withSIGTTOUBlocked {
+                tcsetattr(fileDescriptor, TCSANOW, &attributes) == 0
+            } ?? false
+            if didRestoreAttributes {
+                state.originalAttributes = nil
             }
-            state.originalAttributes = nil
         }
     }
 
@@ -345,13 +414,13 @@ public final class TerminalRawInput: Sendable {
         return rawAttributes
     }
 
-    private static func withSIGTTOUBlocked<T>(_ body: () -> T) -> T {
+    private static func withSIGTTOUBlocked<T>(_ body: () -> T) -> T? {
         var signalSet = sigset_t()
         sigemptyset(&signalSet)
         sigaddset(&signalSet, SIGTTOU)
         var previousSignalSet = sigset_t()
         guard pthread_sigmask(SIG_BLOCK, &signalSet, &previousSignalSet) == 0 else {
-            return body()
+            return nil
         }
         defer {
             _ = pthread_sigmask(SIG_SETMASK, &previousSignalSet, nil)
@@ -411,6 +480,7 @@ public final class TerminalRawInput: Sendable {
         guard fileDescriptor >= 0 else {
             return .endOfInput
         }
+        var didAttemptForegroundRecovery = false
 
         if let timeoutMilliseconds {
             while true {
@@ -420,13 +490,24 @@ public final class TerminalRawInput: Sendable {
                     return .timedOut
                 }
                 if pollResult < 0 {
-                    if errno == EINTR {
+                    let pollError = errno
+                    if pollError == EINTR {
                         continue
+                    }
+                    if pollError == EIO,
+                       !didAttemptForegroundRecovery {
+                        didAttemptForegroundRecovery = true
+                        if Self.reclaimStaleForegroundTerminalIfNeeded(
+                            fileDescriptor: fileDescriptor
+                        ) {
+                            continue
+                        }
                     }
                     return .endOfInput
                 }
                 guard (descriptor.revents & Int16(POLLIN)) != 0 else {
-                    // POLLHUP/POLLERR/POLLNVAL without readable buffered data.
+                    // POLLHUP/POLLERR/POLLNVAL without readable buffered data is
+                    // a real end condition. Do not reinterpret it as job control.
                     return .endOfInput
                 }
                 break
@@ -439,8 +520,20 @@ public final class TerminalRawInput: Sendable {
             if readCount == 1 {
                 return .byte(byte)
             }
-            if readCount < 0, errno == EINTR {
-                continue
+            if readCount < 0 {
+                let readError = errno
+                if readError == EINTR {
+                    continue
+                }
+                if readError == EIO,
+                   !didAttemptForegroundRecovery {
+                    didAttemptForegroundRecovery = true
+                    if Self.reclaimStaleForegroundTerminalIfNeeded(
+                        fileDescriptor: fileDescriptor
+                    ) {
+                        continue
+                    }
+                }
             }
             return .endOfInput
         }

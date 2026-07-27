@@ -69,8 +69,11 @@ extension ChatGPTSubscriptionGenerationClient {
         let sessionIdentity = SessionIdentity(configuration: requestConfiguration)
         // Keep cache routing stable across transport resets. The WebSocket ID
         // may rotate after a failure, but the canonical identity must not.
-        let promptCacheKey = promptCacheKeysByIdentity[sessionIdentity] ?? UUID().uuidString
-        storePromptCacheKey(promptCacheKey, for: sessionIdentity)
+        let proposedPromptCacheKey = promptCacheKey(for: sessionIdentity) ?? UUID().uuidString
+        let promptCacheKey = storePromptCacheKey(
+            proposedPromptCacheKey,
+            for: sessionIdentity
+        )
         let chatGPTSessionID = session.chatGPTSessionID ?? promptCacheKey
         guard mutateSession(for: lease, { session in
             if session.chatGPTSessionID == nil {

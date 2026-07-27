@@ -40,15 +40,19 @@ enum TerminalEscapeStopMonitor {
     /// cancellation, always restoring the terminal it put into raw mode.
     static func watchForEscape(
         token: TerminalBlockingReadToken,
+        rawInput: TerminalRawInput = TerminalRawInput(),
+        managesRawMode: Bool = true,
+        onPollStarted: @escaping @Sendable () -> Void = {},
         onStop: @Sendable () -> Void
     ) -> Bool? {
-        let rawInput = TerminalRawInput()
-        guard rawInput.beginRawMode() else {
+        guard !managesRawMode || rawInput.beginRawMode() else {
             return nil
         }
 
         defer {
-            rawInput.restoreRawMode()
+            if managesRawMode {
+                rawInput.restoreRawMode()
+            }
         }
 
         while !token.isCancelled() {
@@ -56,7 +60,8 @@ enum TerminalEscapeStopMonitor {
             // monitor discards every byte that is not ESC, so reading here
             // would swallow the operator's `r`/`a`/`c` answer.
             guard let byte = TerminalConsentInputOwnership.withBackgroundRead({
-                rawInput.readByte(timeoutMilliseconds: pollTimeoutMilliseconds)
+                onPollStarted()
+                return rawInput.readByte(timeoutMilliseconds: pollTimeoutMilliseconds)
             }) else {
                 // Consent owns the terminal and no read happened, so nothing
                 // throttled this iteration: idle on this dedicated thread

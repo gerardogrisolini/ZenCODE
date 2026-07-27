@@ -363,10 +363,20 @@ struct TerminalInputLifecycleTests {
         let didStop = TerminalTestFlag()
         let token = TerminalBlockingReadToken()
         let didStartWatching = TerminalTestSignal()
+        let input = makeIdleInput()
+        defer {
+            input.pipe.fileHandleForWriting.closeFile()
+            input.pipe.fileHandleForReading.closeFile()
+        }
+        let rawInput = input.rawInput
 
         let watch = Task.detached {
-            didStartWatching.signal()
-            return TerminalEscapeStopMonitor.watchForEscape(token: token) {
+            return TerminalEscapeStopMonitor.watchForEscape(
+                token: token,
+                rawInput: rawInput,
+                managesRawMode: false,
+                onPollStarted: { didStartWatching.signal() }
+            ) {
                 didStop.set(true)
             }
         }
@@ -377,6 +387,31 @@ struct TerminalInputLifecycleTests {
         // test environment); in neither case may it report a stop request.
         #expect(await watch.value != true)
         #expect(!didStop.value)
+    }
+
+    @Test
+    func foregroundRecoveryTargetsOnlyAStaleDifferentOwner() {
+        #expect(
+            !TerminalRawInput.shouldReclaimForegroundTerminal(
+                foregroundProcessGroup: 202,
+                currentProcessGroup: 202,
+                foregroundProcessGroupExists: true
+            )
+        )
+        #expect(
+            !TerminalRawInput.shouldReclaimForegroundTerminal(
+                foregroundProcessGroup: 101,
+                currentProcessGroup: 202,
+                foregroundProcessGroupExists: true
+            )
+        )
+        #expect(
+            TerminalRawInput.shouldReclaimForegroundTerminal(
+                foregroundProcessGroup: 101,
+                currentProcessGroup: 202,
+                foregroundProcessGroupExists: false
+            )
+        )
     }
 
     @Test
