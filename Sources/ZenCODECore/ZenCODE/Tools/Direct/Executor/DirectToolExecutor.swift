@@ -116,7 +116,15 @@ public actor DirectToolExecutor {
     public func updateToolProviders(
         _ providers: [AgentToolProvider],
         sessionID: String? = nil
-    ) {
+    ) async {
+        // Propagate the prompt-skill provider to the sub-agent runtime so that
+        // delegated sub-agents inherit the parent session's skill selection and
+        // can execute the intrinsic `skills.list` / `skills.read` tools.
+        let skillProvider = providers.first { provider in
+            provider.tools.contains { PromptSkillToolProvider.toolNames.contains($0.name) }
+        }
+        await subAgentRuntime.installPromptSkillToolProvider(skillProvider)
+
         guard let sessionID = sessionID?.nilIfBlank else {
             toolProviderRegistry.update(providers)
             return

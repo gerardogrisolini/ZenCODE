@@ -143,6 +143,13 @@ extension DirectSubAgentRuntime {
                     // even when the selected profile does not coordinate tasks.
                     childAllowedToolNames?.formUnion(["tasks.list", "tasks.get", "tasks.update"])
                 }
+                if childAllowedToolNames != nil {
+                    // Prompt-skill tools are intrinsic and always-on: every
+                    // delegated sub-agent must be able to discover and read
+                    // selected prompt-skill guidance, mirroring the top-level
+                    // session allowlist resolved by AgentCoreAppSessionFactory.
+                    childAllowedToolNames?.formUnion(PromptSkillToolProvider.toolNames)
+                }
                 await backend.createSession(
                     id: sessionID,
                     cwd: workingDirectory.path,
@@ -159,6 +166,15 @@ extension DirectSubAgentRuntime {
                     thinkingSelection: backendContext.thinkingSelection,
                     preserveThinking: false
                 )
+                // Propagate the parent session's prompt-skill provider so the
+                // sub-agent can actually execute `skills.list` and `skills.read`
+                // through its own backend executor.
+                if let promptSkillToolProvider {
+                    await backend.updateToolProviders(
+                        [promptSkillToolProvider],
+                        sessionID: sessionID
+                    )
+                }
 
                 let now = Date()
                 agents[id] = AgentRecord(

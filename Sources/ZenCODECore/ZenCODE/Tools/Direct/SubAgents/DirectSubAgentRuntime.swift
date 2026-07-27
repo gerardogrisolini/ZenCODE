@@ -301,6 +301,10 @@ public actor DirectSubAgentRuntime {
     public let backendFactory: DirectSubAgentContextualBackendFactory
     public let profileResolver: DirectSubAgentProfileResolver
     public var taskOrchestrator: SessionTaskOrchestrator?
+    /// The parent session's prompt-skill tool provider, propagated to each
+    /// delegated sub-agent so that `skills.list` and `skills.read` remain
+    /// intrinsic and always-on at every delegation depth.
+    public var promptSkillToolProvider: AgentToolProvider?
     private var agentStorage: [String: AgentRecord] = [:]
     /// Lifecycle-transition failures that happen during global shutdown, when
     /// no individual agent record remains available to carry the error.
@@ -331,6 +335,16 @@ public actor DirectSubAgentRuntime {
         _ orchestrator: SessionTaskOrchestrator
     ) {
         taskOrchestrator = orchestrator
+    }
+
+    /// Stores the parent session's prompt-skill provider so that newly
+    /// created sub-agents inherit the same skill selection. Called from
+    /// `DirectToolExecutor.updateToolProviders` whenever the parent session
+    /// registers or refreshes its tool providers.
+    public func installPromptSkillToolProvider(
+        _ provider: AgentToolProvider?
+    ) {
+        promptSkillToolProvider = provider
     }
 
     func takeTasklessDelegationReservation(

@@ -53,7 +53,7 @@ struct DirectSubAgentRuntimeTests {
             allowedToolNames: ["local.readFile", "local.writeFile"]
         )
         let restrictedSession = try #require(await backend.createdSessions().last)
-        #expect(restrictedSession.allowedToolNames == ["local.readFile", "local.writeFile"])
+        #expect(restrictedSession.allowedToolNames == ["local.readFile", "local.writeFile", "skills.list", "skills.read"])
 
         _ = try await runtime.execute(
             rootSessionID: "root",
@@ -71,7 +71,7 @@ struct DirectSubAgentRuntimeTests {
             allowedToolNames: ["local.readFile", "local.writeFile"]
         )
         let narrowedSession = try #require(await backend.createdSessions().last)
-        #expect(narrowedSession.allowedToolNames == ["local.readFile"])
+        #expect(narrowedSession.allowedToolNames == ["local.readFile", "skills.list", "skills.read"])
         await runtime.shutdown()
     }
 
@@ -98,7 +98,7 @@ struct DirectSubAgentRuntimeTests {
         )
 
         let session = try #require(await backend.createdSessions().first)
-        #expect(session.allowedToolNames == ["local.readFile", "local.writeFile"])
+        #expect(session.allowedToolNames == ["local.readFile", "local.writeFile", "skills.list", "skills.read"])
         await runtime.shutdown()
     }
 
@@ -129,7 +129,7 @@ struct DirectSubAgentRuntimeTests {
         )
 
         let session = try #require(await backend.createdSessions().first)
-        #expect(session.allowedToolNames == ["local.writeFile"])
+        #expect(session.allowedToolNames == ["local.writeFile", "skills.list", "skills.read"])
         await runtime.shutdown()
     }
 
@@ -156,7 +156,7 @@ struct DirectSubAgentRuntimeTests {
         )
 
         let session = try #require(await backend.createdSessions().first)
-        #expect(session.allowedToolNames == [])
+        #expect(session.allowedToolNames == ["skills.list", "skills.read"])
         await runtime.shutdown()
     }
 
@@ -195,8 +195,85 @@ struct DirectSubAgentRuntimeTests {
 
         let session = try #require(await backend.createdSessions().first)
         #expect(session.allowedToolNames == [
-            "local.readFile", "tasks.list", "tasks.get", "tasks.update"
+            "local.readFile", "tasks.list", "tasks.get", "tasks.update",
+            "skills.list", "skills.read"
         ])
+        await runtime.shutdown()
+    }
+
+    @Test
+    func skillToolsAreAlwaysOnAndProviderPropagatesToSubAgentBackend() async throws {
+        let skillProvider = PromptSkillSessionProvider(
+            skills: [
+                PromptSkill(
+                    canonicalName: "release-review",
+                    title: "Release Review",
+                    summary: "Review release changes before publishing.",
+                    promptBody: "Review the release carefully.",
+                    sourceDirectoryPath: "/tmp/skills/release-review",
+                    sourceHash: "release-review-hash"
+                )
+            ]
+        ).asToolProvider()
+
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend }
+        )
+        await runtime.installPromptSkillToolProvider(skillProvider)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "role": .string("worker"),
+                "toolNames": .array([.string("local.readFile")])
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-skill-propagation-tests"),
+            parentAllowedToolNames: ["local.readFile", "local.writeFile"]
+        )
+
+        // The intrinsic prompt-skill tools must be present in every
+        // sub-agent allowlist, regardless of the narrowed tool request.
+        let session = try #require(await backend.createdSessions().first)
+        #expect(session.allowedToolNames?.isSuperset(of: PromptSkillToolProvider.toolNames) == true)
+
+        // The parent session's skill provider must be registered on the
+        // sub-agent backend so skills.list / skills.read can execute.
+        let updates = await backend.toolProviderUpdates
+        #expect(updates.count == 1)
+        let propagated = try #require(updates.first)
+        #expect(propagated.providers.count == 1)
+        #expect(propagated.sessionID == session.id)
+        let propagatedToolNames = Set(propagated.providers.flatMap(\.tools).map(\.name))
+        #expect(propagatedToolNames == PromptSkillToolProvider.toolNames)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func skillProviderNotRegisteredWhenAbsent() async throws {
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend }
+        )
+        // No promptSkillToolProvider installed.
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "role": .string("worker")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-skill-absent-tests"),
+            parentAllowedToolNames: ["local.readFile"]
+        )
+
+        let session = try #require(await backend.createdSessions().first)
+        // Skill tools are still in the allowlist (always-on), but no
+        // provider update is sent because there is no skill provider.
+        #expect(session.allowedToolNames?.isSuperset(of: PromptSkillToolProvider.toolNames) == true)
+        let updates = await backend.toolProviderUpdates
+        #expect(updates.isEmpty)
+
         await runtime.shutdown()
     }
 
@@ -1658,6 +1735,7 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     private let blocksPrompts: Bool
     private var sentPrompts: [String] = []
     private var installedTaskOrchestrator = false
+    private(set) var toolProviderUpdates: [(providers: [AgentToolProvider], sessionID: String?)] = []
 
     init(responseText: String = "done", blocksPrompts: Bool = false) {
         self.responseText = responseText
@@ -1668,6 +1746,13 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
         _ orchestrator: SessionTaskOrchestrator
     ) async {
         installedTaskOrchestrator = true
+    }
+
+    func updateToolProviders(
+        _ providers: [AgentToolProvider],
+        sessionID: String?
+    ) async {
+        toolProviderUpdates.append((providers, sessionID))
     }
 
     func createSession(
