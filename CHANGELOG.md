@@ -10,6 +10,27 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-07-27
+
+### Fixed
+
+- ChatGPT prompt-cache routing: separated the canonical `prompt_cache_key`,
+  now persisted by session identity, from the rotating WebSocket session ID
+  that changes after compaction, failure recovery, or stream-interruption
+  replays. The cache key no longer rotates on transport resets, so prompt
+  caching survives continuation replays and connection failures.
+- Prompt-skill tools (`skills.list`, `skills.read`) in delegated sub-agents:
+  the parent session's prompt-skill tool provider is now propagated to each
+  sub-agent, keeping the intrinsic skill selection always-on at every
+  delegation depth.
+
+### Changed
+
+- Broad internal refactoring across the MCP transport codec and clients, the
+  browser CDP feature layer, the ACP bridge and update pipeline, the remote
+  generation and subscription clients, the SwiftNIO HTTP/SSE/WebSocket
+  transport, and the terminal input and rendering layer.
+
 ## [1.0.3] - 2026-07-27
 
 ### Added
@@ -90,7 +111,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.0...v1.0.1
