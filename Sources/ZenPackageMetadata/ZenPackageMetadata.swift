@@ -8,7 +8,7 @@
 public enum ZenPackageMetadata {
     public static let packageName = "ZenCODE"
     public static let coderExecutableName = "zen"
-    public static let version = "1.0.3"
+    public static let version = "1.0.4"
 
     public static func versionDescription(for executableName: String) -> String {
         "\(executableName) \(version)"
