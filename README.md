@@ -40,13 +40,13 @@ ZenCODE supports several ways to run the model, all selected through `zen --setu
 ### macOS
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/v1.0.2/Scripts/install.sh" \
+curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh" \
   | bash -s -- --ref v1.0.4
 ```
 
-The tag pins both the downloaded installer and its source checkout; replace it
-with the latest [published release](https://github.com/gerardogrisolini/ZenCODE/releases).
-For a development build from the moving `main` branch:
+`--ref` pins the source checkout to the release tag. Replace it with the latest
+[published release](https://github.com/gerardogrisolini/ZenCODE/releases).
+Omit it for a development build from the moving `main` branch:
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh" \
@@ -62,7 +62,7 @@ Xcode or the Apple command line tools.
 ### Linux and Windows via WSL
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/v1.0.2/Scripts/install-linux.sh" \
+curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh" \
   | bash -s -- --ref v1.0.4
 ```
 

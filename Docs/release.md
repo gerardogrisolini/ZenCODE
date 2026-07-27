@@ -44,24 +44,24 @@ run by CI.
 
 ## Install an immutable release
 
-Use the installer script from the release tag and pass the same ref to the
-installer. This pins both the downloaded script and the source checkout it
-builds:
+Download the installer from `main` and pass the release tag with `--ref`. The
+installer bootstraps from the script on `main`, then clones and builds the
+exact tag or commit you specify:
 
 ```bash
 # macOS
-curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/vX.Y.Z/Scripts/install.sh \
+curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh \
   | bash -s -- --ref vX.Y.Z
 
 # Linux or WSL
-curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/vX.Y.Z/Scripts/install-linux.sh \
+curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh \
   | bash -s -- --ref vX.Y.Z
 ```
 
 A full 40-character Git commit SHA is also accepted:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/vX.Y.Z/Scripts/install.sh \
+curl -fsSL https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh \
   | bash -s -- --ref 0123456789abcdef0123456789abcdef01234567
 ```
 
