@@ -998,8 +998,7 @@ actor TerminalChatRenderCoordinator {
             .map(TerminalChat.DetailedToolRow.text)
         case (.detailed, .started):
             return TerminalChat.safelyWrappedDetailedToolRows(
-                TerminalChat.detailedToolCallStartedLines(for: toolCall)
-                    .map(TerminalChat.DetailedToolRow.text),
+                TerminalChat.detailedToolCallStartedRows(for: toolCall),
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
             )

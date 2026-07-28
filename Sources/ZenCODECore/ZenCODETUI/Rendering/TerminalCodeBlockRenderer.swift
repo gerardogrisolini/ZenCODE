@@ -9,6 +9,15 @@ import Foundation
 
 enum TerminalCodeBlockRenderer {
     static let reset = "\u{1B}[0m"
+
+    /// Optional data-language overrides used by presentation surfaces that need
+    /// a quieter JSON hierarchy than normal source-code highlighting.
+    struct DataSyntaxColors: Sendable, Equatable {
+        let property: String
+        let string: String
+        let comment: String
+        let number: String
+    }
     
     struct SyntaxProfile {
         var keywords: Set<String>
@@ -124,7 +133,8 @@ enum TerminalCodeBlockRenderer {
     static func renderLine(
         _ line: String,
         language: String?,
-        palette: TerminalMarkdownPalette = .detected
+        palette: TerminalMarkdownPalette = .detected,
+        dataSyntaxColors: DataSyntaxColors? = nil
     ) -> String {
         let safeLine = terminalSafeSourceLine(line)
         switch normalizedLanguage(language) {
@@ -138,7 +148,8 @@ enum TerminalCodeBlockRenderer {
             return renderDataLine(
                 safeLine,
                 language: normalizedLanguage(language),
-                palette: palette
+                palette: palette,
+                syntaxColors: dataSyntaxColors
             )
         default:
             return renderProfileLine(
@@ -373,8 +384,13 @@ enum TerminalCodeBlockRenderer {
     static func renderDataLine(
         _ line: String,
         language: String?,
-        palette: TerminalMarkdownPalette
+        palette: TerminalMarkdownPalette,
+        syntaxColors: DataSyntaxColors? = nil
     ) -> String {
+        let propertyColor = syntaxColors?.property ?? palette.syntaxProperty
+        let stringColor = syntaxColors?.string ?? palette.syntaxString
+        let commentColor = syntaxColors?.comment ?? palette.syntaxComment
+        let numberColor = syntaxColors?.number ?? palette.syntaxNumber
         let comments: [String] = {
             switch language {
             case "json":
@@ -391,7 +407,7 @@ enum TerminalCodeBlockRenderer {
         
         while index < line.endIndex {
             if matchingPrefix(in: line, at: index, prefixes: comments) != nil {
-                rendered += "\(palette.syntaxComment)\(line[index...])\(reset)"
+                rendered += "\(commentColor)\(line[index...])\(reset)"
                 break
             }
             
@@ -403,9 +419,9 @@ enum TerminalCodeBlockRenderer {
             ) {
                 let token = String(line[index..<stringEnd])
                 if isObjectKey(in: line, after: stringEnd) {
-                    rendered += "\(palette.syntaxProperty)\(token)\(reset)"
+                    rendered += "\(propertyColor)\(token)\(reset)"
                 } else {
-                    rendered += "\(palette.syntaxString)\(token)\(reset)"
+                    rendered += "\(stringColor)\(token)\(reset)"
                 }
                 index = stringEnd
                 continue
@@ -414,7 +430,7 @@ enum TerminalCodeBlockRenderer {
             if line[index].isNumber || line[index] == "-" {
                 let end = consumeNumber(in: line, from: index)
                 if end > index {
-                    rendered += "\(palette.syntaxNumber)\(line[index..<end])\(reset)"
+                    rendered += "\(numberColor)\(line[index..<end])\(reset)"
                     index = end
                     continue
                 }
@@ -424,9 +440,9 @@ enum TerminalCodeBlockRenderer {
                 let end = consumeIdentifier(in: line, from: index)
                 let token = String(line[index..<end])
                 if ["false", "null", "true"].contains(token.lowercased()) {
-                    rendered += "\(palette.syntaxNumber)\(token)\(reset)"
+                    rendered += "\(numberColor)\(token)\(reset)"
                 } else if isObjectKey(in: line, after: end) {
-                    rendered += "\(palette.syntaxProperty)\(token)\(reset)"
+                    rendered += "\(propertyColor)\(token)\(reset)"
                 } else {
                     rendered += token
                 }

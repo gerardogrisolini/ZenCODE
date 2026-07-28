@@ -12,6 +12,7 @@ extension TerminalChat {
     /// mistaken for the column boundary.
     enum DetailedToolRow: Sendable, Equatable {
         case text(String)
+        case parameter(String)
         case diff(DetailedToolDiffCells)
         case unifiedDiff(DetailedToolUnifiedDiffLine)
 
@@ -19,7 +20,7 @@ extension TerminalChat {
         /// fallbacks, tests and any non-terminal consumer.
         var plainText: String {
             switch self {
-            case let .text(line):
+            case let .text(line), let .parameter(line):
                 return line
             case let .diff(cells):
                 return cells.plainText
@@ -131,10 +132,8 @@ extension TerminalChat {
         _ line: String,
         isTitle: Bool
     ) -> String {
-        if isTitle {
-            return "\(toolTitleColor)\(line)"
-        }
-        return "\(toolValueColor)\(line)"
+        let baseColor = isTitle ? toolTitleColor : toolValueColor
+        return "\(baseColor)\(renderCompactToolDuration(in: line, restoring: baseColor))"
     }
 
     nonisolated static func compactToolLines(
@@ -308,6 +307,56 @@ extension TerminalChat {
         )
     }
 
+    /// Compact status rows have no font-size control, so elapsed time uses the
+    /// same gray as thinking to reduce its visual weight without adding cells or
+    /// changing the in-place redraw width budget.
+    private nonisolated static func renderCompactToolDuration(
+        in line: String,
+        restoring baseColor: String
+    ) -> String {
+        guard let range = compactToolDurationRange(in: line) else {
+            return line
+        }
+        return "\(line[..<range.lowerBound])\(toolDurationColor)\(line[range])\(baseColor)\(line[range.upperBound...])"
+    }
+
+    private nonisolated static func compactToolDurationRange(
+        in line: String
+    ) -> Range<String.Index>? {
+        let markerRange = ["✅ ", "⚠️ "]
+            .compactMap { line.range(of: $0, options: .backwards) }
+            .max { $0.lowerBound < $1.lowerBound }
+        guard let markerRange else {
+            return nil
+        }
+        let start = markerRange.upperBound
+        let end = line[start...].firstIndex(where: \.isWhitespace) ?? line.endIndex
+        let token = line[start..<end]
+        guard token.hasSuffix("s") else {
+            return nil
+        }
+        let numeric = token.dropLast()
+        let components = numeric.split(
+            separator: ".",
+            omittingEmptySubsequences: false
+        )
+        guard components.count == 2,
+              components.allSatisfy({ component in
+                  !component.isEmpty && component.allSatisfy(\.isWholeNumber)
+              }) else {
+            return nil
+        }
+        let suffix = line[end...]
+        if !suffix.isEmpty {
+            let exitPrefix = " exit "
+            guard suffix.hasPrefix(exitPrefix),
+                  isCanonicalExitCode(suffix.dropFirst(exitPrefix.count)) else {
+                return nil
+            }
+        }
+        return start..<end
+    }
+
     private nonisolated static func isCanonicalExitCode(
         _ value: Substring
     ) -> Bool {
@@ -364,6 +413,9 @@ extension TerminalChat {
             case let .text(line):
                 return wrappedDetailedToolTextLines(line, width: safeLineWidth)
                     .map(DetailedToolRow.text)
+            case let .parameter(line):
+                return wrappedDetailedToolTextLines(line, width: safeLineWidth)
+                    .map(DetailedToolRow.parameter)
             case let .diff(cells):
                 return wrappedDetailedToolDiffRows(cells, width: safeLineWidth)
             case let .unifiedDiff(line):
@@ -553,6 +605,8 @@ extension TerminalChat {
         switch row {
         case let .text(line):
             return renderDetailedToolLine(line, codeLanguage: codeLanguage)
+        case let .parameter(line):
+            return renderDetailedToolParameterLine(line)
         case let .diff(cells):
             return renderDiffCodeAreaLine(
                 indentation: cells.indentation,
@@ -589,6 +643,26 @@ extension TerminalChat {
             return "\(toolLabelColor)\(label)\(toolValueColor)\(value)"
         }
         return "\(toolTitleColor)\(line)"
+    }
+
+    /// Parameter JSON is presentation metadata rather than source code. Render
+    /// keys in light gray and values in muted yellow so a target file's language
+    /// hint can never turn parameter strings green.
+    nonisolated static func renderDetailedToolParameterLine(_ line: String) -> String {
+        let reset = "\u{1B}[0m"
+        let clearToEnd = "\u{1B}[K"
+        let baseStyle = "\(codeAreaBackgroundColor)\(toolParameterBaseColor)"
+        let highlighted = TerminalCodeBlockRenderer.renderLine(
+            line,
+            language: "json",
+            palette: .dark,
+            dataSyntaxColors: toolParameterSyntaxColors
+        )
+        let anchored = highlighted.replacingOccurrences(
+            of: reset,
+            with: "\(reset)\(baseStyle)"
+        )
+        return "\(baseStyle)\(anchored)\(clearToEnd)"
     }
 
     /// Renders a code snippet row of the expanded tool block: the line is
@@ -667,13 +741,24 @@ extension TerminalChat {
         return trimmed.allSatisfy { $0.isLowercase || $0.isLetter }
     }
 
-                // Orange-family palette: full identity orange for titles, a muted
+    // Orange-family palette: full identity orange for titles, a muted
     // terracotta for labels, and a light peach-orange for values so the whole
     // tool block stays within the orange family while keeping a readable
     // hierarchy.
     nonisolated static let toolTitleColor = "\u{1B}[38;5;208m"
     nonisolated static let toolLabelColor = "\u{1B}[38;5;173m"
     nonisolated static let toolValueColor = "\u{1B}[38;5;215m"
+    nonisolated static let toolDurationColor = "\u{1B}[90m"
+    nonisolated static let toolParameterBaseColor = "\u{1B}[38;5;244m"
+    nonisolated static let toolParameterKeyColor = "\u{1B}[38;5;250m"
+    nonisolated static let toolParameterValueColor = "\u{1B}[38;5;180m"
+    nonisolated static let toolParameterSyntaxColors =
+        TerminalCodeBlockRenderer.DataSyntaxColors(
+            property: toolParameterKeyColor,
+            string: toolParameterValueColor,
+            comment: toolParameterBaseColor,
+            number: toolParameterValueColor
+        )
     // Dark gray background framing the code areas of expanded tool blocks,
     // matching the background used for submitted prompts.
     nonisolated static let codeAreaBackgroundColor = "\u{1B}[48;5;236m"

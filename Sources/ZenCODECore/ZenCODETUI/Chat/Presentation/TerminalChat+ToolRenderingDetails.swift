@@ -25,12 +25,18 @@ extension TerminalChat {
     nonisolated static func detailedToolCallStartedLines(
         for toolCall: DirectAgentToolCall
     ) -> [String] {
-        var lines = detailedToolBaseLines(for: toolCall)
+        detailedToolCallStartedRows(for: toolCall).map(\.plainText)
+    }
+
+    nonisolated static func detailedToolCallStartedRows(
+        for toolCall: DirectAgentToolCall
+    ) -> [DetailedToolRow] {
+        var rows = detailedToolBaseRows(for: toolCall)
         if isFileMutationTool(toolCall.name) {
-            lines.append("change: pending")
+            rows.append(.text("change: pending"))
         }
-        lines.append("status: ⏳")
-        return lines
+        rows.append(.text("status: ⏳"))
+        return rows
     }
 
     nonisolated static func detailedToolCallCompletedLines(
@@ -55,7 +61,7 @@ extension TerminalChat {
         result: DirectAgentToolResult,
         contentWidth: Int? = nil
     ) -> [DetailedToolRow] {
-        var rows = detailedToolBaseLines(for: toolCall).map(DetailedToolRow.text)
+        var rows = detailedToolBaseRows(for: toolCall)
 
         if result.isFailure {
             rows.append(.text("error:"))
@@ -80,6 +86,12 @@ extension TerminalChat {
     nonisolated static func detailedToolBaseLines(
         for toolCall: DirectAgentToolCall
     ) -> [String] {
+        detailedToolBaseRows(for: toolCall).map(\.plainText)
+    }
+
+    nonisolated static func detailedToolBaseRows(
+        for toolCall: DirectAgentToolCall
+    ) -> [DetailedToolRow] {
         // The title embeds the tool name and a caller-provided target, so it is
         // sanitized like any other metadata before reaching the terminal.
         let title = sanitizedMetadataText(ToolCallPresentation.toolTitle(for: toolCall))
@@ -87,15 +99,17 @@ extension TerminalChat {
             ?? "tool"
         let kind = ToolCallPresentation.toolKind(for: toolCall.name)
         let icon = ToolCallPresentation.toolIcon(for: toolCall.name)
-        var lines = [
-            "\(icon)  \(title)",
-            "kind: \(kind)"
+        var rows: [DetailedToolRow] = [
+            .text("\(icon)  \(title)"),
+            .text("kind: \(kind)")
         ]
-        lines.append(contentsOf: toolLocationLines(for: toolCall))
+        rows.append(
+            contentsOf: toolLocationLines(for: toolCall).map(DetailedToolRow.text)
+        )
         if !shouldHideParameterLines(for: toolCall.name) {
-            lines.append(contentsOf: parameterLines(for: toolCall))
+            rows.append(contentsOf: parameterRows(for: toolCall))
         }
-        return lines
+        return rows
     }
 
     /// Mutation details render either a numbered source/diff area or structured
@@ -125,6 +139,16 @@ extension TerminalChat {
             lines.append(contentsOf: indentedSnippet(formatted.text))
         }
         return lines
+    }
+
+    /// Keeps parameter payload rows distinct from actual source snippets so the
+    /// renderer can use a metadata palette instead of the target file language.
+    nonisolated static func parameterRows(
+        for toolCall: DirectAgentToolCall
+    ) -> [DetailedToolRow] {
+        parameterLines(for: toolCall).enumerated().map { index, line in
+            index == 0 ? .text(line) : .parameter(line)
+        }
     }
 
     nonisolated static func formattedParameterSnippet(

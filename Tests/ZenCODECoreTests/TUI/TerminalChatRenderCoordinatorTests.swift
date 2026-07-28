@@ -119,6 +119,7 @@ struct TerminalChatRenderCoordinatorTests {
             (await renderer.capturedWriteEvents()).dropFirst(eventCountBeforeCompletion)
         )
         let completionText = completionEvents.map(\.text).joined()
+        let visibleCompletionText = TerminalANSIText.stripANSI(completionText)
         let renderedCompletion = TerminalANSIText.stripANSI(
             completionEvents.last?.text ?? ""
         )
@@ -127,7 +128,12 @@ struct TerminalChatRenderCoordinatorTests {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
 
         #expect(containsCursorUpSequence(completionText))
-        #expect(completionText.contains("⚠️ 1.2s exit 7"))
+        #expect(visibleCompletionText.contains("⚠️ 1.2s exit 7"))
+        #expect(
+            completionText.contains(
+                "⚠️ \(TerminalChat.toolDurationColor)1.2s\(TerminalChat.toolValueColor) exit 7"
+            )
+        )
         #expect(renderedLines.allSatisfy {
             TerminalChat.displayWidth($0) <= terminalColumns - 1
         })

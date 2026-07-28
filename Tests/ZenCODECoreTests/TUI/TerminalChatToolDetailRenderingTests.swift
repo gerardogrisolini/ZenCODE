@@ -458,6 +458,51 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
+    func expandedParametersUseGrayKeysAndYellowValuesInsteadOfCodeGreen() throws {
+        let toolCall = DirectAgentToolCall(
+            id: "call_1",
+            name: "local.readFile",
+            argumentsObject: [
+                "path": "/tmp/project/Sources/App.swift"
+            ],
+            argumentsJSON: #"{"path":"/tmp/project/Sources/App.swift"}"#
+        )
+        let parameterRow = try #require(
+            TerminalChat.detailedToolCallStartedRows(for: toolCall).first { row in
+                if case let .parameter(line) = row {
+                    return line.contains("\"path\"")
+                }
+                return false
+            }
+        )
+        let wrappedParameterRows = TerminalChat.safelyWrappedDetailedToolRows(
+            [parameterRow],
+            columnWidth: 24
+        )
+
+        // The target is Swift, but parameter metadata must use its own JSON
+        // palette rather than inheriting Swift's green string highlighting.
+        let rendered = TerminalChat.renderDetailedToolRow(
+            parameterRow,
+            codeLanguage: "swift"
+        )
+
+        #expect(rendered.contains("\(TerminalChat.toolParameterKeyColor)\"path\""))
+        #expect(
+            rendered.contains(
+                "\(TerminalChat.toolParameterValueColor)\"/tmp/project/Sources/App.swift\""
+            )
+        )
+        #expect(!rendered.contains(TerminalMarkdownPalette.dark.syntaxString))
+        #expect(!rendered.contains(TerminalMarkdownPalette.light.syntaxString))
+        #expect(TerminalANSIText.stripANSI(rendered) == parameterRow.plainText)
+        #expect(wrappedParameterRows.allSatisfy { row in
+            if case .parameter = row { return true }
+            return false
+        })
+    }
+
+    @Test
     func expandedCodeAreaLinesUseBackgroundFrameAndLanguageHighlighting() {
         let rendered = TerminalChat.renderDetailedToolLine(
             "  let value = 1",
