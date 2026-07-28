@@ -83,6 +83,161 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func compactCompletionShowsElapsedMetadataWithinTheRedrawWidthBudget() async {
+        let clock = StreamingClock()
+        let terminalColumns = 26
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            toolNow: { clock.now },
+            columnWidthProvider: { terminalColumns }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "timed-local-exec",
+            name: "local.exec",
+            argumentsObject: ["command": "a-very-long-command-that-needs-truncation"],
+            argumentsJSON: #"{"command":"a-very-long-command-that-needs-truncation"}"#
+        )
+
+        await renderer.writeToolCallStarted(toolCall)
+        let started = await renderer.snapshot()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+        clock.advance(by: .milliseconds(1_200))
+
+        // Advancing the injected clock alone cannot schedule a live compact-row
+        // redraw. Completion is the only subsequent rendering event.
+        #expect(await renderer.capturedWriteEvents().count == eventCountBeforeCompletion)
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(
+                output: "exit_code: 7\nstderr:\nboom",
+                summary: "command failed"
+            )
+        )
+
+        let completionEvents = Array(
+            (await renderer.capturedWriteEvents()).dropFirst(eventCountBeforeCompletion)
+        )
+        let completionText = completionEvents.map(\.text).joined()
+        let renderedCompletion = TerminalANSIText.stripANSI(
+            completionEvents.last?.text ?? ""
+        )
+        let renderedLines = renderedCompletion
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        #expect(containsCursorUpSequence(completionText))
+        #expect(completionText.contains("⚠️ 1.2s exit 7"))
+        #expect(renderedLines.allSatisfy {
+            TerminalChat.displayWidth($0) <= terminalColumns - 1
+        })
+        #expect(started.activeCompactToolRenderedRowCount == 2)
+    }
+
+    @Test
+    func compactLocalExecMetadataUsesCanonicalExitCodeAndCleanMissingStartFallback() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let toolCall = DirectAgentToolCall(
+            id: "completed-without-start",
+            name: "local.exec",
+            argumentsObject: ["command": "false"],
+            argumentsJSON: #"{"command":"false"}"#
+        )
+
+        // A replayed / otherwise unmatched completion has no duration, but a
+        // canonical non-zero code in output remains useful failure metadata.
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(
+                output: "exit_code: 23\nstderr:\nfailed",
+                summary: "failed"
+            )
+        )
+        let missingStartText = await renderer.capturedWriteEvents()
+            .map(\.text)
+            .joined()
+        #expect(missingStartText.contains("⚠️ exit 23"))
+        #expect(!missingStartText.contains("0.0s"))
+
+        let successfulToolCall = DirectAgentToolCall(
+            id: "successful-with-duration",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        let successfulDetail = TerminalChat.compactToolCompletionDetail(
+            for: successfulToolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done"),
+            elapsed: .milliseconds(1_200)
+        )
+        let successfulLines = TerminalChat.compactToolLines(
+            for: successfulToolCall,
+            statusIcon: "✅",
+            statusDetail: successfulDetail,
+            columnWidth: 80
+        )
+        #expect(successfulLines.last?.hasSuffix("✅ 1.2s") == true)
+        #expect(
+            TerminalChat.compactToolCompletionDetail(
+                for: successfulToolCall,
+                result: DirectAgentToolResult(output: "Done", summary: "Done"),
+                elapsed: nil
+            ) == nil
+        )
+
+        let zeroResult = DirectAgentToolResult(
+            output: "exit_code: 0\n<no output>",
+            summary: "exit_code: 0"
+        )
+        #expect(
+            TerminalChat.compactToolCompletionDetail(
+                for: toolCall,
+                result: zeroResult,
+                elapsed: nil
+            ) == nil
+        )
+
+        let summaryExitResult = DirectAgentToolResult(
+            output: "stderr:\ncommand failed",
+            summary: "exit_code: -1",
+            status: .failed
+        )
+        #expect(
+            TerminalChat.compactToolCompletionDetail(
+                for: toolCall,
+                result: summaryExitResult,
+                elapsed: nil
+            ) == "exit -1"
+        )
+
+        let nonCanonicalResult = DirectAgentToolResult(
+            output: "the command printed exit_code: 9 in its prose",
+            summary: "failed: exit_code: 9",
+            status: .failed
+        )
+        #expect(
+            TerminalChat.compactToolCompletionDetail(
+                for: toolCall,
+                result: nonCanonicalResult,
+                elapsed: nil
+            ) == nil
+        )
+
+        let embeddedMarkerResult = DirectAgentToolResult(
+            output: "stdout:\nexit_code: 9",
+            summary: "failed",
+            status: .failed
+        )
+        #expect(
+            TerminalChat.compactToolCompletionDetail(
+                for: toolCall,
+                result: embeddedMarkerResult,
+                elapsed: nil
+            ) == nil
+        )
+    }
+
+    @Test
     func compactCompletionKeepsActiveStyleWhenDetailLevelChanges() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = DirectAgentToolCall(
@@ -513,8 +668,9 @@ struct TerminalChatRenderCoordinatorTests {
         let boundary = TerminalANSIText.stripANSI(completedToolText + overviewText)
 
         #expect(rendered == .rendered)
-        #expect(boundary.contains("✅\n\nTasks"))
-        #expect(!boundary.contains("✅\n\n\nTasks"))
+        #expect(boundary.contains("✅"))
+        #expect(boundary.contains("\n\nTasks"))
+        #expect(!boundary.contains("\n\n\nTasks"))
     }
 
     @Test
@@ -769,7 +925,7 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(stdout.isEmpty)
         #expect(stderr.components(separatedBy: "Finished").count - 1 == 1)
         #expect(stderr.contains("\u{1B}[1mFinished\u{1B}[0m"))
-        #expect(stderr.contains("\u{1B}[38;5;180mcode\u{1B}[0m"))
+        #expect(stderr.contains("\(TerminalMarkdownPalette.detected.inlineCodeForeground)code\u{1B}[0m"))
         #expect(!stderr.contains("**Finished**"))
         #expect(stderr.components(separatedBy: "Response from reviewer").count - 1 == 1)
         #expect(stderr.contains("Agents refreshed."))
@@ -1013,6 +1169,212 @@ struct TerminalChatRenderCoordinatorTests {
 
         #expect(events.count == 1)
         #expect(combined.contains("Planning safely"))
+    }
+
+    @Test
+    func subsequentSubmittedPromptsReceiveOneDimWidthSafeTurnRule() async {
+        let terminalColumns = 7
+        let rule = String(repeating: "─", count: 5)
+        let renderer = makeRenderer(
+            stdinIsTerminal: true,
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { terminalColumns }
+        )
+
+        await renderer.writeSubmittedPrompt("first turn")
+        let firstTurn = await renderer.capturedWriteEvents()
+            .filter { $0.channel == .standardError }
+            .map(\.text)
+            .joined()
+        await renderer.writeSubmittedPrompt("second turn")
+        await renderer.writeSubmittedPrompt("third turn")
+
+        let stderr = await renderer.capturedWriteEvents()
+            .filter { $0.channel == .standardError }
+            .map(\.text)
+            .joined()
+        let visibleRows = TerminalANSIText.stripANSI(stderr)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        let ruleRows = visibleRows.filter { row in
+            let trimmed = row.trimmingCharacters(in: .whitespaces)
+            return !trimmed.isEmpty && trimmed.allSatisfy { $0 == "─" }
+        }
+
+        #expect(!TerminalANSIText.stripANSI(firstTurn).contains(rule))
+        #expect(ruleRows.count == 2)
+        #expect(ruleRows.allSatisfy {
+            TerminalChat.displayWidth($0) <= terminalColumns - 1
+        })
+        #expect(stderr.components(separatedBy: "\u{1B}[90m\(rule)\u{1B}[0m").count - 1 == 2)
+        #expect(stderr.components(separatedBy: "> first turn").count - 1 == 1)
+        #expect(stderr.components(separatedBy: "> second turn").count - 1 == 1)
+        #expect(stderr.components(separatedBy: "> third turn").count - 1 == 1)
+    }
+
+    @Test
+    func terminalThinkingFoldsAcrossDeltasAndReportsOmittedLines() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            terminalThoughtLineLimit: 2
+        )
+
+        await renderer.writeThought("first\nsecond\n")
+        await renderer.writeThought("third\n")
+        await renderer.writeThought("fourth\n")
+        await renderer.finishThoughtOutput()
+
+        let stderr = TerminalANSIText.stripANSI(
+            await renderer.capturedWriteEvents()
+                .filter { $0.channel == .standardError }
+                .map(\.text)
+                .joined()
+        )
+
+        #expect(stderr.contains("first"))
+        #expect(stderr.contains("second"))
+        #expect(!stderr.contains("third"))
+        #expect(!stderr.contains("fourth"))
+        #expect(stderr.contains("… 2 thinking lines omitted"))
+    }
+
+    @Test
+    func terminalThinkingFoldsNoNewlineTextByPhysicalTerminalRows() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 8 },
+            terminalThoughtLineLimit: 2
+        )
+
+        // With one trailing terminal cell reserved, each physical thought row
+        // has seven content columns. The state must persist across deltas.
+        await renderer.writeThought("abcdefghij")
+        await renderer.writeThought("klmnopqrst")
+        await renderer.finishThoughtOutput()
+
+        let stderr = TerminalANSIText.stripANSI(
+            await renderer.capturedWriteEvents()
+                .filter { $0.channel == .standardError }
+                .map(\.text)
+                .joined()
+        )
+
+        #expect(stderr.contains("abcdefg\nhijklmn\n"))
+        #expect(!stderr.contains("opqrst"))
+        #expect(stderr.contains("… 1 thinking lines omitted"))
+    }
+
+    @Test
+    func terminalThinkingCountsAnUnterminatedHiddenTail() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            terminalThoughtLineLimit: 1
+        )
+
+        await renderer.writeThought("visible\n")
+        await renderer.writeThought("hidden tail without newline")
+        await renderer.finishThoughtOutput()
+
+        let stderr = TerminalANSIText.stripANSI(
+            await renderer.capturedWriteEvents()
+                .filter { $0.channel == .standardError }
+                .map(\.text)
+                .joined()
+        )
+
+        #expect(stderr.contains("visible"))
+        #expect(!stderr.contains("hidden tail without newline"))
+        #expect(stderr.contains("… 1 thinking lines omitted"))
+    }
+
+    @Test
+    func nonTerminalThinkingNeverFolds() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: false,
+            terminalThoughtLineLimit: 1
+        )
+
+        await renderer.writeThought("first\nsecond\n")
+        await renderer.writeThought("third\n")
+        await renderer.finishThoughtOutput()
+
+        let stderr = await renderer.capturedWriteEvents()
+            .filter { $0.channel == .standardError }
+            .map(\.text)
+            .joined()
+
+        #expect(stderr.contains("first\nsecond\nthird"))
+        #expect(!stderr.contains("thinking lines omitted"))
+    }
+
+    @Test
+    func terminalThinkingFoldResetsForTheNextStream() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            terminalThoughtLineLimit: 1
+        )
+
+        await renderer.writeThought("first visible\nfirst hidden\n")
+        await renderer.finishThoughtOutput()
+        await renderer.writeThought("second visible\nsecond hidden\n")
+        await renderer.finishThoughtOutput()
+
+        let stderr = TerminalANSIText.stripANSI(
+            await renderer.capturedWriteEvents()
+                .filter { $0.channel == .standardError }
+                .map(\.text)
+                .joined()
+        )
+
+        #expect(stderr.contains("first visible"))
+        #expect(stderr.contains("second visible"))
+        #expect(!stderr.contains("first hidden"))
+        #expect(!stderr.contains("second hidden"))
+        #expect(stderr.components(separatedBy: "… 1 thinking lines omitted").count - 1 == 2)
+    }
+
+    @Test
+    func thoughtFoldingSurvivesToolAndAssistantInterleavingWithoutLosingAssistantContent() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            standardOutputIsTerminal: true,
+            terminalThoughtLineLimit: 1
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "thought-fold-interleave",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.writeThought("first visible\nfirst hidden\n")
+        // Starting a tool completes the first thought stream and must publish
+        // its fold notice before the tool owns the terminal rows.
+        await renderer.writeToolCallStarted(toolCall)
+        await renderer.writeAssistantContent("Assistant answer survives")
+        await renderer.finishAssistantContent()
+        await renderer.writeThought("second visible\nsecond hidden\n")
+        await renderer.finishStreamingOutput()
+
+        let events = await renderer.capturedWriteEvents()
+        let stderr = TerminalANSIText.stripANSI(
+            events
+                .filter { $0.channel == .standardError }
+                .map(\.text)
+                .joined()
+        )
+        let stdout = TerminalANSIText.stripANSI(
+            events
+                .filter { $0.channel == .standardOutput }
+                .map(\.text)
+                .joined()
+        )
+
+        #expect(stderr.contains("🛠️  agent.wait ⏳"))
+        #expect(stderr.components(separatedBy: "… 1 thinking lines omitted").count - 1 == 2)
+        #expect(!stderr.contains("first hidden"))
+        #expect(!stderr.contains("second hidden"))
+        #expect(stdout.contains("Assistant answer survives"))
     }
 
     @Test
@@ -1766,8 +2128,12 @@ struct TerminalChatRenderCoordinatorTests {
         streamingNow: @Sendable @escaping () -> ContinuousClock.Instant = {
             ContinuousClock().now
         },
+        toolNow: @Sendable @escaping () -> ContinuousClock.Instant = {
+            ContinuousClock().now
+        },
         columnWidthProvider: (@Sendable () -> Int)? = nil,
         freshColumnWidthProvider: (@Sendable () -> Int)? = nil,
+        terminalThoughtLineLimit: Int = 12,
         cursorTopology: TerminalChatRenderCoordinator.CursorTopology? = nil
     ) -> TerminalChatRenderCoordinator {
         let resolvedTopology: TerminalChatRenderCoordinator.CursorTopology?
@@ -1790,8 +2156,10 @@ struct TerminalChatRenderCoordinatorTests {
             capturesWrites: true,
             streamingFlushDelay: streamingFlushDelay,
             streamingNow: streamingNow,
+            toolNow: toolNow,
             columnWidthProvider: columnWidthProvider,
-            freshColumnWidthProvider: freshColumnWidthProvider
+            freshColumnWidthProvider: freshColumnWidthProvider,
+            terminalThoughtLineLimit: terminalThoughtLineLimit
         )
     }
 }

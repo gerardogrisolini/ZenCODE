@@ -546,11 +546,12 @@ extension TerminalChatRenderingTests {
 
     @Test
     func expandedReplacePairsDiffRowsWithinWideTerminalBudget() {
-        let lines = TerminalChat.numberedDiffSnippetLines(
+        let rows = TerminalChat.numberedDiffSnippetRows(
             old: "let stable = 0\nlet previous = 1",
             new: "let stable = 0\nlet replacement = 2",
             contentWidth: 80
         )
+        let lines = rows.map(\.plainText)
 
         #expect(lines.first?.contains("old") == true)
         #expect(lines.first?.contains("new") == true)
@@ -559,27 +560,92 @@ extension TerminalChatRenderingTests {
                 && $0.contains("2 │ let replacement = 2")
         })
         #expect(lines.allSatisfy { TerminalChat.displayWidth($0) <= 80 })
+        #expect(rows.allSatisfy { row in
+            if case .diff = row { return true }
+            return false
+        })
     }
 
     @Test
-    func expandedReplaceFallsBackToWrappedVerticalDiffOnNarrowTerminal() {
-        let lines = TerminalChat.numberedDiffSnippetLines(
+    func expandedReplaceUsesStackedUnifiedDiffOnNarrowTerminal() {
+        let rows = TerminalChat.numberedDiffSnippetRows(
             old: "let previousValue = aVeryLongIdentifier",
             new: "let replacementValue = anotherLongIdentifier",
+            // 52 is one cell below the documented 53-cell default threshold:
+            // 2-cell indentation + 3-cell divider + two 24-cell source cells.
+            contentWidth: 52
+        )
+        let lines = rows.map(\.plainText)
+        let wrapped = TerminalChat.safelyWrappedDetailedToolRows(
+            rows,
+            contentInsetWidth: 0,
+            columnWidth: 53
+        )
+
+        #expect(lines.contains("  - 1 │ let previousValue = aVeryLongIdentifier"))
+        #expect(lines.contains("  + 1 │ let replacementValue = anotherLongIdentifier"))
+        #expect(!lines.contains("old:"))
+        #expect(!lines.contains("new:"))
+        #expect(rows.allSatisfy { row in
+            if case .unifiedDiff = row { return true }
+            return false
+        })
+        #expect(wrapped.allSatisfy { TerminalChat.displayWidth($0.plainText) <= 52 })
+        #expect(wrapped.allSatisfy { row in
+            if case .unifiedDiff = row { return true }
+            return false
+        })
+        // Every wrapped row has one spare terminal cell, so the in-place row
+        // accounting used by the render coordinator stays exact.
+        #expect(
+            TerminalChat.renderedTerminalRowCount(
+                for: wrapped.map(\.plainText),
+                contentInsetWidth: 0,
+                columnWidth: 53
+            ) == wrapped.count
+        )
+    }
+
+    @Test
+    func narrowUnifiedDiffKeepsUnicodeAnsiSafetyAndCodeAreaFrame() throws {
+        let rows = TerminalChat.numberedDiffSnippetRows(
+            old: "\u{1B}[31mlet removed = \"\(String(repeating: "東京😀", count: 10))\"",
+            new: "let added = \"\(String(repeating: "東京😀", count: 10))\"",
             contentWidth: 40
         )
-        let wrapped = TerminalChat.safelyWrappedDetailedToolLines(
-            lines,
+        let wrapped = TerminalChat.safelyWrappedDetailedToolRows(
+            rows,
             contentInsetWidth: 0,
             columnWidth: 41
         )
 
-        #expect(lines.contains("old:"))
-        #expect(lines.contains("new:"))
-        #expect(!lines.contains { $0.contains("old") && $0.contains("new") })
-        #expect(wrapped.contains { $0.contains("1 │ let previousValue") })
-        #expect(wrapped.contains { $0.contains("1 │ let replacementValue") })
-        #expect(wrapped.allSatisfy { TerminalChat.displayWidth($0) <= 40 })
+        #expect(rows.allSatisfy { row in
+            if case .unifiedDiff = row { return true }
+            return false
+        })
+        #expect(wrapped.allSatisfy { TerminalChat.displayWidth($0.plainText) <= 40 })
+        #expect(wrapped.contains { $0.plainText.contains("- 1 │ ␛[31mlet removed") })
+        #expect(wrapped.contains { $0.plainText.contains("+ 1 │ let added") })
+        #expect(wrapped.contains { $0.plainText.contains("東京") })
+        #expect(wrapped.contains { $0.plainText.contains("😀") })
+        #expect(wrapped.allSatisfy { !$0.plainText.contains("\u{1B}") })
+
+        let removedRow = try #require(wrapped.first { $0.plainText.contains("- 1 │") })
+        let addedRow = try #require(wrapped.first { $0.plainText.contains("+ 1 │") })
+        let removedRendered = TerminalChat.renderDetailedToolRow(
+            removedRow,
+            codeLanguage: "swift"
+        )
+        let addedRendered = TerminalChat.renderDetailedToolRow(
+            addedRow,
+            codeLanguage: "swift"
+        )
+
+        #expect(removedRendered.hasPrefix("\u{1B}[48;5;236m"))
+        #expect(removedRendered.hasSuffix("\u{1B}[K"))
+        #expect(removedRendered.contains("\u{1B}[38;5;203m-"))
+        #expect(addedRendered.contains("\u{1B}[38;5;114m+"))
+        #expect(TerminalANSIText.stripANSI(removedRendered).contains("- 1 │ ␛[31mlet removed"))
     }
 
     @Test

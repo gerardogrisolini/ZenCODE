@@ -16,7 +16,6 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     private static let italic = "\u{1B}[3m"
     private static let strikethrough = "\u{1B}[9m"
     private static let dim = "\u{1B}[90m"
-    private static let code = "\u{1B}[38;5;180m"
     private static let bullet = "\u{1B}[38;5;244m"
     private static let link = "\u{1B}[38;5;75m"
     private static let quoteBar = "\u{1B}[38;5;108m"
@@ -36,17 +35,6 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
         let cells = Array(repeating: tableSeparatorRowSentinel, count: max(columnCount, 1))
         return "| " + cells.joined(separator: " | ") + " |"
     }
-
-    /// Per-level heading styles, brightest/boldest for top-level headings and
-    /// progressively softer for deeper levels so the hierarchy reads visually.
-    private static let headingStyles: [String] = [
-        "\u{1B}[1;38;5;81m",   // h1 - bold cyan
-        "\u{1B}[1;38;5;75m",   // h2 - bold azure
-        "\u{1B}[1;38;5;111m",  // h3 - bold periwinkle
-        "\u{1B}[38;5;111m",    // h4 - periwinkle
-        "\u{1B}[38;5;110m",    // h5 - steel
-        "\u{1B}[38;5;109m"     // h6 - muted steel
-    ]
 
     /// Bullet glyphs per nesting depth, cycling for deeper levels.
     private static let bulletGlyphs = ["•", "◦", "▪", "‣"]
@@ -71,17 +59,34 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     /// is truncated with an ellipsis. Keeps long URLs from disrupting layout.
     private static let maxFallbackURLWidth = 40
 
-    /// Visible width used for horizontal rules. Wrapping is handled by the
-    /// stream formatter and table alignment is based on measured cell content.
-    let renderWidth: Int
+    /// An injected width makes tests deterministic. Production leaves this nil
+    /// so each render observes terminal resizes through `TerminalWidth`.
+    private let fixedRenderWidth: Int?
+
+    /// Shared with the streaming formatter to preserve Markdown semantics.
+    private let palette: TerminalMarkdownPalette
+
+    /// Visible width used for rules, tables, and code surfaces. The shared
+    /// lookup is short-lived and has no terminal input/output interaction.
+    private var renderWidth: Int {
+        fixedRenderWidth ?? TerminalWidth.current(
+            descriptors: [1, 2, 0],
+            fallback: 0
+        )
+    }
 
     private static let nestedListLinePrefix = "\u{E000}"
 
     private var listDepth = 0
 
-    init(supportsHyperlinks: Bool = false, renderWidth: Int = 0) {
+    init(
+        supportsHyperlinks: Bool = false,
+        renderWidth: Int = 0,
+        palette: TerminalMarkdownPalette? = nil
+    ) {
         self.supportsHyperlinks = supportsHyperlinks
-        self.renderWidth = renderWidth
+        self.fixedRenderWidth = renderWidth > 0 ? renderWidth : nil
+        self.palette = palette ?? .detected
     }
 
     mutating func defaultVisit(_ markup: Markup) -> String {
@@ -107,11 +112,10 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     }
 
     mutating func visitHeading(_ heading: Heading) -> String {
-        let level = max(1, min(heading.level, Self.headingStyles.count))
-        let style = Self.headingStyles[level - 1]
-        let prefix = String(repeating: "#", count: level)
+        let level = max(1, min(heading.level, palette.headingStyles.count))
+        let style = palette.headingStyles[level - 1]
         let body = renderChildren(of: heading)
-        return applyStyle(style, to: "\(prefix) \(body)")
+        return applyStyle(style, to: body)
     }
 
     mutating func visitBlockQuote(_ blockQuote: BlockQuote) -> String {
@@ -168,18 +172,15 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     }
 
     mutating func visitCodeBlock(_ codeBlock: CodeBlock) -> String {
-        let fence = codeBlock.language.map { "```\($0)" } ?? "```"
         let trimmedCode = codeBlock.code.hasSuffix("\n")
         ? String(codeBlock.code.dropLast())
         : codeBlock.code
-        return [
-            "\(Self.dim)\(fence)\(Self.reset)",
-            TerminalCodeBlockRenderer.renderBlock(
-                trimmedCode,
-                language: codeBlock.language
-            ),
-            "\(Self.dim)```\(Self.reset)"
-        ].joined(separator: "\n")
+        return TerminalCodeBlockRenderer.renderBlock(
+            trimmedCode,
+            language: codeBlock.language,
+            width: renderWidth,
+            palette: palette
+        )
     }
 
     mutating func visitThematicBreak(_ thematicBreak: ThematicBreak) -> String {
@@ -188,7 +189,7 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     }
 
     mutating func visitInlineCode(_ inlineCode: InlineCode) -> String {
-        "\(Self.code)\(inlineCode.code)\(Self.reset)"
+        "\(palette.inlineCodeBackground)\(palette.inlineCodeForeground)\(inlineCode.code)\(Self.reset)"
     }
 
     mutating func visitStrong(_ strong: Strong) -> String {
@@ -237,7 +238,7 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
         guard !Self.isHTMLComment(inlineHTML.rawHTML) else {
             return ""
         }
-        return "\(Self.code)\(inlineHTML.rawHTML)\(Self.reset)"
+        return "\(palette.inlineCodeBackground)\(palette.inlineCodeForeground)\(inlineHTML.rawHTML)\(Self.reset)"
     }
 
     mutating func visitHTMLBlock(_ htmlBlock: HTMLBlock) -> String {
@@ -338,7 +339,7 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
         let checkbox = listItem.checkbox.map {
             switch $0 {
             case .checked:
-                return "\(Self.code)[x]\(Self.reset) "
+                return "\(palette.inlineCodeForeground)[x]\(Self.reset) "
             case .unchecked:
                 return "\(Self.bullet)[ ]\(Self.reset) "
             }

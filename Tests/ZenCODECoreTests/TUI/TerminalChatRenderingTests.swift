@@ -1152,12 +1152,18 @@ struct TerminalChatRenderingTests {
 
     @Test
     func markdownFormatterStylesHeadingsAndInlineCode() {
-        var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false,
+            palette: .dark
+        )
 
         let rendered = formatter.consume("## Titolo con `codice`\n")
 
-        #expect(rendered.contains("\u{1B}[1;38;5;75m## Titolo con"))
-        #expect(rendered.contains("\u{1B}[38;5;180mcodice\u{1B}[0m"))
+        #expect(rendered.contains("\u{1B}[1;38;5;75mTitolo con"))
+        #expect(!TerminalANSIText.stripANSI(rendered).contains("##"))
+        #expect(rendered.contains("\u{1B}[48;5;236m\u{1B}[38;5;180mcodice\u{1B}[0m"))
         #expect(rendered.hasSuffix("\n"))
     }
 
@@ -1172,7 +1178,12 @@ struct TerminalChatRenderingTests {
 
     @Test
     func markdownFormatterKeepsPotentialMarkdownBufferedUntilNewline() {
-        var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 80,
+            supportsHyperlinks: false,
+            palette: .dark
+        )
         let partial = "## " + String(repeating: "a", count: 241)
 
         #expect(formatter.consume(partial) == "")
@@ -1280,14 +1291,15 @@ struct TerminalChatRenderingTests {
         var formatter = TerminalMarkdownStreamFormatter(
             isEnabled: true,
             renderWidth: 80,
-            supportsHyperlinks: false
+            supportsHyperlinks: false,
+            palette: .dark
         )
 
         let rendered = formatter.consume("```swift\nlet x = 1\n```\n") + formatter.finish()
 
-        // Fence delimiter lines are dimmed and preserved verbatim.
-        #expect(rendered.contains("\u{1B}[90m```swift\u{1B}[0m"))
-        #expect(rendered.contains("\u{1B}[90m```\u{1B}[0m"))
+        // Fences become a readable header and never leak raw Markdown.
+        #expect(rendered.contains("Code · Swift"))
+        #expect(!rendered.contains("```"))
         // Body is routed through the code renderer: `let` is a keyword.
         #expect(rendered.contains("\u{1B}[38;5;141mlet\u{1B}[0m"))
         #expect(rendered.contains("x = "))
@@ -1907,8 +1919,9 @@ struct TerminalChatRenderingTests {
         )
 
         let opened = formatter.consume("```swift\n")
-        // The opening fence streams immediately.
-        #expect(opened.contains("\u{1B}[90m```swift\u{1B}[0m"))
+        // The opening fence streams a readable header, not raw Markdown.
+        #expect(opened.contains("Code · Swift"))
+        #expect(!opened.contains("```"))
 
         let body = formatter.consume("- not a list\n**not bold**\n")
         // Inside the fence, markdown markers are preserved verbatim.
@@ -1917,7 +1930,9 @@ struct TerminalChatRenderingTests {
         #expect(!body.contains("•"))
 
         let closed = formatter.consume("```\n") + formatter.finish()
-        #expect(closed.contains("\u{1B}[90m```\u{1B}[0m"))
+        // The closing fence preserves its source newline, yielding the blank
+        // block separator used by the complete document renderer.
+        #expect(closed == "\n")
     }
 
     @Test

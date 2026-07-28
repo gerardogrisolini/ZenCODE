@@ -13,6 +13,7 @@ extension TerminalChat {
     enum DetailedToolRow: Sendable, Equatable {
         case text(String)
         case diff(DetailedToolDiffCells)
+        case unifiedDiff(DetailedToolUnifiedDiffLine)
 
         /// Marker-free textual projection used for row accounting, wrapping
         /// fallbacks, tests and any non-terminal consumer.
@@ -22,6 +23,8 @@ extension TerminalChat {
                 return line
             case let .diff(cells):
                 return cells.plainText
+            case let .unifiedDiff(line):
+                return line.plainText
             }
         }
     }
@@ -38,6 +41,40 @@ extension TerminalChat {
 
         var plainText: String {
             "\(indentation)\(oldCell)\(Self.divider)\(newCell)"
+        }
+    }
+
+    /// A single line of the narrow, unified diff presentation. The source
+    /// content is kept separate from its diff marker and line-number gutter so
+    /// wrapping can retain the visual diff structure without inspecting the
+    /// payload for a delimiter.
+    struct DetailedToolUnifiedDiffLine: Sendable, Equatable {
+        static let gutter = " │ "
+
+        let indentation: String
+        /// `-` for a removed line, `+` for an added line, or a space for an
+        /// unchanged context line.
+        let marker: String
+        /// A right-aligned source line number, or an equally wide blank gutter
+        /// for an empty payload / wrapped continuation.
+        let lineNumber: String
+        let content: String
+
+        var prefix: String {
+            "\(indentation)\(marker) \(lineNumber)\(Self.gutter)"
+        }
+
+        var plainText: String {
+            "\(prefix)\(content)"
+        }
+
+        var continuation: DetailedToolUnifiedDiffLine {
+            DetailedToolUnifiedDiffLine(
+                indentation: indentation,
+                marker: marker,
+                lineNumber: String(repeating: " ", count: lineNumber.count),
+                content: content
+            )
         }
     }
 
@@ -103,6 +140,7 @@ extension TerminalChat {
     nonisolated static func compactToolLines(
         for toolCall: DirectAgentToolCall,
         statusIcon: String,
+        statusDetail: String? = nil,
         contentInsetWidth: Int = 0,
         columnWidth: Int? = nil
     ) -> [String] {
@@ -110,35 +148,107 @@ extension TerminalChat {
         let icon = ToolCallPresentation.toolIcon(for: toolCall.name)
         guard let target = ToolCallPresentation.displayToolTarget(for: toolCall),
               title.hasSuffix(target) else {
-            return ["\(icon)  \(title) \(statusIcon)"]
+            return [
+                compactToolStatusLine(
+                    target: "\(icon)  \(title)",
+                    statusIcon: statusIcon,
+                    statusDetail: statusDetail,
+                    collapsesTargetWhitespace: false,
+                    contentInsetWidth: contentInsetWidth,
+                    columnWidth: columnWidth
+                )
+            ]
         }
 
         let action = title
             .dropLast(target.count)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !action.isEmpty else {
-            return ["\(icon)  \(title) \(statusIcon)"]
+            return [
+                compactToolStatusLine(
+                    target: "\(icon)  \(title)",
+                    statusIcon: statusIcon,
+                    statusDetail: statusDetail,
+                    collapsesTargetWhitespace: false,
+                    contentInsetWidth: contentInsetWidth,
+                    columnWidth: columnWidth
+                )
+            ]
         }
         return [
             "\(icon)  \(action):",
             compactToolStatusLine(
                 target: target,
                 statusIcon: statusIcon,
+                statusDetail: statusDetail,
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
             )
         ]
     }
 
+    /// Compact completion metadata is intentionally assembled independently
+    /// from layout. The coordinator measures elapsed time at lifecycle edges;
+    /// this helper merely makes the stable, human-readable status fragment.
+    nonisolated static func compactToolCompletionDetail(
+        for toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult,
+        elapsed: Duration?
+    ) -> String? {
+        var components: [String] = []
+        if let elapsed {
+            components.append(compactToolElapsedTime(elapsed))
+        }
+        if let exitCode = compactLocalExecExitCode(
+            for: toolCall,
+            result: result
+        ), exitCode != 0 {
+            components.append("exit \(exitCode)")
+        }
+        return components.isEmpty ? nil : components.joined(separator: " ")
+    }
+
+    /// Reads only the leading, complete canonical process-result line. In
+    /// particular, an arbitrary phrase or a later stdout line containing
+    /// `exit_code:` is not treated as structured process metadata, avoiding
+    /// false failures from tool output text.
+    nonisolated static func compactLocalExecExitCode(
+        for toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult
+    ) -> Int? {
+        guard toolCall.name == "local.exec" else {
+            return nil
+        }
+        for payload in [result.summary, result.output] {
+            guard let line = payload.split(
+                omittingEmptySubsequences: false,
+                whereSeparator: \.isNewline
+            ).first else {
+                continue
+            }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("exit_code: ") else {
+                continue
+            }
+            let value = trimmed.dropFirst("exit_code: ".count)
+            guard isCanonicalExitCode(value), let exitCode = Int(value) else {
+                continue
+            }
+            return exitCode
+        }
+        return nil
+    }
+
     nonisolated static func compactToolStatusLine(
         target: String,
         statusIcon: String,
+        statusDetail: String? = nil,
+        collapsesTargetWhitespace: Bool = true,
         contentInsetWidth: Int = 0,
         columnWidth: Int? = nil
     ) -> String {
         let resolvedColumns = columnWidth ?? terminalColumnCount()
         let columns = max(0, resolvedColumns - contentInsetWidth)
-        let suffixWidth = displayWidth(statusIcon)
         // Reserve one extra trailing column so the rendered line (inset + target
         // + " " + status icon) never occupies the full terminal width. A line
         // that is exactly terminal-width triggers ambiguous auto-wrap behavior:
@@ -146,18 +256,74 @@ extension TerminalChat {
         // the in-place rewrite on completion moves up one row too few and leaves
         // the previous title line behind, duplicating the tool header.
         let safeLineWidth = max(0, columns - 1)
+        let statusText = compactToolStatusText(
+            icon: statusIcon,
+            detail: statusDetail,
+            maximumWidth: safeLineWidth
+        )
+        let suffixWidth = displayWidth(statusText)
         let textWidthLimit = safeLineWidth - suffixWidth - 1
         guard textWidthLimit > 0 else {
-            return suffixWidth <= safeLineWidth ? statusIcon : ""
+            return suffixWidth <= safeLineWidth ? statusText : ""
         }
+        let displayTarget = collapsesTargetWhitespace
+            ? compactToolInlineTarget(target)
+            : target
         let fittedTarget = fitDisplayWidth(
-            compactToolInlineTarget(target),
+            displayTarget,
             width: textWidthLimit
         )
         guard !fittedTarget.isEmpty else {
-            return suffixWidth <= safeLineWidth ? statusIcon : ""
+            return suffixWidth <= safeLineWidth ? statusText : ""
         }
-        return "\(fittedTarget) \(statusIcon)"
+        return "\(fittedTarget) \(statusText)"
+    }
+
+    /// A narrow terminal must never wrap an in-place compact row. Keep the
+    /// status icon in that case and omit all-or-nothing metadata rather than
+    /// slicing a duration or an `exit N` token into an ambiguous fragment.
+    private nonisolated static func compactToolStatusText(
+        icon: String,
+        detail: String?,
+        maximumWidth: Int
+    ) -> String {
+        guard let detail,
+              !detail.isEmpty else {
+            return icon
+        }
+        let expanded = "\(icon) \(detail)"
+        return displayWidth(expanded) <= maximumWidth ? expanded : icon
+    }
+
+    private nonisolated static func compactToolElapsedTime(_ duration: Duration) -> String {
+        let seconds = max(
+            0,
+            Double(duration.components.seconds)
+                + Double(duration.components.attoseconds) / 1_000_000_000_000_000_000
+        )
+        return String(
+            format: "%.1fs",
+            locale: Locale(identifier: "en_US_POSIX"),
+            seconds
+        )
+    }
+
+    private nonisolated static func isCanonicalExitCode(
+        _ value: Substring
+    ) -> Bool {
+        guard !value.isEmpty else {
+            return false
+        }
+        let digits: Substring
+        if value.first == "-" {
+            digits = value.dropFirst()
+            guard !digits.isEmpty else {
+                return false
+            }
+        } else {
+            digits = value
+        }
+        return digits.allSatisfy(\.isWholeNumber)
     }
 
     nonisolated static func renderedTerminalRowCount(
@@ -200,6 +366,8 @@ extension TerminalChat {
                     .map(DetailedToolRow.text)
             case let .diff(cells):
                 return wrappedDetailedToolDiffRows(cells, width: safeLineWidth)
+            case let .unifiedDiff(line):
+                return wrappedDetailedToolUnifiedDiffRows(line, width: safeLineWidth)
             }
         }
     }
@@ -283,6 +451,44 @@ extension TerminalChat {
         }
     }
 
+    /// Reflows a unified diff line within the single available code column.
+    /// Continuations keep their `-` / `+` marker and a blank number gutter, so
+    /// the source remains attributable while every emitted row still fits the
+    /// in-place terminal redraw budget.
+    private nonisolated static func wrappedDetailedToolUnifiedDiffRows(
+        _ line: DetailedToolUnifiedDiffLine,
+        width: Int
+    ) -> [DetailedToolRow] {
+        guard displayWidth(line.plainText) > width else {
+            return [.unifiedDiff(line)]
+        }
+
+        let prefixWidth = displayWidth(line.prefix)
+        guard prefixWidth < width else {
+            // A terminal narrower than the diff gutter cannot preserve the
+            // structure on one visual row. Reuse the established text fallback
+            // instead of exceeding the safe in-place redraw width.
+            return wrappedDetailedToolTextLines(line.plainText, width: width)
+                .map(DetailedToolRow.text)
+        }
+
+        let fragments = TerminalANSIText.wrapPreservingWhitespace(
+            line.content,
+            width: width - prefixWidth
+        )
+        return fragments.enumerated().map { index, fragment in
+            let wrappedLine = index == 0
+                ? line
+                : line.continuation
+            return .unifiedDiff(DetailedToolUnifiedDiffLine(
+                indentation: wrappedLine.indentation,
+                marker: wrappedLine.marker,
+                lineNumber: wrappedLine.lineNumber,
+                content: fragment
+            ))
+        }
+    }
+
     private nonisolated static func paddedToColumnWidth(
         _ text: String,
         width: Int
@@ -354,6 +560,14 @@ extension TerminalChat {
                 newCell: cells.newCell,
                 language: codeLanguage
             )
+        case let .unifiedDiff(line):
+            return renderUnifiedDiffCodeAreaLine(
+                indentation: line.indentation,
+                marker: line.marker,
+                lineNumber: line.lineNumber,
+                content: line.content,
+                language: codeLanguage
+            )
         }
     }
 
@@ -406,13 +620,40 @@ extension TerminalChat {
         return "\(codeAreaBackgroundColor)\(indentation)\(renderCodeAreaFragment(oldCell, language: language))\(codeAreaBackgroundColor)\(divider)\(renderCodeAreaFragment(newCell, language: language))\(clearToEnd)"
     }
 
+    /// Renders one stacked unified-diff line inside the same framed code area
+    /// used by side-by-side cells. Only the marker is colored as a deletion or
+    /// addition; source content is still highlighted independently and every
+    /// syntax-renderer reset is re-anchored to the code background.
+    nonisolated static func renderUnifiedDiffCodeAreaLine(
+        indentation: String,
+        marker: String,
+        lineNumber: String,
+        content: String,
+        language: String?
+    ) -> String {
+        let clearToEnd = "\u{1B}[K"
+        let markerColor: String
+        switch marker {
+        case "-":
+            markerColor = "\u{1B}[38;5;203m"
+        case "+":
+            markerColor = "\u{1B}[38;5;114m"
+        default:
+            markerColor = codeAreaBackgroundColor
+        }
+        return "\(codeAreaBackgroundColor)\(indentation)\(markerColor)\(marker)\(codeAreaBackgroundColor) \(lineNumber)\(DetailedToolUnifiedDiffLine.gutter)\(renderCodeAreaFragment(content, language: language))\(clearToEnd)"
+    }
+
     private nonisolated static func renderCodeAreaFragment(
         _ line: String,
         language: String?
     ) -> String {
         let reset = "\u{1B}[0m"
         return TerminalCodeBlockRenderer
-            .renderLine(line, language: language)
+            // Expanded tool snippets always paint their own dark code surface,
+            // regardless of the host terminal theme. Keep token colors paired
+            // with that surface instead of using the host light-theme palette.
+            .renderLine(line, language: language, palette: .dark)
             .replacingOccurrences(of: reset, with: "\(reset)\(codeAreaBackgroundColor)")
     }
 

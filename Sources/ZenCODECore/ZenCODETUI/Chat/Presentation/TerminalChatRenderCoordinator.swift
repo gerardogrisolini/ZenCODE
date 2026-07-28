@@ -75,7 +75,10 @@ actor TerminalChatRenderCoordinator {
 
     private enum ToolBlockLifecycle {
         case started
-        case completed(DirectAgentToolResult)
+        case completed(
+            result: DirectAgentToolResult,
+            compactStatusDetail: String?
+        )
 
         var isCompletion: Bool {
             if case .completed = self {
@@ -145,6 +148,57 @@ actor TerminalChatRenderCoordinator {
         }
     }
 
+    /// Incremental accounting for a terminal thought stream. Visible text is
+    /// hard-wrapped to a terminal-safe width before it is emitted, so the budget
+    /// describes physical terminal rows rather than source newline count.
+    private struct ThoughtFoldingState: Sendable {
+        let lineLimit: Int
+        /// Number of completed physical rows already allowed through the fold.
+        var visibleLineCount = 0
+        /// Number of physical rows withheld after the visible prefix.
+        var omittedLineCount = 0
+        /// Visible-cell position within the current physical row. It persists
+        /// across streaming deltas so a long no-newline paragraph cannot bypass
+        /// the folding budget by arriving token-by-token.
+        var currentColumn = 0
+        /// A non-empty omitted line is counted when its first visible character
+        /// arrives. The flag prevents its later newline from counting it again.
+        var omittedLineHasContent = false
+
+        init(lineLimit: Int) {
+            self.lineLimit = max(0, lineLimit)
+        }
+
+        var rendersCurrentLine: Bool {
+            visibleLineCount < lineLimit
+        }
+
+        mutating func recordOmittedContent() {
+            guard !omittedLineHasContent else {
+                return
+            }
+            omittedLineCount += 1
+            omittedLineHasContent = true
+        }
+
+        mutating func finishOmittedLine() {
+            if !omittedLineHasContent {
+                // An empty rendered row is still a row omitted from the stream.
+                omittedLineCount += 1
+            }
+            omittedLineHasContent = false
+        }
+
+        mutating func finishCurrentPhysicalLine() {
+            if rendersCurrentLine {
+                visibleLineCount += 1
+            } else {
+                finishOmittedLine()
+            }
+            currentColumn = 0
+        }
+    }
+
     private enum OverviewContent: Sendable {
         case markdown(String)
         case subAgents(
@@ -178,6 +232,10 @@ actor TerminalChatRenderCoordinator {
     /// safe. Tests pass a controllable closure so the idle-window check is
     /// deterministic; production uses `ContinuousClock`.
     private let streamingNow: @Sendable () -> ContinuousClock.Instant
+    /// Injectable monotonic clock used to measure the interval between a tool's
+    /// start and completion. It is intentionally sampled only at those two
+    /// lifecycle events: compact tool rows do not schedule periodic redraws.
+    private let toolNow: @Sendable () -> ContinuousClock.Instant
     /// Returns the current terminal column count. Overridable in tests to
     /// simulate a deterministic resize between tool start and completion.
     private let columnWidthProvider: @Sendable () -> Int
@@ -185,6 +243,9 @@ actor TerminalChatRenderCoordinator {
     /// Production bypasses the short-lived width cache; injected providers keep
     /// their existing behavior unless an explicit fresh provider is supplied.
     private let freshColumnWidthProvider: @Sendable () -> Int
+    /// The terminal-only thought prefix budget. Production keeps the transcript
+    /// readable while tests may inject a smaller value for concise fixtures.
+    private let terminalThoughtLineLimit: Int
 
     private var nextWriteSequence: UInt64 = 0
     /// Counts every physical emission, whether or not writes are captured.
@@ -203,9 +264,17 @@ actor TerminalChatRenderCoordinator {
 
     private var assistantStreamingState: StreamingContentState
     private var thoughtStreamingState: StreamingContentState
+    private var thoughtFoldingState: ThoughtFoldingState
+    /// A submitted prompt starts a transcript turn. The first prompt remains
+    /// unadorned; every later one receives exactly one visual turn separator.
+    private var hasWrittenSubmittedPrompt = false
 
     private var toolOutputDetailLevel: ToolOutputDetailLevel = .compact
     private var activeToolBlock: ActiveToolBlock?
+    /// Start instants indexed by the stable tool-call identity. A completion
+    /// consumes its entry even when it can no longer rewrite the active row,
+    /// preventing stale lifecycle metadata from leaking into a later call.
+    private var toolStartInstants: [String: ContinuousClock.Instant] = [:]
     /// True while the active tool block belongs to an `agent.*` tool call
     /// (e.g. `agent.wait`). Sub-agent overviews are allowed to interleave with
     /// such blocks so progress remains visible during long-running delegated
@@ -235,8 +304,12 @@ actor TerminalChatRenderCoordinator {
         streamingNow: @Sendable @escaping () -> ContinuousClock.Instant = {
             ContinuousClock().now
         },
+        toolNow: @Sendable @escaping () -> ContinuousClock.Instant = {
+            ContinuousClock().now
+        },
         columnWidthProvider: (@Sendable () -> Int)? = nil,
-        freshColumnWidthProvider: (@Sendable () -> Int)? = nil
+        freshColumnWidthProvider: (@Sendable () -> Int)? = nil,
+        terminalThoughtLineLimit: Int = 12
     ) {
         self.standardOutput = standardOutput
         self.standardError = standardError
@@ -252,6 +325,8 @@ actor TerminalChatRenderCoordinator {
         self.capturesWrites = capturesWrites
         self.streamingFlushDelay = streamingFlushDelay
         self.streamingNow = streamingNow
+        self.toolNow = toolNow
+        self.terminalThoughtLineLimit = max(0, terminalThoughtLineLimit)
         if let columnWidthProvider {
             self.columnWidthProvider = columnWidthProvider
             self.freshColumnWidthProvider = freshColumnWidthProvider
@@ -274,6 +349,9 @@ actor TerminalChatRenderCoordinator {
                 isEnabled: standardErrorIsTerminal,
                 removesUnbalancedStrongMarkers: true
             )
+        )
+        self.thoughtFoldingState = ThoughtFoldingState(
+            lineLimit: terminalThoughtLineLimit
         )
     }
 
@@ -317,23 +395,16 @@ actor TerminalChatRenderCoordinator {
         finishAssistantContentFormatting()
         if !thoughtStreamingState.isStreaming {
             thoughtStreamingState.isStreaming = true
+            thoughtFoldingState = ThoughtFoldingState(
+                lineLimit: terminalThoughtLineLimit
+            )
             let title = standardErrorIsTerminal
                 ? "\u{1B}[90m🤔 Thinking:\u{1B}[0m"
                 : "🤔 Thinking:"
             writeStreamingChat("\(title)\n", to: .standardError)
         }
         let renderedThought = thoughtStreamingState.markdownFormatter.consume(normalizedDelta)
-        let markdown = TerminalChatTextFormatting.renderThoughtMarkdown(
-            renderedThought,
-            standardErrorIsTerminal: standardErrorIsTerminal
-        )
-        if !markdown.isEmpty {
-            writeStreamingChat(
-                markdown,
-                to: .standardError,
-                preservesSpacing: true
-            )
-        }
+        writeRenderedThought(renderedThought)
     }
 
     func writeAssistantContent(_ delta: String) {
@@ -403,10 +474,36 @@ actor TerminalChatRenderCoordinator {
         guard let renderedThought = Self.finishStreamingContent(
             in: &thoughtStreamingState
         ) else {
+            thoughtFoldingState = ThoughtFoldingState(
+                lineLimit: terminalThoughtLineLimit
+            )
             return
         }
+        writeRenderedThought(renderedThought)
+        if standardErrorIsTerminal, thoughtFoldingState.omittedLineCount > 0 {
+            let notice = "\u{1B}[90m… \(thoughtFoldingState.omittedLineCount) thinking lines omitted\u{1B}[0m"
+            writeStreamingChat(
+                notice,
+                to: .standardError,
+                preservesSpacing: true
+            )
+        }
+        thoughtFoldingState = ThoughtFoldingState(
+            lineLimit: terminalThoughtLineLimit
+        )
+        writeStreamingChat("\n\n", to: .standardError)
+        flushPendingStreamingWrites()
+    }
+
+    /// Filters terminal thinking after Markdown has been rendered, so the line
+    /// budget matches the actual terminal transcript rather than raw model
+    /// source. ANSI control sequences are copied as indivisible tokens and the
+    /// dimming pass runs afterwards, guaranteeing every emitted chunk closes its
+    /// own rendition with a reset.
+    private func writeRenderedThought(_ renderedThought: String) {
+        let filteredThought = filteredTerminalThought(renderedThought)
         let markdown = TerminalChatTextFormatting.renderThoughtMarkdown(
-            renderedThought,
+            filteredThought,
             standardErrorIsTerminal: standardErrorIsTerminal
         )
         if !markdown.isEmpty {
@@ -416,8 +513,116 @@ actor TerminalChatRenderCoordinator {
                 preservesSpacing: true
             )
         }
-        writeStreamingChat("\n\n", to: .standardError)
-        flushPendingStreamingWrites()
+    }
+
+    private func filteredTerminalThought(_ renderedThought: String) -> String {
+        guard standardErrorIsTerminal, !renderedThought.isEmpty else {
+            return renderedThought
+        }
+
+        // Every emitted row receives `lineInset`; keep one trailing cell unused
+        // to avoid terminal-dependent auto-wrap at exactly the final column.
+        // Because wrapping is explicit, the row count below remains stable both
+        // in captured tests and in a real TTY.
+        let physicalLineWidth = max(
+            1,
+            columnWidthProvider() - TerminalChat.displayWidth(lineInset) - 1
+        )
+        var output = ""
+        var index = renderedThought.startIndex
+        while index < renderedThought.endIndex {
+            if renderedThought[index] == "\u{1B}",
+               let escapeEnd = Self.terminalEscapeSequenceEnd(
+                   in: renderedThought,
+                   from: index
+               ) {
+                if thoughtFoldingState.rendersCurrentLine {
+                    output += renderedThought[index..<escapeEnd]
+                }
+                index = escapeEnd
+                continue
+            }
+
+            let character = renderedThought[index]
+            if Self.isTerminalLineBreak(character) {
+                if thoughtFoldingState.rendersCurrentLine {
+                    output.append(character)
+                }
+                thoughtFoldingState.finishCurrentPhysicalLine()
+            } else {
+                let characterWidth = TerminalANSIText.visibleWidth(of: character)
+                if thoughtFoldingState.currentColumn > 0,
+                   thoughtFoldingState.currentColumn + characterWidth > physicalLineWidth {
+                    let wrappedVisibleRow = thoughtFoldingState.rendersCurrentLine
+                    thoughtFoldingState.finishCurrentPhysicalLine()
+                    if wrappedVisibleRow {
+                        output.append("\n")
+                    }
+                }
+
+                if thoughtFoldingState.rendersCurrentLine {
+                    output.append(character)
+                } else {
+                    thoughtFoldingState.recordOmittedContent()
+                }
+                thoughtFoldingState.currentColumn += characterWidth
+            }
+            index = renderedThought.index(after: index)
+        }
+        return output
+    }
+
+    private static func isTerminalLineBreak(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            CharacterSet.newlines.contains(scalar)
+        }
+    }
+
+    /// Returns the first index after a CSI or OSC terminal escape. Rendered
+    /// Markdown normally contributes SGR sequences, but accepting OSC too keeps
+    /// the folding boundary safe when hyperlinks are enabled.
+    private static func terminalEscapeSequenceEnd(
+        in text: String,
+        from start: String.Index
+    ) -> String.Index? {
+        let introducer = text.index(after: start)
+        guard introducer < text.endIndex else {
+            return nil
+        }
+
+        switch text[introducer] {
+        case "[":
+            var cursor = text.index(after: introducer)
+            while cursor < text.endIndex {
+                let character = text[cursor]
+                if character.unicodeScalars.count == 1,
+                   let scalar = character.unicodeScalars.first,
+                   (0x40...0x7E).contains(scalar.value) {
+                    return text.index(after: cursor)
+                }
+                cursor = text.index(after: cursor)
+            }
+        case "]":
+            var cursor = text.index(after: introducer)
+            while cursor < text.endIndex {
+                let character = text[cursor]
+                if character == "\u{7}",
+                   cursor < text.endIndex {
+                    return text.index(after: cursor)
+                }
+                if character == "\u{1B}" {
+                    let following = text.index(after: cursor)
+                    if following < text.endIndex, text[following] == "\\" {
+                        return text.index(after: following)
+                    }
+                }
+                cursor = text.index(after: cursor)
+            }
+        default:
+            // A two-byte escape (for example ESC 7) is atomic as well.
+            return text.index(after: introducer)
+        }
+        return nil
     }
 
     private static func finishStreamingContent(
@@ -456,6 +661,11 @@ actor TerminalChatRenderCoordinator {
 
     func writeSubmittedPrompt(_ prompt: String) {
         interruptActiveToolForInterleavedOutputIfNeeded()
+        // A new submitted prompt is a hard transcript boundary. Finalize any
+        // preceding streams first so a coalesced assistant tail cannot be lost
+        // behind the next turn's prompt or separator.
+        finishThoughtOutputIfNeeded()
+        finishAssistantContentFormatting()
         let background = "\u{1B}[48;5;236m"
         let clearToEnd = "\u{1B}[K"
         let reset = "\u{1B}[0m"
@@ -467,8 +677,25 @@ actor TerminalChatRenderCoordinator {
                 return "\(background)\(prefix)\(line)\(clearToEnd)\(reset)"
             }
             .joined(separator: "\n")
-        writeChat("\n\(renderedLines)\n\n", to: .standardError)
+        let separator = hasWrittenSubmittedPrompt
+            ? "\(thematicTurnRule())\n"
+            : ""
+        writeChat("\n\(separator)\(renderedLines)\n\n", to: .standardError)
+        hasWrittenSubmittedPrompt = true
         renderPendingOverviewsIfIdle()
+    }
+
+    /// A terminal-safe visual break between submitted turns. The final column
+    /// stays deliberately unused because auto-wrap at exactly the terminal width
+    /// is terminal-dependent; an interactive input inset is budgeted as well.
+    private func thematicTurnRule() -> String {
+        let contentInsetWidth = TerminalChat.displayWidth(lineInset)
+        let safeWidth = max(1, columnWidthProvider() - contentInsetWidth - 1)
+        let rule = String(repeating: "─", count: safeWidth)
+        guard standardErrorIsTerminal else {
+            return rule
+        }
+        return "\u{1B}[90m\(rule)\u{1B}[0m"
     }
 
     func writeOutput(_ text: String, preservesSpacing: Bool = false) {
@@ -580,6 +807,7 @@ actor TerminalChatRenderCoordinator {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
         prepareForToolOutput()
+        toolStartInstants[toolCall.id] = toolNow()
         activeToolBlockIsSubAgentTool = DirectSubAgentRuntime
             .isSubAgentToolName(toolCall.name)
         renderToolBlock(
@@ -597,6 +825,13 @@ actor TerminalChatRenderCoordinator {
     ) {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
+        let elapsed = toolStartInstants.removeValue(forKey: toolCall.id)
+            .map { $0.duration(to: toolNow()) }
+        let compactStatusDetail = TerminalChat.compactToolCompletionDetail(
+            for: toolCall,
+            result: result,
+            elapsed: elapsed
+        )
 
         // A completion redraws in the style of the block it owns, even if the
         // user toggled details while the tool was running. A stale completion
@@ -607,7 +842,10 @@ actor TerminalChatRenderCoordinator {
         } ?? toolBlockStyle(for: toolOutputDetailLevel)
         renderToolBlock(
             toolCall,
-            lifecycle: .completed(result),
+            lifecycle: .completed(
+                result: result,
+                compactStatusDetail: compactStatusDetail
+            ),
             style: style,
             maximumInPlaceRows: maximumInPlaceRows
         )
@@ -745,10 +983,15 @@ actor TerminalChatRenderCoordinator {
                 columnWidth: columnWidth
             )
             .map(TerminalChat.DetailedToolRow.text)
-        case let (.compact, .completed(result)):
+        case let (.compact, .completed(result, compactStatusDetail)):
+            let hasFailedProcessExit = TerminalChat.compactLocalExecExitCode(
+                for: toolCall,
+                result: result
+            ).map { $0 != 0 } ?? false
             return TerminalChat.compactToolLines(
                 for: toolCall,
-                statusIcon: result.isFailure ? "⚠️" : "✅",
+                statusIcon: result.isFailure || hasFailedProcessExit ? "⚠️" : "✅",
+                statusDetail: compactStatusDetail,
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
             )
@@ -760,7 +1003,7 @@ actor TerminalChatRenderCoordinator {
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
             )
-        case let (.detailed, .completed(result)):
+        case let (.detailed, .completed(result, _)):
             let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
             return TerminalChat.safelyWrappedDetailedToolRows(
                 TerminalChat.detailedToolCallCompletedRows(

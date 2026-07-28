@@ -11,7 +11,6 @@ import Markdown
 public struct TerminalMarkdownStreamFormatter {
     private static let reset = "\u{1B}[0m"
     private static let dim = "\u{1B}[90m"
-    private static let code = "\u{1B}[38;5;180m"
     private static let maxBufferedLineLength = 240
     private static let maxMarkdownBufferedLineLength = 2_000
     // Soft safety net that drives incremental streaming. Kept low so list-heavy
@@ -47,7 +46,7 @@ public struct TerminalMarkdownStreamFormatter {
     /// two deltas (e.g. `**` arriving as two separate deltas) are handled
     /// because the first marker character already halts emission.
     private static let streamingStopChars: Set<Character> = [
-        "`", "*", "_", "~", "[", "<", "|"
+        "`", "*", "_", "~", "[", "<", "|", "\r"
     ]
     /// A zero-width non-whitespace prefix used only while parsing an inline
     /// tail. It prevents the tail from being reinterpreted as a new block when
@@ -65,6 +64,21 @@ public struct TerminalMarkdownStreamFormatter {
         case blockQuote
         case tableCandidate
         case table
+    }
+
+    /// The exact marker that opened a fenced code block. CommonMark requires a
+    /// matching marker and a closing run at least as long as the opening run;
+    /// retaining both prevents an inner shorter run from terminating the block.
+    private struct CodeFence {
+        let marker: Character
+        let length: Int
+        let language: String?
+    }
+
+    private struct CodeFenceRun {
+        let marker: Character
+        let length: Int
+        let remainder: String
     }
 
     /// Incremental classification of the still-unemitted line start. A line
@@ -87,6 +101,7 @@ public struct TerminalMarkdownStreamFormatter {
     private let fixedRenderWidth: Int?
     private let supportsHyperlinks: Bool
     private let removesUnbalancedStrongMarkers: Bool
+    private let palette: TerminalMarkdownPalette
     
     /// Visible terminal width used for reflow. When no fixed width was injected
     /// (production), this is re-read on each access so output adapts to live
@@ -95,8 +110,7 @@ public struct TerminalMarkdownStreamFormatter {
         fixedRenderWidth ?? Self.detectTerminalWidth()
     }
     private var pendingLine = ""
-    private var isInCodeFence = false
-    private var codeFenceLanguage: String?
+    private var activeCodeFence: CodeFence?
     private var blockLines: [String] = []
     private var blockKind: BlockKind?
     // Streaming ordered-list state. While flushing an ordered list item-by-item,
@@ -138,18 +152,21 @@ public struct TerminalMarkdownStreamFormatter {
         self.fixedRenderWidth = nil
         self.supportsHyperlinks = Self.detectHyperlinkSupport()
         self.removesUnbalancedStrongMarkers = removesUnbalancedStrongMarkers
+        self.palette = .detected
     }
     
     init(
         isEnabled: Bool,
         renderWidth: Int,
         supportsHyperlinks: Bool,
-        removesUnbalancedStrongMarkers: Bool = false
+        removesUnbalancedStrongMarkers: Bool = false,
+        palette: TerminalMarkdownPalette? = nil
     ) {
         self.isEnabled = isEnabled
         self.fixedRenderWidth = renderWidth
         self.supportsHyperlinks = supportsHyperlinks
         self.removesUnbalancedStrongMarkers = removesUnbalancedStrongMarkers
+        self.palette = palette ?? .detected
     }
     
     public mutating func consume(_ text: String) -> String {
@@ -216,8 +233,7 @@ public struct TerminalMarkdownStreamFormatter {
             return ""
         }
         defer {
-            isInCodeFence = false
-            codeFenceLanguage = nil
+            activeCodeFence = nil
             resetPendingLineState()
         }
         var rendered = ""
@@ -251,14 +267,20 @@ public struct TerminalMarkdownStreamFormatter {
     /// line-local cache. This keeps consecutive newlines and multiple complete
     /// lines in one input delta equivalent to the former buffered path.
     private mutating func completePendingLine() -> String {
+        // A CR immediately before the observed LF belongs to the same line
+        // ending. Keeping CR buffered (it is a streaming stop character) makes
+        // this normalization work even when the pair spans two deltas.
+        let completedLine = pendingLine.hasSuffix("\r")
+            ? String(pendingLine.dropLast())
+            : pendingLine
         let rendered: String
         if hasEmittedPendingPrefix {
             rendered = completePartiallyEmittedLine(
-                pendingLine,
+                completedLine,
                 startingAtColumn: emittedPendingPrefixColumn
             )
         } else {
-            rendered = handleCompleteLine(pendingLine)
+            rendered = handleCompleteLine(completedLine)
         }
         resetPendingLineState()
         return rendered
@@ -268,7 +290,7 @@ public struct TerminalMarkdownStreamFormatter {
     /// immediately, so a later append sees only the un-emitted tail and cannot
     /// invalidate a stored index into `pendingLine`.
     private mutating func streamPendingLineIfSafe() -> String {
-        guard !isInCodeFence,
+        guard activeCodeFence == nil,
               blockKind == nil,
               !pendingLine.isEmpty else {
             return ""
@@ -364,21 +386,31 @@ public struct TerminalMarkdownStreamFormatter {
         let newline = appendsNewline ? "\n" : ""
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         
-        // Code fences take precedence and are handled line by line.
-        if trimmed.hasPrefix("```") {
-            let flushed = flushBlock()
-            if isInCodeFence {
-                isInCodeFence = false
-                codeFenceLanguage = nil
-            } else {
-                isInCodeFence = true
-                codeFenceLanguage = codeFenceLanguage(from: trimmed)
+        // Fences are presentation boundaries, never literal terminal output.
+        // The exact opening marker/run is retained so shorter inner runs and
+        // fence-looking payload text remain code rather than being discarded.
+        if let activeCodeFence {
+            if isClosingCodeFence(line, for: activeCodeFence) {
+                self.activeCodeFence = nil
+                return flushBlock() + newline
             }
-            return flushed + "\(Self.dim)\(line)\(Self.reset)\(newline)"
+            return TerminalCodeBlockRenderer.renderCodeLine(
+                line,
+                language: activeCodeFence.language,
+                width: codeBlockWidth,
+                palette: palette
+            ).joined(separator: "\n") + newline
         }
-        
-        if isInCodeFence {
-            return "\(TerminalCodeBlockRenderer.renderLine(line, language: codeFenceLanguage))\(newline)"
+
+        if let openingFence = openingCodeFence(in: line) {
+            let flushed = flushBlock()
+            activeCodeFence = openingFence
+            let header = TerminalCodeBlockRenderer.renderHeader(
+                language: openingFence.language,
+                width: codeBlockWidth,
+                palette: palette
+            )
+            return flushed + header + newline
         }
         
         // Continue or start a multi-line block.
@@ -1267,8 +1299,16 @@ public struct TerminalMarkdownStreamFormatter {
         let rendererWidth = renderWidth > 0 ? max(1, renderWidth - 1) : 0
         return TerminalSwiftMarkdownRenderer(
             supportsHyperlinks: supportsHyperlinks,
-            renderWidth: rendererWidth
+            renderWidth: rendererWidth,
+            palette: palette
         )
+    }
+
+    /// Code is emitted directly by the stream (rather than via `makeRenderer`)
+    /// and therefore reserves the same one-column chat inset as a complete
+    /// Markdown renderer created above.
+    private var codeBlockWidth: Int {
+        renderWidth > 0 ? max(1, renderWidth - 1) : 0
     }
     
     /// Reflows rendered output to the terminal width, but never tables or other
@@ -1284,7 +1324,7 @@ public struct TerminalMarkdownStreamFormatter {
     }
     
     private func shouldFlushPendingLineForStreaming(_ line: String) -> Bool {
-        !isInCodeFence && blockKind == nil && !mayContainMarkdown(in: line)
+        activeCodeFence == nil && blockKind == nil && !mayContainMarkdown(in: line)
     }
     
     private func mayContainMarkdown(in line: String) -> Bool {
@@ -1485,9 +1525,67 @@ public struct TerminalMarkdownStreamFormatter {
         return !source[beforeMarker].isWhitespace
     }
     
-    private func codeFenceLanguage(from line: String) -> String? {
-        let info = String(line.dropFirst(3))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    private func openingCodeFence(in line: String) -> CodeFence? {
+        guard let run = codeFenceRun(in: line) else {
+            return nil
+        }
+        let info = run.remainder.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Backticks are forbidden in the info string of a backtick fence. A
+        // tilde fence has no equivalent restriction.
+        guard run.marker != "`" || !info.contains("`") else {
+            return nil
+        }
+        return CodeFence(
+            marker: run.marker,
+            length: run.length,
+            language: codeFenceLanguage(fromInfo: info)
+        )
+    }
+
+    private func isClosingCodeFence(_ line: String, for fence: CodeFence) -> Bool {
+        guard let run = codeFenceRun(in: line),
+              run.marker == fence.marker,
+              run.length >= fence.length else {
+            return false
+        }
+        return run.remainder.allSatisfy(\.isWhitespace)
+    }
+
+    /// Parses an opening/closing marker indented by at most three spaces. Tabs
+    /// are not treated as partial indentation here: accepting one would require
+    /// full CommonMark tab-stop expansion and could misclassify ordinary code.
+    private func codeFenceRun(in line: String) -> CodeFenceRun? {
+        var index = line.startIndex
+        var indentation = 0
+        while index < line.endIndex, line[index] == " " {
+            indentation += 1
+            guard indentation <= 3 else {
+                return nil
+            }
+            index = line.index(after: index)
+        }
+        guard index < line.endIndex,
+              line[index] == "`" || line[index] == "~" else {
+            return nil
+        }
+
+        let marker = line[index]
+        var length = 0
+        while index < line.endIndex, line[index] == marker {
+            length += 1
+            index = line.index(after: index)
+        }
+        guard length >= 3 else {
+            return nil
+        }
+        return CodeFenceRun(
+            marker: marker,
+            length: length,
+            remainder: String(line[index...])
+        )
+    }
+
+    private func codeFenceLanguage(fromInfo info: String) -> String? {
         guard let language = info.split(whereSeparator: { $0.isWhitespace }).first else {
             return nil
         }

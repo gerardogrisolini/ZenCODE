@@ -38,7 +38,7 @@ struct TerminalSwiftMarkdownRendererTests {
 
     @Test
     func tableHeaderStyleIsRestoredAfterInlineReset() {
-        var renderer = TerminalSwiftMarkdownRenderer()
+        var renderer = TerminalSwiftMarkdownRenderer(palette: .dark)
         let document = Document(parsing: """
         | Header `code` after |
         | --- |
@@ -47,27 +47,27 @@ struct TerminalSwiftMarkdownRendererTests {
 
         let rendered = renderer.visit(document)
 
-        #expect(rendered.contains("\u{1B}[38;5;180mcode\u{1B}[0m\u{1B}[1;38;5;81m after"))
+        #expect(rendered.contains("\u{1B}[48;5;236m\u{1B}[38;5;180mcode\u{1B}[0m\u{1B}[1;38;5;81m after"))
     }
 
     @Test
     func headingStyleIsRestoredAfterInlineCodeReset() {
-        var renderer = TerminalSwiftMarkdownRenderer()
+        var renderer = TerminalSwiftMarkdownRenderer(palette: .dark)
         let document = Document(parsing: "## Title with `code` after")
 
         let rendered = renderer.visit(document)
 
-        #expect(rendered.contains("\u{1B}[38;5;180mcode\u{1B}[0m\u{1B}[1;38;5;75m after"))
+        #expect(rendered.contains("\u{1B}[48;5;236m\u{1B}[38;5;180mcode\u{1B}[0m\u{1B}[1;38;5;75m after"))
     }
 
     @Test
     func strongStyleIsRestoredAfterInlineCodeReset() {
-        var renderer = TerminalSwiftMarkdownRenderer()
+        var renderer = TerminalSwiftMarkdownRenderer(palette: .dark)
         let document = Document(parsing: "This is **bold `code` after** text")
 
         let rendered = renderer.visit(document)
 
-        #expect(rendered.contains("\u{1B}[38;5;180mcode\u{1B}[0m\u{1B}[1m after"))
+        #expect(rendered.contains("\u{1B}[48;5;236m\u{1B}[38;5;180mcode\u{1B}[0m\u{1B}[1m after"))
     }
 
     @Test

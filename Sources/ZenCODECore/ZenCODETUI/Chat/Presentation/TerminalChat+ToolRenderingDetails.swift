@@ -682,10 +682,17 @@ extension TerminalChat {
         return rendered
     }
 
+    /// Minimum useful width for each source cell in a side-by-side expanded
+    /// diff. With the standard two-cell indentation and three-cell divider,
+    /// this documents a 53-cell content-width threshold (2 + 3 + 24 * 2).
+    /// At or below a smaller budget the renderer uses stacked unified `-` / `+`
+    /// rows rather than squeezing source code into unusably narrow columns.
+    nonisolated static let detailedToolSideBySideDiffMinimumCellWidth = 24
+
     /// Renders old and new edit payloads side by side when both columns can
-    /// retain useful source context. Narrow terminals receive labelled vertical
-    /// snippets, which the detailed wrapper safely reflows without horizontal
-    /// scrolling.
+    /// retain useful source context. Narrow terminals receive a unified,
+    /// stacked `-` / `+` view, which the detailed wrapper safely reflows without
+    /// horizontal scrolling.
     nonisolated static func numberedDiffSnippetLines(
         old: String,
         new: String,
@@ -702,10 +709,9 @@ extension TerminalChat {
     }
 
     /// Renders old and new edit payloads side by side when both columns can
-    /// retain useful source context. Narrow terminals receive labelled vertical
-    /// snippets, which the detailed wrapper safely reflows without horizontal
-    /// scrolling. Each side-by-side row carries its two cells separately, so no
-    /// content sequence can be mistaken for the divider.
+    /// retain useful source context. Narrow terminals receive a unified,
+    /// stacked `-` / `+` view. Each side-by-side row carries its two cells
+    /// separately, so no content sequence can be mistaken for the divider.
     nonisolated static func numberedDiffSnippetRows(
         old: String,
         new: String,
@@ -721,11 +727,12 @@ extension TerminalChat {
             (availableWidth - displayWidth(indentation) - dividerWidth) / 2
         )
 
-        guard columnWidth >= 24 else {
-            return [.text("old:")]
-                + numberedCodeSnippetRows(old, indentation: indentation)
-                + [.text("new:")]
-                + numberedCodeSnippetRows(new, indentation: indentation)
+        guard columnWidth >= detailedToolSideBySideDiffMinimumCellWidth else {
+            return numberedUnifiedDiffSnippetRows(
+                old: oldSnippet,
+                new: newSnippet,
+                indentation: indentation
+            )
         }
 
         let oldNumberWidth = String(max(1, oldSnippet.lines.count)).count
@@ -755,7 +762,8 @@ extension TerminalChat {
                 )
             )))
         }
-        for row in detailedToolDiffRows(old: oldSnippet.lines, new: newSnippet.lines) {            let oldCell = detailedToolDiffCell(
+        for row in detailedToolDiffRows(old: oldSnippet.lines, new: newSnippet.lines) {
+            let oldCell = detailedToolDiffCell(
                 line: row.oldLineIndex.map { oldSnippet.lines[$0] },
                 number: row.oldLineIndex.map { $0 + 1 },
                 numberWidth: oldNumberWidth,
@@ -781,6 +789,99 @@ extension TerminalChat {
                 oldCell: paddedToDisplayWidth(oldMarker, width: columnWidth),
                 newCell: paddedToDisplayWidth(newMarker, width: columnWidth)
             )))
+        }
+        return rows
+    }
+
+    /// Builds the narrow presentation from the same LCS row model as the wide
+    /// view. Changed source lines become adjacent `-` / `+` rows; unchanged
+    /// lines are emitted once as context. This preserves source numbering and
+    /// structural empty/truncation markers without relying on in-band text
+    /// sentinels or a side-by-side divider.
+    private nonisolated static func numberedUnifiedDiffSnippetRows(
+        old: DetailedToolSnippet,
+        new: DetailedToolSnippet,
+        indentation: String
+    ) -> [DetailedToolRow] {
+        let numberWidth = String(max(1, old.lines.count, new.lines.count)).count
+        let blankLineNumber = String(repeating: " ", count: numberWidth)
+
+        func lineNumber(_ index: Int?) -> String {
+            guard let index else {
+                return blankLineNumber
+            }
+            return paddedLineNumber(index + 1, width: numberWidth)
+        }
+
+        func unifiedRow(
+            marker: String,
+            lineIndex: Int?,
+            content: String
+        ) -> DetailedToolRow {
+            .unifiedDiff(DetailedToolUnifiedDiffLine(
+                indentation: indentation,
+                marker: marker,
+                lineNumber: lineNumber(lineIndex),
+                content: terminalSafeSnippetLine(content)
+            ))
+        }
+
+        var rows: [DetailedToolRow] = []
+        if old.isEmptyPayload {
+            rows.append(unifiedRow(
+                marker: "-",
+                lineIndex: nil,
+                content: detailedToolEmptyPayloadMarker
+            ))
+        }
+        if new.isEmptyPayload {
+            rows.append(unifiedRow(
+                marker: "+",
+                lineIndex: nil,
+                content: detailedToolEmptyPayloadMarker
+            ))
+        }
+
+        for row in detailedToolDiffRows(old: old.lines, new: new.lines) {
+            if let oldIndex = row.oldLineIndex,
+               let newIndex = row.newLineIndex,
+               old.lines[oldIndex] == new.lines[newIndex] {
+                rows.append(unifiedRow(
+                    marker: " ",
+                    lineIndex: newIndex,
+                    content: new.lines[newIndex]
+                ))
+                continue
+            }
+            if let oldIndex = row.oldLineIndex {
+                rows.append(unifiedRow(
+                    marker: "-",
+                    lineIndex: oldIndex,
+                    content: old.lines[oldIndex]
+                ))
+            }
+            if let newIndex = row.newLineIndex {
+                rows.append(unifiedRow(
+                    marker: "+",
+                    lineIndex: newIndex,
+                    content: new.lines[newIndex]
+                ))
+            }
+        }
+
+        if old.isTruncated {
+            rows.append(unifiedRow(
+                marker: "-",
+                lineIndex: nil,
+                content: "... truncated"
+            ))
+        }
+        if new.isTruncated {
+            rows.append(unifiedRow(
+                marker: "+",
+                lineIndex: nil,
+                content: "... truncated"
+            ))
         }
         return rows
     }
