@@ -10,6 +10,31 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-07-28
+
+### Fixed
+
+- ChatGPT prompt-cache persistence crash: persisted cache keys now use a
+  compact SHA-256 hash of a canonical session-identity encoding instead of
+  embedding the full system prompt. The previous reversible representation
+  could grow to tens of kilobytes per session and, with hundreds of sessions,
+  exceed macOS's 4 MiB `UserDefaults` limit. Added bounded storage with LRU
+  eviction, value validation, legacy-format migration, and a dedicated
+  mutation lock.
+- `MCPFeatureConfiguration` protocol dispatch crash: `makeExecutor`,
+  `toolNamePrefix`, and `descriptionPrefix` are now protocol requirements with
+  dynamically dispatched defaults, replacing the statically dispatched
+  `fatalError` default that trapped even when a conformance supplied its own
+  implementation.
+
+### Changed
+
+- Telegram progress reporting: the turn reporter now accumulates assistant
+  content and emits tool-call messages inline, replacing the previous stream
+  of separate system messages (turn started, voice received, transcription
+  ready, file-change summary). The final response is delivered once on
+  completion, reducing notification noise.
+
 ## [1.0.4] - 2026-07-27
 
 ### Fixed
@@ -111,7 +136,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.4...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.1...v1.0.2
