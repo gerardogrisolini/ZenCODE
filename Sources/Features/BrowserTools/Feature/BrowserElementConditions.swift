@@ -9,6 +9,7 @@
 //
 
 import FeatureKit
+import ToolCore
 import Dispatch
 import Foundation
 
@@ -1088,5 +1089,20 @@ extension CDPSession {
     private func elementConditionElapsedMilliseconds(since start: UInt64) -> Int {
         let elapsedNanoseconds = DispatchTime.now().uptimeNanoseconds &- start
         return Int(min(elapsedNanoseconds / 1_000_000, UInt64(Int.max)))
+    }
+}
+
+
+// MARK: - Semantic presentation
+
+extension BrowserWaitElementTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser element", action: "Wait", kind: .read, targetKeyPaths: ["ref", "condition", "value"])
+    }
+}
+
+extension BrowserAssertElementTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser element", action: "Assert", kind: .inspect, targetKeyPaths: ["ref", "condition", "value"])
     }
 }

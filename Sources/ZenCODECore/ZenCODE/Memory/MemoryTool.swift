@@ -40,7 +40,12 @@ public enum MemoryTool {
                 "limit": { "type": "number" }
               }
             }
-            """
+            """,
+            presentation: .standard(
+                title: "Project memory",
+                action: "Read",
+                kind: .read
+            )
         ),
         ToolDescriptor(
             name: "memory.search",
@@ -56,7 +61,13 @@ public enum MemoryTool {
               },
               "required": ["query"]
             }
-            """
+            """,
+            presentation: .standard(
+                title: "Project memory",
+                action: "Search",
+                kind: .search,
+                targetKeyPaths: ["query"]
+            )
         ),
         ToolDescriptor(
             name: "memory.write",
@@ -70,7 +81,12 @@ public enum MemoryTool {
               },
               "required": ["content"]
             }
-            """
+            """,
+            presentation: .standard(
+                title: "Project memory",
+                action: "Write",
+                kind: .edit
+            )
         ),
         ToolDescriptor(
             name: "memory.archive",
@@ -84,7 +100,13 @@ public enum MemoryTool {
               },
               "required": ["id"]
             }
-            """
+            """,
+            presentation: .standard(
+                title: "Memory entry",
+                action: "Archive",
+                kind: .delete,
+                targetKeyPaths: ["id"]
+            )
         )
     ]
 

@@ -780,3 +780,36 @@ private enum SwiftToolsFeatureError: LocalizedError {
         }
     }
 }
+
+
+// MARK: - Semantic presentation
+
+extension SwiftBuildTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Swift package", action: "Build", kind: .execute, targetKeyPaths: ["target", "product", "path", "workingDirectory", "cwd"])
+    }
+}
+
+extension SwiftTestTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Swift tests", action: "Test", kind: .execute, targetKeyPaths: ["filter", "target", "path", "workingDirectory", "cwd"])
+    }
+}
+
+extension SwiftRunTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Swift executable", action: "Run", kind: .execute, targetKeyPaths: ["executable", "product", "path", "workingDirectory", "cwd"])
+    }
+}
+
+extension SwiftPackageTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Swift package", action: "Manage", kind: .manage, targetKeyPaths: ["action", "path", "workingDirectory", "cwd"])
+    }
+}
+
+extension SwiftOutlineTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Swift outline", action: "Inspect", kind: .inspect, targetKeyPaths: ["file_path", "path"], targetFormat: .path)
+    }
+}

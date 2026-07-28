@@ -115,7 +115,7 @@ enum SwiftBundledFeatureCatalog {
     }
 
     private static func browserToolDescriptors() -> [ToolDescriptor] {
-        [
+        return [
             ToolDescriptor(
                 name: "browser.google_search",
                 description: "Searches Google using a real Chrome browser and returns visible links plus a text snapshot as markdown. A visible Chrome window is launched on first use.",
@@ -231,7 +231,7 @@ enum SwiftBundledFeatureCatalog {
                 description: "Closes a persistent Browser page by pageId.",
                 inputSchema: #"{"type":"object","properties":{"pageId":{"type":"string"},"page_id":{"type":"string"}},"required":["pageId"]}"#
             ),
-        ]
+        ].map(applyingDefaultPresentation)
     }
 
     private static func gitToolDescriptors() -> [ToolDescriptor] {
@@ -249,7 +249,7 @@ enum SwiftBundledFeatureCatalog {
     }
 
     private static func jiraToolDescriptors() -> [ToolDescriptor] {
-        [
+        return [
             ToolDescriptor(
                 name: "jira.search",
                 description: "Searches Jira issues by issue key, issue URL, or text and returns selectable issue summaries.",
@@ -265,6 +265,23 @@ enum SwiftBundledFeatureCatalog {
                 description: "Clears the persisted Jira API token used by the Jira tools.",
                 inputSchema: #"{"type":"object","properties":{}}"#
             )
-        ]
+        ].map(applyingDefaultPresentation)
+    }
+
+    private static func applyingDefaultPresentation(
+        _ tool: ToolDescriptor
+    ) -> ToolDescriptor {
+        guard tool.presentation.isAutomatic,
+              let presentation = DirectToolPresentationDefinitions.definition(for: tool.name) else {
+            return tool
+        }
+        return ToolDescriptor(
+            name: tool.name,
+            title: tool.title,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+            outputSchema: tool.outputSchema,
+            presentation: presentation
+        )
     }
 }

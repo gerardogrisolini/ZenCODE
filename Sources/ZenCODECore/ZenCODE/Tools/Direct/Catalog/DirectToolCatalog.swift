@@ -9,17 +9,30 @@ import Foundation
 
 public struct DirectToolDescriptor: Sendable {
     public let name: String
+    public let title: String?
     public let description: String
     public let inputSchema: String
+    public let outputSchema: String?
+    public let presentation: ToolPresentationDefinition
 
     public init(
         name: String,
         description: String,
-        inputSchema: String
+        inputSchema: String,
+        title: String? = nil,
+        outputSchema: String? = nil,
+        presentation: ToolPresentationDefinition? = nil
     ) {
         self.name = name
+        self.title = title
         self.description = description
         self.inputSchema = inputSchema
+        self.outputSchema = outputSchema
+        self.presentation = (
+            presentation
+                ?? DirectToolPresentationDefinitions.definition(for: name)
+                ?? .automatic
+        ).validOrAutomatic
     }
 }
 
@@ -453,15 +466,21 @@ extension DirectToolDescriptor {
         self.init(
             name: toolDescriptor.name,
             description: toolDescriptor.description,
-            inputSchema: toolDescriptor.inputSchema
+            inputSchema: toolDescriptor.inputSchema,
+            title: toolDescriptor.title,
+            outputSchema: toolDescriptor.outputSchema,
+            presentation: toolDescriptor.presentation
         )
     }
 
     public var toolDescriptor: ToolDescriptor {
         ToolDescriptor(
             name: name,
+            title: title,
             description: description,
-            inputSchema: inputSchema
+            inputSchema: inputSchema,
+            outputSchema: outputSchema,
+            presentation: presentation
         )
     }
 
@@ -481,7 +500,15 @@ public struct AgentToolProviderRegistry: Sendable {
     }
 
     public var descriptors: [DirectToolDescriptor] {
-        ToolDescriptor.canonicalized(providers.flatMap(\.tools)).map(DirectToolDescriptor.init)
+        var seenNames = Set<String>()
+        var selected: [ToolDescriptor] = []
+        for provider in providers {
+            for tool in ToolDescriptor.canonicalized(provider.tools)
+            where seenNames.insert(tool.name).inserted {
+                selected.append(tool)
+            }
+        }
+        return ToolDescriptor.canonicalized(selected).map(DirectToolDescriptor.init)
     }
 
     public func executor(for toolName: String) -> AgentToolExecutor? {

@@ -4,10 +4,34 @@
 //
 
 import Foundation
+import ToolCore
 
 /// Shared presentation metadata for direct-agent tool calls.
 public enum ToolCallPresentation {
+    public static func resolved(
+        for toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult? = nil,
+        mode: ToolPresentationMode
+    ) -> ResolvedToolPresentation {
+        ToolPresentationResolver.resolve(
+            call: toolCall,
+            result: result,
+            mode: mode
+        )
+    }
+
     public static func toolTitle(for toolCall: DirectAgentToolCall) -> String {
+        if !toolCall.presentation.isAutomatic {
+            let presentation = resolved(for: toolCall, mode: .compact)
+            if let action = presentation.action,
+               let target = presentation.target {
+                return "\(action) \(target)"
+            }
+            if let target = presentation.target {
+                return "\(presentation.title) \(target)"
+            }
+            return presentation.action ?? presentation.title
+        }
 //        switch toolKind(for: toolCall.name) {
 //        case "read":
 //            return "Read \(displayToolTarget(for: toolCall) ?? toolCall.name)"
@@ -24,6 +48,13 @@ public enum ToolCallPresentation {
 //        default:
             return displayToolTarget(for: toolCall).map { "\(toolCall.name) \($0)" } ?? toolCall.name
 //        }
+    }
+
+    public static func toolKind(for toolCall: DirectAgentToolCall) -> String {
+        guard !toolCall.presentation.isAutomatic else {
+            return toolKind(for: toolCall.name)
+        }
+        return resolved(for: toolCall, mode: .compact).kind.rawValue
     }
 
     public static func toolKind(for toolName: String) -> String {
@@ -231,6 +262,9 @@ public enum ToolCallPresentation {
     }
 
     public static func displayToolTarget(for toolCall: DirectAgentToolCall) -> String? {
+        if !toolCall.presentation.isAutomatic {
+            return resolved(for: toolCall, mode: .compact).target
+        }
         if toolCall.name == "local.applyPatch",
            let target = patchDisplayTarget(from: toolCall.argumentsObject) {
             return target

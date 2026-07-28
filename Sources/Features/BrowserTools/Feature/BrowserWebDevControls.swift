@@ -9,6 +9,7 @@
 //
 
 import FeatureKit
+import ToolCore
 import Foundation
 import Synchronization
 
@@ -1020,5 +1021,32 @@ private enum BrowserWebDevPageInput {
         id: String?
     ) -> String? {
         pageID?.nilIfBlank ?? pageIDSnakeCase?.nilIfBlank ?? id?.nilIfBlank
+    }
+}
+
+
+// MARK: - Semantic presentation
+
+extension BrowserViewportTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser viewport", action: "Set", kind: .manage, targetKeyPaths: ["pageId", "page_id", "preset"])
+    }
+}
+
+extension BrowserResetStateTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser state", action: "Reset", kind: .delete, targetKeyPaths: ["pageId", "page_id", "scope"])
+    }
+}
+
+extension BrowserWaitTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser condition", action: "Wait", kind: .read, targetKeyPaths: ["condition", "value", "pageId", "page_id"])
+    }
+}
+
+extension BrowserAssertTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser condition", action: "Assert", kind: .inspect, targetKeyPaths: ["condition", "value", "pageId", "page_id"])
     }
 }

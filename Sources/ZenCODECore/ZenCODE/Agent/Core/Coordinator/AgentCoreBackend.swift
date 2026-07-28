@@ -232,8 +232,14 @@ public actor AgentCoreBackend {
     }
 
     public func activeToolDescriptors() async -> [DirectToolDescriptor] {
+        await activeToolDescriptors(sessionID: nil)
+    }
+
+    public func activeToolDescriptors(
+        sessionID: String?
+    ) async -> [DirectToolDescriptor] {
         if let backend = activeBackend {
-            return await backend.activeToolDescriptors()
+            return await backend.activeToolDescriptors(sessionID: sessionID)
         }
         return []
     }

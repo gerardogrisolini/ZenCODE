@@ -51,7 +51,7 @@ extension ZenCODEACPBridge {
             "sessionUpdate": "tool_call",
             "toolCallId": toolCall.id,
             "title": toolTitle(for: toolCall),
-            "kind": toolKind(for: toolCall.name),
+            "kind": toolKind(for: toolCall),
             "status": "pending",
             "rawInput": toolCall.argumentsObject,
             "content": [] as [Any],
@@ -67,7 +67,7 @@ extension ZenCODEACPBridge {
             "sessionUpdate": .string("tool_call"),
             "toolCallId": .string(toolCall.id),
             "title": .string(toolTitle(for: toolCall)),
-            "kind": .string(toolKind(for: toolCall.name)),
+            "kind": .string(toolKind(for: toolCall)),
             "status": .string("pending"),
             "rawInput": toolArgumentsJSONValue(for: toolCall),
             "content": .array([]),
@@ -173,7 +173,7 @@ extension ZenCODEACPBridge {
             "sessionUpdate": "tool_call_update",
             "toolCallId": toolCall.id,
             "title": toolTitle(for: toolCall),
-            "kind": toolKind(for: toolCall.name),
+            "kind": toolKind(for: toolCall),
             "status": "in_progress",
             "rawInput": toolCall.argumentsObject,
             "locations": toolLocations(for: toolCall)
@@ -187,7 +187,7 @@ extension ZenCODEACPBridge {
             "sessionUpdate": .string("tool_call_update"),
             "toolCallId": .string(toolCall.id),
             "title": .string(toolTitle(for: toolCall)),
-            "kind": .string(toolKind(for: toolCall.name)),
+            "kind": .string(toolKind(for: toolCall)),
             "status": .string("in_progress"),
             "rawInput": toolArgumentsJSONValue(for: toolCall),
             "locations": .array(toolLocations(for: toolCall).map { JSONValue.acpValue(from: $0) })
@@ -202,7 +202,7 @@ extension ZenCODEACPBridge {
             "sessionUpdate": "tool_call_update",
             "toolCallId": toolCall.id,
             "title": toolTitle(for: toolCall),
-            "kind": toolKind(for: toolCall.name),
+            "kind": toolKind(for: toolCall),
             "status": result.isFailure ? "failed" : "completed",
             "rawInput": toolCall.argumentsObject,
             "rawOutput": [
@@ -230,7 +230,7 @@ extension ZenCODEACPBridge {
             "sessionUpdate": .string("tool_call_update"),
             "toolCallId": .string(toolCall.id),
             "title": .string(toolTitle(for: toolCall)),
-            "kind": .string(toolKind(for: toolCall.name)),
+            "kind": .string(toolKind(for: toolCall)),
             "status": .string(result.isFailure ? "failed" : "completed"),
             "rawInput": toolArgumentsJSONValue(for: toolCall),
             "rawOutput": .object([
@@ -278,6 +278,10 @@ extension ZenCODEACPBridge {
 
     public static func toolKind(for toolName: String) -> String {
         ToolCallPresentation.toolKind(for: toolName)
+    }
+
+    public static func toolKind(for toolCall: DirectAgentToolCall) -> String {
+        ToolCallPresentation.toolKind(for: toolCall)
     }
 
     public static func xcodeToolKind(for rawName: String) -> String {

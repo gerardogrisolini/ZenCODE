@@ -14,7 +14,8 @@ public struct AnyFeatureTool: Sendable {
             name: T.name,
             description: T.description,
             inputSchema: T.inputSchema,
-            outputSchema: T.outputSchema
+            outputSchema: T.outputSchema,
+            presentation: T.presentation
         )
         self.invokeBody = { inputData, context in
             let normalizedInputData = inputData.isEmpty ? Data("{}".utf8) : inputData

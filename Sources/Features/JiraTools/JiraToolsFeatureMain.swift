@@ -118,3 +118,24 @@ struct JiraToolsFeatureMain {
         #endif
     }
 }
+
+
+// MARK: - Semantic presentation
+
+extension JiraSearchTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Jira issues", action: "Search", kind: .search, targetKeyPaths: ["query"])
+    }
+}
+
+extension JiraReadTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Jira issue", action: "Read", kind: .read, targetKeyPaths: ["issue", "key", "url", "id"])
+    }
+}
+
+extension JiraSignOutTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Jira account", action: "Sign out", kind: .manage, includesParameters: false)
+    }
+}

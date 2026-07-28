@@ -7,6 +7,7 @@
 //
 
 import FeatureKit
+import ToolCore
 import Foundation
 
 enum BrowserSpecialistError: LocalizedError, Equatable {
@@ -273,5 +274,20 @@ struct BrowserPerformanceTool: FeatureTool {
             let page = try await session.pageMetadata(pageID: tab.id)
             return BrowserPerformanceOutput(page: page, metrics: metrics)
         }
+    }
+}
+
+
+// MARK: - Semantic presentation
+
+extension BrowserPDFTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser PDF", action: "Print", kind: .create, targetKeyPaths: ["pageId", "page_id", "path"], targetFormat: .path)
+    }
+}
+
+extension BrowserPerformanceTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser performance", action: "Measure", kind: .inspect, targetKeyPaths: ["pageId", "page_id", "mode"])
     }
 }

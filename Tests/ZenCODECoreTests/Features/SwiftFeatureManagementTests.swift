@@ -87,6 +87,11 @@ extension SwiftFeatureRuntimeTests {
             allowedToolNames: [SwiftFeatureRuntime.featurePackageToolsAllowedName]
         )
         #expect(descriptors.map(\.name).contains("example.echo"))
+        let scaffoldedDescriptor = try #require(
+            descriptors.first { $0.name == "example.echo" }
+        )
+        #expect(scaffoldedDescriptor.presentation.title == "Echo")
+        #expect(scaffoldedDescriptor.presentation.target?.keyPaths == ["text"])
 
         let output = try await runtime.executeIfAvailable(
             toolCall: DirectAgentToolCall(

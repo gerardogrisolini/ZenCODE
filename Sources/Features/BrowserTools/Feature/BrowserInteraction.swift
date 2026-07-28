@@ -8,6 +8,7 @@
 //
 
 import FeatureKit
+import ToolCore
 import Foundation
 import Synchronization
 
@@ -902,5 +903,20 @@ struct BrowserDialogTool: FeatureTool {
             let page = (try? await session.pageMetadata(pageID: tab.id)) ?? BrowserPage(tab: tab)
             return BrowserDialogOutput(page: page, action: action)
         }
+    }
+}
+
+
+// MARK: - Semantic presentation
+
+extension BrowserActTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser action", action: "Perform", kind: .execute, targetKeyPaths: ["action", "ref", "pageId", "page_id"])
+    }
+}
+
+extension BrowserDialogTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser dialog", action: "Handle", kind: .communicate, targetKeyPaths: ["action", "pageId", "page_id"])
     }
 }

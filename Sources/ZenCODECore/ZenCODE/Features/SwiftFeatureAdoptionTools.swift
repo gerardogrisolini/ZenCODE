@@ -445,6 +445,11 @@ extension SwiftFeatureRuntime {
         if let outputSchema = tool.outputSchema?.nilIfBlank {
             object["outputSchema"] = outputSchema
         }
+        if !tool.presentation.isAutomatic,
+           let data = try? JSONEncoder().encode(tool.presentation),
+           let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
+            object["presentation"] = value.jsonObject
+        }
         return object
     }
 

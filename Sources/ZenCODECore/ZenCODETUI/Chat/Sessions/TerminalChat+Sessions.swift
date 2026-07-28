@@ -391,6 +391,13 @@ extension TerminalChat {
         await finishThoughtOutputIfNeeded()
         await finishAssistantContentFormatting()
         await writeSystemMessage("\nRestored transcript:\n")
+        let activeDescriptors = await sessionRunner.activeToolDescriptors(
+            sessionID: sessionID
+        )
+        let descriptorsByName = Dictionary(
+            activeDescriptors.map { ($0.name, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         var renderedToolResultIDs = Set<String>()
         for message in history {
             switch message.role {
@@ -400,11 +407,13 @@ extension TerminalChat {
                 await renderSavedAssistantMessage(
                     message,
                     history: history,
+                    descriptorsByName: descriptorsByName,
                     renderedToolResultIDs: &renderedToolResultIDs
                 )
             case .tool:
                 await renderSavedUnmatchedToolResultIfNeeded(
                     message,
+                    descriptorsByName: descriptorsByName,
                     renderedToolResultIDs: &renderedToolResultIDs
                 )
             case .system:
@@ -427,6 +436,7 @@ extension TerminalChat {
     private func renderSavedAssistantMessage(
         _ message: AgentRuntimeMessage,
         history: [AgentRuntimeMessage],
+        descriptorsByName: [String: DirectToolDescriptor],
         renderedToolResultIDs: inout Set<String>
     ) async {
         if let reasoning = message.reasoningContent?.nilIfBlank {
@@ -442,7 +452,10 @@ extension TerminalChat {
         }
 
         for toolCall in message.toolCalls {
-            let directToolCall = Self.directToolCall(from: toolCall)
+            let directToolCall = Self.directToolCall(
+                from: toolCall,
+                descriptor: descriptorsByName[toolCall.name]
+            )
             if let toolResult = Self.toolResult(
                 for: toolCall,
                 in: history,
@@ -457,6 +470,7 @@ extension TerminalChat {
 
     private func renderSavedUnmatchedToolResultIfNeeded(
         _ message: AgentRuntimeMessage,
+        descriptorsByName: [String: DirectToolDescriptor],
         renderedToolResultIDs: inout Set<String>
     ) async {
         let content = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -468,11 +482,15 @@ extension TerminalChat {
             return
         }
 
+        let name = message.toolName ?? "tool.result"
+        let descriptor = descriptorsByName[name]
         let toolCall = DirectAgentToolCall(
             id: toolCallID,
-            name: message.toolName ?? "tool.result",
+            name: name,
             argumentsObject: [:],
-            argumentsJSON: "{}"
+            argumentsJSON: "{}",
+            descriptorTitle: descriptor?.title,
+            presentation: descriptor?.presentation ?? .automatic
         )
         await writeToolCallCompleted(
             toolCall,
@@ -500,14 +518,17 @@ extension TerminalChat {
         }
     }
 
-        nonisolated static func directToolCall(
-        from toolCall: AgentRuntimeToolCall
+    nonisolated static func directToolCall(
+        from toolCall: AgentRuntimeToolCall,
+        descriptor: DirectToolDescriptor? = nil
     ) -> DirectAgentToolCall {
         DirectAgentToolCall(
             id: toolCall.id ?? "restored-tool-\(UUID().uuidString.lowercased())",
             name: toolCall.name,
             argumentsObject: toolArgumentsObject(from: toolCall.argumentsJSON),
-            argumentsJSON: toolCall.argumentsJSON
+            argumentsJSON: toolCall.argumentsJSON,
+            descriptorTitle: descriptor?.title,
+            presentation: descriptor?.presentation ?? .automatic
         )
     }
 

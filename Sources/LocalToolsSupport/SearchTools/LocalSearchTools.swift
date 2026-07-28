@@ -12,6 +12,7 @@ import Darwin
 import Glibc
 #endif
 import FeatureKit
+import ToolCore
 
 
 /// Directories that are skipped by recursive text searches: VCS metadata and
@@ -193,5 +194,26 @@ struct SearchLocateTool: FeatureTool {
             }
         }
         return suggestions
+    }
+}
+
+
+// MARK: - Semantic presentation
+
+extension SearchGlobTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Files", action: "Find", kind: .search, targetKeyPaths: ["pattern", "path"])
+    }
+}
+
+extension SearchGrepTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Text", action: "Search", kind: .search, targetKeyPaths: ["pattern"])
+    }
+}
+
+extension SearchLocateTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Text", action: "Locate", kind: .search, targetKeyPaths: ["pattern"])
     }
 }

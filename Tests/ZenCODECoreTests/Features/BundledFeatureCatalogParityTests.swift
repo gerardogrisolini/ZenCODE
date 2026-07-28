@@ -43,6 +43,24 @@ struct BundledFeatureCatalogParityTests {
     }
 
     @Test
+    func nativeAndStaticallyDeclaredBundledToolsHaveExplicitPresentations() {
+        let nativeDescriptors = DirectToolCatalog.baseDescriptors
+        let missingNative = nativeDescriptors
+            .filter { $0.presentation.isAutomatic }
+            .map(\.name)
+        #expect(missingNative.isEmpty)
+
+        let staticBundledDescriptors = SwiftFeatureRuntime
+            .bundledFeatureDefinitions()
+            .filter { !$0.discoversToolsAtRuntime }
+            .flatMap(\.tools)
+        let missingBundled = staticBundledDescriptors
+            .filter { $0.presentation.isAutomatic }
+            .map(\.name)
+        #expect(missingBundled.isEmpty)
+    }
+
+    @Test
     func installerCatalogMatchesDistributionPlatformSets() throws {
         let packageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
         let catalogURL = packageRoot.appendingPathComponent("Scripts/feature-catalog.sh")

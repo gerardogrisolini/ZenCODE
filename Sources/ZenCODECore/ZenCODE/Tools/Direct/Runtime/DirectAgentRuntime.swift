@@ -49,12 +49,18 @@ public struct DirectAgentToolCall: Sendable {
     public let name: String
     private let arguments: [String: JSONValue]
     public let argumentsJSON: String
+    /// Runtime-only descriptor metadata. Session/history persistence continues
+    /// to store only id, name, and arguments.
+    public let descriptorTitle: String?
+    public let presentation: ToolPresentationDefinition
 
     public init(
         id: String,
         name: String,
         argumentsObject: [String: Any],
-        argumentsJSON: String
+        argumentsJSON: String,
+        descriptorTitle: String? = nil,
+        presentation: ToolPresentationDefinition = .automatic
     ) {
         self.id = id
         self.name = name
@@ -63,6 +69,8 @@ public struct DirectAgentToolCall: Sendable {
         // execution now always receives the exact representation inspected by
         // authorization gates.  Do not retain an untrusted parallel JSON blob.
         self.argumentsJSON = Self.canonicalArgumentsJSON(for: self.arguments)
+        self.descriptorTitle = descriptorTitle
+        self.presentation = presentation.validOrAutomatic
     }
 
     /// Strict initializer for ingress points that require the supplied JSON to
@@ -73,7 +81,9 @@ public struct DirectAgentToolCall: Sendable {
         validating id: String,
         name: String,
         argumentsObject: [String: Any],
-        argumentsJSON: String
+        argumentsJSON: String,
+        descriptorTitle: String? = nil,
+        presentation: ToolPresentationDefinition = .automatic
     ) throws {
         let arguments = argumentsObject.mapValues { JSONValue(jsonObject: $0) }
         guard let data = argumentsJSON.data(using: .utf8),
@@ -87,6 +97,8 @@ public struct DirectAgentToolCall: Sendable {
         self.name = name
         self.arguments = arguments
         self.argumentsJSON = Self.canonicalArgumentsJSON(for: arguments)
+        self.descriptorTitle = descriptorTitle
+        self.presentation = presentation.validOrAutomatic
     }
 
     /// The tool arguments as a JSON-compatible `[String: Any]` dictionary,

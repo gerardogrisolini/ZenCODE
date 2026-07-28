@@ -540,6 +540,7 @@ public protocol AgentRuntimeBackend: Actor {
     ) async throws -> String
 
     func activeToolDescriptors() async -> [DirectToolDescriptor]
+    func activeToolDescriptors(sessionID: String?) async -> [DirectToolDescriptor]
 
     func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot]
 
@@ -554,6 +555,12 @@ public protocol AgentRuntimeBackend: Actor {
 }
 
 extension AgentRuntimeBackend {
+    public func activeToolDescriptors(
+        sessionID _: String?
+    ) async -> [DirectToolDescriptor] {
+        await activeToolDescriptors()
+    }
+
     public func installTaskOrchestrator(
         _ orchestrator: SessionTaskOrchestrator
     ) async {}

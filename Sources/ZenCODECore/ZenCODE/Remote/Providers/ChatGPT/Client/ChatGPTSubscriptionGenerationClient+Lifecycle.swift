@@ -145,12 +145,24 @@ extension ChatGPTSubscriptionGenerationClient {
     }
 
     public func activeToolDescriptors() async -> [DirectToolDescriptor] {
-        guard let session = sessions.values.first else {
-            return await toolExecutor.descriptors(allowedToolNames: [])
+        await activeToolDescriptors(sessionID: nil)
+    }
+
+    public func activeToolDescriptors(
+        sessionID: String?
+    ) async -> [DirectToolDescriptor] {
+        let session = if let sessionID {
+            sessions[sessionID]
+        } else {
+            sessions.values.first
+        }
+        guard let session else {
+            return []
         }
         return await toolExecutor.descriptors(
             allowedToolNames: session.allowedToolNames,
-            preferredWorkspaceRootURL: URL(fileURLWithPath: session.cwd)
+            preferredWorkspaceRootURL: URL(fileURLWithPath: session.cwd),
+            sessionID: session.id
         )
     }
 

@@ -352,6 +352,18 @@ public actor AgentCoreSessionRunner {
         return await backend.subAgentSnapshots()
     }
 
+    /// Returns the descriptors currently active for one session. This lookup is
+    /// intended for best-effort replay presentation; live calls already carry
+    /// the descriptor snapshot selected for their model round.
+    public func activeToolDescriptors(
+        sessionID: String
+    ) async -> [DirectToolDescriptor] {
+        guard let backend else {
+            return []
+        }
+        return await backend.activeToolDescriptors(sessionID: sessionID)
+    }
+
     public func snapshotSession(id sessionID: String) async -> AgentRuntimeSessionSnapshot? {
         if let snapshot = await backend?.snapshotSession(id: sessionID) {
             if let lastKnownSnapshot = lastKnownSessionSnapshots[sessionID],

@@ -338,6 +338,7 @@ public struct SwiftFeatureToolManifest: Codable, Sendable {
     public let description: String
     public let inputSchema: String
     public let outputSchema: String?
+    public let presentation: ToolPresentationDefinition
 
     private enum CodingKeys: String, CodingKey {
         case name
@@ -347,6 +348,7 @@ public struct SwiftFeatureToolManifest: Codable, Sendable {
         case input_schema
         case outputSchema
         case output_schema
+        case presentation
     }
 
     public init(from decoder: Decoder) throws {
@@ -364,6 +366,16 @@ public struct SwiftFeatureToolManifest: Codable, Sendable {
             primaryKey: .outputSchema,
             alternateKey: .output_schema
         )?.nilIfBlank
+        let decodedPresentation: ToolPresentationDefinition?
+        do {
+            decodedPresentation = try container.decodeIfPresent(
+                ToolPresentationDefinition.self,
+                forKey: .presentation
+            )
+        } catch {
+            decodedPresentation = nil
+        }
+        self.presentation = (decodedPresentation ?? .automatic).validOrAutomatic
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -373,6 +385,9 @@ public struct SwiftFeatureToolManifest: Codable, Sendable {
         try container.encode(description, forKey: .description)
         try container.encode(inputSchema, forKey: .inputSchema)
         try container.encodeIfPresent(outputSchema, forKey: .outputSchema)
+        if !presentation.isAutomatic {
+            try container.encode(presentation, forKey: .presentation)
+        }
     }
 
     public var toolDescriptor: ToolDescriptor {
@@ -381,7 +396,8 @@ public struct SwiftFeatureToolManifest: Codable, Sendable {
             title: title,
             description: description,
             inputSchema: inputSchema,
-            outputSchema: outputSchema
+            outputSchema: outputSchema,
+            presentation: presentation
         )
     }
 

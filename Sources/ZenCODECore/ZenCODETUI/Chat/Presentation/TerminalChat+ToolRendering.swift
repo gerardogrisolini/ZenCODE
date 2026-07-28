@@ -143,9 +143,12 @@ extension TerminalChat {
         contentInsetWidth: Int = 0,
         columnWidth: Int? = nil
     ) -> [String] {
-        let title = ToolCallPresentation.toolTitle(for: toolCall)
+        let title = sanitizedMetadataText(
+            ToolCallPresentation.toolTitle(for: toolCall)
+        ) ?? sanitizedMetadataText(toolCall.name) ?? "tool"
         let icon = ToolCallPresentation.toolIcon(for: toolCall.name)
-        guard let target = ToolCallPresentation.displayToolTarget(for: toolCall),
+        guard let rawTarget = ToolCallPresentation.displayToolTarget(for: toolCall),
+              let target = sanitizedMetadataText(rawTarget),
               title.hasSuffix(target) else {
             return [
                 compactToolStatusLine(

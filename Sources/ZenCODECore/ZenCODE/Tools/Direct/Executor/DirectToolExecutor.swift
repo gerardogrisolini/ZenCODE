@@ -177,9 +177,20 @@ public actor DirectToolExecutor {
 
         let providerRegistry = toolProviderRegistry(forSessionID: sessionID)
         let providerDescriptors = providerRegistry.descriptors
-        let coreDescriptors = Self.filtered(
+        #if canImport(Darwin) || canImport(Glibc)
+        let processDescriptors = DirectToolCatalog.coreProcessDescriptors
+        #else
+        let processDescriptors: [DirectToolDescriptor] = []
+        #endif
+        let protectedCoreDescriptors = Self.filtered(
             Self.canonicalized(
-                DirectToolCatalog.baseDescriptors + providerDescriptors
+                DirectToolCatalog.coreLocalFileAndTextDescriptors + processDescriptors
+            ),
+            allowedToolNames: allowedToolNames
+        )
+        let providerPriorityDescriptors = Self.filtered(
+            Self.canonicalized(
+                providerDescriptors + DirectToolCatalog.skillToolDescriptors
             ),
             allowedToolNames: allowedToolNames
         )
@@ -200,8 +211,23 @@ public actor DirectToolExecutor {
         )
         .filter { !reservedSkillToolNames.contains($0.name) }
 
+        let featureManagementDescriptors = Self.filtered(
+            DirectToolCatalog.featureDescriptors,
+            allowedToolNames: allowedToolNames
+        )
+        let lateCoreDescriptors = Self.filtered(
+            DirectToolCatalog.subAgentDescriptors
+                + DirectToolCatalog.todoTaskDescriptors
+                + DirectToolCatalog.memoryDescriptors,
+            allowedToolNames: allowedToolNames
+        )
         let result = Self.canonicalized(
-            coreDescriptors + featureDescriptors + mcpDescriptors
+            protectedCoreDescriptors
+                + providerPriorityDescriptors
+                + mcpDescriptors
+                + featureManagementDescriptors
+                + featureDescriptors
+                + lateCoreDescriptors
         )
 
         // Diagnostic: if xcode tools are requested but none ended up in the

@@ -126,7 +126,10 @@ extension DirectMCPToolRuntime {
                 DirectToolDescriptor(
                     name: XcodeToolIntegration.publicToolName(for: tool.name),
                     description: XcodeToolIntegration.publicDescription(tool.description),
-                    inputSchema: tool.inputSchema
+                    inputSchema: tool.inputSchema,
+                    title: tool.title,
+                    outputSchema: tool.outputSchema,
+                    presentation: Self.presentation(for: tool, family: .xcode)
                 )
             },
             workspaceRootPath: matchedWorkspaceContext.normalizedWorkspaceRootPath,
@@ -161,7 +164,10 @@ extension DirectMCPToolRuntime {
                     DirectToolDescriptor(
                         name: tool.name,
                         description: "Figma: \(tool.description)",
-                        inputSchema: tool.inputSchema
+                        inputSchema: tool.inputSchema,
+                        title: tool.title,
+                        outputSchema: tool.outputSchema,
+                        presentation: Self.presentation(for: tool, family: .figma)
                     )
                 },
                 workspaceRootPath: nil,

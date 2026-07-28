@@ -2416,6 +2416,66 @@ struct TerminalChatToolBlockResizeTests {
         #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
     }
 
+    @Test
+    func semanticDetailedToolKeepsTheExistingOwnedRowRedrawContract() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 100 }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "semantic-redraw",
+            name: "thirdparty.edit",
+            argumentsObject: [
+                "path": "/tmp/App.swift",
+                "old": "old",
+                "new": "new"
+            ],
+            argumentsJSON: "{}",
+            presentation: ToolPresentationDefinition(
+                title: "Source file",
+                action: "Edit",
+                kind: .edit,
+                target: .argument(["path"], format: .path),
+                sections: [
+                    .diff(
+                        label: "change",
+                        old: .argument(["old"], format: .text),
+                        new: .argument(["new"], format: .text)
+                    )
+                ]
+            )
+        )
+        await renderer.setToolOutputDetailLevel(.expanded)
+
+        await renderer.writeToolCallStarted(toolCall)
+        let started = await renderer.snapshot()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "done", summary: "done")
+        )
+
+        let completionEvents = Array(
+            (await renderer.capturedWriteEvents()).dropFirst(eventCountBeforeCompletion)
+        )
+        let completionText = TerminalANSIText.stripANSI(
+            completionEvents.map(\.text).joined()
+        )
+        let rewriteSequence = completionEvents.first?.text ?? ""
+
+        #expect(started.activeDetailedToolRenderedRowCount > 0)
+        #expect(
+            rewriteSequence.hasPrefix(
+                "\u{1B}[\(started.activeDetailedToolRenderedRowCount)A\r"
+            )
+        )
+        #expect(completionText.contains("Source file"))
+        #expect(completionText.contains("target: /tmp/App.swift"))
+        #expect(completionText.contains("status: ✅"))
+        #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
+    }
+
     private func makeRenderer(
         standardErrorIsTerminal: Bool,
         columnWidthProvider: @Sendable @escaping () -> Int

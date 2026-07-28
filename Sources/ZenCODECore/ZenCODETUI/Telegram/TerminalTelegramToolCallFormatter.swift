@@ -30,7 +30,7 @@ enum TerminalTelegramToolCallFormatter {
         _ toolCall: DirectAgentToolCall,
         workingDirectory: URL
     ) -> String {
-        let kind = ToolCallPresentation.toolKind(for: toolCall.name)
+        let kind = ToolCallPresentation.toolKind(for: toolCall)
         let header = "🔧 \(toolCall.name) · \(kind)"
 
         guard let detail = detail(for: toolCall, workingDirectory: workingDirectory) else {

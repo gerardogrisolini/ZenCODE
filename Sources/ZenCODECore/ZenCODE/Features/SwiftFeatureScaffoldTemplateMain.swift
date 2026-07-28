@@ -24,13 +24,30 @@ extension SwiftFeatureRuntime {
         private let generatedToolDescription = \#(escapedDescription)
         private let generatedInputSchema = #"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}"#
 
-        private struct ToolDescriptor: Codable {
+        private struct PresentationValue: Encodable {
+            let source = "arguments"
+            let keyPaths = ["text"]
+            let format = "text"
+        }
+
+        private struct ToolPresentation: Encodable {
+            let strategy = "semantic"
+            let title = "Echo"
+            let action = "Echo"
+            let kind = "execute"
+            let target = PresentationValue()
+            let metadata: [String] = []
+            let sections: [String] = []
+        }
+
+        private struct ToolDescriptor: Encodable {
             let name: String
             let description: String
             let inputSchema: String
+            let presentation: ToolPresentation
         }
 
-        private struct ListToolsResponse: Codable {
+        private struct ListToolsResponse: Encodable {
             let tools: [ToolDescriptor]
         }
 
@@ -71,7 +88,8 @@ extension SwiftFeatureRuntime {
                                     ToolDescriptor(
                                         name: generatedToolName,
                                         description: generatedToolDescription,
-                                        inputSchema: generatedInputSchema
+                                        inputSchema: generatedInputSchema,
+                                        presentation: ToolPresentation()
                                     )
                                 ]
                             )

@@ -268,7 +268,9 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
     }
 
     public let bindings: [Binding]
-    private let nameLookup: [String: Binding]
+    private let localNameLookup: [String: Binding]
+    private let wireNameLookup: [String: Binding]
+    private let compatibilityNameLookup: [String: Binding]
 
     public init(descriptors: [DirectToolDescriptor]) {
         var usedWireNames: Set<String> = []
@@ -282,19 +284,33 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
             )
         }
 
-        var lookup: [String: Binding] = [:]
-        lookup.reserveCapacity(bindings.count * 6)
+        var localLookup: [String: Binding] = [:]
+        var wireLookup: [String: Binding] = [:]
+        var compatibilityLookup: [String: Binding] = [:]
+        localLookup.reserveCapacity(bindings.count * 2)
+        wireLookup.reserveCapacity(bindings.count * 2)
+        compatibilityLookup.reserveCapacity(bindings.count * 4)
         for binding in bindings {
-            Self.insert(binding, for: binding.wireName, into: &lookup, overwrite: true)
-            Self.insert(binding, for: binding.descriptor.name, into: &lookup, overwrite: true)
+            Self.insert(
+                binding,
+                for: binding.descriptor.name,
+                into: &localLookup,
+                overwrite: true
+            )
+            Self.insert(
+                binding,
+                for: binding.wireName,
+                into: &wireLookup,
+                overwrite: true
+            )
 
             let sanitized = sanitizedRemoteToolWireName(for: binding.descriptor.name)
-            Self.insert(binding, for: sanitized, into: &lookup)
+            Self.insert(binding, for: sanitized, into: &compatibilityLookup)
             if sanitized.hasPrefix("tool_") {
                 Self.insert(
                     binding,
                     for: String(sanitized.dropFirst("tool_".count)),
-                    into: &lookup
+                    into: &compatibilityLookup
                 )
             }
 
@@ -304,11 +320,13 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
                     with: "_",
                     options: .regularExpression
                 )
-            Self.insert(binding, for: underscoredName, into: &lookup)
+            Self.insert(binding, for: underscoredName, into: &compatibilityLookup)
         }
 
         self.bindings = bindings
-        self.nameLookup = lookup
+        self.localNameLookup = localLookup
+        self.wireNameLookup = wireLookup
+        self.compatibilityNameLookup = compatibilityLookup
     }
 
     private static func canonicalDescriptorOrder(
@@ -351,13 +369,12 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
     }
 
     public func wireName(forToolName toolName: String) -> String {
-        binding(forToolName: toolName)?.wireName
+        bindingForLocalToolName(toolName)?.wireName
             ?? sanitizedRemoteToolWireName(for: toolName)
     }
 
     public func localToolCall(from toolCall: DirectAgentToolCall) -> DirectAgentToolCall {
-        guard let binding = binding(forToolName: toolCall.name),
-              binding.descriptor.name != toolCall.name else {
+        guard let binding = bindingForIncomingToolName(toolCall.name) else {
             return toolCall
         }
 
@@ -365,12 +382,14 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
             id: toolCall.id,
             name: binding.descriptor.name,
             argumentsObject: toolCall.argumentsObject,
-            argumentsJSON: toolCall.argumentsJSON
+            argumentsJSON: toolCall.argumentsJSON,
+            descriptorTitle: binding.descriptor.title,
+            presentation: binding.descriptor.presentation
         )
     }
 
     public func wireToolCall(from toolCall: DirectAgentToolCall) -> DirectAgentToolCall {
-        let wireName = binding(forToolName: toolCall.name)?.wireName
+        let wireName = bindingForLocalToolName(toolCall.name)?.wireName
             ?? sanitizedRemoteToolWireName(for: toolCall.name)
         guard wireName != toolCall.name else {
             return toolCall
@@ -380,26 +399,46 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
             id: toolCall.id,
             name: wireName,
             argumentsObject: toolCall.argumentsObject,
-            argumentsJSON: toolCall.argumentsJSON
+            argumentsJSON: toolCall.argumentsJSON,
+            descriptorTitle: toolCall.descriptorTitle,
+            presentation: toolCall.presentation
         )
     }
 
     public func binding(forToolName toolName: String) -> Binding? {
-        if let binding = nameLookup[toolName] {
-            return binding
-        }
+        bindingForLocalToolName(toolName)
+            ?? bindingForWireToolName(toolName)
+            ?? bindingForCompatibilityName(toolName)
+    }
 
-        let foldedName = foldedToolWireName(toolName)
-        if let binding = nameLookup[foldedName] {
+    private func bindingForIncomingToolName(_ toolName: String) -> Binding? {
+        // A response name is interpreted in the namespace advertised to the
+        // model first. This matters when one tool's canonical name is another
+        // tool's generated wire name.
+        bindingForWireToolName(toolName)
+            ?? bindingForLocalToolName(toolName)
+            ?? bindingForCompatibilityName(toolName)
+    }
+
+    private func bindingForLocalToolName(_ toolName: String) -> Binding? {
+        localNameLookup[toolName]
+            ?? localNameLookup[foldedToolWireName(toolName)]
+    }
+
+    private func bindingForWireToolName(_ toolName: String) -> Binding? {
+        wireNameLookup[toolName]
+            ?? wireNameLookup[foldedToolWireName(toolName)]
+    }
+
+    private func bindingForCompatibilityName(_ toolName: String) -> Binding? {
+        if let binding = compatibilityNameLookup[toolName]
+            ?? compatibilityNameLookup[foldedToolWireName(toolName)] {
             return binding
         }
 
         let sanitizedName = sanitizedRemoteToolWireName(for: toolName)
-        if let binding = nameLookup[sanitizedName] {
-            return binding
-        }
-
-        return nameLookup[foldedToolWireName(sanitizedName)]
+        return compatibilityNameLookup[sanitizedName]
+            ?? compatibilityNameLookup[foldedToolWireName(sanitizedName)]
     }
 
     private static func uniqueWireName(

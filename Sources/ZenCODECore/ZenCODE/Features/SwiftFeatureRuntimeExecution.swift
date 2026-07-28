@@ -13,6 +13,7 @@ extension SwiftFeatureRuntime {
         excludingFeatureIDs: Set<String> = []
     ) async -> [DirectToolDescriptor] {
         var resolvedTools: [ToolDescriptor] = []
+        var seenToolNames = Set<String>()
         for feature in features {
             guard !excludingFeatureIDs.contains(feature.id),
                   feature.isRelevant(allowedToolNames: allowedToolNames) else {
@@ -25,10 +26,17 @@ extension SwiftFeatureRuntime {
             // the first call for each feature incurs the cost. When the
             // SwiftFeatureRuntime is shared (parent → subagent), the cache is
             // reused across all sessions.
-            if feature.discoversToolsAtRuntime {
-                resolvedTools.append(contentsOf: await tools(for: feature))
-            } else {
-                resolvedTools.append(contentsOf: feature.tools)
+            let featureTools = feature.discoversToolsAtRuntime
+                ? await tools(for: feature)
+                : feature.tools
+            for tool in ToolDescriptor.canonicalized(featureTools)
+            where seenToolNames.insert(tool.name).inserted
+                && features.first(where: { $0.contains(toolName: tool.name) })?.id == feature.id {
+                // Execution resolves the first feature containing a name, even
+                // when only a later duplicate is relevant to the allowlist. Do
+                // not publish that later descriptor with an owner that cannot
+                // execute it.
+                resolvedTools.append(tool)
             }
         }
 

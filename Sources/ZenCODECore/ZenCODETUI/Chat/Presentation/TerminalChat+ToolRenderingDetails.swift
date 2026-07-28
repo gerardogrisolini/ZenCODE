@@ -32,7 +32,8 @@ extension TerminalChat {
         for toolCall: DirectAgentToolCall
     ) -> [DetailedToolRow] {
         var rows = detailedToolBaseRows(for: toolCall)
-        if isFileMutationTool(toolCall.name) {
+        if toolCall.presentation.isAutomatic,
+           isFileMutationTool(toolCall.name) {
             rows.append(.text("change: pending"))
         }
         rows.append(.text("status: ⏳"))
@@ -61,12 +62,21 @@ extension TerminalChat {
         result: DirectAgentToolResult,
         contentWidth: Int? = nil
     ) -> [DetailedToolRow] {
-        var rows = detailedToolBaseRows(for: toolCall)
+        var rows = detailedToolBaseRows(
+            for: toolCall,
+            result: result,
+            contentWidth: contentWidth
+        )
 
         if result.isFailure {
             rows.append(.text("error:"))
             rows.append(contentsOf: indentedSnippet(result.output).map(DetailedToolRow.text))
             rows.append(.text("status: ⚠️"))
+            return rows
+        }
+
+        if !toolCall.presentation.isAutomatic {
+            rows.append(.text("status: ✅"))
             return rows
         }
 
@@ -90,14 +100,24 @@ extension TerminalChat {
     }
 
     nonisolated static func detailedToolBaseRows(
-        for toolCall: DirectAgentToolCall
+        for toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult? = nil,
+        contentWidth: Int? = nil
     ) -> [DetailedToolRow] {
+        if !toolCall.presentation.isAutomatic {
+            return semanticToolRows(
+                for: toolCall,
+                result: result,
+                contentWidth: contentWidth
+            )
+        }
+
         // The title embeds the tool name and a caller-provided target, so it is
         // sanitized like any other metadata before reaching the terminal.
         let title = sanitizedMetadataText(ToolCallPresentation.toolTitle(for: toolCall))
             ?? sanitizedMetadataText(toolCall.name)
             ?? "tool"
-        let kind = ToolCallPresentation.toolKind(for: toolCall.name)
+        let kind = ToolCallPresentation.toolKind(for: toolCall)
         let icon = ToolCallPresentation.toolIcon(for: toolCall.name)
         var rows: [DetailedToolRow] = [
             .text("\(icon)  \(title)"),
@@ -110,6 +130,125 @@ extension TerminalChat {
             rows.append(contentsOf: parameterRows(for: toolCall))
         }
         return rows
+    }
+
+    /// Converts the core's unstyled semantic presentation into the existing TUI
+    /// row primitives. Every label/value is still sanitized here; definitions
+    /// from feature processes and MCP servers are untrusted metadata.
+    nonisolated static func semanticToolRows(
+        for toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult?,
+        contentWidth: Int?
+    ) -> [DetailedToolRow] {
+        let presentation = ToolCallPresentation.resolved(
+            for: toolCall,
+            result: result,
+            mode: .expanded
+        )
+        let icon = ToolCallPresentation.toolIcon(for: toolCall.name)
+        let title = sanitizedMetadataText(presentation.title)
+            ?? sanitizedMetadataText(toolCall.name)
+            ?? "tool"
+        var rows: [DetailedToolRow] = [
+            .text("\(icon)  \(title)"),
+            .text("kind: \(presentation.kind.rawValue)")
+        ]
+        if let action = presentation.action.flatMap(sanitizedMetadataText) {
+            rows.append(.text("action: \(action)"))
+        }
+        if let target = presentation.target.flatMap(sanitizedMetadataText) {
+            rows.append(.text("target: \(target)"))
+        }
+        for item in presentation.metadata {
+            guard let label = sanitizedMetadataText(item.label),
+                  let value = sanitizedMetadataText(item.value) else {
+                continue
+            }
+            rows.append(.text("\(label): \(value)"))
+        }
+        for element in presentation.elements {
+            rows.append(
+                contentsOf: semanticElementRows(
+                    element,
+                    contentWidth: contentWidth
+                )
+            )
+        }
+        return rows
+    }
+
+    nonisolated static func semanticElementRows(
+        _ element: ToolPresentationElement,
+        contentWidth: Int?
+    ) -> [DetailedToolRow] {
+        switch element {
+        case let .parameters(label, value):
+            return semanticParameterRows(label: label, value: value)
+        case let .code(label, content, _):
+            var rows: [DetailedToolRow] = []
+            if let label = label.flatMap(sanitizedMetadataText) {
+                rows.append(.text("\(label):"))
+            }
+            rows.append(contentsOf: numberedCodeSnippetRows(content))
+            return rows
+        case let .diff(label, old, new, _):
+            var rows: [DetailedToolRow] = []
+            if let label = label.flatMap(sanitizedMetadataText) {
+                rows.append(.text("\(label):"))
+            }
+            rows.append(
+                contentsOf: numberedDiffSnippetRows(
+                    old: old,
+                    new: new,
+                    contentWidth: contentWidth
+                )
+            )
+            return rows
+        case let .list(label, items):
+            var rows: [DetailedToolRow] = []
+            if let label = label.flatMap(sanitizedMetadataText) {
+                rows.append(.text("\(label):"))
+            }
+            for (index, item) in items.enumerated() {
+                let rendered = item.prettyPrinted()
+                let lines = indentedSnippetPreservingIndentation(rendered)
+                if lines.count == 1 {
+                    rows.append(.parameter("  \(index + 1). \(lines[0].dropFirst(2))"))
+                } else {
+                    rows.append(.parameter("  \(index + 1)."))
+                    rows.append(contentsOf: lines.map(DetailedToolRow.parameter))
+                }
+            }
+            return rows
+        case let .summary(label, text):
+            guard let summary = compactSummaryLine(text) else {
+                return []
+            }
+            let label = label.flatMap(sanitizedMetadataText) ?? "summary"
+            guard let safeSummary = sanitizedMetadataText(summary) else {
+                return []
+            }
+            return [.text("\(label): \(safeSummary)")]
+        }
+    }
+
+    nonisolated static func semanticParameterRows(
+        label: String?,
+        value: JSONValue
+    ) -> [DetailedToolRow] {
+        let label = label.flatMap(sanitizedMetadataText) ?? "parameters"
+        let formatted: (text: String, preservesIndentation: Bool)
+        if case let .object(object) = value {
+            formatted = formattedParameterSnippet(
+                for: object.mapValues(\.jsonObject)
+            )
+        } else {
+            formatted = (value.prettyPrinted(), true)
+        }
+        let lines = formatted.preservesIndentation
+            ? indentedSnippetPreservingIndentation(formatted.text)
+            : indentedSnippet(formatted.text)
+        return [.text("\(label):")] + lines.map(DetailedToolRow.parameter)
     }
 
     /// Mutation details render either a numbered source/diff area or structured
@@ -1078,6 +1217,25 @@ extension TerminalChat {
     /// from the extension of the file the call targets, so written/edited
     /// code is rendered with proper highlighting in the expanded view.
     nonisolated static func codeLanguageHint(for toolCall: DirectAgentToolCall) -> String? {
+        if !toolCall.presentation.isAutomatic {
+            let presentation = ToolCallPresentation.resolved(
+                for: toolCall,
+                mode: .expanded
+            )
+            for element in presentation.elements {
+                switch element {
+                case let .code(_, _, languageHint),
+                     let .diff(_, _, _, languageHint):
+                    if let languageHint = languageHint?.nilIfBlank {
+                        return languageHint
+                    }
+                case .parameters, .list, .summary:
+                    continue
+                }
+            }
+            return nil
+        }
+
         let arguments = toolCall.argumentsObject
         let path = targetPath(arguments) ?? patchTargetPath(arguments)
         guard let path else {

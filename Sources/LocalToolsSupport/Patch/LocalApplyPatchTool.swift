@@ -12,6 +12,7 @@ import Darwin
 import Glibc
 #endif
 import FeatureKit
+import ToolCore
 
 struct LocalApplyPatchTool: FeatureTool {
     struct Input: Decodable, Sendable {
@@ -270,5 +271,29 @@ struct LocalApplyPatchTool: FeatureTool {
                 try? manager.removeItem(at: backupURL)
             }
         }
+    }
+}
+
+
+extension LocalApplyPatchTool {
+    static var presentation: ToolPresentationDefinition {
+        ToolPresentationDefinition(
+            title: "Patch",
+            action: "Apply",
+            kind: .edit,
+            sections: [
+                .parameters(),
+                .code(
+                    label: "patch",
+                    value: .argument(["patch", "diff"], format: .text),
+                    languageHint: .literal("diff")
+                )
+            ],
+            summary: ToolPresentationSummaryDefinition(
+                value: .resultSummary(),
+                strategy: .firstLine,
+                label: "summary"
+            )
+        )
     }
 }

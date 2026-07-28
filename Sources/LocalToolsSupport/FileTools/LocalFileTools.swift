@@ -12,6 +12,7 @@ import Darwin
 import Glibc
 #endif
 import FeatureKit
+import ToolCore
 
 
 struct LocalPwdTool: FeatureTool {
@@ -479,5 +480,95 @@ struct LocalMoveTool: FeatureTool {
                 throw error
             }
         }
+    }
+}
+
+// MARK: - Semantic presentation
+
+extension LocalPwdTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Working directory", action: "Show", kind: .read, includesParameters: false)
+    }
+}
+
+extension LocalListDirectoryTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Directory", action: "List", kind: .read, targetKeyPaths: ["path"], targetFormat: .path)
+    }
+}
+
+extension LocalReadFileTool {
+    static var presentation: ToolPresentationDefinition { .fileRead() }
+}
+
+extension LocalReadFilesTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Files", action: "Read", kind: .read, targetKeyPaths: ["paths", "file_paths"], targetFormat: .stringList)
+    }
+}
+
+extension LocalInspectFileTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "File structure", action: "Inspect", kind: .inspect, targetKeyPaths: ["file_path", "path"], targetFormat: .path)
+    }
+}
+
+extension LocalWriteFileTool {
+    static var presentation: ToolPresentationDefinition { .fileWrite() }
+}
+
+extension LocalReplaceTool {
+    static var presentation: ToolPresentationDefinition { .fileEdit() }
+}
+
+extension LocalEditFileTool {
+    static var presentation: ToolPresentationDefinition { .fileEdit() }
+}
+
+extension LocalMultiEditTool {
+    static var presentation: ToolPresentationDefinition {
+        ToolPresentationDefinition(
+            title: "File edits",
+            action: "Edit",
+            kind: .edit,
+            target: .argument(["file_path", "path"], format: .path),
+            sections: [
+                .parameters(),
+                .list(label: "edits", value: .argument(["edits"], format: .json))
+            ],
+            summary: ToolPresentationSummaryDefinition(value: .resultSummary(), strategy: .firstLine, label: "summary")
+        )
+    }
+}
+
+extension LocalAppendTool {
+    static var presentation: ToolPresentationDefinition { .fileWrite(action: "Append") }
+}
+
+extension LocalMakeDirectoryTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Directory", action: "Create", kind: .create, targetKeyPaths: ["path"], targetFormat: .path)
+    }
+}
+
+extension LocalDeleteTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Path", action: "Delete", kind: .delete, targetKeyPaths: ["path"], targetFormat: .path)
+    }
+}
+
+extension LocalMoveTool {
+    static var presentation: ToolPresentationDefinition {
+        ToolPresentationDefinition(
+            title: "Path",
+            action: "Move",
+            kind: .move,
+            target: .argument(["destinationPath"], format: .path),
+            metadata: [
+                ToolPresentationMetadataDefinition(label: "from", value: .argument(["sourcePath"], format: .path))
+            ],
+            sections: [.parameters()],
+            summary: ToolPresentationSummaryDefinition(value: .resultSummary(), strategy: .firstLine, label: "summary")
+        )
     }
 }

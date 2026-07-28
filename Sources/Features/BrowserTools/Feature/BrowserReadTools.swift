@@ -7,6 +7,7 @@
 //
 
 import FeatureKit
+import ToolCore
 import Foundation
 
 private enum BrowserPageInput {
@@ -352,5 +353,32 @@ struct BrowserScreenshotTool: FeatureTool {
             let page = try await session.pageMetadata(pageID: tab.id)
             return BrowserScreenshotOutput(page: page, artifact: artifact, fullPage: fullPage)
         }
+    }
+}
+
+
+// MARK: - Semantic presentation
+
+extension BrowserSnapshotTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser snapshot", action: "Capture", kind: .read, targetKeyPaths: ["pageId", "page_id", "id"])
+    }
+}
+
+extension BrowserConsoleTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser console", action: "Read", kind: .read, targetKeyPaths: ["pageId", "page_id", "id"])
+    }
+}
+
+extension BrowserNetworkTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser network", action: "Inspect", kind: .inspect, targetKeyPaths: ["pageId", "page_id", "id"])
+    }
+}
+
+extension BrowserScreenshotTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser screenshot", action: "Capture", kind: .read, targetKeyPaths: ["pageId", "page_id", "id"])
     }
 }

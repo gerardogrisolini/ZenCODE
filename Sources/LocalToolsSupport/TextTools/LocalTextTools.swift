@@ -12,6 +12,7 @@ import Darwin
 import Glibc
 #endif
 import FeatureKit
+import ToolCore
 
 
 struct TextLinesInput: Decodable, Sendable {
@@ -143,5 +144,32 @@ struct TextWordCountTool: FeatureTool {
             characters: \(characters)
             """
         }
+    }
+}
+
+
+// MARK: - Semantic presentation
+
+extension TextHeadTool {
+    static var presentation: ToolPresentationDefinition {
+        .fileRead(title: "File beginning", action: "Read")
+    }
+}
+
+extension TextTailTool {
+    static var presentation: ToolPresentationDefinition {
+        .fileRead(title: "File ending", action: "Read")
+    }
+}
+
+extension TextSortTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Text file", action: "Sort", kind: .read, targetKeyPaths: ["file_path", "path"], targetFormat: .path)
+    }
+}
+
+extension TextWordCountTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Text counts", action: "Count", kind: .inspect, targetKeyPaths: ["file_path", "path"], targetFormat: .path)
     }
 }

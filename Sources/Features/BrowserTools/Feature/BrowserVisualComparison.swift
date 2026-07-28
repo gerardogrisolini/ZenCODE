@@ -8,6 +8,7 @@
 //
 
 import FeatureKit
+import ToolCore
 import Foundation
 
 /// Legacy encoded-byte metadata. These fields remain part of the public output
@@ -507,5 +508,12 @@ struct BrowserCompareScreenshotsTool: FeatureTool {
             pixelComparison: visualDiff.comparison,
             diffArtifact: diffArtifact
         )
+    }
+}
+
+
+extension BrowserCompareScreenshotsTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Screenshots", action: "Compare", kind: .inspect, targetKeyPaths: ["baseline", "actual", "baselinePath", "actualPath"], targetFormat: .path)
     }
 }

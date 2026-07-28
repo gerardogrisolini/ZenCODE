@@ -299,6 +299,60 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func remoteToolWireCatalogKeepsCanonicalAndWireNamespacesDirectional() throws {
+        let firstPresentation = ToolPresentationDefinition.standard(
+            title: "First tool",
+            action: "Run",
+            kind: .execute
+        )
+        let secondPresentation = ToolPresentationDefinition.standard(
+            title: "Second tool",
+            action: "Run",
+            kind: .execute
+        )
+        let catalog = RemoteToolWireCatalog(
+            descriptors: [
+                DirectToolDescriptor(
+                    name: "local.exec",
+                    description: "First descriptor.",
+                    inputSchema: "{}",
+                    presentation: firstPresentation
+                ),
+                DirectToolDescriptor(
+                    name: "tool_local_exec",
+                    description: "Second descriptor.",
+                    inputSchema: "{}",
+                    presentation: secondPresentation
+                )
+            ]
+        )
+
+        let firstIncoming = catalog.localToolCall(
+            from: DirectAgentToolCall(
+                id: "first",
+                name: "tool_local_exec",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            )
+        )
+        let secondIncoming = catalog.localToolCall(
+            from: DirectAgentToolCall(
+                id: "second",
+                name: "tool_tool_local_exec",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            )
+        )
+
+        #expect(catalog.wireName(forToolName: "local.exec") == "tool_local_exec")
+        #expect(catalog.wireName(forToolName: "tool_local_exec") == "tool_tool_local_exec")
+        #expect(firstIncoming.name == "local.exec")
+        #expect(firstIncoming.presentation == firstPresentation)
+        #expect(secondIncoming.name == "tool_local_exec")
+        #expect(secondIncoming.presentation == secondPresentation)
+    }
+
+    @Test
     func remoteToolWireCatalogDoesNotMapSingularTaskNamespaceToTasks() {
         let catalog = RemoteToolWireCatalog(
             descriptors: [

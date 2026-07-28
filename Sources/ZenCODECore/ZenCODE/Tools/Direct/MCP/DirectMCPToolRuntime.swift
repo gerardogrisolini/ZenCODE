@@ -172,7 +172,10 @@ public actor DirectMCPToolRuntime {
                 return DirectToolDescriptor(
                     name: XcodeToolIntegration.publicToolName(for: tool.name),
                     description: XcodeToolIntegration.publicDescription(tool.description),
-                    inputSchema: tool.inputSchema
+                    inputSchema: tool.inputSchema,
+                    title: tool.title,
+                    outputSchema: tool.outputSchema,
+                    presentation: Self.presentation(for: tool, family: .xcode)
                 )
             }
 
@@ -296,7 +299,10 @@ public actor DirectMCPToolRuntime {
                     description: isXcodeCandidate
                         ? XcodeToolIntegration.publicDescription(tool.description)
                         : "\(name): \(tool.description)",
-                    inputSchema: tool.inputSchema
+                    inputSchema: tool.inputSchema,
+                    title: tool.title,
+                    outputSchema: tool.outputSchema,
+                    presentation: Self.presentation(for: tool, family: family)
                 )
             }
             // Descriptor mapping is synchronous, so the fence checked after

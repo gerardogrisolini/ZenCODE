@@ -619,3 +619,18 @@ private enum WebToolsSupport {
         return decoded
     }
 }
+
+
+// MARK: - Semantic presentation
+
+extension WebSearchTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Web", action: "Search", kind: .search, targetKeyPaths: ["query"])
+    }
+}
+
+extension WebFetchTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Web page", action: "Fetch", kind: .read, targetKeyPaths: ["url"], targetFormat: .url)
+    }
+}

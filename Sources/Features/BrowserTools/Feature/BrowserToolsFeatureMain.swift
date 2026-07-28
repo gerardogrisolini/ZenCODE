@@ -9,6 +9,7 @@
 //
 
 import FeatureKit
+import ToolCore
 import Foundation
 
 // MARK: - Errors
@@ -504,5 +505,50 @@ public enum BrowserToolsFeatureRunner {
 
     public static func run() async {
         await FeatureRunner.run(tools())
+    }
+}
+
+
+// MARK: - Semantic presentation
+
+extension BrowserGoogleSearchTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser search", action: "Search", kind: .search, targetKeyPaths: ["query"])
+    }
+}
+
+extension BrowserVisitPageTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Web page", action: "Visit", kind: .read, targetKeyPaths: ["url"], targetFormat: .url)
+    }
+}
+
+extension BrowserOpenTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser page", action: "Open", kind: .create, targetKeyPaths: ["url"], targetFormat: .url)
+    }
+}
+
+extension BrowserPagesTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser pages", action: "List", kind: .read, includesParameters: false)
+    }
+}
+
+extension BrowserGotoTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser page", action: "Navigate", kind: .execute, targetKeyPaths: ["url", "pageId", "page_id"], targetFormat: .url)
+    }
+}
+
+extension BrowserReadTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser page", action: "Read", kind: .read, targetKeyPaths: ["pageId", "page_id"])
+    }
+}
+
+extension BrowserClosePageTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser page", action: "Close", kind: .delete, targetKeyPaths: ["pageId", "page_id"])
     }
 }

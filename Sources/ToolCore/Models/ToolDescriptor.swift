@@ -17,9 +17,10 @@ public nonisolated struct ToolDescriptor: Codable, Identifiable, Hashable, Senda
     public let description: String
     public let inputSchema: String
     public let outputSchema: String?
+    public let presentation: ToolPresentationDefinition
 
     public enum CodingKeys: String, CodingKey {
-        case name, title, description, inputSchema, outputSchema
+        case name, title, description, inputSchema, outputSchema, presentation
     }
 
     public init(
@@ -27,13 +28,47 @@ public nonisolated struct ToolDescriptor: Codable, Identifiable, Hashable, Senda
         title: String? = nil,
         description: String,
         inputSchema: String,
-        outputSchema: String? = nil
+        outputSchema: String? = nil,
+        presentation: ToolPresentationDefinition = .automatic
     ) {
         self.name = name
         self.title = title
         self.description = description
         self.inputSchema = inputSchema
         self.outputSchema = outputSchema
+        self.presentation = presentation.validOrAutomatic
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.title = try container.decodeIfPresent(String.self, forKey: .title)
+        self.description = try container.decode(String.self, forKey: .description)
+        self.inputSchema = try container.decode(String.self, forKey: .inputSchema)
+        self.outputSchema = try container.decodeIfPresent(String.self, forKey: .outputSchema)
+
+        let decodedPresentation: ToolPresentationDefinition?
+        do {
+            decodedPresentation = try container.decodeIfPresent(
+                ToolPresentationDefinition.self,
+                forKey: .presentation
+            )
+        } catch {
+            decodedPresentation = nil
+        }
+        self.presentation = (decodedPresentation ?? .automatic).validOrAutomatic
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encodeIfPresent(title, forKey: .title)
+        try container.encode(description, forKey: .description)
+        try container.encode(inputSchema, forKey: .inputSchema)
+        try container.encodeIfPresent(outputSchema, forKey: .outputSchema)
+        if !presentation.isAutomatic {
+            try container.encode(presentation, forKey: .presentation)
+        }
     }
 
     public func promptDescription() -> String {
@@ -94,7 +129,8 @@ public nonisolated struct ToolDescriptor: Codable, Identifiable, Hashable, Senda
             title: title,
             description: description,
             inputSchema: inputSchema,
-            outputSchema: outputSchema
+            outputSchema: outputSchema,
+            presentation: presentation
         )
     }
 
@@ -111,13 +147,22 @@ public nonisolated struct ToolDescriptor: Codable, Identifiable, Hashable, Senda
                 
                 let inputSchema = dict["input_schema"]?.stringValue ?? dict["inputSchema"]?.stringValue ?? "{}"
                 let outputSchema = dict["output_schema"]?.stringValue ?? dict["outputSchema"]?.stringValue
+                let presentation: ToolPresentationDefinition
+                if let value = dict["presentation"],
+                   let data = try? value.jsonData(),
+                   let decoded = try? JSONDecoder().decode(ToolPresentationDefinition.self, from: data) {
+                    presentation = decoded.validOrAutomatic
+                } else {
+                    presentation = .automatic
+                }
 
                 return ToolDescriptor(
                     name: name,
                     title: title,
                     description: description,
                     inputSchema: inputSchema,
-                    outputSchema: outputSchema
+                    outputSchema: outputSchema,
+                    presentation: presentation
                 )
             }
         } catch {

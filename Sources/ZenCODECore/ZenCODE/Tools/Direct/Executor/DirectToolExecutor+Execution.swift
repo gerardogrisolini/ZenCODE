@@ -14,7 +14,16 @@ extension DirectToolExecutor {
         workingDirectory: URL,
         allowedToolNames: Set<String>?
     ) async throws -> String {
-        if toolCall.name == "local.exec" {
+        let directlyAllowed = Self.isAllowed(
+            toolCall.name,
+            allowedToolNames: allowedToolNames
+        )
+        let featureAllowed = await swiftFeatureRuntime.featureToolIsAllowed(
+            toolName: toolCall.name,
+            allowedToolNames: allowedToolNames
+        )
+
+        if directlyAllowed, toolCall.name == "local.exec" {
 #if canImport(Darwin) || canImport(Glibc)
             return try await executeLocalExec(
                 sessionID: sessionID,
@@ -25,25 +34,25 @@ extension DirectToolExecutor {
             throw DirectToolError.unknownTool(toolCall.name)
 #endif
         }
-        if DirectExecJobRuntime.isExecJobToolName(toolCall.name) {
+        if directlyAllowed, DirectExecJobRuntime.isExecJobToolName(toolCall.name) {
             // Job management only inspects or stops processes that were already
             // authorized at launch through local.exec, so it is not gated.
             return try await execJobRuntime.execute(toolCall: toolCall)
         }
-        if let deniedOutput = await deniedDestructiveToolOutputIfNeeded(
+        if directlyAllowed, let deniedOutput = await deniedDestructiveToolOutputIfNeeded(
             sessionID: sessionID,
             toolCall: toolCall,
             workingDirectory: workingDirectory
         ) {
             throw DirectToolExecutorError.authorizationDenied(deniedOutput)
         }
-        if let output = try await executeCoreLocalFileOrTextTool(
+        if directlyAllowed, let output = try await executeCoreLocalFileOrTextTool(
             toolCall: toolCall,
             workingDirectory: workingDirectory
         ) {
             return output
         }
-        if let toolExecutor = toolProviderRegistry(
+        if directlyAllowed, let toolExecutor = toolProviderRegistry(
             forSessionID: sessionID
         ).executor(for: toolCall.name) {
             return try await toolExecutor(
@@ -54,7 +63,7 @@ extension DirectToolExecutor {
                 )
             )
         }
-        if await mcpRuntime.canExecute(
+        if directlyAllowed, await mcpRuntime.canExecute(
             toolName: toolCall.name,
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: workingDirectory
@@ -62,22 +71,25 @@ extension DirectToolExecutor {
             return try await mcpRuntime.execute(toolCall: toolCall)
         }
         if DirectMCPToolRuntime.isXcodeToolName(toolCall.name) {
-            throw DirectToolError.permissionDenied(
+            if directlyAllowed {
+                throw DirectToolError.permissionDenied(
                 "Xcode MCP is not connected for this session. Re-enable Xcode from /tools, approve Xcode's MCP prompt once, then retry."
-            )
+                )
+            }
         }
-        if SwiftFeatureRuntime.isFeatureManagementToolName(toolCall.name) {
+        if directlyAllowed, SwiftFeatureRuntime.isFeatureManagementToolName(toolCall.name) {
             return try await swiftFeatureRuntime.executeManagementTool(
                 toolCall: toolCall
             )
         }
-        if let output = try await swiftFeatureRuntime.executeIfAvailable(
+        if featureAllowed, let output = try await swiftFeatureRuntime.executeIfAvailable(
             toolCall: toolCall,
             workingDirectory: workingDirectory
         ) {
             return output
         }
-        if let borrowedSubAgentToolExecutor,
+        if directlyAllowed,
+           let borrowedSubAgentToolExecutor,
            Self.isSubAgentCoordinationToolName(toolCall.name) {
             return try await borrowedSubAgentToolExecutor(
                 AgentBorrowedToolCall(
@@ -87,7 +99,7 @@ extension DirectToolExecutor {
                 )
             )
         }
-        if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
+        if directlyAllowed, DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
             return try await subAgentRuntime.execute(
                 rootSessionID: sessionID,
                 toolCall: toolCall,
@@ -95,13 +107,13 @@ extension DirectToolExecutor {
                 allowedToolNames: allowedToolNames
             )
         }
-        if DirectTodoRuntime.isTodoToolName(toolCall.name) {
+        if directlyAllowed, DirectTodoRuntime.isTodoToolName(toolCall.name) {
             return try await todoRuntime.execute(
                 sessionID: sessionID,
                 toolCall: toolCall
             )
         }
-        if DirectTaskToolAdapter.isTaskToolName(toolCall.name) {
+        if directlyAllowed, DirectTaskToolAdapter.isTaskToolName(toolCall.name) {
             let output = try await taskToolAdapter.execute(
                 sessionID: sessionID,
                 toolCall: toolCall
@@ -116,7 +128,7 @@ extension DirectToolExecutor {
             }
             return output
         }
-        if MemoryTool.isMemoryToolName(toolCall.name) {
+        if directlyAllowed, MemoryTool.isMemoryToolName(toolCall.name) {
             let request = ToolRequest(
                 name: toolCall.name,
                 arguments: Self.toolArguments(from: toolCall.argumentsJSON)

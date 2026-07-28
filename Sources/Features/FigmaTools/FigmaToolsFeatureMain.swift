@@ -37,4 +37,48 @@ private struct FigmaFeatureConfiguration: MCPFeatureConfiguration {
             toolNamePrefix: toolNamePrefix
         )
     }
+
+    func listTools(
+        environment: [String: String]
+    ) async throws -> [FeatureToolDescriptor] {
+        guard await isAvailable(environment: environment) else {
+            return []
+        }
+        let executor = try await makeExecutor(environment: environment)
+        let tools: [ToolDescriptor]
+        do {
+            tools = try await executor.loadTools()
+        } catch {
+            await executor.disconnect()
+            throw error
+        }
+        await executor.disconnect()
+
+        return ToolDescriptor.canonicalized(tools).map { tool in
+            let descriptor = ToolDescriptor(
+                name: tool.name,
+                title: tool.title,
+                description: tool.description,
+                inputSchema: tool.inputSchema,
+                outputSchema: tool.outputSchema,
+                presentation: tool.presentation.isAutomatic
+                    ? .standard(
+                        title: tool.title ?? "Figma",
+                        action: "Inspect",
+                        kind: .inspect,
+                        targetKeyPaths: [
+                            "nodeId", "node_id", "fileKey", "file_key",
+                            "url", "name", "query"
+                        ]
+                    )
+                    : tool.presentation
+            )
+            return FeatureToolDescriptor(
+                toolDescriptor: descriptor,
+                description: descriptor.description.hasPrefix(descriptionPrefix)
+                    ? descriptor.description
+                    : "\(descriptionPrefix)\(descriptor.description)"
+            )
+        }
+    }
 }
