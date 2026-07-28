@@ -77,7 +77,8 @@ actor TerminalChatRenderCoordinator {
         case started
         case completed(
             result: DirectAgentToolResult,
-            compactStatusDetail: String?
+            compactStatusDetail: String?,
+            elapsed: Duration?
         )
 
         var isCompletion: Bool {
@@ -844,7 +845,8 @@ actor TerminalChatRenderCoordinator {
             toolCall,
             lifecycle: .completed(
                 result: result,
-                compactStatusDetail: compactStatusDetail
+                compactStatusDetail: compactStatusDetail,
+                elapsed: elapsed
             ),
             style: style,
             maximumInPlaceRows: maximumInPlaceRows
@@ -983,7 +985,7 @@ actor TerminalChatRenderCoordinator {
                 columnWidth: columnWidth
             )
             .map(TerminalChat.DetailedToolRow.text)
-        case let (.compact, .completed(result, compactStatusDetail)):
+        case let (.compact, .completed(result, compactStatusDetail, _)):
             let hasFailedProcessExit = TerminalChat.compactLocalExecExitCode(
                 for: toolCall,
                 result: result
@@ -1002,13 +1004,14 @@ actor TerminalChatRenderCoordinator {
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
             )
-        case let (.detailed, .completed(result, _)):
+        case let (.detailed, .completed(result, _, elapsed)):
             let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
             return TerminalChat.safelyWrappedDetailedToolRows(
                 TerminalChat.detailedToolCallCompletedRows(
                     for: toolCall,
                     result: result,
-                    contentWidth: safeContentWidth
+                    contentWidth: safeContentWidth,
+                    elapsed: elapsed
                 ),
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth

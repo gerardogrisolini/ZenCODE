@@ -128,10 +128,10 @@ struct TerminalChatRenderCoordinatorTests {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
 
         #expect(containsCursorUpSequence(completionText))
-        #expect(visibleCompletionText.contains("⚠️ 1.2s exit 7"))
+        #expect(visibleCompletionText.contains("⚠️  1.20s exit 7"))
         #expect(
             completionText.contains(
-                "⚠️ \(TerminalChat.toolDurationColor)1.2s\(TerminalChat.toolValueColor) exit 7"
+                "⚠️  \(TerminalChat.toolDurationColor)1.20s\(TerminalChat.toolValueColor) exit 7"
             )
         )
         #expect(renderedLines.allSatisfy {
@@ -162,8 +162,8 @@ struct TerminalChatRenderCoordinatorTests {
         let missingStartText = await renderer.capturedWriteEvents()
             .map(\.text)
             .joined()
-        #expect(missingStartText.contains("⚠️ exit 23"))
-        #expect(!missingStartText.contains("0.0s"))
+        #expect(missingStartText.contains("⚠️  exit 23"))
+        #expect(!missingStartText.contains("0.00s"))
 
         let successfulToolCall = DirectAgentToolCall(
             id: "successful-with-duration",
@@ -182,7 +182,7 @@ struct TerminalChatRenderCoordinatorTests {
             statusDetail: successfulDetail,
             columnWidth: 80
         )
-        #expect(successfulLines.last?.hasSuffix("✅ 1.2s") == true)
+        #expect(successfulLines.last?.hasSuffix("✅ 1.20s") == true)
         #expect(
             TerminalChat.compactToolCompletionDetail(
                 for: successfulToolCall,
@@ -366,6 +366,63 @@ struct TerminalChatRenderCoordinatorTests {
                 == started.activeDetailedToolRenderedRowCount
         )
         #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
+    }
+
+    @Test
+    func detailedToolCompletionShowsElapsedTime() {
+        let toolCall = DirectAgentToolCall(
+            id: "detailed-elapsed",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        let rowsWithElapsed = TerminalChat.detailedToolCallCompletedRows(
+            for: toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done"),
+            elapsed: .milliseconds(1_200)
+        )
+        #expect(rowsWithElapsed.last?.plainText == "status: ✅ 1.20s")
+
+        let failedRows = TerminalChat.detailedToolCallCompletedRows(
+            for: toolCall,
+            result: DirectAgentToolResult(output: "Boom", summary: "Boom", status: .failed),
+            elapsed: .milliseconds(350)
+        )
+        #expect(failedRows.last?.plainText == "status: ⚠️  0.35s")
+
+        let rowsWithoutElapsed = TerminalChat.detailedToolCallCompletedRows(
+            for: toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+        #expect(rowsWithoutElapsed.last?.plainText == "status: ✅")
+    }
+
+    @Test
+    func detailedToolCompletionRendersElapsedTime() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let toolCall = DirectAgentToolCall(
+            id: "detailed-elapsed-render",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallStarted(toolCall)
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+
+        let stderr = await renderer.capturedWriteEvents()
+            .filter { $0.channel == .standardError }
+            .map(\.text)
+            .joined()
+        // The expanded status row carries the formatted elapsed duration next
+        // to the completion icon, mirroring the compact detail. The label/value
+        // split inserts an ANSI color code between "status:" and the value, so
+        // assert on the contiguous value fragment instead.
+        #expect(stderr.contains("✅ "))
+        #expect(stderr.contains("s"))
     }
 
     @Test

@@ -129,7 +129,7 @@ enum DirectToolPresentationDefinitions {
                 title: "Patch",
                 action: "Apply",
                 kind: .edit,
-                target: .argument(["path"], format: .path),
+                target: .argument(["patch", "diff"], format: .path),
                 sections: [
                     .parameters(),
                     .code(

@@ -43,12 +43,14 @@ extension TerminalChat {
     nonisolated static func detailedToolCallCompletedLines(
         for toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult,
-        contentWidth: Int? = nil
+        contentWidth: Int? = nil,
+        elapsed: Duration? = nil
     ) -> [String] {
         detailedToolCallCompletedRows(
             for: toolCall,
             result: result,
-            contentWidth: contentWidth
+            contentWidth: contentWidth,
+            elapsed: elapsed
         )
         .map(\.plainText)
     }
@@ -60,7 +62,8 @@ extension TerminalChat {
     nonisolated static func detailedToolCallCompletedRows(
         for toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult,
-        contentWidth: Int? = nil
+        contentWidth: Int? = nil,
+        elapsed: Duration? = nil
     ) -> [DetailedToolRow] {
         var rows = detailedToolBaseRows(
             for: toolCall,
@@ -68,15 +71,26 @@ extension TerminalChat {
             contentWidth: contentWidth
         )
 
+        let elapsedText = elapsed.map { toolElapsedTimeText($0) } ?? ""
+        // ⚠️ carries a variation selector that most terminals render as a
+        // double-width emoji, visually consuming one trailing space. Use an
+        // extra separator so the icon stays separated from the elapsed time.
+        let warningStatus = elapsedText.isEmpty
+            ? "status: ⚠️"
+            : "status: ⚠️  \(elapsedText)"
+        let successStatus = elapsedText.isEmpty
+            ? "status: ✅"
+            : "status: ✅ \(elapsedText)"
+
         if result.isFailure {
             rows.append(.text("error:"))
             rows.append(contentsOf: indentedSnippet(result.output).map(DetailedToolRow.text))
-            rows.append(.text("status: ⚠️"))
+            rows.append(.text(warningStatus))
             return rows
         }
 
         if !toolCall.presentation.isAutomatic {
-            rows.append(.text("status: ✅"))
+            rows.append(.text(successStatus))
             return rows
         }
 
@@ -89,7 +103,7 @@ extension TerminalChat {
         } else if let summary = expandedToolSummary(for: toolCall, result: result) {
             rows.append(.text("summary: \(summary)"))
         }
-        rows.append(.text("status: ✅"))
+        rows.append(.text(successStatus))
         return rows
     }
 

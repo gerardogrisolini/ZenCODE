@@ -199,7 +199,7 @@ extension TerminalChat {
     ) -> String? {
         var components: [String] = []
         if let elapsed {
-            components.append(compactToolElapsedTime(elapsed))
+            components.append(toolElapsedTimeText(elapsed))
         }
         if let exitCode = compactLocalExecExitCode(
             for: toolCall,
@@ -293,18 +293,22 @@ extension TerminalChat {
               !detail.isEmpty else {
             return icon
         }
-        let expanded = "\(icon) \(detail)"
+        // ⚠️ carries a variation selector that most terminals render as a
+        // double-width emoji, visually consuming one trailing space. Add an
+        // extra separator so the icon stays visually separated from the detail.
+        let separator = icon == "⚠️" ? "  " : " "
+        let expanded = "\(icon)\(separator)\(detail)"
         return displayWidth(expanded) <= maximumWidth ? expanded : icon
     }
 
-    private nonisolated static func compactToolElapsedTime(_ duration: Duration) -> String {
+    nonisolated static func toolElapsedTimeText(_ duration: Duration) -> String {
         let seconds = max(
             0,
             Double(duration.components.seconds)
                 + Double(duration.components.attoseconds) / 1_000_000_000_000_000_000
         )
         return String(
-            format: "%.1fs",
+            format: "%.2fs",
             locale: Locale(identifier: "en_US_POSIX"),
             seconds
         )
@@ -333,8 +337,12 @@ extension TerminalChat {
             return nil
         }
         let start = markerRange.upperBound
-        let end = line[start...].firstIndex(where: \.isWhitespace) ?? line.endIndex
-        let token = line[start..<end]
+        // Skip any extra padding whitespace between the status icon and the
+        // duration token (the ⚠️ emoji renders as double-width and carries an
+        // extra separator space to compensate).
+        let tokenStart = line[start...].drop(while: \.isWhitespace).startIndex
+        let end = line[tokenStart...].firstIndex(where: \.isWhitespace) ?? line.endIndex
+        let token = line[tokenStart..<end]
         guard token.hasSuffix("s") else {
             return nil
         }
@@ -357,7 +365,7 @@ extension TerminalChat {
                 return nil
             }
         }
-        return start..<end
+        return tokenStart..<end
     }
 
     private nonisolated static func isCanonicalExitCode(
@@ -649,7 +657,7 @@ extension TerminalChat {
     }
 
     /// Parameter JSON is presentation metadata rather than source code. Render
-    /// keys in light gray and values in muted yellow so a target file's language
+    /// keys in light gray and values in default white so a target file's language
     /// hint can never turn parameter strings green.
     nonisolated static func renderDetailedToolParameterLine(_ line: String) -> String {
         let reset = "\u{1B}[0m"
@@ -754,7 +762,7 @@ extension TerminalChat {
     nonisolated static let toolDurationColor = "\u{1B}[90m"
     nonisolated static let toolParameterBaseColor = "\u{1B}[38;5;244m"
     nonisolated static let toolParameterKeyColor = "\u{1B}[38;5;250m"
-    nonisolated static let toolParameterValueColor = "\u{1B}[38;5;180m"
+    nonisolated static let toolParameterValueColor = "\u{1B}[38;5;255m"
     nonisolated static let toolParameterSyntaxColors =
         TerminalCodeBlockRenderer.DataSyntaxColors(
             property: toolParameterKeyColor,
