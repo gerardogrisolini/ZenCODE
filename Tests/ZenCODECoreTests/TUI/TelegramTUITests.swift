@@ -254,6 +254,45 @@ struct TelegramTUITests {
     }
 
     @Test
+    func telegramProgressReporterPublishesToolCalls() async {
+        let collector = TelegramTestMessageCollector()
+        let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
+            await collector.append(message)
+        }
+
+        await reporter.reportAssistantContent("Controllo il file ")
+        await reporter.reportAssistantContent("prima di modificarlo.")
+        await reporter.reportToolCall(
+            toolCall(
+                "local.readFile",
+                arguments: ["path": "/Users/dev/MyProject/Sources/Main.swift"]
+            ),
+            workingDirectory: Self.formatterWorkingDirectory
+        )
+        await reporter.flush()
+
+        #expect(
+            await collector.allMessages() == [
+                "Controllo il file prima di modificarlo.",
+                "🔧 local.readFile · read\nSources/Main.swift"
+            ]
+        )
+    }
+
+    @Test
+    func telegramProgressReporterDoesNotPublishFinalAssistantContent() async {
+        let collector = TelegramTestMessageCollector()
+        let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
+            await collector.append(message)
+        }
+
+        await reporter.reportAssistantContent("Questa è la risposta finale.")
+        await reporter.flush()
+
+        #expect(await collector.allMessages().isEmpty)
+    }
+
+    @Test
     func telegramPairingCodeAcceptsPlainCodeAndStartPayload() {
         #expect(TerminalTelegramPairingService.pairingCode(in: " abcd1234 ") == "ABCD1234")
         #expect(TerminalTelegramPairingService.pairingCode(in: "/start abcd1234") == "ABCD1234")
@@ -805,5 +844,9 @@ private actor TelegramTestMessageCollector {
         return await withCheckedContinuation { continuation in
             waiters.append(continuation)
         }
+    }
+
+    func allMessages() -> [String] {
+        messages
     }
 }

@@ -10,6 +10,7 @@ actor TerminalTelegramTurnProgressReporter {
     let chatID: Int64
     let sendMessage: @Sendable (String, Int64) async -> Void
     var queue: [String] = []
+    var pendingAssistantContent = ""
     var isDraining = false
     var idleWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -21,7 +22,30 @@ actor TerminalTelegramTurnProgressReporter {
         self.sendMessage = sendMessage
     }
 
-    func enqueue(_ message: String) {
+    func reportAssistantContent(_ delta: String) {
+        guard !delta.isEmpty, pendingAssistantContent.count < 3_900 else {
+            return
+        }
+        let remainingCount = 3_900 - pendingAssistantContent.count
+        pendingAssistantContent.append(contentsOf: delta.prefix(remainingCount))
+    }
+
+    func reportToolCall(
+        _ toolCall: DirectAgentToolCall,
+        workingDirectory: URL
+    ) {
+        if let narration = pendingAssistantContent.nilIfBlank {
+            enqueue(narration)
+        }
+        pendingAssistantContent.removeAll(keepingCapacity: true)
+
+        enqueue(TerminalTelegramToolCallFormatter.format(
+            toolCall,
+            workingDirectory: workingDirectory
+        ))
+    }
+
+    private func enqueue(_ message: String) {
         guard let text = message.nilIfBlank else {
             return
         }
@@ -30,6 +54,9 @@ actor TerminalTelegramTurnProgressReporter {
     }
 
     func flush() async {
+        // Content not followed by a tool belongs to the final response, which is
+        // delivered separately by sendTelegramCompletionIfLinked.
+        pendingAssistantContent.removeAll(keepingCapacity: false)
         guard isDraining || !queue.isEmpty else {
             return
         }

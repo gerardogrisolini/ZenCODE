@@ -76,7 +76,6 @@ extension TerminalChat {
 
     func handleTelegramMessage(
         _ message: TerminalTelegramIncomingMessage,
-        isGenerating: Bool,
         queuedPrompts: inout [TerminalQueuedPrompt],
         eventQueue: TerminalChatEventQueue,
         transcriptions: TerminalVoiceTranscriptionRegistry
@@ -129,12 +128,6 @@ extension TerminalChat {
         queuedPrompts.append(
             TerminalQueuedPrompt(text: text, origin: .telegram(chatID: message.chatID))
         )
-        await sendTelegramSystemMessage(
-            isGenerating
-                ? "Queued for the current ZenCODE session."
-                : "Received. ZenCODE is working.",
-            to: message.chatID
-        )
     }
 
     func handleTelegramVoiceMessage(
@@ -162,7 +155,6 @@ extension TerminalChat {
             return
         }
 
-        await sendTelegramSystemMessage("Voice received. Transcribing...", to: chatID)
         let task = Task(name: "ZenCODE.Telegram.voice-transcription") { [weak self] in
             defer { transcriptions.release(slot) }
             guard let self else { return }
@@ -417,34 +409,6 @@ extension TerminalChat {
         return TerminalTelegramTurnProgressReporter(chatID: chatID) { [weak self] message, chatID in
             await self?.sendTelegramSystemMessage(message, to: chatID)
         }
-    }
-
-    func telegramTurnStartedMessage(prompt: String) -> String {
-        guard let promptPreview = prompt.nilIfBlank else {
-            return "*ZenCODE* is working…"
-        }
-        return "*ZenCODE* is working…\n\(Self.truncatedInline(promptPreview, limit: 300))"
-    }
-
-    func telegramToolStartedMessage(_ toolCall: DirectAgentToolCall) -> String {
-        TerminalTelegramToolCallFormatter.format(toolCall, workingDirectory: configuration.workingDirectory)
-    }
-
-    func telegramFileChangeSummaryMessage(_ summary: TurnFileChangeSummary) -> String {
-        let title = summary.fileCount == 1
-            ? "1 modified file"
-            : "\(summary.fileCount) modified files"
-        var lines = [
-            "*File changes*",
-            "\(title)  +\(summary.totalAdditions) -\(summary.totalDeletions)"
-        ]
-        let visibleEntries = summary.entries.prefix(12).map(Self.renderFileChangeEntry)
-        lines.append(contentsOf: visibleEntries)
-        if summary.entries.count > visibleEntries.count {
-            lines.append("... \(summary.entries.count - visibleEntries.count) more")
-        }
-        lines.append(summary.canUndo ? "Use /undo in the TUI to revert." : "Undo is not available.")
-        return lines.joined(separator: "\n")
     }
 
 }

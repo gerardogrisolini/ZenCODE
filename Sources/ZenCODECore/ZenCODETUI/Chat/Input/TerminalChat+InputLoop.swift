@@ -418,7 +418,6 @@ extension TerminalChat {
             case let .telegramMessage(message):
                 await handleTelegramMessage(
                     message,
-                    isGenerating: isGenerating,
                     queuedPrompts: &queuedPrompts,
                     eventQueue: eventQueue,
                     transcriptions: remoteTranscriptions
@@ -435,10 +434,6 @@ extension TerminalChat {
                         isProcessing: true
                     )
                 }
-                await sendTelegramSystemMessageIfLinked(
-                    "Voice: \(progress.message)",
-                    origin: progress.origin
-                )
             case let .voicePromptCompleted(result):
                 if result.origin == .local {
                     voiceTranscriptionTask = nil
@@ -457,15 +452,7 @@ extension TerminalChat {
                         )
                         await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
                         scheduleQueuedPromptIfNeeded()
-                        await sendTelegramSystemMessageIfLinked(
-                            "Transcription ready. Queued for the current ZenCODE session.",
-                            origin: result.origin
-                        )
                     } else {
-                        await sendTelegramSystemMessageIfLinked(
-                            "Transcription ready. ZenCODE is working.",
-                            origin: result.origin
-                        )
                         await startDirectPrompt(prompt, origin: result.origin)
                     }
                 case let .failure(message):
