@@ -42,6 +42,7 @@ extension ChatGPTSubscriptionGenerationClient {
         guard let lease = sessionLease(for: sessionID) else {
             throw ChatGPTSubscriptionGenerationError.missingSession
         }
+        let httpFallbackScopeID = Self.httpFallbackScopeID(for: lease)
 
         var credentials = try await CodexAgentModel.loadValidCredentials()
         guard let loadedSession = currentSession(for: lease) else {
@@ -151,7 +152,11 @@ extension ChatGPTSubscriptionGenerationClient {
                 )
                 let hasContinuationReplay = requestPayload.previousResponseID?.nilIfBlank != nil
                     && requestPayload.cachedWebSocketInput != nil
-                let usesFreshContinuationReplay = session.continuation?.allowsFreshTransport == true
+                let usesHTTPFallback = webSocketPool.usesHTTPFallback(
+                    scopeID: httpFallbackScopeID
+                )
+                let usesFreshContinuationReplay = !usesHTTPFallback
+                    && session.continuation?.allowsFreshTransport == true
                     && hasContinuationReplay
                 let instructions = requestPayload.instructions?.nilIfBlank
                     ?? "You are a helpful coding assistant."
@@ -192,6 +197,8 @@ extension ChatGPTSubscriptionGenerationClient {
                         reasoningEffort: reasoningEffort,
                         textVerbosity: "medium",
                         sessionID: session.chatGPTSessionID ?? chatGPTSessionID,
+                        threadID: session.id,
+                        fallbackScopeID: httpFallbackScopeID,
                         promptCacheKey: promptCacheKey,
                         cachedWebSocketInput: requestPayload.cachedWebSocketInput.map {
                             JSONValue.acpValue(from: $0)
@@ -212,6 +219,13 @@ extension ChatGPTSubscriptionGenerationClient {
                         || ChatGPTSubscriptionResponsesClient.isCancellationError(error) {
                         throw error
                     }
+                    if error is ChatGPTSubscriptionResponsesClient.ReplayUnsafeStreamFailure {
+                        // Reasoning, content, or tool output already crossed the
+                        // callback boundary. Never replay this request or switch
+                        // transports, even when the underlying failure is
+                        // otherwise transient.
+                        throw error
+                    }
                     if hasContinuationReplay,
                        Self.continuationUnavailableError(from: error) != nil {
                         // The server no longer has the previous response state
@@ -230,12 +244,11 @@ extension ChatGPTSubscriptionGenerationClient {
                     }
                     if streamInterruptionRetries < Self.maxStreamInterruptionRetries,
                        Self.isRetryableStreamInterruption(error) {
-                        // A rejected WebSocket upgrade with an auth status
-                        // (401/403) means the access token is stale on the
-                        // server even though the local expiry window passed.
-                        // Force a refresh so the next upgrade request carries a
-                        // fresh token before closing and rebuilding the client.
-                        if Self.isWebSocketAuthFailure(error) {
+                        // A 401/403 from either transport means the access token
+                        // is stale on the server even though the local expiry
+                        // window passed. Force a refresh before rebuilding the
+                        // client and retrying on the session's active transport.
+                        if Self.isAuthenticationFailure(error) {
                             do {
                                 let refreshed = try await ChatGPTSubscriptionAuthService
                                     .refresh(credentials: credentials)
@@ -291,6 +304,12 @@ extension ChatGPTSubscriptionGenerationClient {
                     continue
                 }
 
+                // A completed request establishes a fresh retry budget for the
+                // next tool round; failures within one request remain bounded.
+                streamInterruptionRetries = 0
+                if completion.didActivateHTTPFallback {
+                    await onEvent(.diagnostic(Self.httpFallbackDiagnostic()))
+                }
                 await streamAccumulator.recordCompletionResponseID(completion.responseID)
                 let rawStreamResult = try await streamAccumulator.result()
                 let streamResult = StreamAccumulatorResult(
@@ -425,31 +444,48 @@ extension ChatGPTSubscriptionGenerationClient {
 
     static func streamInterruptionRetryDiagnostic() -> String {
         "ChatGPT Subscription response was interrupted by a transient WebSocket "
-            + "or backend failure; retrying this turn on a fresh connection with "
+            + "failure; retrying this turn on a fresh connection with "
             + "a full conversation replay."
+    }
+
+    static func httpFallbackDiagnostic() -> String {
+        "ChatGPT Subscription switched this session from WebSocket to HTTP "
+            + "streaming after a recoverable WebSocket backend failure."
     }
 
     static func isRetryableStreamInterruption(_ error: Error) -> Bool {
         guard !ChatGPTSubscriptionResponsesClient.isCancellationError(error) else {
             return false
         }
+        if let error = error as? RemoteTransportError,
+           case let .upgradeRejected(status, _) = error,
+           status == 429 {
+            // The Responses client already applied its bounded backoff budget.
+            // A second full-turn retry would only duplicate the same rate-limit
+            // batch and delay the enriched limit error shown to the user.
+            return false
+        }
         return ChatGPTSubscriptionResponsesClient.isRetryableTransportError(error)
-            || ChatGPTSubscriptionResponsesClient.isRetryableRequestFailure(error)
+            || isAuthenticationFailure(error)
     }
 
-    /// True when the WebSocket upgrade was rejected with an auth-related HTTP
-    /// status (401/403). Such failures warrant a forced token refresh.
-    static func isWebSocketAuthFailure(_ error: Error) -> Bool {
+    /// True when either transport returns an auth-related HTTP status (401/403).
+    /// Such failures warrant a forced token refresh.
+    static func isAuthenticationFailure(_ error: Error) -> Bool {
         if let error = error as? RemoteTransportError,
            case let .upgradeRejected(status, _) = error {
+            return status == 401 || status == 403
+        }
+        if let error = error as? ChatGPTSubscriptionGenerationError,
+           case let .http(status, _) = error {
             return status == 401 || status == 403
         }
         return false
     }
 
     static func authRefreshDiagnostic() -> String {
-        "ChatGPT Subscription rejected the WebSocket upgrade with an auth "
-            + "error; refreshed the access token and will retry."
+        "ChatGPT Subscription returned an authentication error; refreshed "
+            + "the access token and will retry."
     }
 
     static func continuationUnavailableError(

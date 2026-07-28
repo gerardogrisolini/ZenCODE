@@ -9,8 +9,9 @@ import Foundation
 import Synchronization
 
 /// Keeps the ChatGPT Responses WebSocket associated with a session between
-/// rounds. All platforms use the same NIO adapter; no OS-specific socket path
-/// participates in acquisition, reuse, heartbeats, or fencing.
+/// rounds and owns lifecycle tracking for session-scoped HTTP fallback streams.
+/// All platforms use the same NIO adapter; no OS-specific socket path
+/// participates in acquisition, reuse, heartbeats, fencing, or fallback I/O.
 public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private struct Entry {
         let task: any ChatGPTSubscriptionWebSocketTask
@@ -28,11 +29,35 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         let task: any ChatGPTSubscriptionWebSocketTask
     }
 
+    struct HTTPStreamLease {
+        let token: UInt64
+        let response: RemoteHTTPStreamingResponse
+    }
+
+    private struct ActiveHTTPStream {
+        let scopeID: String
+        let body: RemoteHTTPBody
+    }
+
+    private struct PendingHTTPStream {
+        let scopeID: String
+        let task: Task<RemoteHTTPStreamingResponse, Error>
+    }
+
     private struct State {
         var entries: [String: Entry] = [:]
         /// A second acquire must not replace or close an active cached task.
         /// Its short-lived task is tracked here until its matching release.
         var transientEntries: [UInt64: TransientEntry] = [:]
+        /// Once a logical agent session exhausts or is rejected by the
+        /// WebSocket backend, keep all later transport IDs for that session on
+        /// HTTP instead of probing the same failing route again.
+        var httpFallbackScopeIDs: Set<String> = []
+        /// A closed incarnation is fenced permanently; its generation-qualified
+        /// scope ID is never reused by a later logical session incarnation.
+        var closedHTTPFallbackScopeIDs: Set<String> = []
+        var pendingHTTPStreams: [UInt64: PendingHTTPStream] = [:]
+        var activeHTTPStreams: [UInt64: ActiveHTTPStream] = [:]
         private var nextToken: UInt64 = 0
 
         mutating func makeToken() -> UInt64 {
@@ -83,6 +108,9 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private let closeWebSocketTask: @Sendable (
         any ChatGPTSubscriptionWebSocketTask
     ) -> Void
+    private let httpStreamOpener: @Sendable (
+        RemoteHTTPStreamingRequest
+    ) async throws -> RemoteHTTPStreamingResponse
     /// Non-nil only when this pool constructed the NIO transport itself. An
     /// injected transport remains owned by its embedding composition root.
     private let ownedTransport: RemoteTransportCore?
@@ -133,6 +161,9 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
             )
         }
         self.closeWebSocketTask = closeWebSocketTask
+        self.httpStreamOpener = { request in
+            try await resolvedTransport.openHTTPStream(request)
+        }
     }
 
     /// Idle time has no independent TTL: a session may wait on a long-running
@@ -327,6 +358,136 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         reapInvalidOrExpiredIdleEntries()
     }
 
+    func openHTTPStream(
+        _ request: RemoteHTTPStreamingRequest,
+        scopeID: String
+    ) async throws -> HTTPStreamLease {
+        let opener = httpStreamOpener
+        let openingTask = Task<RemoteHTTPStreamingResponse, Error> {
+            try await opener(request)
+        }
+        let token = state.withLock { state -> UInt64? in
+            guard !state.closedHTTPFallbackScopeIDs.contains(scopeID) else {
+                return nil
+            }
+            let token = state.makeToken()
+            state.pendingHTTPStreams[token] = PendingHTTPStream(
+                scopeID: scopeID,
+                task: openingTask
+            )
+            return token
+        }
+        guard let token else {
+            openingTask.cancel()
+            throw CancellationError()
+        }
+
+        let response: RemoteHTTPStreamingResponse
+        do {
+            response = try await withTaskCancellationHandler {
+                try await openingTask.value
+            } onCancel: {
+                openingTask.cancel()
+            }
+        } catch {
+            _ = state.withLock {
+                $0.pendingHTTPStreams.removeValue(forKey: token)
+            }
+            throw error
+        }
+
+        let didRegister = state.withLock { state -> Bool in
+            state.pendingHTTPStreams.removeValue(forKey: token)
+            guard !state.closedHTTPFallbackScopeIDs.contains(scopeID) else {
+                return false
+            }
+            state.activeHTTPStreams[token] = ActiveHTTPStream(
+                scopeID: scopeID,
+                body: response.body
+            )
+            return true
+        }
+        guard didRegister else {
+            response.body.cancel()
+            throw CancellationError()
+        }
+        return HTTPStreamLease(token: token, response: response)
+    }
+
+    func releaseHTTPStream(_ lease: HTTPStreamLease) {
+        _ = state.withLock {
+            $0.activeHTTPStreams.removeValue(forKey: lease.token)
+        }
+    }
+
+    func hasActiveHTTPStream(scopeID: String) -> Bool {
+        state.withLock {
+            $0.activeHTTPStreams.values.contains { $0.scopeID == scopeID }
+        }
+    }
+
+    func hasPendingHTTPStream(scopeID: String) -> Bool {
+        state.withLock {
+            $0.pendingHTTPStreams.values.contains { $0.scopeID == scopeID }
+        }
+    }
+
+    func usesHTTPFallback(scopeID: String) -> Bool {
+        state.withLock {
+            !$0.closedHTTPFallbackScopeIDs.contains(scopeID)
+                && $0.httpFallbackScopeIDs.contains(scopeID)
+        }
+    }
+
+    func isHTTPFallbackScopeClosed(scopeID: String) -> Bool {
+        state.withLock { $0.closedHTTPFallbackScopeIDs.contains(scopeID) }
+    }
+
+    @discardableResult
+    func activateHTTPFallback(scopeID: String) -> Bool {
+        state.withLock { state in
+            guard !state.closedHTTPFallbackScopeIDs.contains(scopeID) else {
+                return false
+            }
+            return state.httpFallbackScopeIDs.insert(scopeID).inserted
+        }
+    }
+
+    func clearHTTPFallback(scopeID: String) {
+        _ = state.withLock {
+            $0.httpFallbackScopeIDs.remove(scopeID)
+        }
+    }
+
+    func closeHTTPFallbackScope(scopeID: String) {
+        let retired = state.withLock { state -> (
+            [Task<RemoteHTTPStreamingResponse, Error>],
+            [RemoteHTTPBody]
+        ) in
+            state.closedHTTPFallbackScopeIDs.insert(scopeID)
+            state.httpFallbackScopeIDs.remove(scopeID)
+            let pendingTokens = state.pendingHTTPStreams.compactMap { token, stream in
+                stream.scopeID == scopeID ? token : nil
+            }
+            let pendingTasks = pendingTokens.compactMap {
+                state.pendingHTTPStreams.removeValue(forKey: $0)?.task
+            }
+            let activeTokens = state.activeHTTPStreams.compactMap { token, stream in
+                stream.scopeID == scopeID ? token : nil
+            }
+            let bodies = activeTokens.compactMap {
+                state.activeHTTPStreams.removeValue(forKey: $0)?.body
+            }
+            return (pendingTasks, bodies)
+        }
+        for task in retired.0 {
+            task.cancel()
+        }
+        for body in retired.1 {
+            body.cancel()
+        }
+    }
+
     public func closeSession(sessionID: String) {
         let retired = state.withLock { state -> (Entry?, [TransientEntry]) in
             let entry = state.entries.removeValue(forKey: sessionID)
@@ -348,12 +509,22 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     }
 
     public func closeAll() {
-        let retired = state.withLock { state -> ([Entry], [TransientEntry]) in
+        let retired = state.withLock {
+            state -> (
+                [Entry],
+                [TransientEntry],
+                [Task<RemoteHTTPStreamingResponse, Error>],
+                [RemoteHTTPBody]
+            ) in
             let entries = Array(state.entries.values)
             let transientEntries = Array(state.transientEntries.values)
+            let pendingTasks = state.pendingHTTPStreams.values.map(\.task)
+            let httpBodies = state.activeHTTPStreams.values.map(\.body)
             state.entries.removeAll()
             state.transientEntries.removeAll()
-            return (entries, transientEntries)
+            state.pendingHTTPStreams.removeAll()
+            state.activeHTTPStreams.removeAll()
+            return (entries, transientEntries, pendingTasks, httpBodies)
         }
 
         for entry in retired.0 {
@@ -362,6 +533,12 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         for entry in retired.1 {
             close(entry.task)
         }
+        for task in retired.2 {
+            task.cancel()
+        }
+        for body in retired.3 {
+            body.cancel()
+        }
     }
 
     /// Terminal lifecycle operation for a pool that owns its default NIO
@@ -369,6 +546,10 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     /// must not be used to acquire another connection.
     public func shutdown() async {
         closeAll()
+        state.withLock {
+            $0.httpFallbackScopeIDs.removeAll()
+            $0.closedHTTPFallbackScopeIDs.removeAll()
+        }
         if let ownedTransport {
             try? await ownedTransport.shutdown()
         }

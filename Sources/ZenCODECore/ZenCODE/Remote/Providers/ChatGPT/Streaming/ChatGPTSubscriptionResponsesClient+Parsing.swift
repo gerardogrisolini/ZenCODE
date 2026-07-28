@@ -127,7 +127,7 @@ extension ChatGPTSubscriptionResponsesClient {
         return payload == "[DONE]"
     }
 
-    static func isReplayUnsafeWebSocketEvent(_ object: [String: Any]) -> Bool {
+    static func isReplayUnsafeStreamEvent(_ object: [String: Any]) -> Bool {
         let normalizedType = (object["type"] as? String)
             .map(normalizedEventType) ?? ""
         guard !normalizedType.isEmpty else {
@@ -145,6 +145,11 @@ extension ChatGPTSubscriptionResponsesClient {
             "output_text",
             "raw_response_item",
             "reasoning",
+            "refusal",
+            "response_cancelled",
+            "response_completed",
+            "response_done",
+            "response_incomplete",
             "tool_call"
         ]
         return replayUnsafeMarkers.contains { normalizedType.contains($0) }
@@ -157,7 +162,8 @@ extension ChatGPTSubscriptionResponsesClient {
             "response_completed",
             "response_done",
             "response_incomplete",
-            "response_failed"
+            "response_failed",
+            "response_cancelled"
         ].contains(normalizedType) {
             return true
         }

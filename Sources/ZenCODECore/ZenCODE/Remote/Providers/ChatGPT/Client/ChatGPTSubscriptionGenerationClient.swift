@@ -270,6 +270,23 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         let generation: UInt64
     }
 
+    /// Fences transport fallback state to one installed incarnation of a
+    /// logical session. Reusing the same public session ID after close/recreate
+    /// cannot inherit a late fallback activation from the previous request.
+    static func httpFallbackScopeID(
+        sessionID: String,
+        generation: UInt64
+    ) -> String {
+        "\(sessionID)\u{1f}\(generation)"
+    }
+
+    static func httpFallbackScopeID(for lease: SessionLease) -> String {
+        httpFallbackScopeID(
+            sessionID: lease.id,
+            generation: lease.generation
+        )
+    }
+
     func installSession(_ session: AgentSession, id: String) {
         nextSessionGeneration &+= 1
         sessionGenerations[id] = nextSessionGeneration

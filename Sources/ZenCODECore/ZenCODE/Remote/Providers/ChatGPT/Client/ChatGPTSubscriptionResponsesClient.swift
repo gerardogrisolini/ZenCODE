@@ -8,10 +8,24 @@
 import Foundation
 import ToolCore
 
-public struct ChatGPTSubscriptionResponsesClient {
+public struct ChatGPTSubscriptionResponsesClient: Sendable {
     public struct StreamCompletion: Sendable {
         public let responseID: String?
+        public let didActivateHTTPFallback: Bool
+
+        init(
+            responseID: String?,
+            didActivateHTTPFallback: Bool = false
+        ) {
+            self.responseID = responseID
+            self.didActivateHTTPFallback = didActivateHTTPFallback
+        }
     }
+
+    typealias HTTPFallbackOverride = @Sendable (
+        JSONValue,
+        String
+    ) async throws -> StreamCompletion
 
     struct WebSocketLease {
         let sessionID: String
@@ -43,6 +57,17 @@ public struct ChatGPTSubscriptionResponsesClient {
         let didSendContinuationPayload: Bool
     }
 
+    /// Preserves the replay boundary when a lower-level transport failure is
+    /// returned to the generation runner. The localized description delegates
+    /// to the original error so backend request IDs remain visible to users.
+    struct ReplayUnsafeStreamFailure: LocalizedError {
+        let underlying: Error
+
+        var errorDescription: String? {
+            underlying.localizedDescription
+        }
+    }
+
     public let credentials: CodexAgentCredentials
     public let baseURL: URL
     /// Historical session value retained for source compatibility. It does not
@@ -50,6 +75,7 @@ public struct ChatGPTSubscriptionResponsesClient {
     public let urlSession: RemoteProviderSession
     public let webSocketPool: ChatGPTSubscriptionWebSocketPool
     private let retrySleep: @Sendable (Int) async throws -> Void
+    private let httpFallbackOverride: HTTPFallbackOverride?
 
     static let maxRetries = 3
     static let baseRetryDelayNanoseconds: UInt64 = 1_000_000_000
@@ -81,7 +107,8 @@ public struct ChatGPTSubscriptionResponsesClient {
         baseURL: URL,
         urlSession: RemoteProviderSession? = nil,
         webSocketPool: ChatGPTSubscriptionWebSocketPool,
-        retrySleep: @escaping @Sendable (Int) async throws -> Void
+        retrySleep: @escaping @Sendable (Int) async throws -> Void,
+        httpFallbackOverride: HTTPFallbackOverride? = nil
     ) {
         self.credentials = credentials
         self.baseURL = baseURL
@@ -89,6 +116,7 @@ public struct ChatGPTSubscriptionResponsesClient {
             ?? RemoteProviderSessionCompatibility.generationSession()
         self.webSocketPool = webSocketPool
         self.retrySleep = retrySleep
+        self.httpFallbackOverride = httpFallbackOverride
     }
 
     public func streamEvents(
@@ -98,6 +126,8 @@ public struct ChatGPTSubscriptionResponsesClient {
         reasoningEffort: String?,
         textVerbosity: String,
         sessionID: String,
+        threadID: String? = nil,
+        fallbackScopeID: String? = nil,
         promptCacheKey: String? = nil,
         cachedWebSocketInput: JSONValue? = nil,
         previousResponseID: String? = nil,
@@ -118,6 +148,27 @@ public struct ChatGPTSubscriptionResponsesClient {
             maxOutputTokens: maxOutputTokens
         )
 
+        let resolvedThreadID = threadID?.nilIfBlank ?? sessionID
+        let resolvedFallbackScopeID = fallbackScopeID?.nilIfBlank
+            ?? resolvedThreadID
+
+        guard !webSocketPool.isHTTPFallbackScopeClosed(
+            scopeID: resolvedFallbackScopeID
+        ) else {
+            throw CancellationError()
+        }
+
+        if webSocketPool.usesHTTPFallback(scopeID: resolvedFallbackScopeID) {
+            return try await streamEventsOverHTTP(
+                body: body,
+                sessionID: sessionID,
+                threadID: resolvedThreadID,
+                fallbackScopeID: resolvedFallbackScopeID,
+                didActivateHTTPFallback: false,
+                onEvent: onEvent
+            )
+        }
+
         var attempt = 0
         var suppressContinuationReplay = false
         while true {
@@ -128,14 +179,37 @@ public struct ChatGPTSubscriptionResponsesClient {
                     previousResponseID: suppressContinuationReplay ? nil : previousResponseID,
                     allowsFreshContinuation: allowsFreshWebSocketContinuation,
                     sessionID: sessionID,
+                    threadID: resolvedThreadID,
                     onEvent: onEvent
                 )
             } catch let failure as WebSocketStreamFailure {
+                if Self.shouldActivateHTTPFallback(
+                    failure.underlying,
+                    receivedReplayUnsafeEvent: failure.receivedReplayUnsafeEvent,
+                    attempt: attempt
+                ) {
+                    let didActivateHTTPFallback = webSocketPool.activateHTTPFallback(
+                        scopeID: resolvedFallbackScopeID
+                    )
+                    return try await streamEventsOverHTTP(
+                        body: body,
+                        sessionID: sessionID,
+                        threadID: resolvedThreadID,
+                        fallbackScopeID: resolvedFallbackScopeID,
+                        didActivateHTTPFallback: didActivateHTTPFallback,
+                        onEvent: onEvent
+                    )
+                }
                 guard Self.shouldRetryWebSocketFailure(
                     failure.underlying,
                     receivedReplayUnsafeEvent: failure.receivedReplayUnsafeEvent,
                     attempt: attempt
                 ) else {
+                    if failure.receivedReplayUnsafeEvent {
+                        throw ReplayUnsafeStreamFailure(
+                            underlying: failure.underlying
+                        )
+                    }
                     throw failure.underlying
                 }
                 if failure.didSendContinuationPayload {
@@ -165,9 +239,13 @@ public struct ChatGPTSubscriptionResponsesClient {
         previousResponseID: String?,
         allowsFreshContinuation: Bool,
         sessionID: String,
+        threadID: String,
         onEvent: ([String: Any]) async throws -> Void
     ) async throws -> StreamCompletion {
-        let request = webSocketRequest(sessionID: sessionID)
+        let request = webSocketRequest(
+            sessionID: sessionID,
+            threadID: threadID
+        )
         let lease = webSocketPool.acquire(
             sessionID: sessionID,
             request: request
@@ -225,7 +303,7 @@ public struct ChatGPTSubscriptionResponsesClient {
                     }
                     let objects = try Self.decodedJSONObjectSequence(from: data)
                     for object in objects {
-                        if Self.isReplayUnsafeWebSocketEvent(object) {
+                        if Self.isReplayUnsafeStreamEvent(object) {
                             didReceiveReplayUnsafeEvent = true
                         }
                         if responseID == nil {
@@ -260,6 +338,106 @@ public struct ChatGPTSubscriptionResponsesClient {
                 didSendContinuationPayload: didSendContinuationPayload
             )
         }
+    }
+
+    private func streamEventsOverHTTP(
+        body: [String: Any],
+        sessionID: String,
+        threadID: String,
+        fallbackScopeID: String,
+        didActivateHTTPFallback: Bool,
+        onEvent: ([String: Any]) async throws -> Void
+    ) async throws -> StreamCompletion {
+        if let httpFallbackOverride {
+            let completion = try await httpFallbackOverride(
+                JSONValue(jsonObject: body),
+                sessionID
+            )
+            return StreamCompletion(
+                responseID: completion.responseID,
+                didActivateHTTPFallback: didActivateHTTPFallback
+            )
+        }
+
+        let lease = try await webSocketPool.openHTTPStream(
+            try request(
+                for: body,
+                sessionID: sessionID,
+                threadID: threadID
+            ),
+            scopeID: fallbackScopeID
+        )
+        defer { webSocketPool.releaseHTTPStream(lease) }
+        let response = lease.response
+        guard (200..<300).contains(response.status) else {
+            let output = try await RemoteStreamTransport.collectErrorBody(
+                from: response.body
+            )
+            throw ChatGPTSubscriptionGenerationError.http(
+                status: response.status,
+                output: Self.enrichedLimitOutput(
+                    status: response.status,
+                    output: output,
+                    headers: response.headers
+                )
+            )
+        }
+
+        var responseID: String?
+        var didReceiveTerminalEvent = false
+        var didReceiveReplayUnsafeEvent = false
+        do {
+            eventLoop: for try await event in response.body.sseEvents() {
+                try Task.checkCancellation()
+                let payload = event.data.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                )
+                if payload.isEmpty {
+                    continue
+                }
+                if payload == "[DONE]" {
+                    break
+                }
+                let objects = try Self.decodedJSONObjectSequence(
+                    from: Data(payload.utf8)
+                )
+                for object in objects {
+                    if Self.isReplayUnsafeStreamEvent(object) {
+                        didReceiveReplayUnsafeEvent = true
+                    }
+                    if responseID == nil {
+                        responseID = ChatGPTSubscriptionGenerationClient.responseID(
+                            from: object
+                        )
+                    }
+                    try await onEvent(object)
+                    if Self.isTerminalEvent(object) {
+                        didReceiveTerminalEvent = true
+                        break eventLoop
+                    }
+                }
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            if didReceiveReplayUnsafeEvent {
+                throw ReplayUnsafeStreamFailure(underlying: error)
+            }
+            throw error
+        }
+
+        guard didReceiveTerminalEvent else {
+            let error = ChatGPTSubscriptionGenerationError.invalidResponse
+            if didReceiveReplayUnsafeEvent {
+                throw ReplayUnsafeStreamFailure(underlying: error)
+            }
+            throw error
+        }
+
+        return StreamCompletion(
+            responseID: responseID,
+            didActivateHTTPFallback: didActivateHTTPFallback
+        )
     }
 
     static func receiveWebSocketMessage(

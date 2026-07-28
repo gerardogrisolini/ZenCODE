@@ -224,11 +224,13 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionGenericRequestFailureIsRetryable() {
+    func chatGPTSubscriptionGenericRequestFailureFallsBackToHTTP() {
         let message = """
         An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 2500a4a9-690b-4951-beb3-602a7d5893d8 in your message.
         """
         let retryableError = ChatGPTSubscriptionGenerationError.responseFailed(message)
+        let replayUnsafeError = ChatGPTSubscriptionResponsesClient
+            .ReplayUnsafeStreamFailure(underlying: retryableError)
         let unrelatedError = ChatGPTSubscriptionGenerationError.responseFailed(
             "The model produced an invalid tool call."
         )
@@ -247,20 +249,28 @@ extension RemoteSessionSnapshotTests {
                 "sequence_number": 2
             ]) == message
         )
+        #expect(replayUnsafeError.localizedDescription == message)
         #expect(
-            ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
+            !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
                 retryableError
             )
         )
         #expect(
-            ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
                 retryableError,
                 receivedReplayUnsafeEvent: false,
                 attempt: 0
             )
         )
         #expect(
-            !ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
+            ChatGPTSubscriptionResponsesClient.shouldActivateHTTPFallback(
+                retryableError,
+                receivedReplayUnsafeEvent: false,
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldActivateHTTPFallback(
                 retryableError,
                 receivedReplayUnsafeEvent: true,
                 attempt: 0
@@ -272,8 +282,17 @@ extension RemoteSessionSnapshotTests {
             )
         )
         #expect(
-            !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
-                incompleteGenericError
+            !ChatGPTSubscriptionResponsesClient.shouldActivateHTTPFallback(
+                unrelatedError,
+                receivedReplayUnsafeEvent: false,
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldActivateHTTPFallback(
+                incompleteGenericError,
+                receivedReplayUnsafeEvent: false,
+                attempt: 0
             )
         )
     }
@@ -291,6 +310,10 @@ extension RemoteSessionSnapshotTests {
         let rateLimited = RemoteTransportError.upgradeRejected(
             status: 429,
             body: #"{"error":"rate_limit"}"#
+        )
+        let upgradeRequired = RemoteTransportError.upgradeRejected(
+            status: 426,
+            body: #"{"error":"use_http"}"#
         )
         let badRequest = RemoteTransportError.upgradeRejected(
             status: 400,
@@ -318,16 +341,72 @@ extension RemoteSessionSnapshotTests {
         )
 
         #expect(
-            ChatGPTSubscriptionGenerationClient.isWebSocketAuthFailure(unauthorized)
+            ChatGPTSubscriptionGenerationClient.isAuthenticationFailure(unauthorized)
         )
         #expect(
-            ChatGPTSubscriptionGenerationClient.isWebSocketAuthFailure(forbidden)
+            ChatGPTSubscriptionGenerationClient.isAuthenticationFailure(forbidden)
         )
         #expect(
-            !ChatGPTSubscriptionGenerationClient.isWebSocketAuthFailure(rateLimited)
+            !ChatGPTSubscriptionGenerationClient.isAuthenticationFailure(rateLimited)
         )
         #expect(
-            !ChatGPTSubscriptionGenerationClient.isWebSocketAuthFailure(badRequest)
+            !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
+                rateLimited
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionGenerationClient.isAuthenticationFailure(badRequest)
+        )
+        #expect(
+            ChatGPTSubscriptionGenerationClient.isAuthenticationFailure(
+                ChatGPTSubscriptionGenerationError.http(
+                    status: 401,
+                    output: #"{"error":"invalid_token"}"#
+                )
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionGenerationClient.isAuthenticationFailure(
+                ChatGPTSubscriptionGenerationError.http(
+                    status: 429,
+                    output: #"{"error":"rate_limit"}"#
+                )
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldActivateHTTPFallback(
+                unauthorized,
+                receivedReplayUnsafeEvent: false,
+                attempt: ChatGPTSubscriptionResponsesClient.maxRetries
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
+                unauthorized,
+                receivedReplayUnsafeEvent: false,
+                attempt: 0
+            )
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
+                rateLimited,
+                receivedReplayUnsafeEvent: false,
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldActivateHTTPFallback(
+                rateLimited,
+                receivedReplayUnsafeEvent: false,
+                attempt: ChatGPTSubscriptionResponsesClient.maxRetries
+            )
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.shouldActivateHTTPFallback(
+                upgradeRequired,
+                receivedReplayUnsafeEvent: false,
+                attempt: 0
+            )
         )
     }
 
@@ -634,10 +713,16 @@ extension RemoteSessionSnapshotTests {
             credentials: chatGPTSubscriptionTestCredentials()
         )
 
-        let request = client.webSocketRequest(sessionID: "session-chatgpt")
+        let request = client.webSocketRequest(
+            sessionID: "session-chatgpt",
+            threadID: "logical-session"
+        )
 
         #expect(
             request.headerValue(for: "session-id") == "session-chatgpt"
+        )
+        #expect(
+            request.headerValue(for: "thread-id") == "logical-session"
         )
         #expect(request.headerValue(for: "session_id") == nil)
         #expect(
@@ -646,7 +731,7 @@ extension RemoteSessionSnapshotTests {
         )
         #expect(
             request.headerValue(for: "x-client-request-id")
-                == "session-chatgpt"
+                == "logical-session"
         )
     }
 
@@ -1120,6 +1205,20 @@ extension RemoteSessionSnapshotTests {
             )
         )
         #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldActivateHTTPFallback(
+                canonicalError,
+                receivedReplayUnsafeEvent: false,
+                attempt: ChatGPTSubscriptionResponsesClient.maxRetries - 1
+            )
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.shouldActivateHTTPFallback(
+                canonicalError,
+                receivedReplayUnsafeEvent: false,
+                attempt: ChatGPTSubscriptionResponsesClient.maxRetries
+            )
+        )
+        #expect(
             !ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
                 CancellationError(),
                 receivedReplayUnsafeEvent: false,
@@ -1186,7 +1285,7 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionNIOClientRetriesGenericRequestFailure() async throws {
+    func chatGPTSubscriptionNIOClientFallsBackAfterGenericRequestFailure() async throws {
         let message = """
         An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 2500a4a9-690b-4951-beb3-602a7d5893d8 in your message.
         """
@@ -1204,17 +1303,111 @@ extension RemoteSessionSnapshotTests {
                 .success(.text(String(decoding: failedResponse, as: UTF8.self)))
             ]
         )
-        let secondTask = ChatGPTSubscriptionTestWebSocketTask(
-            receiveOutcomes: [
-                .success(
-                    .text(
-                        #"{"type":"response.completed","response":{"id":"resp_retried","status":"completed"}}"#
-                    )
-                )
-            ]
-        )
-        let pendingTasks = Mutex([firstTask, secondTask])
         let factoryCount = Mutex(0)
+        let capturedRequests = Mutex<[RemoteWebSocketRequest]>([])
+        let capturedHTTPBodies = Mutex<[JSONValue]>([])
+        let httpFallbackSessionIDs = Mutex<[String]>([])
+        let pool = ChatGPTSubscriptionWebSocketPool(
+            heartbeatIntervalNanoseconds: UInt64.max,
+            webSocketTaskFactory: { request in
+                factoryCount.withLock { $0 += 1 }
+                capturedRequests.withLock { $0.append(request) }
+                return firstTask
+            }
+        )
+        defer { pool.closeAll() }
+        let client = ChatGPTSubscriptionResponsesClient(
+            credentials: chatGPTSubscriptionTestCredentials(),
+            baseURL: URL(string: "https://example.invalid/backend-api")!,
+            webSocketPool: pool,
+            retrySleep: { _ in },
+            httpFallbackOverride: { body, sessionID in
+                capturedHTTPBodies.withLock { $0.append(body) }
+                httpFallbackSessionIDs.withLock { $0.append(sessionID) }
+                return ChatGPTSubscriptionResponsesClient.StreamCompletion(
+                    responseID: "resp_http_fallback"
+                )
+            }
+        )
+
+        let completion = try await client.streamEvents(
+            input: JSONValue.acpValue(from: [["marker": "full-replay"]]),
+            model: "gpt-5.5",
+            instructions: "System prompt",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "transport-session-a",
+            threadID: "logical-session",
+            fallbackScopeID: "logical-session",
+            cachedWebSocketInput: JSONValue.acpValue(
+                from: [["marker": "continuation-delta"]]
+            ),
+            previousResponseID: "resp_previous",
+            allowsFreshWebSocketContinuation: true
+        ) { object in
+            if let errorMessage = ChatGPTSubscriptionGenerationClient
+                .responseErrorMessage(from: object) {
+                throw ChatGPTSubscriptionGenerationError.responseFailed(errorMessage)
+            }
+        }
+
+        let nextCompletion = try await client.streamEvents(
+            input: .array([]),
+            model: "gpt-5.5",
+            instructions: "System prompt",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "transport-session-b",
+            threadID: "logical-session",
+            fallbackScopeID: "logical-session"
+        ) { _ in }
+
+        let request = try #require(capturedRequests.withLock { $0.first })
+        let webSocketPayload = try #require(firstTask.sentMessages.first?.jsonObject)
+        let firstHTTPBodyValue = try #require(
+            capturedHTTPBodies.withLock { $0.first }
+        )
+        let firstHTTPBody = try #require(
+            firstHTTPBodyValue.acpJSONObject as? [String: Any]
+        )
+        let webSocketInput = try #require(webSocketPayload["input"] as? [[String: Any]])
+        let httpInput = try #require(firstHTTPBody["input"] as? [[String: Any]])
+        #expect(completion.responseID == "resp_http_fallback")
+        #expect(completion.didActivateHTTPFallback)
+        #expect(nextCompletion.responseID == "resp_http_fallback")
+        #expect(!nextCompletion.didActivateHTTPFallback)
+        #expect(factoryCount.withLock { $0 } == 1)
+        #expect(httpFallbackSessionIDs.withLock { $0 } == [
+            "transport-session-a",
+            "transport-session-b"
+        ])
+        #expect(request.headerValue(for: "session-id") == "transport-session-a")
+        #expect(request.headerValue(for: "thread-id") == "logical-session")
+        #expect(request.headerValue(for: "x-client-request-id") == "logical-session")
+        #expect(webSocketPayload["previous_response_id"] as? String == "resp_previous")
+        #expect(webSocketInput.first?["marker"] as? String == "continuation-delta")
+        #expect(firstHTTPBody["previous_response_id"] == nil)
+        #expect(httpInput.first?["marker"] as? String == "full-replay")
+        #expect(firstTask.cancelCount == 1)
+
+        pool.closeSession(sessionID: "transport-session-a")
+        #expect(pool.usesHTTPFallback(scopeID: "logical-session"))
+        pool.closeAll()
+        #expect(pool.usesHTTPFallback(scopeID: "logical-session"))
+        pool.clearHTTPFallback(scopeID: "logical-session")
+        #expect(!pool.usesHTTPFallback(scopeID: "logical-session"))
+    }
+
+    @Test
+    func chatGPTSubscriptionNIOClientFallsBackAfterWebSocketRetryBudget() async throws {
+        let tasks = (0...ChatGPTSubscriptionResponsesClient.maxRetries).map { _ in
+            ChatGPTSubscriptionTestWebSocketTask(
+                sendOutcomes: [.failure(RemoteTransportError.closed)]
+            )
+        }
+        let pendingTasks = Mutex(tasks)
+        let factoryCount = Mutex(0)
+        let httpFallbackCount = Mutex(0)
         let pool = ChatGPTSubscriptionWebSocketPool(
             heartbeatIntervalNanoseconds: UInt64.max,
             webSocketTaskFactory: { _ in
@@ -1227,7 +1420,13 @@ extension RemoteSessionSnapshotTests {
             credentials: chatGPTSubscriptionTestCredentials(),
             baseURL: URL(string: "https://example.invalid/backend-api")!,
             webSocketPool: pool,
-            retrySleep: { _ in }
+            retrySleep: { _ in },
+            httpFallbackOverride: { _, _ in
+                httpFallbackCount.withLock { $0 += 1 }
+                return ChatGPTSubscriptionResponsesClient.StreamCompletion(
+                    responseID: "resp_after_retry_budget"
+                )
+            }
         )
 
         let completion = try await client.streamEvents(
@@ -1236,17 +1435,26 @@ extension RemoteSessionSnapshotTests {
             instructions: "System prompt",
             reasoningEffort: nil,
             textVerbosity: "medium",
-            sessionID: "retry-generic-request-failure"
-        ) { object in
-            if let errorMessage = ChatGPTSubscriptionGenerationClient
-                .responseErrorMessage(from: object) {
-                throw ChatGPTSubscriptionGenerationError.responseFailed(errorMessage)
-            }
-        }
+            sessionID: "transport-before-fallback",
+            fallbackScopeID: "logical-retry-budget"
+        ) { _ in }
+        let nextCompletion = try await client.streamEvents(
+            input: .array([]),
+            model: "gpt-5.5",
+            instructions: "System prompt",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "rotated-transport-after-fallback",
+            fallbackScopeID: "logical-retry-budget"
+        ) { _ in }
 
-        #expect(completion.responseID == "resp_retried")
-        #expect(factoryCount.withLock { $0 } == 2)
-        #expect(firstTask.cancelCount == 1)
+        #expect(completion.responseID == "resp_after_retry_budget")
+        #expect(completion.didActivateHTTPFallback)
+        #expect(nextCompletion.responseID == "resp_after_retry_budget")
+        #expect(!nextCompletion.didActivateHTTPFallback)
+        #expect(factoryCount.withLock { $0 } == tasks.count)
+        #expect(httpFallbackCount.withLock { $0 } == 2)
+        #expect(tasks.allSatisfy { $0.cancelCount == 1 })
     }
 
     @Test
@@ -1287,13 +1495,33 @@ extension RemoteSessionSnapshotTests {
                 sessionID: "unsafe-event"
             ) { _ in }
             Issue.record("A replay-unsafe stream unexpectedly retried.")
-        } catch let error as RemoteTransportError {
-            #expect(error == .closed)
+        } catch let failure as ChatGPTSubscriptionResponsesClient.ReplayUnsafeStreamFailure {
+            #expect((failure.underlying as? RemoteTransportError) == .closed)
+            #expect(
+                !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
+                    failure
+                )
+            )
         } catch {
-            Issue.record("Expected RemoteTransportError.closed, got \(error).")
+            Issue.record("Expected a replay-unsafe stream failure, got \(error).")
         }
 
         #expect(factoryCount.withLock { $0 } == 1)
+        #expect(
+            ChatGPTSubscriptionResponsesClient.isReplayUnsafeStreamEvent([
+                "type": "response.reasoning_summary_text.delta"
+            ])
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.isReplayUnsafeStreamEvent([
+                "type": "response.refusal.delta"
+            ])
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.isReplayUnsafeStreamEvent([
+                "type": "response.completed"
+            ])
+        )
     }
 
     @Test
@@ -1869,12 +2097,17 @@ extension RemoteSessionSnapshotTests {
         )
 
         let state = await client.resetTransportIdentityForTesting()
+        let closeClearedFallback = await client.closeClearsHTTPFallbackForTesting()
+        let recreateFencedFallback = await client.recreateFencesHTTPFallbackForTesting()
         await client.shutdown()
 
         #expect(state.promptCacheKey == "stable-prompt-cache-key")
         #expect(state.transportSessionID != "transport-before-reset")
         #expect(state.transportSessionID?.isEmpty == false)
         #expect(state.continuationWasCleared)
+        #expect(state.httpFallbackSurvivedReset)
+        #expect(closeClearedFallback)
+        #expect(recreateFencedFallback)
     }
 }
 
@@ -1882,7 +2115,8 @@ private extension ChatGPTSubscriptionGenerationClient {
     func resetTransportIdentityForTesting() -> (
         promptCacheKey: String?,
         transportSessionID: String?,
-        continuationWasCleared: Bool
+        continuationWasCleared: Bool,
+        httpFallbackSurvivedReset: Bool
     ) {
         let identity = SessionIdentity(
             configuration: RequestConfiguration(
@@ -1915,12 +2149,59 @@ private extension ChatGPTSubscriptionGenerationClient {
             chatGPTSessionID: "transport-before-reset"
         )
 
+        let fallbackScopeID = Self.httpFallbackScopeID(
+            sessionID: session.id,
+            generation: 42
+        )
+        webSocketPool.activateHTTPFallback(scopeID: fallbackScopeID)
         resetContinuationAndTransport(session: &session)
         return (
             promptCacheKey: promptCacheKeysByIdentity[identity],
             transportSessionID: session.chatGPTSessionID,
-            continuationWasCleared: session.continuation == nil
+            continuationWasCleared: session.continuation == nil,
+            httpFallbackSurvivedReset: webSocketPool.usesHTTPFallback(
+                scopeID: fallbackScopeID
+            )
         )
+    }
+
+    func closeClearsHTTPFallbackForTesting() async -> Bool {
+        let sessionID = "fallback-close-session"
+        createSession(id: sessionID, cwd: "/tmp/project")
+        guard let lease = sessionLease(for: sessionID) else {
+            return false
+        }
+        let fallbackScopeID = Self.httpFallbackScopeID(for: lease)
+        webSocketPool.activateHTTPFallback(scopeID: fallbackScopeID)
+        await closeSession(id: sessionID)
+        return !webSocketPool.usesHTTPFallback(scopeID: fallbackScopeID)
+    }
+
+    func recreateFencesHTTPFallbackForTesting() async -> Bool {
+        let sessionID = "fallback-recreated-session"
+        createSession(id: sessionID, cwd: "/tmp/project")
+        guard let firstLease = sessionLease(for: sessionID) else {
+            return false
+        }
+        let firstScopeID = Self.httpFallbackScopeID(for: firstLease)
+        webSocketPool.activateHTTPFallback(scopeID: firstScopeID)
+
+        createSession(id: sessionID, cwd: "/tmp/project")
+        guard let secondLease = sessionLease(for: sessionID) else {
+            return false
+        }
+        let secondScopeID = Self.httpFallbackScopeID(for: secondLease)
+        // Simulate a late completion from the invalidated first incarnation.
+        let lateActivation = webSocketPool.activateHTTPFallback(
+            scopeID: firstScopeID
+        )
+        let isFenced = firstScopeID != secondScopeID
+            && !lateActivation
+            && webSocketPool.isHTTPFallbackScopeClosed(scopeID: firstScopeID)
+            && !webSocketPool.usesHTTPFallback(scopeID: secondScopeID)
+
+        await closeSession(id: sessionID)
+        return isFenced
     }
 }
 

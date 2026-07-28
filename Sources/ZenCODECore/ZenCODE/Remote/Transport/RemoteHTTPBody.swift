@@ -42,6 +42,13 @@ public struct RemoteHTTPBody: AsyncSequence, Sendable {
         RemoteSSEEventStream(body: self)
     }
 
+    /// Cancels this response explicitly even when other handle copies still
+    /// exist. Provider session owners use this to terminate an in-flight stream
+    /// when its logical session is closed.
+    func cancel() {
+        lifetime.invalidate()
+    }
+
     public struct AsyncIterator: AsyncIteratorProtocol {
         private let storage: RemoteHTTPBodyStorage
         private let lifetime: RemoteTransportLifetimeToken

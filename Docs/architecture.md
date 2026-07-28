@@ -79,6 +79,20 @@ consumers, but are never consulted for generation I/O. The compatibility facade
 is deliberately isolated from the transport engine; it preserves API inspection
 and injection without restoring a second networking path.
 
+ChatGPT Subscription prefers Responses WebSockets, but transport availability is
+session-scoped rather than mandatory. A canonical recoverable backend failure,
+an HTTP 426 upgrade rejection, or exhaustion of the bounded replay-safe
+WebSocket retry budget switches that logical agent session to HTTP/SSE for all
+later turns and tool rounds. The fallback key combines the logical session with
+its installation generation, remains independent of the rotating WebSocket
+transport ID, and survives continuation resets without leaking into a recreated
+session incarnation. Closing that incarnation fences late fallback activation
+and cancels any HTTP stream that is opening or active. Events that already
+emitted replay-unsafe reasoning, refusal, content, or tool output are never replayed or moved between
+transports. HTTP/SSE completion requires a terminal Responses event; `[DONE]` or
+EOF alone cannot commit partial output. Authentication failures retain their
+token-refresh path on both transports.
+
 Each opened HTTP/SSE response and upgraded WebSocket separates its public handle
 from the NIO driver actor that the scoped `executeThenClose` run-task retains.
 `RemoteHTTPBody` / `RemoteHTTPStreamingResponse` / `RemoteSSEEventStream` (and

@@ -27,9 +27,11 @@ extension ChatGPTSubscriptionResponsesClient {
 
     func request(
         for body: [String: Any],
-        sessionID: String
+        sessionID: String,
+        threadID: String? = nil
     ) throws -> RemoteHTTPStreamingRequest {
-        RemoteHTTPStreamingRequest(
+        let resolvedThreadID = threadID?.nilIfBlank ?? sessionID
+        return RemoteHTTPStreamingRequest(
             url: Self.codexResponsesURL(baseURL: baseURL),
             method: "POST",
             headers: [
@@ -42,19 +44,16 @@ extension ChatGPTSubscriptionResponsesClient {
                     value: credentials.accountID
                 ),
                 RemoteHTTPHeader(name: "originator", value: "ZenCODE"),
-                RemoteHTTPHeader(
-                    name: "OpenAI-Beta",
-                    value: "responses=experimental"
-                ),
                 RemoteHTTPHeader(name: "Accept", value: "text/event-stream"),
                 RemoteHTTPHeader(
                     name: "Content-Type",
                     value: "application/json"
                 ),
-                RemoteHTTPHeader(name: "session_id", value: sessionID),
+                RemoteHTTPHeader(name: "session-id", value: sessionID),
+                RemoteHTTPHeader(name: "thread-id", value: resolvedThreadID),
                 RemoteHTTPHeader(
                     name: "x-client-request-id",
-                    value: sessionID
+                    value: resolvedThreadID
                 )
             ],
             body: try JSONValue(jsonObject: body).jsonData(
@@ -64,8 +63,12 @@ extension ChatGPTSubscriptionResponsesClient {
         )
     }
 
-    func webSocketRequest(sessionID: String) -> RemoteWebSocketRequest {
-        RemoteWebSocketRequest(
+    func webSocketRequest(
+        sessionID: String,
+        threadID: String? = nil
+    ) -> RemoteWebSocketRequest {
+        let resolvedThreadID = threadID?.nilIfBlank ?? sessionID
+        return RemoteWebSocketRequest(
             url: Self.codexWebSocketURL(baseURL: baseURL),
             headers: [
                 RemoteHTTPHeader(
@@ -82,9 +85,10 @@ extension ChatGPTSubscriptionResponsesClient {
                     value: Self.webSocketBetaHeader
                 ),
                 RemoteHTTPHeader(name: "session-id", value: sessionID),
+                RemoteHTTPHeader(name: "thread-id", value: resolvedThreadID),
                 RemoteHTTPHeader(
                     name: "x-client-request-id",
-                    value: sessionID
+                    value: resolvedThreadID
                 )
             ],
             timeout: .seconds(600)
@@ -280,11 +284,6 @@ extension ChatGPTSubscriptionResponsesClient {
             && normalizedMessage.contains(retryableRequestFailureIDHint)
     }
 
-    static func isRetryable(error: Error) -> Bool {
-        isRetryableTransportError(error)
-            || isRetryableRequestFailure(error)
-    }
-
     static func shouldRetryTransportError(
         _ error: Error,
         attempt: Int
@@ -309,7 +308,45 @@ extension ChatGPTSubscriptionResponsesClient {
               !isCancellationError(error) else {
             return false
         }
-        return isRetryable(error: error)
+        if let transportError = error as? RemoteTransportError,
+           case let .upgradeRejected(status, _) = transportError,
+           status == 401 || status == 403 {
+            // The outer generation client owns credential refresh. Repeating
+            // the same upgrade with the same token only delays recovery.
+            return false
+        }
+        return isRetryableTransportError(error)
+    }
+
+    /// Switches a logical session away from the WebSocket route when retrying
+    /// that same route cannot improve the outcome. Canonical backend failures
+    /// fall back immediately; transport failures retain their bounded WebSocket
+    /// retry budget first. Auth/rate-limit upgrade failures stay on their
+    /// dedicated refresh/backoff paths instead of being replayed over HTTP.
+    static func shouldActivateHTTPFallback(
+        _ error: Error,
+        receivedReplayUnsafeEvent: Bool,
+        attempt: Int
+    ) -> Bool {
+        guard !receivedReplayUnsafeEvent,
+              attempt >= 0,
+              !isCancellationError(error) else {
+            return false
+        }
+
+        if isRetryableRequestFailure(error) {
+            return true
+        }
+
+        if let transportError = error as? RemoteTransportError,
+           case let .upgradeRejected(status, _) = transportError {
+            return status == 426
+        }
+
+        guard attempt >= maxRetries else {
+            return false
+        }
+        return isRetryableTransportError(error)
     }
 
     static func isCancellationError(_ error: Error) -> Bool {

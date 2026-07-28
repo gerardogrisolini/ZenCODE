@@ -21,6 +21,18 @@ extension ChatGPTSubscriptionGenerationClient {
         thinkingSelection: AgentThinkingSelection? = nil,
         preserveThinking: Bool = false
     ) {
+        if let existingSession = sessions[id],
+           let generation = sessionGenerations[id] {
+            webSocketPool.closeHTTPFallbackScope(
+                scopeID: Self.httpFallbackScopeID(
+                    sessionID: id,
+                    generation: generation
+                )
+            )
+            if let transportSessionID = existingSession.chatGPTSessionID {
+                webSocketPool.closeSession(sessionID: transportSessionID)
+            }
+        }
         let messages = RemoteGenerationClient.initialMessages(
             cwd: cwd,
             systemPrompt: systemPrompt,
@@ -101,22 +113,43 @@ extension ChatGPTSubscriptionGenerationClient {
     }
 
     public func closeSession(id: String) async {
+        let fallbackScopeID = sessions[id] != nil
+            ? sessionGenerations[id].map {
+                Self.httpFallbackScopeID(sessionID: id, generation: $0)
+            }
+            : nil
         let session = invalidateSession(id: id)
         await toolExecutor.removeToolProviders(sessionID: id)
+        if let fallbackScopeID {
+            webSocketPool.closeHTTPFallbackScope(scopeID: fallbackScopeID)
+        }
         if let chatGPTSessionID = session?.chatGPTSessionID {
             webSocketPool.closeSession(sessionID: chatGPTSessionID)
         }
     }
 
     public func shutdown() async {
-        let sessionIDs = sessions.values.compactMap(\.chatGPTSessionID)
+        let activeSessions = sessions.values.compactMap { session in
+            sessionGenerations[session.id].map {
+                (
+                    Self.httpFallbackScopeID(
+                        sessionID: session.id,
+                        generation: $0
+                    ),
+                    session.chatGPTSessionID
+                )
+            }
+        }
         sessions.removeAll()
         sessionGenerations.removeAll()
         if ownsWebSocketPool {
             await webSocketPool.shutdown()
         } else {
-            for sessionID in sessionIDs {
-                webSocketPool.closeSession(sessionID: sessionID)
+            for (scopeID, transportSessionID) in activeSessions {
+                webSocketPool.closeHTTPFallbackScope(scopeID: scopeID)
+                if let transportSessionID {
+                    webSocketPool.closeSession(sessionID: transportSessionID)
+                }
             }
         }
         await toolExecutor.shutdown()

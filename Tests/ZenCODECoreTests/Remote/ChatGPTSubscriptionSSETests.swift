@@ -17,7 +17,8 @@ extension RemoteSessionSnapshotTests {
         )
         let request = try client.request(
             for: ["model": "gpt-5.5"],
-            sessionID: "sse-nio-session"
+            sessionID: "sse-nio-session",
+            threadID: "logical-session"
         )
 
         #expect(request.method == "POST")
@@ -26,8 +27,20 @@ extension RemoteSessionSnapshotTests {
             $0.name.caseInsensitiveCompare("Accept") == .orderedSame
         }?.value == "text/event-stream")
         #expect(request.headers.first {
-            $0.name.caseInsensitiveCompare("session_id") == .orderedSame
+            $0.name.caseInsensitiveCompare("session-id") == .orderedSame
         }?.value == "sse-nio-session")
+        #expect(request.headers.first {
+            $0.name.caseInsensitiveCompare("thread-id") == .orderedSame
+        }?.value == "logical-session")
+        #expect(request.headers.first {
+            $0.name.caseInsensitiveCompare("x-client-request-id") == .orderedSame
+        }?.value == "logical-session")
+        #expect(request.headers.contains {
+            $0.name.caseInsensitiveCompare("session_id") == .orderedSame
+        } == false)
+        #expect(request.headers.contains {
+            $0.name.caseInsensitiveCompare("OpenAI-Beta") == .orderedSame
+        } == false)
         #expect(request.body != nil)
     }
 
