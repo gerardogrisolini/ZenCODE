@@ -41,7 +41,7 @@ ZenCODE supports several ways to run the model, all selected through `zen --setu
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh" \
-  | bash -s -- --ref v1.0.4
+  | bash -s -- --ref v1.0.5
 ```
 
 `--ref` pins the source checkout to the release tag. Replace it with the latest
@@ -63,7 +63,7 @@ Xcode or the Apple command line tools.
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh" \
-  | bash -s -- --ref v1.0.4
+  | bash -s -- --ref v1.0.5
 ```
 
 For a development build from the moving `main` branch:
