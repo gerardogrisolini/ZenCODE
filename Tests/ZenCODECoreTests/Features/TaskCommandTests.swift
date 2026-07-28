@@ -80,7 +80,7 @@ struct TaskCommandTests {
         #expect(rendered.contains("▸ `task-1`"))
         #expect(rendered.contains("agent-worker"))
         #expect(rendered.contains("○ `task-2`"))
-        #expect(rendered.contains("waits for: task-1"))
+        #expect(rendered.contains("waits for: `task-1`"))
     }
 
     @Test

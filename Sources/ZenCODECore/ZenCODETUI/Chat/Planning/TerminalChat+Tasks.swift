@@ -245,7 +245,7 @@ extension TerminalChat {
                 suffix.append(agentID)
             }
             if !view.blockedBy.isEmpty {
-                suffix.append("waits for: \(view.blockedBy.joined(separator: ", "))")
+                suffix.append("waits for: " + view.blockedBy.map { "`\($0)`" }.joined(separator: ", "))
             } else if let reason = view.blockedReason,
                       !view.isRunnable,
                       view.task.status != .completed {

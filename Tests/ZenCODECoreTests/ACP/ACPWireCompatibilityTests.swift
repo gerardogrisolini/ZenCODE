@@ -117,7 +117,6 @@ extension ACPCompatibilityTests {
         #expect(create["sessionUpdate"] as? String == "tool_call")
         #expect(create["toolCallId"] as? String == "call_001")
         #expect(create["title"] as? String == "local.exec swift test")
-        #expect(create["kind"] as? String == "execute")
         #expect(create["status"] as? String == "pending")
         #expect(create["tool_call_id"] == nil)
 
@@ -125,7 +124,6 @@ extension ACPCompatibilityTests {
         #expect(progress["sessionUpdate"] as? String == "tool_call_update")
         #expect(progress["toolCallId"] as? String == "call_001")
         #expect(progress["title"] as? String == "local.exec swift test")
-        #expect(progress["kind"] as? String == "execute")
         #expect(progress["status"] as? String == "in_progress")
 
         let completion = ZenCODEACPBridge.toolCallCompletionUpdate(
@@ -138,29 +136,7 @@ extension ACPCompatibilityTests {
         #expect(completion["sessionUpdate"] as? String == "tool_call_update")
         #expect(completion["toolCallId"] as? String == "call_001")
         #expect(completion["title"] as? String == "local.exec swift test")
-        #expect(completion["kind"] as? String == "execute")
         #expect(completion["status"] as? String == "completed")
-    }
-
-    @Test
-    func toolKindsUseClientRecognizedACPCategories() {
-        #expect(ZenCODEACPBridge.toolKind(for: "local.readFile") == "read")
-        #expect(ZenCODEACPBridge.toolKind(for: "local.inspectFile") == "read")
-        #expect(ZenCODEACPBridge.toolKind(for: "git.status") == "read")
-        #expect(ZenCODEACPBridge.toolKind(for: "swift.outline") == "read")
-        #expect(ZenCODEACPBridge.toolKind(for: "search.grep") == "search")
-        #expect(ZenCODEACPBridge.toolKind(for: "search.locate") == "search")
-        #expect(ZenCODEACPBridge.toolKind(for: "web.search") == "search")
-        #expect(ZenCODEACPBridge.toolKind(for: "web.fetch") == "read")
-        #expect(ZenCODEACPBridge.toolKind(for: "local.writeFile") == "edit")
-        #expect(ZenCODEACPBridge.toolKind(for: "xcode.XcodeWrite") == "edit")
-        #expect(ZenCODEACPBridge.toolKind(for: "local.delete") == "delete")
-        #expect(ZenCODEACPBridge.toolKind(for: "xcode.XcodeMV") == "move")
-        #expect(ZenCODEACPBridge.toolKind(for: "local.exec") == "execute")
-        #expect(ZenCODEACPBridge.toolKind(for: "xcode.BuildProject") == "execute")
-        #expect(ZenCODEACPBridge.toolKind(for: "todo.write") == "edit")
-        #expect(ZenCODEACPBridge.toolKind(for: "feature.build") == "execute")
-        #expect(ZenCODEACPBridge.toolKind(for: "unknown.customTool") == "other")
     }
 
     @Test

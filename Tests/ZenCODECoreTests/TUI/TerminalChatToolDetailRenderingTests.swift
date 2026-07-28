@@ -255,10 +255,10 @@ extension TerminalChatRenderingTests {
 
         let lines = TerminalChat.detailedToolCallStartedLines(for: toolCall)
 
-        #expect(lines.contains("🛠️  local.readFile /tmp/project/Sources/App.swift"))
+        #expect(lines.contains("🛠️  local.readFile"))
         #expect(lines.contains("status: ⏳"))
         #expect(lines.last == "status: ⏳")
-        #expect(lines.contains("kind: read"))
+        #expect(!lines.contains { $0.hasPrefix("kind:") })
         #expect(lines.contains("location: /tmp/project/Sources/App.swift"))
         #expect(!lines.contains("rawInput:"))
         #expect(!lines.contains { $0.contains("call_1") })
@@ -286,7 +286,8 @@ extension TerminalChatRenderingTests {
 
         #expect(lines.contains("status: ✅"))
         #expect(lines.last == "status: ✅")
-        #expect(lines.contains("kind: read"))
+        #expect(lines.contains("🛠️  local.readFile"))
+        #expect(!lines.contains { $0.hasPrefix("kind:") })
         #expect(lines.contains("summary: read 2 lines"))
         #expect(!lines.contains("rawOutput.output:"))
         #expect(!lines.contains("let value = 1"))

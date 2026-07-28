@@ -23,89 +23,24 @@ public enum ToolCallPresentation {
     public static func toolTitle(for toolCall: DirectAgentToolCall) -> String {
         if !toolCall.presentation.isAutomatic {
             let presentation = resolved(for: toolCall, mode: .compact)
+            let target = presentation.target ?? fallbackDisplayTarget(for: toolCall)
             if let action = presentation.action,
-               let target = presentation.target {
+               let target {
                 return "\(action) \(target)"
             }
-            if let target = presentation.target {
+            if let target {
                 return "\(presentation.title) \(target)"
             }
             return presentation.action ?? presentation.title
         }
-//        switch toolKind(for: toolCall.name) {
-//        case "read":
-//            return "Read \(displayToolTarget(for: toolCall) ?? toolCall.name)"
-//        case "edit":
-//            return "Edit \(displayToolTarget(for: toolCall) ?? toolCall.name)"
-//        case "delete":
-//            return "Delete \(displayToolTarget(for: toolCall) ?? toolCall.name)"
-//        case "move":
-//            return "Move \(displayToolTarget(for: toolCall) ?? toolCall.name)"
-//        case "search":
-//            return "Search \(displayToolTarget(for: toolCall) ?? toolCall.name)"
-//        case "execute":
-//            return "Run \(displayToolTarget(for: toolCall) ?? toolCall.name)"
-//        default:
-            return displayToolTarget(for: toolCall).map { "\(toolCall.name) \($0)" } ?? toolCall.name
-//        }
+        return displayToolTarget(for: toolCall).map { "\(toolCall.name) \($0)" } ?? toolCall.name
     }
 
     public static func toolKind(for toolCall: DirectAgentToolCall) -> String {
         guard !toolCall.presentation.isAutomatic else {
-            return toolKind(for: toolCall.name)
+            return toolCall.name
         }
         return resolved(for: toolCall, mode: .compact).kind.rawValue
-    }
-
-    public static func toolKind(for toolName: String) -> String {
-        switch toolName {
-        case "local.readFile", "local.readFiles", "local.inspectFile", "local.ls", "local.pwd",
-             "text.head", "text.tail", "text.sort", "text.wc",
-             "git.status", "git.diff", "git.show", "git.log",
-             "git.branch", "git.remote", "git.lsFiles", "git.grep", "git.blame",
-             "swift.outline":
-            return "read"
-        case "search.grep", "search.glob", "search.locate":
-            return "search"
-        case "local.writeFile", "local.replace", "local.append", "local.mkdir",
-             "local.editFile", "local.multiEdit", "local.applyPatch":
-            return "edit"
-        case "local.delete":
-            return "delete"
-        case "local.move":
-            return "move"
-        case "local.exec", "git.add", "git.restore", "git.commit", "git.push",
-             "git.stash", "git.switch":
-            return "execute"
-        case "agent.list", "agent.get", "agent.wait":
-            return "read"
-        case "agent.create", "agent.message", "agent.close":
-            return "execute"
-        default:
-            if XcodeToolIntegration.isToolName(toolName) {
-                return XcodeToolIntegration.presentationKind(for: toolName)
-            }
-            switch toolName {
-            case "web.search", "memory.search":
-                return "search"
-            case "web.fetch", "memory.read", "todo.read", "tasks.list", "tasks.get",
-                 "feature.list", "feature.validate":
-                return "read"
-            case "memory.write", "todo.write", "tasks.update", "feature.scaffold",
-                 "feature.install":
-                return "edit"
-            case "memory.archive", "feature.delete":
-                return "delete"
-            case "feature.enable", "feature.disable", "feature.reload", "feature.build":
-                return "execute"
-            default:
-                break
-            }
-            if toolName.hasPrefix("figma.") || toolName.hasPrefix("jira.") {
-                return "read"
-            }
-            return "other"
-        }
     }
 
     public static func xcodeToolKind(for rawName: String) -> String {
@@ -113,47 +48,6 @@ public enum ToolCallPresentation {
     }
 
     public static func toolIcon(for toolName: String) -> String {
-        /*
-        switch toolName {
-        case "local.exec":
-            return "💻"
-        case "local.readFile", "local.ls", "local.pwd":
-            return "📄"
-        case "local.writeFile", "local.replace", "local.append",
-             "local.mkdir", "local.editFile", "local.multiEdit":
-            return "✏️"
-        case "local.delete":
-            return "🗑️"
-        case "local.move":
-            return "↔️"
-        default:
-            if toolName.hasPrefix("memory.") || toolName.hasPrefix("todo.") {
-                return "🧠"
-            }
-            if toolName.hasPrefix("agent.") || toolName.hasPrefix("tasks.") {
-                return "👥"
-            }
-            if toolName.hasPrefix("git.") {
-                return "🔀"
-            }
-            if toolName.hasPrefix("web.") {
-                return "🌐"
-            }
-            if toolName.hasPrefix("search.") {
-                return "🔎"
-            }
-            if XcodeToolIntegration.isToolName(toolName) {
-                return "🛠️"
-            }
-            if toolName.hasPrefix("figma.") {
-                return "🎨"
-            }
-            if toolName.hasPrefix("jira.") {
-                return "📋"
-            }
-            return "🔨"
-        }
-        */
         "🛠️"
     }
 
@@ -264,7 +158,16 @@ public enum ToolCallPresentation {
     public static func displayToolTarget(for toolCall: DirectAgentToolCall) -> String? {
         if !toolCall.presentation.isAutomatic {
             return resolved(for: toolCall, mode: .compact).target
+                ?? fallbackDisplayTarget(for: toolCall)
         }
+        return fallbackDisplayTarget(for: toolCall)
+    }
+
+    /// Semantic definitions own the preferred target, but a dynamically
+    /// discovered tool can legitimately omit one. Preserve the established
+    /// compact fallback in that case so a useful safe argument is not lost
+    /// behind a bare action such as `Inspect`.
+    private static func fallbackDisplayTarget(for toolCall: DirectAgentToolCall) -> String? {
         if toolCall.name == "local.applyPatch",
            let target = patchDisplayTarget(from: toolCall.argumentsObject) {
             return target
@@ -279,6 +182,14 @@ public enum ToolCallPresentation {
         // targeted agent id) instead of the generic key-based fallback below.
         if let agentTarget = agentDisplayTarget(for: toolCall) {
             return agentTarget
+        }
+
+        if let taskListTarget = taskListDisplayTarget(for: toolCall) {
+            return taskListTarget
+        }
+
+        if let featureListTarget = featureListDisplayTarget(for: toolCall) {
+            return featureListTarget
         }
 
         return stringArguments(
@@ -362,6 +273,58 @@ public enum ToolCallPresentation {
         default:
             return nil
         }
+    }
+
+    /// Summarizes the non-identity filters accepted by `tasks.list`. Graph IDs
+    /// are already semantic targets; these filters need a compact fallback so a
+    /// filtered list does not render as a context-free `List` action.
+    private static func taskListDisplayTarget(for toolCall: DirectAgentToolCall) -> String? {
+        guard toolCall.name == "tasks.list" else {
+            return nil
+        }
+
+        let arguments = toolCall.argumentsObject
+        var filters: [String] = []
+        if let status = stringArgument(arguments, keys: ["status"]) {
+            filters.append("status: \(status)")
+        }
+        if let assignee = stringArgument(
+            arguments,
+            keys: ["assigneeAgentID", "assignee_agent_id", "agentID", "agent_id"]
+        ) {
+            filters.append("agent: \(assignee)")
+        }
+        if boolArgument(arguments, keys: ["runnableOnly", "runnable_only"]) == true {
+            filters.append("runnable")
+        }
+        if boolArgument(arguments, keys: ["includeTerminal", "include_terminal"]) == false {
+            filters.append("active")
+        }
+        return filters.isEmpty ? nil : filters.joined(separator: " · ")
+    }
+
+    /// Summarizes opt-in discovery flags for `feature.list`, including the
+    /// `includeTools` invocation used by the non-interactive `/feature` path.
+    private static func featureListDisplayTarget(for toolCall: DirectAgentToolCall) -> String? {
+        guard toolCall.name == "feature.list" else {
+            return nil
+        }
+
+        let arguments = toolCall.argumentsObject
+        var options: [String] = []
+        if boolArgument(arguments, keys: ["includeTools", "include_tools"]) == true {
+            options.append("include tools")
+        }
+        if boolArgument(arguments, keys: ["includeDisabled", "include_disabled"]) == true {
+            options.append("include disabled")
+        }
+        if boolArgument(
+            arguments,
+            keys: ["discoverRuntimeTools", "discover_runtime_tools"]
+        ) == true {
+            options.append("discover runtime tools")
+        }
+        return options.isEmpty ? nil : options.joined(separator: " · ")
     }
 
     /// Renders the recipient for `agent.message`, honoring both the scalar
@@ -668,6 +631,21 @@ public enum ToolCallPresentation {
             if let value = arguments[key] as? JSONValue,
                let normalizedValue = value.stringValue?.nilIfBlank {
                 return normalizedValue
+            }
+        }
+        return nil
+    }
+
+    private static func boolArgument(
+        _ arguments: [String: Any],
+        keys: [String]
+    ) -> Bool? {
+        for key in keys {
+            if let value = arguments[key] as? Bool {
+                return value
+            }
+            if let value = arguments[key] as? JSONValue {
+                return value.boolValue
             }
         }
         return nil

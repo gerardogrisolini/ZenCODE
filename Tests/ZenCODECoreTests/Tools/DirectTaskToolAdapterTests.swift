@@ -37,7 +37,6 @@ struct DirectTaskToolAdapterTests {
         #expect(SubAgentToolRequestCompatibility.canonicalToolName(for: "cancel_task") == nil)
         #expect(DirectTaskToolAdapter.isTaskToolName("tasks.create"))
         #expect(!DirectTaskToolAdapter.isTaskToolName("task.create"))
-        #expect(ToolCallPresentation.toolKind(for: "task.list") == "other")
         #expect(!DirectToolExecutor.isAllowed(
             "tasks.list",
             allowedToolNames: ["task.list"]

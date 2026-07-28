@@ -276,10 +276,6 @@ extension ZenCODEACPBridge {
         ToolCallPresentation.toolTitle(for: toolCall)
     }
 
-    public static func toolKind(for toolName: String) -> String {
-        ToolCallPresentation.toolKind(for: toolName)
-    }
-
     public static func toolKind(for toolCall: DirectAgentToolCall) -> String {
         ToolCallPresentation.toolKind(for: toolCall)
     }

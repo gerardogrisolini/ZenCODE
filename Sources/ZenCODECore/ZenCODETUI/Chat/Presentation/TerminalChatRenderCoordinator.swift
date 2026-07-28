@@ -918,6 +918,11 @@ actor TerminalChatRenderCoordinator {
         case .completed:
             let activeBlock = activeToolBlock
             let ownsActiveBlock = activeBlock?.id == toolCall.id
+            let completionRowCount = TerminalChat.renderedTerminalRowCount(
+                for: rows.map(\.plainText),
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            )
             let shouldRewriteActiveBlock = activeBlock.map { block in
                 // Safety fuse: if the terminal width changed between tool start
                 // and completion, the saved row count is stale. Emitting
@@ -931,6 +936,14 @@ actor TerminalChatRenderCoordinator {
                 // at the top of the terminal (not the scrolling margin), so
                 // clearing its original row count would descend through the
                 // reserved input/status overlay. Append its completion instead.
+                //
+                // The same hazard arises when the started block was small but
+                // the completion itself overflows the scrolling region (for
+                // example, expanded mutation tools whose payload appears only
+                // on completion): erasing the few owned rows and then streaming
+                // a block that forces the terminal to scroll still drags the
+                // cursor through the reserved overlay. Append the completion in
+                // that case too.
                 let maximumSafeRows = min(
                     block.maximumInPlaceRows ?? Int.max,
                     maximumInPlaceRows ?? Int.max
@@ -940,6 +953,7 @@ actor TerminalChatRenderCoordinator {
                     && standardErrorIsTerminal
                     && block.columnWidth == columnWidth
                     && block.rows <= maximumSafeRows
+                    && completionRowCount <= maximumSafeRows
             } ?? false
 
             // Starts transfer the one physical rewrite slot to the newest
@@ -1321,8 +1335,12 @@ actor TerminalChatRenderCoordinator {
             // A completed response is model-authored transcript content: it is
             // printed once and must never be erased by a later refresh.
             for response in pendingResponses {
+                // Keep the completed response distinct from both the live
+                // status overview above and any later transcript entry.
+                writeChat("\n\n", to: .standardError)
                 writeChat(response.heading, to: .standardError)
                 renderMarkdownMessage(response.markdown, to: .standardError)
+                writeChat("\n\n", to: .standardError)
                 consumedSubAgentResponseTokens.insert(response.token)
             }
             return

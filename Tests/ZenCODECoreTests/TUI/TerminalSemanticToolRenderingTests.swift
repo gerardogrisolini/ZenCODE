@@ -64,6 +64,85 @@ struct TerminalSemanticToolRenderingTests {
     }
 
     @Test
+    func compactInspectFallsBackToItsSafeArgumentWhenNoTargetIsDeclared() {
+        let call = DirectAgentToolCall(
+            id: "inspect",
+            name: "thirdparty.inspect",
+            argumentsObject: ["identifier": "node-42"],
+            argumentsJSON: #"{"identifier":"node-42"}"#,
+            presentation: ToolPresentationDefinition(
+                title: "Third-party resource",
+                action: "Inspect",
+                kind: .inspect
+            )
+        )
+
+        let lines = TerminalChat.compactToolLines(
+            for: call,
+            statusIcon: "✅",
+            statusDetail: "0.03s",
+            columnWidth: 80
+        )
+
+        #expect(lines == ["🛠️  Inspect:", "node-42 ✅ 0.03s"])
+    }
+
+    @Test
+    func compactTaskListShowsItsFiltersWhenNoGraphIDIsProvided() throws {
+        let descriptor = try #require(
+            DirectToolCatalog.todoTaskDescriptors.first { $0.name == "tasks.list" }
+        )
+        let call = DirectAgentToolCall(
+            id: "task-list",
+            name: descriptor.name,
+            argumentsObject: [
+                "status": "pending",
+                "runnableOnly": true,
+                "includeTerminal": false
+            ],
+            argumentsJSON: #"{"status":"pending","runnableOnly":true,"includeTerminal":false}"#,
+            presentation: descriptor.presentation
+        )
+
+        let lines = TerminalChat.compactToolLines(
+            for: call,
+            statusIcon: "✅",
+            statusDetail: "0.02s",
+            columnWidth: 80
+        )
+
+        #expect(
+            lines == [
+                "🛠️  List:",
+                "status: pending · runnable · active ✅ 0.02s"
+            ]
+        )
+    }
+
+    @Test
+    func compactFeatureListShowsItsDiscoveryOptions() throws {
+        let descriptor = try #require(
+            DirectToolCatalog.featureDescriptors.first { $0.name == "feature.list" }
+        )
+        let call = DirectAgentToolCall(
+            id: "feature-list",
+            name: descriptor.name,
+            argumentsObject: ["includeTools": true],
+            argumentsJSON: #"{"includeTools":true}"#,
+            presentation: descriptor.presentation
+        )
+
+        let lines = TerminalChat.compactToolLines(
+            for: call,
+            statusIcon: "✅",
+            statusDetail: "0.02s",
+            columnWidth: 80
+        )
+
+        #expect(lines == ["🛠️  List:", "include tools ✅ 0.02s"])
+    }
+
+    @Test
     func detailedRenderingMapsSemanticElementsToExistingRowPrimitives() {
         let call = Self.call()
         let started = TerminalChat.detailedToolCallStartedLines(for: call)
@@ -76,12 +155,12 @@ struct TerminalSemanticToolRenderingTests {
             contentWidth: 100
         )
 
-        #expect(started.prefix(4) == [
-            "🛠️  Source file",
-            "kind: edit",
+        #expect(started.prefix(3) == [
+            "🛠️  thirdparty.edit",
             "action: Edit",
             "target: /tmp/App.swift"
         ])
+        #expect(!started.contains { $0.hasPrefix("kind:") })
         #expect(started.contains("mode: replace"))
         #expect(started.contains("parameters:"))
         #expect(started.contains("change:"))
@@ -148,7 +227,6 @@ struct TerminalSemanticToolRenderingTests {
 
         #expect(object["title"] == .string("Edit /tmp/App.swift"))
         #expect(object["kind"] == .string("edit"))
-        #expect(ZenCODEACPBridge.toolKind(for: "unknown.tool") == "other")
     }
 
     @Test

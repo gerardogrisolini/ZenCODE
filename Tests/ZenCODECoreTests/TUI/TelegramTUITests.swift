@@ -274,7 +274,7 @@ struct TelegramTUITests {
         #expect(
             await collector.allMessages() == [
                 "Controllo il file prima di modificarlo.",
-                "🔧 local.readFile · read\nSources/Main.swift"
+                "🔧 local.readFile\nSources/Main.swift"
             ]
         )
     }
@@ -430,14 +430,14 @@ struct TelegramTUITests {
     @Test
     func formatterAlwaysShowsConcreteToolNameAndKind() {
         // Empty arguments — header still identifies the tool.
-        #expect(format("local.readFile") == "🔧 local.readFile · read")
-        #expect(format("local.exec") == "🔧 local.exec · execute")
+        #expect(format("local.readFile") == "🔧 local.readFile")
+        #expect(format("local.exec") == "🔧 local.exec")
 
         // kind == "other" for unknown tools.
-        #expect(format("custom.myTool") == "🔧 custom.myTool · other")
+        #expect(format("custom.myTool") == "🔧 custom.myTool")
 
         // Tool with arguments but no recognized detail.
-        #expect(format("custom.myTool", arguments: ["verbosity": 3]) == "🔧 custom.myTool · other")
+        #expect(format("custom.myTool", arguments: ["verbosity": 3]) == "🔧 custom.myTool")
     }
 
     @Test
@@ -446,13 +446,13 @@ struct TelegramTUITests {
             "local.readFile",
             arguments: ["path": "/Users/dev/MyProject/Sources/Main.swift"]
         )
-        #expect(readResult == "🔧 local.readFile · read\nSources/Main.swift")
+        #expect(readResult == "🔧 local.readFile\nSources/Main.swift")
 
         let writeResult = format(
             "local.writeFile",
             arguments: ["file_path": "/Users/dev/MyProject/Tests/Helper.swift"]
         )
-        #expect(writeResult == "🔧 local.writeFile · edit\nTests/Helper.swift")
+        #expect(writeResult == "🔧 local.writeFile\nTests/Helper.swift")
     }
 
     @Test
@@ -464,7 +464,7 @@ struct TelegramTUITests {
                 "destinationPath": "/Users/dev/MyProject/New.swift"
             ]
         )
-        #expect(result == "🔧 local.move · move\nOld.swift → New.swift")
+        #expect(result == "🔧 local.move\nOld.swift → New.swift")
     }
 
     @Test
@@ -479,7 +479,7 @@ struct TelegramTUITests {
                 ]
             ]
         )
-        #expect(result == "🔧 local.readFiles · read\nSources/A.swift (+2 more)")
+        #expect(result == "🔧 local.readFiles\nSources/A.swift (+2 more)")
     }
 
     @Test
@@ -492,7 +492,7 @@ struct TelegramTUITests {
         +new line
         """
         let result = format("local.applyPatch", arguments: ["patch": patch])
-        #expect(result == "🔧 local.applyPatch · edit\nSources/Old.swift (+1 more)")
+        #expect(result == "🔧 local.applyPatch\nSources/Old.swift (+1 more)")
     }
 
     @Test
@@ -503,20 +503,20 @@ struct TelegramTUITests {
             "search.grep",
             arguments: ["pattern": "TODO", "path": "/Users/dev/MyProject"]
         )
-        #expect(grepResult == "🔧 search.grep · search\npattern: TODO")
+        #expect(grepResult == "🔧 search.grep\npattern: TODO")
 
         // When path is a subdirectory, the path is shown instead.
         let grepSubdirResult = format(
             "search.grep",
             arguments: ["pattern": "TODO", "path": "/Users/dev/MyProject/Sources"]
         )
-        #expect(grepSubdirResult == "🔧 search.grep · search\nSources")
+        #expect(grepSubdirResult == "🔧 search.grep\nSources")
 
         let globResult = format(
             "search.glob",
             arguments: ["pattern": "**/*.swift", "path": "/Users/dev/MyProject/Sources"]
         )
-        #expect(globResult == "🔧 search.glob · search\nSources")
+        #expect(globResult == "🔧 search.glob\nSources")
     }
 
     @Test
@@ -527,7 +527,7 @@ struct TelegramTUITests {
             "local.exec",
             arguments: ["command": "swift test --filter MyTests"]
         )
-        #expect(result == "🔧 local.exec · execute\ncommand: swift")
+        #expect(result == "🔧 local.exec\ncommand: swift")
     }
 
     @Test
@@ -536,13 +536,13 @@ struct TelegramTUITests {
             "web.search",
             arguments: ["query": "swift concurrency"]
         )
-        #expect(searchResult == "🔧 web.search · search\nquery: swift concurrency")
+        #expect(searchResult == "🔧 web.search\nquery: swift concurrency")
 
         let fetchResult = format(
             "web.fetch",
             arguments: ["url": "https://example.com/api"]
         )
-        #expect(fetchResult == "🔧 web.fetch · read\nurl: https://example.com/api")
+        #expect(fetchResult == "🔧 web.fetch\nurl: https://example.com/api")
     }
 
     @Test
@@ -551,20 +551,20 @@ struct TelegramTUITests {
             "git.switch",
             arguments: ["branch": "feature/new-thing"]
         )
-        #expect(switchResult == "🔧 git.switch · execute\nbranch: feature/new-thing")
+        #expect(switchResult == "🔧 git.switch\nbranch: feature/new-thing")
 
         let showResult = format(
             "git.show",
             arguments: ["revision": "abc1234"]
         )
-        #expect(showResult == "🔧 git.show · read\nrevision: abc1234")
+        #expect(showResult == "🔧 git.show\nrevision: abc1234")
 
         let commitResult = format(
             "git.commit",
             arguments: ["message": "Fix bug"]
         )
         // git.commit has no path, so it falls to contextual detail.
-        #expect(commitResult == "🔧 git.commit · execute")
+        #expect(commitResult == "🔧 git.commit")
     }
 
     @Test
@@ -573,13 +573,13 @@ struct TelegramTUITests {
             "tasks.create",
             arguments: ["title": "Implement feature X"]
         )
-        #expect(createResult == "🔧 tasks.create · other\ntitle: Implement feature X")
+        #expect(createResult == "🔧 tasks.create\ntitle: Implement feature X")
 
         let updateResult = format(
             "tasks.update",
             arguments: ["id": "task-42", "status": "in_progress"]
         )
-        #expect(updateResult == "🔧 tasks.update · edit\ntask: task-42")
+        #expect(updateResult == "🔧 tasks.update\ntask: task-42")
     }
 
     @Test
@@ -588,7 +588,7 @@ struct TelegramTUITests {
             "feature.enable",
             arguments: ["id": "MyFeature"]
         )
-        #expect(enableResult == "🔧 feature.enable · execute\nfeature: MyFeature")
+        #expect(enableResult == "🔧 feature.enable\nfeature: MyFeature")
     }
 
     @Test
@@ -597,13 +597,13 @@ struct TelegramTUITests {
             "agent.create",
             arguments: ["name": "plan-author", "role": "Planner"]
         )
-        #expect(createResult == "🔧 agent.create · execute\nagent: plan-author")
+        #expect(createResult == "🔧 agent.create\nagent: plan-author")
 
         let messageResult = format(
             "agent.message",
             arguments: ["name": "plan-author", "message": "Continue work"]
         )
-        #expect(messageResult == "🔧 agent.message · execute\nagent: plan-author")
+        #expect(messageResult == "🔧 agent.message\nagent: plan-author")
     }
 
     @Test
@@ -612,7 +612,7 @@ struct TelegramTUITests {
             "custom.unknownTool",
             arguments: ["data": "whatever", "count": 42]
         )
-        #expect(result == "🔧 custom.unknownTool · other")
+        #expect(result == "🔧 custom.unknownTool")
     }
 
     @Test
@@ -667,7 +667,7 @@ struct TelegramTUITests {
             arguments: ["command": "echo hello\necho world\n   echo test"]
         )
         // Newlines are collapsed, then only the first token is shown for local.exec.
-        #expect(result == "🔧 local.exec · execute\ncommand: echo")
+        #expect(result == "🔧 local.exec\ncommand: echo")
     }
 
     @Test
@@ -689,7 +689,7 @@ struct TelegramTUITests {
             "local.readFile",
             arguments: ["path": "Sources/Main.swift"]
         )
-        #expect(result == "🔧 local.readFile · read\nSources/Main.swift")
+        #expect(result == "🔧 local.readFile\nSources/Main.swift")
     }
 
     @Test
@@ -699,7 +699,7 @@ struct TelegramTUITests {
             arguments: ["path": "/tmp/other/file.swift"]
         )
         // Path outside working directory stays absolute, not reduced to basename.
-        #expect(result == "🔧 local.readFile · read\n/tmp/other/file.swift")
+        #expect(result == "🔧 local.readFile\n/tmp/other/file.swift")
     }
 
     @Test
@@ -713,7 +713,7 @@ struct TelegramTUITests {
                 "file_path": "/Users/dev/MyProject/Sources/Main.swift"
             ]
         )
-        #expect(result == "🔧 git.diff · read\nSources/Main.swift")
+        #expect(result == "🔧 git.diff\nSources/Main.swift")
     }
 
     @Test
@@ -724,7 +724,7 @@ struct TelegramTUITests {
             "custom.upload",
             arguments: ["file": "API_KEY=secret"]
         )
-        #expect(result == "🔧 custom.upload · other")
+        #expect(result == "🔧 custom.upload")
         #expect(!result.contains("API_KEY"))
         #expect(!result.contains("secret"))
     }
@@ -735,7 +735,7 @@ struct TelegramTUITests {
             "local.exec",
             arguments: ["command": "API_TOKEN=secret deploy --force"]
         )
-        #expect(result == "🔧 local.exec · execute\ncommand: API_TOKEN=secret")
+        #expect(result == "🔧 local.exec\ncommand: API_TOKEN=secret")
     }
 
     @Test
@@ -749,7 +749,7 @@ struct TelegramTUITests {
                 "file_paths": ["/Users/dev/MyProject/A.swift"]
             ]
         )
-        #expect(result == "🔧 local.readFiles · read\nA.swift")
+        #expect(result == "🔧 local.readFiles\nA.swift")
     }
 
     @Test
@@ -764,7 +764,7 @@ struct TelegramTUITests {
                 ])
             ]
         )
-        #expect(result == "🔧 local.readFiles · read\nA.swift (+1 more)")
+        #expect(result == "🔧 local.readFiles\nA.swift (+1 more)")
     }
 
     @Test
@@ -773,7 +773,7 @@ struct TelegramTUITests {
             "memory.search",
             arguments: ["query": "telegram formatter"]
         )
-        #expect(result == "🔧 memory.search · search\nquery: telegram formatter")
+        #expect(result == "🔧 memory.search\nquery: telegram formatter")
     }
 
     @Test
@@ -782,7 +782,7 @@ struct TelegramTUITests {
             "todo.write",
             arguments: ["title": "Fix bugs", "mode": "upsert"]
         )
-        #expect(result == "🔧 todo.write · edit\ntitle: Fix bugs · mode: upsert")
+        #expect(result == "🔧 todo.write\ntitle: Fix bugs · mode: upsert")
     }
 
     @Test
@@ -792,7 +792,7 @@ struct TelegramTUITests {
             "git.grep",
             arguments: ["pattern": "TODO", "path": "/Users/dev/MyProject"]
         )
-        #expect(result == "🔧 git.grep · read\npattern: TODO")
+        #expect(result == "🔧 git.grep\npattern: TODO")
     }
 
     @Test
@@ -803,7 +803,7 @@ struct TelegramTUITests {
             arguments: ["path": "/tmp/file.swift"],
             workingDirectory: URL(fileURLWithPath: "/", isDirectory: true)
         )
-        #expect(result == "🔧 local.readFile · read\ntmp/file.swift")
+        #expect(result == "🔧 local.readFile\ntmp/file.swift")
     }
 
     @Test
@@ -820,7 +820,7 @@ struct TelegramTUITests {
                 ]
             ]
         )
-        #expect(result == "🔧 local.readFiles · read\nSources/A.swift (+1 more)")
+        #expect(result == "🔧 local.readFiles\nSources/A.swift (+1 more)")
     }
 }
 

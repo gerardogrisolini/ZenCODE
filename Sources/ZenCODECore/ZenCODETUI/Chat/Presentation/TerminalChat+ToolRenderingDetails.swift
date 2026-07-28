@@ -126,16 +126,12 @@ extension TerminalChat {
             )
         }
 
-        // The title embeds the tool name and a caller-provided target, so it is
-        // sanitized like any other metadata before reaching the terminal.
-        let title = sanitizedMetadataText(ToolCallPresentation.toolTitle(for: toolCall))
-            ?? sanitizedMetadataText(toolCall.name)
-            ?? "tool"
-        let kind = ToolCallPresentation.toolKind(for: toolCall)
+        // Expanded output identifies the exact invoked tool instead of its
+        // broad presentation kind.
+        let toolName = sanitizedMetadataText(toolCall.name) ?? "tool"
         let icon = ToolCallPresentation.toolIcon(for: toolCall.name)
         var rows: [DetailedToolRow] = [
-            .text("\(icon)  \(title)"),
-            .text("kind: \(kind)")
+            .text("\(icon)  \(toolName)")
         ]
         rows.append(
             contentsOf: toolLocationLines(for: toolCall).map(DetailedToolRow.text)
@@ -160,12 +156,9 @@ extension TerminalChat {
             mode: .expanded
         )
         let icon = ToolCallPresentation.toolIcon(for: toolCall.name)
-        let title = sanitizedMetadataText(presentation.title)
-            ?? sanitizedMetadataText(toolCall.name)
-            ?? "tool"
+        let toolName = sanitizedMetadataText(toolCall.name) ?? "tool"
         var rows: [DetailedToolRow] = [
-            .text("\(icon)  \(title)"),
-            .text("kind: \(presentation.kind.rawValue)")
+            .text("\(icon)  \(toolName)")
         ]
         if let action = presentation.action.flatMap(sanitizedMetadataText) {
             rows.append(.text("action: \(action)"))

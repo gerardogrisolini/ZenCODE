@@ -25,13 +25,12 @@ enum TerminalTelegramToolCallFormatter {
     /// - Parameters:
     ///   - toolCall: The direct-agent tool call to describe.
     ///   - workingDirectory: The session working directory used to shorten absolute paths.
-    /// - Returns: A message whose first line is always `🔧 <tool-name> · <kind>`.
+    /// - Returns: A message whose first line is always `🔧 <tool-name>`.
     static func format(
         _ toolCall: DirectAgentToolCall,
         workingDirectory: URL
     ) -> String {
-        let kind = ToolCallPresentation.toolKind(for: toolCall)
-        let header = "🔧 \(toolCall.name) · \(kind)"
+        let header = "🔧 \(toolCall.name)"
 
         guard let detail = detail(for: toolCall, workingDirectory: workingDirectory) else {
             return header

@@ -625,7 +625,10 @@ struct TerminalChatRenderCoordinatorTests {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
 
-        #expect(started.activeDetailedToolRenderedRowCount > scrollableRows)
+        // The started block stays small: only the completion payload (which
+        // appears solely on completion for expanded mutation tools) far
+        // exceeds the scrolling region.
+        #expect(started.activeDetailedToolRenderedRowCount <= scrollableRows)
         #expect(!containsCursorUpSequence(completionText))
         #expect(visibleRows.contains { $0.contains("status: ✅") })
         #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 80 })
@@ -993,6 +996,33 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(stderr.components(separatedBy: "Response from reviewer").count - 1 == 1)
         #expect(stderr.contains("Agents refreshed."))
         #expect(snapshot.lastRenderedSubAgentOverviewSignature == "agents:refreshed")
+    }
+
+    @Test
+    func completedSubAgentResponseIsSeparatedByBlankRows() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: false)
+        let response = TerminalChatRenderCoordinator.SubAgentMarkdownResponse(
+            token: "agent-1:completion-1",
+            heading: "   ✅ Response from reviewer:\n",
+            markdown: "Final answer"
+        )
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:completed",
+            text: "Agents completed.\n",
+            responses: [response],
+            force: false,
+            rememberSignature: true
+        )
+
+        let stderr = await renderer.capturedWriteEvents()
+            .filter { $0.channel == .standardError }
+            .map(\.text)
+            .joined()
+
+        #expect(
+            stderr == "Agents completed.\n\n   ✅ Response from reviewer:\nFinal answer\n\n"
+        )
     }
 
     @Test
@@ -2527,7 +2557,10 @@ struct TerminalChatToolBlockResizeTests {
                 "\u{1B}[\(started.activeDetailedToolRenderedRowCount)A\r"
             )
         )
-        #expect(completionText.contains("Source file"))
+        // Expanded output identifies the exact invoked tool, not its broad
+        // presentation title or kind.
+        #expect(completionText.contains("thirdparty.edit"))
+        #expect(!completionText.contains("kind:"))
         #expect(completionText.contains("target: /tmp/App.swift"))
         #expect(completionText.contains("status: ✅"))
         #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
