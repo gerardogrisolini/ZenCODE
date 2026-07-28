@@ -43,7 +43,6 @@ public nonisolated struct ResolvedToolPresentation: Hashable, Sendable {
     public let kind: ToolPresentationKind
     public let metadata: [ToolPresentationMetadata]
     public let elements: [ToolPresentationElement]
-    public let usesAutomaticFallback: Bool
 
     public init(
         mode: ToolPresentationMode,
@@ -52,8 +51,7 @@ public nonisolated struct ResolvedToolPresentation: Hashable, Sendable {
         target: String?,
         kind: ToolPresentationKind,
         metadata: [ToolPresentationMetadata],
-        elements: [ToolPresentationElement],
-        usesAutomaticFallback: Bool
+        elements: [ToolPresentationElement]
     ) {
         self.mode = mode
         self.title = title
@@ -62,6 +60,5 @@ public nonisolated struct ResolvedToolPresentation: Hashable, Sendable {
         self.kind = kind
         self.metadata = metadata
         self.elements = elements
-        self.usesAutomaticFallback = usesAutomaticFallback
     }
 }

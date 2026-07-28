@@ -46,7 +46,7 @@ struct BundledFeatureCatalogParityTests {
     func nativeAndStaticallyDeclaredBundledToolsHaveExplicitPresentations() {
         let nativeDescriptors = DirectToolCatalog.baseDescriptors
         let missingNative = nativeDescriptors
-            .filter { $0.presentation.isAutomatic }
+            .filter { $0.presentation == nil }
             .map(\.name)
         #expect(missingNative.isEmpty)
 
@@ -55,7 +55,7 @@ struct BundledFeatureCatalogParityTests {
             .filter { !$0.discoversToolsAtRuntime }
             .flatMap(\.tools)
         let missingBundled = staticBundledDescriptors
-            .filter { $0.presentation.isAutomatic }
+            .filter { $0.presentation == nil }
             .map(\.name)
         #expect(missingBundled.isEmpty)
     }

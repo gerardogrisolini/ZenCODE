@@ -88,7 +88,7 @@ public struct SwiftFeatureBundle: Hashable, Sendable {
 }
 
 public struct SwiftFeatureManifest: Codable, Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
 
     public let schemaVersion: Int
     public let id: String
@@ -132,7 +132,7 @@ public struct SwiftFeatureManifest: Codable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion)
             ?? container.decodeIfPresent(Int.self, forKey: .schema_version)
-            ?? Self.currentSchemaVersion
+            ?? 1
         self.id = try container.decode(String.self, forKey: .id)
         self.displayName = try Self.firstString(
             in: container,
@@ -142,7 +142,16 @@ public struct SwiftFeatureManifest: Codable, Sendable {
         self.executable = try container.decodeIfPresent(String.self, forKey: .executable)
             ?? container.decode(String.self, forKey: .binary)
         self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
-        self.tools = try container.decode([SwiftFeatureToolManifest].self, forKey: .tools)
+        let tools = try container.decode([SwiftFeatureToolManifest].self, forKey: .tools)
+        if schemaVersion >= 2,
+           tools.contains(where: { $0.presentation == nil }) {
+            throw DecodingError.dataCorruptedError(
+                forKey: .tools,
+                in: container,
+                debugDescription: "Feature manifest schema v2 requires explicit presentation metadata for every tool."
+            )
+        }
+        self.tools = tools
         self.toolNamePrefixes = try Self.stringArray(
             in: container,
             keys: [.toolNamePrefixes, .tool_name_prefixes]
@@ -338,7 +347,9 @@ public struct SwiftFeatureToolManifest: Codable, Sendable {
     public let description: String
     public let inputSchema: String
     public let outputSchema: String?
-    public let presentation: ToolPresentationDefinition
+    /// `nil` represents a legacy v1 manifest. Schema v2 manifests require an
+    /// explicit, semantically valid definition for every declared tool.
+    public let presentation: ToolPresentationDefinition?
 
     private enum CodingKeys: String, CodingKey {
         case name
@@ -366,16 +377,18 @@ public struct SwiftFeatureToolManifest: Codable, Sendable {
             primaryKey: .outputSchema,
             alternateKey: .output_schema
         )?.nilIfBlank
-        let decodedPresentation: ToolPresentationDefinition?
-        do {
-            decodedPresentation = try container.decodeIfPresent(
-                ToolPresentationDefinition.self,
-                forKey: .presentation
+        let presentation = try container.decodeIfPresent(
+            ToolPresentationDefinition.self,
+            forKey: .presentation
+        )
+        if let presentation, !presentation.isSemanticallyValid {
+            throw DecodingError.dataCorruptedError(
+                forKey: .presentation,
+                in: container,
+                debugDescription: "Tool presentation must contain a semantically valid explicit definition."
             )
-        } catch {
-            decodedPresentation = nil
         }
-        self.presentation = (decodedPresentation ?? .automatic).validOrAutomatic
+        self.presentation = presentation
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -385,9 +398,7 @@ public struct SwiftFeatureToolManifest: Codable, Sendable {
         try container.encode(description, forKey: .description)
         try container.encode(inputSchema, forKey: .inputSchema)
         try container.encodeIfPresent(outputSchema, forKey: .outputSchema)
-        if !presentation.isAutomatic {
-            try container.encode(presentation, forKey: .presentation)
-        }
+        try container.encodeIfPresent(presentation, forKey: .presentation)
     }
 
     public var toolDescriptor: ToolDescriptor {

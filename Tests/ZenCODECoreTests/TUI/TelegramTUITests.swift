@@ -408,7 +408,7 @@ struct TelegramTUITests {
         _ name: String,
         arguments: [String: Any] = [:]
     ) -> DirectAgentToolCall {
-        DirectAgentToolCall(
+        presentedToolCall(
             id: "test-\(UUID().uuidString)",
             name: name,
             argumentsObject: arguments,

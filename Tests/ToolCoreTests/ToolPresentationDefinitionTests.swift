@@ -50,13 +50,12 @@ struct ToolPresentationDefinitionTests {
 
         #expect(decoded == definition)
         #expect(decoded.isSemanticallyValid)
-        #expect(decoded.strategy == .semantic)
         #expect(decoded.sections.map(\.kind) == [.parameters, .code, .diff, .list])
         #expect(Set(decoded.summary?.modes ?? []) == [.compact, .expanded])
     }
 
     @Test
-    func automaticDescriptorEncodingPreservesHistoricalShape() throws {
+    func descriptorWithoutPresentationPreservesHistoricalShape() throws {
         let descriptor = ToolDescriptor(
             name: "legacy.tool",
             description: "Legacy descriptor.",
@@ -68,7 +67,7 @@ struct ToolPresentationDefinitionTests {
         let fields = try #require(value.objectValue)
 
         #expect(fields["presentation"] == nil)
-        #expect(descriptor.presentation == .automatic)
+        #expect(descriptor.presentation == nil)
     }
 
     @Test
@@ -96,7 +95,7 @@ struct ToolPresentationDefinitionTests {
     }
 
     @Test
-    func missingOrMalformedPresentationFallsBackWithoutLosingDescriptor() throws {
+    func missingOrMalformedPresentationDoesNotLoseDescriptor() throws {
         let legacy = Data(#"{"name":"legacy","description":"D","inputSchema":"{}"}"#.utf8)
         let malformed = Data(
             #"{"name":"future","description":"D","inputSchema":"{}","presentation":{"strategy":"future"}}"#.utf8
@@ -105,9 +104,9 @@ struct ToolPresentationDefinitionTests {
         let legacyDescriptor = try JSONDecoder().decode(ToolDescriptor.self, from: legacy)
         let malformedDescriptor = try JSONDecoder().decode(ToolDescriptor.self, from: malformed)
 
-        #expect(legacyDescriptor.presentation == .automatic)
+        #expect(legacyDescriptor.presentation == nil)
         #expect(malformedDescriptor.name == "future")
-        #expect(malformedDescriptor.presentation == .automatic)
+        #expect(malformedDescriptor.presentation == nil)
     }
 
     @Test
@@ -123,7 +122,7 @@ struct ToolPresentationDefinitionTests {
                 kind: .inspect
             )
         )
-        let automatic = ToolDescriptor(
+        let unpresented = ToolDescriptor(
             name: "beta",
             description: "B",
             inputSchema: "{}"
@@ -132,6 +131,6 @@ struct ToolPresentationDefinitionTests {
         #expect(!presented.promptDescription().contains(sentinel))
         #expect(!presented.compactPromptDescription().contains(sentinel))
         #expect(!presented.toolCallDescription().contains(sentinel))
-        #expect(ToolDescriptor.canonicalized([automatic, presented]).map(\.name) == ["alpha", "beta"])
+        #expect(ToolDescriptor.canonicalized([unpresented, presented]).map(\.name) == ["alpha", "beta"])
     }
 }

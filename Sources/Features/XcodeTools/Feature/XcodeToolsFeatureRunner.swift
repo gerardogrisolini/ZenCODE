@@ -73,15 +73,14 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration {
                 description: tool.description,
                 inputSchema: tool.inputSchema,
                 outputSchema: tool.outputSchema,
-                presentation: tool.presentation.isAutomatic
-                    ? Self.presentation(for: tool)
-                    : tool.presentation
+                presentation: XcodeToolIntegration.presentation(for: tool)
             )
             return FeatureToolDescriptor(
                 toolDescriptor: descriptor,
                 description: descriptor.description.hasPrefix(descriptionPrefix)
                     ? descriptor.description
-                    : "\(descriptionPrefix)\(descriptor.description)"
+                    : "\(descriptionPrefix)\(descriptor.description)",
+                presentation: XcodeToolIntegration.presentation(for: tool)
             )
         }
     }
@@ -152,65 +151,8 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration {
             || lowered.contains("canceled")
     }
 
-    private static func presentation(
-        for tool: ToolDescriptor
-    ) -> ToolPresentationDefinition {
-        let rawName = tool.name.split(separator: ".").last.map(String.init) ?? tool.name
-        let lowered = rawName.lowercased()
-        if lowered.contains("write") || lowered == "xcodewrite" {
-            return .fileWrite(
-                title: tool.title ?? "Xcode file",
-                action: "Write",
-                targetKeyPaths: ["filePath", "file_path", "path"],
-                contentKeyPaths: ["content", "text"]
-            )
-        }
-        if lowered.contains("update") || lowered.contains("edit") {
-            return .fileEdit(
-                title: tool.title ?? "Xcode file",
-                action: "Edit",
-                targetKeyPaths: ["filePath", "file_path", "path"]
-            )
-        }
-
-        let kind: ToolPresentationKind
-        switch XcodeToolIntegration.presentationKind(for: tool.name) {
-        case "read": kind = .read
-        case "search": kind = .search
-        case "edit": kind = .edit
-        case "delete": kind = .delete
-        case "move": kind = .move
-        case "execute": kind = .execute
-        default: kind = .other
-        }
-        return .standard(
-            title: tool.title ?? rawName,
-            action: xcodeAction(for: kind),
-            kind: kind,
-            targetKeyPaths: [
-                "filePath", "file_path", "path", "scheme", "target",
-                "workspacePath", "projectPath", "tabIdentifier"
-            ],
-            targetFormat: kind == .read || kind == .edit || kind == .delete || kind == .move
-                ? .path
-                : .text
-        )
-    }
-
-    private static func xcodeAction(for kind: ToolPresentationKind) -> String {
-        switch kind {
-        case .read: return "Read"
-        case .search: return "Search"
-        case .create: return "Create"
-        case .edit: return "Edit"
-        case .delete: return "Delete"
-        case .move: return "Move"
-        case .execute: return "Run"
-        case .inspect: return "Inspect"
-        case .communicate: return "Send"
-        case .manage: return "Manage"
-        case .other: return "Use"
-        }
+    func presentation(for tool: ToolDescriptor) -> ToolPresentationDefinition {
+        XcodeToolIntegration.presentation(for: tool)
     }
 }
 

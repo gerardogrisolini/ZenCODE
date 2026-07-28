@@ -94,7 +94,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func compactEditToolLinesIncludeFileTarget() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.editFile",
             argumentsObject: [
@@ -195,7 +195,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func compactExecToolLinesCollapseMultilineCommand() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.exec",
             argumentsObject: [
@@ -221,7 +221,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func detailedReplaceCompletionShowsNumberedSideBySideCodeLines() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.editFile",
             argumentsObject: [
@@ -244,7 +244,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func detailedToolStartOmitsRawInputButKeepsDetails() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.readFile",
             argumentsObject: [
@@ -266,7 +266,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func detailedReadCompletionOmitsRawOutputButKeepsSummaryDetail() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.readFile",
             argumentsObject: [
@@ -295,7 +295,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func detailedReadFilesCompletionCountsPayloadLinesAcrossFiles() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.readFiles",
             argumentsObject: [
@@ -328,7 +328,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func detailedHeadCompletionUsesSingularLineCount() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "text.head",
             argumentsObject: ["path": "/tmp/project/README.md", "lines": 1],
@@ -349,7 +349,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func detailedCompletionUsesPermissionDeniedStatusForErrors() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "xcode.BuildProject",
             argumentsObject: [:],
@@ -373,7 +373,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func detailedWriteCompletionShowsAppliedChangeSnippet() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.writeFile",
             argumentsObject: [
@@ -418,7 +418,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func detailedReplaceCompletionShowsOldAndNewNumberedSnippets() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.replace",
             argumentsObject: [
@@ -440,7 +440,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func expandedLevelAddsCallParameters() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.readFile",
             argumentsObject: [
@@ -460,7 +460,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func expandedParametersUseGrayKeysAndYellowValuesInsteadOfCodeGreen() throws {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.readFile",
             argumentsObject: [
@@ -522,7 +522,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func codeLanguageHintUsesTargetFileExtension() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.writeFile",
             argumentsObject: [
@@ -545,7 +545,7 @@ extension TerminalChatRenderingTests {
         +new
         *** End Patch
         """
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.applyPatch",
             argumentsObject: [
@@ -565,7 +565,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func expandedWriteNumbersEveryContentLineAndKeepsSwiftHighlighting() throws {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "write",
             name: "local.writeFile",
             argumentsObject: [
@@ -837,7 +837,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func expandedAppendAndApplyPatchUseNumberedTerminalSafeSnippets() {
-        let append = DirectAgentToolCall(
+        let append = presentedToolCall(
             id: "append",
             name: "local.append",
             argumentsObject: [
@@ -846,7 +846,7 @@ extension TerminalChatRenderingTests {
             ],
             argumentsJSON: "{}"
         )
-        let patch = DirectAgentToolCall(
+        let patch = presentedToolCall(
             id: "patch",
             name: "local.applyPatch",
             argumentsObject: [
@@ -869,7 +869,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func expandedMultiEditAndXcodeAliasesUseNumberedDiffPreparation() {
-        let multiEdit = DirectAgentToolCall(
+        let multiEdit = presentedToolCall(
             id: "multi",
             name: "local.multiEdit",
             argumentsObject: [
@@ -888,7 +888,7 @@ extension TerminalChatRenderingTests {
         #expect(multiLines.contains { $0.contains("1 │ let old = 1") && $0.contains("1 │ let new = 2") })
 
         for name in ["XcodeWrite", "xcode.XcodeWrite", "xcode.write"] {
-            let toolCall = DirectAgentToolCall(
+            let toolCall = presentedToolCall(
                 id: "write-\(name)",
                 name: name,
                 argumentsObject: [
@@ -903,7 +903,7 @@ extension TerminalChatRenderingTests {
         }
 
         for name in ["XcodeUpdate", "xcode.XcodeUpdate", "xcode.update", "xcode.edit"] {
-            let toolCall = DirectAgentToolCall(
+            let toolCall = presentedToolCall(
                 id: "update-\(name)",
                 name: name,
                 argumentsObject: [
@@ -926,7 +926,7 @@ extension TerminalChatRenderingTests {
         // Every caller-controllable path reaches the terminal through the same
         // sanitization point: title, location, change rows and language hint.
         let hostilePath = "Sources/\u{1B}[2J\u{9B}31m\u{200B}App\u{7F}.swift"
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "hostile-path",
             name: "local.writeFile",
             argumentsObject: [
@@ -962,7 +962,7 @@ extension TerminalChatRenderingTests {
     func expandedPatchTargetIsSanitizedInChangeRowAndLanguageHint() {
         // The patch target is derived from the fully caller-controlled patch
         // body, so it must be neutralized like any other metadata.
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "hostile-patch",
             name: "local.applyPatch",
             argumentsObject: [
@@ -984,7 +984,7 @@ extension TerminalChatRenderingTests {
 
         // A patch whose only target neutralizes to blank falls back rather than
         // rendering an empty or hostile target.
-        let blankTarget = DirectAgentToolCall(
+        let blankTarget = presentedToolCall(
             id: "blank-patch",
             name: "local.applyPatch",
             argumentsObject: ["patch": "*** Update File: \u{1B}\n"],
@@ -1000,7 +1000,7 @@ extension TerminalChatRenderingTests {
     @Test
     func xcodeRemoveAndMoveAliasesMatchRuntimeRoutingWithoutClassifyingBareNames() {
         for name in ["XcodeRM", "xcode.XcodeRM", "xcode.rm", "xcode_rm", "xcodeRM"] {
-            let toolCall = DirectAgentToolCall(
+            let toolCall = presentedToolCall(
                 id: "rm-\(name)",
                 name: name,
                 argumentsObject: ["path": "Sources/Legacy.swift"],
@@ -1015,7 +1015,7 @@ extension TerminalChatRenderingTests {
         }
 
         for name in ["XcodeMV", "xcode.XcodeMV", "xcode.mv", "xcode_mv", "xcodeMV"] {
-            let toolCall = DirectAgentToolCall(
+            let toolCall = presentedToolCall(
                 id: "mv-\(name)",
                 name: name,
                 argumentsObject: [
@@ -1045,7 +1045,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func xcodeMoveMetadataIsSanitizedInBothDirections() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "mv-hostile",
             name: "xcode.mv",
             argumentsObject: [
@@ -1074,7 +1074,7 @@ extension TerminalChatRenderingTests {
             #expect(TerminalChat.shouldHideParameterLines(for: name))
         }
 
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "metadata-only-move",
             name: "xcode.mv",
             argumentsObject: [
@@ -1103,7 +1103,7 @@ extension TerminalChatRenderingTests {
         #expect(TerminalChat.targetPath(arguments) == "Sources/App .swift")
         #expect(TerminalChat.metadataArgument(["from": " \n "], keys: ["from"]) == nil)
 
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "blank-path",
             name: "local.writeFile",
             argumentsObject: arguments.merging(["content": "let value = 1"]) { first, _ in first },
@@ -1114,7 +1114,7 @@ extension TerminalChatRenderingTests {
         #expect(lines.allSatisfy { !$0.contains("\r") && !$0.contains("\t") })
         #expect(TerminalChat.codeLanguageHint(for: toolCall) == "swift")
 
-        let blankOnly = DirectAgentToolCall(
+        let blankOnly = presentedToolCall(
             id: "blank-only",
             name: "local.delete",
             argumentsObject: ["path": "  "],
@@ -1171,7 +1171,7 @@ extension TerminalChatRenderingTests {
             #expect(!TerminalChat.shouldHideParameterLines(for: name))
             #expect(!TerminalChat.isFileMutationTool(name))
 
-            let toolCall = DirectAgentToolCall(
+            let toolCall = presentedToolCall(
                 id: "bare-\(name)",
                 name: name,
                 argumentsObject: [

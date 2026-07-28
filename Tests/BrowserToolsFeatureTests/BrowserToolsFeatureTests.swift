@@ -902,20 +902,17 @@ struct BrowserToolsFeatureTests {
     }
 
     @Test
-    func bundledRuntimeCatalogExposesEveryFeatureToolWithValidSchemas() throws {
+    func bundledRuntimeCatalogDelegatesDescriptorOwnershipToBrowserFeature() throws {
         let feature = try #require(
             SwiftFeatureRuntime.bundledFeatureDefinitions()
                 .first(where: { $0.id == "browser-tools" })
         )
-        let runtimeNames = Set(feature.tools.map(\.name))
-        let featureNames = Set(BrowserToolsFeatureRunner.tools().map(\.descriptor.name))
-
-        #expect(runtimeNames == featureNames)
-        for descriptor in feature.tools {
-            let schemaData = try #require(descriptor.inputSchema.data(using: .utf8))
-            let schema = try JSONSerialization.jsonObject(with: schemaData)
-            #expect(schema is [String: Any])
-        }
+        #expect(feature.tools.isEmpty)
+        #expect(feature.toolNamePrefixes == ["browser."])
+        #expect(feature.discoversToolsAtRuntime)
+        #expect(BrowserToolsFeatureRunner.tools().allSatisfy {
+            $0.descriptor.presentation?.isSemanticallyValid == true
+        })
     }
 }
 

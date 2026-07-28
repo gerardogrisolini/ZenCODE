@@ -32,10 +32,6 @@ extension TerminalChat {
         for toolCall: DirectAgentToolCall
     ) -> [DetailedToolRow] {
         var rows = detailedToolBaseRows(for: toolCall)
-        if toolCall.presentation.isAutomatic,
-           isFileMutationTool(toolCall.name) {
-            rows.append(.text("change: pending"))
-        }
         rows.append(.text("status: ⏳"))
         return rows
     }
@@ -89,20 +85,6 @@ extension TerminalChat {
             return rows
         }
 
-        if !toolCall.presentation.isAutomatic {
-            rows.append(.text(successStatus))
-            return rows
-        }
-
-        let changeRows = appliedChangeDetailRows(
-            for: toolCall,
-            contentWidth: contentWidth
-        )
-        if !changeRows.isEmpty {
-            rows.append(contentsOf: changeRows)
-        } else if let summary = expandedToolSummary(for: toolCall, result: result) {
-            rows.append(.text("summary: \(summary)"))
-        }
         rows.append(.text(successStatus))
         return rows
     }
@@ -118,28 +100,11 @@ extension TerminalChat {
         result: DirectAgentToolResult? = nil,
         contentWidth: Int? = nil
     ) -> [DetailedToolRow] {
-        if !toolCall.presentation.isAutomatic {
-            return semanticToolRows(
-                for: toolCall,
-                result: result,
-                contentWidth: contentWidth
-            )
-        }
-
-        // Expanded output identifies the exact invoked tool instead of its
-        // broad presentation kind.
-        let toolName = sanitizedMetadataText(toolCall.name) ?? "tool"
-        let icon = ToolCallPresentation.toolIcon(for: toolCall.name)
-        var rows: [DetailedToolRow] = [
-            .text("\(icon)  \(toolName)")
-        ]
-        rows.append(
-            contentsOf: toolLocationLines(for: toolCall).map(DetailedToolRow.text)
+        semanticToolRows(
+            for: toolCall,
+            result: result,
+            contentWidth: contentWidth
         )
-        if !shouldHideParameterLines(for: toolCall.name) {
-            rows.append(contentsOf: parameterRows(for: toolCall))
-        }
-        return rows
     }
 
     /// Converts the core's unstyled semantic presentation into the existing TUI
@@ -255,7 +220,9 @@ extension TerminalChat {
         let lines = formatted.preservesIndentation
             ? indentedSnippetPreservingIndentation(formatted.text)
             : indentedSnippet(formatted.text)
-        return [.text("\(label):")] + lines.map(DetailedToolRow.parameter)
+        return [.text("\(label):")] + lines.map {
+            DetailedToolRow.parameter(terminalSafeSnippetLine($0))
+        }
     }
 
     /// Mutation details render either a numbered source/diff area or structured
@@ -745,7 +712,7 @@ extension TerminalChat {
         let visibleLines = Array(lines.prefix(lineLimit))
         var output = visibleLines.isEmpty
             ? ["\(indentation)<empty>"]
-            : visibleLines.map { "\(indentation)\($0)" }
+            : visibleLines.map { terminalSafeSnippetLine("\(indentation)\($0)") }
         if lines.count > visibleLines.count || wasTruncated {
             output.append("\(indentation)... truncated")
         }
@@ -770,7 +737,7 @@ extension TerminalChat {
         let visibleLines = Array(lines.prefix(lineLimit))
         var output = visibleLines.isEmpty
             ? ["\(indentation)<empty>"]
-            : visibleLines.map { "\(indentation)\($0)" }
+            : visibleLines.map { terminalSafeSnippetLine("\(indentation)\($0)") }
         if lines.count > visibleLines.count || wasTruncated {
             output.append("\(indentation)... truncated")
         }
@@ -1224,34 +1191,22 @@ extension TerminalChat {
     /// from the extension of the file the call targets, so written/edited
     /// code is rendered with proper highlighting in the expanded view.
     nonisolated static func codeLanguageHint(for toolCall: DirectAgentToolCall) -> String? {
-        if !toolCall.presentation.isAutomatic {
-            let presentation = ToolCallPresentation.resolved(
-                for: toolCall,
-                mode: .expanded
-            )
-            for element in presentation.elements {
-                switch element {
-                case let .code(_, _, languageHint),
-                     let .diff(_, _, _, languageHint):
-                    if let languageHint = languageHint?.nilIfBlank {
-                        return languageHint
-                    }
-                case .parameters, .list, .summary:
-                    continue
+        let presentation = ToolCallPresentation.resolved(
+            for: toolCall,
+            mode: .expanded
+        )
+        for element in presentation.elements {
+            switch element {
+            case let .code(_, _, languageHint),
+                 let .diff(_, _, _, languageHint):
+                if let languageHint = languageHint?.nilIfBlank {
+                    return languageHint
                 }
+            case .parameters, .list, .summary:
+                continue
             }
-            return nil
         }
-
-        let arguments = toolCall.argumentsObject
-        let path = targetPath(arguments) ?? patchTargetPath(arguments)
-        guard let path else {
-            return nil
-        }
-        let fileExtension = (path as NSString).pathExtension
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return fileExtension.isEmpty ? nil : fileExtension
+        return nil
     }
 
     nonisolated static func leadingSpaceCount(_ line: String) -> Int {

@@ -223,6 +223,35 @@ struct DirectTaskToolAdapterTests {
     }
 
     @Test
+    func taskCreateFallsBackToPopulatedItemsWhenTasksIsEmpty() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
+
+        _ = try await adapter.execute(
+            sessionID: "session",
+            toolCall: call(
+                name: "tasks.create",
+                arguments: [
+                    "graphID": "graph",
+                    "tasks": [],
+                    "items": [
+                        ["id": "a", "title": "A"],
+                        ["id": "b", "title": "B", "dependsOn": ["a"]],
+                    ],
+                ]
+            )
+        )
+
+        let output = try await adapter.execute(
+            sessionID: "session",
+            toolCall: call(name: "tasks.list", arguments: [:])
+        )
+        #expect(output.contains("[pending] a: A"))
+        #expect(output.contains("[pending] b: B"))
+        #expect(output.contains("blocked_by=a"))
+    }
+
+    @Test
     func taskCreateAcceptsTitlesLongerThanTheFormerLimit() async throws {
         let orchestrator = SessionTaskOrchestrator()
         let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)

@@ -57,6 +57,13 @@ extension SwiftFeatureRuntimeTests {
                   "text": { "type": "string" }
                 },
                 "required": ["text"]
+              },
+              "presentation": {
+                "title": "Echo",
+                "action": "Echo",
+                "kind": "execute",
+                "metadata": [],
+                "sections": []
               }
             }
           ]
@@ -94,7 +101,7 @@ extension SwiftFeatureRuntimeTests {
         try """
         #!/bin/sh
         if [ "$1" = "--list-tools" ]; then
-          printf '{"tools":[{"name":"custom.dynamic","description":"Dynamic custom tool","inputSchema":"{}"}]}\n'
+          printf '{"tools":[{"name":"custom.dynamic","description":"Dynamic custom tool","inputSchema":"{}","presentation":{"title":"Dynamic tool","action":"Use","kind":"other","metadata":[],"sections":[]}}]}\n'
           exit 0
         fi
         cat >/dev/null

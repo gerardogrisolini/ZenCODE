@@ -286,8 +286,8 @@ private actor ScriptedFeatureAuthoringModelBackend: AgentRuntimeBackend {
             "local.replace",
             arguments: [
                 "path": scaffold.sourcePath,
-                "oldString": #"return input.text ?? """#,
-                "newString": #"return String((input.text ?? "").reversed())"#
+                "oldString": #"input.text ?? """#,
+                "newString": #"String((input.text ?? "").reversed())"#
             ]
         )
 

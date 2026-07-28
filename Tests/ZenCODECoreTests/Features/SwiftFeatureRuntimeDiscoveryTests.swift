@@ -177,7 +177,20 @@ extension SwiftFeatureRuntimeTests {
                 SwiftFeatureBundle(
                     id: "swift-tools",
                     executableURL: executableURL,
-                    tools: DirectToolCatalog.swiftDescriptors.map(\.toolDescriptor)
+                    tools: [
+                        ToolDescriptor(
+                            name: "swift.outline",
+                            description: "Returns a compact Swift outline.",
+                            inputSchema: #"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
+                            presentation: .standard(
+                                title: "Swift outline",
+                                action: "Inspect",
+                                kind: .inspect,
+                                targetKeyPaths: ["path"],
+                                targetFormat: .path
+                            )
+                        )
+                    ]
                 )
             ]
         )
@@ -219,7 +232,7 @@ extension SwiftFeatureRuntimeTests {
         #!/bin/sh
         if [ "$1" = "--list-tools" ]; then
           printf x >> "\(markerURL.path)"
-          printf '{"tools":[{"name":"dynamic.echo","description":"Dynamic echo","inputSchema":"{}"}]}\n'
+          printf '{"tools":[{"name":"dynamic.echo","description":"Dynamic echo","inputSchema":"{}","presentation":{"title":"Dynamic tool","action":"Use","kind":"other","metadata":[],"sections":[]}}]}\n'
           exit 0
         fi
         cat >/dev/null
@@ -258,7 +271,7 @@ extension SwiftFeatureRuntimeTests {
         #!/bin/sh
         if [ "$1" = "--list-tools" ]; then
           printf x >> "\(unrelatedMarkerURL.path)"
-          printf '{"tools":[{"name":"dynamic.unrelated","description":"Should not run","inputSchema":"{}"}]}\n'
+          printf '{"tools":[{"name":"dynamic.unrelated","description":"Should not run","inputSchema":"{}","presentation":{"title":"Dynamic tool","action":"Use","kind":"other","metadata":[],"sections":[]}}]}\n'
           exit 0
         fi
         cat >/dev/null
@@ -319,7 +332,7 @@ extension SwiftFeatureRuntimeTests {
         #!/bin/sh
         if [ "$1" = "--list-tools" ]; then
           printf x >> "\(markerURL.path)"
-          printf '{"tools":[{"name":"dynamic.status","description":"Dynamic status","inputSchema":"{}"}]}\n'
+          printf '{"tools":[{"name":"dynamic.status","description":"Dynamic status","inputSchema":"{}","presentation":{"title":"Dynamic tool","action":"Use","kind":"other","metadata":[],"sections":[]}}]}\n'
           exit 0
         fi
         cat >/dev/null
@@ -377,7 +390,7 @@ extension SwiftFeatureRuntimeTests {
         #!/bin/sh
         if [ "$1" = "--list-tools" ]; then
           printf x >> "\(markerURL.path)"
-          printf '{"tools":[{"name":"xcode.BuildProject","description":"Dynamic Xcode build","inputSchema":"{}"}]}\n'
+          printf '{"tools":[{"name":"xcode.BuildProject","description":"Dynamic Xcode build","inputSchema":"{}","presentation":{"title":"Dynamic tool","action":"Use","kind":"other","metadata":[],"sections":[]}}]}\n'
           exit 0
         fi
         cat >/dev/null
@@ -433,7 +446,7 @@ extension SwiftFeatureRuntimeTests {
         #!/bin/sh
         if [ "$1" = "--list-tools" ]; then
           printf x >> "\(markerURL.path)"
-          printf '{"tools":[{"name":"xcode.BuildProject","description":"Dynamic Xcode build","inputSchema":"{}"}]}\n'
+          printf '{"tools":[{"name":"xcode.BuildProject","description":"Dynamic Xcode build","inputSchema":"{}","presentation":{"title":"Dynamic tool","action":"Use","kind":"other","metadata":[],"sections":[]}}]}\n'
           exit 0
         fi
         cat >/dev/null
@@ -506,7 +519,7 @@ extension SwiftFeatureRuntimeTests {
         #!/bin/sh
         if [ "$1" = "--list-tools" ]; then
           printf x >> "\(markerURL.path)"
-          printf '{"tools":[{"name":"xcode.BuildProject","description":"Dynamic Xcode build","inputSchema":"{}"}]}\n'
+          printf '{"tools":[{"name":"xcode.BuildProject","description":"Dynamic Xcode build","inputSchema":"{}","presentation":{"title":"Dynamic tool","action":"Use","kind":"other","metadata":[],"sections":[]}}]}\n'
           exit 0
         fi
         cat >/dev/null
@@ -588,7 +601,7 @@ extension SwiftFeatureRuntimeTests {
         #!/bin/sh
         if [ "$1" = "--list-tools" ]; then
           printf x >> "\(markerURL.path)"
-          printf '{"tools":[{"name":"xcode.BuildProject","description":"Dynamic Xcode build","inputSchema":"{}"}]}\n'
+          printf '{"tools":[{"name":"xcode.BuildProject","description":"Dynamic Xcode build","inputSchema":"{}","presentation":{"title":"Dynamic tool","action":"Use","kind":"other","metadata":[],"sections":[]}}]}\n'
           exit 0
         fi
         cat >/dev/null
@@ -681,14 +694,15 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
-    func defaultGitFeatureStatusIncludesPushTool() {
+    func defaultGitFeatureStatusDeclaresToolOwnedRuntimeDiscovery() {
         let gitStatus = SwiftFeatureRuntime.defaultFeatureStatuses(
             includeTools: true,
             includeDisabled: true
         ).first { $0.id == "git-tools" }
 
-        #expect(gitStatus?.tools.contains("git.commit") == true)
-        #expect(gitStatus?.tools.contains("git.push") == true)
+        #expect(gitStatus?.tools.isEmpty == true)
+        #expect(gitStatus?.toolNamePrefixes == ["git."])
+        #expect(gitStatus?.discoversToolsAtRuntime == true)
     }
 
     @Test

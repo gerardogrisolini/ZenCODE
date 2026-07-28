@@ -61,24 +61,31 @@ private struct FigmaFeatureConfiguration: MCPFeatureConfiguration {
                 description: tool.description,
                 inputSchema: tool.inputSchema,
                 outputSchema: tool.outputSchema,
-                presentation: tool.presentation.isAutomatic
-                    ? .standard(
-                        title: tool.title ?? "Figma",
-                        action: "Inspect",
-                        kind: .inspect,
-                        targetKeyPaths: [
-                            "nodeId", "node_id", "fileKey", "file_key",
-                            "url", "name", "query"
-                        ]
-                    )
-                    : tool.presentation
+                presentation: Self.presentation(for: tool)
             )
             return FeatureToolDescriptor(
                 toolDescriptor: descriptor,
                 description: descriptor.description.hasPrefix(descriptionPrefix)
                     ? descriptor.description
-                    : "\(descriptionPrefix)\(descriptor.description)"
+                    : "\(descriptionPrefix)\(descriptor.description)",
+                presentation: Self.presentation(for: tool)
             )
         }
+    }
+
+    func presentation(for tool: ToolDescriptor) -> ToolPresentationDefinition {
+        Self.presentation(for: tool)
+    }
+
+    private static func presentation(for tool: ToolDescriptor) -> ToolPresentationDefinition {
+        .standard(
+            title: tool.title ?? "Figma",
+            action: "Inspect",
+            kind: .inspect,
+            targetKeyPaths: [
+                "nodeId", "node_id", "fileKey", "file_key",
+                "url", "name", "query"
+            ]
+        )
     }
 }

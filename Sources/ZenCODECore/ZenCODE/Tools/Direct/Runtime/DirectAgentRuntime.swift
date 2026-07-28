@@ -52,7 +52,7 @@ public struct DirectAgentToolCall: Sendable {
     /// Runtime-only descriptor metadata. Session/history persistence continues
     /// to store only id, name, and arguments.
     public let descriptorTitle: String?
-    public let presentation: ToolPresentationDefinition
+    public let presentation: ToolPresentationDefinition?
 
     public init(
         id: String,
@@ -60,7 +60,7 @@ public struct DirectAgentToolCall: Sendable {
         argumentsObject: [String: Any],
         argumentsJSON: String,
         descriptorTitle: String? = nil,
-        presentation: ToolPresentationDefinition = .automatic
+        presentation: ToolPresentationDefinition? = nil
     ) {
         self.id = id
         self.name = name
@@ -70,7 +70,7 @@ public struct DirectAgentToolCall: Sendable {
         // authorization gates.  Do not retain an untrusted parallel JSON blob.
         self.argumentsJSON = Self.canonicalArgumentsJSON(for: self.arguments)
         self.descriptorTitle = descriptorTitle
-        self.presentation = presentation.validOrAutomatic
+        self.presentation = presentation
     }
 
     /// Strict initializer for ingress points that require the supplied JSON to
@@ -83,7 +83,7 @@ public struct DirectAgentToolCall: Sendable {
         argumentsObject: [String: Any],
         argumentsJSON: String,
         descriptorTitle: String? = nil,
-        presentation: ToolPresentationDefinition = .automatic
+        presentation: ToolPresentationDefinition? = nil
     ) throws {
         let arguments = argumentsObject.mapValues { JSONValue(jsonObject: $0) }
         guard let data = argumentsJSON.data(using: .utf8),
@@ -98,7 +98,7 @@ public struct DirectAgentToolCall: Sendable {
         self.arguments = arguments
         self.argumentsJSON = Self.canonicalArgumentsJSON(for: arguments)
         self.descriptorTitle = descriptorTitle
-        self.presentation = presentation.validOrAutomatic
+        self.presentation = presentation
     }
 
     /// The tool arguments as a JSON-compatible `[String: Any]` dictionary,

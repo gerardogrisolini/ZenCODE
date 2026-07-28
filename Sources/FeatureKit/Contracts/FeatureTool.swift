@@ -24,7 +24,4 @@ public extension FeatureTool {
         nil
     }
 
-    static var presentation: ToolPresentationDefinition {
-        .automatic
-    }
 }

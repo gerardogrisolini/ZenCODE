@@ -490,7 +490,7 @@ extension TerminalChat {
             argumentsObject: [:],
             argumentsJSON: "{}",
             descriptorTitle: descriptor?.title,
-            presentation: descriptor?.presentation ?? .automatic
+            presentation: descriptor?.presentation
         )
         await writeToolCallCompleted(
             toolCall,
@@ -528,7 +528,7 @@ extension TerminalChat {
             argumentsObject: toolArgumentsObject(from: toolCall.argumentsJSON),
             argumentsJSON: toolCall.argumentsJSON,
             descriptorTitle: descriptor?.title,
-            presentation: descriptor?.presentation ?? .automatic
+            presentation: descriptor?.presentation
         )
     }
 

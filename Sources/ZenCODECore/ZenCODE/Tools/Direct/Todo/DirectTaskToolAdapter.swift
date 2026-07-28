@@ -177,7 +177,10 @@ extension DirectTaskToolAdapter {
     static func requestedTaskDefinitions(
         from arguments: [String: JSONValue]
     ) throws -> [TaskDefinition] {
-        if let values = DirectTodoRuntime.firstArray(["tasks", "items"], in: arguments) {
+        if let primaryValues = DirectTodoRuntime.firstArray(["tasks", "items"], in: arguments) {
+            let values = primaryValues.isEmpty
+                ? (DirectTodoRuntime.firstArray(["items"], in: arguments) ?? primaryValues)
+                : primaryValues
             guard !values.isEmpty else {
                 throw DirectTodoTaskRuntimeError.invalidArgument("tasks")
             }

@@ -71,7 +71,6 @@ struct ToolPresentationResolverTests {
         #expect(resolved.target == "/tmp/App.swift")
         #expect(resolved.kind == .edit)
         #expect(resolved.metadata == [ToolPresentationMetadata(label: "mode", value: "true")])
-        #expect(!resolved.usesAutomaticFallback)
         #expect(resolved.elements.count == 5)
 
         guard case let .parameters(label, value) = resolved.elements[0] else {
@@ -107,7 +106,7 @@ struct ToolPresentationResolverTests {
     }
 
     @Test
-    func automaticFallbackIsGenericAndSafeForUnknownTools() throws {
+    func missingPresentationIsGenericAndSafeForUnknownTools() throws {
         let call = DirectAgentToolCall(
             id: "unknown",
             name: "thirdparty.arbitrary",
@@ -129,9 +128,7 @@ struct ToolPresentationResolverTests {
 
         #expect(compact.title == "thirdparty.arbitrary")
         #expect(compact.kind == .other)
-        #expect(compact.usesAutomaticFallback)
         #expect(compact.elements == [.summary(label: "summary", text: "done")])
-        #expect(expanded.usesAutomaticFallback)
         #expect(expanded.elements.count == 2)
         guard case let .parameters(_, parameters) = expanded.elements[0] else {
             Issue.record("Expected generic parameters")

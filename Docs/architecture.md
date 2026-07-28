@@ -124,8 +124,8 @@ layout are made explicit.
 
 | Area | Intended responsibility and directory layout |
 | --- | --- |
-| `Sources/ToolCore` | Dependency-light wire, descriptor, environment, and compatibility types. It does not contain Xcode-specific request or workspace behavior. |
-| `Sources/FeatureKit` | Feature contracts, schemas, process protocol, and runner support; depends on `ToolCore`. |
+| `Sources/ToolCore` | Dependency-light wire, descriptor, environment, compatibility, and declarative tool-presentation types. It contains no registry or presentation policy keyed by tool name and does not contain Xcode-specific request or workspace behavior. |
+| `Sources/FeatureKit` | Feature contracts, schemas, process protocol, and runner support; depends on `ToolCore`. Every `FeatureTool` owns and publishes its explicit `ToolPresentationDefinition`; `--list-tools` requires the same contract for generated and bundled features. |
 | `Sources/FeatureMCPBridgeKit` | Generic MCP feature integration, configuration, transports, OAuth, execution, and injectable local-transport policy hooks. It has no Xcode-specific behavior. |
 | `Sources/Features/XcodeTools/Feature` | `XcodeToolsFeature` library target: Xcode MCP configuration, policy, compatibility normalization, workspace selection, discovery, execution, and error mapping. |
 | `Sources/Features/XcodeTools/Executable` | Thin `xcode-tools-feature` executable target that delegates to `XcodeToolsFeatureRunner`. |

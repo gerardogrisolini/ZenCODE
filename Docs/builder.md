@@ -38,6 +38,17 @@ Sources/<FeatureTarget>/main.swift
 
 Generated packages are plain Swift 6.3 packages. They run out of process: the kernel starts the executable, sends JSON on stdin, expects JSON on stdout.
 
+Generated tools use the same contracts as bundled tools: basic scaffolds conform
+to `FeatureTool` and run through `FeatureRunner`, while every tool publishes an
+explicit `ToolPresentationDefinition` from its own feature source. The
+`--list-tools` response carries that definition; ZenCODECore does not infer
+presentation rules from a tool name. MCP Bridge scaffolds likewise attach their
+feature-owned presentation metadata to every discovered MCP descriptor.
+Current Builder manifests and `--list-tools` responses use schema version 2,
+which requires a semantically valid presentation definition for every tool.
+Version 1 payloads remain readable for compatibility, but their missing
+metadata stays absent rather than being replaced by an inferred rule.
+
 Templates:
 
 - **Basic Swift feature** — one starter tool.

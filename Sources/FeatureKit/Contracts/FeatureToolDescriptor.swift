@@ -11,7 +11,10 @@ public struct FeatureToolDescriptor: Codable, Hashable, Sendable {
     public let description: String
     public let inputSchema: String
     public let outputSchema: String?
-    public let presentation: ToolPresentationDefinition
+    /// `nil` is retained only while decoding legacy v1 `--list-tools`
+    /// responses. Current feature sources cannot omit presentation because
+    /// `FeatureTool.presentation` is a protocol requirement.
+    public let presentation: ToolPresentationDefinition?
 
     private enum CodingKeys: String, CodingKey {
         case name, description, inputSchema, outputSchema, presentation
@@ -22,13 +25,13 @@ public struct FeatureToolDescriptor: Codable, Hashable, Sendable {
         description: String,
         inputSchema: String,
         outputSchema: String? = nil,
-        presentation: ToolPresentationDefinition = .automatic
+        presentation: ToolPresentationDefinition
     ) {
         self.name = name
         self.description = description
         self.inputSchema = inputSchema
         self.outputSchema = outputSchema
-        self.presentation = presentation.validOrAutomatic
+        self.presentation = presentation
     }
 
     public init(from decoder: Decoder) throws {
@@ -38,16 +41,18 @@ public struct FeatureToolDescriptor: Codable, Hashable, Sendable {
         self.inputSchema = try container.decode(String.self, forKey: .inputSchema)
         self.outputSchema = try container.decodeIfPresent(String.self, forKey: .outputSchema)
 
-        let decodedPresentation: ToolPresentationDefinition?
-        do {
-            decodedPresentation = try container.decodeIfPresent(
-                ToolPresentationDefinition.self,
-                forKey: .presentation
+        let presentation = try container.decodeIfPresent(
+            ToolPresentationDefinition.self,
+            forKey: .presentation
+        )
+        if let presentation, !presentation.isSemanticallyValid {
+            throw DecodingError.dataCorruptedError(
+                forKey: .presentation,
+                in: container,
+                debugDescription: "Tool presentation must contain a semantically valid explicit definition."
             )
-        } catch {
-            decodedPresentation = nil
         }
-        self.presentation = (decodedPresentation ?? .automatic).validOrAutomatic
+        self.presentation = presentation
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -56,22 +61,24 @@ public struct FeatureToolDescriptor: Codable, Hashable, Sendable {
         try container.encode(description, forKey: .description)
         try container.encode(inputSchema, forKey: .inputSchema)
         try container.encodeIfPresent(outputSchema, forKey: .outputSchema)
-        if !presentation.isAutomatic {
-            try container.encode(presentation, forKey: .presentation)
-        }
+        try container.encodeIfPresent(presentation, forKey: .presentation)
     }
 }
 
 public extension FeatureToolDescriptor {
     /// Bridges the feature wire descriptor to ToolCore's canonical descriptor
     /// without changing the feature protocol's encoded shape.
-    init(toolDescriptor: ToolDescriptor, description: String? = nil) {
+    init(
+        toolDescriptor: ToolDescriptor,
+        description: String? = nil,
+        presentation: ToolPresentationDefinition
+    ) {
         self.init(
             name: toolDescriptor.name,
             description: description ?? toolDescriptor.description,
             inputSchema: toolDescriptor.inputSchema,
             outputSchema: toolDescriptor.outputSchema,
-            presentation: toolDescriptor.presentation
+            presentation: presentation
         )
     }
 

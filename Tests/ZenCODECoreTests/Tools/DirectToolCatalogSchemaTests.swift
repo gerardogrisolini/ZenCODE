@@ -5,6 +5,23 @@ import Testing
 @Suite
 struct DirectToolCatalogSchemaTests {
     @Test
+    func everyBuiltInDirectToolOwnsAValidPresentationDefinition() {
+        let descriptors = DirectToolCatalog.baseDescriptors
+            + DirectToolCatalog.localSearchDescriptors
+        let missing = descriptors
+            .filter { $0.presentation == nil }
+            .map(\.name)
+            .sorted()
+        let invalid = descriptors
+            .filter { $0.presentation?.isSemanticallyValid == false }
+            .map(\.name)
+            .sorted()
+
+        #expect(missing.isEmpty)
+        #expect(invalid.isEmpty)
+    }
+
+    @Test
     func tasksCreateBatchSchemaExposesExecutionExecutor() throws {
         let descriptor = try #require(
             DirectToolCatalog.todoTaskDescriptors.first { $0.name == "tasks.create" }

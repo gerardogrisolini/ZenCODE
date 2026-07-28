@@ -36,6 +36,24 @@ public nonisolated enum ToolPresentationValueSource: String, Codable, Hashable, 
     case resultSummary
     case toolName
     case literal
+    /// A value assembled from other declarative value definitions.
+    case composite
+}
+
+public nonisolated enum ToolPresentationValueSelection: String, Codable, Hashable, Sendable {
+    /// Uses the first key path that resolves to a value.
+    case first
+    /// Collects and flattens values from every matching key path.
+    case collect
+    /// Selects the first matching `itemKeyPaths` value for each element in the
+    /// first array resolved by `keyPaths`.
+    case perItemFirst
+}
+
+public nonisolated enum ToolPresentationValueComposition: String, Codable, Hashable, Sendable {
+    case firstAvailable
+    case joined
+    case collected
 }
 
 /// Describes a data-level transformation. It does not imply terminal layout,
@@ -52,6 +70,8 @@ public nonisolated enum ToolPresentationValueFormat: String, Codable, Hashable, 
     case lineCount
     case itemCount
     case languageHint
+    /// Extracts normalized file paths from an apply-patch/unified-diff payload.
+    case patchPaths
 }
 
 /// A serializable value selector used by targets, metadata, sections, and
@@ -64,6 +84,12 @@ public nonisolated struct ToolPresentationValueDefinition: Codable, Hashable, Se
     public let format: ToolPresentationValueFormat
     public let separator: String?
     public let fallback: String?
+    public let selection: ToolPresentationValueSelection?
+    public let itemKeyPaths: [String]?
+    public let components: [ToolPresentationValueDefinition]?
+    public let composition: ToolPresentationValueComposition?
+    public let prefix: String?
+    public let suffix: String?
 
     public init(
         source: ToolPresentationValueSource,
@@ -71,7 +97,13 @@ public nonisolated struct ToolPresentationValueDefinition: Codable, Hashable, Se
         literalValue: String? = nil,
         format: ToolPresentationValueFormat = .automatic,
         separator: String? = nil,
-        fallback: String? = nil
+        fallback: String? = nil,
+        selection: ToolPresentationValueSelection? = nil,
+        itemKeyPaths: [String]? = nil,
+        components: [ToolPresentationValueDefinition]? = nil,
+        composition: ToolPresentationValueComposition? = nil,
+        prefix: String? = nil,
+        suffix: String? = nil
     ) {
         self.source = source
         self.keyPaths = keyPaths
@@ -79,6 +111,12 @@ public nonisolated struct ToolPresentationValueDefinition: Codable, Hashable, Se
         self.format = format
         self.separator = separator
         self.fallback = fallback
+        self.selection = selection
+        self.itemKeyPaths = itemKeyPaths
+        self.components = components
+        self.composition = composition
+        self.prefix = prefix
+        self.suffix = suffix
     }
 
     public static func argument(
@@ -104,6 +142,77 @@ public nonisolated struct ToolPresentationValueDefinition: Codable, Hashable, Se
             source: .arguments,
             format: format,
             fallback: fallback
+        )
+    }
+
+    public static func collectedArguments(
+        _ keyPaths: [String],
+        format: ToolPresentationValueFormat = .stringList,
+        separator: String? = nil,
+        fallback: String? = nil
+    ) -> ToolPresentationValueDefinition {
+        ToolPresentationValueDefinition(
+            source: .arguments,
+            keyPaths: keyPaths,
+            format: format,
+            separator: separator,
+            fallback: fallback,
+            selection: .collect
+        )
+    }
+
+    public static func itemArguments(
+        _ collectionKeyPaths: [String],
+        itemKeyPaths: [String],
+        format: ToolPresentationValueFormat = .stringList,
+        separator: String? = nil,
+        fallback: String? = nil
+    ) -> ToolPresentationValueDefinition {
+        ToolPresentationValueDefinition(
+            source: .arguments,
+            keyPaths: collectionKeyPaths,
+            format: format,
+            separator: separator,
+            fallback: fallback,
+            selection: .perItemFirst,
+            itemKeyPaths: itemKeyPaths
+        )
+    }
+
+    public static func firstAvailable(
+        _ components: [ToolPresentationValueDefinition],
+        fallback: String? = nil
+    ) -> ToolPresentationValueDefinition {
+        ToolPresentationValueDefinition(
+            source: .composite,
+            fallback: fallback,
+            components: components,
+            composition: .firstAvailable
+        )
+    }
+
+    public static func joined(
+        _ components: [ToolPresentationValueDefinition],
+        separator: String
+    ) -> ToolPresentationValueDefinition {
+        ToolPresentationValueDefinition(
+            source: .composite,
+            separator: separator,
+            components: components,
+            composition: .joined
+        )
+    }
+
+    public static func collected(
+        _ components: [ToolPresentationValueDefinition],
+        separator: String? = nil
+    ) -> ToolPresentationValueDefinition {
+        ToolPresentationValueDefinition(
+            source: .composite,
+            format: .stringList,
+            separator: separator,
+            components: components,
+            composition: .collected
         )
     }
 
@@ -146,9 +255,8 @@ public nonisolated struct ToolPresentationValueDefinition: Codable, Hashable, Se
         )
     }
 
-    /// Semantic validation is intentionally lightweight. Malformed definitions
-    /// degrade to `.automatic` at descriptor boundaries instead of preventing a
-    /// tool from being discovered or executed.
+    /// Semantic validation is intentionally lightweight so tool owners can
+    /// verify definitions without coupling the wire contract to a renderer.
     public var isSemanticallyValid: Bool {
         switch source {
         case .literal:
@@ -157,6 +265,12 @@ public nonisolated struct ToolPresentationValueDefinition: Codable, Hashable, Se
             return literalValue == nil
         case .resultOutput, .resultSummary, .toolName:
             return literalValue == nil && keyPaths.isEmpty
+        case .composite:
+            return literalValue == nil
+                && keyPaths.isEmpty
+                && composition != nil
+                && components?.isEmpty == false
+                && components?.allSatisfy(\.isSemanticallyValid) == true
         }
     }
 }
@@ -454,17 +568,11 @@ public extension ToolPresentationDefinition {
     }
 }
 
-public nonisolated enum ToolPresentationDefinitionStrategy: String, Codable, Hashable, Sendable {
-    case automatic
-    case semantic
-}
-
 /// Declarative, serializable, TUI-independent presentation metadata for a tool.
 /// It describes *what* may be shown; terminal consumers retain ownership of
 /// status glyphs, duration/exit metadata, sanitization, layout, truncation,
 /// colors, diff style, and redraw behavior.
 public nonisolated struct ToolPresentationDefinition: Codable, Hashable, Sendable {
-    public let strategy: ToolPresentationDefinitionStrategy
     public let title: String?
     public let action: String?
     public let kind: ToolPresentationKind?
@@ -472,17 +580,6 @@ public nonisolated struct ToolPresentationDefinition: Codable, Hashable, Sendabl
     public let metadata: [ToolPresentationMetadataDefinition]
     public let sections: [ToolPresentationSectionDefinition]
     public let summary: ToolPresentationSummaryDefinition?
-
-    public static let automatic = ToolPresentationDefinition(
-        strategy: .automatic,
-        title: nil,
-        action: nil,
-        kind: nil,
-        target: nil,
-        metadata: [],
-        sections: [],
-        summary: nil
-    )
 
     public init(
         title: String? = nil,
@@ -493,29 +590,6 @@ public nonisolated struct ToolPresentationDefinition: Codable, Hashable, Sendabl
         sections: [ToolPresentationSectionDefinition] = [],
         summary: ToolPresentationSummaryDefinition? = nil
     ) {
-        self.init(
-            strategy: .semantic,
-            title: title,
-            action: action,
-            kind: kind,
-            target: target,
-            metadata: metadata,
-            sections: sections,
-            summary: summary
-        )
-    }
-
-    private init(
-        strategy: ToolPresentationDefinitionStrategy,
-        title: String?,
-        action: String?,
-        kind: ToolPresentationKind?,
-        target: ToolPresentationValueDefinition?,
-        metadata: [ToolPresentationMetadataDefinition],
-        sections: [ToolPresentationSectionDefinition],
-        summary: ToolPresentationSummaryDefinition?
-    ) {
-        self.strategy = strategy
         self.title = title
         self.action = action
         self.kind = kind
@@ -525,37 +599,15 @@ public nonisolated struct ToolPresentationDefinition: Codable, Hashable, Sendabl
         self.summary = summary
     }
 
-    public var isAutomatic: Bool {
-        strategy == .automatic
-    }
-
     public var isSemanticallyValid: Bool {
-        switch strategy {
-        case .automatic:
-            return title == nil
-                && action == nil
-                && kind == nil
-                && target == nil
-                && metadata.isEmpty
-                && sections.isEmpty
-                && summary == nil
-        case .semantic:
-            let hasIdentity = title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                || action?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                || kind != nil
-            let hasContent = target != nil || !metadata.isEmpty || !sections.isEmpty || summary != nil
-            return (hasIdentity || hasContent)
-                && target?.isSemanticallyValid != false
-                && metadata.allSatisfy(\.isSemanticallyValid)
-                && sections.allSatisfy(\.isSemanticallyValid)
-                && summary?.isSemanticallyValid != false
-        }
-    }
-
-    /// Boundary normalization used by descriptor decoders. A syntactically valid
-    /// but semantically malformed third-party definition must not make its tool
-    /// unavailable.
-    public var validOrAutomatic: ToolPresentationDefinition {
-        isSemanticallyValid ? self : .automatic
+        let hasIdentity = title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            || action?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            || kind != nil
+        let hasContent = target != nil || !metadata.isEmpty || !sections.isEmpty || summary != nil
+        return (hasIdentity || hasContent)
+            && target?.isSemanticallyValid != false
+            && metadata.allSatisfy(\.isSemanticallyValid)
+            && sections.allSatisfy(\.isSemanticallyValid)
+            && summary?.isSemanticallyValid != false
     }
 }

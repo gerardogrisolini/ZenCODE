@@ -343,6 +343,9 @@ extension SwiftFeatureRuntime {
             .appendingPathComponent(targetName, isDirectory: true)
         let packageURL = stagingDirectoryURL.appendingPathComponent("Package.swift")
         let sourceURL = sourceDirectoryURL.appendingPathComponent("main.swift")
+        let packagePath = arguments
+            .string("dependencyPath", "dependency_path")?
+            .nilIfBlank ?? Self.defaultPackagePath(fileManager: fileManager)
 
         try fileManager.createDirectory(
             at: sourceDirectoryURL,
@@ -361,7 +364,8 @@ extension SwiftFeatureRuntime {
             }
             try Self.packageManifestContents(
                 productName: productName,
-                targetName: targetName
+                targetName: targetName,
+                packagePath: packagePath
             ).write(to: packageURL, atomically: true, encoding: .utf8)
             try Self.featureMainContents(
                 toolName: toolName,
@@ -381,9 +385,6 @@ extension SwiftFeatureRuntime {
                     .nilIfBlank ?? "\(Self.defaultToolPrefix(for: id))."
             )
             try Self.validateMCPBridgeToolPrefix(toolPrefix)
-            let packagePath = arguments
-                .string("dependencyPath", "dependency_path")?
-                .nilIfBlank ?? Self.defaultPackagePath(fileManager: fileManager)
             let serviceName = arguments
                 .string("serviceName", "service_name")?
                 .nilIfBlank ?? displayName

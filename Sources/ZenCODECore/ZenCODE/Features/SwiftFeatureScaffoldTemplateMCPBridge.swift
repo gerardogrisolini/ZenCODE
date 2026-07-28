@@ -91,11 +91,30 @@ extension SwiftFeatureRuntime {
                     let tools = try await executor.loadTools()
                     await executor.disconnect()
                     return ToolDescriptor.canonicalized(tools).map { tool in
-                        FeatureToolDescriptor(
-                            toolDescriptor: tool,
-                            description: tool.description.hasPrefix("\(bridgeServiceName):")
-                                ? tool.description
-                                : "\(bridgeServiceName): \(tool.description)"
+                        let presentation = ToolPresentationDefinition(
+                            title: tool.title ?? bridgeServiceName,
+                            action: "Use",
+                            kind: .other,
+                            target: .argument(
+                                ["path", "query", "id", "name"],
+                                format: .text
+                            ),
+                            sections: [.parameters()]
+                        )
+                        let descriptor = ToolDescriptor(
+                            name: tool.name,
+                            title: tool.title,
+                            description: tool.description,
+                            inputSchema: tool.inputSchema,
+                            outputSchema: tool.outputSchema,
+                            presentation: presentation
+                        )
+                        return FeatureToolDescriptor(
+                            toolDescriptor: descriptor,
+                            description: descriptor.description.hasPrefix("\(bridgeServiceName):")
+                                ? descriptor.description
+                                : "\(bridgeServiceName): \(descriptor.description)",
+                            presentation: presentation
                         )
                     }
                 } catch {

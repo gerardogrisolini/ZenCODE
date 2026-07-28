@@ -67,27 +67,9 @@ extension DirectMCPToolRuntime {
             servers.append(xcodeServer)
             didAttemptXcodeDiscovery = true
         case .figma:
-            guard force || !didAttemptFigmaDiscovery else {
-                return
-            }
-            guard !servers.contains(where: { $0.family == .figma }) else {
-                return
-            }
-            let fence = shutdownFence()
-            // Suspension point: the probe and `loadTools()` both suspend on the
-            // Figma desktop socket.
-            guard let figmaServer = await discoverFigmaServer() else {
-                return
-            }
-            guard isActive(fence) else {
-                await disconnectStaleExecutor(
-                    figmaServer.backend,
-                    ownsBackend: figmaServer.ownsBackend
-                )
-                return
-            }
-            servers.append(figmaServer)
-            didAttemptFigmaDiscovery = true
+            // Figma discovery belongs to figma-tools-feature, which attaches
+            // the feature-owned presentation contract before publishing tools.
+            return
         case .external:
             return
         }
@@ -129,55 +111,13 @@ extension DirectMCPToolRuntime {
                     inputSchema: tool.inputSchema,
                     title: tool.title,
                     outputSchema: tool.outputSchema,
-                    presentation: Self.presentation(for: tool, family: .xcode)
+                    presentation: XcodeToolIntegration.presentation(for: tool)
                 )
             },
             workspaceRootPath: matchedWorkspaceContext.normalizedWorkspaceRootPath,
             ownsBackend: discovery.ownsExecutor,
             mcpConfiguration: nil
         )
-    }
-
-    func discoverFigmaServer() async -> Server? {
-        guard await MCPServerConfiguration.isFigmaDesktopServerRunning() else {
-            return nil
-        }
-
-        let executor = RemoteMCPToolExecutor(
-            configuration: .figmaDesktopLocal(),
-            toolNamePrefix: "figma."
-        )
-        do {
-            let tools = ToolDescriptor.canonicalized(
-                try await executor.loadTools()
-            )
-            guard !tools.isEmpty else {
-                await executor.disconnect()
-                return nil
-            }
-
-            return Server(
-                family: .figma,
-                toolPrefix: "figma.",
-                backend: .remote(executor),
-                descriptors: tools.map { tool in
-                    DirectToolDescriptor(
-                        name: tool.name,
-                        description: "Figma: \(tool.description)",
-                        inputSchema: tool.inputSchema,
-                        title: tool.title,
-                        outputSchema: tool.outputSchema,
-                        presentation: Self.presentation(for: tool, family: .figma)
-                    )
-                },
-                workspaceRootPath: nil,
-                ownsBackend: true,
-                mcpConfiguration: .figmaDesktopLocal()
-            )
-        } catch {
-            await executor.disconnect()
-            return nil
-        }
     }
 
     public static func defaultXcodeDiscovery() async -> XcodeDiscovery? {

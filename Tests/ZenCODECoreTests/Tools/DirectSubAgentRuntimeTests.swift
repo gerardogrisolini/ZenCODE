@@ -21,7 +21,7 @@ struct DirectSubAgentRuntimeTests {
 
         _ = try await runtime.execute(
             rootSessionID: "root",
-            toolCall: DirectAgentToolCall(
+            toolCall: presentedToolCall(
                 id: "create-worker",
                 name: "agent.create",
                 argumentsObject: [
@@ -39,7 +39,7 @@ struct DirectSubAgentRuntimeTests {
 
         _ = try await runtime.execute(
             rootSessionID: "root",
-            toolCall: DirectAgentToolCall(
+            toolCall: presentedToolCall(
                 id: "create-worker-2",
                 name: "agent.create",
                 argumentsObject: [
@@ -57,7 +57,7 @@ struct DirectSubAgentRuntimeTests {
 
         _ = try await runtime.execute(
             rootSessionID: "root",
-            toolCall: DirectAgentToolCall(
+            toolCall: presentedToolCall(
                 id: "create-worker-3",
                 name: "agent.create",
                 argumentsObject: [
@@ -353,7 +353,7 @@ struct DirectSubAgentRuntimeTests {
                 == thinkingSignature
         )
 
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "grep-call",
             name: "search.grep",
             argumentsObject: ["pattern": "needle"],
@@ -421,7 +421,7 @@ struct DirectSubAgentRuntimeTests {
 
         let createResult = await executor.execute(
             sessionID: "root",
-            toolCall: DirectAgentToolCall(
+            toolCall: presentedToolCall(
                 id: "create-planner",
                 name: "agent.create",
                 argumentsObject: [
@@ -436,7 +436,7 @@ struct DirectSubAgentRuntimeTests {
 
         let waitResult = await executor.execute(
             sessionID: "root",
-            toolCall: DirectAgentToolCall(
+            toolCall: presentedToolCall(
                 id: "wait-planner",
                 name: "agent.wait",
                 argumentsObject: ["name": "plan-author"],
@@ -446,7 +446,7 @@ struct DirectSubAgentRuntimeTests {
         )
         let getResult = await executor.execute(
             sessionID: "root",
-            toolCall: DirectAgentToolCall(
+            toolCall: presentedToolCall(
                 id: "get-planner",
                 name: "agent.get",
                 argumentsObject: ["name": "plan-author"],

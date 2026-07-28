@@ -503,7 +503,28 @@ extension LocalReadFileTool {
 
 extension LocalReadFilesTool {
     static var presentation: ToolPresentationDefinition {
-        .standard(title: "Files", action: "Read", kind: .read, targetKeyPaths: ["paths", "file_paths"], targetFormat: .stringList)
+        ToolPresentationDefinition(
+            title: "Files",
+            action: "Read",
+            kind: .read,
+            target: .argument(["paths", "file_paths"], format: .stringList),
+            sections: [
+                .parameters(),
+                .code(
+                    label: "content",
+                    value: .resultOutput(),
+                    languageHint: .argument(
+                        ["paths.0", "file_paths.0"],
+                        format: .languageHint
+                    )
+                )
+            ],
+            summary: ToolPresentationSummaryDefinition(
+                value: .resultOutput(),
+                strategy: .numberedLineCount,
+                label: "summary"
+            )
+        )
     }
 }
 

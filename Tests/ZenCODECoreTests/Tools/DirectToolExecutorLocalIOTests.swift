@@ -37,9 +37,9 @@ struct DirectToolExecutorLocalIOTests {
         #expect(selectableToolNames.contains("search.glob"))
         #expect(selectableToolNames.contains("search.locate"))
         #expect(selectableToolNames.contains("text.wc"))
-        #expect(selectableToolNames.contains("web.search"))
-        #expect(selectableToolNames.contains("git.status"))
-        #expect(selectableToolNames.contains("git.push"))
+        #expect(!selectableToolNames.contains("web.search"))
+        #expect(!selectableToolNames.contains("git.status"))
+        #expect(!selectableToolNames.contains("git.push"))
     }
 
     @Test

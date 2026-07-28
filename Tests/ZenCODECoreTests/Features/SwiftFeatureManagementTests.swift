@@ -39,11 +39,21 @@ extension SwiftFeatureRuntimeTests {
             from: Data(scaffoldOutput.utf8)
         )
 
-        let packageFirstLine = try String(
+        let packageContents = try String(
             contentsOf: URL(fileURLWithPath: scaffold.packagePath),
             encoding: .utf8
-        ).components(separatedBy: .newlines).first
-        #expect(packageFirstLine == "// swift-tools-version: 6.3")
+        )
+        let sourceContents = try String(
+            contentsOf: URL(fileURLWithPath: scaffold.sourcePath),
+            encoding: .utf8
+        )
+        #expect(packageContents.components(separatedBy: .newlines).first == "// swift-tools-version: 6.3")
+        #expect(packageContents.contains(#".product(name: "FeatureKit", package: "ZenCODE")"#))
+        #expect(packageContents.contains(#".product(name: "ToolCore", package: "ZenCODE")"#))
+        #expect(sourceContents.contains("GeneratedEchoTool: FeatureTool"))
+        #expect(sourceContents.contains("static let presentation = ToolPresentationDefinition("))
+        #expect(sourceContents.contains("FeatureRunner.run"))
+        #expect(!sourceContents.contains("strategy"))
 
         let validateOutput = try await runtime.executeManagementTool(
             toolCall: DirectAgentToolCall(
@@ -90,8 +100,9 @@ extension SwiftFeatureRuntimeTests {
         let scaffoldedDescriptor = try #require(
             descriptors.first { $0.name == "example.echo" }
         )
-        #expect(scaffoldedDescriptor.presentation.title == "Echo")
-        #expect(scaffoldedDescriptor.presentation.target?.keyPaths == ["text"])
+        let presentation = try #require(scaffoldedDescriptor.presentation)
+        #expect(presentation.title == "Echo")
+        #expect(presentation.target?.keyPaths == ["text"])
 
         let output = try await runtime.executeIfAvailable(
             toolCall: DirectAgentToolCall(
@@ -226,6 +237,8 @@ extension SwiftFeatureRuntimeTests {
         #expect(!packageContents.contains(#".product(name: "ZenCODECore", package: "ZenCODE")"#))
         #expect(packageContents.contains(#".product(name: "FeatureMCPBridgeKit", package: "ZenCODE")"#))
         #expect(sourceContents.contains("RemoteMCPToolExecutor"))
+        #expect(sourceContents.contains("let presentation = ToolPresentationDefinition("))
+        #expect(sourceContents.contains("presentation: presentation"))
         #expect(sourceContents.contains("http://127.0.0.1:65535/mcp"))
         #expect(manifest.discoversToolsAtRuntime)
         #expect(manifest.toolNamePrefixes == ["linear."])
@@ -442,7 +455,7 @@ extension SwiftFeatureRuntimeTests {
           printf '{"ok":true,"output":"generated-output"}\n'
           exit 0
         fi
-        printf '{"tools":[{"name":"generated.echo","description":"Generated echo","inputSchema":"{}"}]}\n'
+        printf '{"tools":[{"name":"generated.echo","description":"Generated echo","inputSchema":"{}","presentation":{"title":"Dynamic tool","action":"Use","kind":"other","metadata":[],"sections":[]}}]}\n'
         """.write(to: executableURL, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755],
@@ -458,7 +471,14 @@ extension SwiftFeatureRuntimeTests {
             {
               "name": "generated.echo",
               "description": "Generated echo",
-              "inputSchema": {}
+              "inputSchema": {},
+              "presentation": {
+                "title": "Generated echo",
+                "action": "Use",
+                "kind": "other",
+                "metadata": [],
+                "sections": []
+              }
             }
           ]
         }

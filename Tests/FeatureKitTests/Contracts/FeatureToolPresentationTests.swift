@@ -9,16 +9,6 @@ struct FeatureToolPresentationTests {
         let path: String?
     }
 
-    private struct DefaultPresentationTool: FeatureTool {
-        static let name = "sample.default"
-        static let description = "Uses the compatibility default."
-        static let inputSchema = "{}"
-
-        func run(_ input: Input, context: FeatureContext) async throws -> String {
-            input.path ?? context.workingDirectory.path
-        }
-    }
-
     private struct ExplicitPresentationTool: FeatureTool {
         static let name = "sample.explicit"
         static let description = "Publishes semantic presentation metadata."
@@ -37,20 +27,6 @@ struct FeatureToolPresentationTests {
     }
 
     @Test
-    func featureToolDefaultRemainsAutomaticAndOmittedFromListToolsWire() throws {
-        let descriptor = AnyFeatureTool(DefaultPresentationTool()).descriptor
-        let response = FeatureListToolsResponse(tools: [descriptor])
-        let data = try JSONEncoder().encode(response)
-        let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        let tools = try #require(root["tools"] as? [[String: Any]])
-        let tool = try #require(tools.first)
-
-        #expect(descriptor.presentation == .automatic)
-        #expect(tool["presentation"] == nil)
-        #expect(tool["name"] as? String == "sample.default")
-    }
-
-    @Test
     func explicitPresentationFlowsThroughAnyFeatureToolAndListToolsWire() throws {
         let descriptor = AnyFeatureTool(ExplicitPresentationTool()).descriptor
         let response = FeatureListToolsResponse(tools: [descriptor])
@@ -62,20 +38,38 @@ struct FeatureToolPresentationTests {
 
         #expect(descriptor.presentation == ExplicitPresentationTool.presentation)
         #expect(decoded.tools.first?.presentation == ExplicitPresentationTool.presentation)
-        #expect(presentation["strategy"] as? String == "semantic")
+        #expect(root["schemaVersion"] as? Int == FeatureListToolsResponse.currentSchemaVersion)
+        #expect(presentation["strategy"] == nil)
         #expect(presentation["action"] as? String == "Read")
     }
 
     @Test
-    func malformedFeatureDescriptorPresentationFallsBackToAutomatic() throws {
+    func legacyListToolsMayOmitPresentationButCurrentSchemaMayNot() throws {
+        let legacy = Data(
+            #"{"tools":[{"name":"sample.legacy","description":"D","inputSchema":"{}"}]}"#.utf8
+        )
+        let current = Data(
+            #"{"schemaVersion":2,"tools":[{"name":"sample.current","description":"D","inputSchema":"{}"}]}"#.utf8
+        )
+
+        let decodedLegacy = try JSONDecoder().decode(FeatureListToolsResponse.self, from: legacy)
+
+        #expect(decodedLegacy.schemaVersion == 1)
+        #expect(decodedLegacy.tools.first?.presentation == nil)
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(FeatureListToolsResponse.self, from: current)
+        }
+    }
+
+    @Test
+    func malformedFeatureDescriptorPresentationIsRejected() throws {
         let data = Data(
             #"{"name":"sample.future","description":"D","inputSchema":"{}","presentation":{"strategy":"future"}}"#.utf8
         )
 
-        let descriptor = try JSONDecoder().decode(FeatureToolDescriptor.self, from: data)
-
-        #expect(descriptor.name == "sample.future")
-        #expect(descriptor.presentation == .automatic)
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(FeatureToolDescriptor.self, from: data)
+        }
     }
 
     @Test
@@ -89,7 +83,10 @@ struct FeatureToolPresentationTests {
             presentation: ExplicitPresentationTool.presentation
         )
 
-        let feature = FeatureToolDescriptor(toolDescriptor: original)
+        let feature = FeatureToolDescriptor(
+            toolDescriptor: original,
+            presentation: ExplicitPresentationTool.presentation
+        )
         let roundTrip = feature.toolDescriptor
 
         #expect(feature.presentation == original.presentation)

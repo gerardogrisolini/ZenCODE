@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import FeatureKit
 
 extension SwiftFeatureRuntime {
     func tools(for feature: SwiftFeatureBundle) async -> [ToolDescriptor] {
@@ -41,13 +42,9 @@ extension SwiftFeatureRuntime {
         }
 
         let response = try JSONDecoder().decode(
-            SwiftFeatureListToolsResponse.self,
+            FeatureListToolsResponse.self,
             from: result.stdoutData
         )
-        return response.tools
+        return response.tools.map(\.toolDescriptor)
     }
-}
-
-private struct SwiftFeatureListToolsResponse: Decodable {
-    let tools: [ToolDescriptor]
 }

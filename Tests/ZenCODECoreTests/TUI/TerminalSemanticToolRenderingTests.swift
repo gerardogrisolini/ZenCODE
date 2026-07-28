@@ -64,7 +64,7 @@ struct TerminalSemanticToolRenderingTests {
     }
 
     @Test
-    func compactInspectFallsBackToItsSafeArgumentWhenNoTargetIsDeclared() {
+    func compactInspectDoesNotInferATargetWhenTheToolDoesNotDeclareOne() {
         let call = DirectAgentToolCall(
             id: "inspect",
             name: "thirdparty.inspect",
@@ -84,11 +84,11 @@ struct TerminalSemanticToolRenderingTests {
             columnWidth: 80
         )
 
-        #expect(lines == ["🛠️  Inspect:", "node-42 ✅ 0.03s"])
+        #expect(lines == ["🛠️  Inspect ✅ 0.03s"])
     }
 
     @Test
-    func compactTaskListShowsItsFiltersWhenNoGraphIDIsProvided() throws {
+    func compactTaskListUsesItsDeclaredStatusTarget() throws {
         let descriptor = try #require(
             DirectToolCatalog.todoTaskDescriptors.first { $0.name == "tasks.list" }
         )
@@ -114,13 +114,13 @@ struct TerminalSemanticToolRenderingTests {
         #expect(
             lines == [
                 "🛠️  List:",
-                "status: pending · runnable · active ✅ 0.02s"
+                "pending ✅ 0.02s"
             ]
         )
     }
 
     @Test
-    func compactFeatureListShowsItsDiscoveryOptions() throws {
+    func compactFeatureListUsesItsDeclaredBooleanTarget() throws {
         let descriptor = try #require(
             DirectToolCatalog.featureDescriptors.first { $0.name == "feature.list" }
         )
@@ -139,7 +139,7 @@ struct TerminalSemanticToolRenderingTests {
             columnWidth: 80
         )
 
-        #expect(lines == ["🛠️  List:", "include tools ✅ 0.02s"])
+        #expect(lines == ["🛠️  List:", "true ✅ 0.02s"])
     }
 
     @Test
@@ -253,6 +253,6 @@ struct TerminalSemanticToolRenderingTests {
         #expect(restored.presentation == Self.definition)
         #expect(restored.descriptorTitle == "Current descriptor")
         #expect(restored.argumentsObject["path"] as? String == "/tmp/App.swift")
-        #expect(fallback.presentation == .automatic)
+        #expect(fallback.presentation == nil)
     }
 }

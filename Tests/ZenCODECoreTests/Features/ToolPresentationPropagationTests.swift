@@ -48,21 +48,18 @@ struct ToolPresentationPropagationTests {
     }
 
     @Test
-    func malformedManifestPresentationFallsBackWithoutRejectingTool() throws {
-        let manifest = try JSONDecoder().decode(
-            SwiftFeatureToolManifest.self,
-            from: Data(
-                #"{"name":"manifest.future","description":"D","inputSchema":"{}","presentation":{"strategy":"future"}}"#.utf8
-            )
+    func malformedManifestPresentationIsRejected() {
+        let data = Data(
+            #"{"name":"manifest.future","description":"D","inputSchema":"{}","presentation":{"strategy":"future"}}"#.utf8
         )
 
-        #expect(manifest.name == "manifest.future")
-        #expect(manifest.presentation == .automatic)
-        #expect(manifest.toolDescriptor.presentation == .automatic)
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(SwiftFeatureToolManifest.self, from: data)
+        }
     }
 
     @Test
-    func runtimeDiscoveryPreservesValidPresentationAndIgnoresInvalidPresentation() async throws {
+    func runtimeDiscoveryPreservesToolOwnedPresentation() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("tool-presentation-discovery-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: rootURL) }
@@ -73,7 +70,7 @@ struct ToolPresentationPropagationTests {
         #!/bin/sh
         if [ "$1" = "--list-tools" ]; then
           cat <<'JSON'
-        {"tools":[{"name":"dynamic.presented","description":"Presented","inputSchema":"{}","presentation":{"strategy":"semantic","title":"Dynamic file","action":"Read","kind":"read","target":{"source":"arguments","keyPaths":["path"],"format":"path"},"metadata":[],"sections":[]}},{"name":"dynamic.future","description":"Future","inputSchema":"{}","presentation":{"strategy":"future"}}]}
+        {"tools":[{"name":"dynamic.presented","description":"Presented","inputSchema":"{}","presentation":{"title":"Dynamic file","action":"Read","kind":"read","target":{"source":"arguments","keyPaths":["path"],"format":"path"},"metadata":[],"sections":[]}}]}
         JSON
           exit 0
         fi
@@ -98,11 +95,10 @@ struct ToolPresentationPropagationTests {
         )
         let descriptors = await runtime.descriptors()
         let presented = try #require(descriptors.first { $0.name == "dynamic.presented" })
-        let future = try #require(descriptors.first { $0.name == "dynamic.future" })
+        let presentation = try #require(presented.presentation)
 
-        #expect(presented.presentation.title == "Dynamic file")
-        #expect(presented.presentation.target?.keyPaths == ["path"])
-        #expect(future.presentation == .automatic)
+        #expect(presentation.title == "Dynamic file")
+        #expect(presentation.target?.keyPaths == ["path"])
     }
 
     @Test
@@ -371,30 +367,4 @@ struct ToolPresentationPropagationTests {
         await executor.shutdown()
     }
 
-    @Test
-    func knownMCPFamiliesGetProviderPresentationWhileArbitraryServersStayAutomatic() {
-        let descriptor = ToolDescriptor(
-            name: "inspect",
-            title: "Inspect selection",
-            description: "Inspect a remote selection.",
-            inputSchema: "{}"
-        )
-
-        let xcode = DirectMCPToolRuntime.presentation(
-            for: descriptor,
-            family: .xcode
-        )
-        let figma = DirectMCPToolRuntime.presentation(
-            for: descriptor,
-            family: .figma
-        )
-        let external = DirectMCPToolRuntime.presentation(
-            for: descriptor,
-            family: .external("third-party")
-        )
-
-        #expect(!xcode.isAutomatic)
-        #expect(!figma.isAutomatic)
-        #expect(external.isAutomatic)
-    }
 }

@@ -459,7 +459,7 @@ struct TerminalChatRenderingTests {
         +new
         *** End Patch
         """
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "patch",
             name: "local.applyPatch",
             argumentsObject: ["patch": patch],
@@ -488,7 +488,7 @@ struct TerminalChatRenderingTests {
         +new
         *** End Patch
         """
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "patch",
             name: "local.applyPatch",
             argumentsObject: ["patch": patch],
@@ -673,7 +673,7 @@ struct TerminalChatRenderingTests {
     @Test
     func interleavedModeMessageClearsCompactToolRewriteState() async throws {
         let terminal = try makeTerminalForToolInterleavingTest()
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "compact-tool",
             name: "agent.wait",
             argumentsObject: [:],
@@ -691,7 +691,7 @@ struct TerminalChatRenderingTests {
     @Test
     func interleavedModeMessageClearsDetailedToolRewriteState() async throws {
         let terminal = try makeTerminalForToolInterleavingTest()
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "detailed-tool",
             name: "agent.wait",
             argumentsObject: [:],
@@ -722,7 +722,7 @@ struct TerminalChatRenderingTests {
                 TaskDefinition(id: "second", title: "Second"),
             ]
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "wait-tool",
             name: "agent.wait",
             argumentsObject: [:],
@@ -762,7 +762,7 @@ struct TerminalChatRenderingTests {
         let terminal = try makeTerminalForToolInterleavingTest(
             sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "exec-tool",
             name: "local.exec",
             argumentsObject: [:],
@@ -798,7 +798,7 @@ struct TerminalChatRenderingTests {
         let terminal = try makeTerminalForToolInterleavingTest(
             sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "wait-tool",
             name: "agent.wait",
             argumentsObject: [:],
@@ -835,7 +835,7 @@ struct TerminalChatRenderingTests {
         let terminal = try makeTerminalForToolInterleavingTest(
             sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "create-tool",
             name: "agent.create",
             argumentsObject: [:],
@@ -2383,7 +2383,7 @@ struct TerminalChatRenderingTests {
 
     @Test
     func subAgentOverviewUsesTheCompactToolNameAndTarget() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "grep-call",
             name: "search.grep",
             argumentsObject: ["pattern": "needle"],

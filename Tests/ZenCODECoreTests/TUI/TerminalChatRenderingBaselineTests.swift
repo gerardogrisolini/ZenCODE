@@ -289,7 +289,7 @@ struct TerminalChatRenderingBaselineTests {
     @Test("Golden transcript: mixed prompt/thought/tool/content/overview sequence")
     func mixedSequenceGoldenTranscript() async {
         let renderer = makeGoldenCoordinator()
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "tool-baseline-1",
             name: "tasks.list",
             argumentsObject: [:],
@@ -371,7 +371,7 @@ struct TerminalChatRenderingBaselineTests {
     func mixedSequenceTranscriptIsStable() async {
         func runOnce() async -> String {
             let renderer = makeGoldenCoordinator()
-            let toolCall = DirectAgentToolCall(
+            let toolCall = presentedToolCall(
                 id: "tool-baseline-1",
                 name: "tasks.list",
                 argumentsObject: [:],

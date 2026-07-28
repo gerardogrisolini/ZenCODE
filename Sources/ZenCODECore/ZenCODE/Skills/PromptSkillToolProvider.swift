@@ -28,13 +28,25 @@ public enum PromptSkillToolProvider {
     public static let listToolDescriptor = DirectToolDescriptor(
         name: listToolName,
         description: "Lists the prompt skills currently selected for this session, returning only their id, name, and description. Prompt skills may be added or removed during the session, so call this to discover the current selection before reading guidance.",
-        inputSchema: #"{"type":"object","properties":{}}"#
+        inputSchema: #"{"type":"object","properties":{}}"#,
+        presentation: .standard(
+            title: "Prompt skills",
+            action: "List",
+            kind: .read,
+            includesParameters: false
+        )
     )
 
     public static let readToolDescriptor = DirectToolDescriptor(
         name: toolName,
         description: "Loads one page of complete guidance for a selected prompt skill. Use the id or canonical name returned by skills.list. The tool can read only skills selected for the current session; request the next page with its nextOffset when supplied.",
-        inputSchema: #"{"type":"object","properties":{"identifier":{"type":"string","description":"Selected skill id or canonical name from skills.list."},"offset":{"type":"integer","minimum":0,"description":"Zero-based character offset in the skill guidance body. Defaults to 0."},"limit":{"type":"integer","minimum":1,"maximum":8000,"description":"Maximum body characters to return. Defaults to 6000."}},"required":["identifier"],"additionalProperties":false}"#
+        inputSchema: #"{"type":"object","properties":{"identifier":{"type":"string","description":"Selected skill id or canonical name from skills.list."},"offset":{"type":"integer","minimum":0,"description":"Zero-based character offset in the skill guidance body. Defaults to 0."},"limit":{"type":"integer","minimum":1,"maximum":8000,"description":"Maximum body characters to return. Defaults to 6000."}},"required":["identifier"],"additionalProperties":false}"#,
+        presentation: .standard(
+            title: "Prompt skill",
+            action: "Read",
+            kind: .read,
+            targetKeyPaths: ["identifier"]
+        )
     )
 
     /// Intrinsic skill-tool descriptors in stable order (`skills.list` first).

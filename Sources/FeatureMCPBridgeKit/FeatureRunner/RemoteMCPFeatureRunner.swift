@@ -44,6 +44,9 @@ public protocol MCPFeatureConfiguration {
     /// implementation.
     func makeExecutor(environment: [String: String]) async throws -> RemoteMCPToolExecutor
 
+    /// Returns presentation metadata owned by this feature for a discovered MCP tool.
+    func presentation(for tool: ToolDescriptor) -> ToolPresentationDefinition
+
     /// Lists tools available through this feature's MCP server.
     /// Default implementation uses `RemoteMCPToolExecutor`.
     func listTools(environment: [String: String]) async throws -> [FeatureToolDescriptor]
@@ -93,7 +96,8 @@ extension MCPFeatureConfiguration {
                 toolDescriptor: tool,
                 description: tool.description.hasPrefix(prefix)
                     ? tool.description
-                    : "\(prefix)\(tool.description)"
+                    : "\(prefix)\(tool.description)",
+                presentation: presentation(for: tool)
             )
         }
     }

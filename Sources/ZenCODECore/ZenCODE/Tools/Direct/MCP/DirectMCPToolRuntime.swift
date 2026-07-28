@@ -84,7 +84,6 @@ public actor DirectMCPToolRuntime {
     }
 
     var didAttemptXcodeDiscovery = false
-    var didAttemptFigmaDiscovery = false
     /// Per-family single-flight latch. Actor reentrancy permits another caller
     /// to enter while discovery awaits I/O, so booleans alone cannot prevent
     /// duplicate executor/process creation.
@@ -140,7 +139,6 @@ public actor DirectMCPToolRuntime {
         servers.removeAll()
         shutdownGeneration &+= 1
         didAttemptXcodeDiscovery = false
-        didAttemptFigmaDiscovery = false
         for server in currentServers {
             await server.disconnectIfOwned()
         }
@@ -175,7 +173,7 @@ public actor DirectMCPToolRuntime {
                     inputSchema: tool.inputSchema,
                     title: tool.title,
                     outputSchema: tool.outputSchema,
-                    presentation: Self.presentation(for: tool, family: .xcode)
+                    presentation: XcodeToolIntegration.presentation(for: tool)
                 )
             }
 
@@ -302,7 +300,9 @@ public actor DirectMCPToolRuntime {
                     inputSchema: tool.inputSchema,
                     title: tool.title,
                     outputSchema: tool.outputSchema,
-                    presentation: Self.presentation(for: tool, family: family)
+                    presentation: isXcodeCandidate
+                        ? XcodeToolIntegration.presentation(for: tool)
+                        : tool.presentation
                 )
             }
             // Descriptor mapping is synchronous, so the fence checked after

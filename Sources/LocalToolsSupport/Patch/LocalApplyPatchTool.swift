@@ -281,8 +281,8 @@ extension LocalApplyPatchTool {
             title: "Patch",
             action: "Apply",
             kind: .edit,
+            target: .argument(["patch", "diff"], format: .patchPaths),
             sections: [
-                .parameters(),
                 .code(
                     label: "patch",
                     value: .argument(["patch", "diff"], format: .text),

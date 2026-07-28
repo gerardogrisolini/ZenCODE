@@ -163,7 +163,8 @@ extension SwiftFeatureRuntime {
 
     static func packageManifestContents(
         productName: String,
-        targetName: String
+        targetName: String,
+        packagePath: String
     ) -> String {
         """
         // swift-tools-version: \(generatedSwiftToolsVersion)
@@ -181,9 +182,16 @@ extension SwiftFeatureRuntime {
                     targets: ["\(targetName)"]
                 )
             ],
+            dependencies: [
+                .package(path: \(swiftStringLiteral(packagePath)))
+            ],
             targets: [
                 .executableTarget(
-                    name: "\(targetName)"
+                    name: "\(targetName)",
+                    dependencies: [
+                        .product(name: "FeatureKit", package: "ZenCODE"),
+                        .product(name: "ToolCore", package: "ZenCODE")
+                    ]
                 )
             ]
         )

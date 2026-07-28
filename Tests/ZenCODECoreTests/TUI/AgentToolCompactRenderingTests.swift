@@ -17,7 +17,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentMessageCompactRenderingShowsRecipientAndMessage() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "msg",
             name: "agent.message",
             argumentsObject: [
@@ -38,14 +38,14 @@ extension TerminalChatRenderingTests {
         )
 
         #expect(lines == [
-            "🛠️  agent.message:",
+            "🛠️  Message:",
             "worker: fix the tests ✅"
         ])
     }
 
     @Test
     func agentMessageCompactRenderingCollapsesMultilineMessage() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "msg",
             name: "agent.message",
             argumentsObject: [
@@ -68,14 +68,14 @@ extension TerminalChatRenderingTests {
         )
 
         #expect(lines == [
-            "🛠️  agent.message:",
+            "🛠️  Message:",
             "worker: fix the tests now ✅"
         ])
     }
 
     @Test
     func agentMessageWithoutRecipientShowsMessageOnly() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "msg",
             name: "agent.message",
             argumentsObject: ["message": "please review the diff"],
@@ -93,14 +93,14 @@ extension TerminalChatRenderingTests {
         )
 
         #expect(lines == [
-            "🛠️  agent.message:",
+            "🛠️  Message:",
             "please review the diff ⏳"
         ])
     }
 
     @Test
     func agentMessagePrefersMessageOverPromptAndInput() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "msg",
             name: "agent.message",
             argumentsObject: [
@@ -120,7 +120,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentCreateSingleFormShowsNameAndPrompt() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "create",
             name: "agent.create",
             argumentsObject: [
@@ -141,14 +141,14 @@ extension TerminalChatRenderingTests {
         )
 
         #expect(lines == [
-            "🛠️  agent.create:",
+            "🛠️  Create:",
             "worker fix the tests ✅"
         ])
     }
 
     @Test
     func agentCreateSingleFormShowsProfileWhenNameAbsent() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "create",
             name: "agent.create",
             argumentsObject: ["profile": "builder", "prompt": "build it"],
@@ -162,7 +162,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentCreateSingleFormShowsAgentIdentifierWithoutPrompt() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "create",
             name: "agent.create",
             argumentsObject: ["agent": "explorer"],
@@ -178,7 +178,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentCreateBatchFormJoinsAgentNames() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "create",
             name: "agent.create",
             argumentsObject: [
@@ -201,7 +201,7 @@ extension TerminalChatRenderingTests {
         )
 
         #expect(lines == [
-            "🛠️  agent.create:",
+            "🛠️  Create:",
             "worker, builder ✅"
         ])
     }
@@ -211,7 +211,7 @@ extension TerminalChatRenderingTests {
         // The streaming runtime sometimes delivers nested payloads as
         // JSONValue rather than native Swift dictionaries; both shapes must
         // resolve to the same compact target.
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "create",
             name: "agent.create",
             argumentsObject: [
@@ -230,7 +230,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentCreateBatchFormFallsBackToCountWithoutNames() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "create",
             name: "agent.create",
             argumentsObject: [
@@ -249,7 +249,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentCreateBatchFormUsesItemsKeyAlias() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "create",
             name: "agent.create",
             argumentsObject: [
@@ -270,7 +270,7 @@ extension TerminalChatRenderingTests {
     func agentCreateBatchFormUnwrapsJSONValueArrayWrapper() {
         // A batch wrapped directly in `JSONValue.array(...)` is accepted by the
         // runtime; presentation must unwrap it rather than ignore the payload.
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "create",
             name: "agent.create",
             argumentsObject: [
@@ -292,7 +292,7 @@ extension TerminalChatRenderingTests {
         // Each batch element applies the same precedence as the single form:
         // explicit name first, then the agent-before-profile reference. An
         // element exposing only an `agent` reference must still be summarized.
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "create",
             name: "agent.create",
             argumentsObject: [
@@ -313,7 +313,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentGetCompactRenderingShowsAgentName() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "get",
             name: "agent.get",
             argumentsObject: ["name": "worker"],
@@ -331,14 +331,14 @@ extension TerminalChatRenderingTests {
         )
 
         #expect(lines == [
-            "🛠️  agent.get:",
+            "🛠️  Get:",
             "worker ✅"
         ])
     }
 
     @Test
     func agentWaitCompactRenderingShowsAgentID() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "wait",
             name: "agent.wait",
             argumentsObject: ["id": "agent-42"],
@@ -352,7 +352,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentListWithNoArgumentsRendersSingleLine() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "list",
             name: "agent.list",
             argumentsObject: [:],
@@ -369,14 +369,14 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == ["🛠️  agent.list ✅"])
+        #expect(lines == ["🛠️  List ✅"])
     }
 
     // MARK: - Multi-recipient ids forms, status, precedence
 
     @Test
     func agentWaitWithIdsArrayJoinsIdentifiers() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "wait",
             name: "agent.wait",
             argumentsObject: ["ids": ["agent-1", "agent-2"]],
@@ -393,7 +393,7 @@ extension TerminalChatRenderingTests {
         // Mirrors the runtime: the scalar id is combined with the array ids
         // (scalar first), then deduplicated. The recipient summary must include
         // both unique identifiers.
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "msg",
             name: "agent.message",
             argumentsObject: [
@@ -413,7 +413,7 @@ extension TerminalChatRenderingTests {
     func agentMessageDeduplicatesOverlappingScalarAndArrayIdentifiers() {
         // When the scalar id also appears in the array, the duplicate is
         // dropped (matches the runtime dedupe).
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "msg",
             name: "agent.message",
             argumentsObject: [
@@ -431,7 +431,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentGetWithSingleIdArrayShowsIdentifier() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "get",
             name: "agent.get",
             argumentsObject: ["ids": ["agent-9"]],
@@ -445,7 +445,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentGetWithNamesArrayJoinsIdentifiers() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "get",
             name: "agent.get",
             argumentsObject: ["names": ["worker", "builder"]],
@@ -459,7 +459,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentMessageWithNamesArrayIncludesRecipientPrefix() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "msg",
             name: "agent.message",
             argumentsObject: [
@@ -480,14 +480,14 @@ extension TerminalChatRenderingTests {
         )
 
         #expect(lines == [
-            "🛠️  agent.message:",
+            "🛠️  Message:",
             "worker, builder: fix the tests ✅"
         ])
     }
 
     @Test
     func agentMessageWithIdsArrayAcceptsJSONValueWrapper() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "msg",
             name: "agent.message",
             argumentsObject: [
@@ -504,7 +504,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentCloseCompactRenderingShowsIdentifier() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "close",
             name: "agent.close",
             argumentsObject: ["name": "stale-worker"],
@@ -522,14 +522,14 @@ extension TerminalChatRenderingTests {
         )
 
         #expect(lines == [
-            "🛠️  agent.close:",
+            "🛠️  Close:",
             "stale-worker ✅"
         ])
     }
 
     @Test
     func agentMessagePrefersPromptOverInput() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "msg",
             name: "agent.message",
             argumentsObject: [
@@ -546,7 +546,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentListRendersStatusFilterAsTarget() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "list",
             name: "agent.list",
             argumentsObject: ["status": "idle"],
@@ -564,7 +564,7 @@ extension TerminalChatRenderingTests {
         )
 
         #expect(lines == [
-            "🛠️  agent.list:",
+            "🛠️  List:",
             "idle ✅"
         ])
     }
@@ -573,7 +573,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentWaitPrefersIDOverName() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "wait",
             name: "agent.wait",
             argumentsObject: [
@@ -590,7 +590,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentMessageRecipientPrefersIDOverName() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "msg",
             name: "agent.message",
             argumentsObject: [
@@ -608,7 +608,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentCreatePrefersAgentOverProfileWhenNameAbsent() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "create",
             name: "agent.create",
             argumentsObject: [
@@ -625,7 +625,7 @@ extension TerminalChatRenderingTests {
 
     @Test
     func agentCreatePrefersExplicitNameOverAgentReference() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "create",
             name: "agent.create",
             argumentsObject: [
@@ -641,11 +641,11 @@ extension TerminalChatRenderingTests {
         )
     }
 
-    // MARK: - Non-agent tools are unaffected
+    // MARK: - Non-agent descriptor contract
 
     @Test
-    func nonAgentToolsKeepExistingKeyBasedFallback() {
-        let toolCall = DirectAgentToolCall(
+    func nonAgentToolsUseTheirOwnedTargetDefinition() {
+        let toolCall = presentedToolCall(
             id: "read",
             name: "local.readFile",
             argumentsObject: ["path": "Sources/App.swift"],

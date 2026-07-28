@@ -46,7 +46,6 @@ extension SwiftFeatureRuntime {
                         "required": ["text"]
                     ],
                     "presentation": [
-                        "strategy": "semantic",
                         "title": "Echo",
                         "action": "Echo",
                         "kind": "execute",

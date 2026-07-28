@@ -16,11 +16,6 @@ public nonisolated enum ToolPresentationResolver {
         result: DirectAgentToolResult? = nil,
         mode: ToolPresentationMode
     ) -> ResolvedToolPresentation {
-        let definition = definition.validOrAutomatic
-        guard !definition.isAutomatic else {
-            return automaticPresentation(call: call, result: result, mode: mode)
-        }
-
         let title = nonBlank(definition.title)
             ?? nonBlank(call.descriptorTitle)
             ?? call.name
@@ -52,8 +47,7 @@ public nonisolated enum ToolPresentationResolver {
             target: target,
             kind: definition.kind ?? .other,
             metadata: metadata,
-            elements: elements,
-            usesAutomaticFallback: false
+            elements: elements
         )
     }
 
@@ -62,10 +56,13 @@ public nonisolated enum ToolPresentationResolver {
         result: DirectAgentToolResult? = nil,
         mode: ToolPresentationMode
     ) -> ResolvedToolPresentation {
-        resolve(call.presentation, call: call, result: result, mode: mode)
+        guard let presentation = call.presentation else {
+            return genericPresentation(call: call, result: result, mode: mode)
+        }
+        return resolve(presentation, call: call, result: result, mode: mode)
     }
 
-    private static func automaticPresentation(
+    private static func genericPresentation(
         call: DirectAgentToolCall,
         result: DirectAgentToolResult?,
         mode: ToolPresentationMode
@@ -88,8 +85,7 @@ public nonisolated enum ToolPresentationResolver {
             target: nil,
             kind: .other,
             metadata: [],
-            elements: elements,
-            usesAutomaticFallback: true
+            elements: elements
         )
     }
 
@@ -201,23 +197,135 @@ public nonisolated enum ToolPresentationResolver {
             root = .string(call.name)
         case .literal:
             root = definition.literalValue.map(JSONValue.string)
+        case .composite:
+            root = compositeValue(for: definition, call: call, result: result)
         }
 
         let selected: JSONValue?
         if definition.source == .arguments,
            !definition.keyPaths.isEmpty,
            let root {
-            selected = definition.keyPaths.lazy.compactMap {
-                value(at: $0, in: root)
-            }.first
+            switch definition.selection ?? .first {
+            case .first:
+                selected = definition.keyPaths.lazy.compactMap {
+                    value(at: $0, in: root)
+                }.first
+            case .collect:
+                selected = collectedValue(
+                    keyPaths: definition.keyPaths,
+                    root: root
+                )
+            case .perItemFirst:
+                selected = perItemValue(
+                    collectionKeyPaths: definition.keyPaths,
+                    itemKeyPaths: definition.itemKeyPaths ?? [],
+                    root: root
+                )
+            }
         } else {
             selected = root
         }
 
-        if let selected, selected != .null {
+        if let selected, !isEmptyPresentationValue(selected) {
             return selected
         }
         return definition.fallback.map(JSONValue.string)
+    }
+
+    private static func compositeValue(
+        for definition: ToolPresentationValueDefinition,
+        call: DirectAgentToolCall,
+        result: DirectAgentToolResult?
+    ) -> JSONValue? {
+        let components = definition.components ?? []
+        switch definition.composition {
+        case .firstAvailable:
+            return components.lazy.compactMap {
+                displayString(for: $0, call: call, result: result)
+            }.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .map(JSONValue.string)
+        case .joined:
+            let values = components.compactMap {
+                displayString(for: $0, call: call, result: result)
+            }.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            guard !values.isEmpty else {
+                return nil
+            }
+            return .string(values.joined(separator: definition.separator ?? " "))
+        case .collected:
+            let values = components.compactMap {
+                rawValue(for: $0, call: call, result: result)
+            }.flatMap { value -> [JSONValue] in
+                if case let .array(items) = value {
+                    return items
+                }
+                return [value]
+            }
+            let deduplicatedValues = deduplicated(values)
+            return deduplicatedValues.isEmpty ? nil : .array(deduplicatedValues)
+        case nil:
+            return nil
+        }
+    }
+
+    private static func collectedValue(
+        keyPaths: [String],
+        root: JSONValue
+    ) -> JSONValue? {
+        var values: [JSONValue] = []
+        for keyPath in keyPaths {
+            guard let value = value(at: keyPath, in: root) else {
+                continue
+            }
+            if case let .array(items) = value {
+                values.append(contentsOf: items)
+            } else {
+                values.append(value)
+            }
+        }
+        let deduplicatedValues = deduplicated(values)
+        return deduplicatedValues.isEmpty ? nil : .array(deduplicatedValues)
+    }
+
+    private static func perItemValue(
+        collectionKeyPaths: [String],
+        itemKeyPaths: [String],
+        root: JSONValue
+    ) -> JSONValue? {
+        guard !itemKeyPaths.isEmpty,
+              let collection = collectionKeyPaths.lazy.compactMap({
+                  value(at: $0, in: root)
+              }).first,
+              case let .array(items) = collection else {
+            return nil
+        }
+        let values = items.compactMap { item in
+            itemKeyPaths.lazy.compactMap { value(at: $0, in: item) }.first
+        }
+        let deduplicatedValues = deduplicated(values)
+        return deduplicatedValues.isEmpty ? nil : .array(deduplicatedValues)
+    }
+
+    private static func deduplicated(_ values: [JSONValue]) -> [JSONValue] {
+        var seen = Set<JSONValue>()
+        return values.filter { value in
+            !isEmptyPresentationValue(value) && seen.insert(value).inserted
+        }
+    }
+
+    private static func isEmptyPresentationValue(_ value: JSONValue) -> Bool {
+        switch value {
+        case .null:
+            return true
+        case let .string(value):
+            return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case let .array(values):
+            return values.isEmpty
+        case let .object(values):
+            return values.isEmpty
+        case .bool, .number:
+            return false
+        }
     }
 
     private static func displayString(
@@ -235,26 +343,34 @@ public nonisolated enum ToolPresentationResolver {
         for definition: ToolPresentationValueDefinition,
         rawValue value: JSONValue
     ) -> String? {
+        let rendered: String?
         switch definition.format {
         case .automatic, .text, .path, .command, .url:
-            return plainText(value, separator: definition.separator)
+            rendered = plainText(value, separator: definition.separator)
         case .json:
-            return value.prettyPrinted()
+            rendered = value.prettyPrinted()
         case .stringList:
             if case let .array(values) = value {
                 let strings = values.compactMap { plainText($0) }
-                return strings.joined(separator: definition.separator ?? ", ")
+                rendered = strings.joined(separator: definition.separator ?? ", ")
+            } else {
+                rendered = plainText(value, separator: definition.separator)
             }
-            return plainText(value, separator: definition.separator)
         case .firstLine:
-            return plainText(value).map(firstLine)
+            rendered = plainText(value).map(firstLine)
         case .lineCount:
-            return plainText(value).map { String(logicalLineCount($0)) }
+            rendered = plainText(value).map { String(logicalLineCount($0)) }
         case .itemCount:
-            return String(itemCount(value))
+            rendered = String(itemCount(value))
         case .languageHint:
-            return plainText(value).flatMap(languageHint)
+            rendered = plainText(value).flatMap(languageHint)
+        case .patchPaths:
+            rendered = plainText(value).flatMap(patchDisplayTarget)
         }
+        guard let rendered else {
+            return nil
+        }
+        return (definition.prefix ?? "") + rendered + (definition.suffix ?? "")
     }
 
     private static func contentString(
@@ -271,6 +387,33 @@ public nonisolated enum ToolPresentationResolver {
         default:
             return plainText(value, separator: definition.separator)
         }
+    }
+
+    private static func patchDisplayTarget(_ rawPatch: String) -> String? {
+        var seen = Set<String>()
+        var paths: [String] = []
+        func append(_ rawValue: String) {
+            var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty, value != "/dev/null" else { return }
+            if value.hasPrefix("a/") || value.hasPrefix("b/") {
+                value = String(value.dropFirst(2))
+            }
+            guard !value.isEmpty,
+                  value != "/dev/null",
+                  seen.insert(value).inserted else { return }
+            paths.append(value)
+        }
+        for line in rawPatch.components(separatedBy: "\n") {
+            let prefixes = [
+                "*** Add File: ", "*** Update File: ", "*** Delete File: ",
+                "+++ ", "--- "
+            ]
+            if let prefix = prefixes.first(where: { line.hasPrefix($0) }) {
+                append(String(line.dropFirst(prefix.count)))
+            }
+        }
+        guard let first = paths.first else { return nil }
+        return paths.count == 1 ? first : "\(first) (+\(paths.count - 1) more)"
     }
 
     private static func argumentsValue(for call: DirectAgentToolCall) -> JSONValue {

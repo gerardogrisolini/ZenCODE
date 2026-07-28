@@ -245,6 +245,7 @@ struct PersistedContractCompatibilityTests {
         #expect(manifest.displayName == "Example Feature")
         #expect(manifest.executable == "example-feature")
         #expect(manifest.tools.first?.inputSchema.contains("\"text\"") == true)
+        #expect(manifest.tools.first?.presentation == nil)
         #expect(manifest.toolNamePrefixes == ["example."])
         #expect(manifest.toolNameAliases == ["example.run"])
         #expect(manifest.discoversToolsAtRuntime)
@@ -261,6 +262,17 @@ struct PersistedContractCompatibilityTests {
         #expect(reloaded.toolNamePrefixes == manifest.toolNamePrefixes)
         #expect(reloaded.build?.arguments == ["--verbose"])
         #expect(reloaded.generated?.adoptedFrom == "legacy-feature")
+    }
+
+    @Test
+    func featureManifestV2RejectsToolsWithoutPresentation() throws {
+        let fixture = Data(
+            #"{"schemaVersion":2,"id":"current","executable":"current","enabled":true,"tools":[{"name":"current.tool","description":"D","inputSchema":"{}"}]}"#.utf8
+        )
+
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(SwiftFeatureManifest.self, from: fixture)
+        }
     }
 
     private func decode<T: Decodable>(_ type: T.Type, from fixture: String) throws -> T {

@@ -197,7 +197,12 @@ struct XcodeFeatureCharacterizationTests {
             tools: [FeatureToolDescriptor(
                 name: "xcode.XcodeRead",
                 description: "Xcode: Reads a file",
-                inputSchema: "{}"
+                inputSchema: "{}",
+                presentation: .standard(
+                    title: "Xcode file",
+                    action: "Read",
+                    kind: .read
+                )
             )]
         ))
         let invokeData = try FeatureProcessProtocol.renderJSON(

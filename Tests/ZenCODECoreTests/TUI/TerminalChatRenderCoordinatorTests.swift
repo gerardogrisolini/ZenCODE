@@ -12,7 +12,7 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func compactToolCompletionClearsOnlyOwnedRows() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "tool-1",
             name: "agent.wait",
             argumentsObject: [:],
@@ -55,7 +55,7 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func compactPermissionDeniedCompletionUsesWarningInsteadOfSuccessIcon() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "denied-local-exec",
             name: "local.exec",
             argumentsObject: ["command": "whoami"],
@@ -91,7 +91,7 @@ struct TerminalChatRenderCoordinatorTests {
             toolNow: { clock.now },
             columnWidthProvider: { terminalColumns }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "timed-local-exec",
             name: "local.exec",
             argumentsObject: ["command": "a-very-long-command-that-needs-truncation"],
@@ -143,7 +143,7 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func compactLocalExecMetadataUsesCanonicalExitCodeAndCleanMissingStartFallback() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "completed-without-start",
             name: "local.exec",
             argumentsObject: ["command": "false"],
@@ -165,7 +165,7 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(missingStartText.contains("⚠️  exit 23"))
         #expect(!missingStartText.contains("0.00s"))
 
-        let successfulToolCall = DirectAgentToolCall(
+        let successfulToolCall = presentedToolCall(
             id: "successful-with-duration",
             name: "agent.wait",
             argumentsObject: [:],
@@ -246,7 +246,7 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func compactCompletionKeepsActiveStyleWhenDetailLevelChanges() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "compact-style-change",
             name: "agent.wait",
             argumentsObject: [:],
@@ -283,7 +283,7 @@ struct TerminalChatRenderCoordinatorTests {
                 return widthBox.width
             }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "compact-width-capture",
             name: "agent.wait",
             argumentsObject: [:],
@@ -304,7 +304,7 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func emptyContentDoesNotRelinquishToolRows() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "tool-empty-delta",
             name: "agent.wait",
             argumentsObject: [:],
@@ -338,7 +338,7 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func detailedToolCompletionClearsOnlyOwnedRows() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "tool-detailed",
             name: "local.readFile",
             argumentsObject: [:],
@@ -370,7 +370,7 @@ struct TerminalChatRenderCoordinatorTests {
 
     @Test
     func detailedToolCompletionShowsElapsedTime() {
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "detailed-elapsed",
             name: "agent.wait",
             argumentsObject: [:],
@@ -400,7 +400,7 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func detailedToolCompletionRendersElapsedTime() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "detailed-elapsed-render",
             name: "agent.wait",
             argumentsObject: [:],
@@ -428,7 +428,7 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func externalAuthorizationPromptRelinquishesToolRowsBeforeCompletion() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "authorized-delete",
             name: "local.delete",
             argumentsObject: ["path": "ProvaTest.swift"],
@@ -476,7 +476,7 @@ struct TerminalChatRenderCoordinatorTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { terminalColumns }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "tool-detailed-wrap",
             name: "local.exec",
             argumentsObject: ["command": longArgument],
@@ -545,7 +545,7 @@ struct TerminalChatRenderCoordinatorTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { 80 }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "tool-overflowing-scroll-region",
             name: "local.exec",
             argumentsObject: [
@@ -593,7 +593,7 @@ struct TerminalChatRenderCoordinatorTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { 80 }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "tool-expanded-write-overflow",
             name: "local.writeFile",
             argumentsObject: [
@@ -637,7 +637,7 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func overviewIsDeferredUntilToolNoLongerOwnsRows() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "tool-2",
             name: "tasks.list",
             argumentsObject: [:],
@@ -694,7 +694,7 @@ struct TerminalChatRenderCoordinatorTests {
             standardErrorIsTerminal: true,
             standardOutputIsTerminal: true
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "task-update",
             name: "tasks.update",
             argumentsObject: [:],
@@ -742,7 +742,7 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func interleavedFailureDrainsOverviewDeferredByTool() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "tool-cancelled",
             name: "tasks.list",
             argumentsObject: [:],
@@ -1433,7 +1433,7 @@ struct TerminalChatRenderCoordinatorTests {
             standardOutputIsTerminal: true,
             terminalThoughtLineLimit: 1
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "thought-fold-interleave",
             name: "agent.wait",
             argumentsObject: [:],
@@ -1667,7 +1667,7 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func subAgentOverviewStaysDeferredWhenPublishingSuspendedDuringAgentToolBlock() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "wait-tool",
             name: "agent.wait",
             argumentsObject: [:],
@@ -1721,13 +1721,13 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func staleCompletionDoesNotRelinquishNewerToolOwnership() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let first = DirectAgentToolCall(
+        let first = presentedToolCall(
             id: "overlap-first",
             name: "agent.wait",
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
-        let second = DirectAgentToolCall(
+        let second = presentedToolCall(
             id: "overlap-second",
             name: "agent.wait",
             argumentsObject: [:],
@@ -1772,7 +1772,7 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func detailedCompletionKeepsItsOwnedStyleAfterSwitchingToCompact() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "detailed-style-change",
             name: "local.readFile",
             argumentsObject: [:],
@@ -1811,7 +1811,7 @@ struct TerminalChatRenderCoordinatorTests {
                 return freshWidth.width
             }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "fresh-width-provider",
             name: "agent.wait",
             argumentsObject: [:],
@@ -1897,7 +1897,7 @@ struct TerminalChatRenderCoordinatorTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { 80 }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "expanded-crlf-tab-diff",
             name: "local.editFile",
             argumentsObject: [
@@ -1945,7 +1945,7 @@ struct TerminalChatRenderCoordinatorTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { 120 }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "expanded-ansi-collision",
             name: "local.editFile",
             argumentsObject: [
@@ -1988,7 +1988,7 @@ struct TerminalChatRenderCoordinatorTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { 100 }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "expanded-path-injection",
             name: "local.writeFile",
             argumentsObject: [
@@ -2035,7 +2035,7 @@ struct TerminalChatRenderCoordinatorTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { 100 }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "expanded-patch-injection",
             name: "local.applyPatch",
             argumentsObject: [
@@ -2073,9 +2073,9 @@ struct TerminalChatRenderCoordinatorTests {
         )
         await renderer.setToolOutputDetailLevel(.expanded)
 
-        let removeCall = DirectAgentToolCall(
+        let removeCall = presentedToolCall(
             id: "expanded-xcode-rm",
-            name: "xcode.rm",
+            name: "xcode.XcodeRM",
             argumentsObject: ["path": "Sources/Legacy.swift"],
             argumentsJSON: "{}"
         )
@@ -2085,9 +2085,9 @@ struct TerminalChatRenderCoordinatorTests {
             result: DirectAgentToolResult(output: "", summary: "removed")
         )
 
-        let moveCall = DirectAgentToolCall(
+        let moveCall = presentedToolCall(
             id: "expanded-xcode-mv",
-            name: "xcode.mv",
+            name: "xcode.XcodeMV",
             argumentsObject: [
                 "sourcePath": "Sources/Old.swift",
                 "destinationPath": "Sources/New.swift"
@@ -2119,15 +2119,15 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func expandedXcodeMoveHidesRawControlCharacterParameters() async {
         // The markers make each hostile scalar distinguishable from terminal
-        // framing emitted by the coordinator itself. `xcode.mv` only renders
+        // framing emitted by the coordinator itself. `xcode.XcodeMV` only renders
         // sanitized metadata rows, never its raw parameter JSON.
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
             columnWidthProvider: { 100 }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "expanded-xcode-mv-parameter-injection",
-            name: "xcode.mv",
+            name: "xcode.XcodeMV",
             argumentsObject: [
                 "sourcePath": "Sources/Old\nLF_MARKER\u{1B}ESC_MARKER\rCR_MARKER\tTAB_MARKER\u{9B}C1_MARKER.swift",
                 "destinationPath": "Sources/New.swift"
@@ -2168,7 +2168,7 @@ struct TerminalChatRenderCoordinatorTests {
         )
         await renderer.setToolOutputDetailLevel(.expanded)
 
-        let emptyCall = DirectAgentToolCall(
+        let emptyCall = presentedToolCall(
             id: "expanded-empty-payload",
             name: "local.writeFile",
             argumentsObject: ["path": "Sources/Empty.swift", "content": ""],
@@ -2181,7 +2181,7 @@ struct TerminalChatRenderCoordinatorTests {
         )
         let emptyEventCount = await renderer.capturedWriteEvents().count
 
-        let literalCall = DirectAgentToolCall(
+        let literalCall = presentedToolCall(
             id: "expanded-literal-marker",
             name: "local.writeFile",
             argumentsObject: ["path": "Sources/Literal.swift", "content": "<empty>"],
@@ -2308,7 +2308,7 @@ struct TerminalChatToolBlockResizeTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { widthBox.width }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "resize-compact-100-40",
             name: "agent.wait",
             argumentsObject: [:],
@@ -2354,7 +2354,7 @@ struct TerminalChatToolBlockResizeTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { widthBox.width }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "resize-compact-40-100",
             name: "agent.wait",
             argumentsObject: [:],
@@ -2387,7 +2387,7 @@ struct TerminalChatToolBlockResizeTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { widthBox.width }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "resize-detailed-100-40",
             name: "local.readFile",
             argumentsObject: [:],
@@ -2424,7 +2424,7 @@ struct TerminalChatToolBlockResizeTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { widthBox.width }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "resize-compact-stable",
             name: "agent.wait",
             argumentsObject: [:],
@@ -2467,7 +2467,7 @@ struct TerminalChatToolBlockResizeTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { widthBox.width }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "resize-detailed-stable",
             name: "local.readFile",
             argumentsObject: [:],
@@ -2509,7 +2509,7 @@ struct TerminalChatToolBlockResizeTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { 100 }
         )
-        let toolCall = DirectAgentToolCall(
+        let toolCall = presentedToolCall(
             id: "semantic-redraw",
             name: "thirdparty.edit",
             argumentsObject: [
