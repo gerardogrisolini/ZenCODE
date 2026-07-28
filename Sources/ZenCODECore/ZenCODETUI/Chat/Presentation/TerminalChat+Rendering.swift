@@ -91,7 +91,6 @@ extension TerminalChat {
             return "Active tools: none\n"
         }
 
-        var groupedToolNames = Set<String>()
         var renderedGroups: [String] = []
         let normalizedKeys = TerminalToolSelectionCatalog.normalizedSelectionKeys(
             selectedKeys,
@@ -103,7 +102,6 @@ extension TerminalChat {
             guard !itemToolNames.isEmpty else {
                 continue
             }
-            groupedToolNames.formUnion(itemToolNames)
             let concreteToolNames = itemToolNames.filter { toolName in
                 !toolName.hasSuffix(".")
             }.sorted()
@@ -111,9 +109,9 @@ extension TerminalChat {
             renderedGroups.append("\(item.title) (\(toolCount))")
         }
 
-        let otherToolCount = uniqueToolNames.subtracting(groupedToolNames).count
-        if otherToolCount > 0 {
-            renderedGroups.append("Other (\(otherToolCount))")
+        let skillToolNames = uniqueToolNames.intersection(PromptSkillToolProvider.toolNames)
+        if !skillToolNames.isEmpty {
+            renderedGroups.append("Skills (\(skillToolNames.count))")
         }
 
         guard !renderedGroups.isEmpty else {

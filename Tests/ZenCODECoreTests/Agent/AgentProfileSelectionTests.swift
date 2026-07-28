@@ -442,6 +442,18 @@ extension AgentConfigurationTests {
         #expect(rendered == "Active tools: Shell (1)\n")
         #expect(hiddenOnly == "Active tools: none\n")
     }
+
+    @Test
+    func activeToolRenderingGroupsIntrinsicSkillToolsSeparately() {
+        let items = TerminalChat.toolSelectionItems(featureStatuses: [])
+        let rendered = TerminalChat.renderActiveTools(
+            ["local.exec", "skills.list", "skills.read"],
+            items: items,
+            selectedKeys: ["shell"]
+        )
+
+        #expect(rendered == "Active tools: Shell (1), Skills (2)\n")
+    }
 }
 
 @Suite
