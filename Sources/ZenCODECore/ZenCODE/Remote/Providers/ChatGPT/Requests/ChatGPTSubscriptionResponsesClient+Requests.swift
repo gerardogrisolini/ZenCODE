@@ -14,6 +14,17 @@ extension ChatGPTSubscriptionResponsesClient {
     static let webSocketConnectionLimitErrorMessage =
         "Responses websocket connection limit reached (60 minutes). Create a new websocket connection to continue."
 
+    /// Canonical transient backend failure shown by ChatGPT with a per-attempt
+    /// request ID. Keep this match narrow: arbitrary `response.failed` events
+    /// can describe invalid tool calls or requests that must not be replayed.
+    private static let retryableRequestFailurePrefix =
+        "an error occurred while processing your request."
+    private static let retryableRequestFailureHint =
+        "you can retry your request"
+    private static let retryableRequestFailureHelpCenter = "help.openai.com"
+    private static let retryableRequestFailureIDHint =
+        "please include the request id "
+
     func request(
         for body: [String: Any],
         sessionID: String
@@ -250,8 +261,28 @@ extension ChatGPTSubscriptionResponsesClient {
             == .orderedSame
     }
 
+    static func isRetryableRequestFailure(_ error: Error) -> Bool {
+        guard let error = error as? ChatGPTSubscriptionGenerationError,
+              case let .responseFailed(message) = error else {
+            return false
+        }
+        return isRetryableRequestFailureMessage(message)
+    }
+
+    static func isRetryableRequestFailureMessage(_ message: String) -> Bool {
+        let normalizedMessage = message
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .lowercased()
+        return normalizedMessage.hasPrefix(retryableRequestFailurePrefix)
+            && normalizedMessage.contains(retryableRequestFailureHint)
+            && normalizedMessage.contains(retryableRequestFailureHelpCenter)
+            && normalizedMessage.contains(retryableRequestFailureIDHint)
+    }
+
     static func isRetryable(error: Error) -> Bool {
         isRetryableTransportError(error)
+            || isRetryableRequestFailure(error)
     }
 
     static func shouldRetryTransportError(
@@ -272,10 +303,13 @@ extension ChatGPTSubscriptionResponsesClient {
         receivedReplayUnsafeEvent: Bool,
         attempt: Int
     ) -> Bool {
-        guard !receivedReplayUnsafeEvent else {
+        guard !receivedReplayUnsafeEvent,
+              attempt >= 0,
+              attempt < maxRetries,
+              !isCancellationError(error) else {
             return false
         }
-        return shouldRetryTransportError(error, attempt: attempt)
+        return isRetryable(error: error)
     }
 
     static func isCancellationError(_ error: Error) -> Bool {

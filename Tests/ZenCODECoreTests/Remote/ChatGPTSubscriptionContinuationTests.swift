@@ -224,6 +224,61 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionGenericRequestFailureIsRetryable() {
+        let message = """
+        An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 2500a4a9-690b-4951-beb3-602a7d5893d8 in your message.
+        """
+        let retryableError = ChatGPTSubscriptionGenerationError.responseFailed(message)
+        let unrelatedError = ChatGPTSubscriptionGenerationError.responseFailed(
+            "The model produced an invalid tool call."
+        )
+        let incompleteGenericError = ChatGPTSubscriptionGenerationError.responseFailed(
+            "An error occurred while processing your request. You can retry your request."
+        )
+
+        #expect(
+            ChatGPTSubscriptionGenerationClient.responseErrorMessage(from: [
+                "type": "error",
+                "error": [
+                    "type": "server_error",
+                    "code": "server_error",
+                    "message": message
+                ],
+                "sequence_number": 2
+            ]) == message
+        )
+        #expect(
+            ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
+                retryableError
+            )
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
+                retryableError,
+                receivedReplayUnsafeEvent: false,
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
+                retryableError,
+                receivedReplayUnsafeEvent: true,
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
+                unrelatedError
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
+                incompleteGenericError
+            )
+        )
+    }
+
+    @Test
     func chatGPTSubscriptionUpgradeRejectedAuthFailureIsRetryable() {
         let unauthorized = RemoteTransportError.upgradeRejected(
             status: 401,
@@ -1128,6 +1183,70 @@ extension RemoteSessionSnapshotTests {
         #expect(firstPayload["prompt_cache_key"] as? String == "retry-continuation")
         #expect(secondPayload["prompt_cache_key"] as? String == "retry-continuation")
         #expect((secondPayload["input"] as? [Any])?.isEmpty == true)
+    }
+
+    @Test
+    func chatGPTSubscriptionNIOClientRetriesGenericRequestFailure() async throws {
+        let message = """
+        An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 2500a4a9-690b-4951-beb3-602a7d5893d8 in your message.
+        """
+        let failedResponse = try JSONValue(jsonObject: [
+            "type": "error",
+            "error": [
+                "type": "server_error",
+                "code": "server_error",
+                "message": message
+            ],
+            "sequence_number": 2
+        ]).jsonData(outputFormatting: [.withoutEscapingSlashes])
+        let firstTask = ChatGPTSubscriptionTestWebSocketTask(
+            receiveOutcomes: [
+                .success(.text(String(decoding: failedResponse, as: UTF8.self)))
+            ]
+        )
+        let secondTask = ChatGPTSubscriptionTestWebSocketTask(
+            receiveOutcomes: [
+                .success(
+                    .text(
+                        #"{"type":"response.completed","response":{"id":"resp_retried","status":"completed"}}"#
+                    )
+                )
+            ]
+        )
+        let pendingTasks = Mutex([firstTask, secondTask])
+        let factoryCount = Mutex(0)
+        let pool = ChatGPTSubscriptionWebSocketPool(
+            heartbeatIntervalNanoseconds: UInt64.max,
+            webSocketTaskFactory: { _ in
+                factoryCount.withLock { $0 += 1 }
+                return pendingTasks.withLock { $0.removeFirst() }
+            }
+        )
+        defer { pool.closeAll() }
+        let client = ChatGPTSubscriptionResponsesClient(
+            credentials: chatGPTSubscriptionTestCredentials(),
+            baseURL: URL(string: "https://example.invalid/backend-api")!,
+            webSocketPool: pool,
+            retrySleep: { _ in }
+        )
+
+        let completion = try await client.streamEvents(
+            input: .array([]),
+            model: "gpt-5.5",
+            instructions: "System prompt",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "retry-generic-request-failure"
+        ) { object in
+            if let errorMessage = ChatGPTSubscriptionGenerationClient
+                .responseErrorMessage(from: object) {
+                throw ChatGPTSubscriptionGenerationError.responseFailed(errorMessage)
+            }
+        }
+
+        #expect(completion.responseID == "resp_retried")
+        #expect(factoryCount.withLock { $0 } == 2)
+        #expect(firstTask.cancelCount == 1)
     }
 
     @Test

@@ -424,8 +424,9 @@ extension ChatGPTSubscriptionGenerationClient {
     static let maxStreamInterruptionRetries = 1
 
     static func streamInterruptionRetryDiagnostic() -> String {
-        "ChatGPT Subscription lost the WebSocket stream mid-turn; retrying "
-            + "this turn on a fresh connection with a full conversation replay."
+        "ChatGPT Subscription response was interrupted by a transient WebSocket "
+            + "or backend failure; retrying this turn on a fresh connection with "
+            + "a full conversation replay."
     }
 
     static func isRetryableStreamInterruption(_ error: Error) -> Bool {
@@ -433,6 +434,7 @@ extension ChatGPTSubscriptionGenerationClient {
             return false
         }
         return ChatGPTSubscriptionResponsesClient.isRetryableTransportError(error)
+            || ChatGPTSubscriptionResponsesClient.isRetryableRequestFailure(error)
     }
 
     /// True when the WebSocket upgrade was rejected with an auth-related HTTP
