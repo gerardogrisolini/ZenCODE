@@ -278,7 +278,7 @@ struct TerminalChatRenderingBaselineTests {
 
     private static let expectedGoldenTranscript = """
     0 [err] <LF><ESC>[48;5;236m> Ask something useful<ESC>[K<ESC>[0m<LF><LF>
-    1 [err] <ESC>[38;5;248m🤔 Thinking:<ESC>[0m<LF><ESC>[90mReasoning about the request.<LF><ESC>[0m<LF>
+    1 [err] <ESC>[38;5;247m🤔 Thinking:<ESC>[0m<LF><ESC>[90mReasoning about the request.<LF><ESC>[0m<LF>
     2 [err] <CR><ESC>[2K<ESC>[38;5;208m🛠️  tasks.list:<ESC>[0m<LF><CR><ESC>[2K<ESC>[38;5;215mTasks ⏳<ESC>[0m<LF>
     3 [err] <ESC>[2A<CR><ESC>[2K<ESC>[1B<CR><ESC>[2K<ESC>[1A<CR>
     4 [err] <CR><ESC>[2K<ESC>[38;5;208m🛠️  tasks.list:<ESC>[0m<LF><CR><ESC>[2K<ESC>[38;5;215mTasks ✅ <ESC>[90m0ms<ESC>[38;5;215m<ESC>[0m<LF><LF>
