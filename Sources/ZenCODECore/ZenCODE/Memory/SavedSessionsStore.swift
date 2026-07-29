@@ -28,6 +28,8 @@ public nonisolated struct SavedSessionIndexEntry: Codable, Hashable, Sendable {
 public final class SavedSessionsStore {
     public static let filename = "sessions.json"
 
+    private static let fileTransactionCoordinator = FileTransactionCoordinator.shared
+
     private struct IndexFile: Codable {
         var version: Int
         var sessions: [SavedSessionIndexEntry]
@@ -35,7 +37,6 @@ public final class SavedSessionsStore {
 
     private let fileManager: FileManager
     private let directoryURL: URL?
-    private let writeLock = NSLock()
 
     public init(
         fileManager: FileManager = .default,
@@ -53,8 +54,9 @@ public final class SavedSessionsStore {
 
     /// Returns all saved-session entries, most recently saved first.
     public func sessions() -> [SavedSessionIndexEntry] {
-        writeLock.withLock {
-            guard let index = try? readIndexFile() else {
+        let fileURL = sessionsFileURL()
+        return Self.fileTransactionCoordinator.withLock(for: fileURL) {
+            guard let index = try? readIndexFile(at: fileURL) else {
                 return []
             }
             return index.sessions.sorted { $0.savedAt > $1.savedAt }
@@ -94,12 +96,13 @@ public final class SavedSessionsStore {
             savedAt: savedAt
         )
 
-        return try writeLock.withLock {
-            var index = try readIndexFile()
+        let fileURL = sessionsFileURL()
+        return try Self.fileTransactionCoordinator.withLock(for: fileURL) {
+            var index = try readIndexFile(at: fileURL)
             index.sessions.removeAll { $0.projectPath == normalizedProjectPath }
             index.sessions.insert(entry, at: 0)
             index.sessions.sort { $0.savedAt > $1.savedAt }
-            try writeIndexFile(index)
+            try writeIndexFile(index, to: fileURL)
             return entry
         }
     }
@@ -113,8 +116,7 @@ public final class SavedSessionsStore {
         return AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
     }
 
-    private func readIndexFile() throws -> IndexFile {
-        let fileURL = sessionsFileURL()
+    private func readIndexFile(at fileURL: URL) throws -> IndexFile {
         guard fileManager.fileExists(atPath: fileURL.path) else {
             return IndexFile(version: 1, sessions: [])
         }
@@ -135,8 +137,7 @@ public final class SavedSessionsStore {
         }
     }
 
-    private func writeIndexFile(_ index: IndexFile) throws {
-        let fileURL = sessionsFileURL()
+    private func writeIndexFile(_ index: IndexFile, to fileURL: URL) throws {
         try fileManager.createDirectory(
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true

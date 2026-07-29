@@ -8,6 +8,7 @@
 import Foundation
 @testable import ZenCODECore
 import Testing
+import ToolCore
 
 extension SwiftFeatureRuntimeTests {
     @Test

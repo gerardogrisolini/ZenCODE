@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public enum AgentConversationCompactionPolicy {
     public static let triggerFraction = 0.95

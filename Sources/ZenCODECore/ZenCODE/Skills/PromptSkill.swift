@@ -12,6 +12,7 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
+import ToolCore
 
 public struct PromptSkillPayload: Equatable, Sendable {
     public let canonicalName: String

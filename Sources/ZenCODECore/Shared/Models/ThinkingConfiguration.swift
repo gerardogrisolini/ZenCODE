@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identifiable, Sendable {
     case off

@@ -12,6 +12,7 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
+import ToolCore
 
 public enum PromptSkillCatalog {
     public static func appCatalogSearchRoots(fileManager: FileManager = .default) -> [URL] {

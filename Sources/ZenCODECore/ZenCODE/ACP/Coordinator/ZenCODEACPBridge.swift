@@ -7,6 +7,7 @@
 
 import FeatureMCPBridgeKit
 import Foundation
+import ToolCore
 #if os(macOS)
 import XcodeToolsFeature
 #endif

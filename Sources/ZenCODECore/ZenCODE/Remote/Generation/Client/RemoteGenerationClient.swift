@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public actor RemoteGenerationClient: AgentRuntimeBackend {
     public struct AgentSession {

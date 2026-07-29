@@ -12,6 +12,7 @@ import Glibc
 #endif
 import Foundation
 import Synchronization
+import ToolCore
 
 public enum ZenLogLevel: Int, Comparable, Sendable, CaseIterable {
     case debug = 0

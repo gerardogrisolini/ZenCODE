@@ -6,7 +6,9 @@
 //
 
 import Foundation
+import Synchronization
 import Testing
+import ToolCore
 @testable import ZenCODECore
 
 @Suite
@@ -1704,20 +1706,15 @@ struct DirectSubAgentRuntimeTests {
     }
 }
 
-private final class SubAgentFactoryRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var recordedContexts: [DirectSubAgentRuntime.BackendContext] = []
+private final class SubAgentFactoryRecorder: Sendable {
+    private let recordedContexts = Mutex<[DirectSubAgentRuntime.BackendContext]>([])
 
     var contexts: [DirectSubAgentRuntime.BackendContext] {
-        lock.lock()
-        defer { lock.unlock() }
-        return recordedContexts
+        recordedContexts.withLock { $0 }
     }
 
     func append(_ context: DirectSubAgentRuntime.BackendContext) {
-        lock.lock()
-        recordedContexts.append(context)
-        lock.unlock()
+        recordedContexts.withLock { $0.append(context) }
     }
 }
 

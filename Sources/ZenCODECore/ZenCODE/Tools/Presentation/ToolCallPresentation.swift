@@ -5,6 +5,9 @@
 
 import Foundation
 import ToolCore
+#if os(macOS)
+import XcodeToolsFeature
+#endif
 
 /// Shared presentation metadata for direct-agent tool calls.
 public enum ToolCallPresentation {

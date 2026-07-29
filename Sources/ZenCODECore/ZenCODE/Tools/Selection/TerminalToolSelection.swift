@@ -13,6 +13,10 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import ToolCore
+#if os(macOS)
+import XcodeToolsFeature
+#endif
 
 public enum TerminalChatError: LocalizedError {
     case noInputReceived

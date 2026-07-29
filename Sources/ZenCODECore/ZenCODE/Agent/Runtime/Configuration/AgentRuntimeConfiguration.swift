@@ -5,7 +5,7 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
-@_exported import ToolCore
+public import ToolCore
 import Foundation
 
 public enum AgentLocalExecAccessMode: CaseIterable, Equatable, Sendable {

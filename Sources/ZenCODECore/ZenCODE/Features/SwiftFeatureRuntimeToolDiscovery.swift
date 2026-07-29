@@ -7,6 +7,7 @@
 
 import Foundation
 import FeatureKit
+import ToolCore
 
 extension SwiftFeatureRuntime {
     func tools(for feature: SwiftFeatureBundle) async -> [ToolDescriptor] {

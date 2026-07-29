@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension SessionTaskOrchestrator {
     func normalizedSessionID(_ rawValue: String) throws -> String {

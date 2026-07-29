@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public struct MemoryToolContext: Sendable {
     public let workspaceContext: XcodeWorkspaceContext?

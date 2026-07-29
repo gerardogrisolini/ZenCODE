@@ -5,9 +5,14 @@
 //  Created by Gerardo Grisolini on 02/06/26.
 //
 
+import FeatureMCPBridgeKit
 import Foundation
 @testable import ZenCODECore
 import Testing
+import ToolCore
+#if os(macOS)
+import XcodeToolsFeature
+#endif
 
 extension ACPCompatibilityTests {
     func makeBridge(

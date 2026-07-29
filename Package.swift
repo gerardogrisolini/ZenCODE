@@ -36,7 +36,7 @@ let bundledFeatureTargetDefinitions: [BundledFeatureTargetDefinition] = [
     BundledFeatureTargetDefinition(
         executableName: "web-tools-feature",
         sourceRelativePath: "Sources/Features/WebTools",
-        dependencies: ["FeatureKit"]
+        dependencies: ["FeatureKit", "ToolCore"]
     ),
     BundledFeatureTargetDefinition(
         executableName: "browser-tools-feature",
@@ -47,12 +47,12 @@ let bundledFeatureTargetDefinitions: [BundledFeatureTargetDefinition] = [
     BundledFeatureTargetDefinition(
         executableName: "git-tools-feature",
         sourceRelativePath: "Sources/Features/GitTools",
-        dependencies: ["FeatureKit"]
+        dependencies: ["FeatureKit", "ToolCore"]
     ),
     BundledFeatureTargetDefinition(
         executableName: "swift-tools-feature",
         sourceRelativePath: "Sources/Features/SwiftTools",
-        dependencies: ["FeatureKit"]
+        dependencies: ["FeatureKit", "ToolCore"]
     ),
     BundledFeatureTargetDefinition(
         executableName: "xcode-tools-feature",
@@ -70,6 +70,14 @@ let bundledFeatureTargetDefinitions: [BundledFeatureTargetDefinition] = [
         sourceRelativePath: "Sources/Features/JiraTools",
         dependencies: ["FeatureKit", "ToolCore"]
     )
+]
+
+/// Swift 6.3 `MemberImportVisibility` requires every file to import the modules
+/// that define the members it uses, instead of relying on transitively visible
+/// members. Enable it uniformly for every local Swift target and combine it with
+/// any target-specific settings rather than replacing them.
+let memberImportVisibilitySettings: [SwiftSetting] = [
+    .enableUpcomingFeature("MemberImportVisibility")
 ]
 
 var products: [Product] = [
@@ -128,7 +136,7 @@ for feature in bundledFeatureTargetDefinitions {
     )
 }
 
-let zenCODESwiftSettings: [SwiftSetting] = [
+let zenCODESwiftSettings: [SwiftSetting] = memberImportVisibilitySettings + [
     .define("SWIFTPM_NON_SANDBOX_TUI")
 ]
 
@@ -137,7 +145,8 @@ var targets: [Target] = []
 targets += [
     .target(
         name: "ZenPackageMetadata",
-        dependencies: []
+        dependencies: [],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .target(
         name: "ZenCODECore",
@@ -163,17 +172,19 @@ targets += [
             "LocalToolsSupport",
             "ZenPackageMetadata"
         ],
-        swiftSettings: [
+        swiftSettings: memberImportVisibilitySettings + [
             .define("SWIFTPM_NON_SANDBOX_TUI")
         ]
     ),
     .target(
         name: "FeatureKit",
-        dependencies: ["ToolCore"]
+        dependencies: ["ToolCore"],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .target(
         name: "ToolCore",
-        dependencies: []
+        dependencies: [],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .target(
         name: "FeatureMCPBridgeKit",
@@ -181,7 +192,8 @@ targets += [
             "FeatureKit",
             "ToolCore",
             .product(name: "Crypto", package: "swift-crypto")
-        ]
+        ],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .target(
         name: "XcodeToolsFeature",
@@ -190,24 +202,28 @@ targets += [
             "ToolCore",
             "FeatureMCPBridgeKit"
         ],
-        path: "Sources/Features/XcodeTools/Feature"
+        path: "Sources/Features/XcodeTools/Feature",
+        swiftSettings: memberImportVisibilitySettings
     ),
     .target(
         name: "BrowserToolsFeature",
         dependencies: [
             "FeatureKit",
+            "ToolCore",
             .product(name: "Crypto", package: "swift-crypto")
         ],
-        path: "Sources/Features/BrowserTools/Feature"
+        path: "Sources/Features/BrowserTools/Feature",
+        swiftSettings: memberImportVisibilitySettings
     ),
     .target(
         name: "LocalToolsSupport",
-        dependencies: ["FeatureKit"]
+        dependencies: ["FeatureKit", "ToolCore"],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .target(
         name: "ZenCODESetup",
         dependencies: ["ZenCODECore"],
-        swiftSettings: [
+        swiftSettings: memberImportVisibilitySettings + [
             .define("SWIFTPM_NON_SANDBOX_TUI")
         ]
     ),
@@ -232,29 +248,34 @@ targets += [
             .product(name: "NIOHTTP1", package: "swift-nio"),
             .product(name: "NIOPosix", package: "swift-nio"),
             .product(name: "NIOWebSocket", package: "swift-nio")
-        ]
+        ],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .testTarget(
         name: "ZenCODESetupTests",
         dependencies: [
             "ZenCODECore",
             "ZenCODESetup"
-        ]
+        ],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .testTarget(
         name: "ToolCoreTests",
-        dependencies: ["ToolCore"]
+        dependencies: ["ToolCore"],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .testTarget(
         name: "FeatureKitTests",
-        dependencies: ["FeatureKit"]
+        dependencies: ["FeatureKit", "ToolCore"],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .testTarget(
         name: "FeatureMCPBridgeKitTests",
         dependencies: [
             "FeatureMCPBridgeKit",
             "ToolCore"
-        ]
+        ],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .testTarget(
         name: "XcodeToolsFeatureTests",
@@ -263,7 +284,8 @@ targets += [
             "FeatureKit",
             "FeatureMCPBridgeKit",
             "ToolCore"
-        ]
+        ],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .testTarget(
         name: "BrowserToolsFeatureTests",
@@ -271,20 +293,23 @@ targets += [
             "BrowserToolsFeature",
             "FeatureKit",
             "ZenCODECore"
-        ]
+        ],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .testTarget(
         name: "LocalToolsSupportTests",
         dependencies: [
             "LocalToolsSupport",
             "FeatureKit"
-        ]
+        ],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .testTarget(
         name: "JiraToolsFeatureTests",
         dependencies: [
             "jira-tools-feature"
-        ]
+        ],
+        swiftSettings: memberImportVisibilitySettings
     )
 ]
 
@@ -292,7 +317,8 @@ targets += bundledFeatureTargetDefinitions.map {
     .executableTarget(
         name: $0.executableName,
         dependencies: $0.dependencies,
-        path: $0.executableTargetRelativePath ?? $0.sourceRelativePath
+        path: $0.executableTargetRelativePath ?? $0.sourceRelativePath,
+        swiftSettings: memberImportVisibilitySettings
     )
 }
 

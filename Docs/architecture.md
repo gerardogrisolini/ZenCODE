@@ -23,12 +23,14 @@ migration says otherwise:
 - public installer entry points under `Scripts/install*.sh`.
 
 `Package.swift` remains the authoritative declaration of the SwiftPM graph,
-platform conditions, products, and build flags. `ZenBundledFeatureCatalog` is the runtime
-bundled-feature distribution catalog authority; parity checks reconcile its
-records with the manifest and installer catalogs. On Linux,
-`swift-tools-feature` remains part of the installer product set, while
-`xcode-tools-feature` is omitted from installation, not from the SwiftPM
-product set.
+platform conditions, products, and build flags. Every local Swift target enables
+`MemberImportVisibility`: each source file must import the module that defines
+members it uses, while `public import` is reserved for intentional API re-exports.
+`ZenBundledFeatureCatalog` is the runtime bundled-feature distribution catalog
+authority; parity checks reconcile its records with the manifest and installer
+catalogs. On Linux, `swift-tools-feature` remains part of the installer product
+set, while `xcode-tools-feature` is omitted from installation, not from the
+SwiftPM product set.
 
 The task control plane follows the same compatibility rule: `SessionTaskOrchestrator` is the sole mutable owner, task checkpoint schema 1 is written atomically per project/session, and saved-session v4 embeds the checkpoint tree (`SessionCheckpointTree`) alongside the current graph. Sessions saved before v4 are not loadable. Backend replacement may rebuild transient model state but must not discard the graph; only a logical session reset deletes its checkpoint.
 

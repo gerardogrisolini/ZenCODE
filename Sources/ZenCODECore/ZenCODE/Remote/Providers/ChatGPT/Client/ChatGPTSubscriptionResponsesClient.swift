@@ -501,10 +501,10 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
         return try await withThrowingTaskGroup(
             of: ChatGPTSubscriptionWebSocketMessage.self
         ) { group in
-            group.addTask {
+            group.addTask(name: "ChatGPT WebSocket receive") {
                 try await task.receive()
             }
-            group.addTask {
+            group.addTask(name: "ChatGPT WebSocket idle timeout") {
                 try await Task.sleep(nanoseconds: timeoutNanoseconds)
                 task.cancel(
                     with: ChatGPTSubscriptionWebSocketCloseCode.normalClosure,

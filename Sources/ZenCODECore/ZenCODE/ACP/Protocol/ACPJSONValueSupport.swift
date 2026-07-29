@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension JSONValue {
     public static func acpRequestID(from object: [String: JSONValue]) -> JSONValue? {

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public struct AgentStructuredOutputFormat: Codable, Equatable, Hashable, Sendable {
     public static let defaultName = "structured_output"

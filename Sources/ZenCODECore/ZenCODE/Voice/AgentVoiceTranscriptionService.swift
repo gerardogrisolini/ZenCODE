@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 #if canImport(Speech)
 import Speech
 #endif

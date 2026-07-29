@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public nonisolated struct OpenRouterToolDefinition: Equatable, Sendable {
     public let name: String

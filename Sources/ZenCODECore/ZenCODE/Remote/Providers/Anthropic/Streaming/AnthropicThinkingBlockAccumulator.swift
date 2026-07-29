@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 /// Accumulates the signed `thinking` / `redacted_thinking` content blocks that
 /// Anthropic streams alongside text and tool calls. Re-sending these blocks (with

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension ChatGPTSubscriptionResponsesClient {
     /// Structured error identifiers Codex treats as retryable on the Responses

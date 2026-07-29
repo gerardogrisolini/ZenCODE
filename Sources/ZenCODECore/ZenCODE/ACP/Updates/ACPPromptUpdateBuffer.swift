@@ -7,6 +7,7 @@
 
 import Foundation
 import Synchronization
+import ToolCore
 
 public final class ACPPromptUpdateBuffer: Sendable {
     private struct State {

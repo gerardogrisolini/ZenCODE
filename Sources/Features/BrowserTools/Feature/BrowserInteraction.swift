@@ -844,7 +844,7 @@ struct BrowserActTool: FeatureTool {
                 try await session.setChecked(target: target, checked: false, authorization: authorization)
             }
 
-            try await Task.sleep(nanoseconds: 150_000_000)
+            try await Task.sleep(for: .milliseconds(150))
             let dialog = observer.dialog
             if dialog == nil {
                 try? await session.waitNavigatedReady()

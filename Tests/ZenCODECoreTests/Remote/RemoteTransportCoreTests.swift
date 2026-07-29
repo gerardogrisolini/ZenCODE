@@ -15,6 +15,7 @@ import NIOPosix
 import NIOWebSocket
 import Synchronization
 import Testing
+import ToolCore
 @testable import ZenCODECore
 
 @Suite("RemoteTransportCore", .serialized)
@@ -1331,15 +1332,15 @@ private func wait(for signal: TestSignal) async throws {
 
 /// Weak holder for an internal driver actor, so a test can observe that the
 /// parked run-task released it after the last public handle was dropped.
-private final class WeakBox<T: AnyObject>: @unchecked Sendable {
-    weak var value: T?
+private final class WeakBox<T: AnyObject & Sendable>: Sendable {
+    weak let value: T?
     init(_ value: T) { self.value = value }
 }
 
 /// Polls until `box.value` becomes `nil`. The bounded deadline is only a final
 /// protection: the proof is that the object is actually deallocated, never a
 /// fixed sleep.
-private func awaitDeallocated<T: AnyObject>(
+private func awaitDeallocated<T: AnyObject & Sendable>(
     _ box: WeakBox<T>,
     timeout: Duration = .seconds(5)
 ) async throws {

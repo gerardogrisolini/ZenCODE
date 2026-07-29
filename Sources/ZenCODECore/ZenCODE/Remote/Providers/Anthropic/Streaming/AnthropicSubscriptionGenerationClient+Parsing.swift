@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension AnthropicSubscriptionGenerationClient {
     static func contentBlockText(from object: [String: Any]) -> String? {

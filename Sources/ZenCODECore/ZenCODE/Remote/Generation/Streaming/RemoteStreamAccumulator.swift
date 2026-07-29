@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import ToolCore
 
 /// Accumulates text, reasoning, tool calls, usage, and stop-reason from
 /// parsed stream events and produces a `RemoteStreamResult`.

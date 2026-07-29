@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 enum DirectProcessTools {
 #if canImport(Darwin) || canImport(Glibc)

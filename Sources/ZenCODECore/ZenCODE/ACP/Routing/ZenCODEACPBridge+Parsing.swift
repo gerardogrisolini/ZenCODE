@@ -5,7 +5,9 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
+import FeatureMCPBridgeKit
 import Foundation
+import ToolCore
 #if os(macOS)
 import XcodeToolsFeature
 #endif

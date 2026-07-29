@@ -4,7 +4,9 @@
 //
 
 import Foundation
-import Synchronization
+#if os(macOS)
+import XcodeToolsFeature
+#endif
 
 extension MemoryService {
     func memoryDocuments(workspaceRootURL: URL?) -> [MemoryDocument] {
@@ -310,35 +312,4 @@ private enum MemoryDocumentReadState {
     case loaded([MemoryEntry])
     case unreadable
     case invalid
-}
-
-/// Coordinates a complete read-modify-write transaction by standardized file
-/// URL. It is shared by every `MemoryService` instance in this process.
-final class MemoryDocumentWriteCoordinator: @unchecked Sendable {
-    static let shared = MemoryDocumentWriteCoordinator()
-
-    private final class DocumentLock: @unchecked Sendable {
-        private let mutex = Mutex(())
-
-        func withLock<T>(_ body: () throws -> T) rethrows -> T {
-            try mutex.withLock { _ in
-                try body()
-            }
-        }
-    }
-
-    private let locks = Mutex<[URL: DocumentLock]>([:])
-
-    func withLock<T>(for fileURL: URL, _ body: () throws -> T) rethrows -> T {
-        let standardizedURL = fileURL.standardizedFileURL
-        let documentLock = locks.withLock { locks in
-            if let existingLock = locks[standardizedURL] {
-                return existingLock
-            }
-            let newLock = DocumentLock()
-            locks[standardizedURL] = newLock
-            return newLock
-        }
-        return try documentLock.withLock(body)
-    }
 }

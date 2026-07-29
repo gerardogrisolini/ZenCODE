@@ -1,4 +1,8 @@
 import Foundation
+import ToolCore
+#if os(macOS)
+import XcodeToolsFeature
+#endif
 @testable import ZenCODECore
 
 /// Builds a tool call through the same descriptor-owned presentation contract

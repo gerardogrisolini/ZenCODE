@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 28/06/26.
 //
 
+import ToolCore
 #if os(macOS)
 import Foundation
 @testable import ZenCODECore

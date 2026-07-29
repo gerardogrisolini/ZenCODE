@@ -21,6 +21,7 @@ import Foundation
 import Synchronization
 @testable import ZenCODECore
 import Testing
+import ToolCore
 
 /// Collects every JSON-RPC message the bridge writes, so assertions run against
 /// the real wire output of `ACPWriter`.

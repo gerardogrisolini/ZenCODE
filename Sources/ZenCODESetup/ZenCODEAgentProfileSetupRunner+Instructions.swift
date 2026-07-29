@@ -5,6 +5,7 @@
 
 import Dispatch
 import Foundation
+import ToolCore
 import ZenCODECore
 
 extension ZenCODEAgentProfileSetupRunner {

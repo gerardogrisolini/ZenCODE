@@ -1,8 +1,10 @@
 import Foundation
+import Synchronization
 @testable import BrowserToolsFeature
 @testable import ZenCODECore
 import FeatureKit
 import Testing
+import ToolCore
 
 @Suite
 struct BrowserToolsFeatureTests {
@@ -916,20 +918,15 @@ struct BrowserToolsFeatureTests {
     }
 }
 
-private final class EventRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: [CDPEvent] = []
+private final class EventRecorder: Sendable {
+    private let storage = Mutex<[CDPEvent]>([])
 
     func append(_ event: CDPEvent) {
-        lock.lock()
-        storage.append(event)
-        lock.unlock()
+        storage.withLock { $0.append(event) }
     }
 
     var events: [CDPEvent] {
-        lock.lock()
-        defer { lock.unlock() }
-        return storage
+        storage.withLock { $0 }
     }
 }
 

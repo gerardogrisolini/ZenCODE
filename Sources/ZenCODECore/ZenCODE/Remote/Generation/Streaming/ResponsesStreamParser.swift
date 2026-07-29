@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import ToolCore
 
 /// Parser for the `/responses` streaming endpoint.
 public enum ResponsesStreamParser {

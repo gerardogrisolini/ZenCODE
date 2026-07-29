@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension DirectToolExecutor {
     /// Tool names that route through the destructive-operation authorization

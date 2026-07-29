@@ -43,7 +43,7 @@ public final class MemoryService {
     /// A process-wide coordinator is required because callers commonly create a
     /// fresh `MemoryService` per tool execution. An instance lock would still
     /// permit two instances to lose one another's read-modify-write update.
-    static let documentWriteCoordinator = MemoryDocumentWriteCoordinator.shared
+    static let documentWriteCoordinator = FileTransactionCoordinator.shared
 
     public init(
         fileManager: FileManager = .default

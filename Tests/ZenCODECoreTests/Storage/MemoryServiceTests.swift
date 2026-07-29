@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 import ZenCODECore
 import Testing
 
@@ -242,6 +243,42 @@ struct MemoryServiceTests {
     }
 
     @Test
+    func savedSessionsIndexRetainsConcurrentWritesAcrossInstances() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
+        let storeDirectoryURL = rootURL.appendingPathComponent("store", isDirectory: true)
+        let writeCount = 64
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let barrier = SavedSessionsWriteBarrier(participantCount: writeCount)
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<writeCount {
+                group.addTask {
+                    let directoryURL = index.isMultiple(of: 2)
+                        ? storeDirectoryURL
+                        : storeDirectoryURL.appendingPathComponent(".")
+                    let store = SavedSessionsStore(directoryURL: directoryURL)
+                    await barrier.wait()
+                    try store.recordSavedSession(
+                        projectPath: rootURL.appendingPathComponent("project-\(index)").path,
+                        sessionName: "checkpoint \(index)",
+                        sessionID: "session-\(index)",
+                        savedAt: Date(timeIntervalSince1970: TimeInterval(index))
+                    )
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        let sessions = SavedSessionsStore(directoryURL: storeDirectoryURL).sessions()
+        #expect(sessions.count == writeCount)
+        #expect(Set(sessions.map(\.sessionID)) == Set((0..<writeCount).map { "session-\($0)" }))
+        #expect(Set(sessions.map(\.projectPath)).count == writeCount)
+    }
+
+    @Test
     func memorySearchReturnsProjectEntries() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
@@ -330,5 +367,32 @@ struct MemoryServiceTests {
         ]))
         #expect(Set(profiles.map(\.id)).count == profiles.count)
         #expect(try AgentProfileStore.developerProfile(in: profiles).name == "Developer")
+    }
+}
+
+
+private actor SavedSessionsWriteBarrier {
+    private let participantCount: Int
+    private var arrivedCount = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(participantCount: Int) {
+        self.participantCount = participantCount
+    }
+
+    func wait() async {
+        arrivedCount += 1
+        guard arrivedCount < participantCount else {
+            let waitingTasks = waiters
+            waiters.removeAll()
+            for waiter in waitingTasks {
+                waiter.resume()
+            }
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
     }
 }

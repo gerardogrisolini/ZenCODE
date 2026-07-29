@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension DirectSubAgentRuntime {
     private static let agentIdentifier = ToolPresentationValueDefinition.collected([

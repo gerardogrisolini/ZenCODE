@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension SessionTaskOrchestrator {
     public func claimTasks(

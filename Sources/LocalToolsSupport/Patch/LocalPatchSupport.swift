@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension LocalToolsSupport {
     // MARK: - Unified diff support

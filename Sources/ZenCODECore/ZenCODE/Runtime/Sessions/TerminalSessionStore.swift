@@ -7,6 +7,7 @@
 
 import Crypto
 import Foundation
+import ToolCore
 
 public struct TerminalSavedSessionContextWindow: Codable, Equatable, Sendable {
     public let usedTokens: Int?

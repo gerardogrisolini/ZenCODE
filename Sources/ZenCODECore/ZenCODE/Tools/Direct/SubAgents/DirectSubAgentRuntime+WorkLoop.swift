@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension DirectSubAgentRuntime {
     public func queuePrompt(_ prompt: String, for agentID: String) throws {

@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if os(macOS)
+import XcodeToolsFeature
+#endif
 
 public struct AgentsContextDocument: Hashable, Sendable {
     public enum Scope: String, Hashable, Sendable {

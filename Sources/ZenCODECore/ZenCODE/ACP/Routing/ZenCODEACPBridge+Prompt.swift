@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension ZenCODEACPBridge {
     public func prompt(id: JSONValue?, params: [String: Any]) async throws {

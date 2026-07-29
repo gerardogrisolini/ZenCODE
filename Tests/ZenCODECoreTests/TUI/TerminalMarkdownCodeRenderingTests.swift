@@ -3,6 +3,7 @@
 //  ZenCODE
 //
 
+import Foundation
 import Markdown
 import Testing
 @testable import ZenCODECore

@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public actor DirectTaskToolAdapter {
     private var orchestrator: SessionTaskOrchestrator

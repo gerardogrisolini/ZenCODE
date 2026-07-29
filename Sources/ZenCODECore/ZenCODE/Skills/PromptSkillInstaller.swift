@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public struct PromptSkillInstallResult: Sendable {
     public let skill: PromptSkill

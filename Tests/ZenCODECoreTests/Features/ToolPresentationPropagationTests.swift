@@ -1,6 +1,7 @@
 import Foundation
 @testable import ZenCODECore
 import Testing
+import ToolCore
 
 @Suite
 struct ToolPresentationPropagationTests {

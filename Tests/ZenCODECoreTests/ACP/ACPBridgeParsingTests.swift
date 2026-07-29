@@ -10,6 +10,7 @@ import Foundation
 @testable import XcodeToolsFeature
 @testable import ZenCODECore
 import Testing
+import ToolCore
 
 extension ACPCompatibilityTests {
     @Test

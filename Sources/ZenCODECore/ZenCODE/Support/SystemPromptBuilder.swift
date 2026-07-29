@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public struct SystemPromptRequest: Sendable {
     public let baseSection: String

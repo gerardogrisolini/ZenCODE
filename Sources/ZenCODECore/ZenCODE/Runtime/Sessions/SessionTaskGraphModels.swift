@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public enum TaskGraphSource: Codable, Equatable, Sendable {
     case manual

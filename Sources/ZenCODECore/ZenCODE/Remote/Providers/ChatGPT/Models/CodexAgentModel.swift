@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public struct CodexAgentCredentials: Codable, Equatable, Sendable {
     public let accessToken: String

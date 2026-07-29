@@ -6,6 +6,10 @@
 //
 
 import Foundation
+import ToolCore
+#if os(macOS)
+import XcodeToolsFeature
+#endif
 
 public struct AgentProfileManifest: Codable, Sendable {
     public static let currentVersion = 1

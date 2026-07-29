@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension DirectSubAgentRuntime {
     public static func systemPrompt(

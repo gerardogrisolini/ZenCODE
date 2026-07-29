@@ -275,4 +275,45 @@ struct StdioLineReaderTests {
             ) == ["alpha", "beta"]
         )
     }
+
+    @Test
+    func acpLineStreamDeliversLinesInOrderAndFinishesAtEOF() async throws {
+        let pipe = Self.makePipe()
+        defer { close(pipe.read) }
+        let reader = StdioLineReader(fileDescriptor: pipe.read)
+
+        // The final request has no newline. ACP must receive it before EOF ends
+        // the stream, and the stream must retain the stdin order verbatim.
+        Self.writeText("first\nsecond\npartial", to: pipe.write)
+        close(pipe.write)
+
+        var lines: [String] = []
+        for await line in AgentRuntimeLauncher.acpLineStream(reader: reader) {
+            lines.append(line)
+        }
+
+        #expect(lines == ["first", "second", "partial"])
+        #expect(reader.hasReachedEndOfInput)
+    }
+
+    @Test
+    func cancellingACPReadSignalsTheDispatchBridgeToken() async throws {
+        let pipe = Self.makePipe()
+        defer {
+            close(pipe.read)
+            close(pipe.write)
+        }
+        let reader = StdioLineReader(fileDescriptor: pipe.read)
+
+        let task = Task(name: "StdioLineReaderTests.ACP-cancellation") {
+            await AgentRuntimeLauncher.readACPLineOffCooperativePool(reader: reader)
+        }
+        // Order the cancel after the real `poll` has started. This verifies the
+        // dispatch bridge's token rather than the early-cancel entry guard.
+        await terminalWaitUntil { reader.pollWaitCount > 0 }
+        task.cancel()
+
+        #expect(await task.value == nil)
+        #expect(!reader.hasReachedEndOfInput)
+    }
 }

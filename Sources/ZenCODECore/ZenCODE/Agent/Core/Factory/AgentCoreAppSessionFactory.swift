@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public struct AgentCoreAppSessionRequest: Sendable {
     public let sessionID: String

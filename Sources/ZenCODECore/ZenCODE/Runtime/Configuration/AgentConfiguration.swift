@@ -13,6 +13,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import ToolCore
 
 public enum AgentRunMode: String, Sendable {
     case automatic

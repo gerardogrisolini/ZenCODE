@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public enum SessionTaskOrchestratorError: LocalizedError, Equatable {
     case invalidSessionID
@@ -1011,7 +1012,9 @@ public actor SessionTaskOrchestrator {
         // continuation existed (i.e. until the consumer happened to terminate).
         continuation.onTermination = { [weak self] _ in
             guard let self else { return }
-            Task { await self.removeEventContinuation(sessionID: sessionID, id: observerID) }
+            Task(name: "SessionTaskOrchestrator.removeEventContinuation") {
+                await self.removeEventContinuation(sessionID: sessionID, id: observerID)
+            }
         }
         return stream
     }

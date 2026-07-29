@@ -182,7 +182,7 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 self.loadContinuation = continuation
                 self.didResume = false
-                self.timeoutTask = Task { [weak self] in
+                self.timeoutTask = Task(name: "WebTools.navigation-timeout") { [weak self] in
                     try? await Task.sleep(nanoseconds: UInt64(navigationBudget * 1_000_000_000))
                     self?.resume(.failure(WebToolsFeatureError.permissionDenied(
                         "Timed out loading the page after \(Int(navigationBudget))s."
@@ -191,7 +191,7 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
                 self.webView.load(URLRequest(url: url))
             }
         } onCancel: {
-            Task { @MainActor [weak self] in
+            Task(name: "WebTools.navigation-cancellation") { @MainActor [weak self] in
                 self?.webView.stopLoading()
                 self?.resume(.failure(CancellationError()))
             }

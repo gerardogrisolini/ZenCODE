@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public struct RemoteToolCallAccumulator {
     public struct PartialToolCall {

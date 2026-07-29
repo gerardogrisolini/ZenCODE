@@ -7,6 +7,9 @@
 
 import Foundation
 import ZenPackageMetadata
+#if os(macOS)
+import XcodeToolsFeature
+#endif
 
 /// Static metadata and tool declarations for features distributed with ZenCODE.
 enum SwiftBundledFeatureCatalog {

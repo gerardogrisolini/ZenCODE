@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension DirectTodoRuntime {
     private static let taskExecutionSchema = #"{"type":"object","properties":{"executor":{"type":"string","enum":["coordinator","sub_agent"]},"profile":{"type":"string"},"role":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}},"tool_names":{"type":"array","items":{"type":"string"}},"fileScopes":{"type":"array","items":{"type":"string"}},"file_scopes":{"type":"array","items":{"type":"string"}}}}"#

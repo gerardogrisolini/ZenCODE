@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 #if canImport(Darwin) || canImport(Glibc)
 public enum GitExecutableResolver {

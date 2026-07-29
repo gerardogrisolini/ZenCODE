@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension SwiftFeatureRuntime {
     static func manifestURL(from url: URL) -> URL {

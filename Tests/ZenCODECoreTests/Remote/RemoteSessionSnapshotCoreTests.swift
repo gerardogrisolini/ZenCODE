@@ -11,6 +11,7 @@ import CryptoKit
 #endif
 @testable import ZenCODECore
 import Testing
+import ToolCore
 
 extension RemoteSessionSnapshotTests {
     @Test

@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 import ZenCODECore
 
 extension ZenCODESetupRunner {

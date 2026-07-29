@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension ChatGPTSubscriptionResponsesClient {
     /// Exact server error emitted when a Responses WebSocket reaches its

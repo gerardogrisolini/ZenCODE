@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public actor ACPWriter {
     /// Sink for encoded JSON-RPC messages. Injectable so tests can observe the

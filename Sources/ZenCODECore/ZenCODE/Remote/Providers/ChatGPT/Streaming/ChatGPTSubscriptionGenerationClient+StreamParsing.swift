@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 #if canImport(os)
 import os
 #endif

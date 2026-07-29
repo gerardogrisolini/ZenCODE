@@ -17,6 +17,7 @@ import Foundation
 import Synchronization
 @testable import ZenCODECore
 import Testing
+import ToolCore
 
 /// One-shot gate that also reports when production code reached it, so a test
 /// can pin a handler at an exact suspension point instead of sleeping.

@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 30/05/26.
 //
 
+import FeatureMCPBridgeKit
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -15,6 +16,10 @@ import NIOPosix
 import Synchronization
 @testable import ZenCODECore
 import Testing
+import ToolCore
+#if os(macOS)
+import XcodeToolsFeature
+#endif
 
 extension RemoteSessionSnapshotTests {
     func remoteHistory() -> [AgentRuntimeMessage] {

@@ -200,10 +200,10 @@ actor RemoteWebSocketDriver {
         outbound: NIOAsyncChannelOutboundWriter<WebSocketFrame>
     ) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask {
+            group.addTask(name: "Remote WebSocket write loop") {
                 try await self.serviceWrites(outbound: outbound)
             }
-            group.addTask {
+            group.addTask(name: "Remote WebSocket read loop") {
                 try await self.serviceReads(
                     inbound: inbound,
                     outbound: outbound

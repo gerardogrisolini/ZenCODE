@@ -6,10 +6,10 @@
 //
 
 import Foundation
+import Synchronization
 import ToolCore
 #if os(macOS)
 import Network
-import Synchronization
 
 public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
     public let redirectURL: URL
@@ -77,7 +77,7 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
 
     public func waitForCallback(timeout: TimeInterval) async throws -> MCPOAuthCallback {
         try await withThrowingTaskGroup(of: MCPOAuthCallback.self) { group in
-            group.addTask {
+            group.addTask(name: "MCP OAuth callback wait") {
                 try await withTaskCancellationHandler {
                     try await withCheckedThrowingContinuation { continuation in
                         let bufferedResult = self.state.withLock { state -> Result<MCPOAuthCallback, Error>? in
@@ -116,7 +116,7 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
                 }
             }
 
-            group.addTask {
+            group.addTask(name: "MCP OAuth callback timeout") {
                 let timeoutNanoseconds = UInt64(max(timeout, 1) * 1_000_000_000)
                 try await Task.sleep(nanoseconds: timeoutNanoseconds)
                 throw MCPClientError.browserAuthenticationFailed(

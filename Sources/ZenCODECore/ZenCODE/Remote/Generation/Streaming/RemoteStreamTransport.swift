@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 /// Stateless HTTP/SSE transport helpers for remote generation streaming.
 public enum RemoteStreamTransport {

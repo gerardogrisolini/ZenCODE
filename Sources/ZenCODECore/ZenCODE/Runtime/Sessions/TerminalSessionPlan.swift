@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public enum TerminalSessionPlanPointStatus: String, Codable, Equatable, Sendable {
     case pending

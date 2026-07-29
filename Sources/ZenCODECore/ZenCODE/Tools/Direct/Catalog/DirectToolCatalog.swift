@@ -5,8 +5,10 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
+import FeatureKit
 import Foundation
 import LocalToolsSupport
+import ToolCore
 
 public struct DirectToolDescriptor: Sendable {
     public let name: String

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 /// Compatibility name retained for callers compiled against the former combined
 /// todo/task runtime. Task state now lives in `SessionTaskOrchestrator` and is

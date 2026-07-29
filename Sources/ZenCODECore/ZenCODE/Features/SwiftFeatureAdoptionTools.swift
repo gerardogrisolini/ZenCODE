@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension SwiftFeatureRuntime {
     func adoptFeature(

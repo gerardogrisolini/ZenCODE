@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension DirectToolExecutor {
     public func executeThrowing(

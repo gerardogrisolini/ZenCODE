@@ -8,6 +8,7 @@
 import Foundation
 import FeatureKit
 import LocalToolsSupport
+import ToolCore
 
 extension DirectToolExecutor {
     public static func isCoreLocalFileOrTextToolName(_ toolName: String) -> Bool {

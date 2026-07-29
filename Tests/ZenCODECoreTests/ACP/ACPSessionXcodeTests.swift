@@ -9,6 +9,10 @@ import Foundation
 @testable import FeatureMCPBridgeKit
 @testable import ZenCODECore
 import Testing
+import ToolCore
+#if os(macOS)
+import XcodeToolsFeature
+#endif
 
 extension ACPCompatibilityTests {
     @Test

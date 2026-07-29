@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public struct AgentToolTurnTranscriptToolCall {
     public let name: String

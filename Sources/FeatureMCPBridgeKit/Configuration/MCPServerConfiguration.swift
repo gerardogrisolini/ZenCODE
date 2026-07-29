@@ -12,10 +12,10 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
+import Synchronization
 import ToolCore
 #if canImport(Network)
 import Network
-import Synchronization
 #endif
 
 public nonisolated struct MCPBrowserOAuthConfiguration: Hashable, Sendable {

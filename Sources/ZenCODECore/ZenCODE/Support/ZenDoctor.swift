@@ -11,6 +11,7 @@ import Darwin
 import Glibc
 #endif
 import Foundation
+import ToolCore
 import ZenPackageMetadata
 
 /// Outcome of a single diagnostic check.

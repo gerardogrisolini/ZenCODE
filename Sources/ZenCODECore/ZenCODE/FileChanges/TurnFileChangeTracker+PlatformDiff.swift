@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 #if canImport(Darwin) || canImport(Glibc)
 extension TurnFileChangeTracker {

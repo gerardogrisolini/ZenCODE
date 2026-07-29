@@ -1,3 +1,5 @@
+import FeatureMCPBridgeKit
+import ToolCore
 //
 //  LinuxXcodeToolCompatibility.swift
 //  ZenCODE
@@ -7,8 +9,6 @@
 
 #if !os(macOS)
 import Foundation
-import FeatureMCPBridgeKit
-import ToolCore
 
 /// Source-compatible Xcode types used by shared session APIs on platforms
 /// where the Xcode feature target is intentionally absent.

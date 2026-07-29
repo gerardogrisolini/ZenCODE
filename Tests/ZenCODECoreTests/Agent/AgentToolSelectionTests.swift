@@ -8,6 +8,9 @@
 import Foundation
 @testable import ZenCODECore
 import Testing
+#if os(macOS)
+import XcodeToolsFeature
+#endif
 
 extension AgentConfigurationTests {
     @Test

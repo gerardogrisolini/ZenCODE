@@ -49,17 +49,7 @@ public enum AgentRuntimeLauncher {
             backendFactory: backendFactory
         )
         let reader = StdioLineReader()
-        let lines = AsyncStream<String> { continuation in
-            let task = Task.detached {
-                while let line = reader.readLine() {
-                    continuation.yield(line)
-                }
-                continuation.finish()
-            }
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
-        }
+        let lines = acpLineStream(reader: reader)
 
         await withDiscardingTaskGroup { group in
             for await line in lines {
@@ -75,7 +65,7 @@ public enum AgentRuntimeLauncher {
                 // point before the next line is dequeued, preserving the order
                 // in which ACP requests enter the bridge (e.g. a session/cancel
                 // read after session/prompt reaches the actor in that order).
-                group.addImmediateTask {
+                group.addImmediateTask(name: "ZenCODE.ACP.handle-line") {
                     await bridge.handleLine(trimmedLine)
                 }
             }
@@ -86,6 +76,40 @@ public enum AgentRuntimeLauncher {
             // writer.failAllPending() before the group's implicit barrier waits
             // for its remaining children, which would otherwise hang.
             await bridge.shutdown()
+        }
+    }
+
+    /// Produces ACP input lines without running the blocking stdin read on a
+    /// Swift concurrency worker.
+    ///
+    /// The producer task itself only awaits ``readACPLineOffCooperativePool``.
+    /// That bridge runs the `poll`/`read` transaction on its dedicated Dispatch
+    /// queue and signals its token when this stream is terminated. Consequently,
+    /// cancellation cannot leave a producer task parked on the cooperative pool
+    /// or prevent the reader from finishing after EOF.
+    static func acpLineStream(reader: StdioLineReader) -> AsyncStream<String> {
+        AsyncStream { continuation in
+            let task = Task(name: "ZenCODE.ACP.stdin-reader") {
+                while let line = await readACPLineOffCooperativePool(reader: reader) {
+                    continuation.yield(line)
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    /// Performs one cancellation-aware stdin read on the Dispatch-backed
+    /// blocking-read bridge shared with terminal input.
+    ///
+    /// This intentionally passes the bridge token into `StdioLineReader`: task
+    /// cancellation is not visible from the dedicated Dispatch queue, so the
+    /// poll loop must receive the token explicitly to release that thread.
+    static func readACPLineOffCooperativePool(reader: StdioLineReader) async -> String? {
+        await TerminalBlockingRead.run { token in
+            reader.readLine(shouldCancel: token.isCancelled)
         }
     }
 }

@@ -8,6 +8,7 @@ import Foundation
 import FoundationNetworking
 #endif
 import Synchronization
+import ToolCore
 
 extension RemoteModelCatalogClient {
     func shouldEnrichWithHuggingFace(baseURL: String) -> Bool {

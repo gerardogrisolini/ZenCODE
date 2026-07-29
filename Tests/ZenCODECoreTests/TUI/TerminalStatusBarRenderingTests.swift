@@ -6,24 +6,20 @@
 //
 
 import Foundation
+import Synchronization
 import Testing
 @testable import ZenCODECore
 
 /// Thread-safe buffer that captures all text written to the injected output sink.
-private final class CapturedOutput: @unchecked Sendable {
-    private let lock = NSLock()
-    private var items: [String] = []
+private final class CapturedOutput: Sendable {
+    private let items = Mutex<[String]>([])
 
     func append(_ text: String) {
-        lock.lock()
-        items.append(text)
-        lock.unlock()
+        items.withLock { $0.append(text) }
     }
 
     var writes: [String] {
-        lock.lock()
-        defer { lock.unlock() }
-        return items
+        items.withLock { $0 }
     }
 
     var combined: String {
@@ -31,15 +27,11 @@ private final class CapturedOutput: @unchecked Sendable {
     }
 
     var count: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return items.count
+        items.withLock { $0.count }
     }
 
     func clear() {
-        lock.lock()
-        items.removeAll()
-        lock.unlock()
+        items.withLock { $0.removeAll() }
     }
 }
 

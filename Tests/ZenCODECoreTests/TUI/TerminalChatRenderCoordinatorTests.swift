@@ -5,6 +5,7 @@
 
 import Foundation
 import Testing
+import ToolCore
 @testable import ZenCODECore
 
 @Suite("Terminal chat async render coordinator")

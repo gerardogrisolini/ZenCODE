@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public enum AgentCoreSessionRunnerError: LocalizedError, Equatable {
     case missingSessionSnapshot(String)

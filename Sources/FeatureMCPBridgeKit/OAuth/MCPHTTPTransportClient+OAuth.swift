@@ -69,7 +69,7 @@ extension MCPHTTPTransportClient {
         )
         try await callbackServer.start()
 
-        let callbackTask = Task {
+        let callbackTask = Task(name: "MCP browser OAuth callback") {
             try await callbackServer.waitForCallback(timeout: oauthConfiguration.callbackTimeout)
         }
 

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {

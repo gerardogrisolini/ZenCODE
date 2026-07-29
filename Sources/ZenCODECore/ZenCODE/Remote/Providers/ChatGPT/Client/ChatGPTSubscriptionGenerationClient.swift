@@ -7,6 +7,7 @@
 
 import Foundation
 import Synchronization
+import ToolCore
 #if canImport(CryptoKit)
 import CryptoKit
 #else

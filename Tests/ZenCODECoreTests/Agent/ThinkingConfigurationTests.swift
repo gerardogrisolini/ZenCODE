@@ -6,6 +6,7 @@
 import Foundation
 @testable import ZenCODECore
 import Testing
+import ToolCore
 
 struct ThinkingConfigurationTests {
     @Test

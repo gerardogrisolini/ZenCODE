@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif

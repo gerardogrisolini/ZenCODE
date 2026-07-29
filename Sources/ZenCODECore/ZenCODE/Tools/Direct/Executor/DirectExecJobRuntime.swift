@@ -9,6 +9,7 @@
 import FeatureKit
 import Foundation
 import Synchronization
+import ToolCore
 
 #if os(macOS)
 import Darwin

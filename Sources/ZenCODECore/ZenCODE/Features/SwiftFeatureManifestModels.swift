@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public enum SwiftFeatureBundleSource: String, Codable, Hashable, Sendable {
     case bundled

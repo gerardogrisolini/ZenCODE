@@ -814,12 +814,12 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         to task: any ChatGPTSubscriptionWebSocketTask
     ) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask {
+            group.addTask(name: "ChatGPT WebSocket readiness ping") {
                 // Unlike an idle heartbeat, readiness owns the connection and
                 // must let timeout cancellation force-close a stuck write.
                 try await task.sendPing()
             }
-            group.addTask {
+            group.addTask(name: "ChatGPT WebSocket readiness timeout") {
                 try await Task.sleep(
                     nanoseconds: defaultConnectionReadinessPingTimeoutNanoseconds
                 )

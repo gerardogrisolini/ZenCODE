@@ -9,6 +9,7 @@ import Foundation
 import Synchronization
 @testable import ZenCODECore
 import Testing
+import ToolCore
 
 extension RemoteSessionSnapshotTests {
     @Test

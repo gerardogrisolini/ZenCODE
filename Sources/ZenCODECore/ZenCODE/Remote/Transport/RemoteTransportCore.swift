@@ -466,10 +466,10 @@ public final class RemoteTransportCore: Sendable {
             throw RemoteTransportError.timeout
         }
         return try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
+            group.addTask(name: "Remote transport operation") {
                 try await operation()
             }
-            group.addTask {
+            group.addTask(name: "Remote transport timeout") {
                 try await Task.sleep(for: timeout)
                 throw RemoteTransportError.timeout
             }

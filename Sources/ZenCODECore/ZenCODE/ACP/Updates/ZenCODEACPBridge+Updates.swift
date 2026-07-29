@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension ZenCODEACPBridge {
     public func sendUserMessageChunk(sessionID: String, text: String) async {

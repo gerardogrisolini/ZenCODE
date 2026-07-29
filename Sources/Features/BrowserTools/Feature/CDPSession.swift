@@ -556,7 +556,7 @@ final class CDPSession: Sendable {
     }
 
     private func sleep(milliseconds ms: Int) async throws {
-        try await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
+        try await Task.sleep(for: .milliseconds(ms))
     }
 }
 

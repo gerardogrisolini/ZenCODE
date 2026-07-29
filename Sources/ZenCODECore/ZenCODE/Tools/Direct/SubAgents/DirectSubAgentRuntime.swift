@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public typealias DirectSubAgentBackendFactory = @Sendable () -> any AgentRuntimeBackend
 public typealias DirectSubAgentContextualBackendFactory = @Sendable (

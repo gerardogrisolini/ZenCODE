@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 func jsonString(from value: Any) -> String {
     AgentJSONSupport.jsonString(from: value)

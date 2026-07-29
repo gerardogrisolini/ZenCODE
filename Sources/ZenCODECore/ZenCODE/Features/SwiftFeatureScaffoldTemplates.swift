@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension SwiftFeatureRuntime {
     enum ScaffoldTemplate {

@@ -6,6 +6,10 @@
 //
 
 import Foundation
+import ToolCore
+#if os(macOS)
+import XcodeToolsFeature
+#endif
 
 extension ZenCODEACPBridge {
     public func initialize(id: JSONValue?, params: [String: Any]) async throws {

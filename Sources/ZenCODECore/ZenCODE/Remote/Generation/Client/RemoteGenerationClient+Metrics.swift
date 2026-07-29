@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension RemoteGenerationClient {
     public static func integerValue(_ value: Any?) -> Int? {

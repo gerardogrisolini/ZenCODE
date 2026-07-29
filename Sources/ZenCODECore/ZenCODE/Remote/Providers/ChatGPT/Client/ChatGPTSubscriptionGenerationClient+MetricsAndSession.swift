@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 #if canImport(os)
 import os
 #endif

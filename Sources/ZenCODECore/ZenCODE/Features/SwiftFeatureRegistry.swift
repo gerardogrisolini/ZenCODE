@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public enum SwiftFeatureStateStore {
     public static let stateFilename = "feature-state.json"

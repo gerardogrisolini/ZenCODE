@@ -12,6 +12,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import ToolCore
 
 public enum PromptContentFormatter {
     public static func renderPromptText(from blocks: [Any]) -> String {
