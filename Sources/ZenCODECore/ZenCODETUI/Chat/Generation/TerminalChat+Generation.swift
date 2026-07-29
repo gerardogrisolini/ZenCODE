@@ -39,6 +39,10 @@ extension TerminalChat {
         let telegramProgressReporter = telegramControlState.isActive
             ? makeTelegramTurnProgressReporter(for: attempt.origin)
             : nil
+        // Publish the turn's channel so the authorization handler enqueues its
+        // permission dialogue in the same order as the tool activity.
+        activeTelegramProgressReporter = telegramProgressReporter
+        defer { activeTelegramProgressReporter = nil }
         do {
             var sessionConfiguration = await currentSessionConfiguration()
             if case .plan = attempt.purpose {
@@ -105,6 +109,7 @@ extension TerminalChat {
                     case let .thought(message):
                         await transcriptTurn.appendThought(message)
                         await self.writeThought(message)
+                        await telegramProgressReporter?.reportThought(message)
                     case let .modelLoaded(modelID):
                         await self.printModelIfNeeded(modelID)
                     case let .metrics(metrics):
@@ -139,6 +144,10 @@ extension TerminalChat {
                     case let .toolCallCompleted(toolCall, result):
                         await transcriptTurn.appendToolCallCompleted(toolCall, result: result)
                         await self.writeToolCallCompleted(toolCall, result: result)
+                        await telegramProgressReporter?.reportToolResult(
+                            toolCall,
+                            result: result
+                        )
                         if !result.isFailure,
                            let update = Self.planPointUpdates(from: toolCall) {
                             switch attempt.purpose {

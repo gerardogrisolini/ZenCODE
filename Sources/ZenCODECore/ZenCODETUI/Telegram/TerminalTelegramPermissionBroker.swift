@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 enum TerminalTelegramPermissionDecision: Sendable, Equatable {
     case allowOnce
@@ -30,9 +31,36 @@ enum TerminalTelegramPermissionMessageResult: Sendable, Equatable {
     }
 }
 
+/// Outcome of a remote authorization request.
+///
+/// The handler contract is a `Bool`, but the terminal needs the reason behind a
+/// refusal to tell the local operator whether the remote user declined, never
+/// answered, or never received the request at all.
+enum TerminalTelegramPermissionOutcome: Sendable, Equatable {
+    /// The tool is not gated, or a previous decision already covers it.
+    case notRequired
+    case allowedOnce
+    case allowedAlways
+    case denied
+    case timedOut
+    /// The request could not be delivered to Telegram, so nobody could answer it.
+    case undeliverable
+    case cancelled
+
+    var isApproved: Bool {
+        switch self {
+        case .notRequired, .allowedOnce, .allowedAlways:
+            return true
+        case .denied, .timedOut, .undeliverable, .cancelled:
+            return false
+        }
+    }
+}
+
 private enum TerminalTelegramPermissionResolution: Sendable, Equatable {
     case decision(TerminalTelegramPermissionDecision)
     case timedOut
+    case undeliverable
     case cancelled
 }
 
@@ -50,19 +78,39 @@ actor TerminalTelegramPermissionBroker {
     private var nextRequestCounter = 0
     private var pendingRequests: [String: PendingRequest] = [:]
     private var pendingRequestIDsByChat: [Int64: [String]] = [:]
+    /// Session-scoped "always" decisions, keyed exactly like the terminal
+    /// authorizer's cache so the same command approved remotely is not asked
+    /// again through a different surface.
+    private var alwaysAllowedKeys = Set<String>()
 
+    /// Returns `true` when this request needs no remote dialogue: either the
+    /// tool is not gated, or a previous decision already covers it.
+    func isAlreadyAuthorized(_ request: AgentToolAuthorizationRequest) -> Bool {
+        guard LocalExecPermissionAuthorizer.gatedToolNames.contains(request.toolName) else {
+            return true
+        }
+        if Self.permissionCacheKeys(for: request).allSatisfy(alwaysAllowedKeys.contains) {
+            return true
+        }
+        return request.toolName == "local.exec"
+            && LocalExecPermissionAuthorizer.isCommandPersistentlyAllowed(request.command)
+    }
+
+    /// Requests remote authorization for a gated tool call.
+    ///
+    /// The gated set is the terminal authorizer's set — shell commands plus the
+    /// destructive direct tools — so a remote turn cannot silently perform an
+    /// operation that a local turn would have to confirm.
     func authorize(
         _ request: AgentToolAuthorizationRequest,
         chatID: Int64,
         timeoutNanoseconds: UInt64 = TerminalTelegramPermissionBroker.defaultTimeoutNanoseconds,
-        sendMessage: @escaping @Sendable (String) async -> Void
-    ) async -> Bool {
-        guard request.toolName == "local.exec" else {
-            return true
+        sendMessage: @escaping @Sendable (String) async -> Bool
+    ) async -> TerminalTelegramPermissionOutcome {
+        guard !isAlreadyAuthorized(request) else {
+            return .notRequired
         }
-        if LocalExecPermissionAuthorizer.isCommandPersistentlyAllowed(request.command) {
-            return true
-        }
+        let cacheKeys = Self.permissionCacheKeys(for: request)
 
         let requestID = newRequestID()
         let resolution = await withTaskCancellationHandler(
@@ -83,10 +131,19 @@ actor TerminalTelegramPermissionBroker {
 
                     let message = Self.permissionRequestMessage(
                         requestID: requestID,
-                        request: request
+                        request: request,
+                        timeoutNanoseconds: timeoutNanoseconds
                     )
                     Task(name: "ZenCODE.Telegram.permission-request") {
-                        await sendMessage(message)
+                        // A request nobody received must fail closed at once
+                        // instead of holding the turn until the timeout.
+                        guard await sendMessage(message) else {
+                            self.resolveRequest(
+                                id: requestID,
+                                resolution: .undeliverable
+                            )
+                            return
+                        }
                     }
                 }
             },
@@ -99,15 +156,43 @@ actor TerminalTelegramPermissionBroker {
 
         switch resolution {
         case .decision(.allowOnce):
-            return true
+            return .allowedOnce
         case .decision(.allowAlways):
-            LocalExecPermissionAuthorizer.persistAllowedCommand(request.command)
-            return true
-        case .decision(.deny), .cancelled:
-            return false
+            alwaysAllowedKeys.formUnion(cacheKeys)
+            if request.toolName == "local.exec" {
+                LocalExecPermissionAuthorizer.persistAllowedCommand(request.command)
+            }
+            return .allowedAlways
+        case .decision(.deny):
+            return .denied
+        case .cancelled:
+            return .cancelled
+        case .undeliverable:
+            return .undeliverable
         case .timedOut:
-            await sendMessage(Self.permissionTimedOutMessage(requestID: requestID))
-            return false
+            _ = await sendMessage(Self.permissionTimedOutMessage(requestID: requestID))
+            return .timedOut
+        }
+    }
+
+    /// Mirrors ``LocalExecPermissionAuthorizer``'s cache identity so both
+    /// surfaces agree on what a previous "always" decision already covers.
+    private static func permissionCacheKeys(
+        for request: AgentToolAuthorizationRequest
+    ) -> [String] {
+        let identities: [String]
+        if request.toolName == "local.exec" {
+            let parsedIdentities = LocalExecPermissionAuthorizer
+                .localExecPermissionCacheIdentities(for: request.command)
+            identities = parsedIdentities.isEmpty ? [request.command] : parsedIdentities
+        } else {
+            identities = [request.command]
+        }
+        return identities.map {
+            LocalExecPermissionAuthorizer.permissionCacheKey(
+                toolName: request.toolName,
+                identity: $0
+            )
         }
     }
 
@@ -115,7 +200,7 @@ actor TerminalTelegramPermissionBroker {
         _ text: String,
         chatID: Int64
     ) -> TerminalTelegramPermissionMessageResult {
-                let pendingIDs = pendingRequestIDs(for: chatID)
+        let pendingIDs = pendingRequestIDs(for: chatID)
         guard !pendingIDs.isEmpty else {
             guard Self.permissionCommand(from: text) != nil else {
                 return .notHandled
@@ -195,25 +280,48 @@ actor TerminalTelegramPermissionBroker {
 
     static func permissionRequestMessage(
         requestID: String,
-        request: AgentToolAuthorizationRequest
+        request: AgentToolAuthorizationRequest,
+        timeoutNanoseconds: UInt64 = TerminalTelegramPermissionBroker.defaultTimeoutNanoseconds
     ) -> String {
-        """
-        Permission required
-        Request ID: \(requestID)
+        var lines = [
+            "🔐 Permission required",
+            "Request ID: \(requestID)",
+            "",
+            request.title.nilIfBlank ?? "ZenCODE wants to run a gated operation.",
+            "",
+            "Tool:",
+            request.toolName,
+            "",
+            "Directory:",
+            request.workingDirectory,
+            "",
+            "Command:",
+            request.command,
+            ""
+        ]
+        if let deadline = Self.timeoutDescription(timeoutNanoseconds) {
+            lines.append("Reply within \(deadline):")
+        } else {
+            lines.append("Reply with:")
+        }
+        lines.append(contentsOf: [
+            "/allow \(requestID) — allow once",
+            "/always \(requestID) — allow always",
+            "/deny \(requestID) — reject"
+        ])
+        return lines.joined(separator: "\n")
+    }
 
-        ZenCODE wants to run a local command with access to the workspace.
-
-        Directory:
-        \(request.workingDirectory)
-
-        Command:
-        \(request.command)
-
-        Reply with:
-        /allow \(requestID) — allow once
-        /always \(requestID) — allow always
-        /deny \(requestID) — reject
-        """
+    private static func timeoutDescription(_ timeoutNanoseconds: UInt64) -> String? {
+        guard timeoutNanoseconds > 0 else {
+            return nil
+        }
+        let seconds = Int(timeoutNanoseconds / 1_000_000_000)
+        guard seconds >= 60 else {
+            return seconds <= 0 ? nil : "\(seconds)s"
+        }
+        let minutes = seconds / 60
+        return minutes == 1 ? "1 minute" : "\(minutes) minutes"
     }
 
     private func newRequestID() -> String {
@@ -286,26 +394,26 @@ actor TerminalTelegramPermissionBroker {
     ) -> String {
         switch decision {
         case .allowOnce:
-            return "Permission \(requestID) allowed once. Running command."
+            return "✅ Permission \(requestID) allowed once. Continuing."
         case .allowAlways:
-            return "Permission \(requestID) allowed always. Running command."
+            return "✅ Permission \(requestID) allowed always. Continuing."
         case .deny:
-            return "Permission \(requestID) denied. Command will not run."
+            return "⛔ Permission \(requestID) denied. The operation will not run."
         }
     }
 
     private static func permissionTimedOutMessage(requestID: String) -> String {
-        "Permission \(requestID) timed out. Command will not run."
+        "⌛ Permission \(requestID) timed out. The operation will not run."
     }
 
     private static func pendingPermissionReminder(requestIDs: [String]) -> String {
         """
-        Permission request pending.
+        🔐 Permission request pending.
         Reply with /allow \(requestIDs.first, default: "ID"), /always \(requestIDs.first, default: "ID"), or /deny \(requestIDs.first, default: "ID").
         """
     }
 
-        private static func ambiguousPermissionRequestMessage(requestIDs: [String]) -> String {
+    private static func ambiguousPermissionRequestMessage(requestIDs: [String]) -> String {
         "Multiple permission requests are pending. Include the request ID: \(requestIDs.joined(separator: ", "))."
     }
 

@@ -42,6 +42,19 @@ public actor LocalExecPermissionAuthorizer {
 
     public init() {}
 
+    /// Returns `true` when this request needs no dialog: either the tool is not
+    /// gated, or a previous decision already covers it.
+    ///
+    /// Surfaces that mirror the session elsewhere (Telegram) use this to avoid
+    /// announcing a consent step that will never be presented.
+    public func isAlreadyAuthorized(_ request: AgentToolAuthorizationRequest) -> Bool {
+        guard Self.gatedToolNames.contains(request.toolName) else {
+            return true
+        }
+        loadPersistedAllowedCommandsIfNeeded()
+        return permissionCacheKeys(for: request).allSatisfy(alwaysAllowedKeys.contains)
+    }
+
     public func authorize(_ request: AgentToolAuthorizationRequest) async -> Bool {
         guard Self.gatedToolNames.contains(request.toolName) else {
             return true

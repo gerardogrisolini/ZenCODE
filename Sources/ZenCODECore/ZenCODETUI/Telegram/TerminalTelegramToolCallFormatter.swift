@@ -8,13 +8,25 @@ import ToolCore
 
 /// Formats a `DirectAgentToolCall` into a concise, safe Telegram progress message.
 ///
-/// The formatter is transport-agnostic: it only inspects the tool name and its
-/// `argumentsObject`. It prioritises file paths (converting absolute paths inside
-/// the working directory to workspace-relative form), then falls back to a small
-/// allowlist of contextual fields for tools that do not operate on files.
+/// The tool identity is rendered with the shared `ToolCallPresentation` icon, so
+/// a call is recognisable in the same way on both surfaces, and every message a
+/// turn produces travels on one ordered channel
+/// (``TerminalTelegramTurnProgressReporter``) so tool activity, permission
+/// dialogue and outcomes cannot arrive interleaved.
+///
+/// The detail line intentionally keeps this transport's own extraction instead
+/// of the resolved presentation target the TUI renders. The terminal is a local
+/// surface; a Telegram chat is remote, and the resolved target embeds
+/// caller-controlled content (the whole `local.exec` command line, sub-agent
+/// prompts, complete path lists). Extraction here therefore prioritises file
+/// paths — converting absolute paths inside the working directory to
+/// workspace-relative form — and then falls back to a small allowlist of
+/// contextual fields for tools that do not operate on files.
+///
 /// Sensitive argument fields (file contents, full patches, prompts, old/new
-/// text, environment maps) are never serialized. Allowed contextual values
-/// (commands, patterns, queries, URLs) are truncated but not redacted; they
+/// text, environment maps) are never serialized, and unknown/custom tools are
+/// described by name only. Allowed contextual values (commands reduced to their
+/// leading token, patterns, queries, URLs) are truncated but not redacted; they
 /// may contain operational data visible to the Telegram recipient.
 enum TerminalTelegramToolCallFormatter {
 
@@ -25,17 +37,50 @@ enum TerminalTelegramToolCallFormatter {
     /// - Parameters:
     ///   - toolCall: The direct-agent tool call to describe.
     ///   - workingDirectory: The session working directory used to shorten absolute paths.
-    /// - Returns: A message whose first line is always `🔧 <tool-name>`.
+    /// - Returns: A message whose first line is always `<icon> <tool-name>`.
     static func format(
         _ toolCall: DirectAgentToolCall,
         workingDirectory: URL
     ) -> String {
-        let header = "🔧 \(toolCall.name)"
+        let header = "\(ToolCallPresentation.toolIcon(for: toolCall.name)) \(toolCall.name)"
 
         guard let detail = detail(for: toolCall, workingDirectory: workingDirectory) else {
             return header
         }
         return "\(header)\n\(detail)"
+    }
+
+    /// Returns the Telegram message for a tool call that did not complete.
+    ///
+    /// Successful calls stay silent: the start message already told the remote
+    /// operator what is running, and echoing every completion would double the
+    /// traffic of a turn. Only failures change what the operator needs to know.
+    static func formatFailure(
+        _ toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult
+    ) -> String {
+        let icon = result.isPermissionDenied ? "⛔" : "⚠️"
+        let header = "\(icon) \(toolCall.name) failed"
+        guard let summary = failureSummary(for: result) else {
+            return header
+        }
+        return "\(header)\n\(summary)"
+    }
+
+    private static func failureSummary(for result: DirectAgentToolResult) -> String? {
+        let text = result.summary.nilIfBlank ?? result.output.nilIfBlank
+        guard let text else {
+            return nil
+        }
+        let firstLine = text
+            .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let firstLine, !firstLine.isEmpty else {
+            return nil
+        }
+        return Self.truncatedValue(firstLine, limit: 200)
     }
 
     // MARK: - Detail extraction

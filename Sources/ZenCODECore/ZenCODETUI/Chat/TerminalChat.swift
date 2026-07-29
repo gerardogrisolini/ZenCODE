@@ -117,6 +117,10 @@ public final class TerminalChat {
     public var telegramControlState = TerminalTelegramControlState.inactive()
     public var telegramLinkedChatID: Int64?
     public var telegramLinkedChatTitle: String?
+    /// Ordered Telegram channel of the turn currently generating, when that
+    /// turn's progress is mirrored to the linked chat. Permission dialogue is
+    /// enqueued here so it cannot overtake the tool activity that raised it.
+    var activeTelegramProgressReporter: TerminalTelegramTurnProgressReporter?
     public let voiceRecordingService = TerminalVoiceRecordingService()
     public var activeVoiceRecordingSession: TerminalVoiceRecordingSession?
     var optionalCommandAvailability = TerminalOptionalCommandAvailability.load()

@@ -254,11 +254,86 @@ struct TelegramTUITests {
         #expect(terminal.makeTelegramTurnProgressReporter(for: .local) == nil)
     }
 
+    /// While Telegram mirrors the session every turn owns an authorization
+    /// handler: a mirrored turn must never fall back to a terminal dialog that
+    /// the remote operator cannot answer, and the local operator must not lose
+    /// the dialog for prompts they typed themselves.
+    @Test
+    func telegramInstallsAuthorizationHandlerForMirroredTurns() throws {
+        let terminal = try Self.activeTelegramTerminal()
+
+        #expect(terminal.telegramToolAuthorizationHandler(for: .telegram(chatID: 42)) != nil)
+        #expect(terminal.telegramToolAuthorizationHandler(for: .local) != nil)
+        #expect(terminal.telegramToolAuthorizationHandler(for: .telegram(chatID: 43)) == nil)
+
+        terminal.telegramControlState.isActive = false
+        #expect(terminal.telegramToolAuthorizationHandler(for: .local) == nil)
+        #expect(terminal.telegramToolAuthorizationHandler(for: .telegram(chatID: 42)) == nil)
+    }
+
+    /// Gated tools are the terminal authorizer's set, and a remote turn that
+    /// cannot be asked is denied instead of silently approved.
+    @Test
+    func telegramTurnGatesDestructiveToolsAndFailsClosed() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let deleteRequest = Self.authorizationRequest(
+            toolName: "local.delete",
+            title: "Delete Sources/Old.swift",
+            kind: "destructive",
+            command: "delete Sources/Old.swift"
+        )
+
+        #expect(DirectToolExecutor.destructiveGatedToolNames.allSatisfy(
+            LocalExecPermissionAuthorizer.gatedToolNames.contains
+        ))
+
+        // Tools outside the gated set keep running without any dialogue.
+        let readApproved = await terminal.authorizeTelegramToolRequest(
+            Self.authorizationRequest(
+                toolName: "local.readFile",
+                title: "Read Sources/Main.swift",
+                kind: "read",
+                command: "read Sources/Main.swift"
+            ),
+            origin: .telegram(chatID: 42)
+        )
+        #expect(readApproved)
+
+        // The chat that submitted the prompt can no longer be asked: refuse
+        // rather than perform an unconfirmed destructive operation.
+        terminal.telegramControlState.isActive = false
+        let deleteApproved = await terminal.authorizeTelegramToolRequest(
+            deleteRequest,
+            origin: .telegram(chatID: 42)
+        )
+        #expect(!deleteApproved)
+    }
+
+    private static func activeTelegramTerminal() throws -> TerminalChat {
+        let configuration = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
+        )
+        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false)
+        terminal.telegramLinkedChatID = 42
+        terminal.telegramControlState = TerminalTelegramControlState(
+            isConfigured: true,
+            isActive: true,
+            statusText: "Active",
+            botUsername: nil,
+            lastError: nil,
+            lastMessagePreview: nil
+        )
+        return terminal
+    }
+
     @Test
     func telegramProgressReporterPublishesToolCalls() async {
         let collector = TelegramTestMessageCollector()
         let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
             await collector.append(message)
+            return true
         }
 
         await reporter.reportAssistantContent("Controllo il file ")
@@ -275,7 +350,88 @@ struct TelegramTUITests {
         #expect(
             await collector.allMessages() == [
                 "Controllo il file prima di modificarlo.",
-                "🔧 local.readFile\nSources/Main.swift"
+                "🛠️ local.readFile\nSources/Main.swift"
+            ]
+        )
+    }
+
+    /// Reasoning, narration, tool activity and the permission dialogue raised by
+    /// that tool share one queue, so the remote transcript keeps the order the
+    /// turn actually had.
+    @Test
+    func telegramProgressReporterPublishesThinkingAndKeepsTurnOrder() async {
+        let collector = TelegramTestMessageCollector()
+        let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
+            await collector.append(message)
+            return true
+        }
+
+        await reporter.reportThought("Valuto ")
+        await reporter.reportThought("quale file leggere.")
+        await reporter.reportAssistantContent("Ora leggo il file.")
+        await reporter.reportToolCall(
+            toolCall(
+                "local.readFile",
+                arguments: ["path": "/Users/dev/MyProject/Sources/Main.swift"]
+            ),
+            workingDirectory: Self.formatterWorkingDirectory
+        )
+        #expect(await reporter.send("🔐 Permission required\nRequest ID: A1"))
+        await reporter.flush()
+
+        #expect(
+            await collector.allMessages() == [
+                "💭 Valuto quale file leggere.",
+                "Ora leggo il file.",
+                "🛠️ local.readFile\nSources/Main.swift",
+                "🔐 Permission required\nRequest ID: A1"
+            ]
+        )
+    }
+
+    /// Trailing reasoning still reaches the chat: it is published at the end of
+    /// the turn instead of being dropped with the narration.
+    @Test
+    func telegramProgressReporterPublishesTrailingThinking() async {
+        let collector = TelegramTestMessageCollector()
+        let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
+            await collector.append(message)
+            return true
+        }
+
+        await reporter.reportThought("Nessun tool serve.")
+        await reporter.reportAssistantContent("Questa è la risposta finale.")
+        await reporter.flush()
+
+        #expect(await collector.allMessages() == ["💭 Nessun tool serve."])
+    }
+
+    @Test
+    func telegramProgressReporterPublishesOnlyFailedToolResults() async {
+        let collector = TelegramTestMessageCollector()
+        let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
+            await collector.append(message)
+            return true
+        }
+        let call = toolCall("local.exec", arguments: ["command": "swift build"])
+
+        await reporter.reportToolResult(
+            call,
+            result: DirectAgentToolResult(output: "ok", summary: "ok")
+        )
+        await reporter.reportToolResult(
+            call,
+            result: DirectAgentToolResult(
+                output: "Tool error: build failed\nsecond line",
+                summary: "build failed",
+                status: .failed
+            )
+        )
+        await reporter.flush()
+
+        #expect(
+            await collector.allMessages() == [
+                "⚠️ local.exec failed\nbuild failed"
             ]
         )
     }
@@ -285,6 +441,7 @@ struct TelegramTUITests {
         let collector = TelegramTestMessageCollector()
         let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
             await collector.append(message)
+            return true
         }
 
         await reporter.reportAssistantContent("Questa è la risposta finale.")
@@ -338,6 +495,7 @@ struct TelegramTUITests {
                 timeoutNanoseconds: 5_000_000_000
             ) { message in
                 await collector.append(message)
+                return true
             }
         }
 
@@ -357,7 +515,84 @@ struct TelegramTUITests {
         if case let .handled(replyText) = reply {
             #expect(replyText?.contains("allowed once") == true)
         }
-        #expect(await authorization.value)
+        #expect(await authorization.value == .allowedOnce)
+    }
+
+    /// The destructive direct tools are gated exactly like `local.exec`, so a
+    /// remote turn can no longer perform them without being asked.
+    @Test
+    func telegramPermissionBrokerAsksForDestructiveTools() async throws {
+        let broker = TerminalTelegramPermissionBroker()
+        let collector = TelegramTestMessageCollector()
+        let request = Self.authorizationRequest(
+            toolName: "local.delete",
+            title: "Delete Sources/Old.swift",
+            kind: "destructive",
+            command: "delete Sources/Old.swift"
+        )
+
+        #expect(!(await broker.isAlreadyAuthorized(request)))
+
+        let authorization = Task {
+            await broker.authorize(
+                request,
+                chatID: 42,
+                timeoutNanoseconds: 5_000_000_000
+            ) { message in
+                await collector.append(message)
+                return true
+            }
+        }
+
+        let message = await collector.firstMessage()
+        #expect(message.contains("Permission required"))
+        #expect(message.contains("local.delete"))
+        #expect(message.contains("Delete Sources/Old.swift"))
+        let requestID = try #require(Self.telegramPermissionRequestID(in: message))
+
+        _ = await broker.handleMessage("/deny \(requestID)", chatID: 42)
+        #expect(await authorization.value == .denied)
+    }
+
+    /// A request that never reached the chat must fail closed immediately
+    /// instead of holding the turn until the timeout expires.
+    @Test
+    func telegramPermissionBrokerFailsClosedWhenRequestCannotBeDelivered() async {
+        let broker = TerminalTelegramPermissionBroker()
+        let request = Self.localExecAuthorizationRequest(
+            command: "undeliverable-\(UUID().uuidString) --flag"
+        )
+
+        let outcome = await broker.authorize(
+            request,
+            chatID: 42,
+            timeoutNanoseconds: 600_000_000_000
+        ) { _ in
+            false
+        }
+
+        #expect(outcome == .undeliverable)
+        #expect(!outcome.isApproved)
+    }
+
+    /// A tool outside the gated set never raises a remote dialogue.
+    @Test
+    func telegramPermissionBrokerSkipsUngatedTools() async {
+        let broker = TerminalTelegramPermissionBroker()
+        let request = Self.authorizationRequest(
+            toolName: "local.readFile",
+            title: "Read Sources/Main.swift",
+            kind: "read",
+            command: "read Sources/Main.swift"
+        )
+
+        #expect(await broker.isAlreadyAuthorized(request))
+        let outcome = await broker.authorize(request, chatID: 42) { _ in
+            Issue.record("An ungated tool must not raise a permission request.")
+            return true
+        }
+        #expect(outcome == .notRequired)
+        #expect(outcome.isApproved)
     }
 
     @Test
@@ -374,12 +609,26 @@ struct TelegramTUITests {
     }
 
     private static func localExecAuthorizationRequest(command: String) -> AgentToolAuthorizationRequest {
-        AgentToolAuthorizationRequest(
-            sessionID: "terminal-test",
-            toolCallID: "tool-call-test",
+        authorizationRequest(
             toolName: "local.exec",
             title: "Run \(command)",
             kind: "execute",
+            command: command
+        )
+    }
+
+    private static func authorizationRequest(
+        toolName: String,
+        title: String,
+        kind: String,
+        command: String
+    ) -> AgentToolAuthorizationRequest {
+        AgentToolAuthorizationRequest(
+            sessionID: "terminal-test",
+            toolCallID: "tool-call-test",
+            toolName: toolName,
+            title: title,
+            kind: kind,
             command: command,
             workingDirectory: "/tmp/project"
         )
@@ -431,14 +680,14 @@ struct TelegramTUITests {
     @Test
     func formatterAlwaysShowsConcreteToolNameAndKind() {
         // Empty arguments — header still identifies the tool.
-        #expect(format("local.readFile") == "🔧 local.readFile")
-        #expect(format("local.exec") == "🔧 local.exec")
+        #expect(format("local.readFile") == "🛠️ local.readFile")
+        #expect(format("local.exec") == "🛠️ local.exec")
 
         // kind == "other" for unknown tools.
-        #expect(format("custom.myTool") == "🔧 custom.myTool")
+        #expect(format("custom.myTool") == "🛠️ custom.myTool")
 
         // Tool with arguments but no recognized detail.
-        #expect(format("custom.myTool", arguments: ["verbosity": 3]) == "🔧 custom.myTool")
+        #expect(format("custom.myTool", arguments: ["verbosity": 3]) == "🛠️ custom.myTool")
     }
 
     @Test
@@ -447,13 +696,13 @@ struct TelegramTUITests {
             "local.readFile",
             arguments: ["path": "/Users/dev/MyProject/Sources/Main.swift"]
         )
-        #expect(readResult == "🔧 local.readFile\nSources/Main.swift")
+        #expect(readResult == "🛠️ local.readFile\nSources/Main.swift")
 
         let writeResult = format(
             "local.writeFile",
             arguments: ["file_path": "/Users/dev/MyProject/Tests/Helper.swift"]
         )
-        #expect(writeResult == "🔧 local.writeFile\nTests/Helper.swift")
+        #expect(writeResult == "🛠️ local.writeFile\nTests/Helper.swift")
     }
 
     @Test
@@ -465,7 +714,7 @@ struct TelegramTUITests {
                 "destinationPath": "/Users/dev/MyProject/New.swift"
             ]
         )
-        #expect(result == "🔧 local.move\nOld.swift → New.swift")
+        #expect(result == "🛠️ local.move\nOld.swift → New.swift")
     }
 
     @Test
@@ -480,7 +729,7 @@ struct TelegramTUITests {
                 ]
             ]
         )
-        #expect(result == "🔧 local.readFiles\nSources/A.swift (+2 more)")
+        #expect(result == "🛠️ local.readFiles\nSources/A.swift (+2 more)")
     }
 
     @Test
@@ -493,7 +742,7 @@ struct TelegramTUITests {
         +new line
         """
         let result = format("local.applyPatch", arguments: ["patch": patch])
-        #expect(result == "🔧 local.applyPatch\nSources/Old.swift (+1 more)")
+        #expect(result == "🛠️ local.applyPatch\nSources/Old.swift (+1 more)")
     }
 
     @Test
@@ -504,20 +753,20 @@ struct TelegramTUITests {
             "search.grep",
             arguments: ["pattern": "TODO", "path": "/Users/dev/MyProject"]
         )
-        #expect(grepResult == "🔧 search.grep\npattern: TODO")
+        #expect(grepResult == "🛠️ search.grep\npattern: TODO")
 
         // When path is a subdirectory, the path is shown instead.
         let grepSubdirResult = format(
             "search.grep",
             arguments: ["pattern": "TODO", "path": "/Users/dev/MyProject/Sources"]
         )
-        #expect(grepSubdirResult == "🔧 search.grep\nSources")
+        #expect(grepSubdirResult == "🛠️ search.grep\nSources")
 
         let globResult = format(
             "search.glob",
             arguments: ["pattern": "**/*.swift", "path": "/Users/dev/MyProject/Sources"]
         )
-        #expect(globResult == "🔧 search.glob\nSources")
+        #expect(globResult == "🛠️ search.glob\nSources")
     }
 
     @Test
@@ -528,7 +777,7 @@ struct TelegramTUITests {
             "local.exec",
             arguments: ["command": "swift test --filter MyTests"]
         )
-        #expect(result == "🔧 local.exec\ncommand: swift")
+        #expect(result == "🛠️ local.exec\ncommand: swift")
     }
 
     @Test
@@ -537,13 +786,13 @@ struct TelegramTUITests {
             "web.search",
             arguments: ["query": "swift concurrency"]
         )
-        #expect(searchResult == "🔧 web.search\nquery: swift concurrency")
+        #expect(searchResult == "🛠️ web.search\nquery: swift concurrency")
 
         let fetchResult = format(
             "web.fetch",
             arguments: ["url": "https://example.com/api"]
         )
-        #expect(fetchResult == "🔧 web.fetch\nurl: https://example.com/api")
+        #expect(fetchResult == "🛠️ web.fetch\nurl: https://example.com/api")
     }
 
     @Test
@@ -552,20 +801,20 @@ struct TelegramTUITests {
             "git.switch",
             arguments: ["branch": "feature/new-thing"]
         )
-        #expect(switchResult == "🔧 git.switch\nbranch: feature/new-thing")
+        #expect(switchResult == "🛠️ git.switch\nbranch: feature/new-thing")
 
         let showResult = format(
             "git.show",
             arguments: ["revision": "abc1234"]
         )
-        #expect(showResult == "🔧 git.show\nrevision: abc1234")
+        #expect(showResult == "🛠️ git.show\nrevision: abc1234")
 
         let commitResult = format(
             "git.commit",
             arguments: ["message": "Fix bug"]
         )
         // git.commit has no path, so it falls to contextual detail.
-        #expect(commitResult == "🔧 git.commit")
+        #expect(commitResult == "🛠️ git.commit")
     }
 
     @Test
@@ -574,13 +823,13 @@ struct TelegramTUITests {
             "tasks.create",
             arguments: ["title": "Implement feature X"]
         )
-        #expect(createResult == "🔧 tasks.create\ntitle: Implement feature X")
+        #expect(createResult == "🛠️ tasks.create\ntitle: Implement feature X")
 
         let updateResult = format(
             "tasks.update",
             arguments: ["id": "task-42", "status": "in_progress"]
         )
-        #expect(updateResult == "🔧 tasks.update\ntask: task-42")
+        #expect(updateResult == "🛠️ tasks.update\ntask: task-42")
     }
 
     @Test
@@ -589,7 +838,7 @@ struct TelegramTUITests {
             "feature.enable",
             arguments: ["id": "MyFeature"]
         )
-        #expect(enableResult == "🔧 feature.enable\nfeature: MyFeature")
+        #expect(enableResult == "🛠️ feature.enable\nfeature: MyFeature")
     }
 
     @Test
@@ -598,13 +847,13 @@ struct TelegramTUITests {
             "agent.create",
             arguments: ["name": "plan-author", "role": "Planner"]
         )
-        #expect(createResult == "🔧 agent.create\nagent: plan-author")
+        #expect(createResult == "🛠️ agent.create\nagent: plan-author")
 
         let messageResult = format(
             "agent.message",
             arguments: ["name": "plan-author", "message": "Continue work"]
         )
-        #expect(messageResult == "🔧 agent.message\nagent: plan-author")
+        #expect(messageResult == "🛠️ agent.message\nagent: plan-author")
     }
 
     @Test
@@ -613,7 +862,7 @@ struct TelegramTUITests {
             "custom.unknownTool",
             arguments: ["data": "whatever", "count": 42]
         )
-        #expect(result == "🔧 custom.unknownTool")
+        #expect(result == "🛠️ custom.unknownTool")
     }
 
     @Test
@@ -668,7 +917,7 @@ struct TelegramTUITests {
             arguments: ["command": "echo hello\necho world\n   echo test"]
         )
         // Newlines are collapsed, then only the first token is shown for local.exec.
-        #expect(result == "🔧 local.exec\ncommand: echo")
+        #expect(result == "🛠️ local.exec\ncommand: echo")
     }
 
     @Test
@@ -690,7 +939,7 @@ struct TelegramTUITests {
             "local.readFile",
             arguments: ["path": "Sources/Main.swift"]
         )
-        #expect(result == "🔧 local.readFile\nSources/Main.swift")
+        #expect(result == "🛠️ local.readFile\nSources/Main.swift")
     }
 
     @Test
@@ -700,7 +949,7 @@ struct TelegramTUITests {
             arguments: ["path": "/tmp/other/file.swift"]
         )
         // Path outside working directory stays absolute, not reduced to basename.
-        #expect(result == "🔧 local.readFile\n/tmp/other/file.swift")
+        #expect(result == "🛠️ local.readFile\n/tmp/other/file.swift")
     }
 
     @Test
@@ -714,7 +963,7 @@ struct TelegramTUITests {
                 "file_path": "/Users/dev/MyProject/Sources/Main.swift"
             ]
         )
-        #expect(result == "🔧 git.diff\nSources/Main.swift")
+        #expect(result == "🛠️ git.diff\nSources/Main.swift")
     }
 
     @Test
@@ -725,7 +974,7 @@ struct TelegramTUITests {
             "custom.upload",
             arguments: ["file": "API_KEY=secret"]
         )
-        #expect(result == "🔧 custom.upload")
+        #expect(result == "🛠️ custom.upload")
         #expect(!result.contains("API_KEY"))
         #expect(!result.contains("secret"))
     }
@@ -736,7 +985,7 @@ struct TelegramTUITests {
             "local.exec",
             arguments: ["command": "API_TOKEN=secret deploy --force"]
         )
-        #expect(result == "🔧 local.exec\ncommand: API_TOKEN=secret")
+        #expect(result == "🛠️ local.exec\ncommand: API_TOKEN=secret")
     }
 
     @Test
@@ -750,7 +999,7 @@ struct TelegramTUITests {
                 "file_paths": ["/Users/dev/MyProject/A.swift"]
             ]
         )
-        #expect(result == "🔧 local.readFiles\nA.swift")
+        #expect(result == "🛠️ local.readFiles\nA.swift")
     }
 
     @Test
@@ -765,7 +1014,7 @@ struct TelegramTUITests {
                 ])
             ]
         )
-        #expect(result == "🔧 local.readFiles\nA.swift (+1 more)")
+        #expect(result == "🛠️ local.readFiles\nA.swift (+1 more)")
     }
 
     @Test
@@ -774,7 +1023,7 @@ struct TelegramTUITests {
             "memory.search",
             arguments: ["query": "telegram formatter"]
         )
-        #expect(result == "🔧 memory.search\nquery: telegram formatter")
+        #expect(result == "🛠️ memory.search\nquery: telegram formatter")
     }
 
     @Test
@@ -783,7 +1032,7 @@ struct TelegramTUITests {
             "todo.write",
             arguments: ["title": "Fix bugs", "mode": "upsert"]
         )
-        #expect(result == "🔧 todo.write\ntitle: Fix bugs · mode: upsert")
+        #expect(result == "🛠️ todo.write\ntitle: Fix bugs · mode: upsert")
     }
 
     @Test
@@ -793,7 +1042,7 @@ struct TelegramTUITests {
             "git.grep",
             arguments: ["pattern": "TODO", "path": "/Users/dev/MyProject"]
         )
-        #expect(result == "🔧 git.grep\npattern: TODO")
+        #expect(result == "🛠️ git.grep\npattern: TODO")
     }
 
     @Test
@@ -804,7 +1053,7 @@ struct TelegramTUITests {
             arguments: ["path": "/tmp/file.swift"],
             workingDirectory: URL(fileURLWithPath: "/", isDirectory: true)
         )
-        #expect(result == "🔧 local.readFile\ntmp/file.swift")
+        #expect(result == "🛠️ local.readFile\ntmp/file.swift")
     }
 
     @Test
@@ -821,7 +1070,7 @@ struct TelegramTUITests {
                 ]
             ]
         )
-        #expect(result == "🔧 local.readFiles\nSources/A.swift (+1 more)")
+        #expect(result == "🛠️ local.readFiles\nSources/A.swift (+1 more)")
     }
 }
 

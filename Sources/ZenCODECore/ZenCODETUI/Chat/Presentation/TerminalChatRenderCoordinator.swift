@@ -402,7 +402,7 @@ actor TerminalChatRenderCoordinator {
             // Render the title one shade lighter than the dimmed thinking
             // body (`[90m`) so the label stands apart from the reasoning text.
             let title = standardErrorIsTerminal
-                ? "\u{1B}[38;5;247m🤔 Thinking:\u{1B}[0m"
+                ? "\u{1B}[38;5;144m🤔 Thinking:\u{1B}[0m"
                 : "🤔 Thinking:"
             writeStreamingChat("\(title)\n", to: .standardError)
         }
