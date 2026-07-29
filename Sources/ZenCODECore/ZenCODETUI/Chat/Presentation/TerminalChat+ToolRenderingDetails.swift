@@ -123,7 +123,8 @@ extension TerminalChat {
         let icon = ToolCallPresentation.toolIcon(for: toolCall.name)
         let toolName = sanitizedMetadataText(toolCall.name) ?? "tool"
         var rows: [DetailedToolRow] = [
-            .text("\(icon)  \(toolName)")
+            .text("\(icon)  \(toolName)"),
+            .text("kind: \(presentation.kind.rawValue)")
         ]
         if let action = presentation.action.flatMap(sanitizedMetadataText) {
             rows.append(.text("action: \(action)"))

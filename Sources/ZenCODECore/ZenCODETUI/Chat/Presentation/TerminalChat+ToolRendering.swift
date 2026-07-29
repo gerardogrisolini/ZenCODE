@@ -143,46 +143,14 @@ extension TerminalChat {
         contentInsetWidth: Int = 0,
         columnWidth: Int? = nil
     ) -> [String] {
-        let title = sanitizedMetadataText(
-            ToolCallPresentation.toolTitle(for: toolCall)
-        ) ?? sanitizedMetadataText(toolCall.name) ?? "tool"
+        let toolName = sanitizedMetadataText(toolCall.name) ?? "tool"
         let icon = ToolCallPresentation.toolIcon(for: toolCall.name)
-        guard let rawTarget = ToolCallPresentation.displayToolTarget(for: toolCall),
-              let target = sanitizedMetadataText(rawTarget),
-              title.hasSuffix(target) else {
-            return [
-                compactToolStatusLine(
-                    target: "\(icon)  \(title)",
-                    statusIcon: statusIcon,
-                    statusDetail: statusDetail,
-                    collapsesTargetWhitespace: false,
-                    contentInsetWidth: contentInsetWidth,
-                    columnWidth: columnWidth
-                )
-            ]
-        }
-
-        let action = title
-            .dropLast(target.count)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !action.isEmpty else {
-            return [
-                compactToolStatusLine(
-                    target: "\(icon)  \(title)",
-                    statusIcon: statusIcon,
-                    statusDetail: statusDetail,
-                    collapsesTargetWhitespace: false,
-                    contentInsetWidth: contentInsetWidth,
-                    columnWidth: columnWidth
-                )
-            ]
-        }
         return [
-            "\(icon)  \(action):",
             compactToolStatusLine(
-                target: target,
+                target: "\(icon)  \(toolName)",
                 statusIcon: statusIcon,
                 statusDetail: statusDetail,
+                collapsesTargetWhitespace: false,
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
             )

@@ -260,6 +260,107 @@ public nonisolated enum XcodeToolIntegration {
         }
     }
 
+    public static func presentation(for tool: ToolDescriptor) -> ToolPresentationDefinition {
+        let rawName = rawToolName(fromPublicName: tool.name)
+        let pathKeys = ["filePath", "file_path", "path"]
+        switch rawName {
+        case "XcodeWrite":
+            return .fileWrite(
+                title: tool.title ?? "Xcode file",
+                action: "Write",
+                targetKeyPaths: pathKeys,
+                contentKeyPaths: ["content", "text"]
+            )
+        case "XcodeUpdate":
+            return .fileEdit(
+                title: tool.title ?? "Xcode file",
+                action: "Edit",
+                targetKeyPaths: pathKeys
+            )
+        case "XcodeMakeDir":
+            return .standard(
+                title: tool.title ?? "Xcode directory",
+                action: "Create",
+                kind: .create,
+                targetKeyPaths: pathKeys,
+                targetFormat: .path
+            )
+        case "XcodeRM":
+            return .standard(
+                title: tool.title ?? "Xcode file",
+                action: "Delete",
+                kind: .delete,
+                targetKeyPaths: pathKeys,
+                targetFormat: .path
+            )
+        case "XcodeMV":
+            return ToolPresentationDefinition(
+                title: tool.title ?? "Xcode file",
+                action: "Move",
+                kind: .move,
+                target: .argument(
+                    ["destinationPath", "destination_path", "to"],
+                    format: .path
+                ),
+                metadata: [
+                    ToolPresentationMetadataDefinition(
+                        label: "from",
+                        value: .argument(
+                            ["sourcePath", "source_path", "from"],
+                            format: .path
+                        )
+                    )
+                ],
+                summary: ToolPresentationSummaryDefinition(
+                    value: .resultSummary(),
+                    strategy: .firstLine,
+                    label: "summary"
+                )
+            )
+        default:
+            break
+        }
+
+        let kind: ToolPresentationKind
+        switch presentationKind(for: tool.name) {
+        case "read": kind = .read
+        case "search": kind = .search
+        case "edit": kind = .edit
+        case "delete": kind = .delete
+        case "move": kind = .move
+        case "execute": kind = .execute
+        default: kind = .other
+        }
+        return .standard(
+            title: tool.title ?? rawName,
+            action: presentationAction(for: kind),
+            kind: kind,
+            targetKeyPaths: pathKeys + [
+                "scheme", "target", "workspacePath", "projectPath",
+                "tabIdentifier"
+            ],
+            targetFormat: kind == .read || kind == .edit || kind == .delete || kind == .move
+                ? .path
+                : .text
+        )
+    }
+
+    private static func presentationAction(for kind: ToolPresentationKind) -> String {
+        switch kind {
+        case .read: return "Read"
+        case .search: return "Search"
+        case .create: return "Create"
+        case .edit: return "Edit"
+        case .delete: return "Delete"
+        case .move: return "Move"
+        case .execute: return "Run"
+        case .inspect: return "Inspect"
+        case .communicate: return "Send"
+        case .manage: return "Manage"
+        case .other: return "Use"
+        }
+    }
+
     public static func matchedWorkspaceContext(
         in contexts: [XcodeWorkspaceContext],
         preferredWorkspaceRootURL: URL?

@@ -2,10 +2,9 @@
 //  AgentToolCompactRenderingTests.swift
 //  ZenCODE
 //
-//  Compact-rendering coverage for the `agent.*` delegation tools. These tools
-//  were previously invisible in compact mode (no target line) because their
-//  significant arguments (`message`, agent `name`/`profile`, the `agents`
-//  batch array) are not part of the generic file-path/command fallback.
+//  Compact-rendering coverage for the `agent.*` delegation tools. Compact rows
+//  consistently show the canonical tool name; semantic target extraction
+//  remains covered because it is also used by expanded and ACP presentations.
 //
 
 import Foundation
@@ -37,10 +36,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == [
-            "🛠️  Message:",
-            "worker: fix the tests ✅"
-        ])
+        #expect(lines == ["🛠️  agent.message ✅"])
     }
 
     @Test
@@ -67,10 +63,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == [
-            "🛠️  Message:",
-            "worker: fix the tests now ✅"
-        ])
+        #expect(lines == ["🛠️  agent.message ✅"])
     }
 
     @Test
@@ -92,10 +85,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == [
-            "🛠️  Message:",
-            "please review the diff ⏳"
-        ])
+        #expect(lines == ["🛠️  agent.message ⏳"])
     }
 
     @Test
@@ -140,10 +130,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == [
-            "🛠️  Create:",
-            "worker fix the tests ✅"
-        ])
+        #expect(lines == ["🛠️  agent.create ✅"])
     }
 
     @Test
@@ -200,10 +187,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == [
-            "🛠️  Create:",
-            "worker, builder ✅"
-        ])
+        #expect(lines == ["🛠️  agent.create ✅"])
     }
 
     @Test
@@ -330,10 +314,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == [
-            "🛠️  Get:",
-            "worker ✅"
-        ])
+        #expect(lines == ["🛠️  agent.get ✅"])
     }
 
     @Test
@@ -367,10 +348,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == [
-            "🛠️  List:",
-            "Agents ✅"
-        ])
+        #expect(lines == ["🛠️  agent.list ✅"])
     }
 
     // MARK: - Multi-recipient ids forms, status, precedence
@@ -480,10 +458,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == [
-            "🛠️  Message:",
-            "worker, builder: fix the tests ✅"
-        ])
+        #expect(lines == ["🛠️  agent.message ✅"])
     }
 
     @Test
@@ -522,10 +497,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == [
-            "🛠️  Close:",
-            "stale-worker ✅"
-        ])
+        #expect(lines == ["🛠️  agent.close ✅"])
     }
 
     @Test
@@ -564,10 +536,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == [
-            "🛠️  List:",
-            "idle ✅"
-        ])
+        #expect(lines == ["🛠️  agent.list ✅"])
     }
 
     // MARK: - Alias-conflict precedence (aligned with runtime lookup)

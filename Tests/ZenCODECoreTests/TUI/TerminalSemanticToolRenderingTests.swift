@@ -50,21 +50,18 @@ struct TerminalSemanticToolRenderingTests {
     }
 
     @Test
-    func compactRenderingUsesToolOwnedActionAndTarget() {
+    func compactRenderingUsesCanonicalToolName() {
         let lines = TerminalChat.compactToolLines(
             for: Self.call(),
             statusIcon: "⏳",
             columnWidth: 80
         )
 
-        #expect(lines.count == 2)
-        #expect(lines[0] == "🛠️  Edit:")
-        #expect(lines[1].contains("/tmp/App.swift"))
-        #expect(lines[1].hasSuffix("⏳"))
+        #expect(lines == ["🛠️  thirdparty.edit ⏳"])
     }
 
     @Test
-    func compactInspectFallsBackToItsSafeArgumentWhenTheToolDoesNotDeclareOne() {
+    func compactRenderingUsesCanonicalNameWhenTheToolDefinesAnInspectPresentation() {
         let call = DirectAgentToolCall(
             id: "inspect",
             name: "thirdparty.inspect",
@@ -84,14 +81,11 @@ struct TerminalSemanticToolRenderingTests {
             columnWidth: 80
         )
 
-        #expect(lines == [
-            "🛠️  Inspect:",
-            "node-42 ✅ 0.03s"
-        ])
+        #expect(lines == ["🛠️  thirdparty.inspect ✅ 0.03s"])
     }
 
     @Test
-    func compactListAndWriteUseTheirSemanticSubjectInsteadOfABareAction() throws {
+    func compactListAndWriteUseTheirCanonicalNames() throws {
         let listDescriptor = PromptSkillToolProvider.listToolDescriptor
         let writeDescriptor = try #require(
             DirectToolCatalog.memoryDescriptors.first { $0.name == "memory.write" }
@@ -101,13 +95,13 @@ struct TerminalSemanticToolRenderingTests {
                 listDescriptor,
                 [:],
                 "0.03s",
-                ["🛠️  List:", "Prompt skills ✅ 0.03s"]
+                ["🛠️  skills.list ✅ 0.03s"]
             ),
             (
                 writeDescriptor,
                 ["content": "Summary: completed"],
                 "0.01s",
-                ["🛠️  Write:", "Project memory ✅ 0.01s"]
+                ["🛠️  memory.write ✅ 0.01s"]
             )
         ]
 
@@ -133,7 +127,7 @@ struct TerminalSemanticToolRenderingTests {
     }
 
     @Test
-    func compactFileListInspectAndWriteShowTheirPathArgument() throws {
+    func compactFileListInspectAndWriteUseTheirCanonicalNames() throws {
         let cases: [(String, [String: Any], String, String, String)] = [
             (
                 "local.ls",
@@ -158,7 +152,7 @@ struct TerminalSemanticToolRenderingTests {
             )
         ]
 
-        for (name, arguments, action, path, duration) in cases {
+        for (name, arguments, _, path, duration) in cases {
             let descriptor = try #require(
                 DirectToolCatalog.filesystemDescriptors.first { $0.name == name }
             )
@@ -179,8 +173,7 @@ struct TerminalSemanticToolRenderingTests {
                     statusDetail: duration,
                     columnWidth: 100
                 ) == [
-                    "🛠️  \(action):",
-                    "\(path) ✅ \(duration)"
+                    "🛠️  \(name) ✅ \(duration)"
                 ]
             )
         }
@@ -211,10 +204,7 @@ struct TerminalSemanticToolRenderingTests {
         )
 
         #expect(
-            lines == [
-                "🛠️  List:",
-                "pending ✅ 0.02s"
-            ]
+            lines == ["🛠️  tasks.list ✅ 0.02s"]
         )
     }
 
@@ -238,7 +228,7 @@ struct TerminalSemanticToolRenderingTests {
             columnWidth: 80
         )
 
-        #expect(lines == ["🛠️  List:", "true ✅ 0.02s"])
+        #expect(lines == ["🛠️  feature.list ✅ 0.02s"])
     }
 
     @Test
@@ -254,12 +244,13 @@ struct TerminalSemanticToolRenderingTests {
             contentWidth: 100
         )
 
-        #expect(started.prefix(3) == [
+        #expect(started.prefix(4) == [
             "🛠️  thirdparty.edit",
+            "kind: edit",
             "action: Edit",
             "target: /tmp/App.swift"
         ])
-        #expect(!started.contains { $0.hasPrefix("kind:") })
+        #expect(started.contains("kind: edit"))
         #expect(started.contains("mode: replace"))
         #expect(started.contains("parameters:"))
         #expect(started.contains("change:"))

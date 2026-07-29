@@ -93,7 +93,7 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func compactEditToolLinesIncludeFileTarget() {
+    func compactToolLinesUseTheCanonicalName() {
         let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.editFile",
@@ -107,8 +107,7 @@ extension TerminalChatRenderingTests {
 
         let lines = TerminalChat.compactToolLines(for: toolCall, statusIcon: "⏳")
 
-        #expect(lines.contains("🛠️  Edit:"))
-        #expect(lines.contains { $0.contains("Sources/App.swift") })
+        #expect(lines == ["🛠️  local.editFile ⏳"])
     }
 
     @Test
@@ -194,7 +193,7 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func compactExecToolLinesCollapseMultilineCommand() {
+    func compactExecToolLinesUseTheCanonicalName() {
         let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.exec",
@@ -212,11 +211,7 @@ extension TerminalChatRenderingTests {
 
         let lines = TerminalChat.compactToolLines(for: toolCall, statusIcon: "✅")
 
-        #expect(lines.count == 2)
-        #expect(lines[0] == "🛠️  Run:")
-        #expect(lines[1].contains("python3 - <<'PY' from pathlib import Path"))
-        #expect(!lines[1].contains("\n"))
-        #expect(lines[1].hasSuffix(" ✅"))
+        #expect(lines == ["🛠️  local.exec ✅"])
     }
 
     @Test
@@ -258,7 +253,7 @@ extension TerminalChatRenderingTests {
         #expect(lines.contains("🛠️  local.readFile"))
         #expect(lines.contains("status: ⏳"))
         #expect(lines.last == "status: ⏳")
-        #expect(!lines.contains { $0.hasPrefix("kind:") })
+        #expect(lines.contains("kind: read"))
         #expect(lines.contains("action: Read"))
         #expect(lines.contains("target: /tmp/project/Sources/App.swift"))
         #expect(!lines.contains("rawInput:"))
@@ -288,7 +283,7 @@ extension TerminalChatRenderingTests {
         #expect(lines.contains("status: ✅"))
         #expect(lines.last == "status: ✅")
         #expect(lines.contains("🛠️  local.readFile"))
-        #expect(!lines.contains { $0.hasPrefix("kind:") })
+        #expect(lines.contains("kind: read"))
         #expect(lines.contains("summary: read 2 lines"))
         #expect(!lines.contains("rawOutput.output:"))
         #expect(!lines.contains("let value = 1"))

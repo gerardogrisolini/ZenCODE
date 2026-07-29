@@ -128,16 +128,17 @@ struct TerminalChatRenderCoordinatorTests {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
 
         #expect(containsCursorUpSequence(completionText))
-        #expect(visibleCompletionText.contains("⚠️  1.20s exit 7"))
+        #expect(visibleCompletionText.contains("1.20s"))
+        #expect(visibleCompletionText.contains("exit 7"))
         #expect(
             completionText.contains(
-                "⚠️  \(TerminalChat.toolDurationColor)1.20s\(TerminalChat.toolValueColor) exit 7"
+                "⚠️  \(TerminalChat.toolDurationColor)1.20s\(TerminalChat.toolTitleColor) exit 7"
             )
         )
         #expect(renderedLines.allSatisfy {
             TerminalChat.displayWidth($0) <= terminalColumns - 1
         })
-        #expect(started.activeCompactToolRenderedRowCount == 2)
+        #expect(started.activeCompactToolRenderedRowCount == 1)
     }
 
     @Test
@@ -1462,8 +1463,7 @@ struct TerminalChatRenderCoordinatorTests {
                 .joined()
         )
 
-        #expect(stderr.contains("🛠️  Wait:"))
-        #expect(stderr.contains("Agent ⏳"))
+        #expect(stderr.contains("🛠️  agent.wait ⏳"))
         #expect(stderr.components(separatedBy: "… 1 thinking lines omitted").count - 1 == 2)
         #expect(!stderr.contains("first hidden"))
         #expect(!stderr.contains("second hidden"))
@@ -2560,10 +2560,10 @@ struct TerminalChatToolBlockResizeTests {
                 "\u{1B}[\(started.activeDetailedToolRenderedRowCount)A\r"
             )
         )
-        // Expanded output identifies the exact invoked tool, not its broad
-        // presentation title or kind.
+        // Expanded output identifies the exact invoked tool and exposes its
+        // semantic kind as a detail row.
         #expect(completionText.contains("thirdparty.edit"))
-        #expect(!completionText.contains("kind:"))
+        #expect(completionText.contains("kind: edit"))
         #expect(completionText.contains("target: /tmp/App.swift"))
         #expect(completionText.contains("status: ✅"))
         #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))

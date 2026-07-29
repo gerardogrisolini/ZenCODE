@@ -450,7 +450,7 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func applyPatchCompactRenderingShowsPatchFileOnSeparateLine() {
+    func applyPatchCompactRenderingUsesCanonicalToolName() {
         let patch = """
         *** Begin Patch
         *** Update File: Sources/App.swift
@@ -472,10 +472,7 @@ struct TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == [
-            "🛠️  Apply:",
-            "Sources/App.swift ✅"
-        ])
+        #expect(lines == ["🛠️  local.applyPatch ✅"])
     }
 
     @Test
