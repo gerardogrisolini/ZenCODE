@@ -495,12 +495,13 @@ struct PlanCommandTests {
     }
 
     @Test
-    func defaultPlannerToolGroupsResolveToReadOnlySubAgentTools() throws {
+    func defaultPlannerToolGroupsResolveAvailableReadOnlySubAgentTools() throws {
         let planner = try #require(
             AgentProfileStore.defaultProfiles().first(where: TerminalChat.isPlannerProfile)
         )
 
         let tools = TerminalChat.plannerSubAgentToolNames(for: planner)
+        let resolvedProfileTools = planner.allowedToolNames()
 
         #expect(planner.tools == AgentProfileStore.plannerToolNames)
         #expect(!planner.tools.contains("shell"))
@@ -508,9 +509,12 @@ struct PlanCommandTests {
         #expect(tools.contains("local.readFile"))
         #expect(tools.contains("local.inspectFile"))
         #expect(tools.contains("search.locate"))
-        #expect(tools.contains("git.diff"))
+        // Bundled Git/Web features are optional in this test environment. When
+        // available, the Planner keeps their read-only tools; when unavailable,
+        // it must not advertise them.
+        #expect(tools.contains("git.diff") == resolvedProfileTools.contains("git.diff"))
         #expect(tools.contains("memory.read"))
-        #expect(tools.contains("web.search"))
+        #expect(tools.contains("web.search") == resolvedProfileTools.contains("web.search"))
         #expect(!tools.contains("local.exec"))
         #expect(!tools.contains("local.writeFile"))
         #expect(!tools.contains("git.add"))

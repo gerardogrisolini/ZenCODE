@@ -625,10 +625,9 @@ struct TerminalChatRenderCoordinatorTests {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
 
-        // The started block stays small: only the completion payload (which
-        // appears solely on completion for expanded mutation tools) far
-        // exceeds the scrolling region.
-        #expect(started.activeDetailedToolRenderedRowCount <= scrollableRows)
+        // Descriptor-owned write content is already known at start, so its
+        // expanded source section participates in the initial row accounting.
+        #expect(started.activeDetailedToolRenderedRowCount > scrollableRows)
         #expect(!containsCursorUpSequence(completionText))
         #expect(visibleRows.contains { $0.contains("status: ✅") })
         #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 80 })
@@ -1463,7 +1462,8 @@ struct TerminalChatRenderCoordinatorTests {
                 .joined()
         )
 
-        #expect(stderr.contains("🛠️  agent.wait ⏳"))
+        #expect(stderr.contains("🛠️  Wait:"))
+        #expect(stderr.contains("Agent ⏳"))
         #expect(stderr.components(separatedBy: "… 1 thinking lines omitted").count - 1 == 2)
         #expect(!stderr.contains("first hidden"))
         #expect(!stderr.contains("second hidden"))
@@ -1972,7 +1972,9 @@ struct TerminalChatRenderCoordinatorTests {
         let visibleRows = TerminalANSIText.stripANSI(completionText)
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
-        let diffRows = visibleRows.filter { $0.contains("let injected = 1") }
+        let diffRows = visibleRows.filter {
+            $0.contains("let injected = 1") && $0.contains("let replacement = 2")
+        }
 
         #expect(diffRows.count == 1)
         #expect(diffRows.allSatisfy { $0.contains("let replacement = 2") })
@@ -2025,7 +2027,7 @@ struct TerminalChatRenderCoordinatorTests {
         // No screen-clear or cursor-home sequence may survive anywhere.
         #expect(!text.contains("\u{1B}[2J"))
         #expect(!text.contains("\u{1B}[1;1H"))
-        #expect(visibleRows.contains { $0.contains("change: write ") })
+        #expect(visibleRows.contains { $0.hasPrefix("target: Sources/") })
         #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 100 })
     }
 
@@ -2060,7 +2062,7 @@ struct TerminalChatRenderCoordinatorTests {
             .map(String.init)
 
         #expect(!text.contains("\u{1B}[2J"))
-        #expect(visibleRows.contains { $0.hasPrefix("change: patch ") })
+        #expect(visibleRows.contains { $0.hasPrefix("target: Sources/") })
         #expect(visibleRows.filter { !$0.hasPrefix("  ") }.allSatisfy { !$0.contains("\u{1B}") })
         #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 100 })
     }
@@ -2107,13 +2109,13 @@ struct TerminalChatRenderCoordinatorTests {
                 .joined()
         )
 
-        // The `change: pending` row proves the alias is classified as a mutation
-        // at start time, and the completion rows come from the routed cases.
-        #expect(visibleText.contains("change: pending"))
-        #expect(visibleText.contains("change: delete Sources/Legacy.swift"))
-        #expect(visibleText.contains("change: move"))
+        // Descriptor-owned action/target metadata preserves the canonical Xcode
+        // operations at both start and completion without legacy change rows.
+        #expect(visibleText.contains("action: Delete"))
+        #expect(visibleText.contains("target: Sources/Legacy.swift"))
+        #expect(visibleText.contains("action: Move"))
         #expect(visibleText.contains("from: Sources/Old.swift"))
-        #expect(visibleText.contains("to: Sources/New.swift"))
+        #expect(visibleText.contains("target: Sources/New.swift"))
     }
 
     @Test
@@ -2155,9 +2157,9 @@ struct TerminalChatRenderCoordinatorTests {
         ] {
             #expect(!text.contains(rawSequence))
         }
-        #expect(visibleText.contains("change: move"))
+        #expect(visibleText.contains("action: Move"))
         #expect(visibleText.contains("from: Sources/Old LF_MARKER ESC_MARKER CR_MARKER TAB_MARKER C1_MARKER.swift"))
-        #expect(visibleText.contains("to: Sources/New.swift"))
+        #expect(visibleText.contains("target: Sources/New.swift"))
     }
 
     @Test
@@ -2207,9 +2209,10 @@ struct TerminalChatRenderCoordinatorTests {
                 .joined()
         )
 
-        // The empty payload has no numbered line; the literal one does.
-        #expect(emptyText.contains("<empty>"))
-        #expect(!emptyText.contains("1 │ <empty>"))
+        // An empty descriptor value is absent; a literal marker remains source
+        // content and receives its own numbered line.
+        #expect(emptyText.contains("target: Sources/Empty.swift"))
+        #expect(!emptyText.contains("<empty>"))
         #expect(literalText.contains("1 │ <empty>"))
     }
 

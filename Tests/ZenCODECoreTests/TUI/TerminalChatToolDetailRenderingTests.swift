@@ -107,7 +107,7 @@ extension TerminalChatRenderingTests {
 
         let lines = TerminalChat.compactToolLines(for: toolCall, statusIcon: "⏳")
 
-        #expect(lines.contains("🛠️  local.editFile:"))
+        #expect(lines.contains("🛠️  Edit:"))
         #expect(lines.contains { $0.contains("Sources/App.swift") })
     }
 
@@ -213,7 +213,7 @@ extension TerminalChatRenderingTests {
         let lines = TerminalChat.compactToolLines(for: toolCall, statusIcon: "✅")
 
         #expect(lines.count == 2)
-        #expect(lines[0] == "🛠️  local.exec:")
+        #expect(lines[0] == "🛠️  Run:")
         #expect(lines[1].contains("python3 - <<'PY' from pathlib import Path"))
         #expect(!lines[1].contains("\n"))
         #expect(lines[1].hasSuffix(" ✅"))
@@ -259,7 +259,8 @@ extension TerminalChatRenderingTests {
         #expect(lines.contains("status: ⏳"))
         #expect(lines.last == "status: ⏳")
         #expect(!lines.contains { $0.hasPrefix("kind:") })
-        #expect(lines.contains("location: /tmp/project/Sources/App.swift"))
+        #expect(lines.contains("action: Read"))
+        #expect(lines.contains("target: /tmp/project/Sources/App.swift"))
         #expect(!lines.contains("rawInput:"))
         #expect(!lines.contains { $0.contains("call_1") })
     }
@@ -392,7 +393,8 @@ extension TerminalChatRenderingTests {
             result: result
         )
 
-        #expect(lines.contains("change: write /tmp/project/Sources/App.swift"))
+        #expect(lines.contains("action: Write"))
+        #expect(lines.contains("target: /tmp/project/Sources/App.swift"))
         #expect(lines.contains("content:"))
         #expect(lines.contains("  1 │ struct App {"))
         #expect(lines.contains("  2 │     let value = 1"))
@@ -558,9 +560,11 @@ extension TerminalChatRenderingTests {
             for: toolCall
         )
 
-        #expect(lines.contains("change: pending"))
+        #expect(lines.contains("action: Apply"))
+        #expect(lines.contains("target: Sources/App.swift"))
+        #expect(lines.contains("patch:"))
+        #expect(lines.contains("  1 │ *** Begin Patch"))
         #expect(!lines.contains("parameters:"))
-        #expect(!lines.contains { $0.contains("*** Begin Patch") })
     }
 
     @Test
@@ -924,7 +928,8 @@ extension TerminalChatRenderingTests {
     @Test
     func expandedMetadataNeutralizesControlSequencesEndToEnd() {
         // Every caller-controllable path reaches the terminal through the same
-        // sanitization point: title, location, change rows and language hint.
+        // sanitization point: title, descriptor target, source sections and
+        // language hint.
         let hostilePath = "Sources/\u{1B}[2J\u{9B}31m\u{200B}App\u{7F}.swift"
         let toolCall = presentedToolCall(
             id: "hostile-path",
@@ -953,15 +958,17 @@ extension TerminalChatRenderingTests {
             #expect(!line.contains("\u{7F}"))
             #expect(!line.contains("\u{200B}"))
         }
-        #expect(startedLines.contains { $0.hasPrefix("location: ") })
-        #expect(completedLines.contains { $0.hasPrefix("change: write ") })
+        #expect(startedLines.contains { $0.hasPrefix("target: ") })
+        #expect(completedLines.contains { $0.hasPrefix("target: ") })
         #expect(TerminalChat.codeLanguageHint(for: toolCall) == "swift")
     }
 
     @Test
     func expandedPatchTargetIsSanitizedInChangeRowAndLanguageHint() {
         // The patch target is derived from the fully caller-controlled patch
-        // body, so it must be neutralized like any other metadata.
+        // body, so it must be neutralized like any other metadata. The
+        // descriptor deliberately marks patch payloads as `diff` regardless of
+        // the target extension.
         let toolCall = presentedToolCall(
             id: "hostile-patch",
             name: "local.applyPatch",
@@ -980,7 +987,7 @@ extension TerminalChatRenderingTests {
         #expect(changeRow?.contains("\u{1B}") == false)
         #expect(changeRow?.contains("\u{200E}") == false)
         #expect(sanitizedTarget?.contains("\u{1B}") == false)
-        #expect(TerminalChat.codeLanguageHint(for: toolCall) == "swift")
+        #expect(TerminalChat.codeLanguageHint(for: toolCall) == "diff")
 
         // A patch whose only target neutralizes to blank falls back rather than
         // rendering an empty or hostile target.
@@ -994,7 +1001,7 @@ extension TerminalChatRenderingTests {
             TerminalChat.appliedChangeDetailLines(for: blankTarget, contentWidth: 80).first
                 == "change: patch file"
         )
-        #expect(TerminalChat.codeLanguageHint(for: blankTarget) == nil)
+        #expect(TerminalChat.codeLanguageHint(for: blankTarget) == "diff")
     }
 
     @Test
@@ -1064,9 +1071,8 @@ extension TerminalChatRenderingTests {
 
     @Test
     func metadataOnlyMutationToolsHideRawParameters() {
-        // Metadata-only operations have terminal-safe `change:` rows just like
-        // source-bearing mutations have numbered snippets. Neither form should
-        // repeat the raw argument object in the expanded block.
+        // Metadata-only operations resolve to descriptor-owned action/target
+        // rows rather than raw parameter JSON.
         for name in [
             "local.delete", "local.move", "local.mkdir",
             "XcodeRM", "xcode.rm", "XcodeMV", "xcode.mv"
@@ -1076,7 +1082,7 @@ extension TerminalChatRenderingTests {
 
         let toolCall = presentedToolCall(
             id: "metadata-only-move",
-            name: "xcode.mv",
+            name: "xcode.XcodeMV",
             argumentsObject: [
                 "sourcePath": "Sources/Old.swift",
                 "destinationPath": "Sources/New.swift"
@@ -1087,14 +1093,17 @@ extension TerminalChatRenderingTests {
         let lines = TerminalChat.detailedToolBaseLines(for: toolCall)
 
         #expect(!lines.contains("parameters:"))
-        #expect(lines.contains { $0.hasPrefix("location: ") })
+        #expect(lines.contains("action: Move"))
+        #expect(lines.contains("target: Sources/New.swift"))
+        #expect(lines.contains("from: Sources/Old.swift"))
     }
 
     @Test
     func blankPathAliasFallsThroughWithoutContaminatingMetadataOrLanguage() {
         // A blank alias key must not shadow the valid one that follows, and
-        // control characters must never reach a metadata row or the language
-        // hint deduced from the path.
+        // control characters must never reach a metadata row. The current local
+        // write descriptor accepts `file_path` and `path`, not the legacy
+        // camel-case alias used below.
         let arguments: [String: Any] = [
             "file_path": "   ",
             "filePath": "\tSources/App\r\n.swift  "
@@ -1112,7 +1121,7 @@ extension TerminalChatRenderingTests {
         let lines = TerminalChat.appliedChangeDetailLines(for: toolCall, contentWidth: 80)
 
         #expect(lines.allSatisfy { !$0.contains("\r") && !$0.contains("\t") })
-        #expect(TerminalChat.codeLanguageHint(for: toolCall) == "swift")
+        #expect(TerminalChat.codeLanguageHint(for: toolCall) == nil)
 
         let blankOnly = presentedToolCall(
             id: "blank-only",

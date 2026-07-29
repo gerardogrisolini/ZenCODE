@@ -473,7 +473,7 @@ struct TerminalChatRenderingTests {
         )
 
         #expect(lines == [
-            "🛠️  local.applyPatch:",
+            "🛠️  Apply:",
             "Sources/App.swift ✅"
         ])
     }
@@ -501,7 +501,9 @@ struct TerminalChatRenderingTests {
             result: result
         )
 
-        #expect(lines.contains("change: patch Sources/App.swift"))
+        #expect(lines.contains("action: Apply"))
+        #expect(lines.contains("target: Sources/App.swift"))
+        #expect(lines.contains("patch:"))
     }
 
     @Test
@@ -2407,7 +2409,7 @@ struct TerminalChatRenderingTests {
         let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
 
         #expect(target == "needle")
-        #expect(rendered.contains("🛠️  \(ToolCallPresentation.toolTitle(for: toolCall))"))
+        #expect(rendered.contains("🛠️  \(toolCall.name) needle"))
         #expect(!rendered.contains("🤔 Thinking…"))
     }
 
