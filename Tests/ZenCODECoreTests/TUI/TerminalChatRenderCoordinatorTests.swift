@@ -391,6 +391,60 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func detailedMultiEditCompletionRewritesPendingTitleWithDiffs() async {
+        let maximumInPlaceRows = 12
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 100 }
+        )
+        let toolCall = presentedToolCall(
+            id: "multi-edit-detailed",
+            name: "local.multiEdit",
+            argumentsObject: [
+                "path": "Sources/Feature.swift",
+                "edits": [
+                    ["oldString": "let old = 1", "newString": "let new = 2"],
+                    ["oldString": "let before = false", "newString": "let after = true"]
+                ]
+            ],
+            argumentsJSON: "{}"
+        )
+        await renderer.setToolOutputDetailLevel(.expanded)
+        await renderer.writeToolCallStarted(
+            toolCall,
+            maximumInPlaceRows: maximumInPlaceRows
+        )
+        let started = await renderer.snapshot()
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "done", summary: "2 edits applied"),
+            maximumInPlaceRows: maximumInPlaceRows
+        )
+
+        let completionEvents = Array(
+            (await renderer.capturedWriteEvents()).dropFirst(eventCountBeforeCompletion)
+        )
+        let completionText = TerminalANSIText.stripANSI(
+            completionEvents.map(\.text).joined()
+        )
+        let rewriteSequence = completionEvents.first?.text ?? ""
+
+        #expect(
+            rewriteSequence.hasPrefix(
+                "\u{1B}[\(started.activeDetailedToolRenderedRowCount)A\r"
+            )
+        )
+        #expect(completionText.components(separatedBy: "local.multiEdit").count - 1 == 1)
+        #expect(!completionText.contains("parameters:"))
+        #expect(completionText.contains("edit 1:"))
+        #expect(completionText.contains("edit 2:"))
+        #expect(completionText.contains("let old = 1"))
+        #expect(completionText.contains("let new = 2"))
+    }
+
+    @Test
     func detailedToolCompletionShowsElapsedTime() {
         let toolCall = presentedToolCall(
             id: "detailed-elapsed",
@@ -2149,10 +2203,11 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func expandedXcodeMoveHidesRawControlCharacterParameters() async {
+    func expandedXcodeMoveSanitizesVisibleParameterPayload() async {
         // The markers make each hostile scalar distinguishable from terminal
-        // framing emitted by the coordinator itself. `xcode.XcodeMV` only renders
-        // sanitized metadata rows, never its raw parameter JSON.
+        // framing emitted by the coordinator itself. A move has no source-code
+        // section, so it renders both the parameters heading and a sanitized JSON
+        // payload alongside its descriptor-owned metadata.
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
             columnWidthProvider: { 100 }
@@ -2180,7 +2235,9 @@ struct TerminalChatRenderCoordinatorTests {
             .joined()
         let visibleText = TerminalANSIText.stripANSI(text)
 
-        #expect(!visibleText.contains("parameters:"))
+        #expect(visibleText.contains("parameters:"))
+        #expect(visibleText.contains("\"sourcePath\""))
+        #expect(visibleText.contains("\"destinationPath\""))
         for rawSequence in [
             "\nLF_MARKER", "\u{1B}ESC_MARKER", "\rCR_MARKER",
             "\tTAB_MARKER", "\u{9B}C1_MARKER"

@@ -254,7 +254,7 @@ struct TerminalSemanticToolRenderingTests {
         ])
         #expect(started.contains("kind: edit"))
         #expect(started.contains("mode: replace"))
-        #expect(started.contains("parameters:"))
+        #expect(!started.contains("parameters:"))
         #expect(started.contains("change:"))
         #expect(started.last == "status: ⏳")
         #expect(completed.contains("summary: one replacement"))

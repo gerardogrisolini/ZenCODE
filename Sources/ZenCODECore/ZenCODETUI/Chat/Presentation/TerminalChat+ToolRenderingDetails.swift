@@ -139,7 +139,60 @@ extension TerminalChat {
             }
             rows.append(.text("\(label): \(value)"))
         }
+
+        let isMutationPresentation: Bool
+        switch presentation.kind {
+        case .create, .edit, .delete, .move:
+            isMutationPresentation = true
+        case .read, .search, .execute, .inspect, .communicate, .manage, .other:
+            isMutationPresentation = isFileMutationTool(toolCall.name)
+        }
+        let rendersSourceChanges = isMutationPresentation
+            && presentation.elements.contains { element in
+                switch element {
+                case .code, .diff:
+                    return true
+                case .parameters, .list, .summary:
+                    return false
+                }
+            }
+
+        // A multi-edit is structurally a sequence of old/new source pairs. Its
+        // declarative list element preserves that payload for generic consumers,
+        // but when actual source changes are available they use the same
+        // side-by-side diff rows as a single edit. Parameters are suppressed only
+        // in this source-rendering branch; malformed or metadata-only calls fall
+        // through and retain both the heading and their JSON payload.
+        if normalizedMutationToolName(toolCall.name) == "local.multiEdit",
+           multiEditHasSourceChanges(toolCall.argumentsObject) {
+            rows.append(contentsOf: multiEditChangeDetailRows(
+                toolCall.argumentsObject,
+                contentWidth: contentWidth
+            ))
+            for element in presentation.elements {
+                if case .summary = element {
+                    rows.append(contentsOf: semanticElementRows(
+                        element,
+                        contentWidth: contentWidth
+                    ))
+                }
+            }
+            return rows
+        }
+
+        if isMutationPresentation,
+           !rendersSourceChanges,
+           !presentation.elements.contains(where: { element in
+               if case .parameters = element { return true }
+               return false
+           }) {
+            rows.append(contentsOf: parameterRows(for: toolCall))
+        }
+
         for element in presentation.elements {
+            if rendersSourceChanges, case .parameters = element {
+                continue
+            }
             rows.append(
                 contentsOf: semanticElementRows(
                     element,
@@ -228,13 +281,6 @@ extension TerminalChat {
         return [.text("\(label):")] + lines.map {
             DetailedToolRow.parameter(terminalSafeSnippetLine($0))
         }
-    }
-
-    /// Mutation details render either a numbered source/diff area or structured
-    /// metadata rows, so raw JSON parameters would only duplicate those details
-    /// without their terminal-safe presentation.
-    nonisolated static func shouldHideParameterLines(for toolName: String) -> Bool {
-        isFileMutationTool(toolName)
     }
 
     /// Renders the full call parameters as pretty-printed JSON for the
@@ -412,6 +458,15 @@ extension TerminalChat {
             .map(\.plainText)
     }
 
+    nonisolated static func multiEditHasSourceChanges(
+        _ arguments: [String: Any]
+    ) -> Bool {
+        arrayObjectArgument(arguments, keys: ["edits"]).contains { edit in
+            rawStringArgument(edit, keys: ["oldString", "old_string"]) != nil
+                || rawStringArgument(edit, keys: ["newString", "new_string"]) != nil
+        }
+    }
+
     nonisolated static func multiEditChangeDetailRows(
         _ arguments: [String: Any],
         contentWidth: Int? = nil
@@ -420,7 +475,7 @@ extension TerminalChat {
         var rows: [DetailedToolRow] = [
             .text("change: edit \(targetPath(arguments) ?? "file") (\(edits.count) edits)")
         ]
-        for (index, edit) in edits.prefix(3).enumerated() {
+        for (index, edit) in edits.enumerated() {
             rows.append(.text("edit \(index + 1):"))
             if let oldString = rawStringArgument(edit, keys: ["oldString", "old_string"]),
                let newString = rawStringArgument(edit, keys: ["newString", "new_string"]) {
@@ -437,9 +492,6 @@ extension TerminalChat {
                 rows.append(.text("  new:"))
                 rows.append(contentsOf: numberedCodeSnippetRows(newString, indentation: "    "))
             }
-        }
-        if edits.count > 3 {
-            rows.append(.text("... \(edits.count - 3) more edits"))
         }
         return rows
     }

@@ -585,6 +585,27 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
+    func sourceRenderingSuppressesParameterHeadingAndPayloadTogether() {
+        let toolCall = presentedToolCall(
+            id: "write-source",
+            name: "local.writeFile",
+            argumentsObject: [
+                "file_path": "Sources/Feature.swift",
+                "content": "let value = 1"
+            ],
+            argumentsJSON: "{}"
+        )
+
+        let lines = TerminalChat.detailedToolCallStartedLines(for: toolCall)
+
+        #expect(lines.contains("content:"))
+        #expect(lines.contains("  1 │ let value = 1"))
+        #expect(!lines.contains("parameters:"))
+        #expect(!lines.contains { $0.contains("\"file_path\"") })
+        #expect(!lines.contains { $0.contains("\"content\"") })
+    }
+
+    @Test
     func applyPatchDetailsHideRawParametersUntilNumberedChangeIsAvailable() {
         let patch = """
         *** Begin Patch
@@ -612,6 +633,7 @@ extension TerminalChatRenderingTests {
         #expect(lines.contains("patch:"))
         #expect(lines.contains("  1 │ *** Begin Patch"))
         #expect(!lines.contains("parameters:"))
+        #expect(!lines.contains { $0.contains("\"patch\"") })
     }
 
     @Test
@@ -914,8 +936,6 @@ extension TerminalChatRenderingTests {
         #expect(patchLines.contains { $0.contains("1 │ *** Begin Patch") })
         #expect(patchLines.contains { $0.contains("2 │ +   let patched = true") })
         #expect((appendLines + patchLines).allSatisfy { !$0.contains("\r") && !$0.contains("\t") })
-        #expect(TerminalChat.shouldHideParameterLines(for: append.name))
-        #expect(TerminalChat.shouldHideParameterLines(for: patch.name))
     }
 
     @Test
@@ -925,18 +945,41 @@ extension TerminalChatRenderingTests {
             name: "local.multiEdit",
             argumentsObject: [
                 "path": "Sources/Feature.swift",
-                "edits": [[
-                    "oldString": "let old = 1",
-                    "newString": "let new = 2"
-                ]]
+                "edits": [
+                    [
+                        "oldString": "let old = 1",
+                        "newString": "let new = 2"
+                    ],
+                    [
+                        "old_string": "let before = false",
+                        "new_string": "let after = true"
+                    ]
+                ]
             ],
             argumentsJSON: "{}"
         )
 
         let multiLines = TerminalChat.appliedChangeDetailLines(for: multiEdit, contentWidth: 80)
+        let startedLines = TerminalChat.detailedToolCallStartedLines(for: multiEdit)
+        let completedLines = TerminalChat.detailedToolCallCompletedLines(
+            for: multiEdit,
+            result: DirectAgentToolResult(output: "", summary: "2 edits applied"),
+            contentWidth: 80
+        )
 
         #expect(multiLines.contains("edit 1:"))
+        #expect(multiLines.contains("edit 2:"))
         #expect(multiLines.contains { $0.contains("1 │ let old = 1") && $0.contains("1 │ let new = 2") })
+        #expect(multiLines.contains { $0.contains("1 │ let before = false") && $0.contains("1 │ let after = true") })
+        for lines in [startedLines, completedLines] {
+            #expect(lines.filter { $0 == "🛠️  local.multiEdit" }.count == 1)
+            #expect(!lines.contains("parameters:"))
+            #expect(!lines.contains { $0.contains("\"oldString\"") || $0.contains("\"newString\"") })
+            #expect(lines.contains("edit 1:"))
+            #expect(lines.contains("edit 2:"))
+            #expect(lines.contains { $0.contains("1 │ let old = 1") && $0.contains("1 │ let new = 2") })
+            #expect(lines.contains { $0.contains("1 │ let before = false") && $0.contains("1 │ let after = true") })
+        }
 
         for name in ["XcodeWrite", "xcode.XcodeWrite", "xcode.write"] {
             let toolCall = presentedToolCall(
@@ -949,7 +992,6 @@ extension TerminalChatRenderingTests {
                 argumentsJSON: "{}"
             )
             let lines = TerminalChat.appliedChangeDetailLines(for: toolCall, contentWidth: 80)
-            #expect(TerminalChat.shouldHideParameterLines(for: name))
             #expect(lines.contains("  1 │ let written = true"))
         }
 
@@ -965,9 +1007,29 @@ extension TerminalChatRenderingTests {
                 argumentsJSON: "{}"
             )
             let lines = TerminalChat.appliedChangeDetailLines(for: toolCall, contentWidth: 80)
-            #expect(TerminalChat.shouldHideParameterLines(for: name))
             #expect(lines.contains { $0.contains("1 │ let before = false") && $0.contains("1 │ let after = true") })
         }
+    }
+
+    @Test
+    func multiEditWithoutRenderableSourceKeepsParameterHeadingAndPayload() {
+        let toolCall = presentedToolCall(
+            id: "multi-metadata-only",
+            name: "local.multiEdit",
+            argumentsObject: [
+                "path": "Sources/Feature.swift",
+                "edits": [["replaceAll": true]]
+            ],
+            argumentsJSON: "{}"
+        )
+
+        let lines = TerminalChat.detailedToolCallStartedLines(for: toolCall)
+
+        #expect(lines.contains("parameters:"))
+        #expect(lines.contains { $0.contains("\"edits\"") })
+        #expect(lines.contains { $0.contains("\"replaceAll\"") })
+        #expect(!lines.contains("edit 1:"))
+        #expect(!lines.contains { $0.contains(" │ ") })
     }
 
     // MARK: - Robustness regressions
@@ -1117,16 +1179,7 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func metadataOnlyMutationToolsHideRawParameters() {
-        // Metadata-only operations resolve to descriptor-owned action/target
-        // rows rather than raw parameter JSON.
-        for name in [
-            "local.delete", "local.move", "local.mkdir",
-            "XcodeRM", "xcode.rm", "XcodeMV", "xcode.mv"
-        ] {
-            #expect(TerminalChat.shouldHideParameterLines(for: name))
-        }
-
+    func metadataOnlyMutationToolsKeepParameterHeadingAndPayloadTogether() {
         let toolCall = presentedToolCall(
             id: "metadata-only-move",
             name: "xcode.XcodeMV",
@@ -1139,7 +1192,9 @@ extension TerminalChatRenderingTests {
 
         let lines = TerminalChat.detailedToolBaseLines(for: toolCall)
 
-        #expect(!lines.contains("parameters:"))
+        #expect(lines.contains("parameters:"))
+        #expect(lines.contains { $0.contains("\"sourcePath\"") })
+        #expect(lines.contains { $0.contains("\"destinationPath\"") })
         #expect(lines.contains("action: Move"))
         #expect(lines.contains("target: Sources/New.swift"))
         #expect(lines.contains("from: Sources/Old.swift"))
@@ -1224,7 +1279,6 @@ extension TerminalChatRenderingTests {
         // no false mutation rendering and no hidden parameters.
         for name in ["write", "update", "edit", "other.write"] {
             #expect(TerminalChat.normalizedMutationToolName(name) == name)
-            #expect(!TerminalChat.shouldHideParameterLines(for: name))
             #expect(!TerminalChat.isFileMutationTool(name))
 
             let toolCall = presentedToolCall(

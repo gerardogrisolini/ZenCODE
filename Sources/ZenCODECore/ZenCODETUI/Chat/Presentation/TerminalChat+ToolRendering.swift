@@ -791,6 +791,30 @@ extension TerminalChat {
         return "\(codeAreaBackgroundColor)\(renderCodeAreaFragment(line, language: language))\(clearToEnd)"
     }
 
+    /// Renders a single side-by-side diff cell. When the cell carries a
+    /// line-number gutter (``<number> │ <content>``), the gutter is painted
+    /// with the neutral gray gutter color so the syntax highlighter never
+    /// recolors the number — matching the regular code-area rendering.
+    private nonisolated static func renderDiffCellFragment(
+        _ cell: String,
+        language: String?
+    ) -> String {
+        let gutterSeparator = " │ "
+        guard let range = cell.range(of: gutterSeparator) else {
+            return renderCodeAreaFragment(cell, language: language)
+        }
+        let numberPart = String(cell[..<range.lowerBound])
+        let contentPart = String(cell[range.upperBound...])
+        // Only treat the prefix as a line-number gutter when it is entirely
+        // numeric or whitespace; otherwise the " │ " belongs to the content.
+        let trimmed = numberPart.trimmingCharacters(in: .whitespaces)
+        guard trimmed.isEmpty || trimmed.allSatisfy(\.isWholeNumber) else {
+            return renderCodeAreaFragment(cell, language: language)
+        }
+        return "\(toolCodeGutterColor)\(numberPart)\(codeAreaBackgroundColor)\(gutterSeparator)"
+            + renderCodeAreaFragment(contentPart, language: language)
+    }
+
     /// The old and new cells of a side-by-side diff must be tokenized as two
     /// independent source lines. In particular, a line comment or an unterminated
     /// string on the old side must not color the divider and hide highlighting on
@@ -803,7 +827,11 @@ extension TerminalChat {
     ) -> String {
         let clearToEnd = "\u{1B}[K"
         let divider = DetailedToolDiffCells.divider
-        return "\(codeAreaBackgroundColor)\(indentation)\(renderCodeAreaFragment(oldCell, language: language))\(codeAreaBackgroundColor)\(divider)\(renderCodeAreaFragment(newCell, language: language))\(clearToEnd)"
+        return "\(codeAreaBackgroundColor)\(indentation)"
+            + renderDiffCellFragment(oldCell, language: language)
+            + "\(codeAreaBackgroundColor)\(divider)"
+            + renderDiffCellFragment(newCell, language: language)
+            + clearToEnd
     }
 
     /// Renders one stacked unified-diff line inside the same framed code area
@@ -827,7 +855,7 @@ extension TerminalChat {
         default:
             markerColor = codeAreaBackgroundColor
         }
-        return "\(codeAreaBackgroundColor)\(indentation)\(markerColor)\(marker)\(codeAreaBackgroundColor) \(lineNumber)\(DetailedToolUnifiedDiffLine.gutter)\(renderCodeAreaFragment(content, language: language))\(clearToEnd)"
+        return "\(codeAreaBackgroundColor)\(indentation)\(markerColor)\(marker)\(codeAreaBackgroundColor) \(toolCodeGutterColor)\(lineNumber)\(codeAreaBackgroundColor)\(DetailedToolUnifiedDiffLine.gutter)\(renderCodeAreaFragment(content, language: language))\(clearToEnd)"
     }
 
     private nonisolated static func renderCodeAreaFragment(
