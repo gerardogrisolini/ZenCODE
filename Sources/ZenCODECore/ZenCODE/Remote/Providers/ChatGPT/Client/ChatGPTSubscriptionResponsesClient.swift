@@ -73,6 +73,15 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
     /// callback or a different provider error retryable.
     struct RetryableBackendFailure: LocalizedError {
         let message: String
+        let retryDelayNanoseconds: UInt64?
+
+        init(
+            message: String,
+            retryDelayNanoseconds: UInt64? = nil
+        ) {
+            self.message = message
+            self.retryDelayNanoseconds = retryDelayNanoseconds
+        }
 
         var errorDescription: String? {
             message
@@ -86,10 +95,14 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
     public let urlSession: RemoteProviderSession
     public let webSocketPool: ChatGPTSubscriptionWebSocketPool
     private let retrySleep: @Sendable (Int) async throws -> Void
+    private let retryDelaySleep: @Sendable (UInt64) async throws -> Void
     private let httpFallbackOverride: HTTPFallbackOverride?
 
-    static let maxRetries = 3
-    static let baseRetryDelayNanoseconds: UInt64 = 1_000_000_000
+    /// Matches Codex's default Responses stream retry budget. Keeping the
+    /// shorter 200 ms exponential base preserves a bounded fallback delay while
+    /// giving brief backend overloads more opportunities to recover.
+    static let maxRetries = 5
+    static let baseRetryDelayNanoseconds: UInt64 = 200_000_000
     static let webSocketBetaHeader = "responses_websockets=2026-02-06"
     static let webSocketIdleTimeoutNanoseconds: UInt64? = nil
 
@@ -119,6 +132,9 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
         urlSession: RemoteProviderSession? = nil,
         webSocketPool: ChatGPTSubscriptionWebSocketPool,
         retrySleep: @escaping @Sendable (Int) async throws -> Void,
+        retryDelaySleep: @escaping @Sendable (UInt64) async throws -> Void = {
+            try await Task.sleep(nanoseconds: $0)
+        },
         httpFallbackOverride: HTTPFallbackOverride? = nil
     ) {
         self.credentials = credentials
@@ -127,6 +143,7 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
             ?? RemoteProviderSessionCompatibility.generationSession()
         self.webSocketPool = webSocketPool
         self.retrySleep = retrySleep
+        self.retryDelaySleep = retryDelaySleep
         self.httpFallbackOverride = httpFallbackOverride
     }
 
@@ -238,7 +255,10 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
                     // a complete replay instead of a stale previous_response_id.
                     suppressContinuationReplay = true
                 }
-                try await retrySleep(attempt)
+                try await sleepForRetry(
+                    failure.underlying,
+                    attempt: attempt
+                )
                 attempt += 1
             } catch is CancellationError {
                 throw CancellationError()
@@ -250,6 +270,18 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
                 attempt += 1
             }
         }
+    }
+
+    private func sleepForRetry(
+        _ error: Error,
+        attempt: Int
+    ) async throws {
+        if let failure = error as? RetryableBackendFailure,
+           let retryDelayNanoseconds = failure.retryDelayNanoseconds {
+            try await retryDelaySleep(retryDelayNanoseconds)
+            return
+        }
+        try await retrySleep(attempt)
     }
 
     private func streamEventsOverWebSocket(
@@ -382,7 +414,7 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
                 guard Self.shouldRetryHTTPFailure(error, attempt: attempt) else {
                     throw error
                 }
-                try await retrySleep(attempt)
+                try await sleepForRetry(error, attempt: attempt)
                 attempt += 1
             }
         }

@@ -15,10 +15,26 @@ extension ChatGPTSubscriptionResponsesClient {
     /// and invalid requests non-retryable.
     private static let retryableBackendErrorIdentifiers: Set<String> = [
         "previous_response_not_found",
+        "rate_limit_exceeded",
         "server_error",
         "server_is_overloaded",
         "slow_down",
         "websocket_connection_limit_reached"
+    ]
+
+    /// `response.failed` is retryable by default in Codex after these terminal
+    /// request failures have been classified. Keep the exclusions explicit so
+    /// context, account, policy, and malformed-request failures still reach the
+    /// generation layer instead of being replayed as transient outages.
+    private static let nonRetryableResponseFailureIdentifiers: Set<String> = [
+        "bio_policy",
+        "context_length_exceeded",
+        "cyber_policy",
+        "insufficient_quota",
+        "invalid_prompt",
+        "invalid_request",
+        "invalid_request_error",
+        "usage_not_included"
     ]
 
     static func decodedJSONObjectSequence(from data: Data) throws -> [[String: Any]] {
@@ -167,20 +183,79 @@ extension ChatGPTSubscriptionResponsesClient {
         let errorCode = (errorObject["code"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        let hasRetryableIdentifier = [errorType, errorCode]
-            .compactMap { $0 }
-            .contains { retryableBackendErrorIdentifiers.contains($0) }
+        let identifiers = [errorType, errorCode].compactMap { $0 }
+        let hasNonRetryableResponseFailureIdentifier = identifiers.contains {
+            nonRetryableResponseFailureIdentifiers.contains($0)
+        }
+        // An explicit transient code wins over a generic error type such as
+        // `invalid_request_error`; the exclusion set only controls the default
+        // classification of otherwise-unidentified `response.failed` events.
+        let hasRetryableIdentifier = identifiers.contains {
+            retryableBackendErrorIdentifiers.contains($0)
+        }
         let status = ChatGPTSubscriptionGenerationClient.intValue(
             object["status"] ?? object["status_code"]
         )
         let hasRetryableStatus = normalizedType == "error"
             && status.map { (500...599).contains($0) } == true
-        guard hasRetryableIdentifier || hasRetryableStatus,
+        let isResponseFailure = normalizedType == "response_failed"
+            || responseStatus == "failed"
+        let hasRetryableResponseFailure = isResponseFailure
+            && !hasNonRetryableResponseFailureIdentifier
+        guard hasRetryableIdentifier
+                || hasRetryableStatus
+                || hasRetryableResponseFailure,
               let message = ChatGPTSubscriptionGenerationClient
                 .responseErrorMessage(from: object) else {
             return nil
         }
-        return RetryableBackendFailure(message: message)
+        return RetryableBackendFailure(
+            message: message,
+            retryDelayNanoseconds: retryDelayNanoseconds(
+                from: message,
+                errorCode: errorCode
+            )
+        )
+    }
+
+    static func retryDelayNanoseconds(
+        from message: String,
+        errorCode: String?
+    ) -> UInt64? {
+        guard errorCode == "rate_limit_exceeded",
+              let expression = try? NSRegularExpression(
+                  pattern: #"\btry again in\s+([0-9]+(?:\.[0-9]+)?)\s*(ms|s|milliseconds?|seconds?)\b"#,
+                  options: [.caseInsensitive]
+              ) else {
+            return nil
+        }
+        let fullRange = NSRange(message.startIndex..<message.endIndex, in: message)
+        guard let match = expression.firstMatch(
+            in: message,
+            options: [],
+            range: fullRange
+        ),
+        let valueRange = Range(match.range(at: 1), in: message),
+        let unitRange = Range(match.range(at: 2), in: message),
+        let value = Double(message[valueRange]),
+        value.isFinite,
+        value >= 0 else {
+            return nil
+        }
+
+        let unit = message[unitRange].lowercased()
+        let multiplier = unit == "ms" || unit.hasPrefix("millisecond")
+            ? 1_000_000.0
+            : 1_000_000_000.0
+        let roundedNanoseconds = (value * multiplier).rounded()
+        // `Double(UInt64.max)` rounds up to 2^64. A strict comparison on the
+        // rounded value keeps the subsequent integer conversion in range.
+        guard roundedNanoseconds.isFinite,
+              roundedNanoseconds >= 0,
+              roundedNanoseconds < Double(UInt64.max) else {
+            return nil
+        }
+        return UInt64(roundedNanoseconds)
     }
 
     static func isReplayUnsafeStreamEvent(_ object: [String: Any]) -> Bool {

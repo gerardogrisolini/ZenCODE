@@ -97,13 +97,18 @@ incarnation fences late activation and cancels any HTTP stream that is opening o
 active. Events that already emitted replay-unsafe reasoning, refusal, content,
 or tool output are never replayed or moved between transports. HTTP/SSE
 completion requires a terminal Responses event; `[DONE]` or EOF alone cannot
-commit partial output. Structured transient provider events use stable error
-identifiers (`server_error`, `server_is_overloaded`, `slow_down`,
+commit partial output. Structured `error` events use stable transient identifiers
+(`server_error`, `server_is_overloaded`, `slow_down`,
 `websocket_connection_limit_reached`, or `previous_response_not_found`) or a
-wrapped 5xx status; when received again over HTTP/SSE they are retried within the
-bounded stream budget only when no replay-unsafe output crossed the callback
-boundary. Message text or callback errors alone can never activate that retry.
-Authentication failures retain their token-refresh path on both transports.
+wrapped 5xx status. A `response.failed` event is also retryable by event
+provenance after known context, quota, policy, and malformed-request identifiers
+have been excluded, matching Codex even when the backend omits a transient code.
+When received again over HTTP/SSE, these failures retry within the bounded stream
+budget only when no replay-unsafe output crossed the callback boundary. A valid
+provider retry delay on a rate-limit failure takes precedence over the local
+exponential backoff. Message text or callback errors alone can never activate
+that retry. Authentication failures retain their token-refresh path on both
+transports.
 
 Each opened HTTP/SSE response and upgraded WebSocket separates its public handle
 from the NIO driver actor that the scoped `executeThenClose` run-task retains.

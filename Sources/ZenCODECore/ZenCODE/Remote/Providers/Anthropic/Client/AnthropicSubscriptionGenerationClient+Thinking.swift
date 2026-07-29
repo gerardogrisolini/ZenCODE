@@ -114,7 +114,15 @@ extension AnthropicSubscriptionGenerationClient {
         }
         guard let selection, selection.isEnabled else {
             if usesAdaptiveThinking(modelID: modelID) {
-                return (nil, nil)
+                if selection == .off {
+                    // Explicitly disabled: send disabled to turn off adaptive thinking.
+                    return (["type": "disabled"], nil)
+                }
+                // No preference: activate adaptive thinking at the default
+                // effort. The Claude Code subscription endpoint requires
+                // explicit output_config.effort to enable thinking; omitting
+                // it leaves the model without thinking.
+                return (nil, ["effort": "high"])
             }
             return (["type": "disabled"], nil)
         }

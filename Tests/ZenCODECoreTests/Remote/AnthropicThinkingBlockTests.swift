@@ -393,7 +393,7 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
-    func adaptiveThinkingModelsOmitDisabledThinkingPayload() throws {
+    func adaptiveThinkingModelsHandleNilAndOffSelections() throws {
         let nilSelection = AnthropicSubscriptionGenerationClient.thinkingPayload(
             for: nil,
             modelID: "claude-fable-5",
@@ -411,8 +411,8 @@ struct AnthropicThinkingBlockTests {
         )
 
         #expect(nilSelection.thinking == nil)
-        #expect(nilSelection.outputConfig == nil)
-        #expect(offSelection.thinking == nil)
+        #expect(nilSelection.outputConfig?["effort"] as? String == "high")
+        #expect(offSelection.thinking?["type"] as? String == "disabled")
         #expect(offSelection.outputConfig == nil)
         #expect(nonAdaptiveOff.thinking?["type"] as? String == "disabled")
     }

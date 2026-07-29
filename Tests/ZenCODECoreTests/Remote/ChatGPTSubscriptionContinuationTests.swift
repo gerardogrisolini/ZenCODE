@@ -258,6 +258,45 @@ extension RemoteSessionSnapshotTests {
                 ]
             ]
         ]
+        let genericFailedObject: [String: Any] = [
+            "type": "response.failed",
+            "response": [
+                "status": "failed",
+                "error": [
+                    "message": message
+                ]
+            ]
+        ]
+        let invalidRequestFailedObject: [String: Any] = [
+            "type": "response.failed",
+            "response": [
+                "status": "failed",
+                "error": [
+                    "code": "invalid_request_error",
+                    "message": "The request payload is invalid."
+                ]
+            ]
+        ]
+        let explicitlyRetryableTypedObject: [String: Any] = [
+            "type": "error",
+            "error": [
+                "type": "invalid_request_error",
+                "code": "websocket_connection_limit_reached",
+                "message": ChatGPTSubscriptionResponsesClient
+                    .webSocketConnectionLimitErrorMessage
+            ]
+        ]
+        let rateLimitedObject: [String: Any] = [
+            "type": "response.failed",
+            "response": [
+                "status": "failed",
+                "error": [
+                    "type": "invalid_request_error",
+                    "code": "rate_limit_exceeded",
+                    "message": "Rate limit reached. Please try again in 11.054s."
+                ]
+            ]
+        ]
         let slowDownObject: [String: Any] = [
             "type": "error",
             "error": [
@@ -283,6 +322,21 @@ extension RemoteSessionSnapshotTests {
                 from: overloadedObject
             )
         )
+        let genericFailedError = try #require(
+            ChatGPTSubscriptionResponsesClient.retryableBackendFailure(
+                from: genericFailedObject
+            )
+        )
+        let explicitlyRetryableTypedError = try #require(
+            ChatGPTSubscriptionResponsesClient.retryableBackendFailure(
+                from: explicitlyRetryableTypedObject
+            )
+        )
+        let rateLimitedError = try #require(
+            ChatGPTSubscriptionResponsesClient.retryableBackendFailure(
+                from: rateLimitedObject
+            )
+        )
         let callbackError = ChatGPTSubscriptionGenerationError.responseFailed(message)
         let replayUnsafeError = ChatGPTSubscriptionResponsesClient
             .ReplayUnsafeStreamFailure(underlying: retryableError)
@@ -304,6 +358,36 @@ extension RemoteSessionSnapshotTests {
             ) == nil
         )
         #expect(overloadedError.localizedDescription == overloadedMessage)
+        #expect(genericFailedError.localizedDescription == message)
+        #expect(
+            explicitlyRetryableTypedError.localizedDescription
+                == ChatGPTSubscriptionResponsesClient
+                    .webSocketConnectionLimitErrorMessage
+        )
+        #expect(rateLimitedError.retryDelayNanoseconds == 11_054_000_000)
+        #expect(
+            ChatGPTSubscriptionResponsesClient.retryDelayNanoseconds(
+                from: "Rate limit reached. Please try again in 250 milliseconds.",
+                errorCode: "rate_limit_exceeded"
+            ) == 250_000_000
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.retryDelayNanoseconds(
+                from: "Rate limit reached. Please try again later.",
+                errorCode: "rate_limit_exceeded"
+            ) == nil
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.retryDelayNanoseconds(
+                from: "Please try again in 18446744073.709551616s.",
+                errorCode: "rate_limit_exceeded"
+            ) == nil
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.retryableBackendFailure(
+                from: invalidRequestFailedObject
+            ) == nil
+        )
         #expect(
             ChatGPTSubscriptionResponsesClient.retryableBackendFailure(
                 from: slowDownObject
@@ -964,6 +1048,15 @@ extension RemoteSessionSnapshotTests {
         #expect(
             request.headerValue(for: "x-client-request-id")
                 == "logical-session"
+        )
+    }
+
+    @Test
+    func chatGPTSubscriptionRetryPolicyMatchesCodexDefaults() {
+        #expect(ChatGPTSubscriptionResponsesClient.maxRetries == 5)
+        #expect(
+            ChatGPTSubscriptionResponsesClient.baseRetryDelayNanoseconds
+                == 200_000_000
         )
     }
 
@@ -1630,16 +1723,82 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionNIOClientHonorsRateLimitRetryDelay() async throws {
+        let rateLimitedResponse = try JSONValue(jsonObject: [
+            "type": "response.failed",
+            "response": [
+                "status": "failed",
+                "error": [
+                    "code": "rate_limit_exceeded",
+                    "message": "Rate limit reached. Please try again in 11.054s."
+                ]
+            ]
+        ]).jsonData(outputFormatting: [.withoutEscapingSlashes])
+        let firstTask = ChatGPTSubscriptionTestWebSocketTask(
+            receiveOutcomes: [
+                .success(.text(String(decoding: rateLimitedResponse, as: UTF8.self)))
+            ]
+        )
+        let secondTask = ChatGPTSubscriptionTestWebSocketTask(
+            receiveOutcomes: [
+                .success(
+                    .text(
+                        #"{"type":"response.completed","response":{"id":"resp_after_rate_limit","status":"completed"}}"#
+                    )
+                )
+            ]
+        )
+        let pendingTasks = Mutex([firstTask, secondTask])
+        let localBackoffAttempts = Mutex<[Int]>([])
+        let providerRetryDelays = Mutex<[UInt64]>([])
+        let pool = ChatGPTSubscriptionWebSocketPool(
+            heartbeatIntervalNanoseconds: UInt64.max,
+            webSocketTaskFactory: { _ in
+                pendingTasks.withLock { $0.removeFirst() }
+            }
+        )
+        defer { pool.closeAll() }
+        let client = ChatGPTSubscriptionResponsesClient(
+            credentials: chatGPTSubscriptionTestCredentials(),
+            baseURL: URL(string: "https://example.invalid/backend-api")!,
+            webSocketPool: pool,
+            retrySleep: { attempt in
+                localBackoffAttempts.withLock { $0.append(attempt) }
+            },
+            retryDelaySleep: { delay in
+                providerRetryDelays.withLock { $0.append(delay) }
+            }
+        )
+
+        let completion = try await client.streamEvents(
+            input: .array([]),
+            model: "gpt-5.5",
+            instructions: "System prompt",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "rate-limit-transport",
+            fallbackScopeID: "rate-limit-logical-session"
+        ) { _ in }
+
+        #expect(completion.responseID == "resp_after_rate_limit")
+        #expect(localBackoffAttempts.withLock { $0 }.isEmpty)
+        #expect(providerRetryDelays.withLock { $0 } == [11_054_000_000])
+        #expect(firstTask.cancelCount == 1)
+        #expect(secondTask.cancelCount == 0)
+    }
+
+    @Test
     func chatGPTSubscriptionNIOClientFallsBackAndRetriesGenericRequestFailureOverHTTP() async throws {
         let message = """
         An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 2500a4a9-690b-4951-beb3-602a7d5893d8 in your message.
         """
         let failedResponse = try JSONValue(jsonObject: [
-            "type": "error",
-            "error": [
-                "type": "server_error",
-                "code": "server_error",
-                "message": message
+            "type": "response.failed",
+            "response": [
+                "status": "failed",
+                "error": [
+                    "message": message
+                ]
             ],
             "sequence_number": 2
         ]).jsonData(outputFormatting: [.withoutEscapingSlashes])
@@ -1747,7 +1906,10 @@ extension RemoteSessionSnapshotTests {
             "transport-session-b"
         ])
         #expect(capturedHTTPBodies.withLock { $0.count } == 3)
-        #expect(retrySleepAttempts.withLock { $0 } == [0, 1, 2, 0])
+        #expect(
+            retrySleepAttempts.withLock { $0 }
+                == Array(0..<ChatGPTSubscriptionResponsesClient.maxRetries) + [0]
+        )
         #expect(request.headerValue(for: "session-id") == "transport-session-a")
         #expect(request.headerValue(for: "thread-id") == "logical-session")
         #expect(request.headerValue(for: "x-client-request-id") == "logical-session")
