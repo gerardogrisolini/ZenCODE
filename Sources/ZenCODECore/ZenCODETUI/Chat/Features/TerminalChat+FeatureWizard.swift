@@ -8,21 +8,29 @@ import ToolCore
 
 extension TerminalChat {
     func runFeatureWizard() async -> TerminalFeatureCommandResult {
+        guard let rawRequirements = await promptFeatureLine(
+            "Goal / requirements (optional)",
+            required: false
+        ) else {
+            return await cancelledFeatureWizard()
+        }
+        let requirements = rawRequirements.nilIfBlank
+
         guard let template = await TerminalCheckboxMenu.selectOneOffActor(
             title: "Feature template",
             items: [
                 TerminalCheckboxMenuItem(
+                    value: FeatureWizardTemplate.basic,
+                    title: "Basic Swift Feature",
+                    detail: "Create an editable Swift tool, then let Builder implement it"
+                ),
+                TerminalCheckboxMenuItem(
                     value: FeatureWizardTemplate.mcpBridge,
                     title: "MCP Bridge",
                     detail: "Expose tools from an HTTP or stdio MCP service"
-                ),
-                TerminalCheckboxMenuItem(
-                    value: FeatureWizardTemplate.basic,
-                    title: "Basic Swift Feature",
-                    detail: "Create a small editable Swift tool scaffold"
                 )
             ],
-            selected: .mcpBridge,
+            selected: .basic,
             reservedBottomRows: await statusBar.reservedRowsForOverlay()
         ) else {
             return await cancelledFeatureWizard()
@@ -40,7 +48,10 @@ extension TerminalChat {
         }
         let description = await promptFeatureLine(
             "Description",
-            defaultValue: template.defaultDescription(displayName: displayName)
+            defaultValue: Self.featureWizardDescription(
+                requirements: requirements,
+                fallback: template.defaultDescription(displayName: displayName)
+            )
         )
         guard let description else {
             return await cancelledFeatureWizard()
@@ -92,7 +103,7 @@ extension TerminalChat {
                     TerminalCheckboxMenuItem(
                         value: FeatureWizardTransport.stdio,
                         title: "Stdio",
-                        detail: "Launch an MCP server executable"
+                        detail: "Launch an MCP server executable using ZenCODE's environment"
                     )
                 ],
                 selected: .http,
@@ -103,7 +114,7 @@ extension TerminalChat {
 
             switch transport {
             case .http:
-                guard let endpointURL = await promptFeatureLine("MCP endpoint URL", required: true) else {
+                guard let endpointURL = await promptFeatureEndpointURL() else {
                     return await cancelledFeatureWizard()
                 }
                 arguments["endpointURL"] = endpointURL
@@ -118,47 +129,45 @@ extension TerminalChat {
                         arguments["arguments"] = parsedArguments
                     }
                 }
-                if let rawEnvironment = await promptFeatureLine("Environment KEY=value pairs", defaultValue: "") {
-                    let parsedEnvironment = Self.featureWizardEnvironment(rawEnvironment)
-                    if !parsedEnvironment.isEmpty {
-                        arguments["environment"] = parsedEnvironment
-                    }
-                }
             }
         }
 
-        let shouldEnable = await promptFeatureYesNo("Enable feature after build?", defaultValue: true) ?? false
-        let shouldSelect = shouldEnable
-            ? (await promptFeatureYesNo("Select feature for this session?", defaultValue: true) ?? false)
-            : false
-        guard let requirements = await promptFeatureLine(
-            "Goal / requirements (empty to edit the generated prompt)",
-            required: false
-        ) else {
-            return await cancelledFeatureWizard()
+        let activationPrompt = switch template {
+        case .basic:
+            "Enable feature after implementation and a successful build?"
+        case .mcpBridge:
+            "Enable and select feature if the initial build succeeds?"
         }
+        let activateAfterSuccessfulBuild = await promptFeatureYesNo(
+            activationPrompt,
+            defaultValue: true
+        ) ?? false
 
         return await createFeatureFromWizard(
+            template: template,
             id: id,
             displayName: displayName,
             arguments: arguments,
-            shouldEnable: shouldEnable,
-            shouldSelect: shouldSelect,
-            requirements: requirements.nilIfBlank
+            activateAfterSuccessfulBuild: activateAfterSuccessfulBuild,
+            requirements: requirements
         )
     }
 
     func createFeatureFromWizard(
+        template: FeatureWizardTemplate,
         id: String,
         displayName: String,
         arguments: [String: Any],
-        shouldEnable: Bool,
-        shouldSelect: Bool,
+        activateAfterSuccessfulBuild: Bool,
         requirements: String?
     ) async -> TerminalFeatureCommandResult {
+        let plan = FeatureWizardCreationPlan(
+            template: template,
+            activateAfterSuccessfulBuild: activateAfterSuccessfulBuild
+        )
         var scaffoldArguments = arguments
-        scaffoldArguments["build"] = true
-        scaffoldArguments["enable"] = shouldEnable
+        scaffoldArguments["build"] = plan.buildsScaffold
+        scaffoldArguments["enable"] = plan.enablesScaffold
         guard let scaffoldOutput = await executeFeatureManagementTool(
             name: "feature.scaffold",
             arguments: scaffoldArguments
@@ -173,21 +182,56 @@ extension TerminalChat {
             await writeFailureMessage("ZenCODE: could not decode the feature.scaffold report.\n")
             return .none
         }
-        guard scaffoldReport.ok ?? true else {
-            return .none
+
+        if plan.runsImplementationPrompt {
+            await writeSystemMessage(
+                Self.renderFeatureDraftCompletion(
+                    id: id,
+                    enableAfterBuild: plan.enablesAfterImplementation
+                )
+            )
+            return Self.featurePromptResult(
+                Self.featureImplementationPrompt(
+                    id: id,
+                    displayName: displayName,
+                    directoryPath: scaffoldReport.directoryPath,
+                    manifestPath: scaffoldReport.manifestPath,
+                    sourcePath: scaffoldReport.sourcePath,
+                    toolName: scaffoldReport.toolName,
+                    enableAfterBuild: plan.enablesAfterImplementation,
+                    requirements: requirements
+                ),
+                requirements: requirements
+            )
+        }
+
+        guard scaffoldReport.ok == true,
+              scaffoldReport.built == true else {
+            await writeSystemMessage(
+                "The MCP bridge scaffold was preserved so Builder can inspect and repair it.\n"
+            )
+            return Self.featurePromptResult(
+                Self.featureMCPRepairPrompt(
+                    report: scaffoldReport,
+                    displayName: displayName,
+                    enableAfterBuild: activateAfterSuccessfulBuild,
+                    requirements: requirements
+                ),
+                requirements: requirements
+            )
         }
 
         let enabled = scaffoldReport.enabled ?? false
-        if enabled {
+        let featureSelectionKey = TerminalToolSelectionCatalog.featurePackageKey(id: id)
+        let shouldSelect = plan.selectsScaffold && enabled
+        if shouldSelect {
+            var nextSelection = selectedToolKeys
+            nextSelection.insert(featureSelectionKey)
+            await applyToolSelection(nextSelection)
+        } else if enabled {
             await updateCurrentSessionToolOptions(discoverExternalTools: false)
         }
-
-        let selected = shouldSelect && enabled
-        if selected {
-            var nextSelection = selectedToolKeys
-            nextSelection.insert(TerminalToolSelectionCatalog.featurePackageKey(id: id))
-            await applyToolSelection(nextSelection)
-        }
+        let selected = shouldSelect && selectedToolKeys.contains(featureSelectionKey)
 
         await writeSystemMessage(
             Self.renderFeatureWizardCompletion(
@@ -197,24 +241,33 @@ extension TerminalChat {
                 selected: selected
             )
         )
-
-        return Self.featurePromptResult(
-            Self.featureImplementationPrompt(
-                id: id,
-                displayName: displayName,
-                directoryPath: scaffoldReport.directoryPath,
-                manifestPath: scaffoldReport.manifestPath,
-                sourcePath: scaffoldReport.sourcePath,
-                toolName: scaffoldReport.toolName,
-                requirements: requirements
-            ),
-            requirements: requirements
-        )
+        return .none
     }
 
     private func cancelledFeatureWizard() async -> TerminalFeatureCommandResult {
         await writeSystemMessage("Feature creation cancelled.\n")
         return .none
+    }
+
+    private func promptFeatureEndpointURL() async -> String? {
+        while let endpointURL = await promptFeatureLine(
+            "MCP endpoint URL (without embedded credentials)",
+            required: true
+        ) {
+            switch SwiftFeatureRuntime.mcpBridgeEndpointIssue(endpointURL) {
+            case nil:
+                return endpointURL
+            case .invalidHTTPURL:
+                await writeFailureMessage(
+                    "ZenCODE: enter an absolute http:// or https:// MCP endpoint URL.\n"
+                )
+            case .embeddedCredentials:
+                await writeFailureMessage(
+                    "ZenCODE: do not embed credentials, tokens, API keys, or passwords in the endpoint URL. Configure them outside generated source.\n"
+                )
+            }
+        }
+        return nil
     }
 
     @discardableResult

@@ -14,6 +14,11 @@ extension SwiftFeatureRuntime {
         case mcpBridge
     }
 
+    enum MCPBridgeEndpointIssue: Equatable, Sendable {
+        case invalidHTTPURL
+        case embeddedCredentials
+    }
+
     static func scaffoldTemplate(arguments: [String: Any]) -> ScaffoldTemplate {
         let rawValue = arguments
             .string("template", "kind", "scaffoldTemplate", "scaffold_template")?
@@ -61,6 +66,54 @@ extension SwiftFeatureRuntime {
                 "Tool prefix '\(prefix)' conflicts with a core tool namespace."
             )
         }
+    }
+
+    static func mcpBridgeEndpointIssue(
+        _ rawValue: String
+    ) -> MCPBridgeEndpointIssue? {
+        guard let components = URLComponents(string: rawValue),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              components.host?.nilIfBlank != nil else {
+            return .invalidHTTPURL
+        }
+        if components.user?.nilIfBlank != nil || components.password?.nilIfBlank != nil {
+            return .embeddedCredentials
+        }
+        if components.queryItems?.contains(where: {
+            isSensitiveMCPBridgeCredentialName($0.name)
+        }) == true {
+            return .embeddedCredentials
+        }
+        if let fragment = components.fragment?.nilIfBlank,
+           fragment.split(separator: "&").contains(where: { entry in
+               let name = entry.split(separator: "=", maxSplits: 1).first.map(String.init) ?? ""
+               return isSensitiveMCPBridgeCredentialName(name)
+           }) {
+            return .embeddedCredentials
+        }
+        return nil
+    }
+
+    private static func isSensitiveMCPBridgeCredentialName(
+        _ rawValue: String
+    ) -> Bool {
+        let normalized = rawValue
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
+        let exactNames: Set<String> = [
+            "accesstoken", "apikey", "auth", "authorization", "clientsecret",
+            "credential", "credentials", "key", "password", "secret",
+            "signature", "token"
+        ]
+        if exactNames.contains(normalized) {
+            return true
+        }
+        let sensitiveSuffixes = [
+            "accesstoken", "apikey", "authorization", "clientsecret",
+            "credential", "credentials", "password", "secret", "signature", "token"
+        ]
+        return sensitiveSuffixes.contains { normalized.hasSuffix($0) }
     }
 
     static func defaultPackagePath(fileManager: FileManager) -> String {

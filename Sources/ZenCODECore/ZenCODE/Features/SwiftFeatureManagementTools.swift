@@ -386,6 +386,30 @@ extension SwiftFeatureRuntime {
                     .nilIfBlank ?? "\(Self.defaultToolPrefix(for: id))."
             )
             try Self.validateMCPBridgeToolPrefix(toolPrefix)
+            let endpointURLString = arguments
+                .string("endpointURL", "endpoint_url", "url")?
+                .nilIfBlank
+            if let endpointURLString,
+               let endpointIssue = Self.mcpBridgeEndpointIssue(endpointURLString) {
+                switch endpointIssue {
+                case .invalidHTTPURL:
+                    throw DirectToolError.permissionDenied(
+                        "MCP bridge endpointURL must be an absolute http:// or https:// URL."
+                    )
+                case .embeddedCredentials:
+                    throw DirectToolError.permissionDenied(
+                        "MCP bridge endpointURL cannot contain credentials, tokens, API keys, passwords, signatures, or other secret query/fragment values. Configure secrets outside generated source."
+                    )
+                }
+            }
+            let hasStaticEnvironment = ["environment", "env"].contains { key in
+                !Self.stringDictionaryArgument(arguments, keys: [key]).isEmpty
+            }
+            guard !hasStaticEnvironment else {
+                throw DirectToolError.permissionDenied(
+                    "MCP bridge scaffolds do not accept static environment values because scaffold configuration is written to generated source. Configure secrets in the environment used to launch ZenCODE; stdio bridges inherit it at runtime."
+                )
+            }
             let serviceName = arguments
                 .string("serviceName", "service_name")?
                 .nilIfBlank ?? displayName
@@ -397,15 +421,11 @@ extension SwiftFeatureRuntime {
             try Self.mcpBridgeMainContents(
                 serviceName: serviceName,
                 toolPrefix: toolPrefix,
-                endpointURLString: arguments.string("endpointURL", "endpoint_url", "url")?.nilIfBlank,
+                endpointURLString: endpointURLString,
                 executablePath: arguments.string("executablePath", "executable_path", "command")?.nilIfBlank,
                 arguments: Self.stringArrayArgument(
                     arguments,
                     keys: ["arguments", "args", "commandArguments", "command_arguments"]
-                ),
-                environment: Self.stringDictionaryArgument(
-                    arguments,
-                    keys: ["environment", "env"]
                 )
             ).write(to: sourceURL, atomically: true, encoding: .utf8)
             try Self.mcpBridgeFeatureManifestContents(

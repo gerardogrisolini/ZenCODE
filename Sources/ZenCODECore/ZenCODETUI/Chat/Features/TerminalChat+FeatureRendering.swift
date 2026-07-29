@@ -43,6 +43,22 @@ extension TerminalChat {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    public nonisolated static func renderFeatureDraftCompletion(
+        id: String,
+        enableAfterBuild: Bool
+    ) -> String {
+        var lines = [
+            "Feature '\(id)' scaffolded as a disabled draft.",
+            "Builder will implement it before validation and the first build."
+        ]
+        if enableAfterBuild {
+            lines.append("It will only be enabled after validation and build both succeed.")
+        } else {
+            lines.append("It will remain disabled after the build until you enable it explicitly.")
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
     public nonisolated static func featureImplementationPrompt(
         id: String,
         displayName: String,
@@ -50,8 +66,12 @@ extension TerminalChat {
         manifestPath: String,
         sourcePath: String,
         toolName: String,
+        enableAfterBuild: Bool,
         requirements: String?
     ) -> String {
+        let activationInstruction = enableAfterBuild
+            ? "Only after both validation and build succeed, enable `\(id)` with `feature.enable`. Then tell me to use `/tools` to expose and try it in this session."
+            : "Leave `\(id)` disabled after the successful build. Tell me I can enable it later with `/feature enable \(id)` and expose it through `/tools`."
         var sections = [
             """
             Implement the Swift feature "\(displayName)" (`\(id)`).
@@ -65,8 +85,10 @@ extension TerminalChat {
             - Tool: \(toolName)
 
             Work on the existing Swift package using the available file/text tools.
-            Keep Swift tools 6.3, update the tool description and JSON schema if needed, then run `feature.validate` and `feature.build` for `\(id)`.
-            If everything passes, enable the feature with `feature.enable` and tell me whether I should select it from `/tools` to try it in the current session.
+            Keep Swift tools 6.3 and preserve the feature id. Implement the requested behavior, tool description, input schema, output contract, and presentation metadata before building.
+            Run `feature.validate` for `\(id)` and fix every error. Then run `feature.build` and fix any build failure. Do not enable or expose placeholder, incomplete, invalid, or unbuilt code.
+            `feature.build` reloads the feature runtime after success; do not call `feature.reload` unless files changed outside the build flow or runtime discovery must be refreshed.
+            \(activationInstruction)
             """
         ]
 
@@ -87,6 +109,51 @@ extension TerminalChat {
             )
         }
 
+        return sections.joined()
+    }
+
+    public nonisolated static func featureMCPRepairPrompt(
+        report: SwiftFeatureScaffoldReport,
+        displayName: String,
+        enableAfterBuild: Bool,
+        requirements: String?
+    ) -> String {
+        let validationErrors = report.validation?.errors ?? []
+        let buildError = report.build?.stderr
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfBlank
+        let diagnostics = String(
+            (validationErrors + [buildError].compactMap { $0 })
+                .map { "- \($0)" }
+                .joined(separator: "\n")
+                .prefix(6_000)
+        )
+        let activationInstruction = enableAfterBuild
+            ? "The initial automatic selection could not complete. After validation and build succeed, enable `\(report.id)` with `feature.enable`, then tell me to select it from `/tools`."
+            : "Leave `\(report.id)` disabled after the repair."
+
+        var sections = [
+            """
+            Repair the generated MCP bridge "\(displayName)" (`\(report.id)`).
+
+            Feature directory:
+            \(report.directoryPath)
+
+            Main files:
+            - Manifest: \(report.manifestPath)
+            - Source: \(report.sourcePath)
+
+            Inspect the generated package and the diagnostics below. Fix the bridge without embedding credentials, API keys, tokens, passwords, or environment values in generated source. Stdio bridges inherit the ZenCODE process environment.
+            Run `feature.validate` and then `feature.build` for `\(report.id)`, fixing errors before continuing. `feature.build` reloads the runtime after success.
+            \(activationInstruction)
+            """
+        ]
+        if !diagnostics.isEmpty {
+            sections.append("\n\nDiagnostics:\n\(diagnostics)")
+        }
+        if let requirements {
+            sections.append("\n\nGoal / requirements:\n\(requirements)")
+        }
         return sections.joined()
     }
 
@@ -118,7 +185,7 @@ extension TerminalChat {
             \(sourceList)
             \(adoptedLine)
 
-            Work on the existing package using the available file/text tools. Preserve the feature id and existing tool names unless I explicitly ask to rename them. After edits, run `feature.validate` and `feature.build` for `\(report.id)`, then `feature.reload` if the build passes.
+            Work on the existing package using the available file/text tools. Preserve the feature id and existing tool names unless I explicitly ask to rename them. After edits, run `feature.validate` and `feature.build` for `\(report.id)`. A successful `feature.build` reloads the runtime; use `feature.reload` only after external file changes or when runtime discovery must be refreshed.
             """
         ]
 
@@ -458,24 +525,28 @@ extension TerminalChat {
         return "\(prefix.nilIfBlank ?? "feature")."
     }
 
+    nonisolated static func featureWizardDescription(
+        requirements: String?,
+        fallback: String
+    ) -> String {
+        guard let requirements = requirements?.nilIfBlank else {
+            return fallback
+        }
+        let collapsed = requirements
+            .split(whereSeparator: \Character.isWhitespace)
+            .joined(separator: " ")
+        guard collapsed.count > 160 else {
+            return collapsed
+        }
+        let endIndex = collapsed.index(collapsed.startIndex, offsetBy: 157)
+        return String(collapsed[..<endIndex]).trimmingCharacters(in: .whitespaces) + "..."
+    }
+
     nonisolated static func featureWizardArguments(_ rawValue: String) -> [String] {
         rawValue
             .split(separator: " ")
             .map(String.init)
             .filter { !$0.isEmpty }
-    }
-
-    nonisolated static func featureWizardEnvironment(_ rawValue: String) -> [String: String] {
-        var environment: [String: String] = [:]
-        for entry in rawValue.split(separator: " ").map(String.init) {
-            let parts = entry.split(separator: "=", maxSplits: 1).map(String.init)
-            guard parts.count == 2,
-                  !parts[0].isEmpty else {
-                continue
-            }
-            environment[parts[0]] = parts[1]
-        }
-        return environment
     }
 
     nonisolated static func featureDisplayName(_ status: SwiftFeatureStatus) -> String {

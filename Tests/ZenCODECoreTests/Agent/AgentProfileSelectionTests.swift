@@ -121,6 +121,33 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    func builderWorkflowPolicyAppliesToPersistedAndInstructionlessProfiles() throws {
+        let persistedBuilder = AgentProfile(
+            id: AgentProfileStore.builderAgentID.uuidString,
+            name: "Customized Builder",
+            instructions: "Keep my custom Builder instructions.",
+            tools: []
+        )
+        let instructionlessBuilder = AgentProfile(
+            id: "custom-builder-id",
+            name: AgentProfileStore.builderAgentName,
+            instructions: nil,
+            tools: []
+        )
+
+        let persistedPrompt = try #require(persistedBuilder.promptSection)
+        let instructionlessPrompt = try #require(instructionlessBuilder.promptSection)
+
+        #expect(persistedPrompt.contains("Keep my custom Builder instructions."))
+        #expect(persistedPrompt.contains("Builder workflow policy:"))
+        #expect(persistedPrompt.contains("Never enable placeholder"))
+        #expect(persistedPrompt.contains("Never embed credentials"))
+        #expect(persistedPrompt.contains("A successful `feature.build` reloads"))
+        #expect(instructionlessPrompt.contains("Builder workflow policy:"))
+        #expect(instructionlessPrompt.contains("Agent instructions:"))
+    }
+
+    @Test
     func agentProfileRoundTripsThinkingSelection() throws {
         let profile = AgentProfile(
             id: "custom",

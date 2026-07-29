@@ -241,6 +241,8 @@ extension SwiftFeatureRuntimeTests {
         #expect(sourceContents.contains("let presentation = ToolPresentationDefinition("))
         #expect(sourceContents.contains("presentation: presentation"))
         #expect(sourceContents.contains("http://127.0.0.1:65535/mcp"))
+        #expect(sourceContents.contains("environment: ProcessInfo.processInfo.environment"))
+        #expect(!sourceContents.contains("bridgeEnvironment"))
         #expect(manifest.discoversToolsAtRuntime)
         #expect(manifest.toolNamePrefixes == ["linear."])
         #expect(manifest.tools.isEmpty)
@@ -276,6 +278,77 @@ extension SwiftFeatureRuntimeTests {
         )
         #expect(build.ok)
         #expect(FileManager.default.isExecutableFile(atPath: build.executablePath))
+    }
+
+    @Test
+    func featureScaffoldRejectsMCPSecretsBeforeInstallingPackage() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-mcp-secrets-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+
+        let runtime = SwiftFeatureRuntime(featureSearchRoots: [rootURL])
+        let cases: [(id: String, arguments: [String: Any], expectedError: String)] = [
+            (
+                id: "secret-environment-mcp",
+                arguments: [
+                    "id": "secret-environment-mcp",
+                    "template": "mcp-bridge",
+                    "toolPrefix": "secret_environment.",
+                    "executablePath": "/usr/bin/false",
+                    "environment": ["TOKEN": "super-secret"]
+                ],
+                expectedError: "do not accept static environment values"
+            ),
+            (
+                id: "secret-endpoint-mcp",
+                arguments: [
+                    "id": "secret-endpoint-mcp",
+                    "template": "mcp-bridge",
+                    "toolPrefix": "secret_endpoint.",
+                    "endpointURL": "https://mcp.example.com/tools?client_secret=super-secret"
+                ],
+                expectedError: "cannot contain credentials"
+            ),
+            (
+                id: "secret-environment-alias-mcp",
+                arguments: [
+                    "id": "secret-environment-alias-mcp",
+                    "template": "mcp-bridge",
+                    "toolPrefix": "secret_environment_alias.",
+                    "executablePath": "/usr/bin/false",
+                    "environment": [String: String](),
+                    "env": ["API_KEY": "super-secret"]
+                ],
+                expectedError: "do not accept static environment values"
+            )
+        ]
+
+        for testCase in cases {
+            do {
+                _ = try await runtime.executeManagementTool(
+                    toolCall: DirectAgentToolCall(
+                        id: "feature-scaffold-\(testCase.id)",
+                        name: "feature.scaffold",
+                        argumentsObject: testCase.arguments,
+                        argumentsJSON: "{}"
+                    )
+                )
+                Issue.record("Expected feature.scaffold to reject secret configuration.")
+            } catch {
+                #expect(error.localizedDescription.contains(testCase.expectedError))
+            }
+            #expect(
+                !FileManager.default.fileExists(
+                    atPath: rootURL.appendingPathComponent(testCase.id).path
+                )
+            )
+        }
     }
 
     @Test

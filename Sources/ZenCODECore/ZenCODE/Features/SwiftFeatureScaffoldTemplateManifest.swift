@@ -117,17 +117,6 @@ extension SwiftFeatureRuntime {
         return "[\(renderedValues)]"
     }
 
-    static func swiftStringDictionaryLiteral(_ values: [String: String]) -> String {
-        guard !values.isEmpty else {
-            return "[:]"
-        }
-        let renderedValues = values
-            .sorted { $0.key < $1.key }
-            .map { "\(swiftStringLiteral($0.key)): \(swiftStringLiteral($0.value))" }
-            .joined(separator: ", ")
-        return "[\(renderedValues)]"
-    }
-
     static func swiftStringLiteral(_ value: String) -> String {
         let escaped = value
             .replacingOccurrences(of: "\\", with: "\\\\")

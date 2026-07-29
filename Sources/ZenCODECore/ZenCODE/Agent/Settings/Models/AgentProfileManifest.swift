@@ -340,9 +340,18 @@ public struct AgentProfile: Codable, Hashable, Sendable {
 
     public func promptSection(memoryToolEnabled: Bool) -> String? {
         var lines = ["Selected agent: \(displayName)"]
-        if instructions != nil {
+        var instructionSections: [String] = []
+        if let resolvedInstructions = resolvedInstructions(
+            memoryToolEnabled: memoryToolEnabled
+        ).nilIfBlank {
+            instructionSections.append(resolvedInstructions)
+        }
+        if AgentProfileStore.isBuilderAgent(self) {
+            instructionSections.append(AgentProfileStore.builderWorkflowInstructions)
+        }
+        if !instructionSections.isEmpty {
             lines.append("Agent instructions:")
-            lines.append(resolvedInstructions(memoryToolEnabled: memoryToolEnabled))
+            lines.append(instructionSections.joined(separator: "\n\n"))
         }
         return lines.joined(separator: "\n").nilIfBlank
     }
@@ -517,6 +526,14 @@ public enum AgentProfileStore {
     public static let builderToolNames: [String] = codingToolNames + [
         TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools")
     ]
+    static let builderWorkflowInstructions = """
+    Builder workflow policy:
+    - Use Dynamic Swift Features only for reusable runtime capabilities, not ordinary one-off edits.
+    - For a Basic feature, scaffold a disabled draft, implement the real behavior first, then run `feature.validate` followed by `feature.build`. Never enable placeholder, incomplete, invalid, or unbuilt code.
+    - For an MCP bridge, collect only non-secret transport configuration. Never embed credentials, API keys, tokens, passwords, or environment values in generated source or endpoint URLs; stdio bridges inherit the ZenCODE process environment.
+    - Enable a feature only after validation and build succeed. `/tools` remains the explicit session-level control for exposing its tools.
+    - A successful `feature.build` reloads the feature runtime. Use `feature.reload` only after external file changes or when runtime discovery must be refreshed.
+    """
     public static let reviewerToolNames: [String] = codingToolNames.filter { $0 != "shell" }
     public static let reporterToolNames: [String] = [
         "files",

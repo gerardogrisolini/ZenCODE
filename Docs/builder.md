@@ -22,13 +22,16 @@ Switching agents resets the conversation so the Builder system prompt and intrin
 /feature edit <id|name|#> [requirements]
 /feature build <id|name|#>
 /feature validate <id|name|#>
-/feature reload              # refresh after rebuilding an enabled feature
+/feature reload              # manual refresh after external changes/discovery
 /feature delete <id|name|#>  # generated packages or local bundled copies only
 ```
 
 ## Creating A Feature
 
-Run `/feature` to start the wizard. It asks for a template and metadata, then scaffolds a Swift package under `~/.zencode/features/<feature-id>/`:
+Run `/feature` to start the wizard. This remains the single entry point for both
+new Swift tools and MCP bridges; there are no separate creation subcommands.
+The wizard asks for the goal first, then the template and metadata, and
+scaffolds a Swift package under `~/.zencode/features/<feature-id>/`:
 
 ```text
 feature.json
@@ -51,21 +54,36 @@ metadata stays absent rather than being replaced by an inferred rule.
 
 Templates:
 
-- **Basic Swift feature** — one starter tool.
-- **MCP Bridge** — forwards tool calls to an HTTP or stdio MCP server.
+- **Basic Swift Feature** (default) — creates one disabled starter tool. Builder
+  implements the real behavior before the first validation and build. The
+  placeholder is never enabled or exposed.
+- **MCP Bridge** — forwards tool calls to an HTTP or stdio MCP server. The
+  configured bridge is validated and built immediately; if requested, it is
+  enabled and selected only after that build succeeds.
 
-When the wizard finishes, Builder prepares an implementation prompt and can start implementing immediately if you provided requirements.
+For a Basic Feature, the wizard prepares an implementation prompt and starts it
+immediately when requirements were supplied; an empty goal leaves the prompt
+ready for review. For a successfully built MCP Bridge no second implementation
+prompt is needed. If its validation or build fails, Builder receives a repair
+prompt and the disabled scaffold remains available for inspection.
 
 ## Typical Workflow
 
-1. `/feature` to scaffold.
-2. Builder implements or edits the generated Swift code.
-3. `/feature validate <id|name|#>`.
-4. `/feature build <id|name|#>`.
-5. `/feature enable <id|name|#>`.
-6. `/tools` to expose the package in the current session.
+1. Run `/feature` and describe the reusable capability.
+2. For a Basic Feature, Builder implements the disabled scaffold.
+3. Builder runs `feature.validate`, fixes errors, then runs `feature.build`.
+4. Builder enables the package only after both operations succeed, when that
+   option was selected in the wizard.
+5. Use `/tools` to expose a completed Basic Feature in the current session.
 
-After editing any feature, repeat validate → build → reload (if already enabled) → `/tools`.
+For an MCP Bridge, steps 2–4 happen inside the wizard. When activation was
+requested and the initial build succeeds, the bridge is also selected for the
+current session. If the initial build needs a Builder repair, automatic
+selection is not claimed: after the repair, use `/tools` explicitly.
+
+After editing a feature, repeat validate → build. A successful `feature.build`
+already reloads the feature runtime. Use `/feature reload` only after external
+file changes or when runtime-discovered tools need to be refreshed.
 
 ## Enabling vs Exposing
 
@@ -75,6 +93,17 @@ Two separate steps:
 - **Expose** (`/tools`) decides whether the model can call its tools in the current session.
 
 Builder's own lifecycle tools (`feature.scaffold`, `feature.build`) are intrinsic to the agent and not selectable through `/tools`.
+
+## MCP Configuration And Secrets
+
+HTTP endpoint URLs must not contain usernames, passwords, tokens, API keys, or
+other credentials. The wizard rejects common credential-bearing URL forms.
+
+For stdio MCP servers, the generated bridge inherits the environment of the
+`zen` process. Configure sensitive values before launching `zen` or through the
+integration's dedicated secure setup; the wizard deliberately does not collect
+`KEY=value` pairs, and `feature.scaffold` rejects non-empty `environment`/`env`
+values so they cannot be emitted into generated Swift source.
 
 ## Editing Existing Features
 

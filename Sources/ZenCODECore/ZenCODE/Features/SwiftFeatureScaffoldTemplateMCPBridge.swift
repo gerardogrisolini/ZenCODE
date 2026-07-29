@@ -11,15 +11,13 @@ extension SwiftFeatureRuntime {
         toolPrefix: String,
         endpointURLString: String?,
         executablePath: String?,
-        arguments: [String],
-        environment: [String: String]
+        arguments: [String]
     ) -> String {
         let escapedServiceName = swiftStringLiteral(serviceName)
         let escapedToolPrefix = swiftStringLiteral(toolPrefix)
         let endpointLiteral = endpointURLString.map(swiftStringLiteral) ?? "nil"
         let executablePathLiteral = executablePath.map(swiftStringLiteral) ?? "nil"
         let argumentsLiteral = swiftStringArrayLiteral(arguments)
-        let environmentLiteral = swiftStringDictionaryLiteral(environment)
         return #"""
         import Foundation
         import FeatureKit
@@ -31,7 +29,6 @@ extension SwiftFeatureRuntime {
         private let bridgeEndpointURLString: String? = \#(endpointLiteral)
         private let bridgeExecutablePath: String? = \#(executablePathLiteral)
         private let bridgeExecutableArguments: [String] = \#(argumentsLiteral)
-        private let bridgeEnvironment: [String: String] = \#(environmentLiteral)
 
         @main
         enum MCPBridgeFeatureMain {
@@ -159,12 +156,10 @@ extension SwiftFeatureRuntime {
 
                 if let executablePath = bridgeExecutablePath,
                    !executablePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    var environment = ProcessInfo.processInfo.environment
-                    environment.merge(bridgeEnvironment) { _, new in new }
                     return MCPServerConfiguration(
                         executablePath: executablePath,
                         arguments: bridgeExecutableArguments,
-                        environment: environment
+                        environment: ProcessInfo.processInfo.environment
                     )
                 }
 

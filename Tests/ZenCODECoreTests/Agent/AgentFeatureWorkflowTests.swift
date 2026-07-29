@@ -35,6 +35,94 @@ extension AgentConfigurationTests {
         #expect(builderCommands.contains("/feature"))
     }
 
+    @Test
+    func featureWizardPlansBuildOnlyCompleteMCPBridges() {
+        let enabledBasic = FeatureWizardCreationPlan(
+            template: .basic,
+            activateAfterSuccessfulBuild: true
+        )
+        let disabledBasic = FeatureWizardCreationPlan(
+            template: .basic,
+            activateAfterSuccessfulBuild: false
+        )
+        let enabledBridge = FeatureWizardCreationPlan(
+            template: .mcpBridge,
+            activateAfterSuccessfulBuild: true
+        )
+        let disabledBridge = FeatureWizardCreationPlan(
+            template: .mcpBridge,
+            activateAfterSuccessfulBuild: false
+        )
+
+        #expect(!enabledBasic.buildsScaffold)
+        #expect(!enabledBasic.enablesScaffold)
+        #expect(!enabledBasic.selectsScaffold)
+        #expect(enabledBasic.runsImplementationPrompt)
+        #expect(enabledBasic.enablesAfterImplementation)
+        #expect(!disabledBasic.enablesAfterImplementation)
+
+        #expect(enabledBridge.buildsScaffold)
+        #expect(enabledBridge.enablesScaffold)
+        #expect(enabledBridge.selectsScaffold)
+        #expect(!enabledBridge.runsImplementationPrompt)
+        #expect(disabledBridge.buildsScaffold)
+        #expect(!disabledBridge.enablesScaffold)
+        #expect(!disabledBridge.selectsScaffold)
+    }
+
+    @Test
+    func featureWizardRejectsCredentialBearingMCPEndpoints() {
+        #expect(SwiftFeatureRuntime.mcpBridgeEndpointIssue("https://mcp.example.com/tools") == nil)
+        #expect(SwiftFeatureRuntime.mcpBridgeEndpointIssue("https://mcp.example.com/tools?project=zen") == nil)
+        #expect(SwiftFeatureRuntime.mcpBridgeEndpointIssue("mcp.example.com/tools") == .invalidHTTPURL)
+        #expect(
+            SwiftFeatureRuntime.mcpBridgeEndpointIssue("https://user:password@mcp.example.com/tools")
+                == .embeddedCredentials
+        )
+        #expect(
+            SwiftFeatureRuntime.mcpBridgeEndpointIssue("https://mcp.example.com/tools?access_token=secret")
+                == .embeddedCredentials
+        )
+        #expect(
+            SwiftFeatureRuntime.mcpBridgeEndpointIssue("https://mcp.example.com/tools?API_KEY=secret")
+                == .embeddedCredentials
+        )
+        #expect(
+            SwiftFeatureRuntime.mcpBridgeEndpointIssue("https://mcp.example.com/tools?client-secret=secret")
+                == .embeddedCredentials
+        )
+        #expect(
+            SwiftFeatureRuntime.mcpBridgeEndpointIssue("https://mcp.example.com/tools?key=secret")
+                == .embeddedCredentials
+        )
+        #expect(
+            SwiftFeatureRuntime.mcpBridgeEndpointIssue("https://mcp.example.com/tools#access_token=secret")
+                == .embeddedCredentials
+        )
+    }
+
+    @Test
+    func featureWizardDescriptionUsesGoalWithoutGrowingUnbounded() {
+        #expect(
+            TerminalChat.featureWizardDescription(
+                requirements: "  Return   the current\nbranch  ",
+                fallback: "Fallback"
+            ) == "Return the current branch"
+        )
+        #expect(
+            TerminalChat.featureWizardDescription(
+                requirements: nil,
+                fallback: "Fallback"
+            ) == "Fallback"
+        )
+        let longDescription = TerminalChat.featureWizardDescription(
+            requirements: String(repeating: "x", count: 200),
+            fallback: "Fallback"
+        )
+        #expect(longDescription.count == 160)
+        #expect(longDescription.hasSuffix("..."))
+    }
+
         @Test
     func savedSessionCommandTreatsSaveAsActiveSessionUpdate() {
                 #expect(TerminalChat.savedSessionCommandAction(rawArguments: "") == .list)
@@ -214,6 +302,7 @@ extension AgentConfigurationTests {
             manifestPath: "/tmp/features/test1/feature.json",
             sourcePath: "/tmp/features/test1/Sources/Test1/main.swift",
             toolName: "test1.run",
+            enableAfterBuild: true,
             requirements: "Return the current git branch as JSON."
         )
         let draftPrompt = TerminalChat.featureImplementationPrompt(
@@ -223,6 +312,7 @@ extension AgentConfigurationTests {
             manifestPath: "/tmp/features/test1/feature.json",
             sourcePath: "/tmp/features/test1/Sources/Test1/main.swift",
             toolName: "test1.run",
+            enableAfterBuild: false,
             requirements: nil
         )
 
@@ -231,7 +321,48 @@ extension AgentConfigurationTests {
         #expect(prompt.contains("Return the current git branch as JSON."))
         #expect(prompt.contains("feature.validate"))
         #expect(prompt.contains("feature.build"))
+        #expect(prompt.contains("Do not enable or expose placeholder"))
+        #expect(prompt.contains("enable `test1` with `feature.enable`"))
+        #expect(prompt.contains("do not call `feature.reload`"))
+        #expect(draftPrompt.contains("Leave `test1` disabled"))
         #expect(draftPrompt.hasSuffix("Goal / requirements:"))
+    }
+
+    @Test
+    func failedMCPScaffoldProducesRepairPromptWithDiagnostics() {
+        let report = SwiftFeatureScaffoldReport(
+            id: "broken-mcp",
+            directoryPath: "/tmp/features/broken-mcp",
+            manifestPath: "/tmp/features/broken-mcp/feature.json",
+            packagePath: "/tmp/features/broken-mcp/Package.swift",
+            sourcePath: "/tmp/features/broken-mcp/Sources/BrokenMcp/main.swift",
+            toolName: "broken.",
+            ok: false,
+            built: false,
+            enabled: false,
+            validation: SwiftFeatureValidationReport(
+                id: "broken-mcp",
+                manifestPath: "/tmp/features/broken-mcp/feature.json",
+                executablePath: nil,
+                errors: ["Invalid bridge configuration"],
+                warnings: [],
+                tools: []
+            )
+        )
+
+        let prompt = TerminalChat.featureMCPRepairPrompt(
+            report: report,
+            displayName: "Broken MCP",
+            enableAfterBuild: true,
+            requirements: "Connect to the internal service."
+        )
+
+        #expect(prompt.contains("Repair the generated MCP bridge"))
+        #expect(prompt.contains("Invalid bridge configuration"))
+        #expect(prompt.contains("without embedding credentials"))
+        #expect(prompt.contains("Stdio bridges inherit"))
+        #expect(prompt.contains("enable `broken-mcp`"))
+        #expect(prompt.contains("Connect to the internal service."))
     }
 
     @Test
