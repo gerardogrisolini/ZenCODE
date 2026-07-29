@@ -22,9 +22,35 @@ extension TerminalChat {
         await printToolSelectionStatus()
     }
 
+    /// Uses the backend's resolved descriptor set so runtime-discovered feature
+    /// prefixes such as `git.` are not presented as active groups with zero tools.
+    func resolvedActiveToolNames(
+        fallbackAllowedToolNames: Set<String>
+    ) async -> [String] {
+        let activeDescriptors = await sessionRunner.activeToolDescriptors(
+            sessionID: sessionID
+        )
+        return Self.resolvedActiveToolNames(
+            fallbackAllowedToolNames: fallbackAllowedToolNames,
+            activeDescriptors: activeDescriptors
+        )
+    }
+
+    nonisolated static func resolvedActiveToolNames(
+        fallbackAllowedToolNames: Set<String>,
+        activeDescriptors: [DirectToolDescriptor]
+    ) -> [String] {
+        let activeToolNames = Set(activeDescriptors.map(\.name))
+        return (activeToolNames.isEmpty ? fallbackAllowedToolNames : activeToolNames)
+            .sorted()
+    }
+
     public func printStartupSummary() async {
         let allowedToolNames = await selectedAllowedToolNames(
             discoverExternalTools: false
+        )
+        let activeToolNames = await resolvedActiveToolNames(
+            fallbackAllowedToolNames: allowedToolNames
         )
         let toolItems = await toolSelectionItems()
         didPrintActiveTools = true
@@ -32,7 +58,7 @@ extension TerminalChat {
         var lines = [
             "Version: \(Self.appVersionDescription)",
             Self.renderActiveTools(
-                Array(allowedToolNames),
+                activeToolNames,
                 items: toolItems,
                 selectedKeys: selectedToolKeys
             )

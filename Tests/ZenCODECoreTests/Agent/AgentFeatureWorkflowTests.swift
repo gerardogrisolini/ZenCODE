@@ -404,8 +404,12 @@ extension AgentConfigurationTests {
             for: selectedKeys,
             items: items
         )
+        let activeToolNames = TerminalChat.resolvedActiveToolNames(
+            fallbackAllowedToolNames: allowedToolNames,
+            activeDescriptors: []
+        )
         let rendered = TerminalChat.renderActiveTools(
-            Array(allowedToolNames),
+            activeToolNames,
             items: items,
             selectedKeys: selectedKeys
         )
@@ -414,6 +418,81 @@ extension AgentConfigurationTests {
         #expect(!rendered.contains("Figma (1)"))
         #expect(rendered.hasPrefix("Active tools: Figma (0)"))
         #expect(!rendered.contains("\n  Figma"))
+    }
+
+    @Test
+    func activeToolRenderingCountsResolvedRuntimeDescriptors() throws {
+        let items = TerminalChat.toolSelectionItems(
+            featureStatuses: [
+                featureStatus(
+                    id: "git-tools",
+                    source: .bundled,
+                    tools: [],
+                    toolNamePrefixes: ["git."],
+                    discoversToolsAtRuntime: true
+                ),
+                featureStatus(
+                    id: "swift-tools",
+                    source: .bundled,
+                    tools: [],
+                    toolNamePrefixes: ["swift."],
+                    discoversToolsAtRuntime: true
+                ),
+                featureStatus(
+                    id: "web-tools",
+                    source: .bundled,
+                    tools: [],
+                    toolNamePrefixes: ["web."],
+                    discoversToolsAtRuntime: true
+                )
+            ]
+        )
+        let selectedKeys = try TerminalChat.parseToolSelection(
+            "git swift web",
+            items: items
+        )
+        let allowedToolNames = TerminalToolSelectionCatalog.allowedToolNames(
+            for: selectedKeys,
+            items: items
+        )
+        let activeToolNames = TerminalChat.resolvedActiveToolNames(
+            fallbackAllowedToolNames: allowedToolNames,
+            activeDescriptors: [
+                DirectToolDescriptor(
+                    name: "git.status",
+                    description: "Git status",
+                    inputSchema: "{}"
+                ),
+                DirectToolDescriptor(
+                    name: "git.diff",
+                    description: "Git diff",
+                    inputSchema: "{}"
+                ),
+                DirectToolDescriptor(
+                    name: "swift.build",
+                    description: "Swift build",
+                    inputSchema: "{}"
+                ),
+                DirectToolDescriptor(
+                    name: "web.search",
+                    description: "Web search",
+                    inputSchema: "{}"
+                ),
+                DirectToolDescriptor(
+                    name: "web.fetch",
+                    description: "Web fetch",
+                    inputSchema: "{}"
+                )
+            ]
+        )
+        let rendered = TerminalChat.renderActiveTools(
+            activeToolNames,
+            items: items,
+            selectedKeys: selectedKeys
+        )
+
+        #expect(rendered == "Active tools: Git (2), Swift (1), Web (2)\n")
+        #expect(!rendered.contains("(0)"))
     }
 
     @Test

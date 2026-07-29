@@ -77,8 +77,17 @@ extension TerminalChat {
         let allowedToolNames = await updateCurrentSessionToolOptions(
             discoverExternalTools: shouldDiscoverExternalTools
         )
+        let activeToolNames = await resolvedActiveToolNames(
+            fallbackAllowedToolNames: allowedToolNames
+        )
         let renderItems = await toolSelectionItems()
-        await writeSystemMessage(Self.renderActiveTools(Array(allowedToolNames), items: renderItems, selectedKeys: selectedToolKeys))
+        await writeSystemMessage(
+            Self.renderActiveTools(
+                activeToolNames,
+                items: renderItems,
+                selectedKeys: selectedToolKeys
+            )
+        )
         didPrintActiveTools = true
     }
 
@@ -86,8 +95,17 @@ extension TerminalChat {
         let allowedToolNames = await selectedAllowedToolNames(
             discoverExternalTools: false
         )
+        let activeToolNames = await resolvedActiveToolNames(
+            fallbackAllowedToolNames: allowedToolNames
+        )
         let items = await toolSelectionItems()
-        await writeSystemMessage(Self.renderActiveTools(Array(allowedToolNames), items: items, selectedKeys: selectedToolKeys))
+        await writeSystemMessage(
+            Self.renderActiveTools(
+                activeToolNames,
+                items: items,
+                selectedKeys: selectedToolKeys
+            )
+        )
     }
 
     public nonisolated static func shouldDiscoverExternalTools(
