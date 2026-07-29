@@ -13,6 +13,7 @@ extension TerminalChat {
     enum DetailedToolRow: Sendable, Equatable {
         case text(String)
         case parameter(String)
+        case code(DetailedToolCodeLine)
         case diff(DetailedToolDiffCells)
         case unifiedDiff(DetailedToolUnifiedDiffLine)
 
@@ -22,11 +23,40 @@ extension TerminalChat {
             switch self {
             case let .text(line), let .parameter(line):
                 return line
+            case let .code(line):
+                return line.plainText
             case let .diff(cells):
                 return cells.plainText
             case let .unifiedDiff(line):
                 return line.plainText
             }
+        }
+    }
+
+    /// A source row whose gutter stays separate from syntax-highlighted content.
+    /// File-read tools can preserve the real line number returned by the tool,
+    /// while generated snippets use the same representation with local numbers.
+    struct DetailedToolCodeLine: Sendable, Equatable {
+        static let gutter = " │ "
+
+        let indentation: String
+        let lineNumber: String
+        let content: String
+
+        var prefix: String {
+            "\(indentation)\(lineNumber)\(Self.gutter)"
+        }
+
+        var plainText: String {
+            "\(prefix)\(content)"
+        }
+
+        var continuation: DetailedToolCodeLine {
+            DetailedToolCodeLine(
+                indentation: indentation,
+                lineNumber: String(repeating: " ", count: lineNumber.count),
+                content: content
+            )
         }
     }
 
@@ -441,11 +471,43 @@ extension TerminalChat {
             case let .parameter(line):
                 return wrappedDetailedToolTextLines(line, width: safeLineWidth)
                     .map(DetailedToolRow.parameter)
+            case let .code(line):
+                return wrappedDetailedToolCodeRows(line, width: safeLineWidth)
             case let .diff(cells):
                 return wrappedDetailedToolDiffRows(cells, width: safeLineWidth)
             case let .unifiedDiff(line):
                 return wrappedDetailedToolUnifiedDiffRows(line, width: safeLineWidth)
             }
+        }
+    }
+
+    /// Reflows source content without re-highlighting or repeating its line
+    /// number on continuation rows.
+    private nonisolated static func wrappedDetailedToolCodeRows(
+        _ line: DetailedToolCodeLine,
+        width: Int
+    ) -> [DetailedToolRow] {
+        guard displayWidth(line.plainText) > width else {
+            return [.code(line)]
+        }
+
+        let prefixWidth = displayWidth(line.prefix)
+        guard prefixWidth < width else {
+            return wrappedDetailedToolTextLines(line.plainText, width: width)
+                .map(DetailedToolRow.text)
+        }
+
+        let fragments = TerminalANSIText.wrapPreservingWhitespace(
+            line.content,
+            width: width - prefixWidth
+        )
+        return fragments.enumerated().map { index, fragment in
+            let wrappedLine = index == 0 ? line : line.continuation
+            return .code(DetailedToolCodeLine(
+                indentation: wrappedLine.indentation,
+                lineNumber: wrappedLine.lineNumber,
+                content: fragment
+            ))
         }
     }
 
@@ -632,6 +694,13 @@ extension TerminalChat {
             return renderDetailedToolLine(line, codeLanguage: codeLanguage)
         case let .parameter(line):
             return renderDetailedToolParameterLine(line)
+        case let .code(line):
+            return renderCodeAreaLine(
+                indentation: line.indentation,
+                lineNumber: line.lineNumber,
+                content: line.content,
+                language: codeLanguage
+            )
         case let .diff(cells):
             return renderDiffCodeAreaLine(
                 indentation: cells.indentation,
@@ -648,6 +717,23 @@ extension TerminalChat {
                 language: codeLanguage
             )
         }
+    }
+
+    /// Renders a source row with a neutral gutter and independently highlighted
+    /// content. Keeping the number out of the tokenizer prevents source-language
+    /// palettes from coloring it orange.
+    nonisolated static func renderCodeAreaLine(
+        indentation: String,
+        lineNumber: String,
+        content: String,
+        language: String?
+    ) -> String {
+        let clearToEnd = "\u{1B}[K"
+        let codeStyle = "\(codeAreaBackgroundColor)\(TerminalMarkdownPalette.dark.codeForeground)"
+        return "\(codeAreaBackgroundColor)\(indentation)"
+            + "\(toolCodeGutterColor)\(lineNumber)\(DetailedToolCodeLine.gutter)"
+            + "\(codeStyle)\(renderCodeAreaFragment(content, language: language))"
+            + clearToEnd
     }
 
     nonisolated static func renderDetailedToolLine(
@@ -671,12 +757,13 @@ extension TerminalChat {
     }
 
     /// Parameter JSON is presentation metadata rather than source code. Render
-    /// keys in light gray and values in default white so a target file's language
-    /// hint can never turn parameter strings green.
+    /// keys in light gray and values in the peach-orange shared with metadata
+    /// values (the "giallino" of `action`), with no code-area background so a
+    /// target file's language hint can never turn parameter strings green and
+    /// the parameter block blends into the surrounding tool block.
     nonisolated static func renderDetailedToolParameterLine(_ line: String) -> String {
         let reset = "\u{1B}[0m"
-        let clearToEnd = "\u{1B}[K"
-        let baseStyle = "\(codeAreaBackgroundColor)\(toolParameterBaseColor)"
+        let baseStyle = toolParameterBaseColor
         let highlighted = TerminalCodeBlockRenderer.renderLine(
             line,
             language: "json",
@@ -687,7 +774,7 @@ extension TerminalChat {
             of: reset,
             with: "\(reset)\(baseStyle)"
         )
-        return "\(baseStyle)\(anchored)\(clearToEnd)"
+        return "\(baseStyle)\(anchored)"
     }
 
     /// Renders a code snippet row of the expanded tool block: the line is
@@ -775,8 +862,11 @@ extension TerminalChat {
     nonisolated static let toolValueColor = "\u{1B}[38;5;215m"
     nonisolated static let toolDurationColor = "\u{1B}[90m"
     nonisolated static let toolParameterBaseColor = "\u{1B}[38;5;244m"
+    nonisolated static let toolCodeGutterColor = "\u{1B}[90m"
     nonisolated static let toolParameterKeyColor = "\u{1B}[38;5;250m"
-    nonisolated static let toolParameterValueColor = "\u{1B}[38;5;255m"
+    // Values (JSON strings and numbers) reuse the peach-orange shared with
+    // metadata values such as `action`, instead of default white.
+    nonisolated static let toolParameterValueColor = toolValueColor
     nonisolated static let toolParameterSyntaxColors =
         TerminalCodeBlockRenderer.DataSyntaxColors(
             property: toolParameterKeyColor,

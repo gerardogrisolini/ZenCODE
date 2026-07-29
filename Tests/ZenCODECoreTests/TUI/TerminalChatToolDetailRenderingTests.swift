@@ -263,7 +263,7 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func detailedReadCompletionOmitsRawOutputButKeepsSummaryDetail() {
+    func detailedReadCompletionPreservesOnlyTheRealSourceLineNumber() {
         let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.readFile",
@@ -288,7 +288,57 @@ extension TerminalChatRenderingTests {
         #expect(lines.contains("kind: read"))
         #expect(lines.contains("summary: read 2 lines"))
         #expect(!lines.contains("rawOutput.output:"))
-        #expect(!lines.contains("let value = 1"))
+        #expect(lines.contains("  1 │ let value = 1"))
+        #expect(lines.contains("  2 │ let second = 2"))
+        #expect(!lines.contains { $0.contains("1 │ 1") || $0.contains("2 │ 2") })
+    }
+
+    @Test
+    func detailedReadOffsetUsesGrayPreservedLineNumberGutter() throws {
+        let toolCall = presentedToolCall(
+            id: "call_offset",
+            name: "local.readFile",
+            argumentsObject: [
+                "path": "/tmp/project/Sources/App.swift",
+                "offset": 76,
+                "limit": 2
+            ],
+            argumentsJSON: #"{"path":"/tmp/project/Sources/App.swift","offset":76,"limit":2}"#
+        )
+        let rows = TerminalChat.detailedToolCallCompletedRows(
+            for: toolCall,
+            result: DirectAgentToolResult(
+                output: "76\t}\n77\tpublic func run() {}",
+                summary: "76\t}"
+            )
+        )
+        let sourceRows = rows.compactMap { row -> TerminalChat.DetailedToolCodeLine? in
+            guard case let .code(line) = row else {
+                return nil
+            }
+            return line
+        }
+
+        #expect(sourceRows.map(\.lineNumber) == ["76", "77"])
+        #expect(sourceRows.map(\.content) == ["}", "public func run() {}"])
+        let rendered = TerminalChat.renderDetailedToolRow(
+            try #require(sourceRows.first.map(TerminalChat.DetailedToolRow.code)),
+            codeLanguage: "swift"
+        )
+        #expect(
+            rendered.contains(
+                "\(TerminalChat.toolCodeGutterColor)76\(TerminalChat.DetailedToolCodeLine.gutter)"
+            )
+        )
+        #expect(
+            rendered.contains(
+                "\(TerminalChat.toolCodeGutterColor)76"
+                    + "\(TerminalChat.DetailedToolCodeLine.gutter)"
+                    + "\(TerminalChat.codeAreaBackgroundColor)"
+                    + "\(TerminalMarkdownPalette.dark.codeForeground)"
+            )
+        )
+        #expect(!TerminalANSIText.stripANSI(rendered).contains("1 │ 76"))
     }
 
     @Test

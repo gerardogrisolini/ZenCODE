@@ -143,7 +143,8 @@ extension TerminalChat {
             rows.append(
                 contentsOf: semanticElementRows(
                     element,
-                    contentWidth: contentWidth
+                    contentWidth: contentWidth,
+                    preservesSourceLineNumbers: presentation.kind == .read
                 )
             )
         }
@@ -152,7 +153,8 @@ extension TerminalChat {
 
     nonisolated static func semanticElementRows(
         _ element: ToolPresentationElement,
-        contentWidth: Int?
+        contentWidth: Int?,
+        preservesSourceLineNumbers: Bool = false
     ) -> [DetailedToolRow] {
         switch element {
         case let .parameters(label, value):
@@ -162,7 +164,9 @@ extension TerminalChat {
             if let label = label.flatMap(sanitizedMetadataText) {
                 rows.append(.text("\(label):"))
             }
-            rows.append(contentsOf: numberedCodeSnippetRows(content))
+            rows.append(contentsOf: preservesSourceLineNumbers
+                ? preservedLineNumberCodeSnippetRows(content)
+                : numberedCodeSnippetRows(content))
             return rows
         case let .diff(label, old, new, _):
             var rows: [DetailedToolRow] = []
@@ -800,22 +804,78 @@ extension TerminalChat {
         let snippet = detailedToolSnippet(text)
         let numberWidth = String(max(1, snippet.lines.count)).count
         var rendered = snippet.lines.enumerated().map { index, line in
-            DetailedToolRow.text(
-                "\(indentation)\(paddedLineNumber(index + 1, width: numberWidth)) │ \(terminalSafeSnippetLine(line))"
-            )
+            DetailedToolRow.code(DetailedToolCodeLine(
+                indentation: indentation,
+                lineNumber: paddedLineNumber(index + 1, width: numberWidth),
+                content: terminalSafeSnippetLine(line)
+            ))
         }
         if snippet.isEmptyPayload {
             // Structural emptiness: no line number is assigned, so this row is
             // distinct from a numbered line whose content is literally the
             // marker text.
-            rendered.append(.text(
-                "\(indentation)\(String(repeating: " ", count: numberWidth)) │ \(detailedToolEmptyPayloadMarker)"
-            ))
+            rendered.append(.code(DetailedToolCodeLine(
+                indentation: indentation,
+                lineNumber: String(repeating: " ", count: numberWidth),
+                content: detailedToolEmptyPayloadMarker
+            )))
         }
         if snippet.isTruncated {
-            rendered.append(.text(
-                "\(indentation)\(String(repeating: " ", count: numberWidth)) │ ... truncated"
+            rendered.append(.code(DetailedToolCodeLine(
+                indentation: indentation,
+                lineNumber: String(repeating: " ", count: numberWidth),
+                content: "... truncated"
+            )))
+        }
+        return rendered
+    }
+
+    /// Renders output from file-read tools, whose wire text already prefixes
+    /// source rows with `<real line number>\t`. The prefix is consumed into the
+    /// gutter instead of being displayed as a second number in the source cell.
+    nonisolated static func preservedLineNumberCodeSnippetRows(
+        _ text: String,
+        indentation: String = "  "
+    ) -> [DetailedToolRow] {
+        let snippet = detailedToolSnippet(text)
+        let parsedLines = snippet.lines.map { line -> (number: Int?, content: String) in
+            guard let tab = line.firstIndex(of: "\t") else {
+                return (nil, line)
+            }
+            let numberText = line[..<tab]
+            guard !numberText.isEmpty,
+                  numberText.allSatisfy(\.isWholeNumber),
+                  let number = Int(numberText) else {
+                return (nil, line)
+            }
+            return (number, String(line[line.index(after: tab)...]))
+        }
+        let numberWidth = max(
+            1,
+            parsedLines.compactMap { $0.number }.map { String($0).count }.max() ?? 1
+        )
+        var rendered = parsedLines.map { line in
+            DetailedToolRow.code(DetailedToolCodeLine(
+                indentation: indentation,
+                lineNumber: line.number.map {
+                    paddedLineNumber($0, width: numberWidth)
+                } ?? String(repeating: " ", count: numberWidth),
+                content: terminalSafeSnippetLine(line.content)
             ))
+        }
+        if snippet.isEmptyPayload {
+            rendered.append(.code(DetailedToolCodeLine(
+                indentation: indentation,
+                lineNumber: String(repeating: " ", count: numberWidth),
+                content: detailedToolEmptyPayloadMarker
+            )))
+        }
+        if snippet.isTruncated {
+            rendered.append(.code(DetailedToolCodeLine(
+                indentation: indentation,
+                lineNumber: String(repeating: " ", count: numberWidth),
+                content: "... truncated"
+            )))
         }
         return rendered
     }

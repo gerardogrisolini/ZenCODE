@@ -553,12 +553,10 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func detailedToolBlockBeyondScrollRegionAppendsCompletionWithoutErasingOverlay() async {
+    func detailedToolPendingBeyondScrollRegionIsBoundedAndRewritten() async {
         let scrollableRows = 12
-        // The *started* block must exceed the scrolling region: that is the
-        // precondition for the append-only completion path under test.
-        // Expanded mutation tools now render their payload only on completion,
-        // so this fixture uses a tool whose parameters are shown at start time.
+        // A large pending payload is bounded before it is written, retaining an
+        // owned block that completion can replace instead of duplicating.
         let script = (0..<40)
             .map { "echo line\($0)" }
             .joined(separator: "\n")
@@ -596,19 +594,26 @@ struct TerminalChatRenderCoordinatorTests {
             .map(\.text)
             .joined()
 
-        #expect(started.activeDetailedToolRenderedRowCount > scrollableRows)
-        #expect(!containsCursorUpSequence(completionText))
+        #expect(started.activeDetailedToolRenderedRowCount == scrollableRows)
+        #expect(containsCursorUpSequence(completionText))
+        #expect(
+            completionText.components(separatedBy: "\u{1B}[2K").count - 1
+                == started.activeDetailedToolRenderedRowCount
+        )
         #expect(TerminalANSIText.stripANSI(completionText).contains("status: ✅"))
     }
 
     @Test
-    func expandedMutationCompletionBeyondScrollRegionAppendsWithoutErasingOverlay() async {
-        // Companion case for expanded mutations: the payload appears only on
-        // completion, so the started block stays small while the completion
-        // far exceeds the scrolling region.
+    func expandedEditCompletionBeyondScrollRegionReplacesBoundedPendingBlock() async {
+        // Edit arguments can make both lifecycle renderings taller than the
+        // scrolling region. The pending copy is bounded, then replaced by the
+        // complete diff even when the latter scrolls.
         let scrollableRows = 4
-        let content = (0..<40)
-            .map { "let value\($0) = \($0)" }
+        let oldContent = (0..<40)
+            .map { "let oldValue\($0) = \($0)" }
+            .joined(separator: "\n")
+        let newContent = (0..<40)
+            .map { "let newValue\($0) = \($0)" }
             .joined(separator: "\n")
         let renderer = makeRenderer(
             stdinIsTerminal: true,
@@ -616,11 +621,12 @@ struct TerminalChatRenderCoordinatorTests {
             columnWidthProvider: { 80 }
         )
         let toolCall = presentedToolCall(
-            id: "tool-expanded-write-overflow",
-            name: "local.writeFile",
+            id: "tool-expanded-edit-overflow",
+            name: "local.editFile",
             argumentsObject: [
                 "path": "/tmp/project/Sources/App.swift",
-                "content": content
+                "oldString": oldContent,
+                "newString": newContent
             ],
             argumentsJSON: "{}"
         )
@@ -635,7 +641,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         await renderer.writeToolCallCompleted(
             toolCall,
-            result: DirectAgentToolResult(output: "Wrote file", summary: "Wrote file"),
+            result: DirectAgentToolResult(output: "Updated file", summary: "Updated file"),
             maximumInPlaceRows: scrollableRows
         )
 
@@ -647,10 +653,12 @@ struct TerminalChatRenderCoordinatorTests {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
 
-        // Descriptor-owned write content is already known at start, so its
-        // expanded source section participates in the initial row accounting.
-        #expect(started.activeDetailedToolRenderedRowCount > scrollableRows)
-        #expect(!containsCursorUpSequence(completionText))
+        #expect(started.activeDetailedToolRenderedRowCount == scrollableRows)
+        #expect(containsCursorUpSequence(completionText))
+        #expect(
+            completionText.components(separatedBy: "\u{1B}[2K").count - 1
+                == started.activeDetailedToolRenderedRowCount
+        )
         #expect(visibleRows.contains { $0.contains("status: ✅") })
         #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 80 })
     }

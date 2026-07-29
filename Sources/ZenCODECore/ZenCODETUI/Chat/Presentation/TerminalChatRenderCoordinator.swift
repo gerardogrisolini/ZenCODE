@@ -894,13 +894,19 @@ actor TerminalChatRenderCoordinator {
             ? freshColumnWidthProvider()
             : columnWidthProvider()
         let contentInsetWidth = TerminalChat.displayWidth(lineInset)
-        let rows = toolBlockRows(
+        var rows = toolBlockRows(
             for: toolCall,
             lifecycle: lifecycle,
             style: style,
             contentInsetWidth: contentInsetWidth,
             columnWidth: columnWidth
         )
+        if !lifecycle.isCompletion, style == .detailed {
+            rows = boundedStartedToolRows(
+                rows,
+                maximumInPlaceRows: maximumInPlaceRows
+            )
+        }
 
         switch lifecycle {
         case .started:
@@ -918,11 +924,6 @@ actor TerminalChatRenderCoordinator {
         case .completed:
             let activeBlock = activeToolBlock
             let ownsActiveBlock = activeBlock?.id == toolCall.id
-            let completionRowCount = TerminalChat.renderedTerminalRowCount(
-                for: rows.map(\.plainText),
-                contentInsetWidth: contentInsetWidth,
-                columnWidth: columnWidth
-            )
             let shouldRewriteActiveBlock = activeBlock.map { block in
                 // Safety fuse: if the terminal width changed between tool start
                 // and completion, the saved row count is stale. Emitting
@@ -937,13 +938,12 @@ actor TerminalChatRenderCoordinator {
                 // clearing its original row count would descend through the
                 // reserved input/status overlay. Append its completion instead.
                 //
-                // The same hazard arises when the started block was small but
-                // the completion itself overflows the scrolling region (for
-                // example, expanded mutation tools whose payload appears only
-                // on completion): erasing the few owned rows and then streaming
-                // a block that forces the terminal to scroll still drags the
-                // cursor through the reserved overlay. Append the completion in
-                // that case too.
+                // A completion may be taller than the region. That does not make
+                // clearing unsafe when the pending block itself is still fully
+                // owned: normal output then scrolls inside the terminal's active
+                // scrolling region. Bounding detailed pending blocks at start
+                // keeps them rewritable and avoids leaving the hourglass copy in
+                // the transcript beside a long completed result.
                 let maximumSafeRows = min(
                     block.maximumInPlaceRows ?? Int.max,
                     maximumInPlaceRows ?? Int.max
@@ -953,7 +953,6 @@ actor TerminalChatRenderCoordinator {
                     && standardErrorIsTerminal
                     && block.columnWidth == columnWidth
                     && block.rows <= maximumSafeRows
-                    && completionRowCount <= maximumSafeRows
             } ?? false
 
             // Starts transfer the one physical rewrite slot to the newest
@@ -975,6 +974,34 @@ actor TerminalChatRenderCoordinator {
             lifecycle: lifecycle,
             style: style
         )
+    }
+
+    /// Keeps a detailed pending block inside the rewriteable scrolling region.
+    /// Large edit/write payloads are shown in full by the completion; while the
+    /// tool is running, retain a bounded prefix plus status so that completion
+    /// can replace rather than duplicate the pending block.
+    private func boundedStartedToolRows(
+        _ rows: [TerminalChat.DetailedToolRow],
+        maximumInPlaceRows: Int?
+    ) -> [TerminalChat.DetailedToolRow] {
+        guard let maximumInPlaceRows,
+              rows.count > maximumInPlaceRows else {
+            return rows
+        }
+        guard maximumInPlaceRows > 0 else {
+            return rows.last.map { [$0] } ?? []
+        }
+        guard maximumInPlaceRows > 1 else {
+            return rows.last.map { [$0] } ?? []
+        }
+        guard maximumInPlaceRows > 2 else {
+            return [rows[0], rows[rows.count - 1]]
+        }
+
+        return Array(rows.prefix(maximumInPlaceRows - 2)) + [
+            .text("... details shown on completion"),
+            rows[rows.count - 1]
+        ]
     }
 
     private func toolBlockStyle(
