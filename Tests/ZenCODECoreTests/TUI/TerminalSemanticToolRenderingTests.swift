@@ -64,7 +64,7 @@ struct TerminalSemanticToolRenderingTests {
     }
 
     @Test
-    func compactInspectDoesNotInferATargetWhenTheToolDoesNotDeclareOne() {
+    func compactInspectFallsBackToItsSafeArgumentWhenTheToolDoesNotDeclareOne() {
         let call = DirectAgentToolCall(
             id: "inspect",
             name: "thirdparty.inspect",
@@ -84,7 +84,106 @@ struct TerminalSemanticToolRenderingTests {
             columnWidth: 80
         )
 
-        #expect(lines == ["🛠️  Inspect ✅ 0.03s"])
+        #expect(lines == [
+            "🛠️  Inspect:",
+            "node-42 ✅ 0.03s"
+        ])
+    }
+
+    @Test
+    func compactListAndWriteUseTheirSemanticSubjectInsteadOfABareAction() throws {
+        let listDescriptor = PromptSkillToolProvider.listToolDescriptor
+        let writeDescriptor = try #require(
+            DirectToolCatalog.memoryDescriptors.first { $0.name == "memory.write" }
+        )
+        let cases: [(DirectToolDescriptor, [String: Any], String, [String])] = [
+            (
+                listDescriptor,
+                [:],
+                "0.03s",
+                ["🛠️  List:", "Prompt skills ✅ 0.03s"]
+            ),
+            (
+                writeDescriptor,
+                ["content": "Summary: completed"],
+                "0.01s",
+                ["🛠️  Write:", "Project memory ✅ 0.01s"]
+            )
+        ]
+
+        for (descriptor, arguments, duration, expectedLines) in cases {
+            let call = DirectAgentToolCall(
+                id: descriptor.name,
+                name: descriptor.name,
+                argumentsObject: arguments,
+                argumentsJSON: "{}",
+                descriptorTitle: descriptor.title,
+                presentation: descriptor.presentation
+            )
+
+            let lines = TerminalChat.compactToolLines(
+                for: call,
+                statusIcon: "✅",
+                statusDetail: duration,
+                columnWidth: 100
+            )
+
+            #expect(lines == expectedLines)
+        }
+    }
+
+    @Test
+    func compactFileListInspectAndWriteShowTheirPathArgument() throws {
+        let cases: [(String, [String: Any], String, String, String)] = [
+            (
+                "local.ls",
+                ["path": "Sources", "includeHidden": false],
+                "List",
+                "Sources",
+                "0.03s"
+            ),
+            (
+                "local.inspectFile",
+                ["file_path": "Sources/App.swift"],
+                "Inspect",
+                "Sources/App.swift",
+                "0.47s"
+            ),
+            (
+                "local.writeFile",
+                ["path": "Sources/App.swift", "content": "struct App {}"],
+                "Write",
+                "Sources/App.swift",
+                "0.01s"
+            )
+        ]
+
+        for (name, arguments, action, path, duration) in cases {
+            let descriptor = try #require(
+                DirectToolCatalog.filesystemDescriptors.first { $0.name == name }
+            )
+            let call = DirectAgentToolCall(
+                id: name,
+                name: name,
+                argumentsObject: arguments,
+                argumentsJSON: "{}",
+                descriptorTitle: descriptor.title,
+                presentation: descriptor.presentation
+            )
+
+            #expect(ToolCallPresentation.displayToolTarget(for: call) == path)
+            #expect(
+                TerminalChat.compactToolLines(
+                    for: call,
+                    statusIcon: "✅",
+                    statusDetail: duration,
+                    columnWidth: 100
+                ) == [
+                    "🛠️  \(action):",
+                    "\(path) ✅ \(duration)"
+                ]
+            )
+        }
     }
 
     @Test

@@ -23,11 +23,15 @@ public enum ToolCallPresentation {
     public static func toolTitle(for toolCall: DirectAgentToolCall) -> String {
         if toolCall.presentation != nil {
             let presentation = resolved(for: toolCall, mode: .compact)
+            let target = compactDisplayTarget(
+                for: toolCall,
+                presentation: presentation
+            )
             if let action = presentation.action,
-               let target = presentation.target {
+               let target {
                 return "\(action) \(target)"
             }
-            if let target = presentation.target {
+            if let target {
                 return "\(presentation.title) \(target)"
             }
             return presentation.action ?? presentation.title
@@ -64,6 +68,34 @@ public enum ToolCallPresentation {
 
     private static let readFilesPathArrayArgumentKeys = ["paths", "file_paths"]
 
+    /// Conservative, name-independent fallback keys for compact rendering.
+    /// Payload-like fields such as `content`, `message`, `prompt`, credentials,
+    /// and tokens are deliberately excluded: a tool that wants to expose one of
+    /// those values must opt in through its own presentation definition.
+    private static let compactFallbackStringArgumentKeys = [
+        "file_path",
+        "filePath",
+        "file_name",
+        "fileName",
+        "filename",
+        "file",
+        "sourceFilePath",
+        "sourcePath",
+        "destinationPath",
+        "directoryPath",
+        "path",
+        "workingDirectory",
+        "working_directory",
+        "cwd",
+        "identifier",
+        "id",
+        "name",
+        "query",
+        "pattern",
+        "command",
+        "url",
+        "uri"
+    ]
 
     public static func toolLocations(for toolCall: DirectAgentToolCall) -> [[String: Any]] {
         var seen = Set<String>()
@@ -146,7 +178,41 @@ public enum ToolCallPresentation {
         guard toolCall.presentation != nil else {
             return nil
         }
-        return resolved(for: toolCall, mode: .compact).target
+        return compactDisplayTarget(
+            for: toolCall,
+            presentation: resolved(for: toolCall, mode: .compact)
+        )
+    }
+
+    /// Keeps a compact tool call from degrading to a context-free verb such as
+    /// `List`, `Inspect`, or `Write`. The tool-owned target remains authoritative;
+    /// a safe scalar argument is used only when that target is absent, followed
+    /// by the tool-owned semantic title for genuinely argument-less operations.
+    private static func compactDisplayTarget(
+        for toolCall: DirectAgentToolCall,
+        presentation: ResolvedToolPresentation
+    ) -> String? {
+        if let target = presentation.target?.nilIfBlank {
+            return target
+        }
+        if let argument = fallbackArgumentTarget(for: toolCall) {
+            return argument
+        }
+        guard let action = presentation.action?.nilIfBlank,
+              let title = presentation.title.nilIfBlank,
+              title.caseInsensitiveCompare(action) != .orderedSame else {
+            return nil
+        }
+        return title
+    }
+
+    private static func fallbackArgumentTarget(
+        for toolCall: DirectAgentToolCall
+    ) -> String? {
+        stringArgument(
+            toolCall.argumentsObject,
+            keys: compactFallbackStringArgumentKeys
+        )
     }
 
     private static func stringArguments(

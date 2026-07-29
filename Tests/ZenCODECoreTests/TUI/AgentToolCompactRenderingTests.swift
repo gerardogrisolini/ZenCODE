@@ -351,7 +351,7 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func agentListWithNoArgumentsRendersSingleLine() {
+    func agentListWithNoArgumentsUsesItsSemanticSubject() {
         let toolCall = presentedToolCall(
             id: "list",
             name: "agent.list",
@@ -359,9 +359,7 @@ extension TerminalChatRenderingTests {
             argumentsJSON: "{}"
         )
 
-        // `agent.list` legitimately has nothing to show: it falls back to the
-        // single-line compact form (no separate target line).
-        #expect(ToolCallPresentation.displayToolTarget(for: toolCall) == nil)
+        #expect(ToolCallPresentation.displayToolTarget(for: toolCall) == "Agents")
 
         let lines = TerminalChat.compactToolLines(
             for: toolCall,
@@ -369,7 +367,10 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == ["🛠️  List ✅"])
+        #expect(lines == [
+            "🛠️  List:",
+            "Agents ✅"
+        ])
     }
 
     // MARK: - Multi-recipient ids forms, status, precedence

@@ -36,11 +36,12 @@ struct LocalListDirectoryTool: FeatureTool {
     static let name = "local.ls"
     static let description = "Lists files and directories. Paths may be absolute or relative to the working directory."
     static let inputSchema = buildInputSchema(
-        [.string("path"), .boolean("includeHidden")]
+        [.string("path"), .boolean("includeHidden")],
+        required: ["path"]
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        let url = context.resolvePath(input.path ?? ".")
+        let url = try LocalToolsSupport.requiredPath(input.path, context: context)
         let includeHidden = input.includeHidden ?? false
         return try await LocalIOOffloader.run {
             try LocalToolsSupport.listDirectory(url, includeHidden: includeHidden)
