@@ -434,17 +434,19 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
-    func otherAdaptiveThinkingModelsDoNotForceSummarizedDisplay() throws {
-        let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
-            for: .high,
-            modelID: "claude-opus-5",
-            maxTokens: 8192
-        )
-        let thinking = try #require(payload.thinking)
+    func adaptiveThinkingModelsRequestSummarizedDisplayAtMaxEffort() throws {
+        for modelID in ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"] {
+            let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
+                for: .max,
+                modelID: modelID,
+                maxTokens: 64_000
+            )
+            let thinking = try #require(payload.thinking)
 
-        #expect(thinking["type"] as? String == "adaptive")
-        #expect(thinking["display"] == nil)
-        #expect(payload.outputConfig?["effort"] as? String == "high")
+            #expect(thinking["type"] as? String == "adaptive")
+            #expect(thinking["display"] as? String == "summarized")
+            #expect(payload.outputConfig?["effort"] as? String == "max")
+        }
     }
 
     @Test

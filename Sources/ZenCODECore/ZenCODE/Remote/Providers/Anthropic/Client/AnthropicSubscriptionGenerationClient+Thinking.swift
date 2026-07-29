@@ -164,8 +164,11 @@ extension AnthropicSubscriptionGenerationClient {
         )
     }
 
+    /// Adaptive models default to omitting visible thinking text. ZenCODE
+    /// renders streamed thinking, so every enabled adaptive request opts into
+    /// summarized display and receives `thinking_delta` events from Anthropic.
     static func usesSummarizedThinkingDisplay(modelID: String) -> Bool {
-        modelID == "claude-fable-5"
+        adaptiveThinkingModelIDs.contains(modelID)
     }
 
     static func supportsThinking(modelID: String) -> Bool {
