@@ -10,6 +10,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Startup task recovery now skips checkpoint scanning and its interactive
+  selection when `zen` runs in `--acp` mode, preserving JSON-RPC-only I/O.
+
 ## [1.0.6] - 2026-07-29
 
 ### Added

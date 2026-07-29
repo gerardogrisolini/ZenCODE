@@ -10,6 +10,35 @@ import Testing
 @Suite
 struct TerminalCheckboxMenuRenderingTests {
     @Test
+    func resumableTaskGraphSelectionRequiresInteractiveChatMode() throws {
+        let workingDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let chatConfiguration = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            runMode: .chat,
+            workingDirectory: workingDirectory
+        )
+        let acpConfiguration = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            runMode: .acp,
+            workingDirectory: workingDirectory
+        )
+
+        #expect(TerminalChat.shouldOfferResumableTaskGraphSelection(
+            configuration: chatConfiguration,
+            stdinIsTerminal: true
+        ))
+        #expect(!TerminalChat.shouldOfferResumableTaskGraphSelection(
+            configuration: chatConfiguration,
+            stdinIsTerminal: false
+        ))
+        #expect(!TerminalChat.shouldOfferResumableTaskGraphSelection(
+            configuration: acpConfiguration,
+            stdinIsTerminal: true
+        ))
+    }
+
+    @Test
     func clearFrameSequenceClearsOnlyMenuRowsAndKeepsCursorInsideFrame() {
         let frame = TerminalCheckboxMenu.RenderedFrame(row: 10, height: 3)
 

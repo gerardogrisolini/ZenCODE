@@ -18,6 +18,7 @@ project for task-graph checkpoints left incomplete by earlier sessions. If any
 are found, an orange, scrollable picker opens before the model session is
 created. Use `↑`/`↓` to move and `Enter` to select the graph marked with `(x)`.
 You can also choose **Start fresh** to leave every checkpoint unchanged.
+The startup scan and picker are disabled when `zen` runs in `--acp` mode.
 
 Selecting **Delete old tasks…** opens a multi-selection list. Use `Space` to
 mark obsolete graphs with `[x]`, `A` to select all, `N` to select none, and

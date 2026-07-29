@@ -21,10 +21,15 @@ extension TerminalChat {
     /// checkpoint. Returns the resumed graph (if any) so the caller can print a
     /// notice after the startup screen has been rendered.
     ///
-    /// Non-interactive (piped) input is skipped: resuming requires a choice
-    /// the operator cannot make over a pipe.
+    /// Non-interactive (piped) input and ACP mode are skipped: resuming requires
+    /// a choice the operator can make without contaminating ACP JSON-RPC I/O.
     func applyResumableTaskGraphSessionIfNeeded() async -> ResumableTaskGraph? {
-        guard stdinIsTerminal else { return nil }
+        guard Self.shouldOfferResumableTaskGraphSelection(
+            configuration: configuration,
+            stdinIsTerminal: stdinIsTerminal
+        ) else {
+            return nil
+        }
         let workingDirectory = configuration.workingDirectory
         var resumable = await sessionRunner.resumableTaskGraphCheckpoints(
             workingDirectory: workingDirectory
@@ -71,6 +76,19 @@ extension TerminalChat {
             }
         }
         return nil
+    }
+
+    nonisolated static func shouldOfferResumableTaskGraphSelection(
+        configuration: AgentConfiguration,
+        stdinIsTerminal: Bool
+    ) -> Bool {
+        guard stdinIsTerminal else { return false }
+        switch configuration.resolvedRunMode(stdinIsTerminal: stdinIsTerminal) {
+        case .chat:
+            return true
+        case .acp:
+            return false
+        }
     }
 
     nonisolated static func resumableTaskGraphChoiceItems(
