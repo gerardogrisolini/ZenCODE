@@ -266,11 +266,10 @@ extension ChatGPTSubscriptionResponsesClient {
     }
 
     static func isRetryableRequestFailure(_ error: Error) -> Bool {
-        guard let error = error as? ChatGPTSubscriptionGenerationError,
-              case let .responseFailed(message) = error else {
+        guard let error = error as? RetryableBackendFailure else {
             return false
         }
-        return isRetryableRequestFailureMessage(message)
+        return isRetryableRequestFailureMessage(error.message)
     }
 
     static func isRetryableRequestFailureMessage(_ message: String) -> Bool {
@@ -295,6 +294,23 @@ extension ChatGPTSubscriptionResponsesClient {
             return false
         }
         return isRetryableTransportError(error)
+    }
+
+    /// Retries only the canonical transient backend failure on the already-
+    /// selected HTTP transport. Generic transport interruptions retain the
+    /// generation runner's existing retry budget, while replay-unsafe output is
+    /// never duplicated.
+    static func shouldRetryHTTPFailure(
+        _ error: Error,
+        attempt: Int
+    ) -> Bool {
+        guard attempt >= 0,
+              attempt < maxRetries,
+              !isCancellationError(error),
+              !(error is ReplayUnsafeStreamFailure) else {
+            return false
+        }
+        return isRetryableRequestFailure(error)
     }
 
     static func shouldRetryWebSocketFailure(

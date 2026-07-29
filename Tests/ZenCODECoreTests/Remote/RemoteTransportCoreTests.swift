@@ -640,6 +640,340 @@ struct RemoteTransportCoreTests {
         await server.shutdown()
     }
 
+    @Test("ChatGPT HTTP fallback retries a canonical backend failure")
+    func chatGPTHTTPFallbackRetriesCanonicalBackendFailure() async throws {
+        let message = """
+        An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 037b6141-1e24-4874-9032-ba40b471127c in your message.
+        """
+        let failureJSON = try JSONValue(jsonObject: [
+            "type": "error",
+            "error": [
+                "type": "server_error",
+                "code": "server_error",
+                "message": message
+            ]
+        ]).jsonData(outputFormatting: [.withoutEscapingSlashes])
+        let failurePayload = "data: \(String(decoding: failureJSON, as: UTF8.self))\n\n"
+        let completionPayload = """
+        data: {"type":"response.created","response":{"id":"resp_http_retry"}}
+
+        data: {"type":"response.completed","response":{"id":"resp_http_retry","status":"completed"}}
+
+
+        """
+        let requestCount = Mutex(0)
+        let server = try await LocalHTTPTestServer.start { context, _ in
+            let attempt = requestCount.withLock { count in
+                count += 1
+                return count
+            }
+            let payload = attempt == 1 ? failurePayload : completionPayload
+            writeSSEPayload(payload, to: context)
+        }
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+        let pool = ChatGPTSubscriptionWebSocketPool(
+            transport: transport,
+            heartbeatIntervalNanoseconds: UInt64.max
+        )
+        let sessionID = "chatgpt-http-retry"
+        _ = pool.activateHTTPFallback(scopeID: sessionID)
+        let retrySleepAttempts = Mutex<[Int]>([])
+        let client = ChatGPTSubscriptionResponsesClient(
+            credentials: CodexAgentCredentials(
+                accessToken: "test-access-token",
+                refreshToken: "test-refresh-token",
+                expiresAt: Date().addingTimeInterval(3_600),
+                accountID: "test-account"
+            ),
+            baseURL: server.url(path: "/backend-api"),
+            webSocketPool: pool,
+            retrySleep: { attempt in
+                retrySleepAttempts.withLock { $0.append(attempt) }
+            }
+        )
+
+        do {
+            let completion = try await client.streamEvents(
+                input: .array([]),
+                model: "gpt-5.5",
+                instructions: "System prompt",
+                reasoningEffort: nil,
+                textVerbosity: "medium",
+                sessionID: sessionID
+            ) { object in
+                if let errorMessage = ChatGPTSubscriptionGenerationClient
+                    .responseErrorMessage(from: object) {
+                    throw ChatGPTSubscriptionGenerationError.responseFailed(errorMessage)
+                }
+            }
+
+            #expect(completion.responseID == "resp_http_retry")
+            #expect(requestCount.withLock { $0 } == 2)
+            #expect(retrySleepAttempts.withLock { $0 } == [0])
+            #expect(pool.usesHTTPFallback(scopeID: sessionID))
+        } catch {
+            pool.closeAll()
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            throw error
+        }
+
+        pool.closeAll()
+        try await transport.shutdown()
+        await server.shutdown()
+    }
+
+    @Test("ChatGPT HTTP canonical backend retry budget is bounded")
+    func chatGPTHTTPFallbackBoundsCanonicalBackendRetries() async throws {
+        let message = """
+        An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID bounded-http-retry in your message.
+        """
+        let failureJSON = try JSONValue(jsonObject: [
+            "type": "response.done",
+            "response": [
+                "status": "failed",
+                "error": [
+                    "type": "server_error",
+                    "code": "server_error",
+                    "message": message
+                ]
+            ]
+        ]).jsonData(outputFormatting: [.withoutEscapingSlashes])
+        let payload = "data: \(String(decoding: failureJSON, as: UTF8.self))\n\n"
+        let requestCount = Mutex(0)
+        let server = try await LocalHTTPTestServer.start { context, _ in
+            requestCount.withLock { $0 += 1 }
+            writeSSEPayload(payload, to: context)
+        }
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+        let pool = ChatGPTSubscriptionWebSocketPool(
+            transport: transport,
+            heartbeatIntervalNanoseconds: UInt64.max
+        )
+        let sessionID = "chatgpt-http-bounded-retry"
+        _ = pool.activateHTTPFallback(scopeID: sessionID)
+        let retrySleepAttempts = Mutex<[Int]>([])
+        let client = ChatGPTSubscriptionResponsesClient(
+            credentials: CodexAgentCredentials(
+                accessToken: "test-access-token",
+                refreshToken: "test-refresh-token",
+                expiresAt: Date().addingTimeInterval(3_600),
+                accountID: "test-account"
+            ),
+            baseURL: server.url(path: "/backend-api"),
+            webSocketPool: pool,
+            retrySleep: { attempt in
+                retrySleepAttempts.withLock { $0.append(attempt) }
+            }
+        )
+
+        do {
+            do {
+                _ = try await client.streamEvents(
+                    input: .array([]),
+                    model: "gpt-5.5",
+                    instructions: "System prompt",
+                    reasoningEffort: nil,
+                    textVerbosity: "medium",
+                    sessionID: sessionID
+                ) { object in
+                    if let errorMessage = ChatGPTSubscriptionGenerationClient
+                        .responseErrorMessage(from: object) {
+                        throw ChatGPTSubscriptionGenerationError.responseFailed(
+                            errorMessage
+                        )
+                    }
+                }
+                Issue.record("An exhausted HTTP retry budget unexpectedly completed.")
+            } catch let error as ChatGPTSubscriptionResponsesClient
+                .RetryableBackendFailure {
+                #expect(error.message == message)
+            }
+
+            #expect(
+                requestCount.withLock { $0 }
+                    == ChatGPTSubscriptionResponsesClient.maxRetries + 1
+            )
+            #expect(retrySleepAttempts.withLock { $0 } == [0, 1, 2])
+        } catch {
+            pool.closeAll()
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            throw error
+        }
+
+        pool.closeAll()
+        try await transport.shutdown()
+        await server.shutdown()
+    }
+
+    @Test("ChatGPT HTTP does not replay canonical failure after output")
+    func chatGPTHTTPFallbackDoesNotReplayAfterUnsafeOutput() async throws {
+        let message = """
+        An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID unsafe-http-retry in your message.
+        """
+        let failureJSON = try JSONValue(jsonObject: [
+            "type": "error",
+            "error": [
+                "type": "server_error",
+                "code": "server_error",
+                "message": message
+            ]
+        ]).jsonData(outputFormatting: [.withoutEscapingSlashes])
+        let payload = """
+        data: {"type":"response.output_text.delta","delta":"partial"}
+
+        data: \(String(decoding: failureJSON, as: UTF8.self))
+
+
+        """
+        let requestCount = Mutex(0)
+        let server = try await LocalHTTPTestServer.start { context, _ in
+            requestCount.withLock { $0 += 1 }
+            writeSSEPayload(payload, to: context)
+        }
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+        let pool = ChatGPTSubscriptionWebSocketPool(
+            transport: transport,
+            heartbeatIntervalNanoseconds: UInt64.max
+        )
+        let sessionID = "chatgpt-http-unsafe-retry"
+        _ = pool.activateHTTPFallback(scopeID: sessionID)
+        let retrySleepAttempts = Mutex<[Int]>([])
+        let client = ChatGPTSubscriptionResponsesClient(
+            credentials: CodexAgentCredentials(
+                accessToken: "test-access-token",
+                refreshToken: "test-refresh-token",
+                expiresAt: Date().addingTimeInterval(3_600),
+                accountID: "test-account"
+            ),
+            baseURL: server.url(path: "/backend-api"),
+            webSocketPool: pool,
+            retrySleep: { attempt in
+                retrySleepAttempts.withLock { $0.append(attempt) }
+            }
+        )
+
+        do {
+            do {
+                _ = try await client.streamEvents(
+                    input: .array([]),
+                    model: "gpt-5.5",
+                    instructions: "System prompt",
+                    reasoningEffort: nil,
+                    textVerbosity: "medium",
+                    sessionID: sessionID
+                ) { object in
+                    if let errorMessage = ChatGPTSubscriptionGenerationClient
+                        .responseErrorMessage(from: object) {
+                        throw ChatGPTSubscriptionGenerationError.responseFailed(
+                            errorMessage
+                        )
+                    }
+                }
+                Issue.record("A replay-unsafe HTTP stream unexpectedly completed.")
+            } catch let failure as ChatGPTSubscriptionResponsesClient
+                .ReplayUnsafeStreamFailure {
+                guard let error = failure.underlying
+                    as? ChatGPTSubscriptionResponsesClient.RetryableBackendFailure else {
+                    Issue.record("Expected a wrapped canonical backend error.")
+                    pool.closeAll()
+                    await transport.shutdownIgnoringError()
+                    await server.shutdown()
+                    return
+                }
+                #expect(error.message == message)
+            }
+
+            #expect(requestCount.withLock { $0 } == 1)
+            #expect(retrySleepAttempts.withLock { $0 }.isEmpty)
+        } catch {
+            pool.closeAll()
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            throw error
+        }
+
+        pool.closeAll()
+        try await transport.shutdown()
+        await server.shutdown()
+    }
+
+    @Test("ChatGPT HTTP does not retry a callback-originated failure")
+    func chatGPTHTTPFallbackDoesNotRetryCallbackFailure() async throws {
+        let message = """
+        An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID callback-error in your message.
+        """
+        let payload = """
+        data: {"type":"response.created","response":{"id":"resp_callback"}}
+
+
+        """
+        let requestCount = Mutex(0)
+        let server = try await LocalHTTPTestServer.start { context, _ in
+            requestCount.withLock { $0 += 1 }
+            writeSSEPayload(payload, to: context)
+        }
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+        let pool = ChatGPTSubscriptionWebSocketPool(
+            transport: transport,
+            heartbeatIntervalNanoseconds: UInt64.max
+        )
+        let sessionID = "chatgpt-http-callback-error"
+        _ = pool.activateHTTPFallback(scopeID: sessionID)
+        let retrySleepAttempts = Mutex<[Int]>([])
+        let client = ChatGPTSubscriptionResponsesClient(
+            credentials: CodexAgentCredentials(
+                accessToken: "test-access-token",
+                refreshToken: "test-refresh-token",
+                expiresAt: Date().addingTimeInterval(3_600),
+                accountID: "test-account"
+            ),
+            baseURL: server.url(path: "/backend-api"),
+            webSocketPool: pool,
+            retrySleep: { attempt in
+                retrySleepAttempts.withLock { $0.append(attempt) }
+            }
+        )
+
+        do {
+            do {
+                _ = try await client.streamEvents(
+                    input: .array([]),
+                    model: "gpt-5.5",
+                    instructions: "System prompt",
+                    reasoningEffort: nil,
+                    textVerbosity: "medium",
+                    sessionID: sessionID
+                ) { _ in
+                    throw ChatGPTSubscriptionGenerationError.responseFailed(message)
+                }
+                Issue.record("A callback-originated error unexpectedly completed.")
+            } catch let error as ChatGPTSubscriptionGenerationError {
+                guard case let .responseFailed(output) = error else {
+                    Issue.record("Expected callback responseFailed, got \(error).")
+                    pool.closeAll()
+                    await transport.shutdownIgnoringError()
+                    await server.shutdown()
+                    return
+                }
+                #expect(output == message)
+            }
+
+            #expect(requestCount.withLock { $0 } == 1)
+            #expect(retrySleepAttempts.withLock { $0 }.isEmpty)
+        } catch {
+            pool.closeAll()
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            throw error
+        }
+
+        pool.closeAll()
+        try await transport.shutdown()
+        await server.shutdown()
+    }
+
     @Test("ChatGPT HTTP fallback rejects DONE without a terminal response event")
     func chatGPTHTTPFallbackRejectsNonTerminalDone() async throws {
         let server = try await LocalHTTPTestServer.start { context, _ in
@@ -912,6 +1246,34 @@ struct RemoteTransportCoreTests {
         try await transport.shutdown()
         await server.shutdown()
     }
+}
+
+private func writeSSEPayload(
+    _ payload: String,
+    to context: ChannelHandlerContext
+) {
+    var headers = HTTPHeaders()
+    headers.add(name: "content-type", value: "text/event-stream")
+    headers.add(name: "content-length", value: String(payload.utf8.count))
+    context.write(
+        LocalHTTPResponseHandler.wrapOutboundOut(
+            .head(
+                HTTPResponseHead(
+                    version: .http1_1,
+                    status: .ok,
+                    headers: headers
+                )
+            )
+        ),
+        promise: nil
+    )
+    var body = context.channel.allocator.buffer(capacity: payload.utf8.count)
+    body.writeString(payload)
+    context.writeAndFlush(
+        LocalHTTPResponseHandler.wrapOutboundOut(.body(.byteBuffer(body))),
+        promise: nil
+    )
+    context.close(promise: nil)
 }
 
 private extension RemoteTransportCore {

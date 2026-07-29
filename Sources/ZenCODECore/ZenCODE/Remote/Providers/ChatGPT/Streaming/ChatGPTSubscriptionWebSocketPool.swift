@@ -72,6 +72,18 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         let entryToClose: Entry?
     }
 
+    enum ScopedWebSocketAcquireResult {
+        case acquired(ChatGPTSubscriptionResponsesClient.WebSocketLease)
+        case useHTTPFallback
+        case closed
+    }
+
+    private enum AcquireDecision {
+        case acquired(AcquireResult)
+        case useHTTPFallback
+        case closed
+    }
+
     private struct ReleaseResult {
         var heartbeatToCancel: Task<Void, Never>?
         var entryToClose: Entry?
@@ -199,8 +211,44 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         sessionID: String,
         request: RemoteWebSocketRequest
     ) -> ChatGPTSubscriptionResponsesClient.WebSocketLease {
+        guard case let .acquired(lease) = acquire(
+            sessionID: sessionID,
+            request: request,
+            fallbackScopeID: nil
+        ) else {
+            preconditionFailure("An unscoped WebSocket acquire cannot be rerouted")
+        }
+        return lease
+    }
+
+    func acquire(
+        sessionID: String,
+        request: RemoteWebSocketRequest,
+        fallbackScopeID: String
+    ) -> ScopedWebSocketAcquireResult {
+        acquire(
+            sessionID: sessionID,
+            request: request,
+            fallbackScopeID: Optional(fallbackScopeID)
+        )
+    }
+
+    private func acquire(
+        sessionID: String,
+        request: RemoteWebSocketRequest,
+        fallbackScopeID: String?
+    ) -> ScopedWebSocketAcquireResult {
         reapInvalidOrExpiredIdleEntries()
-        let result = state.withLock { state -> AcquireResult in
+        let decision = state.withLock { state -> AcquireDecision in
+            if let fallbackScopeID {
+                if state.closedHTTPFallbackScopeIDs.contains(fallbackScopeID) {
+                    return .closed
+                }
+                if state.httpFallbackScopeIDs.contains(fallbackScopeID) {
+                    return .useHTTPFallback
+                }
+            }
+
             let now = monotonicClock()
             if var existing = state.entries[sessionID] {
                 if !existing.isBusy,
@@ -217,7 +265,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                     existing.heartbeatID = nil
                     existing.heartbeatTask = nil
                     state.entries[sessionID] = existing
-                    return AcquireResult(
+                    return .acquired(AcquireResult(
                         lease: ChatGPTSubscriptionResponsesClient.WebSocketLease(
                             sessionID: sessionID,
                             task: existing.task,
@@ -227,7 +275,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                         ),
                         heartbeatToCancel: heartbeatToCancel,
                         entryToClose: nil
-                    )
+                    ))
                 }
 
                 if !existing.isBusy {
@@ -235,7 +283,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                     let leaseID = state.makeToken()
                     let entry = makeEntry(request: request, leaseID: leaseID)
                     state.entries[sessionID] = entry
-                    return AcquireResult(
+                    return .acquired(AcquireResult(
                         lease: ChatGPTSubscriptionResponsesClient.WebSocketLease(
                             sessionID: sessionID,
                             task: entry.task,
@@ -245,7 +293,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                         ),
                         heartbeatToCancel: nil,
                         entryToClose: entryToClose
-                    )
+                    ))
                 }
 
                 // Do not evict an active response, even if its connection has
@@ -256,7 +304,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                     sessionID: sessionID,
                     task: task
                 )
-                return AcquireResult(
+                return .acquired(AcquireResult(
                     lease: ChatGPTSubscriptionResponsesClient.WebSocketLease(
                         sessionID: sessionID,
                         task: task,
@@ -266,13 +314,13 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                     ),
                     heartbeatToCancel: nil,
                     entryToClose: nil
-                )
+                ))
             }
 
             let leaseID = state.makeToken()
             let entry = makeEntry(request: request, leaseID: leaseID)
             state.entries[sessionID] = entry
-            return AcquireResult(
+            return .acquired(AcquireResult(
                 lease: ChatGPTSubscriptionResponsesClient.WebSocketLease(
                     sessionID: sessionID,
                     task: entry.task,
@@ -282,14 +330,21 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                 ),
                 heartbeatToCancel: nil,
                 entryToClose: nil
-            )
+            ))
         }
 
-        result.heartbeatToCancel?.cancel()
-        if let entryToClose = result.entryToClose {
-            dispose(entryToClose)
+        switch decision {
+        case let .acquired(result):
+            result.heartbeatToCancel?.cancel()
+            if let entryToClose = result.entryToClose {
+                dispose(entryToClose)
+            }
+            return .acquired(result.lease)
+        case .useHTTPFallback:
+            return .useHTTPFallback
+        case .closed:
+            return .closed
         }
-        return result.lease
     }
 
     func release(

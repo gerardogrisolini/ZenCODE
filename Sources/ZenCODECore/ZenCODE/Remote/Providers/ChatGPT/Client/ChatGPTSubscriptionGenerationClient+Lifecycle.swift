@@ -51,6 +51,20 @@ extension ChatGPTSubscriptionGenerationClient {
             continuation: Self.restoredContinuation(from: messages),
             chatGPTSessionID: nil
         ), id: id)
+        if usesDelegatedHTTPStreamingTransport,
+           let generation = sessionGenerations[id] {
+            // `connectionScopeID` is assigned only to delegated backends by the
+            // remote sub-agent factory. Prime their generation-qualified scope
+            // onto HTTP before any request can open a WebSocket. Reusing the
+            // existing fallback scope also preserves cancellation and recreate
+            // fencing for opening and active HTTP streams.
+            webSocketPool.activateHTTPFallback(
+                scopeID: Self.httpFallbackScopeID(
+                    sessionID: id,
+                    generation: generation
+                )
+            )
+        }
     }
 
     public func createSessionIfNeeded(
@@ -119,13 +133,16 @@ extension ChatGPTSubscriptionGenerationClient {
             }
             : nil
         let session = invalidateSession(id: id)
-        await toolExecutor.removeToolProviders(sessionID: id)
         if let fallbackScopeID {
             webSocketPool.closeHTTPFallbackScope(scopeID: fallbackScopeID)
         }
         if let chatGPTSessionID = session?.chatGPTSessionID {
             webSocketPool.closeSession(sessionID: chatGPTSessionID)
         }
+        // Fence and cancel transport work before the first suspension. Otherwise
+        // the in-flight prompt can observe fallback removal and acquire a late
+        // WebSocket while this actor awaits cross-actor provider cleanup.
+        await toolExecutor.removeToolProviders(sessionID: id)
     }
 
     public func shutdown() async {

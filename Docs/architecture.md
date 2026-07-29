@@ -79,19 +79,26 @@ consumers, but are never consulted for generation I/O. The compatibility facade
 is deliberately isolated from the transport engine; it preserves API inspection
 and injection without restoring a second networking path.
 
-ChatGPT Subscription prefers Responses WebSockets, but transport availability is
-session-scoped rather than mandatory. A canonical recoverable backend failure,
-an HTTP 426 upgrade rejection, or exhaustion of the bounded replay-safe
-WebSocket retry budget switches that logical agent session to HTTP/SSE for all
-later turns and tool rounds. The fallback key combines the logical session with
-its installation generation, remains independent of the rotating WebSocket
-transport ID, and survives continuation resets without leaking into a recreated
-session incarnation. Closing that incarnation fences late fallback activation
-and cancels any HTTP stream that is opening or active. Events that already
-emitted replay-unsafe reasoning, refusal, content, or tool output are never replayed or moved between
-transports. HTTP/SSE completion requires a terminal Responses event; `[DONE]` or
-EOF alone cannot commit partial output. Authentication failures retain their
-token-refresh path on both transports.
+The root ChatGPT Subscription session prefers Responses WebSockets, but transport
+availability is session-scoped rather than mandatory. Delegated ChatGPT
+sub-agent backends start directly on HTTP/SSE: each delegated backend remains
+reusable after completing work, so allowing every one to retain an independent
+WebSocket would accumulate uncoordinated long-lived connections across parallel
+batches. A canonical recoverable backend failure, an HTTP 426 upgrade rejection,
+or exhaustion of the bounded replay-safe WebSocket retry budget switches a root
+logical agent session to HTTP/SSE for all later turns and tool rounds. The HTTP
+scope key combines the logical session with its installation generation, remains
+independent of the rotating WebSocket transport ID, and survives continuation
+resets without leaking into a recreated session incarnation. Closing that
+incarnation fences late activation and cancels any HTTP stream that is opening or
+active. Events that already emitted replay-unsafe reasoning, refusal, content,
+or tool output are never replayed or moved between transports. HTTP/SSE
+completion requires a terminal Responses event; `[DONE]` or EOF alone cannot
+commit partial output. A canonical transient provider event whose error type or
+code is `server_error`, received again over HTTP/SSE, is retried within the
+bounded stream budget only when no replay-unsafe output crossed the callback
+boundary; message text or callback errors alone can never activate that retry.
+Authentication failures retain their token-refresh path on both transports.
 
 Each opened HTTP/SSE response and upgraded WebSocket separates its public handle
 from the NIO driver actor that the scoped `executeThenClose` run-task retains.

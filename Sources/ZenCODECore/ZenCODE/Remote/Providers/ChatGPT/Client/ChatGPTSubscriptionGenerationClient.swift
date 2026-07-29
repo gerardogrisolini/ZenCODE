@@ -218,6 +218,13 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
     let webSocketPool: ChatGPTSubscriptionWebSocketPool
     let ownsWebSocketPool: Bool
     let connectionScopeID: String?
+    /// Delegated backends receive a connection scope from the sub-agent factory.
+    /// They stay on HTTP/SSE so parallel, reusable agents cannot accumulate an
+    /// uncoordinated set of long-lived Responses WebSockets. The unscoped root
+    /// backend remains WebSocket-preferred.
+    var usesDelegatedHTTPStreamingTransport: Bool {
+        connectionScopeID != nil
+    }
     var sessions: [String: AgentSession] = [:]
     var sessionGenerations: [String: UInt64] = [:]
     var nextSessionGeneration: UInt64 = 0

@@ -224,11 +224,33 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionGenericRequestFailureFallsBackToHTTP() {
+    func chatGPTSubscriptionGenericRequestFailureFallsBackToHTTP() throws {
         let message = """
         An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 2500a4a9-690b-4951-beb3-602a7d5893d8 in your message.
         """
-        let retryableError = ChatGPTSubscriptionGenerationError.responseFailed(message)
+        let canonicalObject: [String: Any] = [
+            "type": "error",
+            "error": [
+                "type": "server_error",
+                "code": "server_error",
+                "message": message
+            ],
+            "sequence_number": 2
+        ]
+        let nonCanonicalObject: [String: Any] = [
+            "type": "error",
+            "error": [
+                "type": "invalid_request_error",
+                "code": "invalid_request_error",
+                "message": message
+            ]
+        ]
+        let retryableError = try #require(
+            ChatGPTSubscriptionResponsesClient.retryableBackendFailure(
+                from: canonicalObject
+            )
+        )
+        let callbackError = ChatGPTSubscriptionGenerationError.responseFailed(message)
         let replayUnsafeError = ChatGPTSubscriptionResponsesClient
             .ReplayUnsafeStreamFailure(underlying: retryableError)
         let unrelatedError = ChatGPTSubscriptionGenerationError.responseFailed(
@@ -239,20 +261,49 @@ extension RemoteSessionSnapshotTests {
         )
 
         #expect(
-            ChatGPTSubscriptionGenerationClient.responseErrorMessage(from: [
-                "type": "error",
-                "error": [
-                    "type": "server_error",
-                    "code": "server_error",
-                    "message": message
-                ],
-                "sequence_number": 2
-            ]) == message
+            ChatGPTSubscriptionGenerationClient.responseErrorMessage(
+                from: canonicalObject
+            ) == message
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.retryableBackendFailure(
+                from: nonCanonicalObject
+            ) == nil
         )
         #expect(replayUnsafeError.localizedDescription == message)
         #expect(
             !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
                 retryableError
+            )
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.shouldRetryHTTPFailure(
+                retryableError,
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryHTTPFailure(
+                retryableError,
+                attempt: ChatGPTSubscriptionResponsesClient.maxRetries
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryHTTPFailure(
+                replayUnsafeError,
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryHTTPFailure(
+                RemoteTransportError.closed,
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldRetryHTTPFailure(
+                callbackError,
+                attempt: 0
             )
         )
         #expect(
@@ -273,6 +324,13 @@ extension RemoteSessionSnapshotTests {
             !ChatGPTSubscriptionResponsesClient.shouldActivateHTTPFallback(
                 retryableError,
                 receivedReplayUnsafeEvent: true,
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldActivateHTTPFallback(
+                callbackError,
+                receivedReplayUnsafeEvent: false,
                 attempt: 0
             )
         )
@@ -601,6 +659,129 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionDelegatedConnectionScopeStartsOnHTTPStreaming() async throws {
+        let rootWebSocketCount = Mutex(0)
+        let delegatedWebSocketCount = Mutex(0)
+        let rootPool = ChatGPTSubscriptionWebSocketPool(
+            heartbeatIntervalNanoseconds: UInt64.max,
+            webSocketTaskFactory: { _ in
+                rootWebSocketCount.withLock { $0 += 1 }
+                return ChatGPTSubscriptionTestWebSocketTask()
+            }
+        )
+        let delegatedPool = ChatGPTSubscriptionWebSocketPool(
+            heartbeatIntervalNanoseconds: UInt64.max,
+            webSocketTaskFactory: { _ in
+                delegatedWebSocketCount.withLock { $0 += 1 }
+                return ChatGPTSubscriptionTestWebSocketTask()
+            }
+        )
+        let rootClient = ChatGPTSubscriptionGenerationClient(
+            configuration: remoteStreamingConfiguration(),
+            webSocketPool: rootPool
+        )
+        let delegatedClient = ChatGPTSubscriptionGenerationClient(
+            configuration: remoteStreamingConfiguration(),
+            webSocketPool: delegatedPool,
+            connectionScopeID: "delegated-backend"
+        )
+        let sessionID = "transport-policy-session"
+
+        await rootClient.createSession(id: sessionID, cwd: "/tmp/project")
+        await delegatedClient.createSession(id: sessionID, cwd: "/tmp/project")
+        let rootScope = try #require(
+            await rootClient.httpFallbackScopeIDForTesting(sessionID: sessionID)
+        )
+        let firstDelegatedScope = try #require(
+            await delegatedClient.httpFallbackScopeIDForTesting(sessionID: sessionID)
+        )
+
+        #expect(!(await rootClient.usesDelegatedHTTPStreamingTransport))
+        #expect(await delegatedClient.usesDelegatedHTTPStreamingTransport)
+        #expect(!rootPool.usesHTTPFallback(scopeID: rootScope))
+        #expect(delegatedPool.usesHTTPFallback(scopeID: firstDelegatedScope))
+        #expect(rootWebSocketCount.withLock { $0 } == 0)
+        #expect(delegatedWebSocketCount.withLock { $0 } == 0)
+
+        await delegatedClient.createSession(id: sessionID, cwd: "/tmp/project")
+        let secondDelegatedScope = try #require(
+            await delegatedClient.httpFallbackScopeIDForTesting(sessionID: sessionID)
+        )
+        #expect(firstDelegatedScope != secondDelegatedScope)
+        #expect(delegatedPool.isHTTPFallbackScopeClosed(scopeID: firstDelegatedScope))
+        #expect(delegatedPool.usesHTTPFallback(scopeID: secondDelegatedScope))
+
+        await delegatedClient.closeSession(id: sessionID)
+        #expect(delegatedPool.isHTTPFallbackScopeClosed(scopeID: secondDelegatedScope))
+        #expect(!delegatedPool.usesHTTPFallback(scopeID: secondDelegatedScope))
+
+        await rootClient.shutdown()
+        await delegatedClient.shutdown()
+        rootPool.closeAll()
+        delegatedPool.closeAll()
+    }
+
+    @Test
+    func chatGPTSubscriptionFactoryScopesDelegatedBackendForHTTPStreaming() async throws {
+        let provider = AgentRemoteProvider(
+            id: AgentRemoteProvider.chatGPTSubscriptionProviderID,
+            name: CodexAgentModel.displayTitle,
+            baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
+            modelID: "unit-model",
+            chatEndpoint: .responses
+        )
+        let rootBackend = try AgentRemoteBackendFactory.makeRemoteBackend(
+            configuration: remoteStreamingConfiguration(),
+            mcpRuntime: DirectMCPToolRuntime(),
+            fallbackProvider: provider
+        )
+        let rootClient = try #require(
+            rootBackend as? ChatGPTSubscriptionGenerationClient
+        )
+        let toolExecutor = await rootClient.toolExecutor
+        let subAgentRuntime = await toolExecutor.subAgentRuntime
+        let backendFactory = await subAgentRuntime.backendFactory
+        let delegatedBackend = try backendFactory(
+            DirectSubAgentRuntime.BackendContext(
+                requestedName: "worker",
+                requestedRole: "delegated test",
+                profile: nil
+            )
+        )
+        let delegatedClient = try #require(
+            delegatedBackend as? ChatGPTSubscriptionGenerationClient
+        )
+        let nestedToolExecutor = await delegatedClient.toolExecutor
+        let nestedRuntime = await nestedToolExecutor.subAgentRuntime
+        let nestedFactory = await nestedRuntime.backendFactory
+        let nestedBackend = try nestedFactory(
+            DirectSubAgentRuntime.BackendContext(
+                requestedName: "nested-worker",
+                requestedRole: "nested delegated test",
+                profile: nil
+            )
+        )
+        let nestedClient = try #require(
+            nestedBackend as? ChatGPTSubscriptionGenerationClient
+        )
+
+        #expect(!(await rootClient.usesDelegatedHTTPStreamingTransport))
+        #expect(await rootClient.connectionScopeID == nil)
+        #expect(await delegatedClient.usesDelegatedHTTPStreamingTransport)
+        #expect(await delegatedClient.connectionScopeID != nil)
+        #expect(await nestedClient.usesDelegatedHTTPStreamingTransport)
+        #expect(await nestedClient.connectionScopeID != nil)
+        #expect(
+            await nestedClient.connectionScopeID
+                != delegatedClient.connectionScopeID
+        )
+
+        await nestedClient.shutdown()
+        await delegatedClient.shutdown()
+        await rootClient.shutdown()
+    }
+
+    @Test
     func chatGPTSubscriptionFullReplayDropsPlainReasoningTextFallback() throws {
         let messages: [[String: Any]] = [
             ["role": "system", "content": "System prompt"],
@@ -758,6 +939,46 @@ extension RemoteSessionSnapshotTests {
             ChatGPTSubscriptionWebSocketPool.defaultMaximumConnectionAge
                 < ChatGPTSubscriptionWebSocketPool.serverMaximumConnectionAge
         )
+    }
+
+    @Test
+    func chatGPTSubscriptionScopedAcquireCannotRaceHTTPClosureIntoWebSocket() async {
+        let harness = ChatGPTSubscriptionWebSocketPoolHarness(
+            maximumConnectionAge: .seconds(10)
+        )
+        let iterations = 100
+        let outcomes = ChatGPTSubscriptionScopedAcquireOutcomes()
+
+        for index in 0..<iterations {
+            let scopeID = "delegated-race-\(index)"
+            harness.pool.activateHTTPFallback(scopeID: scopeID)
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    harness.pool.closeHTTPFallbackScope(scopeID: scopeID)
+                }
+                group.addTask {
+                    let result = harness.pool.acquire(
+                        sessionID: "transport-\(index)",
+                        request: harness.request(),
+                        fallbackScopeID: scopeID
+                    )
+                    switch result {
+                    case let .acquired(lease):
+                        harness.pool.release(lease, keepAlive: false)
+                        await outcomes.recordAcquired()
+                    case .useHTTPFallback:
+                        await outcomes.recordHTTP()
+                    case .closed:
+                        await outcomes.recordClosed()
+                    }
+                }
+            }
+        }
+
+        let result = await outcomes.snapshot()
+        #expect(result.acquired == 0)
+        #expect(result.http + result.closed == iterations)
+        #expect(harness.createdRequests().isEmpty)
     }
 
     @Test
@@ -1285,7 +1506,7 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionNIOClientFallsBackAfterGenericRequestFailure() async throws {
+    func chatGPTSubscriptionNIOClientFallsBackAndRetriesGenericRequestFailureOverHTTP() async throws {
         let message = """
         An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 2500a4a9-690b-4951-beb3-602a7d5893d8 in your message.
         """
@@ -1307,6 +1528,7 @@ extension RemoteSessionSnapshotTests {
         let capturedRequests = Mutex<[RemoteWebSocketRequest]>([])
         let capturedHTTPBodies = Mutex<[JSONValue]>([])
         let httpFallbackSessionIDs = Mutex<[String]>([])
+        let retrySleepAttempts = Mutex<[Int]>([])
         let pool = ChatGPTSubscriptionWebSocketPool(
             heartbeatIntervalNanoseconds: UInt64.max,
             webSocketTaskFactory: { request in
@@ -1320,10 +1542,20 @@ extension RemoteSessionSnapshotTests {
             credentials: chatGPTSubscriptionTestCredentials(),
             baseURL: URL(string: "https://example.invalid/backend-api")!,
             webSocketPool: pool,
-            retrySleep: { _ in },
+            retrySleep: { attempt in
+                retrySleepAttempts.withLock { $0.append(attempt) }
+            },
             httpFallbackOverride: { body, sessionID in
-                capturedHTTPBodies.withLock { $0.append(body) }
+                let attempt = capturedHTTPBodies.withLock { bodies in
+                    bodies.append(body)
+                    return bodies.count
+                }
                 httpFallbackSessionIDs.withLock { $0.append(sessionID) }
+                if attempt == 1 {
+                    throw ChatGPTSubscriptionResponsesClient.RetryableBackendFailure(
+                        message: message
+                    )
+                }
                 return ChatGPTSubscriptionResponsesClient.StreamCompletion(
                     responseID: "resp_http_fallback"
                 )
@@ -1379,8 +1611,11 @@ extension RemoteSessionSnapshotTests {
         #expect(factoryCount.withLock { $0 } == 1)
         #expect(httpFallbackSessionIDs.withLock { $0 } == [
             "transport-session-a",
+            "transport-session-a",
             "transport-session-b"
         ])
+        #expect(capturedHTTPBodies.withLock { $0.count } == 3)
+        #expect(retrySleepAttempts.withLock { $0 } == [0])
         #expect(request.headerValue(for: "session-id") == "transport-session-a")
         #expect(request.headerValue(for: "thread-id") == "logical-session")
         #expect(request.headerValue(for: "x-client-request-id") == "logical-session")
@@ -2112,6 +2347,10 @@ extension RemoteSessionSnapshotTests {
 }
 
 private extension ChatGPTSubscriptionGenerationClient {
+    func httpFallbackScopeIDForTesting(sessionID: String) -> String? {
+        sessionLease(for: sessionID).map(Self.httpFallbackScopeID(for:))
+    }
+
     func resetTransportIdentityForTesting() -> (
         promptCacheKey: String?,
         transportSessionID: String?,
@@ -2202,6 +2441,28 @@ private extension ChatGPTSubscriptionGenerationClient {
 
         await closeSession(id: sessionID)
         return isFenced
+    }
+}
+
+private actor ChatGPTSubscriptionScopedAcquireOutcomes {
+    private var acquired = 0
+    private var http = 0
+    private var closed = 0
+
+    func recordAcquired() {
+        acquired += 1
+    }
+
+    func recordHTTP() {
+        http += 1
+    }
+
+    func recordClosed() {
+        closed += 1
+    }
+
+    func snapshot() -> (acquired: Int, http: Int, closed: Int) {
+        (acquired, http, closed)
     }
 }
 

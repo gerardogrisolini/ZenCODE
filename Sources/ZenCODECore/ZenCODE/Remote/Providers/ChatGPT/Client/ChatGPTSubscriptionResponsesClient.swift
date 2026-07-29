@@ -68,6 +68,17 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
         }
     }
 
+    /// Provenance-preserving representation of the canonical transient
+    /// `server_error` emitted by the Responses backend. Text alone is not enough
+    /// to make a callback or a different provider error retryable.
+    struct RetryableBackendFailure: LocalizedError {
+        let message: String
+
+        var errorDescription: String? {
+            message
+        }
+    }
+
     public let credentials: CodexAgentCredentials
     public let baseURL: URL
     /// Historical session value retained for source compatibility. It does not
@@ -152,34 +163,42 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
         let resolvedFallbackScopeID = fallbackScopeID?.nilIfBlank
             ?? resolvedThreadID
 
-        guard !webSocketPool.isHTTPFallbackScopeClosed(
-            scopeID: resolvedFallbackScopeID
-        ) else {
-            throw CancellationError()
-        }
-
-        if webSocketPool.usesHTTPFallback(scopeID: resolvedFallbackScopeID) {
-            return try await streamEventsOverHTTP(
-                body: body,
-                sessionID: sessionID,
-                threadID: resolvedThreadID,
-                fallbackScopeID: resolvedFallbackScopeID,
-                didActivateHTTPFallback: false,
-                onEvent: onEvent
-            )
-        }
-
         var attempt = 0
         var suppressContinuationReplay = false
         while true {
+            try Task.checkCancellation()
+            let acquisition = webSocketPool.acquire(
+                sessionID: sessionID,
+                request: webSocketRequest(
+                    sessionID: sessionID,
+                    threadID: resolvedThreadID
+                ),
+                fallbackScopeID: resolvedFallbackScopeID
+            )
+            let lease: WebSocketLease
+            switch acquisition {
+            case let .acquired(acquiredLease):
+                lease = acquiredLease
+            case .useHTTPFallback:
+                return try await streamEventsOverHTTPWithRetry(
+                    body: body,
+                    sessionID: sessionID,
+                    threadID: resolvedThreadID,
+                    fallbackScopeID: resolvedFallbackScopeID,
+                    didActivateHTTPFallback: false,
+                    onEvent: onEvent
+                )
+            case .closed:
+                throw CancellationError()
+            }
+
             do {
                 return try await streamEventsOverWebSocket(
                     body: body,
                     cachedInput: suppressContinuationReplay ? nil : cachedWebSocketInput,
                     previousResponseID: suppressContinuationReplay ? nil : previousResponseID,
                     allowsFreshContinuation: allowsFreshWebSocketContinuation,
-                    sessionID: sessionID,
-                    threadID: resolvedThreadID,
+                    lease: lease,
                     onEvent: onEvent
                 )
             } catch let failure as WebSocketStreamFailure {
@@ -191,7 +210,7 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
                     let didActivateHTTPFallback = webSocketPool.activateHTTPFallback(
                         scopeID: resolvedFallbackScopeID
                     )
-                    return try await streamEventsOverHTTP(
+                    return try await streamEventsOverHTTPWithRetry(
                         body: body,
                         sessionID: sessionID,
                         threadID: resolvedThreadID,
@@ -238,18 +257,9 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
         cachedInput: JSONValue?,
         previousResponseID: String?,
         allowsFreshContinuation: Bool,
-        sessionID: String,
-        threadID: String,
+        lease: WebSocketLease,
         onEvent: ([String: Any]) async throws -> Void
     ) async throws -> StreamCompletion {
-        let request = webSocketRequest(
-            sessionID: sessionID,
-            threadID: threadID
-        )
-        let lease = webSocketPool.acquire(
-            sessionID: sessionID,
-            request: request
-        )
         var keepConnection = false
         var responseID: String?
         var didReceiveTerminalEvent = false
@@ -303,13 +313,16 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
                     }
                     let objects = try Self.decodedJSONObjectSequence(from: data)
                     for object in objects {
-                        if Self.isReplayUnsafeStreamEvent(object) {
-                            didReceiveReplayUnsafeEvent = true
-                        }
                         if responseID == nil {
                             responseID = ChatGPTSubscriptionGenerationClient.responseID(
                                 from: object
                             )
+                        }
+                        if let failure = Self.retryableBackendFailure(from: object) {
+                            throw failure
+                        }
+                        if Self.isReplayUnsafeStreamEvent(object) {
+                            didReceiveReplayUnsafeEvent = true
                         }
                         try await onEvent(object)
                         if Self.isTerminalEvent(object) {
@@ -337,6 +350,41 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
                 receivedReplayUnsafeEvent: didReceiveReplayUnsafeEvent,
                 didSendContinuationPayload: didSendContinuationPayload
             )
+        }
+    }
+
+    private func streamEventsOverHTTPWithRetry(
+        body: [String: Any],
+        sessionID: String,
+        threadID: String,
+        fallbackScopeID: String,
+        didActivateHTTPFallback: Bool,
+        onEvent: ([String: Any]) async throws -> Void
+    ) async throws -> StreamCompletion {
+        var attempt = 0
+        while true {
+            guard !webSocketPool.isHTTPFallbackScopeClosed(
+                scopeID: fallbackScopeID
+            ) else {
+                throw CancellationError()
+            }
+
+            do {
+                return try await streamEventsOverHTTP(
+                    body: body,
+                    sessionID: sessionID,
+                    threadID: threadID,
+                    fallbackScopeID: fallbackScopeID,
+                    didActivateHTTPFallback: didActivateHTTPFallback,
+                    onEvent: onEvent
+                )
+            } catch {
+                guard Self.shouldRetryHTTPFailure(error, attempt: attempt) else {
+                    throw error
+                }
+                try await retrySleep(attempt)
+                attempt += 1
+            }
         }
     }
 
@@ -402,13 +450,16 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
                     from: Data(payload.utf8)
                 )
                 for object in objects {
-                    if Self.isReplayUnsafeStreamEvent(object) {
-                        didReceiveReplayUnsafeEvent = true
-                    }
                     if responseID == nil {
                         responseID = ChatGPTSubscriptionGenerationClient.responseID(
                             from: object
                         )
+                    }
+                    if let failure = Self.retryableBackendFailure(from: object) {
+                        throw failure
+                    }
+                    if Self.isReplayUnsafeStreamEvent(object) {
+                        didReceiveReplayUnsafeEvent = true
                     }
                     try await onEvent(object)
                     if Self.isTerminalEvent(object) {

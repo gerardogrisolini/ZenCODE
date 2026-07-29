@@ -127,6 +127,42 @@ extension ChatGPTSubscriptionResponsesClient {
         return payload == "[DONE]"
     }
 
+    static func retryableBackendFailure(
+        from object: [String: Any]
+    ) -> RetryableBackendFailure? {
+        let normalizedType = (object["type"] as? String)
+            .map(normalizedEventType) ?? ""
+        let response = object["response"] as? [String: Any]
+        let responseStatus = (response?["status"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let errorObject: [String: Any]?
+        if normalizedType == "error" {
+            errorObject = object["error"] as? [String: Any]
+        } else if normalizedType == "response_failed" || responseStatus == "failed" {
+            errorObject = response?["error"] as? [String: Any]
+        } else {
+            errorObject = nil
+        }
+
+        guard let errorObject else {
+            return nil
+        }
+        let errorType = (errorObject["type"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let errorCode = (errorObject["code"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard errorType == "server_error" || errorCode == "server_error",
+              let message = ChatGPTSubscriptionGenerationClient
+                .responseErrorMessage(from: object),
+              isRetryableRequestFailureMessage(message) else {
+            return nil
+        }
+        return RetryableBackendFailure(message: message)
+    }
+
     static func isReplayUnsafeStreamEvent(_ object: [String: Any]) -> Bool {
         let normalizedType = (object["type"] as? String)
             .map(normalizedEventType) ?? ""
