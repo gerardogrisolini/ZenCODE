@@ -11,6 +11,32 @@ zen --acp    # ACP over stdio for compatible clients
 
 Standalone `zen` uses providers/models from `~/.zencode/settings.json`.
 
+## Recovering Incomplete Tasks at Startup
+
+When standalone `zen` starts in an interactive terminal, it scans the current
+project for task-graph checkpoints left incomplete by earlier sessions. If any
+are found, an orange, scrollable picker opens before the model session is
+created. Use `↑`/`↓` to move and `Enter` to select the graph marked with `(x)`.
+You can also choose **Start fresh** to leave every checkpoint unchanged.
+
+Selecting **Delete old tasks…** opens a multi-selection list. Use `Space` to
+mark obsolete graphs with `[x]`, `A` to select all, `N` to select none, and
+`Enter` to delete the selected graphs. Deletion is graph-specific: other graphs
+stored in the same previous session are preserved.
+
+> **Exact-graph recovery guarantee:** a recovery choice identifies both the
+> previous logical session and the selected graph. ZenCODE restores the
+> checkpoint, makes that exact graph active and current, persists the new
+> `currentGraphID`, and only then creates the model/backend session. It never
+> substitutes another graph merely because that graph was current when the old
+> checkpoint was written. Any active execution attempt found in the checkpoint
+> is marked `interrupted`, and its task becomes `blocked`; external work is not
+> assumed to still be running after a process restart.
+
+This startup recovery concerns the authoritative task graph. It is separate
+from `/sessions restore`, which navigates the saved conversation checkpoint
+tree and creates a new conversational branch.
+
 ## First Setup
 
 ```bash
@@ -185,7 +211,16 @@ When work has multiple units, dependencies, or concurrent delegation, the coordi
 
 `/workflow` uses a distinct graph source. Its tasks must declare `execution.executor: sub_agent`, and the orchestrator rejects coordinator attempts or graph replacement while that workflow is active. This enforces delegation at the task lifecycle boundary rather than by applying a read-only tool policy to the coordinator. A coordinator without `agent.create` may work directly only in a graph that permits coordinator execution; it must never create or directly execute a workflow task.
 
-Checkpoints are written atomically under `~/.zencode/task-graphs/<project>/` and restored by session ID. Active attempts found during restore become `blocked` rather than silently resumed.
+Checkpoints are written atomically under `~/.zencode/task-graphs/<project>/`.
+At interactive startup, ZenCODE enumerates every incomplete graph for the
+current project and lets the operator resume one or delete obsolete graphs. A
+selection is keyed by `sessionID + graphID`: the orchestrator restores the
+owning session, makes the selected graph current, and persists that choice
+before the backend session starts. Other active graphs from the same checkpoint
+are archived when the selected graph takes ownership. Active attempts found
+during restore are marked `interrupted` and their tasks become `blocked` rather
+than being silently resumed. See
+[Recovering Incomplete Tasks at Startup](#recovering-incomplete-tasks-at-startup).
 
 ## Skills
 

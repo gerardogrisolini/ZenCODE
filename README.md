@@ -18,6 +18,7 @@ Windows (via WSL), all the way down to a Raspberry Pi.
 - **Runs everywhere** — macOS, Linux, and Windows (via WSL); model inference stays on the remote provider, so even a single-board computer can host the agent.
 - **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, with a dedicated agent profile.
 - **Agentic workflows** — dependency-aware task graph with `/plan`, `/workflow`, and `/review`, plus [capability-based delegation](Docs/bindings.md) to specialized sub-agents.
+- **Task recovery at startup** — incomplete task graphs are detected per project and presented in a scrollable picker, so you can resume the exact graph you selected or remove obsolete work before starting a new session.
 - **Full control over tools** — granular `/tools` selection (filesystem, shell, Git, search, memory, sub-agents, Xcode, Figma, features), with change tracking and `/undo` as a safety net.
 - **Extensible** — the Builder generates reusable Dynamic Swift Features as durable tools; skills are selectable per session and installable from GitHub or a local folder.
 
@@ -41,7 +42,7 @@ ZenCODE supports several ways to run the model, all selected through `zen --setu
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh" \
-  | bash -s -- --ref v1.0.5
+  | bash -s -- --ref v1.0.6
 ```
 
 `--ref` pins the source checkout to the release tag. Replace it with the latest
@@ -63,7 +64,7 @@ Xcode or the Apple command line tools.
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh" \
-  | bash -s -- --ref v1.0.5
+  | bash -s -- --ref v1.0.6
 ```
 
 For a development build from the moving `main` branch:

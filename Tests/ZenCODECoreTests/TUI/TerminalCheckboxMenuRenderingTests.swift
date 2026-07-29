@@ -3,6 +3,7 @@
 //  ZenCODE
 //
 
+import Foundation
 import Testing
 @testable import ZenCODECore
 
@@ -25,5 +26,29 @@ struct TerminalCheckboxMenuRenderingTests {
         )
         #expect(!sequence.contains("\u{1B}[J"))
         #expect(!sequence.contains("\u{1B}[13;1H"))
+    }
+
+    @Test
+    func resumableTaskGraphMenusExposeResumeAndCheckboxDeletionChoices() {
+        let graph = ResumableTaskGraph(
+            sessionID: "session",
+            graphID: "unfinished",
+            state: .active,
+            source: .workflow,
+            totalTaskCount: 3,
+            pendingTaskCount: 2,
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let choices = TerminalChat.resumableTaskGraphChoiceItems([graph])
+        #expect(choices.count == 3)
+        #expect(choices[0].value == .resume(graph.id))
+        #expect(choices[0].groupTitle == "Resume")
+        #expect(choices[1].value == .deleteOld)
+        #expect(choices[2].value == .startFresh)
+
+        let deletionItems = TerminalChat.resumableTaskGraphDeletionItems([graph])
+        #expect(deletionItems.map(\.value) == [graph.id])
+        #expect(deletionItems.map(\.title) == ["unfinished"])
     }
 }

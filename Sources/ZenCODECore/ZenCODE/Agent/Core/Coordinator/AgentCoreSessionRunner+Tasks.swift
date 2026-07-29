@@ -22,6 +22,35 @@ public extension AgentCoreSessionRunner {
         try await taskOrchestrator.graphSnapshots(sessionID: sessionID)
     }
 
+    func resumableTaskGraphCheckpoints(
+        workingDirectory: URL
+    ) async -> [ResumableTaskGraph] {
+        await taskOrchestrator.resumableTaskGraphCheckpoints(
+            workingDirectory: workingDirectory
+        )
+    }
+
+    func removeResumableTaskGraphs(
+        _ graphs: [ResumableTaskGraph],
+        workingDirectory: URL
+    ) async throws {
+        try await taskOrchestrator.removeResumableTaskGraphs(
+            graphs,
+            workingDirectory: workingDirectory
+        )
+    }
+
+    @discardableResult
+    func resumeTaskGraph(
+        _ graph: ResumableTaskGraph,
+        workingDirectory: URL
+    ) async throws -> TaskGraphSnapshot {
+        try await taskOrchestrator.resumeTaskGraph(
+            graph,
+            workingDirectory: workingDirectory
+        )
+    }
+
     @discardableResult
     func restoreTaskGraph(
         _ snapshot: TaskGraphSnapshot,

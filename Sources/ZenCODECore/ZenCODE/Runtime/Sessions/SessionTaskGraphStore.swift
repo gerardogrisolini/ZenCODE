@@ -127,6 +127,56 @@ public struct SessionTaskGraphStore: Sendable {
         }
     }
 
+    /// Enumerates every valid checkpoint persisted for a working directory,
+    /// regardless of session identifier. Corrupt, oversized, or
+    /// schema-mismatched files are skipped best-effort so a single bad file
+    /// cannot prevent detection of the remaining work. Used at startup to find
+    /// incomplete task graphs from previous sessions.
+    public func loadCheckpoints(
+        workingDirectory: URL,
+        fileManager: FileManager = .default
+    ) -> [SessionTaskGraphCheckpoint] {
+        let directoryURL = taskGraphsDirectoryURL(
+            workingDirectory: workingDirectory,
+            fileManager: fileManager
+        )
+        let entries: [String]
+        do {
+            entries = try fileManager.contentsOfDirectory(atPath: directoryURL.path)
+        } catch {
+            return []
+        }
+
+        var results: [SessionTaskGraphCheckpoint] = []
+        for entry in entries {
+            // Skip lock directories and recovered corrupt copies.
+            guard entry.hasSuffix(".plist"),
+                  !entry.contains(".lock"),
+                  !entry.contains(".corrupt-") else {
+                continue
+            }
+            let fileURL = directoryURL.appendingPathComponent(entry, isDirectory: false)
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: fileURL.path, isDirectory: &isDirectory),
+                  !isDirectory.boolValue else {
+                continue
+            }
+            guard let data = try? Data(contentsOf: fileURL, options: [.mappedIfSafe]),
+                  data.count <= maximumSnapshotBytes else {
+                continue
+            }
+            guard let checkpoint = try? PropertyListDecoder().decode(
+                SessionTaskGraphCheckpoint.self,
+                from: data
+            ),
+                checkpoint.schemaVersion == SessionTaskGraphCheckpoint.currentSchemaVersion else {
+                continue
+            }
+            results.append(checkpoint)
+        }
+        return results
+    }
+
     @discardableResult
     public func delete(
         sessionID: String,

@@ -10,6 +10,53 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-07-29
+
+### Added
+
+- Startup recovery for incomplete task graphs. Interactive sessions now scan
+  the current project for unfinished work and present it in the same orange,
+  scrollable picker used by setup. Operators can resume a graph, start fresh
+  without changing saved work, or mark obsolete graphs with `[x]` and delete
+  them selectively.
+- Exact-graph recovery semantics: a startup choice is resolved by
+  `sessionID + graphID`, and the selected graph is made active/current and
+  persisted before the model backend starts. Other graphs in the same
+  checkpoint are preserved, while superseded active graphs are archived.
+- Declarative tool-presentation metadata shared by direct tools, MCP tools, and
+  Swift Features, including structured titles, locations, arguments, statuses,
+  and change summaries.
+- Expanded Browser feature observability, including bounded console and network
+  diagnostics with filtering and redaction.
+
+### Changed
+
+- Tool output rendering now uses the shared presentation contract across the
+  compact and expanded TUI views, ACP updates, bundled features, and delegated
+  tools, with clearer orange-family hierarchy and parameter formatting.
+- ChatGPT subscription sessions now prefer Responses WebSockets for the root
+  session, retry replay-safe transient failures within a bounded budget, and
+  fall back to HTTP/SSE for the remainder of the logical session when the
+  WebSocket path is unavailable. Delegated sessions start directly on
+  HTTP/SSE to avoid accumulating long-lived connections.
+- Telegram turn reporting and permission handling now preserve tool-call order,
+  accumulate assistant content cleanly, and provide richer inline progress
+  without duplicating the final response.
+
+### Fixed
+
+- Task recovery no longer restores whichever graph happened to be current when
+  an old checkpoint was written. The exact graph selected by the operator is
+  now authoritative, including when one previous session contains multiple
+  incomplete graphs. Persisted active attempts are marked `interrupted` and
+  their tasks become `blocked` instead of being assumed to still be running.
+- ChatGPT WebSocket lifecycle, continuation parsing, connection fallback, and
+  close handling across transport resets and replay-safe retries.
+- Anthropic subscription thinking-block accumulation and thinking payload
+  handling across streamed responses.
+- Expanded tool rendering, active-tool selection, tool-name normalization, and
+  related Linux build compatibility.
+
 ## [1.0.5] - 2026-07-28
 
 ### Fixed
@@ -136,7 +183,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.2...v1.0.3

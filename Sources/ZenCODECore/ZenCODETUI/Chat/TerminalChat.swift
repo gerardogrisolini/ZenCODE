@@ -287,6 +287,8 @@ public final class TerminalChat {
         try applyInitialSkillSelectionIfNeeded()
         await ensureWorkspaceAccessIfNeeded()
 
+        let resumedTaskGraph = await applyResumableTaskGraphSessionIfNeeded()
+
         try await createCurrentSession()
         await refreshInitialStatusBarContextWindow()
         _ = try await preloadCurrentModel(emitStatus: configuration.hostedModels != nil)
@@ -295,6 +297,9 @@ public final class TerminalChat {
             AgentOutput.clearTerminalScreenIfNeeded()
         }
         await printStartupSummary()
+        if let resumedTaskGraph {
+            await writeResumedTaskGraphNotice(resumedTaskGraph)
+        }
 
         let statusBarStarted = await statusBar.start()
         await refreshStatusBarGitStatusSummary()
