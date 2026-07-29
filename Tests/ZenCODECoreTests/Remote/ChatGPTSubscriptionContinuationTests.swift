@@ -224,10 +224,12 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionGenericRequestFailureFallsBackToHTTP() throws {
+    func chatGPTSubscriptionStructuredBackendFailuresRetryThenFallBackToHTTP() throws {
         let message = """
         An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 2500a4a9-690b-4951-beb3-602a7d5893d8 in your message.
         """
+        let overloadedMessage =
+            "Our servers are currently overloaded. Please try again later."
         let canonicalObject: [String: Any] = [
             "type": "error",
             "error": [
@@ -245,9 +247,39 @@ extension RemoteSessionSnapshotTests {
                 "message": message
             ]
         ]
+        let overloadedObject: [String: Any] = [
+            "type": "response.failed",
+            "response": [
+                "status": "failed",
+                "error": [
+                    "code": "server_is_overloaded",
+                    "message": overloadedMessage
+                ]
+            ]
+        ]
+        let slowDownObject: [String: Any] = [
+            "type": "error",
+            "error": [
+                "code": "slow_down",
+                "message": overloadedMessage
+            ]
+        ]
+        let wrappedServerFailure: [String: Any] = [
+            "type": "error",
+            "status_code": 502,
+            "error": [
+                "type": "upstream_error",
+                "message": "Temporary upstream failure."
+            ]
+        ]
         let retryableError = try #require(
             ChatGPTSubscriptionResponsesClient.retryableBackendFailure(
                 from: canonicalObject
+            )
+        )
+        let overloadedError = try #require(
+            ChatGPTSubscriptionResponsesClient.retryableBackendFailure(
+                from: overloadedObject
             )
         )
         let callbackError = ChatGPTSubscriptionGenerationError.responseFailed(message)
@@ -269,6 +301,17 @@ extension RemoteSessionSnapshotTests {
             ChatGPTSubscriptionResponsesClient.retryableBackendFailure(
                 from: nonCanonicalObject
             ) == nil
+        )
+        #expect(overloadedError.localizedDescription == overloadedMessage)
+        #expect(
+            ChatGPTSubscriptionResponsesClient.retryableBackendFailure(
+                from: slowDownObject
+            )?.localizedDescription == overloadedMessage
+        )
+        #expect(
+            ChatGPTSubscriptionResponsesClient.retryableBackendFailure(
+                from: wrappedServerFailure
+            )?.localizedDescription == "Temporary upstream failure."
         )
         #expect(replayUnsafeError.localizedDescription == message)
         #expect(
@@ -307,7 +350,14 @@ extension RemoteSessionSnapshotTests {
             )
         )
         #expect(
-            !ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
+            ChatGPTSubscriptionResponsesClient.shouldRetryWebSocketFailure(
+                retryableError,
+                receivedReplayUnsafeEvent: false,
+                attempt: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionResponsesClient.shouldActivateHTTPFallback(
                 retryableError,
                 receivedReplayUnsafeEvent: false,
                 attempt: 0
@@ -317,7 +367,7 @@ extension RemoteSessionSnapshotTests {
             ChatGPTSubscriptionResponsesClient.shouldActivateHTTPFallback(
                 retryableError,
                 receivedReplayUnsafeEvent: false,
-                attempt: 0
+                attempt: ChatGPTSubscriptionResponsesClient.maxRetries
             )
         )
         #expect(
@@ -1506,6 +1556,79 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
+    func chatGPTSubscriptionNIOClientRetriesOverloadOnFreshWebSocket() async throws {
+        let overloadedResponse = try JSONValue(jsonObject: [
+            "type": "response.failed",
+            "response": [
+                "status": "failed",
+                "error": [
+                    "code": "server_is_overloaded",
+                    "message": "Our servers are currently overloaded. Please try again later."
+                ]
+            ]
+        ]).jsonData(outputFormatting: [.withoutEscapingSlashes])
+        let firstTask = ChatGPTSubscriptionTestWebSocketTask(
+            receiveOutcomes: [
+                .success(.text(String(decoding: overloadedResponse, as: UTF8.self)))
+            ]
+        )
+        let secondTask = ChatGPTSubscriptionTestWebSocketTask(
+            receiveOutcomes: [
+                .success(
+                    .text(
+                        #"{"type":"response.completed","response":{"id":"resp_after_overload","status":"completed"}}"#
+                    )
+                )
+            ]
+        )
+        let pendingTasks = Mutex([firstTask, secondTask])
+        let factoryCount = Mutex(0)
+        let fallbackCount = Mutex(0)
+        let retrySleepAttempts = Mutex<[Int]>([])
+        let pool = ChatGPTSubscriptionWebSocketPool(
+            heartbeatIntervalNanoseconds: UInt64.max,
+            webSocketTaskFactory: { _ in
+                factoryCount.withLock { $0 += 1 }
+                return pendingTasks.withLock { $0.removeFirst() }
+            }
+        )
+        defer { pool.closeAll() }
+        let client = ChatGPTSubscriptionResponsesClient(
+            credentials: chatGPTSubscriptionTestCredentials(),
+            baseURL: URL(string: "https://example.invalid/backend-api")!,
+            webSocketPool: pool,
+            retrySleep: { attempt in
+                retrySleepAttempts.withLock { $0.append(attempt) }
+            },
+            httpFallbackOverride: { _, _ in
+                fallbackCount.withLock { $0 += 1 }
+                return ChatGPTSubscriptionResponsesClient.StreamCompletion(
+                    responseID: "unexpected-http-fallback"
+                )
+            }
+        )
+
+        let completion = try await client.streamEvents(
+            input: .array([]),
+            model: "gpt-5.5",
+            instructions: "System prompt",
+            reasoningEffort: nil,
+            textVerbosity: "medium",
+            sessionID: "overload-transport",
+            fallbackScopeID: "overload-logical-session"
+        ) { _ in }
+
+        #expect(completion.responseID == "resp_after_overload")
+        #expect(!completion.didActivateHTTPFallback)
+        #expect(factoryCount.withLock { $0 } == 2)
+        #expect(fallbackCount.withLock { $0 } == 0)
+        #expect(retrySleepAttempts.withLock { $0 } == [0])
+        #expect(firstTask.cancelCount == 1)
+        #expect(secondTask.cancelCount == 0)
+        #expect(!pool.usesHTTPFallback(scopeID: "overload-logical-session"))
+    }
+
+    @Test
     func chatGPTSubscriptionNIOClientFallsBackAndRetriesGenericRequestFailureOverHTTP() async throws {
         let message = """
         An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 2500a4a9-690b-4951-beb3-602a7d5893d8 in your message.
@@ -1519,11 +1642,14 @@ extension RemoteSessionSnapshotTests {
             ],
             "sequence_number": 2
         ]).jsonData(outputFormatting: [.withoutEscapingSlashes])
-        let firstTask = ChatGPTSubscriptionTestWebSocketTask(
-            receiveOutcomes: [
-                .success(.text(String(decoding: failedResponse, as: UTF8.self)))
-            ]
-        )
+        let webSocketTasks = (0...ChatGPTSubscriptionResponsesClient.maxRetries).map { _ in
+            ChatGPTSubscriptionTestWebSocketTask(
+                receiveOutcomes: [
+                    .success(.text(String(decoding: failedResponse, as: UTF8.self)))
+                ]
+            )
+        }
+        let pendingWebSocketTasks = Mutex(webSocketTasks)
         let factoryCount = Mutex(0)
         let capturedRequests = Mutex<[RemoteWebSocketRequest]>([])
         let capturedHTTPBodies = Mutex<[JSONValue]>([])
@@ -1534,7 +1660,7 @@ extension RemoteSessionSnapshotTests {
             webSocketTaskFactory: { request in
                 factoryCount.withLock { $0 += 1 }
                 capturedRequests.withLock { $0.append(request) }
-                return firstTask
+                return pendingWebSocketTasks.withLock { $0.removeFirst() }
             }
         )
         defer { pool.closeAll() }
@@ -1595,7 +1721,12 @@ extension RemoteSessionSnapshotTests {
         ) { _ in }
 
         let request = try #require(capturedRequests.withLock { $0.first })
-        let webSocketPayload = try #require(firstTask.sentMessages.first?.jsonObject)
+        let webSocketPayload = try #require(
+            webSocketTasks.first?.sentMessages.first?.jsonObject
+        )
+        let retryWebSocketPayload = try #require(
+            webSocketTasks.dropFirst().first?.sentMessages.first?.jsonObject
+        )
         let firstHTTPBodyValue = try #require(
             capturedHTTPBodies.withLock { $0.first }
         )
@@ -1608,22 +1739,27 @@ extension RemoteSessionSnapshotTests {
         #expect(completion.didActivateHTTPFallback)
         #expect(nextCompletion.responseID == "resp_http_fallback")
         #expect(!nextCompletion.didActivateHTTPFallback)
-        #expect(factoryCount.withLock { $0 } == 1)
+        #expect(factoryCount.withLock { $0 } == webSocketTasks.count)
         #expect(httpFallbackSessionIDs.withLock { $0 } == [
             "transport-session-a",
             "transport-session-a",
             "transport-session-b"
         ])
         #expect(capturedHTTPBodies.withLock { $0.count } == 3)
-        #expect(retrySleepAttempts.withLock { $0 } == [0])
+        #expect(retrySleepAttempts.withLock { $0 } == [0, 1, 2, 0])
         #expect(request.headerValue(for: "session-id") == "transport-session-a")
         #expect(request.headerValue(for: "thread-id") == "logical-session")
         #expect(request.headerValue(for: "x-client-request-id") == "logical-session")
         #expect(webSocketPayload["previous_response_id"] as? String == "resp_previous")
         #expect(webSocketInput.first?["marker"] as? String == "continuation-delta")
+        #expect(retryWebSocketPayload["previous_response_id"] == nil)
+        #expect(
+            (retryWebSocketPayload["input"] as? [[String: Any]])?.first?["marker"]
+                as? String == "full-replay"
+        )
         #expect(firstHTTPBody["previous_response_id"] == nil)
         #expect(httpInput.first?["marker"] as? String == "full-replay")
-        #expect(firstTask.cancelCount == 1)
+        #expect(webSocketTasks.allSatisfy { $0.cancelCount == 1 })
 
         pool.closeSession(sessionID: "transport-session-a")
         #expect(pool.usesHTTPFallback(scopeID: "logical-session"))

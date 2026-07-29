@@ -8,6 +8,18 @@
 import Foundation
 
 extension ChatGPTSubscriptionResponsesClient {
+    /// Structured error identifiers Codex treats as retryable on the Responses
+    /// WebSocket path. Matching identifiers (or a wrapped 5xx status) avoids
+    /// relying on localized server text while keeping unrelated callback errors
+    /// and invalid requests non-retryable.
+    private static let retryableBackendErrorIdentifiers: Set<String> = [
+        "previous_response_not_found",
+        "server_error",
+        "server_is_overloaded",
+        "slow_down",
+        "websocket_connection_limit_reached"
+    ]
+
     static func decodedJSONObjectSequence(from data: Data) throws -> [[String: Any]] {
         if isDoneMarker(data) {
             return []
@@ -154,10 +166,17 @@ extension ChatGPTSubscriptionResponsesClient {
         let errorCode = (errorObject["code"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        guard errorType == "server_error" || errorCode == "server_error",
+        let hasRetryableIdentifier = [errorType, errorCode]
+            .compactMap { $0 }
+            .contains { retryableBackendErrorIdentifiers.contains($0) }
+        let status = ChatGPTSubscriptionGenerationClient.intValue(
+            object["status"] ?? object["status_code"]
+        )
+        let hasRetryableStatus = normalizedType == "error"
+            && status.map { (500...599).contains($0) } == true
+        guard hasRetryableIdentifier || hasRetryableStatus,
               let message = ChatGPTSubscriptionGenerationClient
-                .responseErrorMessage(from: object),
-              isRetryableRequestFailureMessage(message) else {
+                .responseErrorMessage(from: object) else {
             return nil
         }
         return RetryableBackendFailure(message: message)

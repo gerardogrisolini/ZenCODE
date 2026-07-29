@@ -68,9 +68,9 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
         }
     }
 
-    /// Provenance-preserving representation of the canonical transient
-    /// `server_error` emitted by the Responses backend. Text alone is not enough
-    /// to make a callback or a different provider error retryable.
+    /// Provenance-preserving representation of a structured transient failure
+    /// emitted by the Responses backend. Text alone is not enough to make a
+    /// callback or a different provider error retryable.
     struct RetryableBackendFailure: LocalizedError {
         let message: String
 

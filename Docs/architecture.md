@@ -84,9 +84,10 @@ availability is session-scoped rather than mandatory. Delegated ChatGPT
 sub-agent backends start directly on HTTP/SSE: each delegated backend remains
 reusable after completing work, so allowing every one to retain an independent
 WebSocket would accumulate uncoordinated long-lived connections across parallel
-batches. A canonical recoverable backend failure, an HTTP 426 upgrade rejection,
-or exhaustion of the bounded replay-safe WebSocket retry budget switches a root
-logical agent session to HTTP/SSE for all later turns and tool rounds. The HTTP
+batches. Structured transient Responses failures and transport failures retry on
+a fresh WebSocket within the bounded replay-safe budget, matching Codex; an HTTP
+426 upgrade rejection or exhaustion of that budget switches a root logical agent
+session to HTTP/SSE for all later turns and tool rounds. The HTTP
 scope key combines the logical session with its installation generation, remains
 independent of the rotating WebSocket transport ID, and survives continuation
 resets without leaking into a recreated session incarnation. Closing that
@@ -94,10 +95,12 @@ incarnation fences late activation and cancels any HTTP stream that is opening o
 active. Events that already emitted replay-unsafe reasoning, refusal, content,
 or tool output are never replayed or moved between transports. HTTP/SSE
 completion requires a terminal Responses event; `[DONE]` or EOF alone cannot
-commit partial output. A canonical transient provider event whose error type or
-code is `server_error`, received again over HTTP/SSE, is retried within the
+commit partial output. Structured transient provider events use stable error
+identifiers (`server_error`, `server_is_overloaded`, `slow_down`,
+`websocket_connection_limit_reached`, or `previous_response_not_found`) or a
+wrapped 5xx status; when received again over HTTP/SSE they are retried within the
 bounded stream budget only when no replay-unsafe output crossed the callback
-boundary; message text or callback errors alone can never activate that retry.
+boundary. Message text or callback errors alone can never activate that retry.
 Authentication failures retain their token-refresh path on both transports.
 
 Each opened HTTP/SSE response and upgraded WebSocket separates its public handle
