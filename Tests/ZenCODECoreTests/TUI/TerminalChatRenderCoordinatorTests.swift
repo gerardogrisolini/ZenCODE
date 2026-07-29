@@ -142,6 +142,26 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func elapsedTimeUsesMillisecondsBelowOneSecond() {
+        #expect(TerminalChat.toolElapsedTimeText(.zero) == "0ms")
+        #expect(TerminalChat.toolElapsedTimeText(.nanoseconds(1)) == "<0.01ms")
+        #expect(TerminalChat.toolElapsedTimeText(.microseconds(820)) == "0.82ms")
+        #expect(TerminalChat.toolElapsedTimeText(.milliseconds(12)) == "12.0ms")
+        #expect(TerminalChat.toolElapsedTimeText(.milliseconds(350)) == "350ms")
+        #expect(TerminalChat.toolElapsedTimeText(.milliseconds(1_200)) == "1.20s")
+
+        let rendered = TerminalChat.renderCompactToolLine(
+            "Read ✅ 0.82ms",
+            isTitle: false
+        )
+        #expect(
+            rendered.contains(
+                "\(TerminalChat.toolDurationColor)0.82ms\(TerminalChat.toolValueColor)"
+            )
+        )
+    }
+
+    @Test
     func compactLocalExecMetadataUsesCanonicalExitCodeAndCleanMissingStartFallback() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = presentedToolCall(
@@ -164,7 +184,7 @@ struct TerminalChatRenderCoordinatorTests {
             .map(\.text)
             .joined()
         #expect(missingStartText.contains("⚠️  exit 23"))
-        #expect(!missingStartText.contains("0.00s"))
+        #expect(!missingStartText.contains("0ms"))
 
         let successfulToolCall = presentedToolCall(
             id: "successful-with-duration",
@@ -389,7 +409,7 @@ struct TerminalChatRenderCoordinatorTests {
             result: DirectAgentToolResult(output: "Boom", summary: "Boom", status: .failed),
             elapsed: .milliseconds(350)
         )
-        #expect(failedRows.last?.plainText == "status: ⚠️  0.35s")
+        #expect(failedRows.last?.plainText == "status: ⚠️  350ms")
 
         let rowsWithoutElapsed = TerminalChat.detailedToolCallCompletedRows(
             for: toolCall,

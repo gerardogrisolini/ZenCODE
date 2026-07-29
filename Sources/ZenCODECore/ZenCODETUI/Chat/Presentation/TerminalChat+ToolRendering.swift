@@ -288,10 +288,31 @@ extension TerminalChat {
             Double(duration.components.seconds)
                 + Double(duration.components.attoseconds) / 1_000_000_000_000_000_000
         )
+        let locale = Locale(identifier: "en_US_POSIX")
+        guard seconds < 1 else {
+            return String(format: "%.2fs", locale: locale, seconds)
+        }
+
+        let milliseconds = seconds * 1_000
+        guard milliseconds > 0 else {
+            return "0ms"
+        }
+        guard milliseconds >= 0.01 else {
+            return "<0.01ms"
+        }
+
+        let format: String
+        if milliseconds < 10 {
+            format = "%.2fms"
+        } else if milliseconds < 100 {
+            format = "%.1fms"
+        } else {
+            format = "%.0fms"
+        }
         return String(
-            format: "%.2fs",
-            locale: Locale(identifier: "en_US_POSIX"),
-            seconds
+            format: format,
+            locale: locale,
+            milliseconds
         )
     }
 
@@ -324,18 +345,7 @@ extension TerminalChat {
         let tokenStart = line[start...].drop(while: \.isWhitespace).startIndex
         let end = line[tokenStart...].firstIndex(where: \.isWhitespace) ?? line.endIndex
         let token = line[tokenStart..<end]
-        guard token.hasSuffix("s") else {
-            return nil
-        }
-        let numeric = token.dropLast()
-        let components = numeric.split(
-            separator: ".",
-            omittingEmptySubsequences: false
-        )
-        guard components.count == 2,
-              components.allSatisfy({ component in
-                  !component.isEmpty && component.allSatisfy(\.isWholeNumber)
-              }) else {
+        guard isCanonicalToolDurationToken(token) else {
             return nil
         }
         let suffix = line[end...]
@@ -347,6 +357,29 @@ extension TerminalChat {
             }
         }
         return tokenStart..<end
+    }
+
+    private nonisolated static func isCanonicalToolDurationToken(
+        _ token: Substring
+    ) -> Bool {
+        let numeric: Substring
+        if token.hasSuffix("ms") {
+            numeric = token.dropLast(2)
+        } else if token.hasSuffix("s") {
+            numeric = token.dropLast()
+        } else {
+            return false
+        }
+
+        let unsignedNumeric = numeric.first == "<" ? numeric.dropFirst() : numeric
+        let components = unsignedNumeric.split(
+            separator: ".",
+            omittingEmptySubsequences: false
+        )
+        return (components.count == 1 || components.count == 2)
+            && components.allSatisfy { component in
+                !component.isEmpty && component.allSatisfy(\.isWholeNumber)
+            }
     }
 
     private nonisolated static func isCanonicalExitCode(
