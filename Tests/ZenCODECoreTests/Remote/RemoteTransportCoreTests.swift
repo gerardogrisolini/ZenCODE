@@ -795,7 +795,10 @@ struct RemoteTransportCoreTests {
                 requestCount.withLock { $0 }
                     == ChatGPTSubscriptionResponsesClient.maxRetries + 1
             )
-            #expect(retrySleepAttempts.withLock { $0 } == [0, 1, 2])
+            #expect(
+                retrySleepAttempts.withLock { $0 }
+                    == Array(0..<ChatGPTSubscriptionResponsesClient.maxRetries)
+            )
         } catch {
             pool.closeAll()
             await transport.shutdownIgnoringError()
