@@ -107,7 +107,7 @@ extension TerminalChatRenderingTests {
 
         let lines = TerminalChat.compactToolLines(for: toolCall, statusIcon: "⏳")
 
-        #expect(lines == ["🛠️  local.editFile ⏳"])
+        #expect(lines == ["🛠️  local.editFile:", "Sources/App.swift ⏳"])
     }
 
     @Test
@@ -211,7 +211,9 @@ extension TerminalChatRenderingTests {
 
         let lines = TerminalChat.compactToolLines(for: toolCall, statusIcon: "✅")
 
-        #expect(lines == ["🛠️  local.exec ✅"])
+        #expect(lines.count == 2)
+        #expect(lines[0] == "🛠️  local.exec:")
+        #expect(lines[1].hasSuffix("✅"))
     }
 
     @Test

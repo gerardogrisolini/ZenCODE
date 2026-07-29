@@ -132,13 +132,13 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(visibleCompletionText.contains("exit 7"))
         #expect(
             completionText.contains(
-                "⚠️  \(TerminalChat.toolDurationColor)1.20s\(TerminalChat.toolTitleColor) exit 7"
+                "⚠️  \(TerminalChat.toolDurationColor)1.20s\(TerminalChat.toolValueColor) exit 7"
             )
         )
         #expect(renderedLines.allSatisfy {
             TerminalChat.displayWidth($0) <= terminalColumns - 1
         })
-        #expect(started.activeCompactToolRenderedRowCount == 1)
+        #expect(started.activeCompactToolRenderedRowCount == 2)
     }
 
     @Test
@@ -1463,7 +1463,8 @@ struct TerminalChatRenderCoordinatorTests {
                 .joined()
         )
 
-        #expect(stderr.contains("🛠️  agent.wait ⏳"))
+        #expect(stderr.contains("🛠️  agent.wait:"))
+        #expect(stderr.contains("Agent ⏳"))
         #expect(stderr.components(separatedBy: "… 1 thinking lines omitted").count - 1 == 2)
         #expect(!stderr.contains("first hidden"))
         #expect(!stderr.contains("second hidden"))

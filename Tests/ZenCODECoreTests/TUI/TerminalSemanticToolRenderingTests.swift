@@ -50,18 +50,18 @@ struct TerminalSemanticToolRenderingTests {
     }
 
     @Test
-    func compactRenderingUsesCanonicalToolName() {
+    func compactRenderingUsesCanonicalNameAndTarget() {
         let lines = TerminalChat.compactToolLines(
             for: Self.call(),
             statusIcon: "⏳",
             columnWidth: 80
         )
 
-        #expect(lines == ["🛠️  thirdparty.edit ⏳"])
+        #expect(lines == ["🛠️  thirdparty.edit:", "/tmp/App.swift ⏳"])
     }
 
     @Test
-    func compactRenderingUsesCanonicalNameWhenTheToolDefinesAnInspectPresentation() {
+    func compactInspectUsesItsSafeArgumentAsTarget() {
         let call = DirectAgentToolCall(
             id: "inspect",
             name: "thirdparty.inspect",
@@ -81,11 +81,11 @@ struct TerminalSemanticToolRenderingTests {
             columnWidth: 80
         )
 
-        #expect(lines == ["🛠️  thirdparty.inspect ✅ 0.03s"])
+        #expect(lines == ["🛠️  thirdparty.inspect:", "node-42 ✅ 0.03s"])
     }
 
     @Test
-    func compactListAndWriteUseTheirCanonicalNames() throws {
+    func compactListAndWriteUseTheirCanonicalNameAndSemanticSubject() throws {
         let listDescriptor = PromptSkillToolProvider.listToolDescriptor
         let writeDescriptor = try #require(
             DirectToolCatalog.memoryDescriptors.first { $0.name == "memory.write" }
@@ -95,13 +95,13 @@ struct TerminalSemanticToolRenderingTests {
                 listDescriptor,
                 [:],
                 "0.03s",
-                ["🛠️  skills.list ✅ 0.03s"]
+                ["🛠️  skills.list:", "Prompt skills ✅ 0.03s"]
             ),
             (
                 writeDescriptor,
                 ["content": "Summary: completed"],
                 "0.01s",
-                ["🛠️  memory.write ✅ 0.01s"]
+                ["🛠️  memory.write:", "Project memory ✅ 0.01s"]
             )
         ]
 
@@ -127,7 +127,7 @@ struct TerminalSemanticToolRenderingTests {
     }
 
     @Test
-    func compactFileListInspectAndWriteUseTheirCanonicalNames() throws {
+    func compactFileListInspectAndWriteShowTheirCanonicalNameAndPathArgument() throws {
         let cases: [(String, [String: Any], String, String, String)] = [
             (
                 "local.ls",
@@ -173,7 +173,8 @@ struct TerminalSemanticToolRenderingTests {
                     statusDetail: duration,
                     columnWidth: 100
                 ) == [
-                    "🛠️  \(name) ✅ \(duration)"
+                    "🛠️  \(name):",
+                    "\(path) ✅ \(duration)"
                 ]
             )
         }
@@ -204,7 +205,7 @@ struct TerminalSemanticToolRenderingTests {
         )
 
         #expect(
-            lines == ["🛠️  tasks.list ✅ 0.02s"]
+            lines == ["🛠️  tasks.list:", "pending ✅ 0.02s"]
         )
     }
 
@@ -228,7 +229,7 @@ struct TerminalSemanticToolRenderingTests {
             columnWidth: 80
         )
 
-        #expect(lines == ["🛠️  feature.list ✅ 0.02s"])
+        #expect(lines == ["🛠️  feature.list:", "true ✅ 0.02s"])
     }
 
     @Test
