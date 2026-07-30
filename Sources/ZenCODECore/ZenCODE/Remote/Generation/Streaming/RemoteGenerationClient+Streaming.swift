@@ -127,9 +127,12 @@ extension RemoteGenerationClient {
             ))
         }
         let toolCatalog = RemoteToolWireCatalog(descriptors: toolDescriptors)
+        let wireMessages = Self.chatCompletionsMessagesExpandingToolImages(
+            from: toolCatalog.wireMessages(from: messages)
+        )
         var body: [String: Any] = [
             "model": provider.modelID,
-            "messages": toolCatalog.wireMessages(from: messages),
+            "messages": wireMessages,
             "stream": true,
             "stream_options": [
                 "include_usage": true

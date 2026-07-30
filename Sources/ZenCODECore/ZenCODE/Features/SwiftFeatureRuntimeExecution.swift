@@ -67,6 +67,16 @@ extension SwiftFeatureRuntime {
         toolCall: DirectAgentToolCall,
         workingDirectory: URL
     ) async throws -> String? {
+        try await executeResultIfAvailable(
+            toolCall: toolCall,
+            workingDirectory: workingDirectory
+        )?.output
+    }
+
+    func executeResultIfAvailable(
+        toolCall: DirectAgentToolCall,
+        workingDirectory: URL
+    ) async throws -> SwiftFeatureInvocationResult? {
         guard let feature = features.first(where: { $0.contains(toolName: toolCall.name) }) else {
             return nil
         }
@@ -84,7 +94,7 @@ extension SwiftFeatureRuntime {
             stdinData: Data(toolCall.argumentsJSON.utf8),
             timeout: feature.invocationTimeoutSeconds ?? 60
         )
-        return try Self.renderInvocationResult(result, feature: feature)
+        return try Self.invocationResult(result, feature: feature)
     }
 
     public func featureStatuses(

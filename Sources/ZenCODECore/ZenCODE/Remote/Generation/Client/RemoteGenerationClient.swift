@@ -436,12 +436,9 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                 )
                 await onEvent(.toolCallCompleted(toolCall, result))
                 guard mutateSession(for: lease, { session in
-                    session.messages.append([
-                        "role": "tool",
-                        "tool_call_id": toolCall.id,
-                        "name": toolCall.name,
-                        "content": result.modelOutput
-                    ])
+                    session.messages.append(
+                        Self.toolResultMessage(toolCall: toolCall, result: result)
+                    )
                 }) else {
                     throw RemoteGenerationClientError.missingSession
                 }
@@ -512,11 +509,12 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             let content = contentString(from: message["content"]) ?? ""
             let imageAttachments = chatCompletionsImageContentItems(from: message["content"])
                 .enumerated()
-                .map { index, _ in
-                    AgentRuntimeAttachment(
-                        kind: .image,
-                        originalFilename: "image-\(index + 1)"
-                    )
+                .map { index, item in
+                    runtimeImageAttachment(from: item, index: index)
+                        ?? AgentRuntimeAttachment(
+                            kind: .image,
+                            originalFilename: "image-\(index + 1)"
+                        )
                 }
             return AgentRuntimeMessage(
                 role: role,

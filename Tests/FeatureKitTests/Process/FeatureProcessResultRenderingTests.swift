@@ -78,4 +78,39 @@ struct FeatureProcessResultRenderingTests {
 
         #expect(viaRenderer == "exit_code: 2\ntimed_out: true\nstdout:\nhello\nstderr:\nboom")
     }
+
+    @Test
+    func successfulInvocationEnvelopeIncludesDeclaredAttachments() throws {
+        let data = try FeatureProcessProtocol.renderSuccess(
+            outputData: Data(#"{"summary":"captured"}"#.utf8),
+            attachments: [
+                FeatureInvocationAttachment(
+                    path: "/tmp/screenshot.png",
+                    kind: .image,
+                    contentType: "image/png",
+                    originalFilename: "screenshot.png"
+                )
+            ]
+        )
+        let root = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        let output = try #require(root["output"] as? [String: Any])
+        let attachments = try #require(root["attachments"] as? [[String: Any]])
+
+        #expect(output["summary"] as? String == "captured")
+        #expect(attachments.first?["path"] as? String == "/tmp/screenshot.png")
+        #expect(attachments.first?["kind"] as? String == "image")
+        #expect(attachments.first?["contentType"] as? String == "image/png")
+    }
+
+    @Test
+    func successfulInvocationEnvelopeWithoutAttachmentsRetainsLegacyWire() throws {
+        let data = try FeatureProcessProtocol.renderSuccess(
+            outputData: Data(#""ok""#.utf8),
+            attachments: []
+        )
+
+        #expect(String(decoding: data, as: UTF8.self) == #"{"ok":true,"output":"ok"}"# + "\n")
+    }
 }

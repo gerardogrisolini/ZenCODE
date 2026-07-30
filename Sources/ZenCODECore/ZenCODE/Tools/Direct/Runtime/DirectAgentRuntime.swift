@@ -123,17 +123,20 @@ public struct DirectAgentToolResult: Sendable {
     public let summary: String
     public let modelOutput: String
     public let status: Status
+    public let attachments: [AgentRuntimeAttachment]
 
     public init(
         output: String,
         summary: String,
         modelOutput: String? = nil,
-        status: Status = .completed
+        status: Status = .completed,
+        attachments: [AgentRuntimeAttachment] = []
     ) {
         self.output = output
         self.summary = summary
         self.modelOutput = modelOutput ?? output
         self.status = status
+        self.attachments = attachments
     }
 
     public var isFailure: Bool {

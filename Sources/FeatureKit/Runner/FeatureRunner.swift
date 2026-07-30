@@ -30,11 +30,14 @@ public enum FeatureRunner {
                         ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
                     environment: environment
                 )
-                let outputData = try await tool.invoke(
+                let invocationResult = try await tool.invokeResult(
                     inputData: inputData,
                     context: context
                 )
-                FeatureProcessProtocol.emitSuccess(outputData: outputData)
+                try FeatureProcessProtocol.emitSuccess(
+                    outputData: invocationResult.outputData,
+                    attachments: invocationResult.attachments
+                )
             case .usage:
                 try FeatureProcessProtocol.emitJSON(
                     FeatureErrorResponse(error: FeatureProcessProtocol.usageText)

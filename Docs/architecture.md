@@ -71,6 +71,19 @@ SwiftNIO. Those paths must not select an implementation through platform
 conditions, Foundation networking, Network, or libcurl. The `CLibCURLWebSocket`
 target and its adapter are retired; no system curl linker dependency remains.
 
+Feature invocations may add an optional `attachments` array to the successful
+`--invoke` envelope. Each `FeatureInvocationAttachment` names an absolute local
+image path plus its kind and content metadata; `FeatureRunner` emits the field
+only for outputs conforming to `FeatureInvocationAttachmentProviding`, so the
+legacy envelope remains byte-for-byte unchanged for ordinary feature tools.
+`ZenCODECore` must read and validate each declared file before it becomes an
+`AgentRuntimeAttachment`, retain it on the tool message in session snapshots,
+and map it to the provider's native multimodal form. Chat Completions receives a
+text tool result followed by a grouped user image message, Responses receives a
+`function_call_output` followed by `input_image` content, and Anthropic embeds
+the image content inside `tool_result`. A feature-generated image path must
+never be sent to the remote provider as a substitute for the image bytes.
+
 `RemoteTransportCore()` borrows the process-wide NIO event-loop group. A client
 that constructs its own transport closes it during `shutdown()`; an explicitly
 injected transport remains owned by its embedding composition root. The ChatGPT
@@ -142,7 +155,7 @@ layout are made explicit.
 | Area | Intended responsibility and directory layout |
 | --- | --- |
 | `Sources/ToolCore` | Dependency-light wire, descriptor, environment, compatibility, and declarative tool-presentation types. It contains no registry or presentation policy keyed by tool name and does not contain Xcode-specific request or workspace behavior. |
-| `Sources/FeatureKit` | Feature contracts, schemas, process protocol, and runner support; depends on `ToolCore`. Every `FeatureTool` owns and publishes its explicit `ToolPresentationDefinition`; `--list-tools` requires the same contract for generated and bundled features. |
+| `Sources/FeatureKit` | Feature contracts, schemas, process protocol, and runner support; depends on `ToolCore`. Every `FeatureTool` owns and publishes its explicit `ToolPresentationDefinition`; `--list-tools` requires the same contract for generated and bundled features. Outputs may conform to `FeatureInvocationAttachmentProviding` to add validated local images to the model's multimodal tool context. |
 | `Sources/FeatureMCPBridgeKit` | Generic MCP feature integration, configuration, transports, OAuth, execution, and injectable local-transport policy hooks. It has no Xcode-specific behavior. |
 | `Sources/Features/XcodeTools/Feature` | `XcodeToolsFeature` library target: Xcode MCP configuration, policy, compatibility normalization, workspace selection, discovery, execution, and error mapping. |
 | `Sources/Features/XcodeTools/Executable` | Thin `xcode-tools-feature` executable target that delegates to `XcodeToolsFeatureRunner`. |

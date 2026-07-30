@@ -70,6 +70,7 @@ actor AgentCorePromptTurnRecorder {
                 AgentRuntimeMessage(
                     role: .tool,
                     content: result.modelOutput,
+                    attachments: result.attachments,
                     toolCallID: toolCall.id,
                     toolName: toolCall.name
                 )

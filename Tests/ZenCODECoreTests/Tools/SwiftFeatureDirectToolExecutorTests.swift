@@ -73,6 +73,88 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
+    func directToolExecutorImportsFeatureInvocationImageAttachments() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-attachment-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+
+        let pngData = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        let pngURL = rootURL.appendingPathComponent("screenshot.png")
+        try pngData.write(to: pngURL)
+        let responseURL = rootURL.appendingPathComponent("response.json")
+        let responseData = try JSONSerialization.data(withJSONObject: [
+            "ok": true,
+            "output": "feature screenshot output",
+            "attachments": [[
+                "path": pngURL.path,
+                "kind": "image",
+                "contentType": "image/png",
+                "originalFilename": "desktop.png"
+            ]]
+        ])
+        try responseData.write(to: responseURL)
+
+        let executableURL = rootURL.appendingPathComponent("feature")
+        try """
+        #!/bin/sh
+        cat >/dev/null
+        cat '\(responseURL.path)'
+        """.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+
+        let runtime = SwiftFeatureRuntime(
+            features: [
+                SwiftFeatureBundle(
+                    id: "attachment-fixture",
+                    executableURL: executableURL,
+                    tools: [
+                        ToolDescriptor(
+                            name: "attachment.fixture",
+                            description: "Returns a screenshot attachment",
+                            inputSchema: #"{"type":"object","properties":{}}"#
+                        )
+                    ]
+                )
+            ]
+        )
+        let executor = DirectToolExecutor(
+            swiftFeatureRuntime: runtime,
+            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+        )
+
+        let result = await executor.execute(
+            sessionID: "test-session",
+            toolCall: DirectAgentToolCall(
+                id: "feature-attachment-call",
+                name: "attachment.fixture",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            workingDirectory: rootURL,
+            allowedToolNames: ["attachment.fixture"]
+        )
+
+        #expect(result.output == "feature screenshot output")
+        #expect(result.status == .completed)
+        let attachment = try #require(result.attachments.first)
+        #expect(result.attachments.count == 1)
+        #expect(attachment.kind == .image)
+        #expect(attachment.fileURL == pngURL.standardizedFileURL)
+        #expect(attachment.data == pngData)
+        #expect(attachment.contentType == "image/png")
+        #expect(attachment.originalFilename == "desktop.png")
+    }
+
+    @Test
     func directToolExecutorAllowsFeaturePackageToolsWithFeatureGroupToken() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-feature-generated-token-\(UUID().uuidString)", isDirectory: true)

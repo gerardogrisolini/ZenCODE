@@ -180,6 +180,21 @@ extension RemoteGenerationClient {
         ]
     }
 
+    public static func toolResultMessage(
+        toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult
+    ) -> [String: Any] {
+        [
+            "role": "tool",
+            "tool_call_id": toolCall.id,
+            "name": toolCall.name,
+            "content": chatCompletionsContentPayload(
+                content: result.modelOutput,
+                attachments: result.attachments
+            )
+        ]
+    }
+
     public static func promptContent(
         _ content: String,
         role: String,
@@ -283,6 +298,56 @@ extension RemoteGenerationClient {
         return items
     }
 
+    /// Chat Completions tool messages accept text output but not image content
+    /// parts. Preserve each function result as a tool message, then emit its
+    /// images in one user message after the contiguous tool-result group.
+    public static func chatCompletionsMessagesExpandingToolImages(
+        from messages: [[String: Any]]
+    ) -> [[String: Any]] {
+        var expanded: [[String: Any]] = []
+        var pendingImageItems: [[String: Any]] = []
+
+        func flushPendingImages() {
+            guard !pendingImageItems.isEmpty else {
+                return
+            }
+            expanded.append([
+                "role": "user",
+                "content": pendingImageItems
+            ])
+            pendingImageItems.removeAll(keepingCapacity: true)
+        }
+
+        for message in messages {
+            let role = stringValue(message["role"])?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard role == "tool" else {
+                flushPendingImages()
+                expanded.append(message)
+                continue
+            }
+
+            let imageItems = chatCompletionsImageContentItems(from: message["content"])
+            guard !imageItems.isEmpty else {
+                expanded.append(message)
+                continue
+            }
+
+            var textOnlyToolMessage = message
+            textOnlyToolMessage["content"] = contentString(from: message["content"]) ?? ""
+            expanded.append(textOnlyToolMessage)
+            pendingImageItems.append([
+                "type": "text",
+                "text": toolGeneratedMediaLabel(from: message)
+            ])
+            pendingImageItems.append(contentsOf: imageItems)
+        }
+
+        flushPendingImages()
+        return expanded
+    }
+
     public static func responsesInputPayload(
         from messages: [[String: Any]]
     ) -> (instructions: String?, input: [Any]) {
@@ -305,6 +370,7 @@ extension RemoteGenerationClient {
     ) throws -> (instructions: String?, input: [Any]) {
         var instructions: [String] = []
         var input: [Any] = []
+        var pendingToolImageItems: [[String: Any]] = []
         let lastUserIndex = messages.lastIndex { message in
             (message["role"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -315,6 +381,15 @@ extension RemoteGenerationClient {
             let role = (message["role"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()
+            if role != "tool", !pendingToolImageItems.isEmpty {
+                input.append(
+                    responsesMessagePayload(
+                        role: "user",
+                        contentItems: pendingToolImageItems
+                    )
+                )
+                pendingToolImageItems.removeAll(keepingCapacity: true)
+            }
             if role == "system" {
                 if let content = contentString(from: message["content"]),
                    !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -396,7 +471,19 @@ extension RemoteGenerationClient {
                         output: output
                     )
                 )
+                pendingToolImageItems.append(
+                    contentsOf: responsesToolImageItems(from: message)
+                )
             }
+        }
+
+        if !pendingToolImageItems.isEmpty {
+            input.append(
+                responsesMessagePayload(
+                    role: "user",
+                    contentItems: pendingToolImageItems
+                )
+            )
         }
 
         let resolvedInstructions = instructions
@@ -761,6 +848,44 @@ extension RemoteGenerationClient {
         return nil
     }
 
+    public static func runtimeImageAttachment(
+        from item: [String: Any],
+        index: Int
+    ) -> AgentRuntimeAttachment? {
+        guard let dataURL = chatCompletionsImageURL(from: item)?.nilIfBlank,
+              dataURL.hasPrefix("data:"),
+              let commaIndex = dataURL.firstIndex(of: ",") else {
+            return nil
+        }
+
+        let metadataStart = dataURL.index(dataURL.startIndex, offsetBy: "data:".count)
+        let metadata = String(dataURL[metadataStart..<commaIndex])
+        let components = metadata.split(separator: ";", omittingEmptySubsequences: true)
+        let contentType = components.first.map(String.init)?.nilIfBlank ?? "image/png"
+        let encodedPayload = String(dataURL[dataURL.index(after: commaIndex)...])
+        let data: Data?
+        if components.dropFirst().contains(where: { $0.lowercased() == "base64" }) {
+            data = Data(base64Encoded: encodedPayload)
+        } else {
+            data = encodedPayload.removingPercentEncoding.map { Data($0.utf8) }
+        }
+        guard let data else {
+            return nil
+        }
+
+        let pathExtension = AgentRuntimeAttachmentStore.preferredFilenameExtension(
+            originalFilename: "",
+            contentType: contentType
+        )
+        let suffix = pathExtension.isEmpty ? "" : ".\(pathExtension)"
+        return AgentRuntimeAttachment(
+            kind: .image,
+            data: data,
+            contentType: contentType,
+            originalFilename: "image-\(index + 1)\(suffix)"
+        )
+    }
+
     public static func imageDataURLs(from attachments: [AgentRuntimeAttachment]) -> [String] {
         attachments.compactMap { attachment in
             guard attachment.kind == .image,
@@ -802,6 +927,28 @@ extension RemoteGenerationClient {
         default:
             return "image/png"
         }
+    }
+
+    private static func responsesToolImageItems(
+        from message: [String: Any]
+    ) -> [[String: Any]] {
+        let images = responsesContentItems(from: message["content"], role: "user")
+            .filter { stringValue($0["type"])?.lowercased() == "input_image" }
+        guard !images.isEmpty else {
+            return []
+        }
+        return [[
+            "type": "input_text",
+            "text": toolGeneratedMediaLabel(from: message)
+        ]] + images
+    }
+
+    private static func toolGeneratedMediaLabel(from message: [String: Any]) -> String {
+        let toolName = stringValue(message["name"])?.nilIfBlank ?? "tool"
+        if let callID = stringValue(message["tool_call_id"])?.nilIfBlank {
+            return "Image returned by tool '\(toolName)' for call '\(callID)'."
+        }
+        return "Image returned by tool '\(toolName)'."
     }
 
     public static func isResponseToolCallItem(_ item: [String: Any]) -> Bool {

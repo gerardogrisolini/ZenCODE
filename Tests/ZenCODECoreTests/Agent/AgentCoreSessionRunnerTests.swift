@@ -160,7 +160,15 @@ struct AgentCoreSessionRunnerTests {
             DirectAgentToolResult(
                 output: "full output shown in UI",
                 summary: "read big.swift",
-                modelOutput: "compact output sent back to the model"
+                modelOutput: "compact output sent back to the model",
+                attachments: [
+                    AgentRuntimeAttachment(
+                        kind: .image,
+                        data: Data([0x89, 0x50, 0x4E, 0x47]),
+                        contentType: "image/png",
+                        originalFilename: "tool-output.png"
+                    )
+                ]
             )
         ))
 
@@ -170,6 +178,8 @@ struct AgentCoreSessionRunnerTests {
         #expect(toolMessage.content == "compact output sent back to the model")
         #expect(toolMessage.toolCallID == "call_read")
         #expect(toolMessage.toolName == "local.readFile")
+        #expect(toolMessage.attachments.count == 1)
+        #expect(toolMessage.attachments.first?.data == Data([0x89, 0x50, 0x4E, 0x47]))
     }
 
     @Test

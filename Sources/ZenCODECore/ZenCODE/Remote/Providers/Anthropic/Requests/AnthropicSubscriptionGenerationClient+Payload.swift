@@ -286,10 +286,19 @@ extension AnthropicSubscriptionGenerationClient {
         guard let toolUseID = stringValue(message["tool_call_id"])?.nilIfBlank else {
             return nil
         }
+        let imageItems = RemoteGenerationClient.chatCompletionsImageContentItems(
+            from: message["content"]
+        )
+        let content: Any
+        if imageItems.isEmpty {
+            content = RemoteGenerationClient.contentString(from: message["content"]) ?? ""
+        } else {
+            content = userContentBlocks(from: message["content"])
+        }
         return [
             "type": "tool_result",
             "tool_use_id": toolUseID,
-            "content": RemoteGenerationClient.contentString(from: message["content"]) ?? ""
+            "content": content
         ]
     }
 

@@ -413,12 +413,12 @@ extension ChatGPTSubscriptionGenerationClient {
                     )
                     await onEvent(.toolCallCompleted(toolCall, result))
                     guard mutateSession(for: lease, { session in
-                        session.messages.append([
-                            "role": "tool",
-                            "tool_call_id": toolCall.id,
-                            "name": toolCall.name,
-                            "content": result.modelOutput
-                        ])
+                        session.messages.append(
+                            RemoteGenerationClient.toolResultMessage(
+                                toolCall: toolCall,
+                                result: result
+                            )
+                        )
                     }) else {
                         throw ChatGPTSubscriptionGenerationError.missingSession
                     }

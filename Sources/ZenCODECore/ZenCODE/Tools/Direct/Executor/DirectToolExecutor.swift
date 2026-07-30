@@ -307,16 +307,18 @@ public actor DirectToolExecutor {
             guard isAllowed || featureToolIsAllowed else {
                 throw DirectToolExecutorError.toolNotAllowed(toolCall.name)
             }
-            let output = try await executeThrowing(
+            let execution = try await executeThrowingResult(
                 sessionID: sessionID,
                 toolCall: toolCall,
                 workingDirectory: workingDirectory,
                 allowedToolNames: allowedToolNames
             )
+            let output = execution.output
             return DirectAgentToolResult(
                 output: truncated(output),
                 summary: summary(from: output),
-                modelOutput: modelOutput(from: output, toolName: toolCall.name)
+                modelOutput: modelOutput(from: output, toolName: toolCall.name),
+                attachments: execution.attachments
             )
         } catch {
             if let executorError = error as? DirectToolExecutorError,

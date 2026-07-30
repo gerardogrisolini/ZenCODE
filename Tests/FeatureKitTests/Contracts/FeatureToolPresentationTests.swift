@@ -26,6 +26,36 @@ struct FeatureToolPresentationTests {
         }
     }
 
+    private struct AttachmentOutput: Codable, Sendable, FeatureInvocationAttachmentProviding {
+        let value: String
+
+        var featureInvocationAttachments: [FeatureInvocationAttachment] {
+            [
+                FeatureInvocationAttachment(
+                    path: "/tmp/tool-image.png",
+                    kind: .image,
+                    contentType: "image/png",
+                    originalFilename: "tool-image.png"
+                )
+            ]
+        }
+    }
+
+    private struct AttachmentTool: FeatureTool {
+        static let name = "sample.attachment"
+        static let description = "Returns model-facing media."
+        static let inputSchema = "{}"
+        static let presentation = ToolPresentationDefinition(
+            title: "Attachment",
+            action: "Capture",
+            kind: .read
+        )
+
+        func run(_ input: Input, context _: FeatureContext) async throws -> AttachmentOutput {
+            AttachmentOutput(value: input.path ?? "ok")
+        }
+    }
+
     @Test
     func explicitPresentationFlowsThroughAnyFeatureToolAndListToolsWire() throws {
         let descriptor = AnyFeatureTool(ExplicitPresentationTool()).descriptor
@@ -41,6 +71,24 @@ struct FeatureToolPresentationTests {
         #expect(root["schemaVersion"] as? Int == FeatureListToolsResponse.currentSchemaVersion)
         #expect(presentation["strategy"] == nil)
         #expect(presentation["action"] as? String == "Read")
+    }
+
+    @Test
+    func invocationAttachmentsFlowThroughTypeErasedFeatureTool() async throws {
+        let tool = AnyFeatureTool(AttachmentTool())
+
+        let result = try await tool.invokeResult(
+            inputData: Data("{}".utf8),
+            context: FeatureContext(environment: [:])
+        )
+        let output = try JSONDecoder().decode(AttachmentOutput.self, from: result.outputData)
+        let attachment = try #require(result.attachments.first)
+
+        #expect(output.value == "ok")
+        #expect(result.attachments.count == 1)
+        #expect(attachment.path == "/tmp/tool-image.png")
+        #expect(attachment.kind == .image)
+        #expect(attachment.contentType == "image/png")
     }
 
     @Test

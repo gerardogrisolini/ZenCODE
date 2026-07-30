@@ -56,6 +56,7 @@ actor TerminalSessionTranscriptTurn {
             AgentRuntimeMessage(
                 role: .tool,
                 content: result.output,
+                attachments: result.attachments,
                 toolCallID: toolCall.id,
                 toolName: toolCall.name
             )

@@ -7,7 +7,10 @@ import Foundation
 
 public struct AnyFeatureTool: Sendable {
     public let descriptor: FeatureToolDescriptor
-    private let invokeBody: @Sendable (Data, FeatureContext) async throws -> Data
+    private let invokeBody: @Sendable (
+        Data,
+        FeatureContext
+    ) async throws -> AnyFeatureToolInvocationResult
 
     public init<T: FeatureTool>(_ tool: T) {
         self.descriptor = FeatureToolDescriptor(
@@ -21,7 +24,12 @@ public struct AnyFeatureTool: Sendable {
             let normalizedInputData = inputData.isEmpty ? Data("{}".utf8) : inputData
             let input = try JSONDecoder().decode(T.Input.self, from: normalizedInputData)
             let output = try await tool.run(input, context: context)
-            return try JSONEncoder().encode(output)
+            let attachments = (output as? any FeatureInvocationAttachmentProviding)?
+                .featureInvocationAttachments ?? []
+            return AnyFeatureToolInvocationResult(
+                outputData: try JSONEncoder().encode(output),
+                attachments: attachments
+            )
         }
     }
 
@@ -29,6 +37,13 @@ public struct AnyFeatureTool: Sendable {
         inputData: Data,
         context: FeatureContext
     ) async throws -> Data {
+        try await invokeResult(inputData: inputData, context: context).outputData
+    }
+
+    public func invokeResult(
+        inputData: Data,
+        context: FeatureContext
+    ) async throws -> AnyFeatureToolInvocationResult {
         try await invokeBody(inputData, context)
     }
 }

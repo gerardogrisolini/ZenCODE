@@ -69,6 +69,36 @@ public enum FeatureProcessProtocol {
         FileHandle.standardOutput.write(Data("}\n".utf8))
     }
 
+    /// Writes a successful invocation envelope with local media artifacts that
+    /// the feature host must import into the model's multimodal context.
+    ///
+    /// The legacy byte-for-byte envelope is retained when `attachments` is
+    /// empty so existing feature executables and wire fixtures remain stable.
+    public static func emitSuccess(
+        outputData: Data,
+        attachments: [FeatureInvocationAttachment]
+    ) throws {
+        FileHandle.standardOutput.write(
+            try renderSuccess(outputData: outputData, attachments: attachments)
+        )
+    }
+
+    public static func renderSuccess(
+        outputData: Data,
+        attachments: [FeatureInvocationAttachment]
+    ) throws -> Data {
+        guard !attachments.isEmpty else {
+            return Data(#"{"ok":true,"output":"#.utf8)
+                + outputData
+                + Data("}\n".utf8)
+        }
+        return Data(#"{"ok":true,"output":"#.utf8)
+            + outputData
+            + Data(",\"attachments\":".utf8)
+            + (try renderJSON(attachments))
+            + Data("}\n".utf8)
+    }
+
     public static let usageText = """
     Usage:
       feature-binary --list-tools
