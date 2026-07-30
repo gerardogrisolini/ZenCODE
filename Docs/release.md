@@ -29,7 +29,10 @@ but it is not a reproducible release input.
    ```
 
    `swift test` includes `BundledFeatureCatalogParityTests`, which reconciles
-   the SwiftPM products, runtime catalog, and installer feature catalog.
+   the runtime catalog with each standalone optional-feature manifest and
+   verifies that the root SwiftPM graph does not expose feature products. Run
+   `swift test` inside every changed `Sources/Features/<Feature>` package as
+   part of its feature-specific release validation.
 4. Commit the version and lockfile, then create and push the matching annotated
    tag `vX.Y.Z`. The **Release verification** workflow accepts the broad GitHub
    tag glob `v*`, then enforces the strict `vX.Y.Z` shape and requires it to
@@ -69,3 +72,13 @@ Both installers keep `main` as the convenient default for development, but
 print a warning when a moving branch/ref is selected. The `--ref` option
 overrides `ZENCODE_INSTALLER_REF`; tags and full commit IDs are the supported
 immutable choices for a release install.
+
+The installers build and install only `zen`; they no longer build or copy a
+`zen-features/` directory of bundled executables. They remove that legacy
+directory, and when bootstrapped from a temporary URL checkout retain a
+source-only copy under `~/.zencode/source/`. A local-checkout installer uses its
+existing checkout instead. They offer the optional-feature picker at the end
+when a controlling terminal is available. Each selection is copied and compiled
+on demand into
+`~/.zencode/features/<id>/` through `zen --install-features`. Use
+`ZENCODE_SUPPORT_DIRECTORY` to relocate both paths in automated environments.

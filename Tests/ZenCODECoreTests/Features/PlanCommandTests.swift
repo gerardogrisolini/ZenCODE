@@ -508,10 +508,9 @@ struct PlanCommandTests {
         #expect(!planner.tools.contains("local.readFile"))
         #expect(tools.contains("local.readFile"))
         #expect(tools.contains("local.inspectFile"))
-        #expect(tools.contains("search.locate"))
-        // Bundled Git/Web features are optional in this test environment. When
-        // available, the Planner keeps their read-only tools; when unavailable,
-        // it must not advertise them.
+        // Optional packages remain in the profile selection, but only an
+        // installed and available package can add its read-only tools.
+        #expect(tools.contains("search.locate") == resolvedProfileTools.contains("search.locate"))
         #expect(tools.contains("git.diff") == resolvedProfileTools.contains("git.diff"))
         #expect(tools.contains("memory.read"))
         #expect(tools.contains("web.search") == resolvedProfileTools.contains("web.search"))

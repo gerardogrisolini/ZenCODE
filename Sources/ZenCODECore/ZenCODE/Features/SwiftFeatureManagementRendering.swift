@@ -149,10 +149,16 @@ extension SwiftFeatureRuntime {
         throw DirectToolError.missingArgument("path")
     }
 
+    /// Copies a feature package into `destinationDirectoryURL` atomically.
+    ///
+    /// `prepare` runs on the fully copied staging directory before it is swapped
+    /// in, so generated files (rewritten `Package.swift`, `feature.json`) become
+    /// visible together with the sources instead of appearing afterwards.
     func installFeatureDirectory(
         sourceDirectoryURL: URL,
         destinationDirectoryURL: URL,
-        overwrite: Bool
+        overwrite: Bool,
+        prepare: ((URL) throws -> Void)? = nil
     ) throws -> Bool {
         let sourceURL = sourceDirectoryURL.resolvingSymlinksInPath().standardizedFileURL
         let destinationURL = destinationDirectoryURL.standardizedFileURL
@@ -191,6 +197,7 @@ extension SwiftFeatureRuntime {
             from: sourceURL,
             to: stagingURL
         )
+        try prepare?(stagingURL)
         if fileManager.fileExists(atPath: destinationURL.path) {
             _ = try fileManager.replaceItemAt(
                 destinationURL,

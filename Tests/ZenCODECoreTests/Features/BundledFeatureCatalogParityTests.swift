@@ -23,22 +23,51 @@ struct BundledFeatureCatalogParityTests {
     @Test
     func sourcePathsAndPackageProductsMatchDistributionCatalog() throws {
         let packageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
-        let packageProducts = try dumpedPackageProductNames(at: packageRoot)
 
         for feature in ZenBundledFeatureCatalog.all {
+            let featurePackageURL = packageRoot
+                .appendingPathComponent(feature.sourceRelativePath, isDirectory: true)
+            let manifestURL = featurePackageURL.appendingPathComponent("Package.swift")
             #expect(
                 FileManager.default.fileExists(
-                    atPath: packageRoot.appendingPathComponent(feature.sourceRelativePath).path
+                    atPath: manifestURL.path
                 )
             )
-            #expect(packageProducts.contains(feature.productName))
+
+            let manifest = try String(contentsOf: manifestURL, encoding: .utf8)
+            #expect(
+                manifest.contains(
+                    "\(SwiftFeatureRuntime.zenPackagePathMarker)\n        .package(path: \"../../..\")"
+                )
+            )
+
+            let products = try dumpedPackageProducts(at: featurePackageURL)
+            #expect(products.executable.contains(feature.productName))
         }
     }
 
     @Test
-    func linuxDistributionIncludesSwiftToolsAndOmitsXcodeTools() {
-        let linuxProducts = Set(ZenBundledFeatureCatalog.linuxInstallerProductNames)
+    func rootPackageDoesNotDeclareOptionalFeatureProducts() throws {
+        let packageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
+        let rootProducts = try dumpedPackageProducts(at: packageRoot).all
+        let featureProducts = Set(ZenBundledFeatureCatalog.all.map(\.productName))
 
+        #expect(rootProducts.isDisjoint(with: featureProducts))
+    }
+
+    @Test
+    func linuxInstallationEligibilityIsCatalogDrivenAndExcludesXcodeTools() throws {
+        let linuxProducts = Set(ZenBundledFeatureCatalog.linuxInstallerProductNames)
+        let linuxFeatureIDs = Set(
+            ZenBundledFeatureCatalog.all
+                .filter(\.isInstalledOnLinux)
+                .map(\.id)
+        )
+        let allFeatureIDs = Set(ZenBundledFeatureCatalog.all.map(\.id))
+        let xcode = try #require(ZenBundledFeatureCatalog.feature(id: "xcode-tools"))
+
+        #expect(!xcode.isInstalledOnLinux)
+        #expect(linuxFeatureIDs == allFeatureIDs.subtracting(["xcode-tools"]))
         #expect(linuxProducts.contains("swift-tools-feature"))
         #expect(!linuxProducts.contains("xcode-tools-feature"))
     }
@@ -61,19 +90,7 @@ struct BundledFeatureCatalogParityTests {
         #expect(missingBundled.isEmpty)
     }
 
-    @Test
-    func installerCatalogMatchesDistributionPlatformSets() throws {
-        let packageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
-        let catalogURL = packageRoot.appendingPathComponent("Scripts/feature-catalog.sh")
-
-        let macOSProducts = try installerProducts(from: catalogURL, platform: "macos")
-        let linuxProducts = try installerProducts(from: catalogURL, platform: "linux")
-
-        #expect(macOSProducts == ZenBundledFeatureCatalog.macOSInstallerProductNames)
-        #expect(linuxProducts == ZenBundledFeatureCatalog.linuxInstallerProductNames)
-    }
-
-    private func dumpedPackageProductNames(at packageRoot: URL) throws -> Set<String> {
+    private func dumpedPackageProducts(at packageRoot: URL) throws -> DumpedPackageProducts {
         let environment = ProcessInfo.processInfo.environment
 
         let scratchPath = FileManager.default.temporaryDirectory
@@ -97,24 +114,17 @@ struct BundledFeatureCatalogParityTests {
         let object = try JSONSerialization.jsonObject(with: data)
         let package = try #require(object as? [String: Any])
         let products = try #require(package["products"] as? [[String: Any]])
-        return Set(products.compactMap { $0["name"] as? String })
-    }
-
-    private func installerProducts(from catalogURL: URL, platform: String) throws -> [String] {
-        let data = try runProcess(
-            executableURL: URL(fileURLWithPath: "/bin/bash"),
-            arguments: [
-                "-c",
-                "source \"$1\"; zencode_select_feature_products \"$2\"; printf '%s\\n' \"${FEATURE_PRODUCTS[@]}\"",
-                "bash",
-                catalogURL.path,
-                platform
-            ],
-            currentDirectoryURL: catalogURL.deletingLastPathComponent()
+        return DumpedPackageProducts(
+            all: Set(products.compactMap { $0["name"] as? String }),
+            executable: Set(products.compactMap { product in
+                guard let name = product["name"] as? String,
+                      let type = product["type"] as? [String: Any],
+                      type.keys.contains("executable") else {
+                    return nil
+                }
+                return name
+            })
         )
-        return String(decoding: data, as: UTF8.self)
-            .split(whereSeparator: \.isNewline)
-            .map(String.init)
     }
 
     private func runProcess(
@@ -157,5 +167,10 @@ struct BundledFeatureCatalogParityTests {
         var errorDescription: String? {
             "\(executable) exited with status \(status): \(errorText)"
         }
+    }
+
+    private struct DumpedPackageProducts {
+        let all: Set<String>
+        let executable: Set<String>
     }
 }

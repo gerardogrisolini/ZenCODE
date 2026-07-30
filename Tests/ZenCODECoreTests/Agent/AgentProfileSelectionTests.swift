@@ -41,7 +41,11 @@ extension AgentConfigurationTests {
         #expect(reporterProfile.instructions?.contains("Reporter agent") == true)
         let reporterAllowedToolNames = reporterProfile.allowedToolNames()
         #expect(reporterAllowedToolNames.contains("local.writeFile"))
-        #expect(reporterAllowedToolNames.contains("git."))
+        // Package selections remain in the profile allowlist, but an
+        // uninstalled optional feature contributes no executable tool prefix.
+        #expect(reporterAllowedToolNames.contains(searchKey))
+        #expect(reporterAllowedToolNames.contains(gitKey))
+        #expect(!reporterAllowedToolNames.contains("git."))
         #expect(!reporterAllowedToolNames.contains("git.push"))
         #expect(!reporterAllowedToolNames.contains("local.exec"))
         #expect(!reporterAllowedToolNames.contains("memory.read"))
@@ -55,8 +59,13 @@ extension AgentConfigurationTests {
         #expect(!plannerProfile.tools.contains("local.exec"))
         #expect(!plannerProfile.tools.contains("local.readFile"))
         #expect(!plannerProfile.tools.contains("local.writeFile"))
-        #expect(plannerProfile.tools.allSatisfy {
+        let optionalFeatureKeys = Set([searchKey, gitKey, webKey])
+        #expect(plannerProfile.tools.filter { !optionalFeatureKeys.contains($0) }.allSatisfy {
             !TerminalToolSelectionCatalog.selectionKeys(for: $0, items: toolSelectionItems).isEmpty
+        })
+        #expect(optionalFeatureKeys.isSubset(of: Set(plannerProfile.tools)))
+        #expect(optionalFeatureKeys.allSatisfy { key in
+            !toolSelectionItems.contains { $0.key == key }
         })
 
         for profile in profiles.values where profile.name != "Planner" {

@@ -75,8 +75,10 @@ curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scri
 ```
 
 Drive the agent through configured remote providers (`zen --setup`). The
-standalone agent, TUI, ACP bridge, and bundled feature executables work
-normally.
+standalone agent, TUI, and ACP bridge work normally. Optional Swift feature
+packages are selected at the end of the installer or installed later with
+`zen --install-features`; they are compiled on demand under
+`~/.zencode/features/<id>/`, not distributed as executables next to `zen`.
 
 Windows is supported through WSL. Install Ubuntu first, then run the Linux
 installer inside the Ubuntu shell:
@@ -111,6 +113,7 @@ Use a source checkout when developing ZenCODE itself:
 git clone https://github.com/gerardogrisolini/ZenCODE.git
 cd ZenCODE
 swift build -c release --product zen
+./.build/release/zen --install-features swift-tools --zen-package-path "$PWD"
 ```
 
 ## TUI Commands
@@ -146,14 +149,13 @@ complete command reference.
 - `Sources/ToolCore`: dependency-light tool wire, descriptor, environment, and compatibility types.
 - `Sources/FeatureKit`: feature contracts, schemas, process protocol, and runner support.
 - `Sources/FeatureMCPBridgeKit`: generic MCP feature integration, transports, and injectable local-transport policies.
-- `Sources/Features/XcodeTools/Feature`: `XcodeToolsFeature`, the feature-owned Xcode MCP implementation library.
-- `Sources/Features/XcodeTools/Executable`: the thin `xcode-tools-feature` executable entry point.
+- `Sources/XcodeToolsFeature`: `XcodeToolsFeature`, the root-package Xcode MCP implementation library.
 - `Sources/LocalToolsSupport`: reusable local file, search, text, and patch tooling.
 - `Sources/ZenPackageMetadata`: internal bundled-feature distribution metadata and catalog parity support.
 - `Sources/ZenCODECore`: reusable agent runtime, TUI, tools, skills, ACP, config, memory, sessions, and feature management.
 - `Sources/ZenCODESetup`: interactive setup for standalone `zen`.
 - `Sources/zen`: the `zen` composition root and command-line dispatch.
-- `Sources/Features`: bundled Dynamic Swift Feature executables.
+- `Sources/Features`: self-contained optional SwiftPM feature packages. They are excluded from the root graph and installed on demand into `~/.zencode/features/<id>/` as local Builder-compatible features.
 - `Tests`: SwiftPM test targets.
 - `Docs`: detailed guides and feature documentation.
 

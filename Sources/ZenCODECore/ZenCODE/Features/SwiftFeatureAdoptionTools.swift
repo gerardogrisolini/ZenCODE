@@ -54,75 +54,52 @@ extension SwiftFeatureRuntime {
             )
         }
 
+        let destinationDirectoryURL = featureRootURL()
+            .appendingPathComponent(id, isDirectory: true)
+            .standardizedFileURL
+        if fileManager.fileExists(atPath: destinationDirectoryURL.path), !overwrite {
+            throw DirectToolError.permissionDenied(
+                "Generated Swift feature '\(id)' already exists at \(destinationDirectoryURL.path). Pass overwrite=true to replace it."
+            )
+        }
+
         let sourceDirectoryURL = try bundledFeatureSourceDirectory(
             definition: definition,
             arguments: arguments
         )
         let zenPackageRootURL = try zenCODEPackageRootURL(arguments: arguments)
-        let destinationDirectoryURL = featureRootURL()
-            .appendingPathComponent(id, isDirectory: true)
-            .standardizedFileURL
-        let targetName = Self.targetName(for: id)
-        let targetDirectoryURL = destinationDirectoryURL
-            .appendingPathComponent("Sources", isDirectory: true)
-            .appendingPathComponent(targetName, isDirectory: true)
-        let packageURL = destinationDirectoryURL.appendingPathComponent("Package.swift")
-        let manifestURL = destinationDirectoryURL
-            .appendingPathComponent(SwiftFeatureRegistry.manifestFilename)
-
-        guard Self.path(destinationDirectoryURL, isDescendantOf: featureRootURL()),
-              destinationDirectoryURL.path != featureRootURL().path else {
-            throw DirectToolError.permissionDenied(
-                "Feature adoption can only create packages under the generated features directory: \(featureRootURL().path)."
-            )
-        }
-
-        if fileManager.fileExists(atPath: destinationDirectoryURL.path) {
-            guard overwrite else {
-                throw DirectToolError.permissionDenied(
-                    "Generated Swift feature '\(id)' already exists at \(destinationDirectoryURL.path). Pass overwrite=true to replace it."
-                )
-            }
-            try fileManager.removeItem(at: destinationDirectoryURL)
-        }
-
-        try fileManager.createDirectory(
-            at: targetDirectoryURL,
-            withIntermediateDirectories: true
-        )
-        try copyFeatureDirectoryContents(
-            from: sourceDirectoryURL,
-            to: targetDirectoryURL
-        )
-        try Self.adoptedPackageManifestContents(
-            productName: id,
-            targetName: targetName,
-            zenPackagePath: zenPackageRootURL.path,
-            adoptedFrom: definition.id
-        ).write(to: packageURL, atomically: true, encoding: .utf8)
-
         let state = SwiftFeatureStateStore.load(fileManager: fileManager)
         let enabled = arguments.bool("enabled")
             ?? existingGeneratedRecord?.manifestEnabled
             ?? state.bundledFeatureIsEnabled(id: id)
-        try Self.adoptedFeatureManifestContents(
-            definition: definition,
-            displayName: Self.adoptedDisplayName(for: definition.id),
-            enabled: enabled
-        ).write(to: manifestURL, atomically: true, encoding: .utf8)
 
-        let sourcePaths = swiftSourcePaths(in: targetDirectoryURL)
+        // Adoption reuses the feature's own SwiftPM manifest instead of
+        // regenerating one, so the adopted copy keeps the exact target layout of
+        // the upstream package and only its ZenCODE dependency path changes.
+        let materialized = try materializeFeaturePackage(
+            definition: definition,
+            sourceDirectoryURL: sourceDirectoryURL,
+            zenPackageRootURL: zenPackageRootURL,
+            displayName: Self.adoptedDisplayName(for: definition.id),
+            enabled: enabled,
+            overwrite: true
+        )
+
+        let sourcePaths = swiftSourcePaths(
+            in: materialized.destinationDirectoryURL
+                .appendingPathComponent("Sources", isDirectory: true)
+        )
         return SwiftFeatureAdoptReport(
             ok: true,
             id: id,
             adoptedFrom: id,
             sourcePath: sourceDirectoryURL.path,
-            destinationPath: destinationDirectoryURL.path,
-            manifestPath: manifestURL.path,
-            packagePath: packageURL.path,
+            destinationPath: materialized.destinationDirectoryURL.path,
+            manifestPath: materialized.manifestURL.path,
+            packagePath: materialized.packageURL.path,
             sourcePaths: sourcePaths,
             enabled: enabled,
-            copied: true
+            copied: materialized.copied
         )
     }
 
@@ -263,36 +240,13 @@ extension SwiftFeatureRuntime {
     }
 
     private func zenCODEPackageRootURL(arguments: [String: Any]) throws -> URL {
-        if let rawPackagePath = arguments
+        let explicitURL = arguments
             .string("zenPackagePath", "zen_package_path", "dependencyPath", "dependency_path")?
-            .nilIfBlank {
-            let packageURL = resolvedInstallPath(rawPackagePath)
-            guard fileManager.fileExists(
-                atPath: packageURL.appendingPathComponent("Package.swift").path
-            ) else {
-                throw DirectToolError.permissionDenied(
-                    "ZenCODE package root not found at \(packageURL.path)."
-                )
-            }
-            return packageURL
-        }
-
-        if let packageURL = Self.sourcePackageRootURL(fileManager: fileManager) {
-            return packageURL
-        }
-
-        let workingDirectoryURL = URL(
-            fileURLWithPath: fileManager.currentDirectoryPath,
-            isDirectory: true
-        ).standardizedFileURL
-        if fileManager.fileExists(
-            atPath: workingDirectoryURL.appendingPathComponent("Package.swift").path
-        ) {
-            return workingDirectoryURL
-        }
-
-        throw DirectToolError.permissionDenied(
-            "Could not locate a ZenCODE source checkout to adopt bundled feature sources. Pass zenPackagePath or sourcePath."
+            .nilIfBlank
+            .map(resolvedInstallPath)
+        return try Self.zenCODESourceCheckoutURL(
+            explicitURL: explicitURL,
+            fileManager: fileManager
         )
     }
 
@@ -315,105 +269,30 @@ extension SwiftFeatureRuntime {
         return paths.sorted()
     }
 
-    static func adoptedPackageManifestContents(
-        productName: String,
-        targetName: String,
-        zenPackagePath: String,
-        adoptedFrom: String
-    ) -> String {
-        if adoptedFrom == "xcode-tools" {
-            return """
-            // swift-tools-version: \(generatedSwiftToolsVersion)
-
-            import PackageDescription
-
-            let package = Package(
-                name: "\(productName)",
-                platforms: [
-                    .macOS(.v26)
-                ],
-                products: [
-                    .executable(
-                        name: "\(productName)",
-                        targets: ["\(targetName)"]
-                    )
-                ],
-                dependencies: [
-                    .package(path: \(swiftStringLiteral(zenPackagePath)))
-                ],
-                targets: [
-                    .target(
-                        name: "AdoptedXcodeToolsFeature",
-                        dependencies: [
-                            .product(name: "FeatureKit", package: "ZenCODE"),
-                            .product(name: "ToolCore", package: "ZenCODE"),
-                            .product(name: "FeatureMCPBridgeKit", package: "ZenCODE")
-                        ],
-                        path: "Sources/\(targetName)/Feature"
-                    ),
-                    .executableTarget(
-                        name: "\(targetName)",
-                        dependencies: ["AdoptedXcodeToolsFeature"],
-                        path: "Sources/\(targetName)/Executable",
-                        swiftSettings: [.define("XCODE_TOOLS_FEATURE_ADOPTED")]
-                    )
-                ]
-            )
-            """
-        }
-
-        return """
-        // swift-tools-version: \(generatedSwiftToolsVersion)
-
-        import PackageDescription
-
-        let package = Package(
-            name: "\(productName)",
-            platforms: [
-                .macOS(.v26)
-            ],
-            products: [
-                .executable(
-                    name: "\(productName)",
-                    targets: ["\(targetName)"]
-                )
-            ],
-            dependencies: [
-                .package(path: \(swiftStringLiteral(zenPackagePath)))
-            ],
-            targets: [
-                .executableTarget(
-                    name: "\(targetName)",
-                    dependencies: [
-                        .product(name: "FeatureKit", package: "ZenCODE"),
-                        .product(name: "ToolCore", package: "ZenCODE"),
-                        .product(name: "FeatureMCPBridgeKit", package: "ZenCODE")
-                    ]
-                )
-            ]
-        )
-        """
-    }
-
+    /// Builds the `feature.json` of a feature installed from the bundled
+    /// catalog. Identity, routing, and timeout metadata all come from the
+    /// runtime catalog; the build section always targets the package's own
+    /// SwiftPM product name.
     static func adoptedFeatureManifestContents(
         definition: BundledFeatureDefinition,
         displayName: String,
         enabled: Bool
     ) throws -> String {
+        let executablePath = ".build/release/\(definition.executableName)"
         var object: [String: Any] = [
             "schemaVersion": SwiftFeatureManifest.currentSchemaVersion,
             "id": definition.id,
             "displayName": displayName,
             "description": definition.description ?? "Adopted Swift feature for ZenCODE.",
             "enabled": enabled,
-            "executable": ".build/release/\(definition.id)",
+            "executable": executablePath,
             "discoversToolsAtRuntime": definition.discoversToolsAtRuntime,
             "build": [
                 "system": "swiftpm",
                 "packagePath": ".",
-                "product": definition.id,
+                "product": definition.executableName,
                 "configuration": "release",
-                "executablePath": ".build/release/\(definition.id)"
+                "executablePath": executablePath
             ],
             "generated": [
                 "by": "ZenCODE",
@@ -422,6 +301,9 @@ extension SwiftFeatureRuntime {
             ],
             "tools": definition.tools.map(Self.manifestToolObject)
         ]
+        if let invocationTimeoutSeconds = definition.invocationTimeoutSeconds {
+            object["invocationTimeoutSeconds"] = invocationTimeoutSeconds
+        }
         if !definition.toolNamePrefixes.isEmpty {
             object["toolNamePrefixes"] = definition.toolNamePrefixes
         }
@@ -454,7 +336,7 @@ extension SwiftFeatureRuntime {
         return object
     }
 
-    private static func adoptedDisplayName(for id: String) -> String {
+    static func adoptedDisplayName(for id: String) -> String {
         let base = id.hasSuffix("-tools")
             ? String(id.dropLast("-tools".count))
             : id

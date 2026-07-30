@@ -11,7 +11,18 @@ import ZenPackageMetadata
 import XcodeToolsFeature
 #endif
 
-/// Static metadata and tool declarations for features distributed with ZenCODE.
+/// Runtime metadata and tool declarations for the optional feature packages
+/// shipped in the ZenCODE source tree.
+///
+/// These are **not** executables distributed next to `zen`. Each entry is a
+/// self-contained SwiftPM package under `sourceRelativePath` that the user can
+/// install from source into `~/.zencode/features/<id>/`, where it behaves
+/// exactly like a package created by the local feature Builder.
+///
+/// Distribution identity (`id`, `productName`, `sourceRelativePath`,
+/// `isInstalledOnLinux`) stays in `ZenBundledFeatureCatalog`; only runtime
+/// details such as descriptions, schemas, prefixes, aliases, and invocation
+/// timeouts live here.
 enum SwiftBundledFeatureCatalog {
     static func definitions() -> [SwiftFeatureRuntime.BundledFeatureDefinition] {
         let search = metadata(for: "search-tools")

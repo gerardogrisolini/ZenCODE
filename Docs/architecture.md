@@ -14,9 +14,9 @@ migration says otherwise:
 - library products and imports `ZenCODECore`, `ZenCODESetup`, `FeatureKit`,
   `ToolCore`, `FeatureMCPBridgeKit`, `XcodeToolsFeature`, and
   `LocalToolsSupport`;
-- executable `zen`, its ACP entry point, and the
-  bundled feature executable names;
-- bundled feature IDs, tool names, selection prefixes, source-relative paths,
+- executable `zen` and its ACP entry point;
+- optional feature IDs, executable product names, tool names, selection
+  prefixes, source-relative paths,
   and the `--list-tools` / `--invoke` JSON envelopes;
 - settings, profiles, permissions, session snapshots,
   feature manifests, and cache key formats;
@@ -26,11 +26,26 @@ migration says otherwise:
 platform conditions, products, and build flags. Every local Swift target enables
 `MemberImportVisibility`: each source file must import the module that defines
 members it uses, while `public import` is reserved for intentional API re-exports.
-`ZenBundledFeatureCatalog` is the runtime bundled-feature distribution catalog
-authority; parity checks reconcile its records with the manifest and installer
-catalogs. On Linux, `swift-tools-feature` remains part of the installer product
-set, while `xcode-tools-feature` is omitted from installation, not from the
-SwiftPM product set.
+`ZenBundledFeatureCatalog` is the runtime catalog authority for optional feature
+identity. Every catalog entry owns a standalone SwiftPM package at its
+`sourceRelativePath` under `Sources/Features`; the root `Package.swift`
+intentionally declares none of their executable products or targets. Parity
+checks ensure that every package has its catalog product and the marker
+`// zencode:package-path` immediately above `.package(path: "../../..")`.
+That marked dependency is rewritten when the package is installed outside the
+checkout. Linux eligibility remains an explicit `isInstalledOnLinux` catalog
+property, so `xcode-tools` is excluded there.
+
+Optional feature packages are not executables distributed beside `zen`. The
+installer and `zen --install-features` copy a package to
+`~/.zencode/features/<id>/`, generate the same manifest shape used by a local
+Builder feature, build its release product there, and enable it only after the
+build succeeds. The installer retains its source checkout at
+`~/.zencode/source/` (or under `ZENCODE_SUPPORT_DIRECTORY`) when it was
+bootstrapped from a temporary URL checkout, so later installs can resolve the
+root package; an installer launched from a local checkout continues to use that
+checkout. Existing user-created Builder packages keep the same discovery,
+manifest, and selection contracts.
 
 The task control plane follows the same compatibility rule: `SessionTaskOrchestrator` is the sole mutable owner, task checkpoint schema 1 is written atomically per project/session, and saved-session v4 embeds the checkpoint tree (`SessionCheckpointTree`) alongside the current graph. Sessions saved before v4 are not loadable. Backend replacement may rebuild transient model state but must not discard the graph; only a logical session reset deletes its checkpoint. Startup recovery identifies work by the pair `sessionID + graphID`, not by session alone: the selected graph must become active/current and that `currentGraphID` must be persisted before backend creation. A checkpoint's formerly current graph must never replace a different graph explicitly selected by the operator.
 
@@ -157,20 +172,20 @@ layout are made explicit.
 | `Sources/ToolCore` | Dependency-light wire, descriptor, environment, compatibility, and declarative tool-presentation types. It contains no registry or presentation policy keyed by tool name and does not contain Xcode-specific request or workspace behavior. |
 | `Sources/FeatureKit` | Feature contracts, schemas, process protocol, and runner support; depends on `ToolCore`. Every `FeatureTool` owns and publishes its explicit `ToolPresentationDefinition`; `--list-tools` requires the same contract for generated and bundled features. Outputs may conform to `FeatureInvocationAttachmentProviding` to add validated local images to the model's multimodal tool context. |
 | `Sources/FeatureMCPBridgeKit` | Generic MCP feature integration, configuration, transports, OAuth, execution, and injectable local-transport policy hooks. It has no Xcode-specific behavior. |
-| `Sources/Features/XcodeTools/Feature` | `XcodeToolsFeature` library target: Xcode MCP configuration, policy, compatibility normalization, workspace selection, discovery, execution, and error mapping. |
-| `Sources/Features/XcodeTools/Executable` | Thin `xcode-tools-feature` executable target that delegates to `XcodeToolsFeatureRunner`. |
-| `Sources/Features/BrowserTools/Feature` | `BrowserToolsFeature` library target: the opt-in Chrome/CDP Browser runtime, direct URL policy plus a per-invocation Fetch/DNS request guard, persistent page handles, fixed viewport presets, scoped state reset, bounded semantic observations, snapshot-bound DOM/computed-CSS inspection, page and element wait/assertions, guarded interactions, redacted/filterable network diagnostics, decoded-pixel screenshot comparison with Browser-owned diff artifacts, and PNG/PDF artifacts. It denies downloads fail-closed, must not enable Browser in a default agent profile, and must not expose raw CDP/JavaScript evaluation or selectors to the model. The request guard is not a persistent network sandbox: pages may keep running between one-shot feature invocations, so durable isolation requires a separate browser guardian/proxy or host firewall boundary. |
-| `Sources/Features/BrowserTools/Executable` | Thin `browser-tools-feature` executable target that delegates to `BrowserToolsFeatureRunner`; it retains the stable bundled executable name and feature root. |
+| `Sources/XcodeToolsFeature` | `XcodeToolsFeature` library target in the main graph: Xcode MCP configuration, policy, compatibility normalization, workspace selection, discovery, execution, and error mapping. |
+| `Sources/Features/XcodeTools` | Standalone `xcode-tools-feature` package. Its thin executable target delegates to the `XcodeToolsFeature` product exported by the root package. |
+| `Sources/Features/BrowserTools/Sources/BrowserToolsFeature` | `BrowserToolsFeature` library target owned by the standalone Browser package: the opt-in Chrome/CDP Browser runtime, direct URL policy plus a per-invocation Fetch/DNS request guard, persistent page handles, fixed viewport presets, scoped state reset, bounded semantic observations, snapshot-bound DOM/computed-CSS inspection, page and element wait/assertions, guarded interactions, redacted/filterable network diagnostics, decoded-pixel screenshot comparison with Browser-owned diff artifacts, and PNG/PDF artifacts. It denies downloads fail-closed, must not enable Browser in a default agent profile, and must not expose raw CDP/JavaScript evaluation or selectors to the model. The request guard is not a persistent network sandbox: pages may keep running between one-shot feature invocations, so durable isolation requires a separate browser guardian/proxy or host firewall boundary. |
+| `Sources/Features/BrowserTools/Sources/browser-tools-feature` | Thin `browser-tools-feature` executable target that delegates to `BrowserToolsFeatureRunner`. |
 | `Sources/LocalToolsSupport` | Reusable local file, search, text, and patch tooling. |
 | `Sources/ZenPackageMetadata` | Internal bundled-feature distribution metadata used for catalog parity; it is not a public product. |
-| `Sources/Features/<Feature>` | A standalone executable feature root. Keep its entry point thin and place implementation in feature-owned support or library targets; Xcode Tools and Browser Tools use explicit library-plus-executable boundaries. |
+| `Sources/Features/<Feature>` | A self-contained optional SwiftPM package with its own `Package.swift`, `Sources/<product-name>/`, and package-local `Tests/`. It is outside the root graph; keep the entry point thin and place implementation in feature-owned support or library targets. The marker `// zencode:package-path` must immediately precede the root `.package(path: "../../..")` dependency so installation can rewrite only that path. |
 | `Sources/ZenCODECore/ZenCODE` | Runtime domains: `Agent`, `Remote`, `Tools`, `Features`, `Context`, `Memory`, `FileChanges`, `Runtime`, and `Support`; `ZenCODETUI` and ACP remain source areas within this target. |
 | `Sources/ZenCODECore/ZenCODE/Runtime/Sessions` | Neutral session state and persistence, including the authoritative task DAG, attempt fencing, execution scopes, atomic task-graph checkpoints, startup enumeration/recovery, and the session checkpoint tree (`SessionCheckpointTree`). Workflow-sourced graphs require sub-agent execution attempts, while coordinator tool grants remain independent of that lifecycle constraint. Startup recovery is graph-specific: the orchestrator restores the owning session, interrupts persisted active attempts, activates exactly the operator-selected graph, archives superseded active graphs, and persists `currentGraphID` before backend creation. A negative validation persists `failed`; `tasks.retry` returns the task to `pending`, and a new `agent.create(taskID:)` claims its fresh workflow attempt rather than messaging the completed agent. `AgentCoreSessionRunner` owns one orchestrator and injects it into every backend; direct task tools are stateless adapters and TUI/ACP code only projects or requests orchestrator-owned snapshot restoration. |
 | `Sources/ZenCODECore/ZenCODE/ACP` | ACP protocol adaptation only: JSON-RPC routing, parsing, lifecycle, and event encoding. |
 | `Sources/ZenCODECore/ZenCODETUI` | Terminal-only state, input, rendering, and presentation. `TerminalChatRenderCoordinator` is the sole owner of stateful chat writes and streaming formatter/cursor state; its stateless text normalization lives in `TerminalChatTextFormatting`, while `TerminalMarkdownStreamFormatter` owns incremental Markdown state and `TerminalWidth` centralizes cached terminal-width probes. `TerminalStatusBar` separately owns status and input-panel rendering state. Shared runtime types must not be introduced here. |
 | `Sources/ZenCODESetup` | Interactive standalone-agent setup. |
-| `Sources/zen` | The executable composition root, command-line dispatch, and bundled feature wiring. |
-| `Tests` | Unit targets: `ToolCoreTests`, `FeatureKitTests`, `FeatureMCPBridgeKitTests`, `XcodeToolsFeatureTests`, `BrowserToolsFeatureTests`, `LocalToolsSupportTests`, `ZenCODECoreTests`, and `ZenCODESetupTests`. |
+| `Sources/zen` | The executable composition root, command-line dispatch, setup, and optional-feature installer CLI. |
+| `Tests` | Root-package unit targets: `ToolCoreTests`, `FeatureKitTests`, `FeatureMCPBridgeKitTests`, `XcodeToolsFeatureTests`, `LocalToolsSupportTests`, `ZenCODECoreTests`, and `ZenCODESetupTests`. Feature packages own and run their package-local tests separately. |
 
 The names of existing targets, products, executables, and feature roots are not
 renamed during the first reorganisation pass. A future target split is allowed
@@ -187,21 +202,21 @@ root:
 ToolCore ──→ FeatureKit ──→ LocalToolsSupport
     └────────────────────→ FeatureMCPBridgeKit
 FeatureKit ──────────────→ FeatureMCPBridgeKit
-FeatureKit ──────────────→ BrowserToolsFeature ──→ browser-tools-feature
 ToolCore / FeatureKit / FeatureMCPBridgeKit ──→ XcodeToolsFeature
 
 ZenPackageMetadata ─────→ ZenCODECore ──→ ZenCODESetup
 
-ZenCODECore / ZenCODESetup ────────────────────────────────────┐
-ZenPackageMetadata / bundled feature executables ──────────────┤
-                                                               ↓
-                                                              zen
+ZenCODECore / ZenCODESetup / ZenPackageMetadata ───────────────→ zen
+
+ZenCODE root products ──→ Sources/Features/<Feature>/Package.swift
+                              └───────────────────────────────→ feature executable
 ```
 
-`FeatureMCPBridgeKit` depends on `FeatureKit` and `ToolCore`; `BrowserToolsFeature`
-depends on `FeatureKit` and is composed only by the thin `browser-tools-feature`
-executable;
-`XcodeToolsFeature` depends on those generic MCP support targets;
+`FeatureMCPBridgeKit` depends on `FeatureKit` and `ToolCore`;
+`BrowserToolsFeature` depends on `FeatureKit` and is composed only by its thin
+package-local `browser-tools-feature` executable; `XcodeToolsFeature` depends
+on the generic MCP support targets and remains a root-package library consumed
+by the package-local `xcode-tools-feature` executable;
 `LocalToolsSupport` depends on `FeatureKit`; and `ZenCODECore` consumes all
 five support targets plus `ZenPackageMetadata`. `ZenCODESetup` depends on
 `ZenCODECore`. `ZenCODETUI` and ACP may consume neutral runtime
@@ -212,10 +227,13 @@ only composition root for backend selection.
 
 ## Consumer Migration Note
 
-No consumer action is required for the source reorganization. Public products
-and imports, `zen`, bundled feature executables, CLI behavior, and wire and
-persistence contracts remain unchanged. Consumers depend on SwiftPM products
-and modules, not repository source paths; `ZenPackageMetadata` is an internal
+The root library products and imports, `zen`, and generated Builder-feature
+wire and persistence contracts remain compatible. Optional feature executables
+are no longer installed beside the `zen` binary or built by the root package.
+Install the desired package with `zen --install-features [id,id,...]` (or select
+it in setup) before selecting its tools. Installed catalog packages use the
+same `~/.zencode/features/<id>/` layout and feature manifest behavior as a
+Builder-created local feature. `ZenPackageMetadata` remains an internal
 implementation detail.
 
 The terminal-rendering concurrency migration is an intentional source-level
@@ -245,9 +263,11 @@ overlay, or status-bar state concurrently.
 
 Every structural checkpoint must at least build the affected target and run its
 focused tests. Before a release, resolve only from the tracked
-`Package.resolved`, validate the package graph, build `ZenCODECore`, run the
-complete non-live test suite, and build the release `zen` product. Check feature
-`--list-tools` output when a feature changes, validate shell syntax with
+`Package.resolved`, validate the root package graph, build `ZenCODECore`, run
+the complete non-live root test suite, and build the release `zen` product. An
+optional feature change additionally runs `swift test` from its own
+`Sources/Features/<Feature>` package (with an isolated scratch directory) and
+checks its `--list-tools` output after installation. Validate shell syntax with
 `bash -n Scripts/*.sh`, and finish with `git diff --check`.
 
 The version/release contract is documented in [release.md](release.md): a

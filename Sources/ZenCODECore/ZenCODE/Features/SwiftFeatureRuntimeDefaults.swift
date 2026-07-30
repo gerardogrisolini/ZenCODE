@@ -44,20 +44,6 @@ extension SwiftFeatureRuntime {
             self.discoversToolsAtRuntime = discoversToolsAtRuntime
             self.invocationTimeoutSeconds = invocationTimeoutSeconds
         }
-
-        func bundle(executableURL: URL) -> SwiftFeatureBundle {
-            SwiftFeatureBundle(
-                id: id,
-                executableURL: executableURL,
-                tools: tools,
-                toolNamePrefixes: toolNamePrefixes,
-                toolNameAliases: toolNameAliases,
-                discoversToolsAtRuntime: discoversToolsAtRuntime,
-                invocationTimeoutSeconds: invocationTimeoutSeconds,
-                source: .bundled,
-                isCore: isCore
-            )
-        }
     }
 
     public static func defaultFeatureBundles(
@@ -122,23 +108,6 @@ extension SwiftFeatureRuntime {
         }
     }
 
-    private static func bundledFeatureBundles(
-        fileManager: FileManager
-    ) -> [SwiftFeatureBundle] {
-        let state = SwiftFeatureStateStore.load(fileManager: fileManager)
-        return bundledFeatureDefinitions()
-            .filter { state.bundledFeatureIsEnabled(id: $0.id) }
-            .compactMap { definition in
-                guard let executableURL = availableBundledExecutableURL(
-                    named: definition.executableName,
-                    fileManager: fileManager
-                ) else {
-                    return nil
-                }
-                return definition.bundle(executableURL: executableURL)
-            }
-    }
-
     static func bundledFeatureDefinitions() -> [BundledFeatureDefinition] {
         SwiftBundledFeatureCatalog.definitions()
     }
@@ -147,6 +116,12 @@ extension SwiftFeatureRuntime {
         bundledFeatureDefinitions().first { $0.id == id }
     }
 
+    /// Catalog records merged with the packages installed under the user feature
+    /// root.
+    ///
+    /// Optional features are never resolved as executables shipped next to the
+    /// `zen` binary: an entry that has no installed package is reported as not
+    /// available, with an issue explaining how to install it.
     static func defaultFeatureRecords(
         searchRoots: [URL]?,
         fileManager: FileManager
@@ -160,22 +135,25 @@ extension SwiftFeatureRuntime {
         )
         .filter { !coreBundledIDs.contains($0.id) }
         let generatedShadowIDs = Set(generatedRecords.map(\.id))
+        let featureRootURL = optionalFeatureRootURL(
+            searchRoots: searchRoots,
+            fileManager: fileManager
+        )
 
         let bundledRecords = bundledDefinitions.map { feature in
-            let executableURL = bundledExecutableStatusURL(
-                named: feature.executableName,
-                fileManager: fileManager
-            )
-            return SwiftFeatureRecord(
+            SwiftFeatureRecord(
                 id: feature.id,
                 displayName: nil,
                 description: feature.description,
                 source: .bundled,
                 isCore: feature.isCore,
-                executableURL: executableURL,
+                executableURL: notInstalledExecutableURL(
+                    definition: feature,
+                    featureRootURL: featureRootURL
+                ),
                 manifestURL: nil,
                 manifestEnabled: state.bundledFeatureIsEnabled(id: feature.id),
-                executableAvailable: fileManager.isExecutableFile(atPath: executableURL.path),
+                executableAvailable: false,
                 tools: feature.tools,
                 toolNamePrefixes: feature.toolNamePrefixes,
                 toolNameAliases: feature.toolNameAliases,
@@ -184,12 +162,27 @@ extension SwiftFeatureRuntime {
                 build: nil,
                 generated: nil,
                 adoptedFrom: nil,
-                issue: nil
+                issue: optionalFeatureNotInstalledIssue
             )
         }
         .filter { !generatedShadowIDs.contains($0.id) }
 
         return bundledRecords + generatedRecords
+    }
+
+    /// Path the release executable *will* have once the optional feature is
+    /// installed. Reporting it keeps `feature.list` output actionable without
+    /// implying the binary exists.
+    private static func notInstalledExecutableURL(
+        definition: BundledFeatureDefinition,
+        featureRootURL: URL
+    ) -> URL {
+        featureRootURL
+            .appendingPathComponent(definition.id, isDirectory: true)
+            .appendingPathComponent(".build", isDirectory: true)
+            .appendingPathComponent("release", isDirectory: true)
+            .appendingPathComponent(definition.executableName)
+            .standardizedFileURL
     }
 
     static func status(
@@ -294,205 +287,10 @@ extension SwiftFeatureRuntime {
         )
     }
 
-    private static func availableBundledExecutableURL(
-        named executableName: String,
-        fileManager: FileManager
-    ) -> URL? {
-        for executableURL in bundledExecutableCandidateURLs(
-            named: executableName,
-            fileManager: fileManager
-        ) {
-            if fileManager.isExecutableFile(atPath: executableURL.path) {
-                return executableURL
-            }
-        }
-        return nil
-    }
-
-    private static func bundledExecutableStatusURL(
-        named executableName: String,
-        fileManager: FileManager
-    ) -> URL {
-        availableBundledExecutableURL(
-            named: executableName,
-            fileManager: fileManager
-        ) ?? bundledExecutableCandidateURLs(
-            named: executableName,
-            fileManager: fileManager
-        ).first
-            ?? URL(fileURLWithPath: executableName).standardizedFileURL
-    }
-
-    static func bundledExecutableCandidateURLs(
-        named executableName: String,
-        fileManager: FileManager,
-        workingDirectoryURL explicitWorkingDirectoryURL: URL? = nil,
-        pathEnvironment: String? = ProcessInfo.processInfo.environment["PATH"],
-        commandLineArgument: String? = CommandLine.arguments.first,
-        executableDirectoryURLs explicitExecutableDirectoryURLs: [URL]? = nil
-    ) -> [URL] {
-        var seenPaths = Set<String>()
-        let executableDirectories = explicitExecutableDirectoryURLs
-            ?? defaultExecutableDirectoryURLs(
-                pathEnvironment: pathEnvironment,
-                commandLineArgument: commandLineArgument,
-                fileManager: fileManager
-            )
-        let workingDirectoryURL = explicitWorkingDirectoryURL?.standardizedFileURL
-            ?? URL(
-                fileURLWithPath: fileManager.currentDirectoryPath,
-                isDirectory: true
-            ).standardizedFileURL
-        let buildRootURLs = [
-            workingDirectoryURL,
-            sourcePackageRootURL(fileManager: fileManager)
-        ]
-            .compactMap { $0 }
-            .map { $0.appendingPathComponent(".build", isDirectory: true) }
-        let buildProductDirectories = buildRootURLs.flatMap {
-            swiftPMBuildProductDirectories(
-                buildDirectoryURL: $0,
-                fileManager: fileManager
-            )
-        }
-        let installedFeatureDirectories = executableDirectories.flatMap {
-            bundledFeatureInstallDirectories(binaryDirectoryURL: $0)
-        }
-        let ancestorDirectories = executableDirectories.flatMap { directoryURL in
-            var directories = [directoryURL]
-            var parentURL = directoryURL
-            for _ in 0..<4 {
-                parentURL = parentURL.deletingLastPathComponent()
-                directories.append(parentURL)
-            }
-            return directories
-        }
-        let candidateDirectories = installedFeatureDirectories
-            + ancestorDirectories
-            + buildProductDirectories
-
-        return candidateDirectories.compactMap { directoryURL in
-            let executableURL = directoryURL
-                .appendingPathComponent(executableName)
-                .standardizedFileURL
-            guard seenPaths.insert(executableURL.path).inserted else {
-                return nil
-            }
-            return executableURL
-        }
-    }
-
-    private static func defaultExecutableDirectoryURLs(
-        pathEnvironment: String?,
-        commandLineArgument: String?,
-        fileManager: FileManager
-    ) -> [URL] {
-        let bundleDirectories = [
-            Bundle.main.executableURL?.deletingLastPathComponent(),
-            Bundle.main.executableURL?
-                .resolvingSymlinksInPath()
-                .deletingLastPathComponent()
-        ].compactMap { $0 }
-        let commandLineDirectories = commandLineArgument.map {
-            commandLineExecutableDirectoryURLs(
-                argument: $0,
-                pathEnvironment: pathEnvironment,
-                fileManager: fileManager
-            )
-        } ?? []
-        return bundleDirectories + commandLineDirectories
-    }
-
-    private static func commandLineExecutableDirectoryURLs(
-        argument: String,
-        pathEnvironment: String?,
-        fileManager: FileManager
-    ) -> [URL] {
-        guard !argument.isEmpty else {
-            return []
-        }
-        if argument.contains("/") {
-            let executableURL = URL(fileURLWithPath: argument)
-            return [
-                executableURL.standardizedFileURL.deletingLastPathComponent(),
-                executableURL.resolvingSymlinksInPath().deletingLastPathComponent()
-            ]
-        }
-
-        for directoryURL in executableSearchPathDirectories(pathEnvironment: pathEnvironment) {
-            let executableURL = directoryURL.appendingPathComponent(argument)
-            guard fileManager.isExecutableFile(atPath: executableURL.path) else {
-                continue
-            }
-            return [
-                directoryURL.standardizedFileURL,
-                executableURL.resolvingSymlinksInPath().deletingLastPathComponent()
-            ]
-        }
-        return []
-    }
-
-    private static func executableSearchPathDirectories(
-        pathEnvironment: String?
-    ) -> [URL] {
-        guard let pathEnvironment else {
-            return []
-        }
-        return pathEnvironment
-            .split(separator: ":", omittingEmptySubsequences: true)
-            .map {
-                URL(fileURLWithPath: String($0), isDirectory: true)
-                    .standardizedFileURL
-            }
-    }
-
-    private static func bundledFeatureInstallDirectories(
-        binaryDirectoryURL: URL
-    ) -> [URL] {
-        let binaryDirectoryURL = binaryDirectoryURL.standardizedFileURL
-        let packageDirectoryURL = binaryDirectoryURL.deletingLastPathComponent()
-        return [
-            binaryDirectoryURL,
-            binaryDirectoryURL.appendingPathComponent("features", isDirectory: true),
-            binaryDirectoryURL.appendingPathComponent("zen-features", isDirectory: true),
-            packageDirectoryURL.appendingPathComponent("features", isDirectory: true),
-            packageDirectoryURL.appendingPathComponent("zen-features", isDirectory: true),
-            packageDirectoryURL.appendingPathComponent("share", isDirectory: true)
-                .appendingPathComponent("ZenCODE", isDirectory: true)
-                .appendingPathComponent("features", isDirectory: true)
-        ]
-    }
-
     static func sourcePackageRootURL(fileManager: FileManager) -> URL? {
         PackageRootResolver.packageRoot(
             forSourceFilePath: #filePath,
             fileManager: fileManager
         )
-    }
-
-    private static func swiftPMBuildProductDirectories(
-        buildDirectoryURL: URL,
-        fileManager: FileManager
-    ) -> [URL] {
-        var directories = [
-            buildDirectoryURL.appendingPathComponent("debug", isDirectory: true),
-            buildDirectoryURL.appendingPathComponent("release", isDirectory: true)
-        ]
-        guard let children = try? fileManager.contentsOfDirectory(
-            at: buildDirectoryURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return directories
-        }
-
-        for childURL in children {
-            guard (try? childURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
-                continue
-            }
-            directories.append(childURL.appendingPathComponent("debug", isDirectory: true))
-            directories.append(childURL.appendingPathComponent("release", isDirectory: true))
-        }
-        return directories
     }
 }

@@ -52,18 +52,22 @@ Creates files under `~/.zencode/`:
 - `AGENTS.md` — global operating guidance.
 - `MEMORY.md` — lightweight global resume index.
 - `sessions/` — saved session snapshots grouped by project.
-- `features/` — generated Swift feature packages.
+- `features/` — generated Builder packages and installed optional feature packages.
+- `source/` — persistent ZenCODE checkout retained by the platform installer for later optional-feature builds.
 
 ## Command Line Options
 
 ```text
-zen [--setup] [--doctor] [--acp] [--agent NAME] [--model MODEL_ID] [--cwd PATH] [--skills LIST]
+zen [--setup] [--doctor] [--acp] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--agent NAME] [--model MODEL_ID] [--cwd PATH] [--skills LIST]
 ```
 
 - `--setup`: open setup, then exit.
 - `--doctor`: print a redacted, read-only diagnostic report and exit. It never
   starts setup, accesses a provider, creates configuration, or writes a log.
 - `--acp`: run ACP JSON-RPC over stdio.
+- `--install-features [id,id,...]`: copy the requested optional feature package(s), build their release products, and enable them. With no IDs in an interactive terminal, opens the optional-feature picker.
+- `--no-features`: skip optional-feature installation when used with `--install-features`.
+- `--zen-package-path DIR`: use this ZenCODE checkout as the feature source and rewritten local package dependency. This is useful after a manual installation; platform installers preserve their checkout under `~/.zencode/source/` automatically.
 - `--agent NAME`: select an agent profile (default: `Developer`).
 - `--model MODEL_ID`: request a model override for the direct session; delegated sub-agents remain restricted to the selected profile's authorized bindings.
 - `--cwd PATH`: working directory for local tools.
@@ -73,6 +77,35 @@ zen [--setup] [--doctor] [--acp] [--agent NAME] [--model MODEL_ID] [--cwd PATH] 
 - `--verbose`: show status/tool progress on stderr.
 
 Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, `ZENCODE_AGENT_MODEL`, `ZENCODE_AGENT_CWD`, `ZENCODE_AGENT_SKILLS`, `ZENCODE_AGENT_VERBOSE`, `ZENCODE_AGENT_BEARER_TOKEN`.
+
+## Optional Feature Packages
+
+Search, web, browser, Git, Swift, Jira, Figma, and Xcode integrations are
+catalogued optional SwiftPM packages. They are **not** executable files shipped
+next to `zen`, and the root `swift build` does not build them. Install only the
+ones you need:
+
+```bash
+zen --install-features git-tools,swift-tools
+zen --install-features                    # interactive picker
+zen --install-features --no-features      # explicitly skip the picker/install
+zen --install-features web-tools --zen-package-path /path/to/ZenCODE
+```
+
+The command copies each package into `~/.zencode/features/<id>/`, rewrites its
+marked dependency on the ZenCODE checkout, creates the normal Builder-compatible
+`feature.json`, builds its release product, then enables it. Consequently an
+uninstalled feature remains visible as installable but contributes no available
+tools to a profile or `/tools` selection. After installation, its package can be
+selected and managed exactly like a local Builder feature.
+
+At the end of the macOS/Linux installer, an interactive terminal is offered the
+same **Features** picker. The installer removes the legacy `zen-features/`
+directory and, when it was bootstrapped from a temporary URL checkout, keeps a
+source-only copy at `~/.zencode/source/` so future installs still work after
+that temporary checkout is removed. An installer launched from a local checkout
+uses that checkout directly. Set `ZENCODE_SUPPORT_DIRECTORY` to relocate both
+`features/` and the persisted `source/` copy.
 
 ## Diagnostics
 
@@ -202,7 +235,7 @@ intended.
 
 ## Tool Selection
 
-Tool groups include: filesystem, shell, text, search, Git, memory, sub-agents, Xcode (when running), Figma (when the desktop MCP server is available), generated Swift features, and bundled integrations. Use `/tools` to select per session. ACP clients pass enabled tools directly.
+Tool groups include: filesystem, shell, text, search, Git, memory, sub-agents, Xcode (when running), Figma (when the desktop MCP server is available), generated Swift features, and installed optional feature packages. Use `/tools` to select per session. ACP clients pass enabled tools directly.
 
 ## Task Orchestration
 
@@ -321,6 +354,7 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, a
 - **No tools available**: use `/tools`, switch profile, or check ACP client tool exposure.
 - **`/make-agents` needs Files**: enable `Files` with `/tools` or switch profile.
 - **`/feature` unavailable**: switch to `/agents Builder`.
+- **Optional feature tools are missing**: install the package with `zen --install-features <id>` (or choose it in setup), then enable/select it with `/tools`.
 - **`/plan`, `/workflow`, or `/review` needs sub-agents**: enable `sub-agents` with `/tools` or switch profile.
 - **Xcode tools missing**: make sure Xcode is running. See [xcode.md](xcode.md).
 - **Figma tools missing**: make sure the Figma desktop MCP server is enabled.

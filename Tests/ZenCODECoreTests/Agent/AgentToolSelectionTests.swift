@@ -50,21 +50,66 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    func developerProfileEnablesCoreAndFeaturePackageTools() {
+    func developerProfileKeepsOptionalFeatureSelectionsButOnlyExpandsInstalledTools() {
         let profile = AgentProfile(
             id: "developer",
             name: "Developer",
             tools: AgentProfileStore.developerToolNames
         )
-        let allowedToolNames = profile.allowedToolNames()
 
-        #expect(allowedToolNames.contains("local.exec"))
-        #expect(allowedToolNames.contains("local.readFile"))
-        #expect(allowedToolNames.contains("local.inspectFile"))
-        #expect(allowedToolNames.contains("search.grep"))
-        #expect(allowedToolNames.contains("search.locate"))
-        #expect(allowedToolNames.contains("text.wc"))
-        #expect(!allowedToolNames.contains("feature.list"))
+        let searchSelectionKey = TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools")
+        #expect(profile.tools.contains(searchSelectionKey))
+
+        let coreItems = TerminalToolSelectionCatalog.items(featureStatuses: [])
+        let coreAllowedToolNames = TerminalToolSelectionCatalog.allowedToolNames(
+            for: Set(profile.tools.filter { !$0.hasPrefix(TerminalToolSelectionCatalog.featurePackageKeyPrefix) }),
+            items: coreItems
+        )
+        #expect(coreAllowedToolNames.contains("local.exec"))
+        #expect(coreAllowedToolNames.contains("local.readFile"))
+        #expect(coreAllowedToolNames.contains("local.inspectFile"))
+        #expect(coreAllowedToolNames.contains("text.wc"))
+        #expect(!coreAllowedToolNames.contains("feature.list"))
+
+        let uninstalledItems = TerminalToolSelectionCatalog.items(
+            featureStatuses: [
+                featureStatus(
+                    id: "search-tools",
+                    source: .bundled,
+                    tools: ["search.glob", "search.grep"],
+                    enabled: false,
+                    available: false
+                )
+            ]
+        )
+        let uninstalledAllowedToolNames = TerminalToolSelectionCatalog.allowedToolNames(
+            for: [searchSelectionKey],
+            items: uninstalledItems
+        )
+
+        #expect(!uninstalledItems.contains { $0.key == searchSelectionKey })
+        #expect(!uninstalledAllowedToolNames.contains("search.glob"))
+        #expect(!uninstalledAllowedToolNames.contains("search.grep"))
+
+        let installedItems = TerminalToolSelectionCatalog.items(
+            featureStatuses: [
+                featureStatus(
+                    id: "search-tools",
+                    source: .generated,
+                    tools: ["search.glob", "search.grep"],
+                    enabled: true,
+                    available: true
+                )
+            ]
+        )
+        let installedAllowedToolNames = TerminalToolSelectionCatalog.allowedToolNames(
+            for: [searchSelectionKey],
+            items: installedItems
+        )
+
+        #expect(installedItems.contains { $0.key == searchSelectionKey })
+        #expect(installedAllowedToolNames.contains("search.glob"))
+        #expect(installedAllowedToolNames.contains("search.grep"))
     }
 
     @Test

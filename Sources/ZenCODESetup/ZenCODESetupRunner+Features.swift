@@ -16,16 +16,34 @@ extension ZenCODESetupRunner {
             includeTools: true,
             includeDisabled: true
         )
-        let sortedStatuses = statuses.sorted(by: featureStatusSortOrder)
-        guard !sortedStatuses.isEmpty else {
+        let optionalFeatures = SwiftFeatureRuntime.optionalFeatures()
+        let optionalFeaturesByID = Dictionary(
+            uniqueKeysWithValues: optionalFeatures.map { ($0.id, $0) }
+        )
+        let optionalFeatureIDs = Set(optionalFeatures.map(\.id))
+        let sortedStatuses = statuses
+            .filter { status in
+                guard optionalFeatureIDs.contains(status.id) else {
+                    return true
+                }
+                return optionalFeaturesByID[status.id]?.installed == true
+            }
+            .sorted(by: featureStatusSortOrder)
+        let installableOptionalFeatures = optionalFeatures
+            .filter { !$0.installed && $0.supportedOnCurrentPlatform }
+            .sorted(by: optionalFeatureSortOrder)
+
+        guard !sortedStatuses.isEmpty || !installableOptionalFeatures.isEmpty else {
             AgentOutput.standardError.writeString("No Swift features found.\n")
             return
         }
 
         let selectedIDs = Set(sortedStatuses.filter(\.enabled).map(\.id))
+        let menuItems = sortedStatuses.map(featureCheckboxItem)
+            + installableOptionalFeatures.map(optionalFeatureCheckboxItem)
         guard let requestedIDs = TerminalCheckboxMenu.select(
             title: "Features",
-            items: sortedStatuses.map(featureCheckboxItem),
+            items: menuItems,
             selected: selectedIDs
         ) else {
             return
@@ -39,6 +57,30 @@ extension ZenCODESetupRunner {
         for status in sortedStatuses where idsToEnable.contains(status.id) {
             try await setFeature(status.id, enabled: true, runtime: runtime)
             didChange = true
+        }
+        let installableIDs = Set(installableOptionalFeatures.map(\.id))
+        for id in requestedIDs.intersection(installableIDs) {
+            AgentOutput.standardError.writeString("Installing optional feature \(id)…\n")
+            do {
+                let report = try await runtime.installOptionalFeature(id: id)
+                if report.ok {
+                    AgentOutput.standardError.writeString("Installed and enabled \(report.productName).\n")
+                    didChange = true
+                } else {
+                    let details = report.errors.isEmpty
+                        ? "The build or enable step did not complete."
+                        : report.errors.joined(separator: " ")
+                    AgentOutput.standardError.writeString(
+                        "Could not install optional feature \(id): \(details) " +
+                        "Retry from a ZenCODE checkout or pass --zen-package-path to zen --install-features.\n"
+                    )
+                }
+            } catch {
+                AgentOutput.standardError.writeString(
+                    "Could not install optional feature \(id): \(error.localizedDescription) " +
+                    "Retry from a ZenCODE checkout or pass --zen-package-path to zen --install-features.\n"
+                )
+            }
         }
         for status in sortedStatuses where idsToDisable.contains(status.id) {
             try await setFeature(status.id, enabled: false, runtime: runtime)
@@ -90,6 +132,17 @@ extension ZenCODESetupRunner {
         )
     }
 
+    private static func optionalFeatureCheckboxItem(
+        _ feature: SwiftFeatureOptionalFeature
+    ) -> TerminalCheckboxMenuItem<String> {
+        TerminalCheckboxMenuItem(
+            value: feature.id,
+            title: "\(feature.displayName) [\(feature.id)]",
+            detail: "\(feature.description) — not installed",
+            groupTitle: "Installable"
+        )
+    }
+
     private static func featureMenuDetail(_ status: SwiftFeatureStatus) -> String {
         TerminalToolSelectionCatalog.featureDetail(status)
     }
@@ -106,6 +159,13 @@ extension ZenCODESetupRunner {
             return lhs.source == .bundled
         }
         return featureDisplayName(lhs).localizedCaseInsensitiveCompare(featureDisplayName(rhs)) == .orderedAscending
+    }
+
+    private static func optionalFeatureSortOrder(
+        _ lhs: SwiftFeatureOptionalFeature,
+        _ rhs: SwiftFeatureOptionalFeature
+    ) -> Bool {
+        lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
     }
 
     private static func escapedJSONString(_ value: String) -> String {

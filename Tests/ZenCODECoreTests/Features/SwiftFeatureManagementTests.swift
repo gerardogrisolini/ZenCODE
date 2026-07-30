@@ -675,11 +675,16 @@ extension SwiftFeatureRuntimeTests {
         #expect(report.ok)
         #expect(report.adopted)
         #expect(report.adoptedFrom == "xcode-tools")
-        #expect(report.sourcePaths.contains { $0.hasSuffix("/Feature/XcodeToolsFeatureRunner.swift") })
-        #expect(report.sourcePaths.contains { $0.hasSuffix("/Executable/XcodeToolsFeatureMain.swift") })
-        #expect(package.contains("name: \"AdoptedXcodeToolsFeature\""))
-        #expect(package.contains("Sources/XcodeTools/Feature"))
-        #expect(package.contains("Sources/XcodeTools/Executable"))
+        // Adoption reuses the feature package layout and manifest verbatim; only
+        // the ZenCODE dependency path is rewritten to an absolute checkout.
+        #expect(report.sourcePaths.contains { $0.hasSuffix("/xcode-tools-feature/XcodeToolsFeatureMain.swift") })
+        #expect(package.contains("name: \"xcode-tools-feature\""))
+        #expect(!package.contains("XCODE_TOOLS_FEATURE_ADOPTED"))
+        #expect(!package.contains("AdoptedXcodeToolsFeature"))
+        #expect(!package.contains(".package(path: \"../../..\")"))
+        #expect(package.contains(SwiftFeatureRuntime.zenPackagePathMarker))
+        let zenPackageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
+        #expect(package.contains(".package(path: \"\(zenPackageRoot.path)\")"))
 
         let buildOutput = try await runtime.executeManagementTool(
             toolCall: featureManagementCall(

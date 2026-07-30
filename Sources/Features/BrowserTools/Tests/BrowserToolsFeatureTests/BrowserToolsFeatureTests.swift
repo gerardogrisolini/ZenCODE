@@ -1,7 +1,6 @@
 import Foundation
 import Synchronization
 @testable import BrowserToolsFeature
-@testable import ZenCODECore
 import FeatureKit
 import Testing
 import ToolCore
@@ -904,14 +903,7 @@ struct BrowserToolsFeatureTests {
     }
 
     @Test
-    func bundledRuntimeCatalogDelegatesDescriptorOwnershipToBrowserFeature() throws {
-        let feature = try #require(
-            SwiftFeatureRuntime.bundledFeatureDefinitions()
-                .first(where: { $0.id == "browser-tools" })
-        )
-        #expect(feature.tools.isEmpty)
-        #expect(feature.toolNamePrefixes == ["browser."])
-        #expect(feature.discoversToolsAtRuntime)
+    func browserFeatureToolsHaveSemanticallyValidPresentations() {
         #expect(BrowserToolsFeatureRunner.tools().allSatisfy {
             $0.descriptor.presentation?.isSemanticallyValid == true
         })

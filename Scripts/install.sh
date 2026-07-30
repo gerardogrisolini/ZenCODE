@@ -4,15 +4,19 @@ set -euo pipefail
 
 # ZenCODE macOS installer
 #
-# Builds ZenCODE and installs the binary and bundled feature executables. When
-# launched outside a repository checkout, for example with curl | bash, the
-# installer uses a temporary source checkout and removes it before exiting.
+# Builds ZenCODE and installs its binary. Optional Swift features are installed
+# afterwards, on request, as local source packages. When launched outside a
+# repository checkout, for example with curl | bash, the installer keeps a
+# source copy for later feature builds before removing its temporary checkout.
 #
 # Environment overrides:
 #   INSTALL_DIR    Directory for the ZenCODE binary (default: /usr/local/bin)
-#   FEATURES_DIR   Directory for feature executables
+#   FEATURES_DIR   Legacy directory of bundled feature executables to clean
 #                  (default: $INSTALL_DIR/zen-features)
 #   BUILD_CONFIG   SwiftPM configuration: release or debug (default: release)
+#   ZENCODE_SUPPORT_DIRECTORY
+#                  Directory for configuration and the persistent source copy
+#                  (default: $HOME/.zencode)
 #   ZENCODE_INSTALLER_REF
 #                  Git ref used by the URL installer (default: main)
 #
@@ -48,15 +52,19 @@ usage() {
     cat <<'EOF'
 ZenCODE macOS installer
 
-Builds ZenCODE and installs the binary and bundled feature executables. When
-launched outside a repository checkout, for example with curl | bash, the
-installer uses a temporary source checkout and removes it before exiting.
+Builds ZenCODE and installs its binary. Optional Swift features are installed
+afterwards, on request, as local source packages. When launched outside a
+repository checkout, for example with curl | bash, the installer keeps a
+source copy for later feature builds before removing its temporary checkout.
 
 Environment overrides:
   INSTALL_DIR    Directory for the ZenCODE binary (default: /usr/local/bin)
-  FEATURES_DIR   Directory for feature executables
+  FEATURES_DIR   Legacy directory of bundled feature executables to clean
                  (default: $INSTALL_DIR/zen-features)
   BUILD_CONFIG   SwiftPM configuration: release or debug (default: release)
+  ZENCODE_SUPPORT_DIRECTORY
+                 Directory for configuration and the persistent source copy
+                 (default: $HOME/.zencode)
   ZENCODE_INSTALLER_REF
                  Git ref used by the URL installer (default: main)
 Flags:
@@ -149,6 +157,67 @@ resolve_package_dir() {
     printf '%s\n' "$package_dir"
 }
 
+# Copy a checkout fetched by the curl installer into the support directory so
+# optional feature packages can still resolve their local ZenCODE dependency
+# after this temporary checkout has been removed. Keep source only: SwiftPM
+# build products and Git metadata are intentionally not persisted.
+persist_source_checkout() {
+    local source_root="$1"
+    local support_root="${ZENCODE_SUPPORT_DIRECTORY:-${HOME}/.zencode}"
+    local destination="${support_root%/}/source"
+    local staging=""
+
+    mkdir -p "$support_root"
+    staging="$(mktemp -d "${support_root%/}/.source.install.XXXXXX")"
+
+    if command -v rsync &>/dev/null; then
+        if ! rsync -a --exclude='.git' --exclude='.build' "${source_root%/}/" "${staging}/"; then
+            rm -rf "$staging"
+            echo "Error: could not preserve the ZenCODE source checkout." >&2
+            return 1
+        fi
+    elif ! (
+        cd "$source_root"
+        tar -cf - --exclude='.git' --exclude='.build' .
+    ) | (
+        cd "$staging"
+        tar -xf -
+    ); then
+        rm -rf "$staging"
+        echo "Error: could not preserve the ZenCODE source checkout." >&2
+        return 1
+    fi
+
+    # Both rsync and tar patterns differ slightly across macOS and Linux. A
+    # final traversal makes the exclusion contract unambiguous on either one.
+    find "$staging" -type d \( -name '.git' -o -name '.build' \) -prune -exec rm -rf {} \;
+    rm -rf "$destination"
+    mv "$staging" "$destination"
+    printf '%s\n' "$destination"
+}
+
+select_optional_features() {
+    local zen_binary="$1"
+    local source_root="$2"
+
+    # curl | bash leaves stdin occupied by the script. Prefer the controlling
+    # terminal when it exists, but never make a successful ZenCODE installation
+    # fail just because optional feature selection is unavailable.
+    if { exec 3</dev/tty; } 2>/dev/null; then
+        echo ""
+        echo "Select optional features to install from source:"
+        if ! "$zen_binary" --install-features --zen-package-path "$source_root" <&3; then
+            echo "Warning: optional feature selection did not complete." >&2
+            echo "Run '${zen_binary} --install-features --zen-package-path ${source_root}' to retry." >&2
+        fi
+        exec 3<&-
+    else
+        echo ""
+        echo "No interactive terminal is available; no optional features were installed."
+        echo "Run '${zen_binary} --install-features --zen-package-path ${source_root}' after installation to select them."
+    fi
+}
+
 # Clone REPO_URL at REF into DEST. A full 40-hex commit SHA cannot be used with
 # `git clone --branch`, so fetch it explicitly; tags and branches use a shallow
 # branch clone. This keeps an explicit immutable ref (tag/commit) robust.
@@ -190,7 +259,7 @@ bootstrap_checkout() {
     echo ""
 
     set +e
-    "${checkout}/Scripts/install.sh" "${ORIGINAL_ARGS[@]}"
+    ZENCODE_INSTALLER_TEMP_CHECKOUT=1 "${checkout}/Scripts/install.sh" "${ORIGINAL_ARGS[@]}"
     status=$?
     set -e
     exit "$status"
@@ -251,16 +320,17 @@ PACKAGE_DIR="$(resolve_package_dir || true)"
 if [ -z "$PACKAGE_DIR" ]; then
     bootstrap_checkout
 fi
+SOURCE_CHECKOUT_DIR="$PACKAGE_DIR"
+if [ "${ZENCODE_INSTALLER_TEMP_CHECKOUT:-0}" = "1" ]; then
+    SOURCE_CHECKOUT_DIR="$(persist_source_checkout "$PACKAGE_DIR")"
+fi
 SCRIPT_DIR="${PACKAGE_DIR}/Scripts"
-source "${SCRIPT_DIR}/feature-catalog.sh"
 source "${SCRIPT_DIR}/install-support.sh"
 
 backup_existing_config_files
 trap restore_config_files EXIT
 
 cd "$PACKAGE_DIR"
-
-zencode_select_feature_products macos
 
 echo ""
 echo "Build configuration:"
@@ -274,11 +344,6 @@ echo ""
 echo "Building ZenCODE (${BUILD_CONFIG})..."
 swift build -c "$BUILD_CONFIG" --product zen
 
-for product in "${FEATURE_PRODUCTS[@]}"; do
-    echo "Building ${product} (${BUILD_CONFIG})..."
-    swift build -c "$BUILD_CONFIG" --product "$product"
-done
-
 BIN_PATH="$(swift build -c "$BUILD_CONFIG" --show-bin-path)"
 if [ ! -x "${BIN_PATH}/zen" ]; then
     echo "Error: build did not produce ${BIN_PATH}/zen." >&2
@@ -286,19 +351,19 @@ if [ ! -x "${BIN_PATH}/zen" ]; then
 fi
 
 SUDO=""
-if ! mkdir -p "$INSTALL_DIR" "$FEATURES_DIR" 2>/dev/null; then
+if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
     if command -v sudo &>/dev/null; then
         SUDO="sudo"
     else
-        echo "Error: cannot create ${INSTALL_DIR} or ${FEATURES_DIR}, and sudo was not found." >&2
+        echo "Error: cannot create ${INSTALL_DIR}, and sudo was not found." >&2
         exit 1
     fi
 fi
-if [ -z "$SUDO" ] && { [ ! -w "$INSTALL_DIR" ] || [ ! -w "$FEATURES_DIR" ]; }; then
+if [ -z "$SUDO" ] && [ ! -w "$INSTALL_DIR" ]; then
     if command -v sudo &>/dev/null; then
         SUDO="sudo"
     else
-        echo "Error: ${INSTALL_DIR} or ${FEATURES_DIR} is not writable, and sudo was not found." >&2
+        echo "Error: ${INSTALL_DIR} is not writable, and sudo was not found." >&2
         exit 1
     fi
 fi
@@ -306,24 +371,19 @@ fi
 echo ""
 echo "Installing to ${INSTALL_DIR}..."
 $SUDO mkdir -p "$INSTALL_DIR"
-$SUDO mkdir -p "$FEATURES_DIR"
+
+zencode_remove_legacy_feature_directory "$FEATURES_DIR" "$INSTALL_DIR"
 
 zencode_install_executable_atomically "${BIN_PATH}/zen" "${INSTALL_DIR}/zen"
-
-for product in "${FEATURE_PRODUCTS[@]}"; do
-    if [ -x "${BIN_PATH}/${product}" ]; then
-        zencode_install_executable_atomically "${BIN_PATH}/${product}" "${FEATURES_DIR}/${product}"
-    else
-        echo "Warning: ${product} was not built, skipping." >&2
-    fi
-done
 
 echo ""
 echo "✓ ZenCODE installed successfully!"
 echo ""
 echo "  zen        → ${INSTALL_DIR}/zen"
-echo "  features     → ${FEATURES_DIR}/"
+echo "  source     → ${SOURCE_CHECKOUT_DIR}"
 echo ""
 echo "Make sure ${INSTALL_DIR} is in your PATH."
 echo ""
 echo "Configure a provider with: zen --setup"
+
+select_optional_features "${INSTALL_DIR}/zen" "$SOURCE_CHECKOUT_DIR"

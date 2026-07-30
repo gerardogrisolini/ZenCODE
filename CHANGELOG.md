@@ -15,6 +15,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Startup task recovery now skips checkpoint scanning and its interactive
   selection when `zen` runs in `--acp` mode, preserving JSON-RPC-only I/O.
 
+### Changed
+
+- Optional Swift features are now standalone SwiftPM packages under
+  `Sources/Features` rather than executable products in the root package or
+  files installed beside `zen`. The installer removes the legacy
+  `zen-features/` directory, preserves a source checkout, and offers on-demand
+  installation through `zen --install-features`; selected packages are built as
+  Builder-compatible local features in `~/.zencode/features/<id>/`.
+
 ## [1.0.6] - 2026-07-29
 
 ### Added

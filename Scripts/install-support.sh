@@ -59,3 +59,36 @@ zencode_install_executable_atomically() {
         return 1
     fi
 }
+
+# Removes the directory that older installations used for bundled feature
+# executables. Optional features now live as local source packages under the
+# support directory, so a stale executable there could otherwise shadow them.
+#
+# FEATURES_DIR is a documented environment override, so this deletion is guarded:
+# it never removes the binary directory itself, a home directory, or a root path,
+# and it does nothing when the directory is absent.
+zencode_remove_legacy_feature_directory() {
+    if [ "$#" -ne 2 ]; then
+        echo "Error: zencode_remove_legacy_feature_directory requires FEATURES_DIR and INSTALL_DIR." >&2
+        return 2
+    fi
+
+    local features_dir="${1%/}"
+    local install_dir="${2%/}"
+
+    if [ -z "$features_dir" ] || [ "$features_dir" = "/" ]; then
+        return 0
+    fi
+    if [ "$features_dir" = "$install_dir" ] || [ "$features_dir" = "${HOME%/}" ]; then
+        echo "Warning: refusing to remove ${features_dir} as a legacy feature directory." >&2
+        return 0
+    fi
+    if [ ! -d "$features_dir" ]; then
+        return 0
+    fi
+
+    echo "Removing legacy bundled feature executables from ${features_dir}..."
+    if ! zencode_run_install_command rm -rf "$features_dir"; then
+        echo "Warning: could not remove the legacy feature directory ${features_dir}." >&2
+    fi
+}

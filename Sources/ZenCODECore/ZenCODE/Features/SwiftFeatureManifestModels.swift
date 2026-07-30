@@ -660,9 +660,14 @@ public struct SwiftFeatureEditReport: Codable, Sendable {
 
 public struct SwiftFeatureState: Codable, Sendable {
     public static let currentVersion = 1
-    public static let defaultDisabledBundledFeatureIDs: Set<String> = [
-        "jira-tools"
-    ]
+    /// Catalog features that stay disabled until the user opts in explicitly.
+    ///
+    /// Empty since optional features are installed from source on demand:
+    /// anything the user has not installed is already absent from the feature
+    /// root, so there is nothing left to opt out of by default. Both persisted
+    /// lists keep their meaning, so existing `feature-state.json` files (which
+    /// may still pin `jira-tools` in either list) migrate unchanged.
+    public static let defaultDisabledBundledFeatureIDs: Set<String> = []
 
     public var version: Int
     public var disabledBundledFeatureIDs: [String]

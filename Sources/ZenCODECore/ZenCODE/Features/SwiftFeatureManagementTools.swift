@@ -79,7 +79,7 @@ extension SwiftFeatureRuntime {
         }
     }
 
-    private func setFeature(id: String, enabled: Bool) async throws {
+    func setFeature(id: String, enabled: Bool) async throws {
         guard explicitFeatures == nil else {
             throw DirectToolError.permissionDenied(
                 "Feature enable/disable is unavailable for an explicitly constructed runtime."
@@ -121,7 +121,7 @@ extension SwiftFeatureRuntime {
         throw DirectToolError.permissionDenied("Unknown Swift feature: \(id).")
     }
 
-    private func validateFeature(
+    func validateFeature(
         arguments: [String: Any]
     ) throws -> SwiftFeatureValidationReport {
         let manifestURL = try featureManifestURL(arguments: arguments)
@@ -215,7 +215,7 @@ extension SwiftFeatureRuntime {
         )
     }
 
-    private func buildFeature(
+    func buildFeature(
         arguments: [String: Any]
     ) async throws -> SwiftFeatureBuildReport {
         let manifestURL = try featureManifestURL(arguments: arguments)

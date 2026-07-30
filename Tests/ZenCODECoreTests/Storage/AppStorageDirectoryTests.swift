@@ -12,7 +12,7 @@ import Testing
 @Suite(.serialized)
 struct AppStorageDirectoryTests {
     @Test
-    func coderSupportFilesDefaultToHomeZenCodeDirectory() {
+    func coderSupportFilesUseTheEffectiveZenCodeDirectory() {
         AppStorageDirectory.configureSupportDirectoryURL(nil)
         AgentSettingsManifestStore.resetDefaultCacheForTesting()
         defer {
@@ -20,11 +20,12 @@ struct AppStorageDirectoryTests {
             AgentSettingsManifestStore.resetDefaultCacheForTesting()
         }
 
-        let supportDirectory = UserHomeDirectory.current()
+        let defaultSupportDirectory = UserHomeDirectory.current()
             .appendingPathComponent(".zencode", isDirectory: true)
             .standardizedFileURL
+        let supportDirectory = AppStorageDirectory.appSupportDirectoryURL()
 
-        #expect(AppStorageDirectory.defaultSupportDirectoryURL() == supportDirectory)
+        #expect(AppStorageDirectory.defaultSupportDirectoryURL() == defaultSupportDirectory)
         #expect(ZenFileService.supportDirectoryURL() == supportDirectory)
         #expect(AgentsContextService().globalAgentsFileURL() == supportDirectory.appendingPathComponent("AGENTS.md"))
         #expect(SavedSessionsStore().sessionsFileURL() == supportDirectory.appendingPathComponent("sessions.json"))

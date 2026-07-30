@@ -2,76 +2,6 @@
 
 import PackageDescription
 
-/// Bundled feature products intentionally use the same name for their SwiftPM
-/// target, product, built executable, and installed filename. Keep the
-/// package-only build details together so those names and source paths are not
-/// repeated across products, `zen` dependencies, and target declarations.
-struct BundledFeatureTargetDefinition {
-    let executableName: String
-    let sourceRelativePath: String
-    let dependencies: [Target.Dependency]
-    /// The executable may live below the copied feature root when a bundled
-    /// feature also contains a reusable library target.
-    let executableTargetRelativePath: String?
-
-    init(
-        executableName: String,
-        sourceRelativePath: String,
-        dependencies: [Target.Dependency],
-        executableTargetRelativePath: String? = nil
-    ) {
-        self.executableName = executableName
-        self.sourceRelativePath = sourceRelativePath
-        self.dependencies = dependencies
-        self.executableTargetRelativePath = executableTargetRelativePath
-    }
-}
-
-let bundledFeatureTargetDefinitions: [BundledFeatureTargetDefinition] = [
-    BundledFeatureTargetDefinition(
-        executableName: "search-tools-feature",
-        sourceRelativePath: "Sources/Features/SearchTools",
-        dependencies: ["FeatureKit", "LocalToolsSupport"]
-    ),
-    BundledFeatureTargetDefinition(
-        executableName: "web-tools-feature",
-        sourceRelativePath: "Sources/Features/WebTools",
-        dependencies: ["FeatureKit", "ToolCore"]
-    ),
-    BundledFeatureTargetDefinition(
-        executableName: "browser-tools-feature",
-        sourceRelativePath: "Sources/Features/BrowserTools",
-        dependencies: ["BrowserToolsFeature"],
-        executableTargetRelativePath: "Sources/Features/BrowserTools/Executable"
-    ),
-    BundledFeatureTargetDefinition(
-        executableName: "git-tools-feature",
-        sourceRelativePath: "Sources/Features/GitTools",
-        dependencies: ["FeatureKit", "ToolCore"]
-    ),
-    BundledFeatureTargetDefinition(
-        executableName: "swift-tools-feature",
-        sourceRelativePath: "Sources/Features/SwiftTools",
-        dependencies: ["FeatureKit", "ToolCore"]
-    ),
-    BundledFeatureTargetDefinition(
-        executableName: "xcode-tools-feature",
-        sourceRelativePath: "Sources/Features/XcodeTools",
-        dependencies: ["XcodeToolsFeature"],
-        executableTargetRelativePath: "Sources/Features/XcodeTools/Executable"
-    ),
-    BundledFeatureTargetDefinition(
-        executableName: "figma-tools-feature",
-        sourceRelativePath: "Sources/Features/FigmaTools",
-        dependencies: ["FeatureKit", "ToolCore", "FeatureMCPBridgeKit"]
-    ),
-    BundledFeatureTargetDefinition(
-        executableName: "jira-tools-feature",
-        sourceRelativePath: "Sources/Features/JiraTools",
-        dependencies: ["FeatureKit", "ToolCore"]
-    )
-]
-
 /// Swift 6.3 `MemberImportVisibility` requires every file to import the modules
 /// that define the members it uses, instead of relying on transitively visible
 /// members. Enable it uniformly for every local Swift target and combine it with
@@ -80,7 +10,7 @@ let memberImportVisibilitySettings: [SwiftSetting] = [
     .enableUpcomingFeature("MemberImportVisibility")
 ]
 
-var products: [Product] = [
+let products: [Product] = [
     .library(
         name: "ZenCODECore",
         targets: ["ZenCODECore"]
@@ -115,34 +45,17 @@ var products: [Product] = [
     )
 ]
 
-products += bundledFeatureTargetDefinitions.map {
-    .executable(name: $0.executableName, targets: [$0.executableName])
-}
-
-var zenCODEDependencies: [Target.Dependency] = [
+let zenCODEDependencies: [Target.Dependency] = [
     "ZenCODECore",
     "ZenCODESetup",
     "ZenPackageMetadata"
 ]
 
-for feature in bundledFeatureTargetDefinitions {
-    zenCODEDependencies.append(
-        .target(
-            name: feature.executableName,
-            condition: feature.executableName == "xcode-tools-feature"
-                ? .when(platforms: [.macOS])
-                : nil
-        )
-    )
-}
-
 let zenCODESwiftSettings: [SwiftSetting] = memberImportVisibilitySettings + [
     .define("SWIFTPM_NON_SANDBOX_TUI")
 ]
 
-var targets: [Target] = []
-
-targets += [
+let targets: [Target] = [
     .target(
         name: "ZenPackageMetadata",
         dependencies: [],
@@ -202,17 +115,7 @@ targets += [
             "ToolCore",
             "FeatureMCPBridgeKit"
         ],
-        path: "Sources/Features/XcodeTools/Feature",
-        swiftSettings: memberImportVisibilitySettings
-    ),
-    .target(
-        name: "BrowserToolsFeature",
-        dependencies: [
-            "FeatureKit",
-            "ToolCore",
-            .product(name: "Crypto", package: "swift-crypto")
-        ],
-        path: "Sources/Features/BrowserTools/Feature",
+        path: "Sources/XcodeToolsFeature",
         swiftSettings: memberImportVisibilitySettings
     ),
     .target(
@@ -288,39 +191,14 @@ targets += [
         swiftSettings: memberImportVisibilitySettings
     ),
     .testTarget(
-        name: "BrowserToolsFeatureTests",
-        dependencies: [
-            "BrowserToolsFeature",
-            "FeatureKit",
-            "ZenCODECore"
-        ],
-        swiftSettings: memberImportVisibilitySettings
-    ),
-    .testTarget(
         name: "LocalToolsSupportTests",
         dependencies: [
             "LocalToolsSupport",
             "FeatureKit"
         ],
         swiftSettings: memberImportVisibilitySettings
-    ),
-    .testTarget(
-        name: "JiraToolsFeatureTests",
-        dependencies: [
-            "jira-tools-feature"
-        ],
-        swiftSettings: memberImportVisibilitySettings
     )
 ]
-
-targets += bundledFeatureTargetDefinitions.map {
-    .executableTarget(
-        name: $0.executableName,
-        dependencies: $0.dependencies,
-        path: $0.executableTargetRelativePath ?? $0.sourceRelativePath,
-        swiftSettings: memberImportVisibilitySettings
-    )
-}
 
 let dependencies: [Package.Dependency] = [
     .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),

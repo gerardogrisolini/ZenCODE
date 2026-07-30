@@ -142,14 +142,6 @@ extension SwiftFeatureRuntimeTests {
 
     @Test
     func bundledSwiftOutlineReturnsCompactDeclarationMap() async throws {
-        let status = try #require(
-            SwiftFeatureRuntime.defaultFeatureStatuses()
-                .first { $0.id == "swift-tools" }
-        )
-        let executablePath = status.executablePath
-        let executableURL = URL(fileURLWithPath: executablePath)
-        try #require(FileManager.default.isExecutableFile(atPath: executableURL.path))
-
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-outline-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -158,6 +150,14 @@ extension SwiftFeatureRuntimeTests {
         try FileManager.default.createDirectory(
             at: rootURL,
             withIntermediateDirectories: true
+        )
+        // Optional features are self-contained SwiftPM packages, not products
+        // of the root graph. Build the real package in this test's UUID scratch
+        // directory, then exercise the exact executable users install.
+        let executableURL = try Self.buildOptionalFeatureProduct(
+            named: "swift-tools-feature",
+            sourceRelativePath: "Sources/Features/SwiftTools",
+            scratchPath: rootURL.appendingPathComponent("swift-package-scratch", isDirectory: true)
         )
         let sourceURL = rootURL.appendingPathComponent("Feature.swift")
         try """
@@ -711,118 +711,172 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
-    func bundledExecutableCandidatesIncludeSourcePackageBuildProductsFromOtherWorkingDirectory() throws {
-        let outsideWorkingDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("feature-cwd-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: outsideWorkingDirectory)
-        }
-        try FileManager.default.createDirectory(
-            at: outsideWorkingDirectory,
-            withIntermediateDirectories: true
-        )
-        let packageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
-        let packageBuildPrefix = packageRoot
-            .appendingPathComponent(".build", isDirectory: true)
-            .path + "/"
-
-        let candidates = SwiftFeatureRuntime.bundledExecutableCandidateURLs(
-            named: "git-tools-feature",
-            fileManager: .default,
-            workingDirectoryURL: outsideWorkingDirectory
-        )
-
-        #expect(
-            candidates.contains {
-                $0.path.hasPrefix(packageBuildPrefix)
-                    && $0.lastPathComponent == "git-tools-feature"
-            }
-        )
-    }
-
-    @Test
-    func bundledExecutableCandidatesIncludeReleaseFeaturesDirectoryNextToBinary() throws {
-        let binaryDirectoryURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("feature-release-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: binaryDirectoryURL)
-        }
-        try FileManager.default.createDirectory(
-            at: binaryDirectoryURL,
-            withIntermediateDirectories: true
-        )
-
-        let candidates = SwiftFeatureRuntime.bundledExecutableCandidateURLs(
-            named: "web-tools-feature",
-            fileManager: .default,
-            pathEnvironment: nil,
-            commandLineArgument: nil,
-            executableDirectoryURLs: [binaryDirectoryURL]
-        )
-        let expectedURL = binaryDirectoryURL
-            .appendingPathComponent("features", isDirectory: true)
-            .appendingPathComponent("web-tools-feature")
-            .standardizedFileURL
-
-        #expect(candidates.contains { $0.path == expectedURL.path })
-    }
-
-    @Test
-    func bundledExecutableCandidatesIncludeInstallerFeatureDirectoryNextToBinary() throws {
-        let binaryDirectoryURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("feature-install-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: binaryDirectoryURL)
-        }
-        try FileManager.default.createDirectory(
-            at: binaryDirectoryURL,
-            withIntermediateDirectories: true
-        )
-
-        let candidates = SwiftFeatureRuntime.bundledExecutableCandidateURLs(
-            named: "git-tools-feature",
-            fileManager: .default,
-            pathEnvironment: nil,
-            commandLineArgument: nil,
-            executableDirectoryURLs: [binaryDirectoryURL]
-        )
-        let expectedURL = binaryDirectoryURL
-            .appendingPathComponent("zen-features", isDirectory: true)
-            .appendingPathComponent("git-tools-feature")
-            .standardizedFileURL
-
-        #expect(candidates.contains { $0.path == expectedURL.path })
-    }
-
-    @Test
-    func bundledExecutableCandidatesResolveInvocationThroughPath() throws {
+    func uninstalledOptionalFeatureIsUnavailableWithInstallInstructions() throws {
         let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("feature-path-\(UUID().uuidString)", isDirectory: true)
-        let binaryDirectoryURL = rootURL.appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("feature-not-installed-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
         }
         try FileManager.default.createDirectory(
-            at: binaryDirectoryURL,
+            at: rootURL,
             withIntermediateDirectories: true
         )
-        let coderURL = binaryDirectoryURL.appendingPathComponent("ZenCODE")
-        try "#!/bin/sh\n".write(to: coderURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o755],
-            ofItemAtPath: coderURL.path
+
+        let statuses = SwiftFeatureRuntime.defaultFeatureStatuses(
+            searchRoots: [rootURL],
+            includeTools: false,
+            includeDisabled: true
+        )
+        let gitStatus = try #require(statuses.first { $0.id == "git-tools" })
+
+        #expect(gitStatus.source == .bundled)
+        #expect(!gitStatus.available)
+        #expect(!gitStatus.enabled)
+        #expect(gitStatus.issue == SwiftFeatureRuntime.optionalFeatureNotInstalledIssue)
+        // The reported path is the destination the installer will create, not an
+        // executable shipped next to the binary.
+        #expect(
+            gitStatus.executablePath
+                == rootURL
+                    .appendingPathComponent("git-tools", isDirectory: true)
+                    .appendingPathComponent(".build/release/git-tools-feature")
+                    .standardizedFileURL
+                    .path
+        )
+    }
+
+    @Test
+    func uninstalledOptionalFeaturesContributeNoBundlesOrTools() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("feature-empty-root-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
         )
 
-        let candidates = SwiftFeatureRuntime.bundledExecutableCandidateURLs(
-            named: "figma-tools-feature",
-            fileManager: .default,
-            pathEnvironment: binaryDirectoryURL.path,
-            commandLineArgument: "ZenCODE"
+        #expect(SwiftFeatureRuntime.defaultFeatureBundles(searchRoots: [rootURL]).isEmpty)
+        #expect(SwiftFeatureRuntime.defaultFeatureToolDescriptors(searchRoots: [rootURL]).isEmpty)
+    }
+
+    @Test
+    func optionalFeatureCatalogReportsCatalogIdentityAndInstallPath() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("feature-optional-list-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
         )
-        let expectedURL = binaryDirectoryURL
-            .appendingPathComponent("figma-tools-feature")
+
+        let features = SwiftFeatureRuntime.optionalFeatures(searchRoots: [rootURL])
+        let git = try #require(features.first { $0.id == "git-tools" })
+
+        #expect(git.productName == "git-tools-feature")
+        #expect(git.displayName == "Git")
+        #expect(git.sourceRelativePath == "Sources/Features/GitTools")
+        #expect(!git.installed)
+        #expect(!git.enabled)
+        #expect(!git.built)
+        #expect(git.supportedOnCurrentPlatform)
+        #expect(
+            git.installPath
+                == rootURL.appendingPathComponent("git-tools", isDirectory: true)
+                    .standardizedFileURL
+                    .path
+        )
+    }
+
+    /// Builds one self-contained optional feature without using or probing the
+    /// root package's build products. The caller owns `scratchPath` and removes
+    /// it with its UUID test root.
+    static func buildOptionalFeatureProduct(
+        named productName: String,
+        sourceRelativePath: String,
+        scratchPath: URL
+    ) throws -> URL {
+        let packageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
+        let featurePackageURL = packageRoot.appendingPathComponent(sourceRelativePath, isDirectory: true)
+        var environment = ProcessInfo.processInfo.environment
+        environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = scratchPath
+            .appendingPathComponent("support", isDirectory: true)
+            .path
+
+        _ = try runFeaturePackageProcess(
+            arguments: [
+                "swift",
+                "build",
+                "--scratch-path",
+                scratchPath.path,
+                "--product",
+                productName
+            ],
+            currentDirectoryURL: featurePackageURL,
+            environment: environment
+        )
+        let binPathData = try runFeaturePackageProcess(
+            arguments: [
+                "swift",
+                "build",
+                "--scratch-path",
+                scratchPath.path,
+                "--show-bin-path"
+            ],
+            currentDirectoryURL: featurePackageURL,
+            environment: environment
+        )
+        let binPath = String(decoding: binPathData, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let executableURL = URL(fileURLWithPath: binPath, isDirectory: true)
+            .appendingPathComponent(productName)
             .standardizedFileURL
+        guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
+            throw SwiftFeaturePackageBuildError.missingExecutable(executableURL.path)
+        }
+        return executableURL
+    }
 
-        #expect(candidates.contains { $0.path == expectedURL.path })
+    private static func runFeaturePackageProcess(
+        arguments: [String],
+        currentDirectoryURL: URL,
+        environment: [String: String]
+    ) throws -> Data {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = arguments
+        process.currentDirectoryURL = currentDirectoryURL
+        process.environment = environment
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        let outputData = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            throw SwiftFeaturePackageBuildError.commandFailed(
+                arguments: arguments,
+                output: String(decoding: outputData, as: UTF8.self)
+            )
+        }
+        return outputData
+    }
+
+    private enum SwiftFeaturePackageBuildError: LocalizedError {
+        case missingExecutable(String)
+        case commandFailed(arguments: [String], output: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .missingExecutable(let path):
+                return "Optional feature build did not produce executable at \(path)."
+            case .commandFailed(let arguments, let output):
+                return "\(arguments.joined(separator: " ")) failed: \(output)"
+            }
+        }
     }
 }
