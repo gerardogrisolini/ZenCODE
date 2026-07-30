@@ -77,8 +77,10 @@ The installers build and install only `zen`; they no longer build or copy a
 `zen-features/` directory of bundled executables. They remove that legacy
 directory, and when bootstrapped from a temporary URL checkout retain a
 source-only copy under `~/.zencode/source/`. A local-checkout installer uses its
-existing checkout instead. They offer the optional-feature picker at the end
-when a controlling terminal is available. Each selection is copied and compiled
-on demand into
-`~/.zencode/features/<id>/` through `zen --install-features`. Use
+existing checkout instead. The installers no longer offer an optional-feature
+picker: features are installed, updated, enabled, and disabled from the Features
+step of `zen --setup`, whose `Update installed` group reinstalls a package from
+the current source. Each selection is copied and compiled on demand into
+`~/.zencode/features/<id>/` through the same runtime path as
+`zen --install-features`. Use
 `ZENCODE_SUPPORT_DIRECTORY` to relocate both paths in automated environments.

@@ -76,8 +76,8 @@ curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scri
 
 Drive the agent through configured remote providers (`zen --setup`). The
 standalone agent, TUI, and ACP bridge work normally. Optional Swift feature
-packages are selected at the end of the installer or installed later with
-`zen --install-features`; they are compiled on demand under
+packages are selected from the Features step of `zen --setup`, or installed
+later with `zen --install-features`; they are compiled on demand under
 `~/.zencode/features/<id>/`, not distributed as executables next to `zen`.
 
 Windows is supported through WSL. Install Ubuntu first, then run the Linux

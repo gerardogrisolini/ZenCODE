@@ -99,9 +99,16 @@ uninstalled feature remains visible as installable but contributes no available
 tools to a profile or `/tools` selection. After installation, its package can be
 selected and managed exactly like a local Builder feature.
 
-At the end of the macOS/Linux installer, an interactive terminal is offered the
-same **Features** picker. The installer removes the legacy `zen-features/`
-directory and, when it was bootstrapped from a temporary URL checkout, keeps a
+The **Features** step of `zen --setup` covers the same lifecycle. Its rows are
+grouped as `Bundled`/`Generated` (check to enable, uncheck to disable),
+`Installable` (not installed yet), and `Update installed`. Checking an
+`Update installed` row reinstalls that package from the current ZenCODE source
+and rebuilds it, which is how an installed feature picks up source changes; the
+reinstall also applies the enabled state expressed by that feature's own row.
+
+The macOS/Linux installers do not offer a feature picker: they install `zen`
+only. They remove the legacy `zen-features/`
+directory and, when bootstrapped from a temporary URL checkout, keep a
 source-only copy at `~/.zencode/source/` so future installs still work after
 that temporary checkout is removed. An installer launched from a local checkout
 uses that checkout directly. Set `ZENCODE_SUPPORT_DIRECTORY` to relocate both

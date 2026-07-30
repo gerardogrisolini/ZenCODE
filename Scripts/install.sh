@@ -4,10 +4,11 @@ set -euo pipefail
 
 # ZenCODE macOS installer
 #
-# Builds ZenCODE and installs its binary. Optional Swift features are installed
-# afterwards, on request, as local source packages. When launched outside a
-# repository checkout, for example with curl | bash, the installer keeps a
-# source copy for later feature builds before removing its temporary checkout.
+# Builds ZenCODE and installs its binary. Optional Swift features are not
+# installed here: select them later from 'zen --setup', which builds them from
+# source on demand. When launched outside a repository checkout, for example
+# with curl | bash, the installer keeps a source copy for those later feature
+# builds before removing its temporary checkout.
 #
 # Environment overrides:
 #   INSTALL_DIR    Directory for the ZenCODE binary (default: /usr/local/bin)
@@ -52,10 +53,11 @@ usage() {
     cat <<'EOF'
 ZenCODE macOS installer
 
-Builds ZenCODE and installs its binary. Optional Swift features are installed
-afterwards, on request, as local source packages. When launched outside a
-repository checkout, for example with curl | bash, the installer keeps a
-source copy for later feature builds before removing its temporary checkout.
+Builds ZenCODE and installs its binary. Optional Swift features are not
+installed here: select them later from 'zen --setup', which builds them from
+source on demand. When launched outside a repository checkout, for example with
+curl | bash, the installer keeps a source copy for those later feature builds
+before removing its temporary checkout.
 
 Environment overrides:
   INSTALL_DIR    Directory for the ZenCODE binary (default: /usr/local/bin)
@@ -194,28 +196,6 @@ persist_source_checkout() {
     rm -rf "$destination"
     mv "$staging" "$destination"
     printf '%s\n' "$destination"
-}
-
-select_optional_features() {
-    local zen_binary="$1"
-    local source_root="$2"
-
-    # curl | bash leaves stdin occupied by the script. Prefer the controlling
-    # terminal when it exists, but never make a successful ZenCODE installation
-    # fail just because optional feature selection is unavailable.
-    if { exec 3</dev/tty; } 2>/dev/null; then
-        echo ""
-        echo "Select optional features to install from source:"
-        if ! "$zen_binary" --install-features --zen-package-path "$source_root" <&3; then
-            echo "Warning: optional feature selection did not complete." >&2
-            echo "Run '${zen_binary} --install-features --zen-package-path ${source_root}' to retry." >&2
-        fi
-        exec 3<&-
-    else
-        echo ""
-        echo "No interactive terminal is available; no optional features were installed."
-        echo "Run '${zen_binary} --install-features --zen-package-path ${source_root}' after installation to select them."
-    fi
 }
 
 # Clone REPO_URL at REF into DEST. A full 40-hex commit SHA cannot be used with
@@ -385,5 +365,4 @@ echo ""
 echo "Make sure ${INSTALL_DIR} is in your PATH."
 echo ""
 echo "Configure a provider with: zen --setup"
-
-select_optional_features "${INSTALL_DIR}/zen" "$SOURCE_CHECKOUT_DIR"
+echo "Optional Swift features are installed from the Features step of that setup."
