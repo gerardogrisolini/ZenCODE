@@ -99,11 +99,201 @@ struct TerminalInteractiveLineReaderTests {
         let sequence = TerminalInteractiveLineReader.redrawSequence(
             prompt: "Feature id: ",
             buffer: Array("github"),
-            cursorIndex: 6
+            cursorIndex: 6,
+            terminalColumns: 80
         )
 
         #expect(sequence == "\r\u{1B}[2KFeature id: github")
         #expect(!sequence.hasPrefix("\n"))
+    }
+
+    @Test
+    func redrawLayoutPlacesCursorBeforeAndAfterExplicitNewline() {
+        let buffer = Array("one\ntwo")
+        let beforeNewline = TerminalInteractiveLineReader.renderLayout(
+            prompt: "> ",
+            buffer: buffer,
+            cursorIndex: 3,
+            terminalColumns: 20
+        )
+        let afterNewline = TerminalInteractiveLineReader.renderLayout(
+            prompt: "> ",
+            buffer: buffer,
+            cursorIndex: 4,
+            terminalColumns: 20
+        )
+
+        #expect(beforeNewline.text == "> one\r\ntwo")
+        #expect(beforeNewline.lineCount == 2)
+        #expect(beforeNewline.cursorRow == 0)
+        #expect(beforeNewline.cursorColumn == 5)
+        #expect(afterNewline.cursorRow == 1)
+        #expect(afterNewline.cursorColumn == 0)
+        #expect(
+            TerminalInteractiveLineReader.redrawSequence(
+                prompt: "> ",
+                buffer: buffer,
+                cursorIndex: 3,
+                terminalColumns: 20
+            ) == "\r\u{1B}[2K> one\r\ntwo\u{1B}[1A\r\u{1B}[5C"
+        )
+        #expect(
+            TerminalInteractiveLineReader.redrawSequence(
+                prompt: "> ",
+                buffer: buffer,
+                cursorIndex: 4,
+                terminalColumns: 20
+            ) == "\r\u{1B}[2K> one\r\ntwo\r"
+        )
+    }
+
+    @Test
+    func redrawLayoutTraversesSoftWrappedRows() {
+        let buffer = Array("abcdef")
+        let beforeWrappedCharacter = TerminalInteractiveLineReader.renderLayout(
+            prompt: ">",
+            buffer: buffer,
+            cursorIndex: 3,
+            terminalColumns: 5
+        )
+        let afterWrappedCharacter = TerminalInteractiveLineReader.renderLayout(
+            prompt: ">",
+            buffer: buffer,
+            cursorIndex: 4,
+            terminalColumns: 5
+        )
+
+        #expect(beforeWrappedCharacter.text == "> abc\r\ndef")
+        #expect(beforeWrappedCharacter.lineCount == 2)
+        #expect(beforeWrappedCharacter.cursorRow == 0)
+        #expect(beforeWrappedCharacter.cursorColumn == 4)
+        #expect(afterWrappedCharacter.cursorRow == 1)
+        #expect(afterWrappedCharacter.cursorColumn == 1)
+        #expect(
+            TerminalInteractiveLineReader.redrawSequence(
+                prompt: ">",
+                buffer: buffer,
+                cursorIndex: 3,
+                terminalColumns: 5
+            ) == "\r\u{1B}[2K> abc\r\ndef\u{1B}[1A\r\u{1B}[4C"
+        )
+        #expect(
+            TerminalInteractiveLineReader.redrawSequence(
+                prompt: ">",
+                buffer: buffer,
+                cursorIndex: 4,
+                terminalColumns: 5
+            ) == "\r\u{1B}[2K> abc\r\ndef\r\u{1B}[1C"
+        )
+    }
+
+    @Test
+    func redrawLayoutPreservesANSIPromptSequencesAsZeroWidthTokens() {
+        let prompt = "\u{1B}[38;5;208m> \u{1B}[0m"
+        let layout = TerminalInteractiveLineReader.renderLayout(
+            prompt: prompt,
+            buffer: Array("abcd"),
+            cursorIndex: 2,
+            terminalColumns: 5
+        )
+
+        // The visible prompt is two cells wide, so the first physical row can
+        // contain exactly `> ab`. In particular, the renderer must not count
+        // or split either ANSI sequence while inserting its CRLF.
+        #expect(layout.text == "\u{1B}[38;5;208m> \u{1B}[0mab\r\ncd")
+        #expect(layout.lineCount == 2)
+        #expect(layout.cursorRow == 0)
+        #expect(layout.cursorColumn == 4)
+        #expect(
+            TerminalInteractiveLineReader.redrawSequence(
+                prompt: prompt,
+                buffer: Array("abcd"),
+                cursorIndex: 2,
+                terminalColumns: 5
+            ) == "\r\u{1B}[2K\u{1B}[38;5;208m> \u{1B}[0mab\r\ncd\u{1B}[1A\r\u{1B}[4C"
+        )
+    }
+
+    @Test
+    func redrawLayoutExpandsTabsAtDeterministicStops() {
+        let buffer = Array("ab\tc")
+        let layout = TerminalInteractiveLineReader.renderLayout(
+            prompt: "",
+            buffer: buffer,
+            cursorIndex: 3,
+            terminalColumns: 9
+        )
+
+        // At column two, a tab advances six cells to the next eight-cell tab
+        // stop. The following character therefore wraps deterministically.
+        #expect(layout.text == "ab      \r\nc")
+        #expect(layout.lineCount == 2)
+        #expect(layout.cursorRow == 0)
+        #expect(layout.cursorColumn == 8)
+        #expect(
+            TerminalInteractiveLineReader.redrawSequence(
+                prompt: "",
+                buffer: buffer,
+                cursorIndex: 3,
+                terminalColumns: 9
+            ) == "\r\u{1B}[2Kab      \r\nc\u{1B}[1A\r\u{1B}[8C"
+        )
+    }
+
+    @Test
+    func redrawClearsPreviousFootprintWhenDraftShrinks() {
+        #expect(
+            TerminalInteractiveLineReader.lineCount(
+                for: Array("abcde"),
+                terminalColumns: 5
+            ) == 2
+        )
+        #expect(
+            TerminalInteractiveLineReader.lineCount(
+                for: Array("abc"),
+                terminalColumns: 5
+            ) == 1
+        )
+        #expect(
+            TerminalInteractiveLineReader.redrawSequence(
+                prompt: "",
+                buffer: Array("x"),
+                cursorIndex: 1,
+                previousLineCount: 3,
+                previousCursorRow: 2,
+                terminalColumns: 5
+            ) == "\r\u{1B}[2A\u{1B}[0Jx"
+        )
+    }
+
+    @Test
+    func homeAndEndStayWithinCurrentLogicalLine() {
+        let buffer = Array("first\nsecond\nthird")
+
+        #expect(
+            TerminalInteractiveLineReader.homeCursorIndex(
+                in: buffer,
+                cursorIndex: 8
+            ) == 6
+        )
+        #expect(
+            TerminalInteractiveLineReader.endCursorIndex(
+                in: buffer,
+                cursorIndex: 8
+            ) == 12
+        )
+        #expect(
+            TerminalInteractiveLineReader.homeCursorIndex(
+                in: buffer,
+                cursorIndex: 12
+            ) == 6
+        )
+        #expect(
+            TerminalInteractiveLineReader.endCursorIndex(
+                in: buffer,
+                cursorIndex: 14
+            ) == buffer.count
+        )
     }
 
     @Test

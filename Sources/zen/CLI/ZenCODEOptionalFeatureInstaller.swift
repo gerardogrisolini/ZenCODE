@@ -111,12 +111,12 @@ enum ZenCODEOptionalFeatureInstaller {
                     build: true,
                     enable: true
                 )
-                if report.copied {
-                    writeStatus("  Copied: \(report.destinationPath)\n")
-                } else {
-                    writeStatus("  Source package was already current: \(report.destinationPath)\n")
-                }
                 if report.ok {
+                    if report.copied {
+                        writeStatus("  Copied: \(report.destinationPath)\n")
+                    } else {
+                        writeStatus("  Source package was already current: \(report.destinationPath)\n")
+                    }
                     writeStatus("  ✓ Built and enabled \(report.productName).\n")
                 } else {
                     didFail = true

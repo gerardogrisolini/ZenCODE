@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Release tags follow the strict `vX.Y.Z` contract described in
 [Docs/release.md](Docs/release.md) and must match `ZenPackageMetadata.version`.
 
+## [Unreleased]
+
 ## [1.0.7] - 2026-07-30
 
 ### Added
@@ -206,7 +208,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.6...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.7...HEAD
+[1.0.7]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.3...v1.0.4

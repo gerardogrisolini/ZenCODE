@@ -234,30 +234,46 @@ public final class TerminalInteractiveLineReader: Sendable {
     ) -> String? {
         var buffer: [Character] = []
         var cursorIndex = 0
-        var renderedLineCount = 1
+        let initialTerminalColumns = TerminalChat.terminalColumnCount(forceRefresh: true)
+        let initialLayout = Self.renderLayout(
+            prompt: prompt,
+            buffer: buffer,
+            cursorIndex: cursorIndex,
+            terminalColumns: initialTerminalColumns
+        )
+        var renderedLineCount = initialLayout.lineCount
+        var renderedCursorRow = initialLayout.cursorRow
         withPanelLock { state in
             state.historyIndex = nil
             state.draftBeforeHistory.removeAll()
         }
 
-        AgentOutput.standardError.writeString(prompt)
+        AgentOutput.standardError.writeString(initialLayout.text)
 
         return rawInput.withRawTerminal {
-            // Tracks how many terminal rows the previous redraw spanned so the
-            // next one can clear every row it occupied. Without this, a buffer
-            // containing newlines (Option/Shift+Enter) would leave earlier rows
-            // on screen and each redraw would reprint the whole buffer, making
-            // the prompt appear to duplicate itself line after line.
+            // Tracks the full old cursor location as well as the old footprint:
+            // after navigating within a multi-line draft, the cursor is often
+            // not on its final row and clearing must start at the first row.
             func redrawBuffer() {
+                let terminalColumns = TerminalChat.terminalColumnCount(forceRefresh: true)
                 AgentOutput.standardError.writeString(
                     Self.redrawSequence(
                         prompt: prompt,
                         buffer: buffer,
                         cursorIndex: cursorIndex,
-                        previousLineCount: renderedLineCount
+                        previousLineCount: renderedLineCount,
+                        previousCursorRow: renderedCursorRow,
+                        terminalColumns: terminalColumns
                     )
                 )
-                renderedLineCount = Self.lineCount(for: buffer)
+                let layout = Self.renderLayout(
+                    prompt: prompt,
+                    buffer: buffer,
+                    cursorIndex: cursorIndex,
+                    terminalColumns: terminalColumns
+                )
+                renderedLineCount = layout.lineCount
+                renderedCursorRow = layout.cursorRow
             }
 
             while true {
@@ -318,13 +334,13 @@ public final class TerminalInteractiveLineReader: Sendable {
                         continue
                     }
                     cursorIndex -= 1
-                    AgentOutput.standardError.writeString("\u{1B}[1D")
+                    redrawBuffer()
                 case .right:
                     guard cursorIndex < buffer.count else {
                         continue
                     }
                     cursorIndex += 1
-                    AgentOutput.standardError.writeString("\u{1B}[1C")
+                    redrawBuffer()
                 case .up:
                     guard let previous = previousHistory(currentBuffer: buffer) else {
                         continue
@@ -340,17 +356,25 @@ public final class TerminalInteractiveLineReader: Sendable {
                     cursorIndex = buffer.count
                     redrawBuffer()
                 case .home:
-                    guard cursorIndex > 0 else {
+                    let lineStart = Self.homeCursorIndex(
+                        in: buffer,
+                        cursorIndex: cursorIndex
+                    )
+                    guard cursorIndex != lineStart else {
                         continue
                     }
-                    AgentOutput.standardError.writeString("\u{1B}[\(cursorIndex)D")
-                    cursorIndex = 0
+                    cursorIndex = lineStart
+                    redrawBuffer()
                 case .end:
-                    guard cursorIndex < buffer.count else {
+                    let lineEnd = Self.endCursorIndex(
+                        in: buffer,
+                        cursorIndex: cursorIndex
+                    )
+                    guard cursorIndex != lineEnd else {
                         continue
                     }
-                    AgentOutput.standardError.writeString("\u{1B}[\(buffer.count - cursorIndex)C")
-                    cursorIndex = buffer.count
+                    cursorIndex = lineEnd
+                    redrawBuffer()
                 case .clearBeforeCursor:
                     guard cursorIndex > 0 else {
                         continue

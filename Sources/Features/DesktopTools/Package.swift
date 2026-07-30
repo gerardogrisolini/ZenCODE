@@ -24,6 +24,11 @@ let package = Package(
                 .product(name: "ToolCore", package: "ZenCODE")
             ],
             swiftSettings: memberImportVisibilitySettings
+        ),
+        .testTarget(
+            name: "DesktopToolsFeatureTests",
+            dependencies: ["desktop-tools-feature"],
+            swiftSettings: memberImportVisibilitySettings
         )
     ]
 )

@@ -277,10 +277,12 @@ extension SwiftFeatureRuntime {
 
     /// Installs one optional feature from source into the user feature root.
     ///
-    /// The package is copied atomically (staging directory + swap, `.build` and
+    /// The package is prepared in an unpublished staging directory (`.build` and
     /// other local artefacts excluded), its ZenCODE dependency path is rewritten
     /// to the resolved checkout, a Builder-shaped `feature.json` is generated,
-    /// and the release product is built before the feature is enabled.
+    /// and the release product is built before the complete directory replaces
+    /// the installed version. This keeps an existing feature available when a
+    /// candidate fails validation, building, or times out.
     @discardableResult
     public func installOptionalFeature(
         id: String,
@@ -318,20 +320,31 @@ extension SwiftFeatureRuntime {
             definition: definition,
             zenPackageRootURL: zenPackageRootURL
         )
+        let destinationDirectoryURL = featureRootURL()
+            .appendingPathComponent(definition.id, isDirectory: true)
+            .standardizedFileURL
+        let destinationPackageURL = destinationDirectoryURL
+            .appendingPathComponent("Package.swift")
+        let destinationManifestURL = destinationDirectoryURL
+            .appendingPathComponent(SwiftFeatureRegistry.manifestFilename)
+        let destinationExecutableURL = destinationDirectoryURL
+            .appendingPathComponent(".build", isDirectory: true)
+            .appendingPathComponent("release", isDirectory: true)
+            .appendingPathComponent(definition.executableName)
 
         // The manifest is written disabled: enabling happens only after the
         // release product exists, exactly like a Builder-created feature.
-        let materialized = try materializeFeaturePackage(
+        let staged = try stageOptionalFeaturePackage(
             definition: definition,
             sourceDirectoryURL: sourceDirectoryURL,
             zenPackageRootURL: zenPackageRootURL,
             displayName: Self.adoptedDisplayName(for: definition.id),
-            enabled: false,
-            overwrite: true
+            destinationDirectoryURL: destinationDirectoryURL
         )
+        defer { try? fileManager.removeItem(at: staged.destinationDirectoryURL) }
 
         let validation = try validateFeature(
-            arguments: ["manifestPath": materialized.manifestURL.path]
+            arguments: ["manifestPath": staged.manifestURL.path]
         )
         let blockingErrors = validation.errors.filter {
             !$0.hasPrefix("Executable is missing or not executable:")
@@ -339,22 +352,47 @@ extension SwiftFeatureRuntime {
         let command = ["swift", "build", "-c", "release", "--product", definition.executableName]
 
         guard blockingErrors.isEmpty else {
-            reloadFeatureBundles()
             return SwiftFeatureOptionalInstallReport(
                 ok: false,
                 id: id,
                 productName: definition.executableName,
                 sourcePath: sourceDirectoryURL.path,
                 zenPackagePath: zenPackageRootURL.path,
-                destinationPath: materialized.destinationDirectoryURL.path,
-                packagePath: materialized.packageURL.path,
-                manifestPath: materialized.manifestURL.path,
-                executablePath: materialized.executableURL.path,
+                destinationPath: destinationDirectoryURL.path,
+                packagePath: destinationPackageURL.path,
+                manifestPath: destinationManifestURL.path,
+                executablePath: destinationExecutableURL.path,
                 command: command,
-                copied: materialized.copied,
+                copied: false,
                 built: false,
                 enabled: false,
                 errors: blockingErrors,
+                validation: validation,
+                build: nil
+            )
+        }
+
+        // An executable from the source is deliberately excluded from the
+        // staging copy. Publishing an enabled feature without a fresh build
+        // would therefore advertise a feature that cannot be executed.
+        guard shouldBuild || !shouldEnable else {
+            return SwiftFeatureOptionalInstallReport(
+                ok: false,
+                id: id,
+                productName: definition.executableName,
+                sourcePath: sourceDirectoryURL.path,
+                zenPackagePath: zenPackageRootURL.path,
+                destinationPath: destinationDirectoryURL.path,
+                packagePath: destinationPackageURL.path,
+                manifestPath: destinationManifestURL.path,
+                executablePath: destinationExecutableURL.path,
+                command: command,
+                copied: false,
+                built: false,
+                enabled: false,
+                errors: [
+                    "Optional feature '\(id)' cannot be enabled when build=false. Build it successfully first."
+                ],
                 validation: validation,
                 build: nil
             )
@@ -364,21 +402,13 @@ extension SwiftFeatureRuntime {
         if shouldBuild {
             buildReport = try await buildFeature(
                 arguments: [
-                    "manifestPath": materialized.manifestURL.path,
+                    "manifestPath": staged.manifestURL.path,
                     "timeoutSeconds": Int(timeoutSeconds)
                 ]
             )
         }
 
         let built = buildReport?.ok ?? false
-        var enabled = false
-        if shouldEnable, buildReport?.ok ?? !shouldBuild {
-            try await setFeature(id: id, enabled: true)
-            enabled = true
-        } else {
-            reloadFeatureBundles()
-        }
-
         var errors: [String] = []
         if let buildReport, !buildReport.ok {
             errors.append(
@@ -386,20 +416,57 @@ extension SwiftFeatureRuntime {
             )
         }
 
+        guard errors.isEmpty else {
+            return SwiftFeatureOptionalInstallReport(
+                ok: false,
+                id: id,
+                productName: definition.executableName,
+                sourcePath: sourceDirectoryURL.path,
+                zenPackagePath: zenPackageRootURL.path,
+                destinationPath: destinationDirectoryURL.path,
+                packagePath: destinationPackageURL.path,
+                manifestPath: destinationManifestURL.path,
+                executablePath: destinationExecutableURL.path,
+                command: buildReport?.command ?? command,
+                copied: false,
+                built: false,
+                enabled: false,
+                errors: errors,
+                validation: validation,
+                build: buildReport
+            )
+        }
+
+        // Enable the staged manifest before publication. `setFeature(id:)`
+        // discovers the live package and would leave a successfully replaced
+        // package disabled if that post-swap mutation failed.
+        if shouldEnable {
+            try SwiftFeatureRegistry.setFeatureManifestEnabled(
+                manifestURL: staged.manifestURL,
+                enabled: true,
+                fileManager: fileManager
+            )
+        }
+        try publishStagedOptionalFeaturePackage(
+            stagedDirectoryURL: staged.destinationDirectoryURL,
+            destinationDirectoryURL: destinationDirectoryURL
+        )
+        reloadFeatureBundles()
+
         return SwiftFeatureOptionalInstallReport(
-            ok: errors.isEmpty && (!shouldEnable || enabled),
+            ok: true,
             id: id,
             productName: definition.executableName,
             sourcePath: sourceDirectoryURL.path,
             zenPackagePath: zenPackageRootURL.path,
-            destinationPath: materialized.destinationDirectoryURL.path,
-            packagePath: materialized.packageURL.path,
-            manifestPath: materialized.manifestURL.path,
-            executablePath: materialized.executableURL.path,
+            destinationPath: destinationDirectoryURL.path,
+            packagePath: destinationPackageURL.path,
+            manifestPath: destinationManifestURL.path,
+            executablePath: destinationExecutableURL.path,
             command: buildReport?.command ?? command,
-            copied: materialized.copied,
+            copied: true,
             built: built,
-            enabled: enabled,
+            enabled: shouldEnable,
             errors: errors,
             validation: validation,
             build: buildReport
@@ -435,6 +502,108 @@ extension SwiftFeatureRuntime {
         let manifestURL: URL
         let executableURL: URL
         let copied: Bool
+    }
+
+    /// Creates an unpublished package that can be validated and built without
+    /// changing an installed feature. The directory is hidden so registry scans
+    /// do not observe an in-flight candidate.
+    func stageOptionalFeaturePackage(
+        definition: BundledFeatureDefinition,
+        sourceDirectoryURL: URL,
+        zenPackageRootURL: URL,
+        displayName: String,
+        destinationDirectoryURL: URL
+    ) throws -> MaterializedFeaturePackage {
+        let featureRootURL = featureRootURL()
+        guard Self.path(destinationDirectoryURL, isDescendantOf: featureRootURL),
+              destinationDirectoryURL.path != featureRootURL.path else {
+            throw DirectToolError.permissionDenied(
+                "Features can only be installed under the generated features directory: \(featureRootURL.path)."
+            )
+        }
+
+        let sourcePackageURL = sourceDirectoryURL.appendingPathComponent("Package.swift")
+        guard fileManager.fileExists(atPath: sourcePackageURL.path) else {
+            throw DirectToolError.permissionDenied(
+                """
+                Feature package manifest not found: \(sourcePackageURL.path).
+                Optional features must be self-contained SwiftPM packages.
+                """
+            )
+        }
+        let packageContents = try Self.packageManifestRewritingZenPackagePath(
+            String(contentsOf: sourcePackageURL, encoding: .utf8),
+            zenPackagePath: zenPackageRootURL.path,
+            packageURL: sourcePackageURL
+        )
+        let manifestContents = try Self.adoptedFeatureManifestContents(
+            definition: definition,
+            displayName: displayName,
+            enabled: false
+        )
+
+        let stagingDirectoryURL = featureRootURL.appendingPathComponent(
+            ".zencode-feature-install-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(
+            at: stagingDirectoryURL,
+            withIntermediateDirectories: true
+        )
+        do {
+            try copyFeatureDirectoryContents(
+                from: sourceDirectoryURL,
+                to: stagingDirectoryURL
+            )
+            try packageContents.write(
+                to: stagingDirectoryURL.appendingPathComponent("Package.swift"),
+                atomically: true,
+                encoding: .utf8
+            )
+            try manifestContents.write(
+                to: stagingDirectoryURL.appendingPathComponent(SwiftFeatureRegistry.manifestFilename),
+                atomically: true,
+                encoding: .utf8
+            )
+        } catch {
+            try? fileManager.removeItem(at: stagingDirectoryURL)
+            throw error
+        }
+
+        return MaterializedFeaturePackage(
+            sourceDirectoryURL: sourceDirectoryURL,
+            destinationDirectoryURL: stagingDirectoryURL,
+            packageURL: stagingDirectoryURL.appendingPathComponent("Package.swift"),
+            manifestURL: stagingDirectoryURL
+                .appendingPathComponent(SwiftFeatureRegistry.manifestFilename),
+            executableURL: stagingDirectoryURL
+                .appendingPathComponent(".build", isDirectory: true)
+                .appendingPathComponent("release", isDirectory: true)
+                .appendingPathComponent(definition.executableName),
+            copied: false
+        )
+    }
+
+    /// Publishes a candidate only after it has passed validation/build. Replacing
+    /// sibling directories is atomic on the feature-root volume, preserving the
+    /// installed directory if the replacement itself cannot be completed.
+    func publishStagedOptionalFeaturePackage(
+        stagedDirectoryURL: URL,
+        destinationDirectoryURL: URL
+    ) throws {
+        if fileManager.fileExists(atPath: destinationDirectoryURL.path) {
+            _ = try fileManager.replaceItemAt(
+                destinationDirectoryURL,
+                withItemAt: stagedDirectoryURL,
+                backupItemName: nil,
+                options: []
+            )
+        } else {
+            try fileManager.moveItem(
+                at: stagedDirectoryURL,
+                to: destinationDirectoryURL
+            )
+        }
     }
 
     /// Copies a feature package into the user feature root and turns it into a

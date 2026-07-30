@@ -409,7 +409,7 @@ private struct DesktopRunTool: FeatureTool {
     }
 }
 
-private enum DesktopControlError: LocalizedError {
+enum DesktopControlError: LocalizedError {
     case invalidAction(String)
     case missingArgument(String, String)
     case invalidArgument(String, String)
@@ -441,6 +441,26 @@ private enum DesktopControlError: LocalizedError {
         case let .operationFailed(message):
             return message
         }
+    }
+}
+
+enum DesktopWindowSelectionPolicy {
+    static func selectedProcessID(
+        requestedWindowID: UInt32?,
+        matchingWindowPID: pid_t?,
+        fallbackProcessID: () -> pid_t?
+    ) throws -> pid_t {
+        if requestedWindowID != nil {
+            guard let matchingWindowPID else {
+                throw DesktopControlError.windowNotFound
+            }
+            return matchingWindowPID
+        }
+
+        guard let fallbackPID = fallbackProcessID() else {
+            throw DesktopControlError.appNotFound
+        }
+        return fallbackPID
     }
 }
 
@@ -1168,14 +1188,13 @@ private enum DesktopController {
         let expected = input.window_id.flatMap { id in
             windowRecords(onScreenOnly: false, matching: DesktopRunInput(copying: input, windowID: id)).first
         }
-        let pid: pid_t
-        if let expected {
-            pid = expected.pid
-        } else if let selected = matchingRunningApp(input, defaultToFrontmost: true) {
-            pid = selected.processIdentifier
-        } else {
-            throw DesktopControlError.appNotFound
-        }
+        let pid = try DesktopWindowSelectionPolicy.selectedProcessID(
+            requestedWindowID: input.window_id,
+            matchingWindowPID: expected?.pid,
+            fallbackProcessID: {
+                matchingRunningApp(input, defaultToFrontmost: true)?.processIdentifier
+            }
+        )
 
         let application = AXUIElementCreateApplication(pid)
         var rawWindows: CFTypeRef?

@@ -218,6 +218,128 @@ struct SwiftFeatureOptionalInstallationTests {
         )
     }
 
+    @Test
+    func failedOptionalFeatureUpdatePreservesThePreviousBuiltEnabledPackage() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("optional-update-transaction-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        let featureRootURL = rootURL.appendingPathComponent("features", isDirectory: true)
+        let checkoutURL = rootURL.appendingPathComponent("checkout", isDirectory: true)
+        try Self.writeZenPackageRoot(at: checkoutURL)
+
+        let runtime = SwiftFeatureRuntime(featureSearchRoots: [featureRootURL])
+        let definition = try #require(SwiftFeatureRuntime.bundledFeatureDefinition(id: "git-tools"))
+        let sourceURL = try #require(definition.sourceRelativePath)
+            .split(separator: "/")
+            .reduce(checkoutURL) { partialURL, component in
+                partialURL.appendingPathComponent(String(component), isDirectory: true)
+            }
+        try Self.writeFeaturePackage(at: sourceURL, productName: definition.executableName)
+        let sourceMainURL = sourceURL
+            .appendingPathComponent("Sources", isDirectory: true)
+            .appendingPathComponent(definition.executableName, isDirectory: true)
+            .appendingPathComponent("main.swift")
+        try "print(\"previous version\")\n".write(
+            to: sourceMainURL,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let installed = try await runtime.materializeFeaturePackage(
+            definition: definition,
+            sourceDirectoryURL: sourceURL,
+            zenPackageRootURL: checkoutURL,
+            displayName: "Git",
+            enabled: true,
+            overwrite: true
+        )
+        try Self.writeExecutable(at: installed.executableURL)
+        let previousSource = try String(
+            contentsOf: installed.destinationDirectoryURL
+                .appendingPathComponent("Sources", isDirectory: true)
+                .appendingPathComponent(definition.executableName, isDirectory: true)
+                .appendingPathComponent("main.swift"),
+            encoding: .utf8
+        )
+
+        // The candidate validates, but its product cannot compile. It must stay
+        // in staging and leave the built, enabled package above untouched.
+        try "this is not valid Swift\n".write(
+            to: sourceMainURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        let report = try await runtime.installOptionalFeature(
+            id: definition.id,
+            zenPackageRootURL: checkoutURL,
+            timeoutSeconds: 30
+        )
+
+        #expect(!report.ok)
+        #expect(!report.copied)
+        #expect(!report.built)
+        #expect(!report.enabled)
+        #expect(report.build?.ok == false)
+        #expect(
+            try String(
+                contentsOf: installed.destinationDirectoryURL
+                    .appendingPathComponent("Sources", isDirectory: true)
+                    .appendingPathComponent(definition.executableName, isDirectory: true)
+                    .appendingPathComponent("main.swift"),
+                encoding: .utf8
+            ) == previousSource
+        )
+        let record = try #require(
+            SwiftFeatureRegistry.featureRecord(
+                id: definition.id,
+                searchRoots: [featureRootURL]
+            )
+        )
+        #expect(record.manifestEnabled)
+        #expect(record.executableAvailable)
+    }
+
+    @Test
+    func optionalFeatureCannotBeEnabledWhenBuildIsSkipped() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("optional-build-enable-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        let featureRootURL = rootURL.appendingPathComponent("features", isDirectory: true)
+        let checkoutURL = rootURL.appendingPathComponent("checkout", isDirectory: true)
+        try Self.writeZenPackageRoot(at: checkoutURL)
+
+        let runtime = SwiftFeatureRuntime(featureSearchRoots: [featureRootURL])
+        let definition = try #require(SwiftFeatureRuntime.bundledFeatureDefinition(id: "git-tools"))
+        let sourceURL = try #require(definition.sourceRelativePath)
+            .split(separator: "/")
+            .reduce(checkoutURL) { partialURL, component in
+                partialURL.appendingPathComponent(String(component), isDirectory: true)
+            }
+        try Self.writeFeaturePackage(at: sourceURL, productName: definition.executableName)
+
+        let report = try await runtime.installOptionalFeature(
+            id: definition.id,
+            zenPackageRootURL: checkoutURL,
+            build: false,
+            enable: true
+        )
+
+        #expect(!report.ok)
+        #expect(!report.copied)
+        #expect(!report.built)
+        #expect(!report.enabled)
+        #expect(report.errors.contains { $0.contains("build=false") })
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: featureRootURL.appendingPathComponent(definition.id).path
+            )
+        )
+    }
+
     // MARK: - Catalog
 
     @Test
@@ -355,6 +477,37 @@ struct SwiftFeatureOptionalInstallationTests {
             to: sourceDirectoryURL.appendingPathComponent("main.swift"),
             atomically: true,
             encoding: .utf8
+        )
+    }
+
+    private static func writeZenPackageRoot(at directoryURL: URL) throws {
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        try """
+        // swift-tools-version: 6.3
+
+        import PackageDescription
+
+        let package = Package(name: "ZenCODE")
+        """.write(
+            to: directoryURL.appendingPathComponent("Package.swift"),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
+    private static func writeExecutable(at executableURL: URL) throws {
+        try FileManager.default.createDirectory(
+            at: executableURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "#!/bin/sh\nexit 0\n".write(
+            to: executableURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
         )
     }
 }
