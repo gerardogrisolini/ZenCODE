@@ -11,7 +11,6 @@ import Foundation
 import Testing
 import ToolCore
 #if os(macOS)
-import XcodeToolsFeature
 #endif
 
 extension AgentConfigurationTests {
@@ -68,32 +67,6 @@ extension AgentConfigurationTests {
             models: [model],
             selectedModelID: model.id,
             selectedThinkingSelection: selectedThinkingSelection
-        )
-    }
-
-    static func xcodeDiscovery(workspacePath: String) -> DirectMCPToolRuntime.XcodeDiscovery {
-        DirectMCPToolRuntime.XcodeDiscovery(
-            executor: XcodeToolExecutor(
-                configuration: MCPServerConfiguration(
-                    executablePath: "/usr/bin/false",
-                    arguments: [],
-                    environment: [:]
-                )
-            ),
-            tools: [
-                ToolDescriptor(
-                    name: "BuildProject",
-                    description: "Builds an Xcode project.",
-                    inputSchema: "{}"
-                )
-            ],
-            workspaceContexts: [
-                XcodeWorkspaceContext(
-                    workspacePath: workspacePath,
-                    defaultTabIdentifier: nil
-                )
-            ],
-            ownsExecutor: false
         )
     }
 }

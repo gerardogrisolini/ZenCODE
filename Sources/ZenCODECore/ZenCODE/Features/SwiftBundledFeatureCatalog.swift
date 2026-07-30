@@ -7,9 +7,6 @@
 
 import Foundation
 import ZenPackageMetadata
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 /// Runtime metadata and tool declarations for the optional feature packages
 /// shipped in the ZenCODE source tree.
@@ -31,11 +28,13 @@ enum SwiftBundledFeatureCatalog {
         let git = metadata(for: "git-tools")
         let swift = metadata(for: "swift-tools")
         let jira = metadata(for: "jira-tools")
+        #if os(macOS)
         let xcode = metadata(for: "xcode-tools")
+        #endif
         let figma = metadata(for: "figma-tools")
         let desktop = metadata(for: "desktop-tools")
 
-        return [
+        var definitions = [
             SwiftFeatureRuntime.BundledFeatureDefinition(
                 id: search.id,
                 executableName: search.productName,
@@ -93,20 +92,6 @@ enum SwiftBundledFeatureCatalog {
                 invocationTimeoutSeconds: 660
             ),
             SwiftFeatureRuntime.BundledFeatureDefinition(
-                id: XcodeToolIntegration.featureID,
-                executableName: xcode.productName,
-                description: "Build, test, preview, and inspect Xcode projects.",
-                sourceRelativePath: xcode.sourceRelativePath,
-                tools: [],
-                toolNamePrefixes: [
-                    XcodeToolIntegration.toolPrefix,
-                    XcodeToolIntegration.legacyToolPrefix
-                ],
-                toolNameAliases: XcodeToolIntegration.toolNameAliases,
-                discoversToolsAtRuntime: true,
-                invocationTimeoutSeconds: 3_660
-            ),
-            SwiftFeatureRuntime.BundledFeatureDefinition(
                 id: figma.id,
                 executableName: figma.productName,
                 description: "Inspect Figma files, frames, and design data.",
@@ -129,6 +114,32 @@ enum SwiftBundledFeatureCatalog {
                 invocationTimeoutSeconds: 180
             )
         ]
+        #if os(macOS)
+        definitions.insert(
+            SwiftFeatureRuntime.BundledFeatureDefinition(
+                id: xcode.id,
+                executableName: xcode.productName,
+                description: "Build, test, preview, and inspect Xcode projects.",
+                sourceRelativePath: xcode.sourceRelativePath,
+                tools: [],
+                toolNamePrefixes: ["xcode.", "Xcode"],
+                toolNameAliases: [
+                    "BuildProject",
+                    "DocumentationSearch",
+                    "ExecuteSnippet",
+                    "GetBuildLog",
+                    "GetTestList",
+                    "RenderPreview",
+                    "RunAllTests",
+                    "RunSomeTests"
+                ],
+                discoversToolsAtRuntime: true,
+                invocationTimeoutSeconds: 3_660
+            ),
+            at: 6
+        )
+        #endif
+        return definitions
     }
 
     private static func metadata(for id: String) -> ZenBundledFeatureMetadata {

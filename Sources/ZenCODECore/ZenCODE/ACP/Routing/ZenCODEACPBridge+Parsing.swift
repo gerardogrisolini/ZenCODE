@@ -8,42 +8,22 @@
 import FeatureMCPBridgeKit
 import Foundation
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 extension ZenCODEACPBridge {
     public struct ACPMCPServerDefinition: Sendable {
         public let name: String
         public let type: String
         public let configuration: MCPServerConfiguration
-        public let isXcodeCandidate: Bool
 
         public init(
             name: String,
             type: String,
-            configuration: MCPServerConfiguration,
-            isXcodeCandidate: Bool
+            configuration: MCPServerConfiguration
         ) {
             self.name = name
             self.type = type
             self.configuration = configuration
-            self.isXcodeCandidate = isXcodeCandidate
         }
-    }
-
-    /// Cross-platform detection of whether an MCP server definition targets
-    /// Xcode. Delegates to `DirectMCPToolRuntime.isXcodeServerCandidate`, which
-    /// uses name-based detection so an ACP-provided Xcode MCP server is
-    /// recognized identically on macOS and Linux.
-    static func isXcodeServerCandidate(
-        name: String,
-        configuration: MCPServerConfiguration
-    ) -> Bool {
-        DirectMCPToolRuntime.isXcodeServerCandidate(
-            name: name,
-            configuration: configuration
-        )
     }
 
     public func runtimeHistory(from value: Any?) -> [AgentRuntimeMessage] {
@@ -307,7 +287,7 @@ extension ZenCODEACPBridge {
             return false
         }
         let lowercasedKey = key.lowercased()
-        if lowercasedKey.hasPrefix("mcp_xcode") {
+        if lowercasedKey.hasPrefix("mcp_") {
             return false
         }
         return [
@@ -378,11 +358,7 @@ extension ZenCODEACPBridge {
             return ACPMCPServerDefinition(
                 name: name,
                 type: type,
-                configuration: configuration,
-                isXcodeCandidate: Self.isXcodeServerCandidate(
-                    name: name,
-                    configuration: configuration
-                )
+                configuration: configuration
             )
         case "http":
             guard let rawURL = stringValue(
@@ -403,11 +379,7 @@ extension ZenCODEACPBridge {
             return ACPMCPServerDefinition(
                 name: name,
                 type: type,
-                configuration: configuration,
-                isXcodeCandidate: Self.isXcodeServerCandidate(
-                    name: name,
-                    configuration: configuration
-                )
+                configuration: configuration
             )
         default:
             return nil

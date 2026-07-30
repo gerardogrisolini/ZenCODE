@@ -13,9 +13,6 @@ import Glibc
 #endif
 import Foundation
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 extension TerminalChat {
     public func createCurrentSession(
@@ -261,34 +258,8 @@ extension TerminalChat {
             selectedToolKeys,
             items: baseItems
         )
-        let dynamicToolPrefixes = TerminalToolSelectionCatalog.externalDiscoveryPrefixes(
-            for: selectedToolKeys,
-            items: baseItems
-        )
-        let requestedMCPDiscoveryToolNames = Set(
-            dynamicToolPrefixes.filter {
-                $0 == XcodeToolIntegration.toolPrefix || $0 == "figma."
-            }
-        )
-        let mcpDiscoveryToolNames = ExternalToolAvailability.discoverableToolPrefixes(
-            requestedMCPDiscoveryToolNames
-        )
-        let mcpDescriptors: [DirectToolDescriptor]
-        if discoverExternalTools, !mcpDiscoveryToolNames.isEmpty {
-            mcpDescriptors = await sessionRunner.mcpToolDescriptors(
-                allowedToolNames: mcpDiscoveryToolNames,
-                preferredWorkspaceRootURL: configuration.workingDirectory
-            )
-        } else {
-            mcpDescriptors = await sessionRunner.knownMCPToolDescriptors(
-                allowedToolNames: requestedMCPDiscoveryToolNames,
-                preferredWorkspaceRootURL: configuration.workingDirectory
-            )
-        }
-
-        let items = await toolSelectionItems(
-            additionalDescriptors: mcpDescriptors
-        )
+        _ = discoverExternalTools
+        let items = baseItems
         var allowedToolNames = TerminalToolSelectionCatalog.allowedToolNames(
             for: selectedToolKeys,
             items: items

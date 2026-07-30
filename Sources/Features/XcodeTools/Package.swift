@@ -17,10 +17,27 @@ let package = Package(
         .package(path: "../../..")
     ],
     targets: [
+        .target(
+            name: "XcodeToolsFeature",
+            dependencies: [
+                .product(name: "FeatureKit", package: "ZenCODE"),
+                .product(name: "ToolCore", package: "ZenCODE"),
+                .product(name: "FeatureMCPBridgeKit", package: "ZenCODE")
+            ],
+            swiftSettings: memberImportVisibilitySettings
+        ),
         .executableTarget(
             name: "xcode-tools-feature",
+            dependencies: ["XcodeToolsFeature"],
+            swiftSettings: memberImportVisibilitySettings
+        ),
+        .testTarget(
+            name: "XcodeToolsFeatureTests",
             dependencies: [
-                .product(name: "XcodeToolsFeature", package: "ZenCODE")
+                "XcodeToolsFeature",
+                .product(name: "FeatureKit", package: "ZenCODE"),
+                .product(name: "ToolCore", package: "ZenCODE"),
+                .product(name: "FeatureMCPBridgeKit", package: "ZenCODE")
             ],
             swiftSettings: memberImportVisibilitySettings
         )

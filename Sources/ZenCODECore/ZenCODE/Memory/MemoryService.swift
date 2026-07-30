@@ -73,20 +73,6 @@ public final class MemoryService {
 
     public func readEntries(
         scope: MemoryScope?,
-        for workspaceContext: XcodeWorkspaceContext?,
-        includeArchived: Bool = false,
-        limit: Int
-    ) -> [MemoryEntry] {
-        readEntries(
-            scope: scope,
-            workspaceRootURL: workspaceRootURL(for: workspaceContext),
-            includeArchived: includeArchived,
-            limit: limit
-        )
-    }
-
-    public func readEntries(
-        scope: MemoryScope?,
         workingDirectory: URL?,
         includeArchived: Bool = false,
         limit: Int
@@ -113,22 +99,6 @@ public final class MemoryService {
             .filter { includeArchived || !$0.isArchived }
             .prefix(max(limit, 0))
             .map { $0 }
-    }
-
-    public func searchEntries(
-        query: String,
-        scope: MemoryScope?,
-        for workspaceContext: XcodeWorkspaceContext?,
-        includeArchived: Bool = false,
-        limit: Int
-    ) -> [MemoryEntry] {
-        searchEntries(
-            query: query,
-            scope: scope,
-            workspaceRootURL: workspaceRootURL(for: workspaceContext),
-            includeArchived: includeArchived,
-            limit: limit
-        )
     }
 
     public func searchEntries(
@@ -185,19 +155,6 @@ public final class MemoryService {
         }
         .prefix(max(limit, 0))
         .map(\.entry)
-    }
-
-    @discardableResult
-    public func writeEntry(
-        content: String,
-        scope: MemoryScope,
-        workspaceContext: XcodeWorkspaceContext?
-    ) throws -> MemoryEntry {
-        try writeEntry(
-            content: content,
-            scope: scope,
-            workspaceRootURL: workspaceRootURL(for: workspaceContext)
-        )
     }
 
     @discardableResult
@@ -268,19 +225,6 @@ public final class MemoryService {
             Self.notifyMemoryEntriesChanged()
             return entries[index]
         }
-    }
-
-    @discardableResult
-    public func archiveEntry(
-        id rawIdentifier: String,
-        scope: MemoryScope?,
-        for workspaceContext: XcodeWorkspaceContext?
-    ) throws -> MemoryEntry {
-        try archiveEntry(
-            id: rawIdentifier,
-            scope: scope,
-            workspaceRootURL: workspaceRootURL(for: workspaceContext)
-        )
     }
 
     @discardableResult

@@ -10,7 +10,6 @@ import Foundation
 @testable import ZenCODECore
 import Testing
 import ToolCore
-import XcodeToolsFeature
 
 extension SwiftFeatureRuntimeTests {
     @Test
@@ -354,39 +353,6 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
-    func directToolExecutorMarksUnavailableXcodeToolsAsPermissionDenied() async throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("xcode-permission-denied-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-        try FileManager.default.createDirectory(
-            at: rootURL,
-            withIntermediateDirectories: true
-        )
-        let executor = DirectToolExecutor(
-            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
-        )
-
-        let result = await executor.execute(
-            sessionID: "test-session",
-            toolCall: DirectAgentToolCall(
-                id: "xcode-call-1",
-                name: "xcode.BuildProject",
-                argumentsObject: [:],
-                argumentsJSON: "{}"
-            ),
-            workingDirectory: rootURL,
-            allowedToolNames: ["xcode.BuildProject"]
-        )
-
-        #expect(result.status == .permissionDenied)
-        #expect(result.isPermissionDenied)
-        #expect(result.output.contains("Xcode MCP is not connected"))
-    }
-
-    @Test
     func directToolExecutorMarksGenericMCPPermissionFailures() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("mcp-permission-denied-\(UUID().uuidString)", isDirectory: true)
@@ -605,38 +571,4 @@ extension SwiftFeatureRuntimeTests {
         #expect(!result.output.contains("Git command cancelled."))
     }
 
-    @Test
-    func mcpManagedSwiftFeatureIDsExcludesXcodeOnlyWhenMcpProvidesIt() {
-        // (a) feature xcode-tools NOT excluded when mcpDescriptors is empty,
-        //     even though xcode tool names are requested.
-        let empty = DirectToolExecutor.mcpManagedSwiftFeatureIDs(
-            mcpDescriptors: []
-        )
-        #expect(empty.isEmpty)
-
-        // (b) feature xcode-tools IS excluded when mcpDescriptors contains an xcode tool.
-        let withXcode = DirectToolExecutor.mcpManagedSwiftFeatureIDs(
-            mcpDescriptors: [
-                DirectToolDescriptor(
-                    name: "xcode.BuildProject",
-                    description: "Builds an Xcode project",
-                    inputSchema: #"{"type":"object","properties":{}}"#
-                )
-            ]
-        )
-        #expect(withXcode.count == 1)
-        #expect(withXcode.contains("xcode-tools"))
-
-        // Non-xcode MCP descriptors must not exclude the xcode feature.
-        let nonXcode = DirectToolExecutor.mcpManagedSwiftFeatureIDs(
-            mcpDescriptors: [
-                DirectToolDescriptor(
-                    name: "figma.read",
-                    description: "Reads a Figma file",
-                    inputSchema: #"{"type":"object","properties":{}}"#
-                )
-            ]
-        )
-        #expect(nonXcode.isEmpty)
-    }
 }

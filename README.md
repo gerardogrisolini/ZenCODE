@@ -149,13 +149,12 @@ complete command reference.
 - `Sources/ToolCore`: dependency-light tool wire, descriptor, environment, and compatibility types.
 - `Sources/FeatureKit`: feature contracts, schemas, process protocol, and runner support.
 - `Sources/FeatureMCPBridgeKit`: generic MCP feature integration, transports, and injectable local-transport policies.
-- `Sources/XcodeToolsFeature`: `XcodeToolsFeature`, the root-package Xcode MCP implementation library.
 - `Sources/LocalToolsSupport`: reusable local file, search, text, and patch tooling.
 - `Sources/ZenPackageMetadata`: internal bundled-feature distribution metadata and catalog parity support.
 - `Sources/ZenCODECore`: reusable agent runtime, TUI, tools, skills, ACP, config, memory, sessions, and feature management.
 - `Sources/ZenCODESetup`: interactive setup for standalone `zen`.
 - `Sources/zen`: the `zen` composition root and command-line dispatch.
-- `Sources/Features`: self-contained optional SwiftPM feature packages. They are excluded from the root graph and installed on demand into `~/.zencode/features/<id>/` as local Builder-compatible features.
+- `Sources/Features`: self-contained optional SwiftPM feature packages. They own their implementations and package-local tests, are excluded from the root graph, and are installed on demand into `~/.zencode/features/<id>/` as local Builder-compatible features. The macOS-only Xcode integration lives entirely in `Sources/Features/XcodeTools`.
 - `Tests`: SwiftPM test targets.
 - `Docs`: detailed guides and feature documentation.
 

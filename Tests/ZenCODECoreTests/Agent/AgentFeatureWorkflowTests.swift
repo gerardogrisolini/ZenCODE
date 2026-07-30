@@ -428,10 +428,10 @@ extension AgentConfigurationTests {
     func featureListShowsBundledAndGeneratedPackagesIncludingDisabled() throws {
         let statuses = [
             featureStatus(
-                id: "xcode-tools",
+                id: "design-tools",
                 source: .bundled,
                 tools: [],
-                toolNamePrefixes: ["xcode."],
+                toolNamePrefixes: ["design."],
                 discoversToolsAtRuntime: true,
                 enabled: false
             ),
@@ -450,12 +450,12 @@ extension AgentConfigurationTests {
 
         let rendered = TerminalChat.renderFeatureStatusList(statuses)
 
-        #expect(rendered.contains("Xcode [xcode-tools] - disabled, bundled, discovers tools at runtime"))
+        #expect(rendered.contains("Design Tools [design-tools] - disabled, bundled, discovers tools at runtime"))
         #expect(rendered.contains("Linear [custom-linear] - enabled, generated, editable, 1 tool: linear.issue.list"))
         #expect(rendered.contains("Git [git-tools] - enabled, bundled, 1 tool: git.status"))
         #expect(!rendered.contains("core"))
         #expect(rendered.contains("Run /feature list to open the enable/disable menu."))
-        #expect(try TerminalChat.resolvedFeatureID("xcode", statuses: statuses) == "xcode-tools")
+        #expect(try TerminalChat.resolvedFeatureID("Design Tools", statuses: statuses) == "design-tools")
         #expect(try TerminalChat.resolvedFeatureID("Linear", statuses: statuses) == "custom-linear")
     }
 
@@ -488,10 +488,10 @@ extension AgentConfigurationTests {
             featureStatus(id: "search-tools", source: .bundled, tools: []),
             featureStatus(id: "custom-linear", displayName: "Linear", source: .generated, tools: []),
             featureStatus(
-                id: "xcode-tools",
+                id: "design-tools",
                 source: .generated,
                 tools: [],
-                adoptedFrom: "xcode-tools"
+                adoptedFrom: "design-tools"
             )
         ]
 
@@ -508,12 +508,12 @@ extension AgentConfigurationTests {
             nil
         ])
         #expect(items.map(\.title) == [
+            "Design Tools [design-tools]",
             "Figma [figma-tools]",
             "Git [git-tools]",
             "Jira [jira-tools]",
             "Linear [custom-linear]",
-            "Search [search-tools]",
-            "Xcode [xcode-tools]"
+            "Search [search-tools]"
         ])
     }
 
@@ -631,23 +631,18 @@ extension AgentConfigurationTests {
         let items = TerminalChat.toolSelectionItems(
             featureStatuses: [
                 featureStatus(
-                    id: "xcode-tools",
-                    source: .bundled,
-                    tools: [],
-                    toolNamePrefixes: ["xcode."],
+                    id: "custom-design",
+                    displayName: "Design",
+                    description: "Design tools.",
+                    source: .generated,
+                    tools: ["design.Build"],
+                    toolNamePrefixes: ["design."],
                     discoversToolsAtRuntime: true
-                )
-            ],
-            additionalDescriptors: [
-                DirectToolDescriptor(
-                    name: "xcode.BuildProject",
-                    description: "Xcode: build project",
-                    inputSchema: "{}"
                 )
             ]
         )
-        let xcodeItem = try #require(items.first { $0.title == "Xcode" })
-        let selectedKeys = try TerminalChat.parseToolSelection("xcode", items: items)
+        let designItem = try #require(items.first { $0.title == "Design" })
+        let selectedKeys = try TerminalChat.parseToolSelection("design", items: items)
         let allowedToolNames = TerminalToolSelectionCatalog.allowedToolNames(
             for: selectedKeys,
             items: items
@@ -658,10 +653,10 @@ extension AgentConfigurationTests {
             selectedKeys: selectedKeys
         )
 
-        #expect(xcodeItem.detail == "Build, test, preview, and inspect Xcode projects.")
-        #expect(allowedToolNames.contains("xcode.BuildProject"))
-        #expect(rendered.contains("Xcode (1)"))
-        #expect(!rendered.contains("xcode.BuildProject"))
-        #expect(rendered.hasPrefix("Active tools: Xcode (1)"))
+        #expect(designItem.detail == "Design tools.")
+        #expect(allowedToolNames.contains("design.Build"))
+        #expect(rendered.contains("Design (1)"))
+        #expect(!rendered.contains("design.Build"))
+        #expect(rendered.hasPrefix("Active tools: Design (1)"))
     }
 }

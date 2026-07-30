@@ -10,9 +10,6 @@ import Foundation
 @testable import ZenCODECore
 import Testing
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 extension ACPCompatibilityTests {
     func makeBridge(
@@ -20,8 +17,7 @@ extension ACPCompatibilityTests {
         availableAgents: [AgentProfile] = AgentProfileStore.defaultProfiles(),
         agentName: String? = nil,
         backendFactory: AgentRuntimeBackendFactory? = nil,
-        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
-        xcodeIsRunning: @escaping @Sendable () -> Bool = { false }
+        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime()
     ) throws -> ZenCODEACPBridge {
         let configuration = try AgentConfiguration(
             hostedModelID: models.first?.id ?? "model",
@@ -35,38 +31,7 @@ extension ACPCompatibilityTests {
             configuration: configuration,
             writer: ACPWriter(),
             backendFactory: backendFactory,
-            mcpRuntime: mcpRuntime,
-            xcodeIsRunning: xcodeIsRunning
-        )
-    }
-
-    static func xcodeRuntime(workspacePath: String) -> DirectMCPToolRuntime {
-        DirectMCPToolRuntime(
-            xcodeDiscoveryProvider: {
-                DirectMCPToolRuntime.XcodeDiscovery(
-                    executor: XcodeToolExecutor(
-                        configuration: MCPServerConfiguration(
-                            executablePath: "/usr/bin/false",
-                            arguments: [],
-                            environment: [:]
-                        )
-                    ),
-                    tools: [
-                        ToolDescriptor(
-                            name: "BuildProject",
-                            description: "Builds an Xcode project",
-                            inputSchema: "{}"
-                        )
-                    ],
-                    workspaceContexts: [
-                        XcodeWorkspaceContext(
-                            workspacePath: workspacePath,
-                            defaultTabIdentifier: nil
-                        )
-                    ],
-                    ownsExecutor: false
-                )
-            }
+            mcpRuntime: mcpRuntime
         )
     }
 
@@ -125,41 +90,6 @@ extension ZenCODEACPBridge {
             option["id"] as? String == "thinking"
         }
         return thinking?["currentValue"] as? String
-    }
-}
-
-actor XcodeDiscoveryProbe {
-    private var callCount = 0
-
-    func discovery(workspacePath: String) -> DirectMCPToolRuntime.XcodeDiscovery {
-        callCount += 1
-        return DirectMCPToolRuntime.XcodeDiscovery(
-            executor: XcodeToolExecutor(
-                configuration: MCPServerConfiguration(
-                    executablePath: "/usr/bin/false",
-                    arguments: [],
-                    environment: [:]
-                )
-            ),
-            tools: [
-                ToolDescriptor(
-                    name: "BuildProject",
-                    description: "Builds an Xcode project",
-                    inputSchema: "{}"
-                )
-            ],
-            workspaceContexts: [
-                XcodeWorkspaceContext(
-                    workspacePath: workspacePath,
-                    defaultTabIdentifier: nil
-                )
-            ],
-            ownsExecutor: false
-        )
-    }
-
-    func count() -> Int {
-        callCount
     }
 }
 

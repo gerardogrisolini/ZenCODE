@@ -52,15 +52,12 @@ struct ZenDiagnosticsTests {
         let parent = try temporaryDirectory()
         let supportDirectory = parent.appendingPathComponent("support", isDirectory: true)
         defer {
-            AppStorageDirectory.configureSupportDirectoryURL(nil)
             ZenLogger.configure(nil)
             try? FileManager.default.removeItem(at: parent)
         }
-        AppStorageDirectory.configureSupportDirectoryURL(supportDirectory)
-        ZenLogger.configure(nil)
-
         let configuration = ZenLogger.previewConfiguration(
-            environment: ["ZENCODE_LOG": "debug"]
+            environment: ["ZENCODE_LOG": "debug"],
+            supportDirectory: supportDirectory
         )
 
         #expect(configuration?.minimumLevel == .debug)
@@ -73,19 +70,17 @@ struct ZenDiagnosticsTests {
     func doctorReadsLegacyManifestsWithoutChangingPermissions() throws {
         let root = try temporaryDirectory()
         defer {
-            AppStorageDirectory.configureSupportDirectoryURL(nil)
             try? FileManager.default.removeItem(at: root)
         }
-        AppStorageDirectory.configureSupportDirectoryURL(root)
         try FileManager.default.createDirectory(
             at: root,
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o755]
         )
 
-        let settingsURL = AgentSettingsManifestStore.settingsURL()
-        let agentsURL = AgentProfileStore.agentsManifestURL()
-        let permissionsURL = AgentPermissionsManifestStore.permissionsURL()
+        let settingsURL = root.appendingPathComponent("settings.json")
+        let agentsURL = root.appendingPathComponent("agents.json")
+        let permissionsURL = root.appendingPathComponent("permissions.json")
         let encoder = JSONEncoder()
         try encoder.encode(AgentSettingsManifest(models: [])).write(to: settingsURL)
         try encoder.encode(
@@ -100,7 +95,7 @@ struct ZenDiagnosticsTests {
         }
 
         let before = try [settingsURL, agentsURL, permissionsURL].map { try fileMode(at: $0) }
-        let report = ZenDoctor.runReport()
+        let report = ZenDoctor.runReport(supportDirectory: root)
         let after = try [settingsURL, agentsURL, permissionsURL].map { try fileMode(at: $0) }
 
         #expect(before == [0o644, 0o644, 0o644])

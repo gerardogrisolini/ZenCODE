@@ -21,8 +21,8 @@ extension SwiftFeatureRuntime {
                 continue
             }
 
-            // Runtime discovery: invokes `--list-tools` subprocess and blocks
-            // until completion (or user consent for xcode-tools). Results are
+            // Runtime discovery invokes the `--list-tools` subprocess and waits
+            // for completion, including any feature-owned consent. Results are
             // cached per-feature in `runtimeDiscoveredToolsByFeatureID`, so only
             // the first call for each feature incurs the cost. When the
             // SwiftFeatureRuntime is shared (parent → subagent), the cache is

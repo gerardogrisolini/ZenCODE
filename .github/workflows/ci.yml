@@ -68,6 +68,14 @@ jobs:
         # cases concurrently can park that shared manager and cascade timeouts.
         run: swift test --no-parallel
 
+      - name: Test standalone Xcode tools feature
+        run: |
+          swift test --package-path Sources/Features/XcodeTools
+          swift build -c release --package-path Sources/Features/XcodeTools --product xcode-tools-feature
+          output="$(swift run -c release --package-path Sources/Features/XcodeTools xcode-tools-feature --list-tools)"
+          printf '%s\n' "$output"
+          grep -q '"tools"' <<<"$output"
+
       - name: Build release product
         run: swift build -c release --product zen
 

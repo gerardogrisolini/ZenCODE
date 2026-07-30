@@ -884,7 +884,7 @@ extension RemoteSessionSnapshotTests {
             apiKey: nil,
             transport: fixture.transport,
             streamEndpointBaseURLOverride: fixture.baseURL,
-            mcpRuntime: await borrowedXcodeMCPRuntime()
+            mcpRuntime: await borrowedFeatureMCPRuntime()
         )
 
         _ = try await client.streamChatCompletions(

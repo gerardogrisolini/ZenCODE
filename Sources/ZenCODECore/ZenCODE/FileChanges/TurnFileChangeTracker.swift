@@ -7,9 +7,6 @@
 
 import Foundation
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 public actor TurnFileChangeTracker {
     struct Snapshot {
@@ -40,12 +37,9 @@ public actor TurnFileChangeTracker {
 
     public init(workspacePath: String?) {
         let baseURL: URL
-        if let normalizedWorkspaceRoot = XcodeWorkspaceContext.normalizedProjectRootPath(
-            explicitPath: nil,
-            workspacePath: workspacePath
-        ),
-           !normalizedWorkspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            baseURL = URL(fileURLWithPath: normalizedWorkspaceRoot).standardizedFileURL
+        if let workspacePath = workspacePath?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !workspacePath.isEmpty {
+            baseURL = URL(fileURLWithPath: workspacePath).standardizedFileURL
         } else {
             baseURL = Self.platformDefaultBaseDirectoryURL()
         }
@@ -232,15 +226,10 @@ public actor TurnFileChangeTracker {
             let rawPatch = request.arguments["patch"]?.stringValue
                 ?? request.arguments["diff"]?.stringValue
             return compactedPaths(Self.patchPathCandidates(from: rawPatch))
-        case "local.move", "XcodeMV":
+        case "local.move":
             return compactedPaths([
                 request.arguments["sourcePath"]?.stringValue,
                 request.arguments["destinationPath"]?.stringValue
-            ])
-        case "XcodeUpdate", "XcodeWrite", "XcodeRM":
-            return compactedPaths([
-                request.arguments["filePath"]?.stringValue
-                    ?? request.arguments["path"]?.stringValue
             ])
         default:
             return []
@@ -303,11 +292,7 @@ public actor TurnFileChangeTracker {
     }
 
     private static func normalizedTrackedToolName(_ name: String) -> String {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if XcodeToolIntegration.isToolName(trimmedName) {
-            return XcodeToolIntegration.rawToolName(fromPublicName: trimmedName)
-        }
-        return trimmedName
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func jsonValueArguments(

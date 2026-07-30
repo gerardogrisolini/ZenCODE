@@ -200,7 +200,7 @@ extension SwiftFeatureRuntime {
         return true
         #else
         // `isInstalledOnLinux` is the distribution authority for features whose
-        // integration only exists on macOS (Xcode).
+        // platform integration only exists on macOS.
         return metadata?.isInstalledOnLinux ?? true
         #endif
     }

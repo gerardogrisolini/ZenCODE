@@ -5,9 +5,6 @@
 
 import Foundation
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 extension DirectMCPToolRuntime {
     func discoverFamilyIfNeeded(
@@ -15,6 +12,7 @@ extension DirectMCPToolRuntime {
         preferredWorkspaceRootURL: URL?,
         force: Bool
     ) async {
+        _ = preferredWorkspaceRootURL
         guard force || autoDiscoverExternalConnectors else {
             return
         }
@@ -25,124 +23,12 @@ extension DirectMCPToolRuntime {
             discoveringFamilies.remove(family)
         }
 
+        // Connector-specific discovery belongs to optional feature processes.
+        // Direct MCP servers are installed explicitly through
+        // `installExternalMCPServer` and require no vendor-specific branch here.
         switch family {
-        case .xcode:
-            if let existingServer = servers.first(where: { $0.family == .xcode }) {
-                if !serverMatchesPreferredWorkspace(
-                    existingServer,
-                    preferredWorkspaceRootURL: preferredWorkspaceRootURL
-                ) {
-                    // Keep the process-scoped Xcode authorization alive; descriptor filtering
-                    // hides this server from workspaces it does not belong to.
-                    return
-                }
-                return
-            }
-            let previousXcodeServers = servers.filter { $0.family == .xcode }
-            guard force || !didAttemptXcodeDiscovery || !previousXcodeServers.isEmpty else {
-                return
-            }
-            let fence = shutdownFence()
-            servers.removeAll { $0.family == .xcode }
-            // Suspension point: superseded executors tear down asynchronously.
-            for server in previousXcodeServers {
-                await server.disconnectIfOwned()
-            }
-            guard isActive(fence) else {
-                return
-            }
-            // Suspension point: the provider connects to Xcode and may return a
-            // live executor long after a shutdown() drained the runtime.
-            guard let xcodeServer = await discoverXcodeServer(
-                preferredWorkspaceRootURL: preferredWorkspaceRootURL
-            ) else {
-                return
-            }
-            guard isActive(fence) else {
-                await disconnectStaleExecutor(
-                    xcodeServer.backend,
-                    ownsBackend: xcodeServer.ownsBackend
-                )
-                return
-            }
-            servers.append(xcodeServer)
-            didAttemptXcodeDiscovery = true
-        case .figma:
-            // Figma discovery belongs to figma-tools-feature, which attaches
-            // the feature-owned presentation contract before publishing tools.
+        case .figma, .external:
             return
-        case .external:
-            return
-        }
-    }
-
-    func discoverXcodeServer(
-        preferredWorkspaceRootURL: URL?
-    ) async -> Server? {
-        guard let discovery = await xcodeDiscoveryProvider() else {
-            return nil
-        }
-
-        let tools = ToolDescriptor.canonicalized(discovery.tools)
-        guard !tools.isEmpty else {
-            if discovery.ownsExecutor {
-                await discovery.executor.disconnect()
-            }
-            return nil
-        }
-
-        guard let matchedWorkspaceContext = matchedXcodeWorkspaceContext(
-            in: discovery.workspaceContexts,
-            preferredWorkspaceRootURL: preferredWorkspaceRootURL
-        ) else {
-            if discovery.ownsExecutor {
-                await discovery.executor.disconnect()
-            }
-            return nil
-        }
-
-        return Server(
-            family: .xcode,
-            toolPrefix: XcodeToolIntegration.toolPrefix,
-            backend: .xcode(discovery.executor),
-            descriptors: tools.map { tool in
-                DirectToolDescriptor(
-                    name: XcodeToolIntegration.publicToolName(for: tool.name),
-                    description: XcodeToolIntegration.publicDescription(tool.description),
-                    inputSchema: tool.inputSchema,
-                    title: tool.title,
-                    outputSchema: tool.outputSchema,
-                    presentation: XcodeToolIntegration.presentation(for: tool)
-                )
-            },
-            workspaceRootPath: matchedWorkspaceContext.normalizedWorkspaceRootPath,
-            ownsBackend: discovery.ownsExecutor,
-            mcpConfiguration: nil
-        )
-    }
-
-    public static func defaultXcodeDiscovery() async -> XcodeDiscovery? {
-        guard XcodeToolIntegration.isRunning(),
-              let configuration = XcodeToolIntegration.defaultConfiguration() else {
-            return nil
-        }
-
-        let executor = XcodeToolExecutor(configuration: configuration)
-        do {
-            let tools = try await executor.loadTools()
-            let workspaceContexts = try await executor.loadWorkspaceContexts()
-            return XcodeDiscovery(
-                executor: executor,
-                tools: tools,
-                workspaceContexts: workspaceContexts
-            )
-        } catch {
-            ZenLogger.info(
-                .xcodeToolExecutor,
-                "Xcode MCP discovery failed after consent resolution: \(error.localizedDescription)"
-            )
-            await executor.disconnect()
-            return nil
         }
     }
 
@@ -167,29 +53,6 @@ extension DirectMCPToolRuntime {
         return normalized.nilIfBlank ?? "mcp"
     }
 
-    func matchedXcodeWorkspaceContext(
-        in contexts: [XcodeWorkspaceContext],
-        preferredWorkspaceRootURL: URL?
-    ) -> XcodeWorkspaceContext? {
-        XcodeToolIntegration.matchedWorkspaceContext(
-            in: contexts,
-            preferredWorkspaceRootURL: preferredWorkspaceRootURL
-        )
-    }
-
-    func serverMatchesPreferredWorkspace(
-        _ server: Server,
-        preferredWorkspaceRootURL: URL?
-    ) -> Bool {
-        guard server.family == .xcode else {
-            return true
-        }
-        return XcodeToolIntegration.workspaceMatches(
-            workspaceRootPath: server.workspaceRootPath,
-            preferredWorkspaceRootURL: preferredWorkspaceRootURL
-        )
-    }
-
     func serverIsRequested(
         _ server: Server,
         allowedToolNames: Set<String>?
@@ -204,10 +67,7 @@ extension DirectMCPToolRuntime {
             return true
         }
         return server.descriptors.contains { descriptor in
-            Self.toolName(
-                descriptor.name,
-                isAllowedBy: allowedToolNames
-            )
+            Self.toolName(descriptor.name, isAllowedBy: allowedToolNames)
         }
     }
 
@@ -222,5 +82,4 @@ extension DirectMCPToolRuntime {
             allowedToolName.hasSuffix(".") && toolName.hasPrefix(allowedToolName)
         }
     }
-
 }

@@ -126,15 +126,22 @@ public enum ZenDoctor {
     /// Builds a diagnostic report without mutating any state.
     public static func runReport(
         fileManager: FileManager = .default,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        supportDirectory: URL? = nil
     ) -> ZenDoctorReport {
-        let paths = manifestPaths(fileManager: fileManager)
+        let paths = manifestPaths(
+            fileManager: fileManager,
+            supportDirectory: supportDirectory
+        )
         return ZenDoctorReport(sections: [
             environmentSection(environment: environment),
             supportFilesSection(paths: paths, fileManager: fileManager),
             configurationSection(paths: paths, fileManager: fileManager),
             permissionsSection(paths: paths, fileManager: fileManager),
-            diagnosticsSection(environment: environment)
+            diagnosticsSection(
+                environment: environment,
+                supportDirectory: paths.supportDirectory
+            )
         ])
     }
 
@@ -559,7 +566,10 @@ public enum ZenDoctor {
 
     // MARK: - Diagnostics logging
 
-    private static func diagnosticsSection(environment: [String: String]) -> ZenDoctorSection {
+    private static func diagnosticsSection(
+        environment: [String: String],
+        supportDirectory: URL
+    ) -> ZenDoctorSection {
         var checks: [ZenDoctorCheck] = []
 
         // Resolve the logger configuration directly from the environment rather
@@ -567,7 +577,10 @@ public enum ZenDoctor {
         // creates) the log file on first resolution, which would be a side
         // effect; resolving the configuration here keeps the doctor read-only
         // even when logging is enabled, without ever touching stdout.
-        if let configuration = ZenLogger.previewConfiguration(environment: environment) {
+        if let configuration = ZenLogger.previewConfiguration(
+            environment: environment,
+            supportDirectory: supportDirectory
+        ) {
             let level = configuration.minimumLevel.label
             checks.append(
                 ZenDoctorCheck(
@@ -664,13 +677,17 @@ public enum ZenDoctor {
 
     // MARK: - Helpers
 
-    private static func manifestPaths(fileManager: FileManager) -> ManifestPaths {
-        let supportDirectory = AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
+    private static func manifestPaths(
+        fileManager: FileManager,
+        supportDirectory: URL?
+    ) -> ManifestPaths {
+        let supportDirectory = supportDirectory?.standardizedFileURL
+            ?? AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
         return ManifestPaths(
             supportDirectory: supportDirectory,
-            settings: AgentSettingsManifestStore.settingsURL(fileManager: fileManager),
-            agents: AgentProfileStore.agentsManifestURL(fileManager: fileManager),
-            permissions: AgentPermissionsManifestStore.permissionsURL(fileManager: fileManager)
+            settings: supportDirectory.appendingPathComponent("settings.json"),
+            agents: supportDirectory.appendingPathComponent("agents.json"),
+            permissions: supportDirectory.appendingPathComponent("permissions.json")
         )
     }
 

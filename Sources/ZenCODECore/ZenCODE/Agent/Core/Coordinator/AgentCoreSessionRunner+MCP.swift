@@ -26,21 +26,6 @@ extension AgentCoreSessionRunner {
         )
     }
 
-    public func installBorrowedXcodeExecutor(
-        _ executor: XcodeToolExecutor?,
-        tools: [ToolDescriptor]
-    ) async {
-        guard let executor,
-              !tools.isEmpty else {
-            return
-        }
-
-        await mcpRuntime.installBorrowedXcodeExecutor(
-            executor,
-            tools: tools
-        )
-    }
-
     public func installACPProvidedMCPServer(
         name: String,
         configuration: MCPServerConfiguration

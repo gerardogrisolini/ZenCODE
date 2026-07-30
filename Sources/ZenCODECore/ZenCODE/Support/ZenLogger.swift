@@ -80,7 +80,6 @@ public enum ZenLogCategory: String, Sendable {
     case userInput = "UserInputService"
     case viewModel = "ViewModel"
     case viewModelRuntime = "ViewModelRuntimeService"
-    case xcodeToolExecutor = "XcodeToolExecutor"
     case conversationHistory = "ConversationHistorySupport"
     case diagnostics = "Diagnostics"
 }
@@ -171,11 +170,14 @@ public enum ZenLogger {
     /// writing anything. This is intentionally separate from ``isEnabled`` so
     /// inspection commands such as `zen --doctor` remain read-only.
     public static func previewConfiguration(
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        supportDirectory: URL? = nil
     ) -> ZenLoggerConfiguration? {
-        ZenLoggerConfiguration.resolve(
+        let supportDirectory = supportDirectory?.standardizedFileURL
+            ?? AppStorageDirectory.appSupportDirectoryURL()
+        return ZenLoggerConfiguration.resolve(
             environment: environment,
-            defaultLogDirectory: AppStorageDirectory.appSupportDirectoryURL()
+            defaultLogDirectory: supportDirectory
                 .appendingPathComponent("logs", isDirectory: true)
                 .standardizedFileURL
         )

@@ -14,9 +14,6 @@ import Glibc
 import Dispatch
 import Foundation
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 public enum TerminalChatError: LocalizedError {
     case noInputReceived
@@ -236,45 +233,7 @@ public enum TerminalToolSelectionCatalog {
             return matchedKeys
         }
 
-        return externalConnectorSelectionKeys(
-            for: trimmedToken,
-            items: items
-        )
-    }
-
-    private static func externalConnectorSelectionKeys(
-        for rawToken: String,
-        items: [TerminalToolSelectionItem]
-    ) -> Set<String> {
-        let normalizedToken = normalizedLookupKey(rawToken)
-        if XcodeToolIntegration.isFeatureReference(rawToken) {
-            return featurePackageSelectionKeys(
-                matchingAllowedToolNames: { name in
-                    XcodeToolIntegration.isFeatureReference(name)
-                },
-                items: items
-            )
-        }
-
-        if normalizedToken == "figma" || rawToken.hasPrefix("figma.") {
-            return featurePackageSelectionKeys(
-                matchingAllowedToolNames: { $0.hasPrefix("figma.") },
-                items: items
-            )
-        }
-
         return []
-    }
-
-    private static func featurePackageSelectionKeys(
-        matchingAllowedToolNames isMatch: (String) -> Bool,
-        items: [TerminalToolSelectionItem]
-    ) -> Set<String> {
-        Set(
-            items.compactMap { item in
-                item.allowedToolNames.contains(where: isMatch) ? item.key : nil
-            }
-        )
     }
 
     private static func coreItems(
@@ -373,34 +332,18 @@ public enum TerminalToolSelectionCatalog {
         let descriptors = AgentToolSelection.selectableDescriptors(
             additionalDescriptors: additionalDescriptors
         )
-        return [
-            bundledFeatureSelectionStatus(
-                id: "search-tools",
-                tools: descriptors.filter { $0.name.hasPrefix("search.") }.map(\.name)
-            ),
-            bundledFeatureSelectionStatus(
-                id: "web-tools",
-                tools: descriptors.filter { $0.name.hasPrefix("web.") }.map(\.name)
-            ),
-            bundledFeatureSelectionStatus(
-                id: "git-tools",
-                tools: descriptors.filter { $0.name.hasPrefix("git.") }.map(\.name)
-            ),
-            bundledFeatureSelectionStatus(
-                id: "swift-tools",
-                tools: descriptors.filter { $0.name.hasPrefix("swift.") }.map(\.name)
-            ),
-            bundledFeatureSelectionStatus(
-                id: XcodeToolIntegration.featureID,
-                tools: descriptors.filter { XcodeToolIntegration.isToolName($0.name) }.map(\.name),
-                toolNamePrefixes: [XcodeToolIntegration.toolPrefix]
-            ),
-            bundledFeatureSelectionStatus(
-                id: "figma-tools",
-                tools: descriptors.filter { $0.name.hasPrefix("figma.") }.map(\.name),
-                toolNamePrefixes: ["figma."]
+        return SwiftBundledFeatureCatalog.definitions().map { feature in
+            let tools = descriptors.filter { descriptor in
+                feature.tools.contains(where: { $0.name == descriptor.name })
+                    || feature.toolNamePrefixes.contains(where: descriptor.name.hasPrefix)
+                    || feature.toolNameAliases.contains(descriptor.name)
+            }.map(\.name)
+            return bundledFeatureSelectionStatus(
+                id: feature.id,
+                tools: tools,
+                toolNamePrefixes: feature.toolNamePrefixes
             )
-        ].filter { !$0.tools.isEmpty || !$0.toolNamePrefixes.isEmpty }
+        }.filter { !$0.tools.isEmpty || !$0.toolNamePrefixes.isEmpty }
     }
 
     private static func bundledFeatureDescription(id: String) -> String? {
@@ -496,11 +439,7 @@ public enum TerminalToolSelectionCatalog {
     private static func externalDiscoveryPrefixes(
         from statuses: [SwiftFeatureStatus]
     ) -> Set<String> {
-        Set(
-            statuses.flatMap(\.toolNamePrefixes).filter {
-                $0 == XcodeToolIntegration.toolPrefix || $0 == "figma."
-            }
-        )
+        Set(statuses.flatMap(\.toolNamePrefixes))
     }
 
     private static func requiresWorkspaceAccess(
@@ -556,8 +495,6 @@ public enum TerminalToolSelectionCatalog {
             aliases.insert("git")
         case "swift-tools":
             aliases.formUnion(["swift", "build", "test"])
-        case "xcode-tools":
-            aliases.insert("xcode")
         case "figma-tools":
             aliases.insert("figma")
         case "desktop-tools":

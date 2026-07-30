@@ -114,7 +114,7 @@ values so they cannot be emitted into generated Swift source.
 - **Generated feature**: opens the existing package and prepares an implementation prompt.
 - **Bundled feature**: creates a local editable copy in `~/.zencode/features/`, then prepares the same prompt.
 
-For `xcode-tools` (bundled multi-target feature), edit the feature-owned implementation under `Sources/XcodeTools/Feature`, not shared `ToolCore` or `FeatureMCPBridgeKit`.
+For `xcode-tools` (bundled multi-target feature), edit the feature-owned implementation under `Sources/Features/XcodeTools/Sources/XcodeToolsFeature`, not shared `ToolCore` or `FeatureMCPBridgeKit`.
 
 Local copies keep the same feature id and shadow the bundled package. `/feature delete` removes the local copy and restores the bundled package.
 

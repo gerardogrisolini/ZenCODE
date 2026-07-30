@@ -203,8 +203,6 @@ extension TerminalChat {
             return "Create, build, and manage Swift feature tools"
         case AgentProfileStore.minimalAgentID.uuidString.lowercased():
             return "Minimal tools and concise replies"
-        case AgentProfileStore.xcodeAgentID.uuidString.lowercased():
-            return "ACP agent for Xcode with Xcode-native tools"
         case AgentProfileStore.reviewerAgentID.uuidString.lowercased():
             return "Read-only reviewer for delegated code review"
         case AgentProfileStore.reporterAgentID.uuidString.lowercased():
@@ -236,7 +234,6 @@ extension TerminalChat {
             ("memory", "memory"),
             (TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools"), "web"),
             ("sub-agents", "sub-agents"),
-            (TerminalToolSelectionCatalog.featurePackageKey(id: "xcode-tools"), "Xcode"),
             (TerminalToolSelectionCatalog.featurePackageKey(id: "figma-tools"), "Figma")
         ]
         let selectedLabels = labels.compactMap { pair in

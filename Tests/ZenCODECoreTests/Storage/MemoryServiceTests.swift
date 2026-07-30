@@ -325,7 +325,7 @@ struct MemoryServiceTests {
 
         #expect(!prompt.contains("Memory tools:"))
         #expect(!prompt.contains("`memory.write`"))
-        #expect(!prompt.contains("memory, and delegated sub-agent tools"))
+        #expect(!prompt.contains("memory, feature, and delegated sub-agent tools"))
     }
 
     @Test
@@ -346,10 +346,10 @@ struct MemoryServiceTests {
 
         #expect(!withoutMemory.contains("Memory tools:"))
         #expect(!withoutMemory.contains("`memory.write`"))
-        #expect(!withoutMemory.contains("memory, and delegated sub-agent tools"))
+        #expect(!withoutMemory.contains("memory, feature, and delegated sub-agent tools"))
         #expect(withMemory.contains("Memory tools:"))
         #expect(withMemory.contains("`memory.write`"))
-        #expect(withMemory.contains("memory, and delegated sub-agent tools"))
+        #expect(withMemory.contains("memory, feature, and delegated sub-agent tools"))
     }
 
     @Test

@@ -39,6 +39,5 @@ let preferredTitleComponents: [String: String] = [
     "swiftdata": "SwiftData",
     "swiftui": "SwiftUI",
     "tui": "TUI",
-    "ui": "UI",
-    "xcode": "Xcode"
+    "ui": "UI"
 ]

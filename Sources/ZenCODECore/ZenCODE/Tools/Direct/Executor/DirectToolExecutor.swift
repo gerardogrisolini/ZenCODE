@@ -8,9 +8,6 @@
 import FeatureMCPBridgeKit
 import Foundation
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 public actor DirectToolExecutor {
     public static let defaultModelOutputLimit = 12_000
@@ -204,12 +201,8 @@ public actor DirectToolExecutor {
         )
         .filter { !providerToolNames.contains($0.name) }
         .filter { !reservedSkillToolNames.contains($0.name) }
-        let excludingFeatureIDs = Self.mcpManagedSwiftFeatureIDs(
-            mcpDescriptors: mcpDescriptors
-        )
         let featureDescriptors = await swiftFeatureRuntime.descriptors(
-            allowedToolNames: allowedToolNames,
-            excludingFeatureIDs: excludingFeatureIDs
+            allowedToolNames: allowedToolNames
         )
         .filter { !reservedSkillToolNames.contains($0.name) }
 
@@ -231,24 +224,6 @@ public actor DirectToolExecutor {
                 + featureDescriptors
                 + lateCoreDescriptors
         )
-
-        // Diagnostic: if xcode tools are requested but none ended up in the
-        // final descriptor set, log which source failed to help debugging.
-        let requestsXcode = allowedToolNames?.contains(where: XcodeToolIntegration.isToolName) == true
-            || allowedToolNames == nil
-        if requestsXcode,
-           !result.contains(where: { XcodeToolIntegration.isToolName($0.name) }) {
-            let mcpHasXcode = mcpDescriptors.contains(where: { XcodeToolIntegration.isToolName($0.name) })
-            let featureExcluded = excludingFeatureIDs.contains(XcodeToolIntegration.featureID)
-            let featureHasXcode = featureDescriptors.contains(where: { XcodeToolIntegration.isToolName($0.name) })
-            ZenLogger.debug(
-                .xcodeToolExecutor,
-                "No xcode descriptors in result — MCP provided xcode: \(mcpHasXcode), "
-                    + "feature excluded: \(featureExcluded), "
-                    + "feature provided xcode: \(featureHasXcode), "
-                    + "preferredWorkspaceRootURL: \(preferredWorkspaceRootURL?.path ?? "nil")"
-            )
-        }
 
         return result
     }
@@ -366,13 +341,8 @@ public actor DirectToolExecutor {
     private static func mcpErrorIsPermissionDenied(_ error: MCPClientError) -> Bool {
         // Generic, cross-platform detection of MCP permission failures.
         //
-        // This intentionally does NOT delegate to `XcodeToolIntegration.isPermissionDenied`:
-        // on Linux that type is a no-op compatibility shim (`LinuxXcodeToolCompatibility`)
-        // that returns `false` for every MCP error, which misclassifies server-side
-        // permission failures such as JSON-RPC `-32000 "Permission denied"` as generic
-        // `.failed` results. The detection below is pure pattern matching on
-        // `MCPClientError` cases with no platform-specific behaviour, so it behaves
-        // identically on macOS and Linux. See `directToolExecutorMarksGenericMCPPermissionFailures`.
+        // Keep permission classification generic so every MCP connector follows
+        // the same result contract on every supported platform.
         switch error {
         case .authorizationRequired:
             return true
@@ -401,7 +371,7 @@ public actor DirectToolExecutor {
         allowedToolNames: Set<String>?
     ) -> [DirectToolDescriptor] {
         guard let allowedToolNames else {
-            return descriptors.filter { !XcodeToolIntegration.isToolName($0.name) }
+            return descriptors
         }
 
         guard !allowedToolNames.isEmpty else {
@@ -418,7 +388,7 @@ public actor DirectToolExecutor {
         allowedToolNames: Set<String>?
     ) -> Bool {
         guard let allowedToolNames else {
-            return !XcodeToolIntegration.isToolName(toolName)
+            return true
         }
 
         guard !allowedToolNames.isEmpty else {
@@ -445,42 +415,7 @@ public actor DirectToolExecutor {
             return true
         }
 
-        if XcodeToolIntegration.isToolName(toolName) {
-            if allowedToolNames.contains(XcodeToolIntegration.toolPrefix) {
-                return true
-            }
-            if let canonicalXcodeToolName = XcodeToolIntegration.canonicalToolName(for: toolName),
-               allowedToolNames.contains(canonicalXcodeToolName) {
-                return true
-            }
-        }
-
-        for prefix in [XcodeToolIntegration.toolPrefix, "figma."] where toolName.hasPrefix(prefix) {
-            let unprefixedName = String(toolName.dropFirst(prefix.count))
-            if allowedToolNames.contains(unprefixedName) {
-                return true
-            }
-        }
-
         return false
-    }
-
-    /// Feature IDs whose tools are provided by MCP and therefore must be excluded
-    /// from the Swift feature descriptor stream to avoid duplicates.
-    ///
-    /// Exclusion is driven solely by the MCP descriptors actually materialized for
-    /// the current session. This keeps the Swift feature runtime as a valid fallback
-    /// when MCP does not surface a feature's tools (e.g. the Xcode server is not
-    /// matched for the subagent's workspace), while still preventing duplication when
-    /// MCP does provide them.
-    static func mcpManagedSwiftFeatureIDs(
-        mcpDescriptors: [DirectToolDescriptor]
-    ) -> Set<String> {
-        var featureIDs = Set<String>()
-        if mcpDescriptors.contains(where: { XcodeToolIntegration.isToolName($0.name) }) {
-            featureIDs.insert(XcodeToolIntegration.featureID)
-        }
-        return featureIDs
     }
 
     public static func isSubAgentCoordinationToolName(_ toolName: String) -> Bool {

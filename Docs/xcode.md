@@ -10,8 +10,18 @@ Xcode can run `zen` as an ACP stdio coding agent.
    zen --setup
    ```
 
-2. Make sure the recommended agents exist. The setup can create `Developer`, `Builder`, `Minimal`, `Xcode`, `Planner`, `Reviewer`, and `Reporter`.
-3. Verify the executable path:
+2. If you want the optional Xcode-native tools, install their macOS-only feature package:
+
+   ```bash
+   zen --install-features xcode-tools
+   ```
+
+   The Xcode MCP implementation is not part of the `zen` executable or the root
+   SwiftPM graph. It runs through the separately installed
+   `xcode-tools-feature` process.
+
+3. Make sure the recommended agents exist. The setup can create `Developer`, `Builder`, `Minimal`, `Planner`, `Reviewer`, and `Reporter`.
+4. Verify the executable path:
 
    ```bash
    which zen
@@ -39,7 +49,7 @@ In the agent editor, set:
 
 To pin a specific agent profile, add this environment variable:
 - **Name**: `ZENCODE_AGENT_NAME`
-- **Value**: `Xcode`
+- **Value**: `Minimal`
 
 ![Xcode agent arguments and environment configuration](Images/xcode-agent-arguments.png)
 
@@ -61,6 +71,6 @@ Environment:
 ## Troubleshooting
 
 - **Xcode cannot start the agent**: use an absolute executable path, not just `zen`.
-- **Xcode tools are unavailable**: keep Xcode open and approve any MCP/automation prompt shown by Xcode.
+- **Xcode tools are unavailable**: install or update `xcode-tools` with `zen --install-features xcode-tools`, keep Xcode open, enable the package in `/tools`, and approve any MCP/automation prompt shown by Xcode.
 - **No model is configured**: run `zen --setup` in Terminal and configure at least one provider/model.
 - **“This provider requires authentication” in Xcode 27 beta 3**: update ZenCODE, select **Continue with ZenCODE**, then retry the session. This is an Xcode ACP compatibility acknowledgment, not provider authentication.

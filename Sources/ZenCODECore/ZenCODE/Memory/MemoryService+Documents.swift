@@ -4,9 +4,6 @@
 //
 
 import Foundation
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 extension MemoryService {
     func memoryDocuments(workspaceRootURL: URL?) -> [MemoryDocument] {
@@ -261,16 +258,6 @@ extension MemoryService {
             score += 10
         }
         return score
-    }
-
-    func workspaceRootURL(for workspaceContext: XcodeWorkspaceContext?) -> URL? {
-        guard let path = XcodeWorkspaceContext.normalizedProjectRootPath(
-            explicitPath: workspaceContext?.workspacePath,
-            workspacePath: workspaceContext?.workspacePath
-        ) else {
-            return nil
-        }
-        return URL(fileURLWithPath: path).standardizedFileURL
     }
 
 }

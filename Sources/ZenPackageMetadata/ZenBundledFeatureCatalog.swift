@@ -34,68 +34,70 @@ public struct ZenBundledFeatureMetadata: Sendable, Equatable, Hashable {
 /// such as descriptions, schemas, aliases, and timeouts remain in
 /// `SwiftBundledFeatureCatalog`.
 public enum ZenBundledFeatureCatalog {
-    public static let all: [ZenBundledFeatureMetadata] = [
-        ZenBundledFeatureMetadata(
-            id: "search-tools",
-            productName: "search-tools-feature",
-            sourceRelativePath: "Sources/Features/SearchTools",
-            isInstalledOnLinux: true,
-        ),
-        ZenBundledFeatureMetadata(
-            id: "web-tools",
-            productName: "web-tools-feature",
-            sourceRelativePath: "Sources/Features/WebTools",
-            isInstalledOnLinux: true,
-        ),
-        ZenBundledFeatureMetadata(
-            id: "browser-tools",
-            productName: "browser-tools-feature",
-            sourceRelativePath: "Sources/Features/BrowserTools",
-            isInstalledOnLinux: true,
-        ),
-        ZenBundledFeatureMetadata(
-            id: "git-tools",
-            productName: "git-tools-feature",
-            sourceRelativePath: "Sources/Features/GitTools",
-            isInstalledOnLinux: true,
-        ),
-        ZenBundledFeatureMetadata(
-            id: "swift-tools",
-            productName: "swift-tools-feature",
-            sourceRelativePath: "Sources/Features/SwiftTools",
-            isInstalledOnLinux: true,
-        ),
-        ZenBundledFeatureMetadata(
-            id: "xcode-tools",
-            productName: "xcode-tools-feature",
-            sourceRelativePath: "Sources/Features/XcodeTools",
-            // Xcode's MCP service is only available on macOS. Keep the SwiftPM
-            // product portable for shared runtime compatibility, but do not
-            // distribute its executable through the Linux installer.
-            isInstalledOnLinux: false,
-        ),
-        ZenBundledFeatureMetadata(
-            id: "figma-tools",
-            productName: "figma-tools-feature",
-            sourceRelativePath: "Sources/Features/FigmaTools",
-            isInstalledOnLinux: true,
-        ),
-        ZenBundledFeatureMetadata(
-            id: "jira-tools",
-            productName: "jira-tools-feature",
-            sourceRelativePath: "Sources/Features/JiraTools",
-            isInstalledOnLinux: true,
-        ),
-        ZenBundledFeatureMetadata(
-            id: "desktop-tools",
-            productName: "desktop-tools-feature",
-            sourceRelativePath: "Sources/Features/DesktopTools",
-            // Desktop control is implemented with AppKit, Accessibility, and
-            // Quartz. Keep it out of the Linux install set for the same reason
-            // as Xcode: the platform integration simply does not exist there.
-            isInstalledOnLinux: false,
+    public static let all: [ZenBundledFeatureMetadata] = {
+        var features = [
+            ZenBundledFeatureMetadata(
+                id: "search-tools",
+                productName: "search-tools-feature",
+                sourceRelativePath: "Sources/Features/SearchTools",
+                isInstalledOnLinux: true,
+            ),
+            ZenBundledFeatureMetadata(
+                id: "web-tools",
+                productName: "web-tools-feature",
+                sourceRelativePath: "Sources/Features/WebTools",
+                isInstalledOnLinux: true,
+            ),
+            ZenBundledFeatureMetadata(
+                id: "browser-tools",
+                productName: "browser-tools-feature",
+                sourceRelativePath: "Sources/Features/BrowserTools",
+                isInstalledOnLinux: true,
+            ),
+            ZenBundledFeatureMetadata(
+                id: "git-tools",
+                productName: "git-tools-feature",
+                sourceRelativePath: "Sources/Features/GitTools",
+                isInstalledOnLinux: true,
+            ),
+            ZenBundledFeatureMetadata(
+                id: "swift-tools",
+                productName: "swift-tools-feature",
+                sourceRelativePath: "Sources/Features/SwiftTools",
+                isInstalledOnLinux: true,
+            ),
+            ZenBundledFeatureMetadata(
+                id: "figma-tools",
+                productName: "figma-tools-feature",
+                sourceRelativePath: "Sources/Features/FigmaTools",
+                isInstalledOnLinux: true,
+            ),
+            ZenBundledFeatureMetadata(
+                id: "jira-tools",
+                productName: "jira-tools-feature",
+                sourceRelativePath: "Sources/Features/JiraTools",
+                isInstalledOnLinux: true,
+            ),
+            ZenBundledFeatureMetadata(
+                id: "desktop-tools",
+                productName: "desktop-tools-feature",
+                sourceRelativePath: "Sources/Features/DesktopTools",
+                isInstalledOnLinux: false,
+            )
+        ]
+        #if os(macOS)
+        features.insert(
+            ZenBundledFeatureMetadata(
+                id: "xcode-tools",
+                productName: "xcode-tools-feature",
+                sourceRelativePath: "Sources/Features/XcodeTools",
+                isInstalledOnLinux: false,
+            ),
+            at: 5
         )
-    ]
+        #endif
+        return features
+    }()
 
     public static func feature(id: String) -> ZenBundledFeatureMetadata? {
         all.first { $0.id == id }

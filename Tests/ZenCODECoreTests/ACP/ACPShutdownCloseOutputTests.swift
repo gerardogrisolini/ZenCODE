@@ -180,8 +180,7 @@ struct ACPShutdownCloseOutputTests {
             backendFactory: { _, _ in
                 createdBackends?.increment()
                 return backend
-            },
-            xcodeIsRunning: { false }
+            }
         )
     }
 

@@ -93,8 +93,7 @@ struct ACPSessionLifecycleConcurrencyTests {
         return ZenCODEACPBridge(
             configuration: configuration,
             writer: ACPWriter(),
-            backendFactory: { _, _ in backend },
-            xcodeIsRunning: { false }
+            backendFactory: { _, _ in backend }
         )
     }
 

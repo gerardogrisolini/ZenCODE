@@ -7,9 +7,6 @@
 
 import Foundation
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 public struct AgentProfileManifest: Codable, Sendable {
     public static let currentVersion = 1
@@ -502,11 +499,9 @@ public enum AgentProfileStore {
     public static let reporterAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000013")!
     public static let builderAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000007")!
     public static let minimalAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000008")!
-    public static let xcodeAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000009")!
     public static let reviewerAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!
     public static let plannerAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000011")!
     public static let builderAgentName = "Builder"
-    public static let xcodeAgentName = "Xcode"
     public static let reviewerAgentName = "Reviewer"
     public static let plannerAgentName = "Planner"
     public static let manifestFilename = "agents.json"
@@ -552,11 +547,6 @@ public enum AgentProfileStore {
         TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools"),
         "text",
         TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools"),
-        "memory",
-        TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools")
-    ]
-    public static let xcodeToolNames: [String] = [
-        "shell",
         "memory",
         TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools")
     ]
@@ -771,15 +761,23 @@ public enum AgentProfileStore {
 
     fileprivate static func normalizedExternalToolReference(_ value: String) -> String? {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let xcodeReference = XcodeToolIntegration.canonicalAllowedToolName(trimmedValue) {
-            return xcodeReference
-        }
         let normalizedValue = toolReferenceKey(trimmedValue)
-        if normalizedValue == "figma" {
-            return "figma."
-        }
-        if trimmedValue.hasPrefix("figma.") {
-            return trimmedValue
+        for feature in SwiftBundledFeatureCatalog.definitions() {
+            let shortID = feature.id.hasSuffix("-tools")
+                ? String(feature.id.dropLast("-tools".count))
+                : feature.id
+            if normalizedValue == toolReferenceKey(feature.id)
+                || normalizedValue == toolReferenceKey(shortID) {
+                return feature.toolNamePrefixes.first
+            }
+            if feature.toolNamePrefixes.contains(where: { trimmedValue.hasPrefix($0) }) {
+                return trimmedValue
+            }
+            if let alias = feature.toolNameAliases.first(where: {
+                $0.caseInsensitiveCompare(trimmedValue) == .orderedSame
+            }) {
+                return alias
+            }
         }
         return nil
     }

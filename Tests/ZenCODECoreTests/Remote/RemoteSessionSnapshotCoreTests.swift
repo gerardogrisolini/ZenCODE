@@ -379,12 +379,12 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func remoteToolWireCatalogSanitizesXcodeNamesForResponses() throws {
+    func remoteToolWireCatalogSanitizesFeatureNamesForResponses() throws {
         let catalog = RemoteToolWireCatalog(
             descriptors: [
                 DirectToolDescriptor(
-                    name: "xcode.BuildProject",
-                    description: "Xcode: build project.",
+                    name: "fixture.Build",
+                    description: "Feature: build project.",
                     inputSchema: #"{"type":"object","properties":{}}"#
                 )
             ]
@@ -397,22 +397,22 @@ extension RemoteSessionSnapshotTests {
         }
         let localToolCall = catalog.localToolCall(
             from: DirectAgentToolCall(
-                id: "call_xcode",
-                name: "tool_xcode_BuildProject",
+                id: "call_feature",
+                name: "tool_fixture_Build",
                 argumentsObject: [:],
                 argumentsJSON: "{}"
             )
         )
 
-        #expect(toolPayloadNames == ["tool_xcode_BuildProject"])
-        #expect(chatToolPayloadNames == ["tool_xcode_BuildProject"])
-        #expect(localToolCall.name == "xcode.BuildProject")
+        #expect(toolPayloadNames == ["tool_fixture_Build"])
+        #expect(chatToolPayloadNames == ["tool_fixture_Build"])
+        #expect(localToolCall.name == "fixture.Build")
     }
 
     @Test
-    func responsesRequestSendsWireSafeToolNamesAndRestoresLocalXcodeToolCall() async throws {
+    func responsesRequestSendsWireSafeToolNamesAndRestoresLocalFeatureToolCall() async throws {
         let response = """
-        data: {"type":"response.output_item.done","output_index":0,"item":{"id":"item_xcode","type":"function_call","call_id":"call_xcode","name":"tool_xcode_BuildProject","arguments":"{\\"scheme\\":\\"App\\"}"}}
+        data: {"type":"response.output_item.done","output_index":0,"item":{"id":"item_feature","type":"function_call","call_id":"call_feature","name":"tool_fixture_Build","arguments":"{\\"scheme\\":\\"App\\"}"}}
 
         data: {"type":"response.completed","response":{"output":[]}}
 
@@ -434,13 +434,13 @@ extension RemoteSessionSnapshotTests {
             apiKey: nil,
             transport: fixture.transport,
             streamEndpointBaseURLOverride: fixture.baseURL,
-            mcpRuntime: await borrowedXcodeMCPRuntime()
+            mcpRuntime: await borrowedFeatureMCPRuntime()
         )
 
         let result = try await client.streamResponses(
-            messages: remoteXcodeHistoryMessages(),
+            messages: remoteFeatureHistoryMessages(),
             sessionID: "session-responses",
-            allowedToolNames: ["local.exec", "xcode."],
+            allowedToolNames: ["local.exec", "fixture."],
             thinkingSelection: nil,
             onEvent: { _ in }
         )
@@ -454,22 +454,22 @@ extension RemoteSessionSnapshotTests {
         let input = try #require(body["input"] as? [[String: Any]])
         let historyFunctionCall = try #require(input.first {
             $0["type"] as? String == "function_call"
-                && $0["call_id"] as? String == "call_previous_xcode"
+                && $0["call_id"] as? String == "call_previous_fixture"
         })
 
-        #expect(toolNames == ["tool_local_exec", "tool_xcode_BuildProject"])
+        #expect(toolNames == ["tool_local_exec", "tool_fixture_Build"])
         #expect(!toolNames.contains("local.exec"))
-        #expect(!toolNames.contains("xcode.BuildProject"))
-        #expect(historyFunctionCall["name"] as? String == "tool_xcode_BuildProject")
-        #expect(JSONValue(jsonObject: body).prettyPrinted().contains("xcode.BuildProject") == false)
-        #expect(result.toolCalls.map(\.name) == ["xcode.BuildProject"])
+        #expect(!toolNames.contains("fixture.Build"))
+        #expect(historyFunctionCall["name"] as? String == "tool_fixture_Build")
+        #expect(JSONValue(jsonObject: body).prettyPrinted().contains("fixture.Build") == false)
+        #expect(result.toolCalls.map(\.name) == ["fixture.Build"])
         #expect(result.toolCalls.first?.argumentsObject["scheme"] as? String == "App")
     }
 
     @Test
-    func chatCompletionsRequestSendsWireSafeToolNamesAndRestoresLocalXcodeToolCall() async throws {
+    func chatCompletionsRequestSendsWireSafeToolNamesAndRestoresLocalFeatureToolCall() async throws {
         let response = """
-        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_xcode","type":"function","function":{"name":"tool_xcode_BuildProject","arguments":"{\\"scheme\\":\\"App\\"}"}}]},"finish_reason":"tool_calls"}]}
+        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_feature","type":"function","function":{"name":"tool_fixture_Build","arguments":"{\\"scheme\\":\\"App\\"}"}}]},"finish_reason":"tool_calls"}]}
 
         data: [DONE]
 
@@ -491,13 +491,13 @@ extension RemoteSessionSnapshotTests {
             apiKey: nil,
             transport: fixture.transport,
             streamEndpointBaseURLOverride: fixture.baseURL,
-            mcpRuntime: await borrowedXcodeMCPRuntime()
+            mcpRuntime: await borrowedFeatureMCPRuntime()
         )
 
         let result = try await client.streamChatCompletions(
-            messages: remoteXcodeHistoryMessages(),
+            messages: remoteFeatureHistoryMessages(),
             sessionID: "session-chat",
-            allowedToolNames: ["local.exec", "xcode."],
+            allowedToolNames: ["local.exec", "fixture."],
             thinkingSelection: nil,
             onEvent: { _ in }
         )
@@ -511,23 +511,23 @@ extension RemoteSessionSnapshotTests {
         let messages = try #require(body["messages"] as? [[String: Any]])
         let assistant = try #require(messages.first {
             ($0["tool_calls"] as? [[String: Any]])?.contains {
-                $0["id"] as? String == "call_previous_xcode"
+                $0["id"] as? String == "call_previous_fixture"
             } == true
         })
         let historyToolCall = try #require((assistant["tool_calls"] as? [[String: Any]])?.first)
         let historyFunction = try #require(historyToolCall["function"] as? [String: Any])
         let toolMessage = try #require(messages.first {
             $0["role"] as? String == "tool"
-                && $0["tool_call_id"] as? String == "call_previous_xcode"
+                && $0["tool_call_id"] as? String == "call_previous_fixture"
         })
 
-        #expect(toolNames == ["tool_local_exec", "tool_xcode_BuildProject"])
+        #expect(toolNames == ["tool_local_exec", "tool_fixture_Build"])
         #expect(!toolNames.contains("local.exec"))
-        #expect(!toolNames.contains("xcode.BuildProject"))
-        #expect(historyFunction["name"] as? String == "tool_xcode_BuildProject")
-        #expect(toolMessage["name"] as? String == "tool_xcode_BuildProject")
-        #expect(JSONValue(jsonObject: body).prettyPrinted().contains("xcode.BuildProject") == false)
-        #expect(result.toolCalls.map(\.name) == ["xcode.BuildProject"])
+        #expect(!toolNames.contains("fixture.Build"))
+        #expect(historyFunction["name"] as? String == "tool_fixture_Build")
+        #expect(toolMessage["name"] as? String == "tool_fixture_Build")
+        #expect(JSONValue(jsonObject: body).prettyPrinted().contains("fixture.Build") == false)
+        #expect(result.toolCalls.map(\.name) == ["fixture.Build"])
         #expect(result.toolCalls.first?.argumentsObject["scheme"] as? String == "App")
     }
 }

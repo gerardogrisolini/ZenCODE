@@ -50,14 +50,13 @@ public struct AgentConfiguration: Sendable {
 
     Tool discovery:
       In chat mode, use /agents to switch agent profiles without restarting the TUI.
-      In chat mode, use /tools to enable local, shell, search, git, memory, sub-agent, Xcode, or Figma tools.
+      In chat mode, use /tools to enable local, shell, search, git, memory, sub-agent, or optional feature tools.
       In chat mode, use the Builder agent to create and manage generated Swift feature packages with /feature.
       In chat mode, use /skills to select prompt skills installed by the app or install a skill from GitHub or a local folder.
       In chat mode, use /attach to add image or video files to the next prompt.
       In chat mode, use /changes to review tracked file changes and /undo to revert the latest tracked changes.
       In chat mode, delegated sub-agent status is shown automatically in the chat flow.
       In ACP mode, clients pass the enabled tools to the agent runtime.
-      Xcode MCP tools are added when Xcode is running and mcpbridge can expose tools.
       Figma MCP tools are added when the local Figma desktop MCP server exposes tools.
 
     Environment:
@@ -332,37 +331,9 @@ public struct AgentConfiguration: Sendable {
               sameFilePath(candidate, executableDirectory) else {
             return candidate
         }
-        if let xcodeProjectDirectory = xcodeProjectDirectoryURL() {
-            return xcodeProjectDirectory
-        }
         return UserHomeDirectory.current()
             .standardizedFileURL
             .resolvingSymlinksInPath()
-    }
-
-    private static func xcodeProjectDirectoryURL(
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> URL? {
-        let candidatePaths = [
-            environment["SRCROOT"],
-            environment["PROJECT_DIR"]
-        ].compactMap { value -> String? in
-            let path = value?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return path?.hasPrefix("/") == true ? path : nil
-        }
-
-        for path in candidatePaths {
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
-                  isDirectory.boolValue else {
-                continue
-            }
-            return URL(fileURLWithPath: path)
-                .standardizedFileURL
-                .resolvingSymlinksInPath()
-        }
-
-        return nil
     }
 
     private static func shellWorkingDirectory(environment: [String: String]) -> String? {

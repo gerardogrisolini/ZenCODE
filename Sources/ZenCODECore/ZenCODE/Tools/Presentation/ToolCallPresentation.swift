@@ -5,9 +5,6 @@
 
 import Foundation
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 /// Shared presentation metadata for direct-agent tool calls.
 public enum ToolCallPresentation {
@@ -47,10 +44,6 @@ public enum ToolCallPresentation {
             return ToolPresentationKind.other.rawValue
         }
         return resolved(for: toolCall, mode: .compact).kind.rawValue
-    }
-
-    public static func xcodeToolKind(for rawName: String) -> String {
-        XcodeToolIntegration.presentationKind(for: rawName)
     }
 
     public static func toolIcon(for toolName: String) -> String {

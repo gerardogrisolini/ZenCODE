@@ -7,9 +7,6 @@
 
 import FeatureMCPBridgeKit
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 public typealias JSONValue = ToolCore.JSONValue
 public typealias ToolDescriptor = ToolCore.ToolDescriptor
@@ -36,9 +33,3 @@ public typealias MCPServerConfiguration = FeatureMCPBridgeKit.MCPServerConfigura
 public typealias MCPToolResultRenderer = FeatureMCPBridgeKit.MCPToolResultRenderer
 public typealias MCPTransportCodec = FeatureMCPBridgeKit.MCPTransportCodec
 public typealias RemoteMCPToolExecutor = FeatureMCPBridgeKit.RemoteMCPToolExecutor
-#if os(macOS)
-public typealias XcodeWorkspaceContext = XcodeToolsFeature.XcodeWorkspaceContext
-public typealias XcodeToolRequestCompatibility = XcodeToolsFeature.XcodeToolRequestCompatibility
-public typealias XcodeToolExecutor = XcodeToolsFeature.XcodeToolExecutor
-public typealias XcodeToolIntegration = XcodeToolsFeature.XcodeToolIntegration
-#endif

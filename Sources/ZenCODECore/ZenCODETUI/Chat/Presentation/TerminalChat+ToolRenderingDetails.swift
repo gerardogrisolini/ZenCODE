@@ -379,7 +379,7 @@ extension TerminalChat {
     ) -> [DetailedToolRow] {
         let arguments = toolCall.argumentsObject
         switch normalizedMutationToolName(toolCall.name) {
-        case "local.writeFile", "XcodeWrite":
+        case "local.writeFile":
             var rows: [DetailedToolRow] = [.text("change: write \(targetPath(arguments) ?? "file")")]
             if let content = rawStringArgument(arguments, keys: ["content", "text"]) {
                 rows.append(.text("content:"))
@@ -393,7 +393,7 @@ extension TerminalChat {
                 rows.append(contentsOf: numberedCodeSnippetRows(content))
             }
             return rows
-        case "local.replace", "local.editFile", "XcodeUpdate":
+        case "local.replace", "local.editFile":
             var rows: [DetailedToolRow] = [.text("change: replace \(targetPath(arguments) ?? "file")")]
             if boolArgument(arguments, keys: ["replaceAll", "replace_all"]) == true {
                 rows.append(.text("mode: replace all"))
@@ -423,9 +423,9 @@ extension TerminalChat {
                 rows.append(contentsOf: numberedCodeSnippetRows(patch))
             }
             return rows
-        case "local.delete", "XcodeRM":
+        case "local.delete":
             return [.text("change: delete \(targetPath(arguments) ?? "file")")]
-        case "local.move", "XcodeMV":
+        case "local.move":
             return [
                 .text("change: move"),
                 .text("from: \(metadataArgument(arguments, keys: ["sourcePath", "source_path", "from"]) ?? "unknown")"),
@@ -500,53 +500,15 @@ extension TerminalChat {
         switch normalizedMutationToolName(toolName) {
         case "local.writeFile", "local.append", "local.replace",
              "local.editFile", "local.multiEdit", "local.applyPatch",
-             "local.delete", "local.move", "local.mkdir",
-             "XcodeWrite", "XcodeUpdate", "XcodeRM", "XcodeMV":
+             "local.delete", "local.move", "local.mkdir":
             return true
         default:
             return false
         }
     }
 
-    /// Canonical Xcode aliases actually accepted by the runtime router.
-    /// `XcodeToolRequestCompatibility` maps only these spellings, so the TUI
-    /// must not treat a bare `write`/`update`/`edit`/`rm`/`mv` from an unrelated
-    /// MCP server as an Xcode mutation.
-    private nonisolated static let xcodeMutationAliases: [String: String] = [
-        "xcodewrite": "XcodeWrite",
-        "xcode_write": "XcodeWrite",
-        "xcode.write": "XcodeWrite",
-        "xcodeupdate": "XcodeUpdate",
-        "xcode_update": "XcodeUpdate",
-        "xcode.update": "XcodeUpdate",
-        "xcodeedit": "XcodeUpdate",
-        "xcode.edit": "XcodeUpdate",
-        "xcoderm": "XcodeRM",
-        "xcode_rm": "XcodeRM",
-        "xcode.rm": "XcodeRM",
-        "xcodemv": "XcodeMV",
-        "xcode_mv": "XcodeMV",
-        "xcode.mv": "XcodeMV"
-    ]
-
     nonisolated static func normalizedMutationToolName(_ toolName: String) -> String {
-        let trimmedName = toolName.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Tool-call events reach the TUI before MCP routing canonicalizes the
-        // request, so mirror the router's alias table exactly. Both the public
-        // `xcode.` form and the already-unprefixed raw name are resolved,
-        // matching `XcodeToolIntegration.normalizedRequest`.
-        if let canonicalName = xcodeMutationAliases[trimmedName.lowercased()] {
-            return canonicalName
-        }
-        if trimmedName.hasPrefix("xcode.") {
-            let rawName = String(trimmedName.dropFirst("xcode.".count))
-            if let canonicalName = xcodeMutationAliases[rawName.lowercased()] {
-                return canonicalName
-            }
-            return rawName
-        }
-        return trimmedName
+        toolName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Path-shaped metadata. Blank or whitespace-only values must fall through

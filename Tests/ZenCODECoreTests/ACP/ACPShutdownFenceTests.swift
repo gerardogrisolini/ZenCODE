@@ -120,8 +120,7 @@ struct ACPShutdownFenceTests {
             backendFactory: { _, _ in
                 createdBackends?.increment()
                 return ShutdownFenceBackend(preloadGate: gate)
-            },
-            xcodeIsRunning: { false }
+            }
         )
     }
 

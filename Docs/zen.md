@@ -249,7 +249,7 @@ intended.
 
 ## Tool Selection
 
-Tool groups include: filesystem, shell, text, search, Git, memory, sub-agents, Xcode (when running), Figma (when the desktop MCP server is available), generated Swift features, and installed optional feature packages. Use `/tools` to select per session. ACP clients pass enabled tools directly.
+Tool groups include filesystem, shell, text, search, Git, memory, sub-agents, generated Swift features, and installed optional feature packages such as XcodeTools on macOS or FigmaTools. Use `/tools` to select per session. ACP clients pass enabled tools directly.
 
 ## Task Orchestration
 

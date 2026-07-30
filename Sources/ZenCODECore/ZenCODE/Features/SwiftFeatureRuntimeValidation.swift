@@ -126,13 +126,18 @@ extension SwiftFeatureRuntime {
 
     static func swiftExecutableURL(fileManager: FileManager) -> URL {
         let environment = ProcessInfo.processInfo.environment
-        let candidates = [
+        var candidates = [
             environment["SWIFT_EXECUTABLE"],
             "/usr/bin/swift",
             "/Library/Developer/CommandLineTools/usr/bin/swift",
-            "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift",
             "/usr/local/bin/swift"
         ].compactMap { $0?.nilIfBlank }
+        #if os(macOS)
+        candidates.insert(
+            "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift",
+            at: min(3, candidates.count)
+        )
+        #endif
 
         for candidate in candidates where fileManager.isExecutableFile(atPath: candidate) {
             return URL(fileURLWithPath: candidate)

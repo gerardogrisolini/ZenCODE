@@ -97,22 +97,6 @@ extension DirectToolExecutor {
                 )
             )
         }
-        if directlyAllowed, await mcpRuntime.canExecute(
-            toolName: toolCall.name,
-            allowedToolNames: allowedToolNames,
-            preferredWorkspaceRootURL: workingDirectory
-        ) {
-            return DirectToolExecutionOutput(
-                output: try await mcpRuntime.execute(toolCall: toolCall)
-            )
-        }
-        if DirectMCPToolRuntime.isXcodeToolName(toolCall.name) {
-            if directlyAllowed {
-                throw DirectToolError.permissionDenied(
-                "Xcode MCP is not connected for this session. Re-enable Xcode from /tools, approve Xcode's MCP prompt once, then retry."
-                )
-            }
-        }
         if directlyAllowed, SwiftFeatureRuntime.isFeatureManagementToolName(toolCall.name) {
             return DirectToolExecutionOutput(
                 output: try await swiftFeatureRuntime.executeManagementTool(
@@ -127,6 +111,15 @@ extension DirectToolExecutor {
             return DirectToolExecutionOutput(
                 output: result.output,
                 attachments: result.attachments
+            )
+        }
+        if directlyAllowed, await mcpRuntime.canExecute(
+            toolName: toolCall.name,
+            allowedToolNames: allowedToolNames,
+            preferredWorkspaceRootURL: workingDirectory
+        ) {
+            return DirectToolExecutionOutput(
+                output: try await mcpRuntime.execute(toolCall: toolCall)
             )
         }
         if directlyAllowed,

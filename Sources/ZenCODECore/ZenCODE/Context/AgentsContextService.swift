@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 public struct AgentsContextDocument: Hashable, Sendable {
     public enum Scope: String, Hashable, Sendable {
@@ -42,10 +39,6 @@ public final class AgentsContextService {
         - Keep edits scoped to the user's request and follow existing project patterns.
         - Use available tools when needed, and ask before destructive or irreversible actions.
 
-        ## Commands
-
-        - For Xcode projects, use the Xcode tool for builds, tests, diagnostics, and file navigation whenever it is active.
-        - Use `xcodebuild` only as a CLI fallback when the Xcode tool is not active or unavailable.
         """
     }
 
@@ -58,12 +51,6 @@ public final class AgentsContextService {
     ) {
         self.fileManager = fileManager
         self.globalAgentsDirectoryURL = globalAgentsDirectoryURL
-    }
-
-    public func promptSection(
-        for workspaceContext: XcodeWorkspaceContext?
-    ) -> String? {
-        promptSection(workspaceRootURL: workspaceRootURL(for: workspaceContext))
     }
 
     public func promptSection(
@@ -98,12 +85,6 @@ public final class AgentsContextService {
 
         If global and project context conflict, prefer the more specific project instruction only when it is clearly about this project and does not contradict the user's current request or direct tool evidence.
         """
-    }
-
-    public func fingerprint(
-        for workspaceContext: XcodeWorkspaceContext?
-    ) -> String? {
-        fingerprint(workspaceRootURL: workspaceRootURL(for: workspaceContext))
     }
 
     public func fingerprint(
@@ -329,16 +310,6 @@ public final class AgentsContextService {
         }
 
         return lines.joined(separator: "\n")
-    }
-
-    private func workspaceRootURL(for workspaceContext: XcodeWorkspaceContext?) -> URL? {
-        guard let path = XcodeWorkspaceContext.normalizedProjectRootPath(
-            explicitPath: workspaceContext?.workspacePath,
-            workspacePath: workspaceContext?.workspacePath
-        ) else {
-            return nil
-        }
-        return URL(fileURLWithPath: path).standardizedFileURL
     }
 
     private func globalAgentsDirectoryURLResolved() -> URL {

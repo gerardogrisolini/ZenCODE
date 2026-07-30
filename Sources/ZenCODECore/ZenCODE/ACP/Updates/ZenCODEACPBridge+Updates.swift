@@ -281,10 +281,6 @@ extension ZenCODEACPBridge {
         ToolCallPresentation.toolKind(for: toolCall)
     }
 
-    public static func xcodeToolKind(for rawName: String) -> String {
-        ToolCallPresentation.xcodeToolKind(for: rawName)
-    }
-
     public static func toolIcon(for toolName: String) -> String {
         ToolCallPresentation.toolIcon(for: toolName)
     }

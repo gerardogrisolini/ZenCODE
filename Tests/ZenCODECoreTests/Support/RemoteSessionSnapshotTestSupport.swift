@@ -18,7 +18,6 @@ import Synchronization
 import Testing
 import ToolCore
 #if os(macOS)
-import XcodeToolsFeature
 #endif
 
 extension RemoteSessionSnapshotTests {
@@ -46,7 +45,7 @@ extension RemoteSessionSnapshotTests {
         ]
     }
 
-    func remoteXcodeHistoryMessages() -> [[String: Any]] {
+    func remoteFeatureHistoryMessages() -> [[String: Any]] {
         RemoteGenerationClient.initialMessages(
             cwd: "/tmp/project",
             systemPrompt: "System prompt",
@@ -57,8 +56,8 @@ extension RemoteSessionSnapshotTests {
                     content: "",
                     toolCalls: [
                         AgentRuntimeToolCall(
-                            id: "call_previous_xcode",
-                            name: "xcode.BuildProject",
+                            id: "call_previous_fixture",
+                            name: "fixture.Build",
                             argumentsJSON: #"{"scheme":"Previous"}"#
                         )
                     ]
@@ -66,11 +65,11 @@ extension RemoteSessionSnapshotTests {
                 AgentRuntimeMessage(
                     role: .tool,
                     content: "Previous build succeeded.",
-                    toolCallID: "call_previous_xcode",
-                    toolName: "xcode.BuildProject"
+                    toolCallID: "call_previous_fixture",
+                    toolName: "fixture.Build"
                 )
             ],
-            allowedToolNames: ["xcode."]
+            allowedToolNames: ["fixture."]
         )
     }
 
@@ -85,28 +84,30 @@ extension RemoteSessionSnapshotTests {
         )
     }
 
-    func borrowedXcodeMCPRuntime() async -> DirectMCPToolRuntime {
+    func borrowedFeatureMCPRuntime() async -> DirectMCPToolRuntime {
         let mcpRuntime = DirectMCPToolRuntime()
-        let xcodeExecutor = XcodeToolExecutor(
+        let executor = RemoteMCPToolExecutor(
             configuration: MCPServerConfiguration(
                 executablePath: "/usr/bin/false",
                 arguments: [],
                 environment: [:]
-            )
+            ),
+            toolNamePrefix: "fixture."
         )
-        await mcpRuntime.installBorrowedXcodeExecutor(
-            xcodeExecutor,
+        _ = await mcpRuntime.installBorrowedExternalExecutor(
+            name: "fixture",
+            executor: executor,
             tools: [
                 ToolDescriptor(
-                    name: "BuildProject",
-                    description: "Builds an Xcode project.",
+                    name: "Build",
+                    description: "Builds a fixture project.",
                     inputSchema: #"{"type":"object","properties":{"scheme":{"type":"string"}}}"#
                 )
             ]
         )
         return mcpRuntime
     }
-    func remoteXcodeToolCatalog() -> RemoteToolWireCatalog {
+    func remoteFeatureToolCatalog() -> RemoteToolWireCatalog {
         RemoteToolWireCatalog(
             descriptors: [
                 DirectToolDescriptor(
@@ -115,8 +116,8 @@ extension RemoteSessionSnapshotTests {
                     inputSchema: #"{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}"#
                 ),
                 DirectToolDescriptor(
-                    name: "xcode.BuildProject",
-                    description: "Builds an Xcode project.",
+                    name: "fixture.Build",
+                    description: "Builds a fixture project.",
                     inputSchema: #"{"type":"object","properties":{"scheme":{"type":"string"}}}"#
                 )
             ]

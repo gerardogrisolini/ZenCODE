@@ -8,9 +8,6 @@
 import FeatureMCPBridgeKit
 import Foundation
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 /// Thrown when an MCP server install completes after the runtime was shut
 /// down. The caller treats it like any other install failure, so the ordinary
@@ -18,41 +15,16 @@ import XcodeToolsFeature
 public struct MCPRuntimeShutdownError: Error {}
 
 public actor DirectMCPToolRuntime {
-    public struct XcodeDiscovery: Sendable {
-        public let executor: XcodeToolExecutor
-        public let tools: [ToolDescriptor]
-        public let workspaceContexts: [XcodeWorkspaceContext]
-        public let ownsExecutor: Bool
-
-        public init(
-            executor: XcodeToolExecutor,
-            tools: [ToolDescriptor],
-            workspaceContexts: [XcodeWorkspaceContext],
-            ownsExecutor: Bool = true
-        ) {
-            self.executor = executor
-            self.tools = tools
-            self.workspaceContexts = workspaceContexts
-            self.ownsExecutor = ownsExecutor
-        }
-    }
-
-    public typealias XcodeDiscoveryProvider = @Sendable () async -> XcodeDiscovery?
-
     enum ServerFamily: Hashable {
-        case xcode
         case figma
         case external(String)
     }
 
     enum Backend {
-        case xcode(XcodeToolExecutor)
         case remote(RemoteMCPToolExecutor)
 
         func execute(_ request: ToolRequest) async throws -> ToolExecutionOutput {
             switch self {
-            case let .xcode(executor):
-                return try await executor.execute(request)
             case let .remote(executor):
                 return try await executor.execute(request)
             }
@@ -60,8 +32,6 @@ public actor DirectMCPToolRuntime {
 
         func disconnect() async {
             switch self {
-            case let .xcode(executor):
-                await executor.disconnect()
             case let .remote(executor):
                 await executor.disconnect()
             }
@@ -73,7 +43,6 @@ public actor DirectMCPToolRuntime {
         let toolPrefix: String
         let backend: Backend
         let descriptors: [DirectToolDescriptor]
-        let workspaceRootPath: String?
         let ownsBackend: Bool
         let mcpConfiguration: MCPServerConfiguration?
 
@@ -85,7 +54,6 @@ public actor DirectMCPToolRuntime {
         }
     }
 
-    var didAttemptXcodeDiscovery = false
     /// Per-family single-flight latch. Actor reentrancy permits another caller
     /// to enter while discovery awaits I/O, so booleans alone cannot prevent
     /// duplicate executor/process creation.
@@ -97,34 +65,22 @@ public actor DirectMCPToolRuntime {
     /// that was torn down.
     private var shutdownGeneration: UInt64 = 0
 
-    /// Snapshot of the shutdown generation, captured *before* a suspension
-    /// point. Comparing it after the await tells the caller whether a
-    /// `shutdown()` landed in between, i.e. whether the state it is about to
-    /// publish (a server append, a connected executor) belongs to a runtime
-    /// generation that no longer exists.
     struct ShutdownFence: Sendable, Equatable {
         fileprivate let generation: UInt64
     }
 
-    /// Capture before every `await` that is followed by an append or any other
-    /// observable side effect on the runtime.
     func shutdownFence() -> ShutdownFence {
         ShutdownFence(generation: shutdownGeneration)
     }
 
-    /// `false` once a `shutdown()` completed while the caller was suspended.
     func isActive(_ fence: ShutdownFence) -> Bool {
         shutdownGeneration == fence.generation
     }
-    let autoDiscoverExternalConnectors: Bool
-    let xcodeDiscoveryProvider: XcodeDiscoveryProvider
 
-    public init(
-        autoDiscoverExternalConnectors: Bool = false,
-        xcodeDiscoveryProvider: @escaping XcodeDiscoveryProvider = DirectMCPToolRuntime.defaultXcodeDiscovery
-    ) {
+    let autoDiscoverExternalConnectors: Bool
+
+    public init(autoDiscoverExternalConnectors: Bool = false) {
         self.autoDiscoverExternalConnectors = autoDiscoverExternalConnectors
-        self.xcodeDiscoveryProvider = xcodeDiscoveryProvider
     }
 
     deinit {
@@ -140,91 +96,13 @@ public actor DirectMCPToolRuntime {
         let currentServers = servers
         servers.removeAll()
         shutdownGeneration &+= 1
-        didAttemptXcodeDiscovery = false
         for server in currentServers {
             await server.disconnectIfOwned()
         }
     }
 
-    public func installBorrowedXcodeExecutor(
-        _ executor: XcodeToolExecutor,
-        tools: [ToolDescriptor]
-    ) async {
-        _ = await installXcodeExecutor(
-            executor,
-            tools: tools,
-            workspaceContexts: [],
-            preferredWorkspaceRootURL: nil,
-            ownsExecutor: false
-        )
-    }
-
-    public func installXcodeExecutor(
-        _ executor: XcodeToolExecutor,
-        tools: [ToolDescriptor],
-        workspaceContexts: [XcodeWorkspaceContext],
-        preferredWorkspaceRootURL: URL?,
-        ownsExecutor: Bool
-    ) async -> [DirectToolDescriptor] {
-        let fence = shutdownFence()
-        let descriptors = ToolDescriptor.canonicalized(tools)
-            .map { tool in
-                return DirectToolDescriptor(
-                    name: XcodeToolIntegration.publicToolName(for: tool.name),
-                    description: XcodeToolIntegration.publicDescription(tool.description),
-                    inputSchema: tool.inputSchema,
-                    title: tool.title,
-                    outputSchema: tool.outputSchema,
-                    presentation: XcodeToolIntegration.presentation(for: tool)
-                )
-            }
-
-        let previousXcodeServers = servers.filter { $0.family == .xcode }
-        servers.removeAll { $0.family == .xcode }
-        didAttemptXcodeDiscovery = true
-
-        // Suspension point: a shutdown() can interleave while the previous
-        // executors are being torn down.
-        for server in previousXcodeServers {
-            await server.disconnectIfOwned()
-        }
-
-        guard isActive(fence) else {
-            await disconnectStaleExecutor(.xcode(executor), ownsBackend: ownsExecutor)
-            return []
-        }
-
-        guard !descriptors.isEmpty else {
-            return []
-        }
-
-        let matchedWorkspaceContext = workspaceContexts.isEmpty
-            ? nil
-            : matchedXcodeWorkspaceContext(
-                in: workspaceContexts,
-                preferredWorkspaceRootURL: preferredWorkspaceRootURL
-            )
-        guard workspaceContexts.isEmpty || matchedWorkspaceContext != nil else {
-            return []
-        }
-
-        servers.append(
-            Server(
-                family: .xcode,
-                toolPrefix: XcodeToolIntegration.toolPrefix,
-                backend: .xcode(executor),
-                descriptors: descriptors,
-                workspaceRootPath: matchedWorkspaceContext?.normalizedWorkspaceRootPath,
-                ownsBackend: ownsExecutor,
-                mcpConfiguration: nil
-            )
-        )
-        return descriptors
-    }
-
     /// Tears down an executor that finished connecting for a runtime
-    /// generation that no longer exists. Borrowed backends are left alone:
-    /// their owner is responsible for the lifecycle.
+    /// generation that no longer exists.
     func disconnectStaleExecutor(_ backend: Backend, ownsBackend: Bool) async {
         guard ownsBackend else {
             return
@@ -232,34 +110,59 @@ public actor DirectMCPToolRuntime {
         await backend.disconnect()
     }
 
+    /// Registers a caller-owned MCP executor without transferring its lifecycle
+    /// to the runtime. This is the generic embedding path for hosts that already
+    /// own an MCP connection.
+    public func installBorrowedExternalExecutor(
+        name: String,
+        executor: RemoteMCPToolExecutor,
+        tools: [ToolDescriptor]
+    ) async -> [DirectToolDescriptor] {
+        let family = ServerFamily.external(Self.externalServerID(for: name))
+        let toolPrefix = Self.externalToolPrefix(for: name)
+        let descriptors = ToolDescriptor.canonicalized(tools).map { tool in
+            DirectToolDescriptor(
+                name: tool.name.hasPrefix(toolPrefix) ? tool.name : "\(toolPrefix)\(tool.name)",
+                description: "\(name): \(tool.description)",
+                inputSchema: tool.inputSchema,
+                title: tool.title,
+                outputSchema: tool.outputSchema,
+                presentation: tool.presentation
+            )
+        }
+        servers.removeAll { $0.family == family }
+        guard !descriptors.isEmpty else {
+            return []
+        }
+        servers.append(
+            Server(
+                family: family,
+                toolPrefix: toolPrefix,
+                backend: .remote(executor),
+                descriptors: descriptors,
+                ownsBackend: false,
+                mcpConfiguration: nil
+            )
+        )
+        return descriptors
+    }
+
     public func installExternalMCPServer(
         name: String,
         configuration: MCPServerConfiguration
     ) async throws -> [DirectToolDescriptor] {
         let fence = shutdownFence()
-        let externalServerID = Self.externalServerID(for: name)
-        let isXcodeCandidate = Self.isXcodeServerCandidate(
-            name: name,
-            configuration: configuration
-        )
-        let usesXcodeBridgePolicy = XcodeToolIntegration.isBridgeConfiguration(configuration)
-        let family: ServerFamily = isXcodeCandidate
-            ? .xcode
-            : .external(externalServerID)
-        let shouldReuseExistingServer = isXcodeCandidate
-        if shouldReuseExistingServer,
-           let existingServer = servers.first(where: {
-               $0.family == family
-                   && $0.mcpConfiguration == configuration
-                   && !$0.descriptors.isEmpty
-           }) {
+        let family = ServerFamily.external(Self.externalServerID(for: name))
+        if let existingServer = servers.first(where: {
+            $0.family == family
+                && $0.mcpConfiguration == configuration
+                && !$0.descriptors.isEmpty
+        }) {
             return existingServer.descriptors
         }
 
         let previousServers = servers.filter { $0.family == family }
         servers.removeAll { $0.family == family }
-        // Suspension point: do not spawn a new backend process if a shutdown
-        // landed while the superseded ones were disconnecting.
         for server in previousServers {
             await server.disconnectIfOwned()
         }
@@ -267,21 +170,14 @@ public actor DirectMCPToolRuntime {
             throw MCPRuntimeShutdownError()
         }
 
-        let toolPrefix = isXcodeCandidate
-            ? XcodeToolIntegration.toolPrefix
-            : Self.externalToolPrefix(for: name)
+        let toolPrefix = Self.externalToolPrefix(for: name)
         let executor = RemoteMCPToolExecutor(
             configuration: configuration,
             toolNamePrefix: toolPrefix,
-            localTransportPolicy: usesXcodeBridgePolicy
-                ? XcodeToolIntegration.localTransportPolicy()
-                : .standard
+            localTransportPolicy: .standard
         )
         do {
             let tools = ToolDescriptor.canonicalized(try await executor.loadTools())
-            // `loadTools()` suspends on the network/pipe: if a shutdown landed
-            // there, this install is stale. Drop the executor instead of
-            // resurrecting a server inside a runtime that was already torn down.
             guard isActive(fence) else {
                 await disconnectStaleExecutor(.remote(executor), ownsBackend: true)
                 throw MCPRuntimeShutdownError()
@@ -293,29 +189,20 @@ public actor DirectMCPToolRuntime {
 
             let descriptors = tools.map { tool in
                 DirectToolDescriptor(
-                    name: isXcodeCandidate
-                        ? XcodeToolIntegration.publicToolName(for: tool.name)
-                        : tool.name,
-                    description: isXcodeCandidate
-                        ? XcodeToolIntegration.publicDescription(tool.description)
-                        : "\(name): \(tool.description)",
+                    name: tool.name,
+                    description: "\(name): \(tool.description)",
                     inputSchema: tool.inputSchema,
                     title: tool.title,
                     outputSchema: tool.outputSchema,
-                    presentation: isXcodeCandidate
-                        ? XcodeToolIntegration.presentation(for: tool)
-                        : tool.presentation
+                    presentation: tool.presentation
                 )
             }
-            // Descriptor mapping is synchronous, so the fence checked after
-            // `loadTools()` still holds at the append below.
             servers.append(
                 Server(
                     family: family,
                     toolPrefix: toolPrefix,
                     backend: .remote(executor),
                     descriptors: descriptors,
-                    workspaceRootPath: nil,
                     ownsBackend: true,
                     mcpConfiguration: configuration
                 )
@@ -360,34 +247,15 @@ public actor DirectMCPToolRuntime {
         allowedToolNames: Set<String>? = nil,
         preferredWorkspaceRootURL: URL? = nil
     ) -> [DirectToolDescriptor] {
+        _ = preferredWorkspaceRootURL
         guard let allowedToolNames else {
-            return servers
-                .filter {
-                    serverMatchesPreferredWorkspace(
-                        $0,
-                        preferredWorkspaceRootURL: preferredWorkspaceRootURL
-                    )
-                }
-                .flatMap(\.descriptors)
+            return servers.flatMap(\.descriptors)
         }
-
         guard !allowedToolNames.isEmpty else {
             return []
         }
-
         return servers
-            .filter { server in
-                serverIsRequested(
-                    server,
-                    allowedToolNames: allowedToolNames
-                )
-            }
-            .filter {
-                serverMatchesPreferredWorkspace(
-                    $0,
-                    preferredWorkspaceRootURL: preferredWorkspaceRootURL
-                )
-            }
+            .filter { serverIsRequested($0, allowedToolNames: allowedToolNames) }
             .flatMap(\.descriptors)
     }
 
@@ -396,10 +264,6 @@ public actor DirectMCPToolRuntime {
         allowedToolNames: Set<String>? = nil,
         preferredWorkspaceRootURL: URL? = nil
     ) async -> Bool {
-        // Fast path: if the tool already resolves to a connected server there is
-        // nothing to discover. This avoids re-running the discovery pass (which
-        // can touch the filesystem via symlink resolution) on every tool call
-        // once the relevant MCP server is connected.
         if serverAndToolName(for: toolName) != nil {
             return true
         }
@@ -415,14 +279,11 @@ public actor DirectMCPToolRuntime {
         guard let (server, rawToolName) = serverAndToolName(for: toolCall.name) else {
             throw DirectMCPToolRuntimeError.unknownTool(toolCall.name)
         }
-
         let request = ToolRequest(
             name: rawToolName,
             arguments: Self.jsonValueArguments(from: toolCall.argumentsObject)
         )
-        let normalizedRequest = normalizedToolRequest(request, for: server)
-
-        let output = try await server.backend.execute(normalizedRequest)
+        let output = try await server.backend.execute(request)
         return output.text
     }
 
@@ -446,8 +307,6 @@ public actor DirectMCPToolRuntime {
         let families = discoveryServerFamilies(allowedToolNames: allowedToolNames)
         return Set(families.map {
             switch $0 {
-            case .xcode:
-                return "xcode"
             case .figma:
                 return "figma"
             case let .external(name):
@@ -460,45 +319,10 @@ public actor DirectMCPToolRuntime {
         allowedToolNames: Set<String>?
     ) -> Set<ServerFamily> {
         guard let allowedToolNames else {
-            return [.xcode, .figma]
+            return [.figma]
         }
-
-        var families = Set<ServerFamily>()
-        for toolName in allowedToolNames {
-            if isXcodeToolName(toolName) {
-                families.insert(.xcode)
-            }
-            if toolName.hasPrefix("figma.") {
-                families.insert(.figma)
-            }
-        }
-        return families
+        return allowedToolNames.contains { $0.hasPrefix("figma.") }
+            ? [.figma]
+            : []
     }
-
-    public static func isXcodeToolName(_ toolName: String) -> Bool {
-        XcodeToolIntegration.isToolName(toolName)
-    }
-
-    /// Cross-platform detection of whether an MCP server definition targets
-    /// Xcode. On Linux the `XcodeToolIntegration` type alias is a no-op shim
-    /// that returns `false` for every candidate; the name-based fallback below
-    /// ensures an ACP-provided Xcode MCP server is recognized identically on
-    /// every platform.
-    static func isXcodeServerCandidate(
-        name: String,
-        configuration: MCPServerConfiguration
-    ) -> Bool {
-        if name.localizedCaseInsensitiveContains("xcode") {
-            return true
-        }
-        let commandName = URL(fileURLWithPath: configuration.executablePath)
-            .lastPathComponent
-            .lowercased()
-        if commandName == "xcrun",
-           configuration.arguments.contains(where: { $0.lowercased() == "mcpbridge" }) {
-            return true
-        }
-        return false
-    }
-
 }

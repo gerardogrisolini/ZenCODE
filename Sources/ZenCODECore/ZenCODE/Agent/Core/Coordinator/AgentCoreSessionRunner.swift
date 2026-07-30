@@ -201,8 +201,6 @@ public actor AgentCoreSessionRunner {
         onToolWillExecute: (@Sendable (DirectAgentToolCall) async -> Void)? = nil,
         borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
         toolProviders: [AgentToolProvider] = [],
-        borrowedXcodeExecutor: XcodeToolExecutor? = nil,
-        borrowedXcodeTools: [ToolDescriptor] = [],
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
         let promptID = UUID()
@@ -215,10 +213,6 @@ public actor AgentCoreSessionRunner {
             promptAuthorizationSessionIDs.removeValue(forKey: promptID)
         }
 
-        await installBorrowedXcodeExecutor(
-            borrowedXcodeExecutor,
-            tools: borrowedXcodeTools
-        )
         let backend = try await ensureBackend(configuration: configuration)
         let generation = backendGeneration
         await backend.updateBorrowedSubAgentToolExecutor(
@@ -487,9 +481,7 @@ public actor AgentCoreSessionRunner {
         authorizeTool: AgentToolAuthorizationHandler? = nil,
         onToolWillExecute: (@Sendable (DirectAgentToolCall) async -> Void)? = nil,
         borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
-        toolProviders: [AgentToolProvider] = [],
-        borrowedXcodeExecutor: XcodeToolExecutor? = nil,
-        borrowedXcodeTools: [ToolDescriptor] = []
+        toolProviders: [AgentToolProvider] = []
     ) -> AsyncThrowingStream<DirectAgentEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<DirectAgentEvent, Error>.makeStream()
         let promptID = UUID()
@@ -512,9 +504,7 @@ public actor AgentCoreSessionRunner {
                     authorizeTool: authorizeTool,
                     onToolWillExecute: onToolWillExecute,
                     borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
-                    toolProviders: toolProviders,
-                    borrowedXcodeExecutor: borrowedXcodeExecutor,
-                    borrowedXcodeTools: borrowedXcodeTools
+                    toolProviders: toolProviders
                 ) { event in
                     await outcomeTracker.record(event)
                     continuation.yield(event)
@@ -665,8 +655,7 @@ public actor AgentCoreSessionRunner {
     }
 
     /// Shuts down the model backend and all session state while keeping the
-    /// connected external MCP servers (for example the already-authorized
-    /// Xcode connection) alive. Use this for backend resets such as model or
+    /// connected external MCP servers alive. Use this for backend resets such as model or
     /// agent switching, where tearing down MCP connections would force the
     /// user to grant external-tool consents again.
     public func shutdownBackendKeepingExternalTools() async {

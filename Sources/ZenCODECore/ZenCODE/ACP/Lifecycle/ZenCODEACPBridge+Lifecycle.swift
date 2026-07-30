@@ -7,9 +7,6 @@
 
 import Foundation
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 extension ZenCODEACPBridge {
     public func initialize(id: JSONValue?, params: [String: Any]) async throws {
@@ -44,40 +41,21 @@ extension ZenCODEACPBridge {
         await writer.sendResultIfRequest(id: id, result: JSONValue.acpValue(from: result))
     }
 
-    /// Xcode 27 beta 3 treats every custom ACP agent as requiring authentication.
-    /// This no-op method only acknowledges that client-mandated step; it does not handle provider access.
+    /// Some ACP clients require an authentication-method acknowledgement before
+    /// starting a session even when provider authentication is managed by the
+    /// agent itself.
     static func authenticationMethods(from params: [String: Any]) -> [[String: Any]] {
-        guard requiresXcodeAuthenticationCompatibilityMethod(from: params) else {
+        let clientCapabilities = params["clientCapabilities"] as? [String: Any]
+        guard clientCapabilities?["auth"] != nil else {
             return []
         }
 
         return [[
-            "id": "zencode-xcode-compatibility",
+            "id": "zencode-client-compatibility",
             "name": "Continue with ZenCODE",
             "description": "Continue to the ZenCODE session.",
             "type": "agent"
         ]]
-    }
-
-    private static func requiresXcodeAuthenticationCompatibilityMethod(from params: [String: Any]) -> Bool {
-        guard let clientInfo = params["clientInfo"] as? [String: Any] else {
-            return false
-        }
-        let clientName = ((clientInfo["name"] as? String) ?? (clientInfo["title"] as? String))?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard clientName == "xcode" else {
-            return false
-        }
-
-        if let version = (clientInfo["version"] as? String)?.nilIfBlank,
-           let majorVersion = Int(version.split(separator: ".", maxSplits: 1).first ?? ""),
-           majorVersion >= 27 {
-            return true
-        }
-
-        let clientCapabilities = params["clientCapabilities"] as? [String: Any]
-        return clientCapabilities?["auth"] != nil
     }
 
     public func preloadModel(id: JSONValue?, params: [String: Any]) async throws {
@@ -124,9 +102,6 @@ extension ZenCODEACPBridge {
         let cacheKey = (params["sessionKey"] as? String)
             ?? (params["cacheKey"] as? String)
         let workingDirectoryURL = URL(fileURLWithPath: cwd)
-        let hasACPProvidedXcodeMCPServer = Self.mcpServerDefinitions(from: params).contains {
-            $0.isXcodeCandidate
-        }
         let acpMCPDescriptors = await registerACPProvidedMCPServers(
             from: params,
             operation: operation
@@ -134,13 +109,9 @@ extension ZenCODEACPBridge {
         try ensureLifecycleOperationLive(operation)
         let requestedAllowedToolNames = Self.allowedToolNames(from: params)
             ?? selectedAgent?.allowedToolNames()
-        let hasACPProvidedXcodeTools = acpMCPDescriptors.contains {
-            DirectMCPToolRuntime.isXcodeToolName($0.name)
-        }
         let resolvedRequestedAllowedToolNames = await resolvedAllowedToolNames(
             requestedAllowedToolNames,
-            workingDirectory: workingDirectoryURL,
-            skipXcodeDiscovery: hasACPProvidedXcodeMCPServer || hasACPProvidedXcodeTools
+            workingDirectory: workingDirectoryURL
         )
         try ensureLifecycleOperationLive(operation)
         var allowedToolNames = Self.allowedToolNames(
@@ -235,29 +206,10 @@ extension ZenCODEACPBridge {
 
     public func resolvedAllowedToolNames(
         _ requestedAllowedToolNames: Set<String>?,
-        workingDirectory: URL,
-        skipXcodeDiscovery: Bool = false
+        workingDirectory: URL
     ) async -> Set<String>? {
-        guard let allowedToolNames = ExternalToolAvailability.resolvedAllowedToolNames(requestedAllowedToolNames) else {
-            return nil
-        }
-
-        guard !skipXcodeDiscovery else {
-            return allowedToolNames
-        }
-        guard allowedToolNames.contains(where: DirectMCPToolRuntime.isXcodeToolName) else {
-            return allowedToolNames
-        }
-        guard xcodeIsRunning() else {
-            return allowedToolNames
-        }
-
-        let requestedXcodePrefixes: Set<String> = [XcodeToolIntegration.toolPrefix]
-        _ = await sessionRunner.mcpToolDescriptors(
-            allowedToolNames: requestedXcodePrefixes,
-            preferredWorkspaceRootURL: workingDirectory
-        )
-        return allowedToolNames
+        _ = workingDirectory
+        return ExternalToolAvailability.resolvedAllowedToolNames(requestedAllowedToolNames)
     }
 
     public func registerACPProvidedMCPServers(
@@ -609,9 +561,6 @@ extension ZenCODEACPBridge {
             "session/restore id=\(sessionID) cwd=\(workingDirectory.path) replay=\(replayHistory) mcpServers=\(Self.mcpServerInputSummary(from: params))"
         )
         try ensureLifecycleOperationLive(operation)
-        let hasACPProvidedXcodeMCPServer = Self.mcpServerDefinitions(from: params).contains {
-            $0.isXcodeCandidate
-        }
         let acpMCPDescriptors = await registerACPProvidedMCPServers(
             from: params,
             operation: operation
@@ -623,7 +572,6 @@ extension ZenCODEACPBridge {
             params: params,
             workingDirectory: workingDirectory,
             acpMCPDescriptors: acpMCPDescriptors,
-            hasACPProvidedXcodeMCPServer: hasACPProvidedXcodeMCPServer,
             selectedAgent: selectedAgent
         )
         try ensureLifecycleOperationLive(operation)
@@ -755,7 +703,6 @@ extension ZenCODEACPBridge {
         params: [String: Any],
         workingDirectory: URL,
         acpMCPDescriptors: [DirectToolDescriptor],
-        hasACPProvidedXcodeMCPServer: Bool = false,
         selectedAgent: AgentProfile? = nil
     ) async -> AgentCoreSessionConfiguration {
         let requestedModelID = Self.modelID(from: params)
@@ -763,13 +710,9 @@ extension ZenCODEACPBridge {
             ?? configuration.effectiveModelID
         let requestedAllowedToolNames = Self.allowedToolNames(from: params)
             ?? selectedAgent?.allowedToolNames()
-        let hasACPProvidedXcodeTools = acpMCPDescriptors.contains {
-            DirectMCPToolRuntime.isXcodeToolName($0.name)
-        }
         let resolvedRequestedAllowedToolNames = await resolvedAllowedToolNames(
             requestedAllowedToolNames,
-            workingDirectory: workingDirectory,
-            skipXcodeDiscovery: hasACPProvidedXcodeMCPServer || hasACPProvidedXcodeTools
+            workingDirectory: workingDirectory
         )
         var allowedToolNames = Self.allowedToolNames(
             resolvedRequestedAllowedToolNames,

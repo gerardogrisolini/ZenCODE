@@ -2449,10 +2449,10 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionRequestBodySendsWireSafeXcodeToolNames() throws {
-        let catalog = remoteXcodeToolCatalog()
+    func chatGPTSubscriptionRequestBodySendsWireSafeFeatureToolNames() throws {
+        let catalog = remoteFeatureToolCatalog()
         let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
-            from: catalog.wireMessages(from: remoteXcodeHistoryMessages()),
+            from: catalog.wireMessages(from: remoteFeatureHistoryMessages()),
             continuation: nil
         )
         let body = ChatGPTSubscriptionRequestBuilder.requestBody(
@@ -2461,7 +2461,7 @@ extension RemoteSessionSnapshotTests {
             instructions: payload.instructions ?? "",
             reasoningEffort: nil,
             textVerbosity: "medium",
-            sessionID: "session-chatgpt-xcode",
+            sessionID: "session-chatgpt-fixture",
             toolPayloads: JSONValue.acpValue(from: catalog.responsesToolPayloads)
         )
         let toolNames = Set(
@@ -2472,31 +2472,31 @@ extension RemoteSessionSnapshotTests {
         let input = try #require(body["input"] as? [[String: Any]])
         let historyFunctionCall = try #require(input.first {
             $0["type"] as? String == "function_call"
-                && $0["call_id"] as? String == "call_previous_xcode"
+                && $0["call_id"] as? String == "call_previous_fixture"
         })
 
-        #expect(toolNames == ["tool_local_exec", "tool_xcode_BuildProject"])
+        #expect(toolNames == ["tool_local_exec", "tool_fixture_Build"])
         #expect(!toolNames.contains("local.exec"))
-        #expect(!toolNames.contains("xcode.BuildProject"))
-        #expect(historyFunctionCall["name"] as? String == "tool_xcode_BuildProject")
-        #expect(JSONValue(jsonObject: body).prettyPrinted().contains("xcode.BuildProject") == false)
+        #expect(!toolNames.contains("fixture.Build"))
+        #expect(historyFunctionCall["name"] as? String == "tool_fixture_Build")
+        #expect(JSONValue(jsonObject: body).prettyPrinted().contains("fixture.Build") == false)
     }
 
     @Test
     func chatGPTSubscriptionClientUsesInjectedMCPRuntimeForActiveTools() async throws {
         let client = ChatGPTSubscriptionGenerationClient(
             configuration: remoteStreamingConfiguration(),
-            mcpRuntime: await borrowedXcodeMCPRuntime()
+            mcpRuntime: await borrowedFeatureMCPRuntime()
         )
 
         await client.createSession(
-            id: "session-chatgpt-xcode-tools",
+            id: "session-chatgpt-fixture-tools",
             cwd: "/tmp/project",
-            allowedToolNames: ["xcode."]
+            allowedToolNames: ["fixture."]
         )
         let descriptors = await client.activeToolDescriptors()
 
-        #expect(descriptors.map(\.name) == ["xcode.BuildProject"])
+        #expect(descriptors.map(\.name) == ["fixture.Build"])
     }
 
     @Test

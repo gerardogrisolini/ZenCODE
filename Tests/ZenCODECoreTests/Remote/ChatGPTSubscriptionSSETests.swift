@@ -47,12 +47,12 @@ extension RemoteSessionSnapshotTests {
 
     @Test
     func chatGPTSubscriptionWebSocketPayloadKeepsCachedContinuationWireSafe() throws {
-        let catalog = remoteXcodeToolCatalog()
-        let messages = catalog.wireMessages(from: remoteXcodeHistoryMessages())
+        let catalog = remoteFeatureToolCatalog()
+        let messages = catalog.wireMessages(from: remoteFeatureHistoryMessages())
         let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
             from: messages,
             continuation: ChatGPTSubscriptionContinuationState(
-                responseID: "resp_previous_xcode",
+                responseID: "resp_previous_fixture",
                 messageCount: messages.count - 1,
                 instructions: "System prompt"
             )
@@ -63,7 +63,7 @@ extension RemoteSessionSnapshotTests {
             instructions: payload.instructions ?? "",
             reasoningEffort: nil,
             textVerbosity: "medium",
-            sessionID: "session-chatgpt-xcode-ws",
+            sessionID: "session-chatgpt-fixture-ws",
             toolPayloads: JSONValue.acpValue(from: catalog.responsesToolPayloads)
         )
         let cachedPayload = ChatGPTSubscriptionResponsesClient.webSocketRequestPayload(
@@ -79,12 +79,12 @@ extension RemoteSessionSnapshotTests {
             }
         )
 
-        #expect(payload.previousResponseID == "resp_previous_xcode")
-        #expect(cachedPayload["previous_response_id"] as? String == "resp_previous_xcode")
+        #expect(payload.previousResponseID == "resp_previous_fixture")
+        #expect(cachedPayload["previous_response_id"] as? String == "resp_previous_fixture")
         #expect(cachedInput.count == 1)
         #expect((cachedInput.first?["type"] as? String) == "function_call_output")
-        #expect(toolNames == ["tool_local_exec", "tool_xcode_BuildProject"])
-        #expect(JSONValue(jsonObject: cachedPayload).prettyPrinted().contains("xcode.BuildProject") == false)
+        #expect(toolNames == ["tool_local_exec", "tool_fixture_Build"])
+        #expect(JSONValue(jsonObject: cachedPayload).prettyPrinted().contains("fixture.Build") == false)
     }
 
     @Test

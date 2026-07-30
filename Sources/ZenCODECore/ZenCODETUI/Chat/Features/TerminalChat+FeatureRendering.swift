@@ -564,8 +564,6 @@ extension TerminalChat {
             return "Swift"
         case "jira-tools":
             return "Jira"
-        case "xcode-tools":
-            return "Xcode"
         case "figma-tools":
             return "Figma"
         case "desktop-tools":

@@ -8,9 +8,6 @@
 import Foundation
 @testable import ZenCODECore
 import Testing
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 extension AgentConfigurationTests {
     @Test
@@ -113,34 +110,6 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    func xcodeToolReferencesSelectRuntimePackageBeforeDiscovery() throws {
-        let items = TerminalChat.toolSelectionItems(
-            featureStatuses: [
-                featureStatus(
-                    id: "xcode-tools",
-                    source: .bundled,
-                    tools: [],
-                    toolNamePrefixes: ["xcode.", "Xcode"],
-                    discoversToolsAtRuntime: true
-                )
-            ]
-        )
-        let xcodeKey = TerminalToolSelectionCatalog.featurePackageKey(id: "xcode-tools")
-
-        let selectedKeys = TerminalChat.toolSelectionKeys(
-            from: ["xcode", "xcode.", "xcode.BuildProject", "XcodeBuildProject"],
-            items: items
-        )
-        let discoveryPrefixes = TerminalToolSelectionCatalog.externalDiscoveryPrefixes(
-            for: selectedKeys,
-            items: items
-        )
-
-        #expect(selectedKeys == Set([xcodeKey]))
-        #expect(discoveryPrefixes.contains("xcode."))
-    }
-
-    @Test
     func swiftOutlineStaysInSwiftFeaturePackageSelection() throws {
         let items = TerminalChat.toolSelectionItems(
             featureStatuses: [
@@ -173,46 +142,6 @@ extension AgentConfigurationTests {
 
         #expect(!developerAllowedToolNames.contains("swift.outline"))
         #expect(!developerAllowedToolNames.contains("swift.build"))
-    }
-
-    @Test
-    func agentAllowedToolNamesNormalizeDirectXcodeReferences() {
-        let profile = AgentProfile(
-            id: "xcode-agent",
-            name: "Xcode Agent",
-            tools: ["xcode", "xcode.BuildProject"]
-        )
-
-        let allowedToolNames = profile.allowedToolNames()
-
-        #expect(DirectMCPToolRuntime.discoveryFamilies(allowedToolNames: allowedToolNames).contains("xcode"))
-        #expect(DirectToolExecutor.isAllowed("xcode.BuildProject", allowedToolNames: allowedToolNames))
-    }
-
-    @Test
-    func unavailableXcodeStaysSelectedButIsNotDiscoverable() {
-        let requestedToolNames = Set([
-            "local.exec",
-            "xcode.",
-            "xcode.BuildProject",
-            "Xcode",
-            "figma."
-        ])
-
-        let allowedToolNames = ExternalToolAvailability.resolvedAllowedToolNames(requestedToolNames)
-        let discoverableToolNames = ExternalToolAvailability.discoverableToolPrefixes(
-            requestedToolNames,
-            xcodeIsRunning: false
-        )
-
-        #expect(allowedToolNames?.contains("local.exec") == true)
-        #expect(allowedToolNames?.contains("figma.") == true)
-        #expect(allowedToolNames?.contains("xcode.") == true)
-        #expect(allowedToolNames?.contains("xcode.BuildProject") == true)
-        #expect(allowedToolNames?.contains("Xcode") == true)
-        #expect(discoverableToolNames.contains("xcode.") == false)
-        #expect(discoverableToolNames.contains("xcode.BuildProject") == false)
-        #expect(discoverableToolNames.contains("Xcode") == false)
     }
 
     @Test
@@ -424,106 +353,6 @@ extension AgentConfigurationTests {
         #expect(notice.content.contains("Removed tool names:"))
         #expect(notice.content.contains("local.exec"))
         #expect(notice.content.contains("historical context"))
-    }
-
-    @Test
-    func xcodeWorkspaceRootMatchesNestedWorkingDirectoryButRejectsSiblings() {
-        #expect(
-            XcodeWorkspaceContext.workspaceRootPath(
-                "/tmp/XcodeApp",
-                matchesPreferredRootPath: "/tmp/XcodeApp/Modules/Feature"
-            )
-        )
-        #expect(
-            XcodeWorkspaceContext.workspaceRootPath(
-                "/tmp/XcodeApp/XcodeApp.xcodeproj",
-                matchesPreferredRootPath: "/tmp/XcodeApp"
-            )
-        )
-        #expect(
-            !XcodeWorkspaceContext.workspaceRootPath(
-                "/tmp/OtherApp",
-                matchesPreferredRootPath: "/tmp/XcodeApp"
-            )
-        )
-    }
-
-    @Test
-    func xcodeDiscoveryRejectsDifferentWorkspace() async {
-        let runtime = DirectMCPToolRuntime(
-            xcodeDiscoveryProvider: {
-                Self.xcodeDiscovery(workspacePath: "/tmp/OtherApp/OtherApp.xcodeproj")
-            }
-        )
-
-        let descriptors = await runtime.discoverDescriptors(
-            allowedToolNames: ["xcode."],
-            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/XcodeApp")
-        )
-
-        #expect(descriptors.isEmpty)
-    }
-
-    @Test
-    func xcodeDiscoveryAcceptsWorkspaceContainingWorkingDirectory() async {
-        let runtime = DirectMCPToolRuntime(
-            xcodeDiscoveryProvider: {
-                Self.xcodeDiscovery(workspacePath: "/tmp/XcodeApp/XcodeApp.xcodeproj")
-            }
-        )
-
-        let descriptors = await runtime.discoverDescriptors(
-            allowedToolNames: ["xcode."],
-            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/XcodeApp/Modules/Feature")
-        )
-
-        #expect(descriptors.map(\.name) == ["xcode.BuildProject"])
-    }
-
-    @Test
-    func xcodeDiscoveryKeepsGrantedSessionForMismatchedWorkspace() async {
-        let discoveryProbe = XcodeDiscoveryProbe()
-        let runtime = DirectMCPToolRuntime(
-            xcodeDiscoveryProvider: {
-                await discoveryProbe.discovery(workspacePath: "/tmp/XcodeApp/XcodeApp.xcodeproj")
-            }
-        )
-
-        let initialDescriptors = await runtime.discoverDescriptors(
-            allowedToolNames: ["xcode."],
-            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/XcodeApp")
-        )
-        let otherWorkspaceDescriptors = await runtime.discoverDescriptors(
-            allowedToolNames: ["xcode."],
-            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/OtherApp")
-        )
-        let restoredWorkspaceDescriptors = await runtime.discoverDescriptors(
-            allowedToolNames: ["xcode."],
-            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/XcodeApp")
-        )
-
-        #expect(initialDescriptors.map(\.name) == ["xcode.BuildProject"])
-        #expect(otherWorkspaceDescriptors.isEmpty)
-        #expect(restoredWorkspaceDescriptors.map(\.name) == ["xcode.BuildProject"])
-        #expect(await discoveryProbe.count() == 1)
-    }
-
-    @Test
-    func appSessionConfigurationKeepsClosedXcodeSelection() throws {
-        let xcodeAgent = AgentProfile(
-            id: "xcode-agent",
-            name: "Xcode Agent",
-            tools: ["shell", "xcode"]
-        )
-
-        let allowedToolNames = AgentCoreAppSessionFactory.resolvedAllowedToolNames(
-            selectedToolKeys: nil,
-            explicitAllowedToolNames: nil,
-            selectedAgent: xcodeAgent
-        )
-
-        #expect(allowedToolNames?.contains("local.exec") == true)
-        #expect(allowedToolNames?.contains("xcode.") == true)
     }
 
     @Test

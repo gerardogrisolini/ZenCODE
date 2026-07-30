@@ -62,8 +62,7 @@ extension ChatGPTSubscriptionGenerationClient {
         _ configuration: RequestConfiguration
     ) -> String {
         [
-            renderedThinkingSetting(configuration.thinkingSelection),
-            renderedDeveloperToolSetting()
+            renderedThinkingSetting(configuration.thinkingSelection)
         ]
         .filter { !$0.isEmpty }
         .joined(separator: "\n")
@@ -96,10 +95,6 @@ extension ChatGPTSubscriptionGenerationClient {
         case .ultra:
             return "- Thinking effort: ultra."
         }
-    }
-
-    static func renderedDeveloperToolSetting() -> String {
-        "- Xcode projects: `xcodebuild` is allowed. When building from the macOS app sandbox, keep build products inside the workspace, for example with `-derivedDataPath .zencode/DerivedData`. If Xcode reports that its license has not been accepted, stop and report that host setup issue."
     }
 
     static func renderedHistory(

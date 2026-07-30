@@ -8,9 +8,6 @@
 import FeatureMCPBridgeKit
 import Foundation
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 
 /// Thrown by `ensureNotShutDown()` once `shutdown()` latched.
 ///
@@ -64,7 +61,6 @@ public actor ZenCODEACPBridge {
     public let writer: ACPWriter
     public let permissionBroker: ACPPermissionBroker
     public let sessionRunner: AgentCoreSessionRunner
-    public let xcodeIsRunning: @Sendable () -> Bool
     public let verboseLogFile: ACPVerboseLogFile?
     public var sessions: [String: SessionState] = [:]
     private var sessionSleepAssertion: ZenSleepAssertion?
@@ -87,14 +83,10 @@ public actor ZenCODEACPBridge {
         configuration: AgentConfiguration,
         writer: ACPWriter,
         backendFactory: AgentRuntimeBackendFactory? = nil,
-        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
-        xcodeIsRunning: @escaping @Sendable () -> Bool = {
-            XcodeToolIntegration.isRunning()
-        }
+        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime()
     ) {
         self.configuration = configuration
         self.writer = writer
-        self.xcodeIsRunning = xcodeIsRunning
         let verboseLogFile = configuration.verboseLogging ? ACPVerboseLogFile.open() : nil
         self.verboseLogFile = verboseLogFile
         let permissionBroker = ACPPermissionBroker(writer: writer)

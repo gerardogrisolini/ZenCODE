@@ -1,8 +1,5 @@
 import Foundation
 import ToolCore
-#if os(macOS)
-import XcodeToolsFeature
-#endif
 @testable import ZenCODECore
 
 /// Builds a tool call through the same descriptor-owned presentation contract
@@ -26,15 +23,6 @@ func presentedToolCall(
         ownedPresentation = presentation
     } else if let descriptor {
         ownedPresentation = descriptor.presentation
-    } else if name.hasPrefix("xcode.") {
-        ownedPresentation = XcodeToolIntegration.presentation(
-            for: ToolDescriptor(
-                name: name,
-                title: descriptorTitle,
-                description: "Test descriptor",
-                inputSchema: "{}"
-            )
-        )
     } else {
         ownedPresentation = nil
     }

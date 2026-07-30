@@ -32,10 +32,6 @@ let products: [Product] = [
         targets: ["FeatureMCPBridgeKit"]
     ),
     .library(
-        name: "XcodeToolsFeature",
-        targets: ["XcodeToolsFeature"]
-    ),
-    .library(
         name: "LocalToolsSupport",
         targets: ["LocalToolsSupport"]
     ),
@@ -78,10 +74,6 @@ let targets: [Target] = [
             "FeatureKit",
             "ToolCore",
             "FeatureMCPBridgeKit",
-            .target(
-                name: "XcodeToolsFeature",
-                condition: .when(platforms: [.macOS])
-            ),
             "LocalToolsSupport",
             "ZenPackageMetadata"
         ],
@@ -109,16 +101,6 @@ let targets: [Target] = [
         swiftSettings: memberImportVisibilitySettings
     ),
     .target(
-        name: "XcodeToolsFeature",
-        dependencies: [
-            "FeatureKit",
-            "ToolCore",
-            "FeatureMCPBridgeKit"
-        ],
-        path: "Sources/XcodeToolsFeature",
-        swiftSettings: memberImportVisibilitySettings
-    ),
-    .target(
         name: "LocalToolsSupport",
         dependencies: ["FeatureKit", "ToolCore"],
         swiftSettings: memberImportVisibilitySettings
@@ -140,7 +122,6 @@ let targets: [Target] = [
         dependencies: [
             "ZenCODECore",
             "FeatureMCPBridgeKit",
-            "XcodeToolsFeature",
             "FeatureKit",
             "LocalToolsSupport",
             "ZenPackageMetadata",
@@ -175,16 +156,6 @@ let targets: [Target] = [
     .testTarget(
         name: "FeatureMCPBridgeKitTests",
         dependencies: [
-            "FeatureMCPBridgeKit",
-            "ToolCore"
-        ],
-        swiftSettings: memberImportVisibilitySettings
-    ),
-    .testTarget(
-        name: "XcodeToolsFeatureTests",
-        dependencies: [
-            "XcodeToolsFeature",
-            "FeatureKit",
             "FeatureMCPBridgeKit",
             "ToolCore"
         ],

@@ -7,6 +7,7 @@
 
 import Foundation
 import Testing
+import ToolCore
 @testable import ZenCODECore
 
 extension TerminalChatRenderingTests {
@@ -939,7 +940,7 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func expandedMultiEditAndXcodeAliasesUseNumberedDiffPreparation() {
+    func expandedMultiEditUsesNumberedDiffPreparation() {
         let multiEdit = presentedToolCall(
             id: "multi",
             name: "local.multiEdit",
@@ -978,35 +979,6 @@ extension TerminalChatRenderingTests {
             #expect(lines.contains("edit 1:"))
             #expect(lines.contains("edit 2:"))
             #expect(lines.contains { $0.contains("1 │ let old = 1") && $0.contains("1 │ let new = 2") })
-            #expect(lines.contains { $0.contains("1 │ let before = false") && $0.contains("1 │ let after = true") })
-        }
-
-        for name in ["XcodeWrite", "xcode.XcodeWrite", "xcode.write"] {
-            let toolCall = presentedToolCall(
-                id: "write-\(name)",
-                name: name,
-                argumentsObject: [
-                    "filePath": "Sources/Feature.swift",
-                    "content": "let written = true"
-                ],
-                argumentsJSON: "{}"
-            )
-            let lines = TerminalChat.appliedChangeDetailLines(for: toolCall, contentWidth: 80)
-            #expect(lines.contains("  1 │ let written = true"))
-        }
-
-        for name in ["XcodeUpdate", "xcode.XcodeUpdate", "xcode.update", "xcode.edit"] {
-            let toolCall = presentedToolCall(
-                id: "update-\(name)",
-                name: name,
-                argumentsObject: [
-                    "filePath": "Sources/Feature.swift",
-                    "oldString": "let before = false",
-                    "newString": "let after = true"
-                ],
-                argumentsJSON: "{}"
-            )
-            let lines = TerminalChat.appliedChangeDetailLines(for: toolCall, contentWidth: 80)
             #expect(lines.contains { $0.contains("1 │ let before = false") && $0.contains("1 │ let after = true") })
         }
     }
@@ -1114,80 +1086,27 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func xcodeRemoveAndMoveAliasesMatchRuntimeRoutingWithoutClassifyingBareNames() {
-        for name in ["XcodeRM", "xcode.XcodeRM", "xcode.rm", "xcode_rm", "xcodeRM"] {
-            let toolCall = presentedToolCall(
-                id: "rm-\(name)",
-                name: name,
-                argumentsObject: ["path": "Sources/Legacy.swift"],
-                argumentsJSON: "{}"
-            )
-            #expect(TerminalChat.normalizedMutationToolName(name) == "XcodeRM")
-            #expect(TerminalChat.isFileMutationTool(name))
-            #expect(
-                TerminalChat.appliedChangeDetailLines(for: toolCall, contentWidth: 80)
-                    == ["change: delete Sources/Legacy.swift"]
-            )
-        }
-
-        for name in ["XcodeMV", "xcode.XcodeMV", "xcode.mv", "xcode_mv", "xcodeMV"] {
-            let toolCall = presentedToolCall(
-                id: "mv-\(name)",
-                name: name,
-                argumentsObject: [
-                    "sourcePath": "Sources/Old.swift",
-                    "destinationPath": "Sources/New.swift"
-                ],
-                argumentsJSON: "{}"
-            )
-            #expect(TerminalChat.normalizedMutationToolName(name) == "XcodeMV")
-            #expect(TerminalChat.isFileMutationTool(name))
-            #expect(
-                TerminalChat.appliedChangeDetailLines(for: toolCall, contentWidth: 80)
-                    == [
-                        "change: move",
-                        "from: Sources/Old.swift",
-                        "to: Sources/New.swift"
-                    ]
-            )
-        }
-
-        // Bare names from unrelated MCP servers must stay unclassified.
-        for name in ["rm", "mv", "write", "update", "edit"] {
-            #expect(TerminalChat.normalizedMutationToolName(name) == name)
-            #expect(!TerminalChat.isFileMutationTool(name))
-        }
-    }
-
-    @Test
-    func xcodeMoveMetadataIsSanitizedInBothDirections() {
-        let toolCall = presentedToolCall(
-            id: "mv-hostile",
-            name: "xcode.mv",
-            argumentsObject: [
-                "from": "Sources/\u{1B}[2JOld.swift",
-                "to": "Sources/New\r\n.swift"
-            ],
-            argumentsJSON: "{}"
-        )
-        let lines = TerminalChat.appliedChangeDetailLines(for: toolCall, contentWidth: 80)
-
-        #expect(lines.count == 3)
-        #expect(lines.allSatisfy { !$0.contains("\u{1B}") && !$0.contains("\r") && !$0.contains("\n") })
-        #expect(lines.contains { $0.hasPrefix("from: Sources/") })
-        #expect(lines.contains { $0.hasPrefix("to: Sources/New") })
-    }
-
-    @Test
-    func metadataOnlyMutationToolsKeepParameterHeadingAndPayloadTogether() {
+    func descriptorOwnedMetadataMutationKeepsParameterHeadingAndPayloadTogether() {
         let toolCall = presentedToolCall(
             id: "metadata-only-move",
-            name: "xcode.XcodeMV",
+            name: "fixture.Move",
             argumentsObject: [
                 "sourcePath": "Sources/Old.swift",
                 "destinationPath": "Sources/New.swift"
             ],
-            argumentsJSON: "{}"
+            argumentsJSON: "{}",
+            presentation: ToolPresentationDefinition(
+                title: "Fixture file",
+                action: "Move",
+                kind: .move,
+                target: .argument(["destinationPath"], format: .path),
+                metadata: [
+                    ToolPresentationMetadataDefinition(
+                        label: "from",
+                        value: .argument(["sourcePath"], format: .path)
+                    )
+                ]
+            )
         )
 
         let lines = TerminalChat.detailedToolBaseLines(for: toolCall)
@@ -1263,35 +1182,6 @@ extension TerminalChatRenderingTests {
                 keys: ["path", "file"]
             ) == "Sources/App.swift"
         )
-    }
-
-    @Test
-    func bareToolNamesAreNotCanonicalizedAsXcodeMutations() {
-        // Only the spellings the runtime router actually accepts are mapped.
-        for name in ["xcode.write", "XcodeWrite", "xcode_write", "xcodewrite"] {
-            #expect(TerminalChat.normalizedMutationToolName(name) == "XcodeWrite")
-        }
-        for name in ["xcode.update", "xcode.edit", "XcodeUpdate", "xcodeedit"] {
-            #expect(TerminalChat.normalizedMutationToolName(name) == "XcodeUpdate")
-        }
-
-        // Homonymous bare names from an unrelated MCP server stay untouched:
-        // no false mutation rendering and no hidden parameters.
-        for name in ["write", "update", "edit", "other.write"] {
-            #expect(TerminalChat.normalizedMutationToolName(name) == name)
-            #expect(!TerminalChat.isFileMutationTool(name))
-
-            let toolCall = presentedToolCall(
-                id: "bare-\(name)",
-                name: name,
-                argumentsObject: [
-                    "filePath": "Sources/Feature.swift",
-                    "content": "let written = true"
-                ],
-                argumentsJSON: "{}"
-            )
-            #expect(TerminalChat.appliedChangeDetailLines(for: toolCall, contentWidth: 80).isEmpty)
-        }
     }
 
     @Test

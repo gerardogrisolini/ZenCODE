@@ -7,7 +7,6 @@
 
 import Foundation
 @testable import FeatureMCPBridgeKit
-@testable import XcodeToolsFeature
 @testable import ZenCODECore
 import Testing
 import ToolCore
@@ -63,19 +62,18 @@ extension ACPCompatibilityTests {
         #expect(contents.contains("sample diagnostic"))
     }
 
-    #if os(macOS)
     @Test
-    func mcpServersParseACPStdioXcodeConfiguration() throws {
+    func mcpServersParseACPStdioConfiguration() throws {
         let definitions = ZenCODEACPBridge.mcpServerDefinitions(from: [
             "mcpServers": [
                 [
                     "type": "stdio",
-                    "name": "Xcode",
-                    "command": "/usr/bin/xcrun",
-                    "args": ["mcpbridge"],
+                    "name": "Fixture",
+                    "command": "/usr/bin/env",
+                    "args": ["fixture-server"],
                     "env": [
                         [
-                            "name": "MCP_XCODE_SESSION_ID",
+                            "name": "MCP_SESSION_ID",
                             "value": "session-1"
                         ]
                     ]
@@ -86,26 +84,22 @@ extension ACPCompatibilityTests {
         let definition = try #require(definitions.first)
 
         #expect(definitions.count == 1)
-        #expect(definition.name == "Xcode")
+        #expect(definition.name == "Fixture")
         #expect(definition.type == "stdio")
-        #expect(definition.isXcodeCandidate)
-        #expect(definition.configuration.executablePath == "/usr/bin/xcrun")
-        #expect(definition.configuration.arguments == ["mcpbridge"])
-        #expect(definition.configuration.environment["MCP_XCODE_SESSION_ID"] == "session-1")
-        #expect(XcodeMCPServerConfiguration.isBridgeConfiguration(definition.configuration))
+        #expect(definition.configuration.executablePath == "/usr/bin/env")
+        #expect(definition.configuration.arguments == ["fixture-server"])
+        #expect(definition.configuration.environment["MCP_SESSION_ID"] == "session-1")
     }
-    #endif
 
-    #if os(macOS)
     @Test
-    func mcpServersParseBareXcrunXcodeConfiguration() throws {
+    func mcpServersParseBareExecutableConfiguration() throws {
         let definitions = ZenCODEACPBridge.mcpServerDefinitions(from: [
             "mcpServers": [
                 [
                     "type": "stdio",
-                    "name": "xcode-tools",
-                    "command": "xcrun",
-                    "args": ["mcpbridge"]
+                    "name": "fixture-tools",
+                    "command": "fixture-server",
+                    "args": ["serve"]
                 ] as [String: Any]
             ]
         ])
@@ -113,13 +107,10 @@ extension ACPCompatibilityTests {
         let definition = try #require(definitions.first)
 
         #expect(definitions.count == 1)
-        #expect(definition.name == "xcode-tools")
-        #expect(definition.isXcodeCandidate)
-        #expect(definition.configuration.executablePath == "xcrun")
-        #expect(definition.configuration.arguments == ["mcpbridge"])
-        #expect(XcodeMCPServerConfiguration.isBridgeConfiguration(definition.configuration))
+        #expect(definition.name == "fixture-tools")
+        #expect(definition.configuration.executablePath == "fixture-server")
+        #expect(definition.configuration.arguments == ["serve"])
     }
-    #endif
 
     @Test
     func mcpServersParseACPHTTPConfiguration() throws {
@@ -144,7 +135,6 @@ extension ACPCompatibilityTests {
         #expect(definitions.count == 1)
         #expect(definition.name == "Docs")
         #expect(definition.type == "http")
-        #expect(!definition.isXcodeCandidate)
         #expect(definition.configuration.endpointURL?.absoluteString == "https://mcp.example.test/mcp")
         #expect(definition.configuration.httpHeaders["Authorization"] == "Bearer token")
     }
@@ -153,10 +143,10 @@ extension ACPCompatibilityTests {
     func mcpServersParseMapConfiguration() throws {
         let definitions = ZenCODEACPBridge.mcpServerDefinitions(from: [
             "mcpServers": [
-                "Xcode": [
+                "Fixture": [
                     "type": "stdio",
-                    "command": "/usr/bin/xcrun",
-                    "args": ["mcpbridge"]
+                    "command": "/usr/bin/env",
+                    "args": ["fixture-server"]
                 ] as [String: Any]
             ] as [String: Any]
         ])
@@ -164,14 +154,14 @@ extension ACPCompatibilityTests {
         let definition = try #require(definitions.first)
 
         #expect(definitions.count == 1)
-        #expect(definition.name == "Xcode")
-        #expect(definition.configuration.executablePath == "/usr/bin/xcrun")
-        #expect(definition.configuration.arguments == ["mcpbridge"])
+        #expect(definition.name == "Fixture")
+        #expect(definition.configuration.executablePath == "/usr/bin/env")
+        #expect(definition.configuration.arguments == ["fixture-server"])
         #expect(ZenCODEACPBridge.mcpServerInputSummary(from: [
             "mcpServers": [
-                "Xcode": [:] as [String: Any]
+                "Fixture": [:] as [String: Any]
             ] as [String: Any]
-        ]) == "object(1:Xcode)")
+        ]) == "object(1:Fixture)")
     }
 
     #if os(macOS)
@@ -181,7 +171,7 @@ extension ACPCompatibilityTests {
             executablePath: "env",
             arguments: [],
             environment: [
-                "MCP_XCODE_SESSION_ID": "session-1",
+                "MCP_SESSION_ID": "session-1",
                 "PATH": "/custom/bin"
             ]
         )
@@ -190,7 +180,7 @@ extension ACPCompatibilityTests {
         let resolvedPathParts = Set((resolvedEnvironment["PATH"] ?? "").split(separator: ":").map(String.init))
 
         #expect(FeatureMCPBridgeKit.MCPClient.resolvedExecutableURL(for: configuration).path == expectedExecutableURL.path)
-        #expect(resolvedEnvironment["MCP_XCODE_SESSION_ID"] == "session-1")
+        #expect(resolvedEnvironment["MCP_SESSION_ID"] == "session-1")
         #expect(resolvedPathParts.contains("/custom/bin"))
         #expect(resolvedPathParts.contains("/usr/bin"))
     }
@@ -203,7 +193,7 @@ extension ACPCompatibilityTests {
             adding: [
                 DirectToolDescriptor(
                     name: "xcode.BuildProject",
-                    description: "Xcode: Build",
+                    description: "Fixture: Build",
                     inputSchema: "{}"
                 )
             ]

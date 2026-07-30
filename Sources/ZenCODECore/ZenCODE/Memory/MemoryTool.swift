@@ -9,18 +9,15 @@ import Foundation
 import ToolCore
 
 public struct MemoryToolContext: Sendable {
-    public let workspaceContext: XcodeWorkspaceContext?
     public let workingDirectory: URL?
     public let currentDate: Date
     public let currentTimeZone: TimeZone
 
     public init(
-        workspaceContext: XcodeWorkspaceContext? = nil,
         workingDirectory: URL? = nil,
         currentDate: Date = Date(),
         currentTimeZone: TimeZone = .current
     ) {
-        self.workspaceContext = workspaceContext
         self.workingDirectory = workingDirectory
         self.currentDate = currentDate
         self.currentTimeZone = currentTimeZone
@@ -158,22 +155,12 @@ public enum MemoryTool {
         let includeArchived = parsedIncludeArchived(from: arguments)
         let limit = parsedLimit(from: arguments)
 
-        let resolvedEntries: [MemoryEntry]
-        if let workspaceContext = context.workspaceContext {
-            resolvedEntries = memoryService.readEntries(
-                scope: .project,
-                for: workspaceContext,
-                includeArchived: includeArchived,
-                limit: limit
-            )
-        } else {
-            resolvedEntries = memoryService.readEntries(
-                scope: .project,
-                workingDirectory: context.workingDirectory,
-                includeArchived: includeArchived,
-                limit: limit
-            )
-        }
+        let resolvedEntries = memoryService.readEntries(
+            scope: .project,
+            workingDirectory: context.workingDirectory,
+            includeArchived: includeArchived,
+            limit: limit
+        )
 
         return ToolExecutionOutput(
             text: renderEntries(resolvedEntries),
@@ -198,24 +185,13 @@ public enum MemoryTool {
         let includeArchived = parsedIncludeArchived(from: arguments)
         let limit = parsedLimit(from: arguments)
 
-        let entries: [MemoryEntry]
-        if let workspaceContext = context.workspaceContext {
-            entries = memoryService.searchEntries(
-                query: query,
-                scope: .project,
-                for: workspaceContext,
-                includeArchived: includeArchived,
-                limit: limit
-            )
-        } else {
-            entries = memoryService.searchEntries(
-                query: query,
-                scope: .project,
-                workingDirectory: context.workingDirectory,
-                includeArchived: includeArchived,
-                limit: limit
-            )
-        }
+        let entries = memoryService.searchEntries(
+            query: query,
+            scope: .project,
+            workingDirectory: context.workingDirectory,
+            includeArchived: includeArchived,
+            limit: limit
+        )
 
         return ToolExecutionOutput(
             text: """
@@ -244,20 +220,11 @@ public enum MemoryTool {
             content,
             context: context
         )
-        let entry: MemoryEntry
-        if let workspaceContext = context.workspaceContext {
-            entry = try memoryService.writeEntry(
-                content: contentToWrite,
-                scope: scope,
-                workspaceContext: workspaceContext
-            )
-        } else {
-            entry = try memoryService.writeEntry(
-                content: contentToWrite,
-                scope: scope,
-                workingDirectory: context.workingDirectory
-            )
-        }
+        let entry = try memoryService.writeEntry(
+            content: contentToWrite,
+            scope: scope,
+            workingDirectory: context.workingDirectory
+        )
 
         return ToolExecutionOutput(
             text: """
@@ -282,20 +249,11 @@ public enum MemoryTool {
             throw MemoryServiceError.missingField("id")
         }
 
-        let entry: MemoryEntry
-        if let workspaceContext = context.workspaceContext {
-            entry = try memoryService.archiveEntry(
-                id: entryID,
-                scope: .project,
-                for: workspaceContext
-            )
-        } else {
-            entry = try memoryService.archiveEntry(
-                id: entryID,
-                scope: .project,
-                workingDirectory: context.workingDirectory
-            )
-        }
+        let entry = try memoryService.archiveEntry(
+            id: entryID,
+            scope: .project,
+            workingDirectory: context.workingDirectory
+        )
 
         return ToolExecutionOutput(
             text: """
