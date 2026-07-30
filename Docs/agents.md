@@ -56,7 +56,7 @@ intrinsic feature-management tools.
 
 **Feature packages** (discovered and enabled separately): `search-tools`,
 `web-tools`, `git-tools`, `swift-tools`, `xcode-tools`, `figma-tools`,
-`jira-tools`.
+`jira-tools`, `desktop-tools`.
 
 Enabling a package makes it available; `/tools` exposes it in the current
 session. The `sub-agents` group is what lets a profile create delegated

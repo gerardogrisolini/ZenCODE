@@ -33,6 +33,7 @@ enum SwiftBundledFeatureCatalog {
         let jira = metadata(for: "jira-tools")
         let xcode = metadata(for: "xcode-tools")
         let figma = metadata(for: "figma-tools")
+        let desktop = metadata(for: "desktop-tools")
 
         return [
             SwiftFeatureRuntime.BundledFeatureDefinition(
@@ -113,6 +114,19 @@ enum SwiftBundledFeatureCatalog {
                 tools: [],
                 toolNamePrefixes: ["figma."],
                 discoversToolsAtRuntime: true
+            ),
+            SwiftFeatureRuntime.BundledFeatureDefinition(
+                id: desktop.id,
+                executableName: desktop.productName,
+                description: "Control the local macOS desktop: system and window state, PNG screenshots, pointer, keyboard, clipboard, and app management.",
+                sourceRelativePath: desktop.sourceRelativePath,
+                tools: [],
+                toolNamePrefixes: ["desktop."],
+                discoversToolsAtRuntime: true,
+                // Screenshots, app launches, and explicit waits are all bounded
+                // by the tool's own limits, but a single invocation can still
+                // legitimately span several seconds of desktop interaction.
+                invocationTimeoutSeconds: 180
             )
         ]
     }

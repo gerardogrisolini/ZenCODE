@@ -80,10 +80,10 @@ Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, 
 
 ## Optional Feature Packages
 
-Search, web, browser, Git, Swift, Jira, Figma, and Xcode integrations are
-catalogued optional SwiftPM packages. They are **not** executable files shipped
-next to `zen`, and the root `swift build` does not build them. Install only the
-ones you need:
+Search, web, browser, Git, Swift, Jira, Figma, Xcode, and desktop integrations
+are catalogued optional SwiftPM packages. They are **not** executable files
+shipped next to `zen`, and the root `swift build` does not build them. Install
+only the ones you need:
 
 ```bash
 zen --install-features git-tools,swift-tools
@@ -106,6 +106,13 @@ source-only copy at `~/.zencode/source/` so future installs still work after
 that temporary checkout is removed. An installer launched from a local checkout
 uses that checkout directly. Set `ZENCODE_SUPPORT_DIRECTORY` to relocate both
 `features/` and the persisted `source/` copy.
+
+`xcode-tools` and `desktop-tools` are macOS-only and are never offered on Linux.
+`desktop-tools` (`desktop.run`) drives the real desktop — pointer, keyboard,
+clipboard, windows, app lifecycle, and PNG screenshots that are attached to the
+model's multimodal context — so macOS asks for Screen Recording and
+Accessibility consent on first use. Call `action=permissions` before anything
+else, and enable it only for a profile that is meant to control the machine.
 
 ## Diagnostics
 

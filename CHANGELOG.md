@@ -10,6 +10,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- New optional macOS feature package `desktop-tools` (`desktop.run`): typed
+  desktop control covering permission/system inspection, app and window
+  enumeration, PNG screenshots attached to the model's multimodal context,
+  pointer/keyboard/clipboard input, and app/window management. It is installed
+  on demand like every other optional package, never executes caller-supplied
+  shell or AppleScript code, and is not offered on Linux.
+
 ### Fixed
 
 - Startup task recovery now skips checkpoint scanning and its interactive

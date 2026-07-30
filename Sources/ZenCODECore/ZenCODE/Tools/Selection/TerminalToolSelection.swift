@@ -560,6 +560,8 @@ public enum TerminalToolSelectionCatalog {
             aliases.insert("xcode")
         case "figma-tools":
             aliases.insert("figma")
+        case "desktop-tools":
+            aliases.formUnion(["desktop", "screenshot", "mouse", "keyboard", "clipboard"])
         default:
             break
         }

@@ -85,6 +85,15 @@ public enum ZenBundledFeatureCatalog {
             productName: "jira-tools-feature",
             sourceRelativePath: "Sources/Features/JiraTools",
             isInstalledOnLinux: true,
+        ),
+        ZenBundledFeatureMetadata(
+            id: "desktop-tools",
+            productName: "desktop-tools-feature",
+            sourceRelativePath: "Sources/Features/DesktopTools",
+            // Desktop control is implemented with AppKit, Accessibility, and
+            // Quartz. Keep it out of the Linux install set for the same reason
+            // as Xcode: the platform integration simply does not exist there.
+            isInstalledOnLinux: false,
         )
     ]
 

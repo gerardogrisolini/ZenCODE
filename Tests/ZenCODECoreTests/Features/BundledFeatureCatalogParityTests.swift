@@ -56,7 +56,12 @@ struct BundledFeatureCatalogParityTests {
     }
 
     @Test
-    func linuxInstallationEligibilityIsCatalogDrivenAndExcludesXcodeTools() throws {
+    func linuxInstallationEligibilityIsCatalogDrivenAndExcludesMacOSOnlyFeatures() throws {
+        // Features whose integration only exists on macOS. Keeping the list
+        // explicit means dropping a platform gate, or adding a macOS-only
+        // feature without one, both fail here instead of silently shipping an
+        // uninstallable package to Linux users.
+        let macOSOnlyIDs: Set<String> = ["xcode-tools", "desktop-tools"]
         let linuxProducts = Set(ZenBundledFeatureCatalog.linuxInstallerProductNames)
         let linuxFeatureIDs = Set(
             ZenBundledFeatureCatalog.all
@@ -64,12 +69,14 @@ struct BundledFeatureCatalogParityTests {
                 .map(\.id)
         )
         let allFeatureIDs = Set(ZenBundledFeatureCatalog.all.map(\.id))
-        let xcode = try #require(ZenBundledFeatureCatalog.feature(id: "xcode-tools"))
 
-        #expect(!xcode.isInstalledOnLinux)
-        #expect(linuxFeatureIDs == allFeatureIDs.subtracting(["xcode-tools"]))
+        for id in macOSOnlyIDs {
+            let feature = try #require(ZenBundledFeatureCatalog.feature(id: id))
+            #expect(!feature.isInstalledOnLinux)
+            #expect(!linuxProducts.contains(feature.productName))
+        }
+        #expect(linuxFeatureIDs == allFeatureIDs.subtracting(macOSOnlyIDs))
         #expect(linuxProducts.contains("swift-tools-feature"))
-        #expect(!linuxProducts.contains("xcode-tools-feature"))
     }
 
     @Test

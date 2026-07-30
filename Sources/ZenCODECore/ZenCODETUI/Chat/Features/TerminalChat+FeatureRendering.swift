@@ -568,6 +568,8 @@ extension TerminalChat {
             return "Xcode"
         case "figma-tools":
             return "Figma"
+        case "desktop-tools":
+            return "Desktop"
         default:
             return featureWizardDisplayName(from: status.id)
         }
