@@ -234,6 +234,7 @@ public final class TerminalInteractiveLineReader: Sendable {
     ) -> String? {
         var buffer: [Character] = []
         var cursorIndex = 0
+        var renderedLineCount = 1
         withPanelLock { state in
             state.historyIndex = nil
             state.draftBeforeHistory.removeAll()
@@ -242,6 +243,23 @@ public final class TerminalInteractiveLineReader: Sendable {
         AgentOutput.standardError.writeString(prompt)
 
         return rawInput.withRawTerminal {
+            // Tracks how many terminal rows the previous redraw spanned so the
+            // next one can clear every row it occupied. Without this, a buffer
+            // containing newlines (Option/Shift+Enter) would leave earlier rows
+            // on screen and each redraw would reprint the whole buffer, making
+            // the prompt appear to duplicate itself line after line.
+            func redrawBuffer() {
+                AgentOutput.standardError.writeString(
+                    Self.redrawSequence(
+                        prompt: prompt,
+                        buffer: buffer,
+                        cursorIndex: cursorIndex,
+                        previousLineCount: renderedLineCount
+                    )
+                )
+                renderedLineCount = Self.lineCount(for: buffer)
+            }
+
             while true {
                 if shouldCancel?() == true {
                     AgentOutput.standardError.writeString("\n")
@@ -270,7 +288,7 @@ public final class TerminalInteractiveLineReader: Sendable {
                     }
                     buffer.insert(contentsOf: characters, at: cursorIndex)
                     cursorIndex += characters.count
-                    redraw(prompt: prompt, buffer: buffer, cursorIndex: cursorIndex)
+                    redrawBuffer()
                 case .enter:
                     let line = String(buffer)
                     AgentOutput.standardError.writeString("\n")
@@ -279,7 +297,7 @@ public final class TerminalInteractiveLineReader: Sendable {
                 case .newline:
                     buffer.insert("\n", at: cursorIndex)
                     cursorIndex += 1
-                    redraw(prompt: prompt, buffer: buffer, cursorIndex: cursorIndex)
+                    redrawBuffer()
                 case .tab:
                     continue
                 case .backspace:
@@ -288,13 +306,13 @@ public final class TerminalInteractiveLineReader: Sendable {
                     }
                     buffer.remove(at: cursorIndex - 1)
                     cursorIndex -= 1
-                    redraw(prompt: prompt, buffer: buffer, cursorIndex: cursorIndex)
+                    redrawBuffer()
                 case .delete:
                     guard cursorIndex < buffer.count else {
                         continue
                     }
                     buffer.remove(at: cursorIndex)
-                    redraw(prompt: prompt, buffer: buffer, cursorIndex: cursorIndex)
+                    redrawBuffer()
                 case .left:
                     guard cursorIndex > 0 else {
                         continue
@@ -313,14 +331,14 @@ public final class TerminalInteractiveLineReader: Sendable {
                     }
                     buffer = previous
                     cursorIndex = buffer.count
-                    redraw(prompt: prompt, buffer: buffer, cursorIndex: cursorIndex)
+                    redrawBuffer()
                 case .down:
                     guard let next = nextHistory() else {
                         continue
                     }
                     buffer = next
                     cursorIndex = buffer.count
-                    redraw(prompt: prompt, buffer: buffer, cursorIndex: cursorIndex)
+                    redrawBuffer()
                 case .home:
                     guard cursorIndex > 0 else {
                         continue
@@ -339,13 +357,13 @@ public final class TerminalInteractiveLineReader: Sendable {
                     }
                     buffer.removeSubrange(0..<cursorIndex)
                     cursorIndex = 0
-                    redraw(prompt: prompt, buffer: buffer, cursorIndex: cursorIndex)
+                    redrawBuffer()
                 case .clearAfterCursor:
                     guard cursorIndex < buffer.count else {
                         continue
                     }
                     buffer.removeSubrange(cursorIndex..<buffer.count)
-                    redraw(prompt: prompt, buffer: buffer, cursorIndex: cursorIndex)
+                    redrawBuffer()
                 case .toggleToolDetails, .toggleAccessMode:
                     continue
                 case .endOfInput:

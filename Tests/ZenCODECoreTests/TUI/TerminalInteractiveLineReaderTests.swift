@@ -314,4 +314,54 @@ struct TerminalInteractiveLineReaderTests {
         #expect(sequence == "\r\u{1B}[2KFeature id: github\u{1B}[3D")
     }
 
+    @Test
+    func lineCountCountsExplicitNewlines() {
+        #expect(TerminalInteractiveLineReader.lineCount(for: Array("")) == 1)
+        #expect(TerminalInteractiveLineReader.lineCount(for: Array("single line")) == 1)
+        #expect(TerminalInteractiveLineReader.lineCount(for: Array("one\ntwo")) == 2)
+        #expect(TerminalInteractiveLineReader.lineCount(for: Array("a\nb\nc")) == 3)
+        #expect(TerminalInteractiveLineReader.lineCount(for: Array("\ntwo")) == 2)
+    }
+
+    @Test
+    func redrawSequenceClearsMultipleRowsForMultilineBuffer() {
+        // After a newline was inserted the previous render spanned two rows.
+        // The redraw must move up one row and erase to the end of the display
+        // before reprinting, so earlier rows do not accumulate on screen.
+        let sequence = TerminalInteractiveLineReader.redrawSequence(
+            prompt: "Goal: ",
+            buffer: Array("line one\nline two"),
+            cursorIndex: 17,
+            previousLineCount: 2
+        )
+
+        #expect(sequence == "\r\u{1B}[1A\u{1B}[0JGoal: line one\nline two")
+    }
+
+    @Test
+    func redrawSequenceClearsThreeRowsForGrowingMultilineBuffer() {
+        let sequence = TerminalInteractiveLineReader.redrawSequence(
+            prompt: "Goal: ",
+            buffer: Array("a\nb\nc"),
+            cursorIndex: 5,
+            previousLineCount: 3
+        )
+
+        #expect(sequence == "\r\u{1B}[2A\u{1B}[0JGoal: a\nb\nc")
+    }
+
+    @Test
+    func redrawSequenceShrinksBackToSingleRow() {
+        // When the newline is deleted the buffer is single-line again, but the
+        // previous render still spanned two rows; the redraw must clear both.
+        let sequence = TerminalInteractiveLineReader.redrawSequence(
+            prompt: "Goal: ",
+            buffer: Array("no newline"),
+            cursorIndex: 10,
+            previousLineCount: 2
+        )
+
+        #expect(sequence == "\r\u{1B}[1A\u{1B}[0JGoal: no newline")
+    }
+
 }

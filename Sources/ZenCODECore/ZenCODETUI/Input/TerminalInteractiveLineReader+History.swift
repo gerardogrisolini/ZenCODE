@@ -80,8 +80,41 @@ extension TerminalInteractiveLineReader {
         return Array(state.history[nextIndex])
     }
 
-    static func redrawSequence(prompt: String, buffer: [Character], cursorIndex: Int) -> String {
-        var sequence = "\r\u{1B}[2K\(prompt)\(String(buffer))"
+    /// Number of terminal rows the rendered prompt + buffer occupies, based
+    /// solely on explicit newline characters. Line wrapping beyond the
+    /// terminal width is intentionally ignored: the blocking line reader is
+    /// used for short prompts, and the multi-line escape sequence below still
+    /// clears past rows even when the estimate is conservative.
+    static func lineCount(for buffer: [Character]) -> Int {
+        buffer.reduce(into: 1) { count, character in
+            if character == "\n" {
+                count += 1
+            }
+        }
+    }
+
+    static func redrawSequence(
+        prompt: String,
+        buffer: [Character],
+        cursorIndex: Int,
+        previousLineCount: Int = 1
+    ) -> String {
+        let bufferString = String(buffer)
+        let effectivePreviousLineCount = max(1, previousLineCount)
+        var sequence = "\r"
+        if effectivePreviousLineCount > 1 {
+            // The previous render spanned several rows (the buffer contained
+            // newlines). `[2K` only clears the cursor's row, so move up to the
+            // first row of the previous render and erase to the end of the
+            // display; otherwise every redraw reprints the whole buffer and
+            // leaves the earlier rows behind, making the prompt appear to
+            // duplicate itself across many lines.
+            sequence += "\u{1B}[\(effectivePreviousLineCount - 1)A"
+            sequence += "\u{1B}[0J"
+        } else {
+            sequence += "\u{1B}[2K"
+        }
+        sequence += "\(prompt)\(bufferString)"
         let boundedCursorIndex = min(max(cursorIndex, 0), buffer.count)
         let charactersAfterCursor = buffer.count - boundedCursorIndex
         if charactersAfterCursor > 0 {
@@ -90,9 +123,19 @@ extension TerminalInteractiveLineReader {
         return sequence
     }
 
-    func redraw(prompt: String, buffer: [Character], cursorIndex: Int) {
+    func redraw(
+        prompt: String,
+        buffer: [Character],
+        cursorIndex: Int,
+        previousLineCount: Int = 1
+    ) {
         AgentOutput.standardError.writeString(
-            Self.redrawSequence(prompt: prompt, buffer: buffer, cursorIndex: cursorIndex)
+            Self.redrawSequence(
+                prompt: prompt,
+                buffer: buffer,
+                cursorIndex: cursorIndex,
+                previousLineCount: previousLineCount
+            )
         )
     }
 
