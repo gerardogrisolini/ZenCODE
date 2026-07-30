@@ -56,7 +56,7 @@ struct BundledFeatureCatalogParityTests {
     }
 
     @Test
-    func xcodeImplementationIsPackageOwnedAndAbsentFromLinuxRootSources() throws {
+    func xcodeImplementationIsPackageOwnedAndAbsentFromRootGraph() throws {
         let packageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
         let rootManifest = try String(
             contentsOf: packageRoot.appendingPathComponent("Package.swift"),
@@ -69,6 +69,11 @@ struct BundledFeatureCatalogParityTests {
             "ZenCODE/Support/LinuxXcodeToolCompatibility.swift"
         )
         #expect(!FileManager.default.fileExists(atPath: legacyShim.path))
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: packageRoot.appendingPathComponent("Sources/XcodeToolsFeature").path
+            )
+        )
 
         let featureManifest = try String(
             contentsOf: packageRoot.appendingPathComponent(
@@ -79,7 +84,7 @@ struct BundledFeatureCatalogParityTests {
         #expect(featureManifest.contains("name: \"XcodeToolsFeature\""))
         #expect(featureManifest.contains("dependencies: [\"XcodeToolsFeature\"]"))
 
-        let linuxRootSourceDirectories = [
+        let rootSourceDirectories = [
             "Sources/ZenCODECore",
             "Sources/ZenCODESetup",
             "Sources/ZenPackageMetadata",
@@ -89,17 +94,13 @@ struct BundledFeatureCatalogParityTests {
             "Sources/LocalToolsSupport",
             "Sources/ToolCore"
         ]
-        for relativePath in linuxRootSourceDirectories {
+        for relativePath in rootSourceDirectories {
             let sourceRoot = packageRoot.appendingPathComponent(relativePath, isDirectory: true)
             for sourceURL in swiftSourceFiles(below: sourceRoot) {
                 let source = try String(contentsOf: sourceURL, encoding: .utf8)
-                let linuxSource = removingMacOSOnlyBlocks(from: source)
                 #expect(
-                    linuxSource.lowercased().range(
-                        of: #"(?<![a-z])xcode"#,
-                        options: .regularExpression
-                    ) == nil,
-                    "Linux root source contains Xcode-specific content: \(sourceURL.path)"
+                    !source.contains("import XcodeToolsFeature"),
+                    "Root source imports package-owned Xcode implementation: \(sourceURL.path)"
                 )
             }
         }
@@ -199,28 +200,6 @@ struct BundledFeatureCatalogParityTests {
             }
             return url
         }
-    }
-
-    private func removingMacOSOnlyBlocks(from source: String) -> String {
-        var excludedDepth = 0
-        var keptLines: [String] = []
-        for line in source.components(separatedBy: .newlines) {
-            let directive = line.trimmingCharacters(in: .whitespaces)
-            if excludedDepth > 0 {
-                if directive.hasPrefix("#if ") {
-                    excludedDepth += 1
-                } else if directive == "#endif" {
-                    excludedDepth -= 1
-                }
-                continue
-            }
-            if directive == "#if os(macOS)" {
-                excludedDepth = 1
-                continue
-            }
-            keptLines.append(line)
-        }
-        return keptLines.joined(separator: "\n")
     }
 
     private func runProcess(

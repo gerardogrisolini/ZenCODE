@@ -33,13 +33,16 @@ checks ensure that every package has its catalog product and the marker
 `// zencode:package-path` immediately above `.package(path: "../../..")`.
 That marked dependency is rewritten when the package is installed outside the
 checkout. Linux eligibility remains an explicit `isInstalledOnLinux` catalog
-property, so `xcode-tools` is excluded there.
+property, so `xcode-tools` remains visible as bundled metadata but cannot be
+installed or executed there.
 
 `xcode-tools` is a macOS-only optional package and owns its entire integration:
 MCP bridge discovery and policy, request compatibility, workspace matching,
 execution, presentation, and tests. The root graph exports no Xcode feature
-product, `ZenCODECore` imports no Xcode implementation module, and Linux builds
-do not compile Xcode runtime metadata or compatibility shims.
+product and `ZenCODECore` imports no Xcode implementation module. Linux builds
+retain only the generic bundled-feature identity, description, selection aliases,
+and timeout required for catalog parity; they compile no Xcode implementation or
+compatibility shim.
 
 Optional feature packages are not executables distributed beside `zen`. The
 installer and `zen --install-features` copy a package to
