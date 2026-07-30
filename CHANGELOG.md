@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Release tags follow the strict `vX.Y.Z` contract described in
 [Docs/release.md](Docs/release.md) and must match `ZenPackageMetadata.version`.
 
-## [Unreleased]
+## [1.0.7] - 2026-07-30
 
 ### Added
 
