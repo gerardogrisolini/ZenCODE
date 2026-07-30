@@ -193,6 +193,117 @@ extension SwiftFeatureRuntime {
         )
     }
 
+    /// Returns whether the installed package differs from the package in the
+    /// currently resolved ZenCODE source checkout.
+    ///
+    /// Build products, generated manifests, package-resolution state, and the
+    /// absolute ZenCODE dependency path are deliberately ignored. Only source
+    /// package changes make an installed feature eligible for an update.
+    public func isOptionalFeatureUpdateAvailable(
+        _ feature: SwiftFeatureOptionalFeature,
+        zenPackageRootURL: URL
+    ) throws -> Bool {
+        guard feature.installed,
+              feature.supportedOnCurrentPlatform,
+              let definition = Self.bundledFeatureDefinition(id: feature.id),
+              !definition.isCore,
+              let sourceRelativePath = definition.sourceRelativePath else {
+            return false
+        }
+
+        let sourceRootURL = zenPackageRootURL.standardizedFileURL
+        let sourceDirectoryURL = sourceRootURL
+            .appendingPathComponent(sourceRelativePath, isDirectory: true)
+            .standardizedFileURL
+        let installedDirectoryURL = featureRootURL()
+            .appendingPathComponent(definition.id, isDirectory: true)
+            .standardizedFileURL
+        guard Self.path(sourceDirectoryURL, isDescendantOf: sourceRootURL),
+              fileManager.fileExists(atPath: sourceDirectoryURL.path),
+              fileManager.fileExists(atPath: installedDirectoryURL.path) else {
+            return false
+        }
+
+        return try normalizedOptionalFeaturePackageFiles(at: sourceDirectoryURL)
+            != normalizedOptionalFeaturePackageFiles(at: installedDirectoryURL)
+    }
+
+    private func normalizedOptionalFeaturePackageFiles(
+        at packageDirectoryURL: URL
+    ) throws -> [String: Data] {
+        var files: [String: Data] = [:]
+        try collectNormalizedOptionalFeaturePackageFiles(
+            at: packageDirectoryURL,
+            relativePath: "",
+            into: &files
+        )
+        return files
+    }
+
+    private func collectNormalizedOptionalFeaturePackageFiles(
+        at directoryURL: URL,
+        relativePath: String,
+        into files: inout [String: Data]
+    ) throws {
+        let entries = try fileManager.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: [
+                .isDirectoryKey,
+                .isRegularFileKey,
+                .isSymbolicLinkKey
+            ],
+            options: [.skipsHiddenFiles]
+        )
+
+        for entryURL in entries {
+            let name = entryURL.lastPathComponent
+            guard !Self.excludedInstallEntryNames.contains(name),
+                  name != "Package.resolved" else {
+                continue
+            }
+            let entryRelativePath = relativePath.isEmpty
+                ? name
+                : "\(relativePath)/\(name)"
+            guard entryRelativePath != SwiftFeatureRegistry.manifestFilename else {
+                continue
+            }
+
+            let values = try entryURL.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isRegularFileKey,
+                .isSymbolicLinkKey
+            ])
+            guard values.isSymbolicLink != true else {
+                throw DirectToolError.permissionDenied(
+                    "Refusing to inspect a symbolic link in feature package: \(entryURL.path)"
+                )
+            }
+            if values.isDirectory == true {
+                try collectNormalizedOptionalFeaturePackageFiles(
+                    at: entryURL,
+                    relativePath: entryRelativePath,
+                    into: &files
+                )
+            } else if values.isRegularFile == true {
+                if entryRelativePath == "Package.swift" {
+                    let contents = try String(contentsOf: entryURL, encoding: .utf8)
+                    let normalized = try Self.packageManifestRewritingZenPackagePath(
+                        contents,
+                        zenPackagePath: "/__zencode_package_root__",
+                        packageURL: entryURL
+                    )
+                    files[entryRelativePath] = Data(normalized.utf8)
+                } else {
+                    files[entryRelativePath] = try Data(contentsOf: entryURL)
+                }
+            } else {
+                throw DirectToolError.permissionDenied(
+                    "Refusing to inspect a non-regular feature package entry: \(entryURL.path)"
+                )
+            }
+        }
+    }
+
     static func isOptionalFeatureSupportedOnCurrentPlatform(
         metadata: ZenBundledFeatureMetadata?
     ) -> Bool {

@@ -101,10 +101,11 @@ selected and managed exactly like a local Builder feature.
 
 The **Features** step of `zen --setup` covers the same lifecycle. Its rows are
 grouped as `Bundled`/`Generated` (check to enable, uncheck to disable),
-`Installable` (not installed yet), and `Update installed`. Checking an
-`Update installed` row reinstalls that package from the current ZenCODE source
-and rebuilds it, which is how an installed feature picks up source changes; the
-reinstall also applies the enabled state expressed by that feature's own row.
+`Installable` (not installed yet), and, only when source changes are available,
+`Update installed`. That last group is hidden when every installed package
+already matches the current ZenCODE source. Checking an `Update installed` row
+reinstalls that package and rebuilds it; the reinstall also applies the enabled
+state expressed by that feature's own row.
 
 The macOS/Linux installers do not offer a feature picker: they install `zen`
 only. They remove the legacy `zen-features/`

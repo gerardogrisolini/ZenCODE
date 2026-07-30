@@ -380,6 +380,60 @@ struct SwiftFeatureOptionalInstallationTests {
     }
 
     @Test
+    func optionalFeatureUpdateIsReportedOnlyWhenInstalledSourceDiffers() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("optional-update-availability-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        let featureRootURL = rootURL.appendingPathComponent("features", isDirectory: true)
+        let checkoutURL = rootURL.appendingPathComponent("checkout", isDirectory: true)
+        try Self.writeZenPackageRoot(at: checkoutURL)
+
+        let runtime = SwiftFeatureRuntime(featureSearchRoots: [featureRootURL])
+        let definition = try #require(SwiftFeatureRuntime.bundledFeatureDefinition(id: "git-tools"))
+        let sourceURL = try #require(definition.sourceRelativePath)
+            .split(separator: "/")
+            .reduce(checkoutURL) { partialURL, component in
+                partialURL.appendingPathComponent(String(component), isDirectory: true)
+            }
+        try Self.writeFeaturePackage(at: sourceURL, productName: definition.executableName)
+        _ = try await runtime.materializeFeaturePackage(
+            definition: definition,
+            sourceDirectoryURL: sourceURL,
+            zenPackageRootURL: checkoutURL,
+            displayName: "Git",
+            enabled: true,
+            overwrite: true
+        )
+
+        let feature = try #require(await runtime.optionalFeatures().first { $0.id == definition.id })
+        #expect(
+            try await !runtime.isOptionalFeatureUpdateAvailable(
+                feature,
+                zenPackageRootURL: checkoutURL
+            )
+        )
+
+        let sourceMainURL = sourceURL
+            .appendingPathComponent("Sources", isDirectory: true)
+            .appendingPathComponent(definition.executableName, isDirectory: true)
+            .appendingPathComponent("main.swift")
+        try "print(\"updated\")\n".write(
+            to: sourceMainURL,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        #expect(
+            try await runtime.isOptionalFeatureUpdateAvailable(
+                feature,
+                zenPackageRootURL: checkoutURL
+            )
+        )
+    }
+
+    @Test
     func unknownOptionalFeatureInstallIsRejected() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("optional-unknown-\(UUID().uuidString)", isDirectory: true)

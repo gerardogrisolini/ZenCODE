@@ -74,7 +74,8 @@ extension ZenCODESetupRunner {
             includeTools: true,
             includeDisabled: true
         )
-        let optionalFeatures = SwiftFeatureRuntime.optionalFeatures()
+        let optionalFeatures = await runtime.optionalFeatures()
+        let zenPackageRootURL = try? SwiftFeatureRuntime.zenCODESourceCheckoutURL()
         let optionalFeaturesByID = Dictionary(
             uniqueKeysWithValues: optionalFeatures.map { ($0.id, $0) }
         )
@@ -90,9 +91,16 @@ extension ZenCODESetupRunner {
         let installableOptionalFeatures = optionalFeatures
             .filter { !$0.installed && $0.supportedOnCurrentPlatform }
             .sorted(by: optionalFeatureSortOrder)
-        let updatableOptionalFeatures = optionalFeatures
-            .filter { $0.installed && $0.supportedOnCurrentPlatform }
-            .sorted(by: optionalFeatureSortOrder)
+        var updatableOptionalFeatures: [SwiftFeatureOptionalFeature] = []
+        if let zenPackageRootURL {
+            for feature in optionalFeatures where (try? await runtime.isOptionalFeatureUpdateAvailable(
+                feature,
+                zenPackageRootURL: zenPackageRootURL
+            )) == true {
+                updatableOptionalFeatures.append(feature)
+            }
+            updatableOptionalFeatures.sort(by: optionalFeatureSortOrder)
+        }
 
         guard !sortedStatuses.isEmpty
                 || !installableOptionalFeatures.isEmpty
