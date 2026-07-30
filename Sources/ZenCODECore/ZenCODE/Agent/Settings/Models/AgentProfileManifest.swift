@@ -369,9 +369,15 @@ public struct AgentProfile: Codable, Hashable, Sendable {
     }
 
     public func allowedToolNames() -> Set<String> {
-        let items = TerminalToolSelectionCatalog.items(
+        allowedToolNames(
             featureStatuses: SwiftFeatureRuntime.defaultFeatureStatuses()
         )
+    }
+
+    func allowedToolNames(
+        featureStatuses: [SwiftFeatureStatus]
+    ) -> Set<String> {
+        let items = TerminalToolSelectionCatalog.items(featureStatuses: featureStatuses)
         var selectedKeys = Set<String>()
         var allowedToolNames = Set<String>()
         for tool in tools {

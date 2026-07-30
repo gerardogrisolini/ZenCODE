@@ -21,8 +21,31 @@ extension AgentConfigurationTests {
         let gitKey = TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools")
         let webKey = TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools")
         let featureBuilderKey = TerminalToolSelectionCatalog.featureBuilderKey
+        let unavailableOptionalFeatureStatuses = [
+            featureStatus(
+                id: "search-tools",
+                source: .bundled,
+                tools: [],
+                enabled: false,
+                available: false
+            ),
+            featureStatus(
+                id: "git-tools",
+                source: .bundled,
+                tools: [],
+                enabled: false,
+                available: false
+            ),
+            featureStatus(
+                id: "web-tools",
+                source: .bundled,
+                tools: [],
+                enabled: false,
+                available: false
+            )
+        ]
         let toolSelectionItems = TerminalChat.toolSelectionItems(
-            featureStatuses: SwiftFeatureRuntime.defaultFeatureStatuses()
+            featureStatuses: unavailableOptionalFeatureStatuses
         )
         let developerProfile = try #require(profiles["Developer"])
         let minimalProfile = try #require(profiles["Minimal"])
@@ -39,7 +62,9 @@ extension AgentConfigurationTests {
         #expect(reporterProfile.tools == AgentProfileStore.reporterToolNames)
         #expect(reporterProfile.tools == ["files", searchKey, "text", gitKey])
         #expect(reporterProfile.instructions?.contains("Reporter agent") == true)
-        let reporterAllowedToolNames = reporterProfile.allowedToolNames()
+        let reporterAllowedToolNames = reporterProfile.allowedToolNames(
+            featureStatuses: unavailableOptionalFeatureStatuses
+        )
         #expect(reporterAllowedToolNames.contains("local.writeFile"))
         // Package selections remain in the profile allowlist, but an
         // uninstalled optional feature contributes no executable tool prefix.

@@ -163,7 +163,7 @@ struct TerminalInteractiveLineReaderTests {
             terminalColumns: 5
         )
 
-        #expect(beforeWrappedCharacter.text == "> abc\r\ndef")
+        #expect(beforeWrappedCharacter.text == ">abc\r\ndef")
         #expect(beforeWrappedCharacter.lineCount == 2)
         #expect(beforeWrappedCharacter.cursorRow == 0)
         #expect(beforeWrappedCharacter.cursorColumn == 4)
@@ -175,7 +175,7 @@ struct TerminalInteractiveLineReaderTests {
                 buffer: buffer,
                 cursorIndex: 3,
                 terminalColumns: 5
-            ) == "\r\u{1B}[2K> abc\r\ndef\u{1B}[1A\r\u{1B}[4C"
+            ) == "\r\u{1B}[2K>abc\r\ndef\u{1B}[1A\r\u{1B}[4C"
         )
         #expect(
             TerminalInteractiveLineReader.redrawSequence(
@@ -183,7 +183,7 @@ struct TerminalInteractiveLineReaderTests {
                 buffer: buffer,
                 cursorIndex: 4,
                 terminalColumns: 5
-            ) == "\r\u{1B}[2K> abc\r\ndef\r\u{1B}[1C"
+            ) == "\r\u{1B}[2K>abc\r\ndef\r\u{1B}[1C"
         )
     }
 
@@ -498,10 +498,11 @@ struct TerminalInteractiveLineReaderTests {
         let sequence = TerminalInteractiveLineReader.redrawSequence(
             prompt: "Feature id: ",
             buffer: Array("github"),
-            cursorIndex: 3
+            cursorIndex: 3,
+            terminalColumns: 80
         )
 
-        #expect(sequence == "\r\u{1B}[2KFeature id: github\u{1B}[3D")
+        #expect(sequence == "\r\u{1B}[2KFeature id: github\r\u{1B}[15C")
     }
 
     @Test
@@ -522,10 +523,12 @@ struct TerminalInteractiveLineReaderTests {
             prompt: "Goal: ",
             buffer: Array("line one\nline two"),
             cursorIndex: 17,
-            previousLineCount: 2
+            previousLineCount: 2,
+            previousCursorRow: 1,
+            terminalColumns: 80
         )
 
-        #expect(sequence == "\r\u{1B}[1A\u{1B}[0JGoal: line one\nline two")
+        #expect(sequence == "\r\u{1B}[1A\u{1B}[0JGoal: line one\r\nline two")
     }
 
     @Test
@@ -534,10 +537,12 @@ struct TerminalInteractiveLineReaderTests {
             prompt: "Goal: ",
             buffer: Array("a\nb\nc"),
             cursorIndex: 5,
-            previousLineCount: 3
+            previousLineCount: 3,
+            previousCursorRow: 2,
+            terminalColumns: 80
         )
 
-        #expect(sequence == "\r\u{1B}[2A\u{1B}[0JGoal: a\nb\nc")
+        #expect(sequence == "\r\u{1B}[2A\u{1B}[0JGoal: a\r\nb\r\nc")
     }
 
     @Test
@@ -548,7 +553,9 @@ struct TerminalInteractiveLineReaderTests {
             prompt: "Goal: ",
             buffer: Array("no newline"),
             cursorIndex: 10,
-            previousLineCount: 2
+            previousLineCount: 2,
+            previousCursorRow: 1,
+            terminalColumns: 80
         )
 
         #expect(sequence == "\r\u{1B}[1A\u{1B}[0JGoal: no newline")
