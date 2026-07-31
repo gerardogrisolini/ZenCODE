@@ -10,7 +10,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
-## [1.0.9] - 2026-07-31
+## [1.0.10] - 2026-07-31
+
+v1.0.9 was tagged but never published: its Linux release gate failed on the
+flaky test fixed below, so no release assets were produced for that tag.
 
 ### Added
 
@@ -31,6 +34,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   build it performs.
 - Removed an unsupported `timeoutSeconds` argument from the `feature.build`
   invocation in `SwiftFeatureManagementTests`.
+- Flaky ACP concurrency test `concurrentACPPromptsReserveTheSessionExactlyOnce`,
+  which dispatched both prompts and opened the completion gate without waiting
+  for the first prompt to reach the backend. Because `Task` does not start its
+  body synchronously, a slow runner could let the first prompt finish and
+  release its reservation before the second one began, so no rejection was
+  recorded. The test now pins the first prompt with the same `startGate` used by
+  the other lifecycle tests in the suite, making the reservation contention
+  deterministic.
 
 ## [1.0.8] - 2026-07-30
 
@@ -259,8 +270,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.9...HEAD
-[1.0.9]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.8...v1.0.9
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.10...HEAD
+[1.0.10]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.8...v1.0.10
 [1.0.8]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.5...v1.0.6

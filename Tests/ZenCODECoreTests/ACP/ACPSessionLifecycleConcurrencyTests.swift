@@ -292,22 +292,35 @@ struct ACPSessionLifecycleConcurrencyTests {
 
     @Test
     func concurrentACPPromptsReserveTheSessionExactlyOnce() async throws {
+        let promptStarted = ACPLifecycleGate()
         let promptMayFinish = ACPLifecycleGate()
-        let backend = GatedRuntimeBackend(finishGate: promptMayFinish)
+        let backend = GatedRuntimeBackend(
+            startGate: promptStarted,
+            finishGate: promptMayFinish
+        )
         let bridge = try Self.makeBridge(backend: backend)
         let sessionID = "acp-session-1"
         await bridge.installTestSession(
             Self.makeConfiguration(sessionID: sessionID)
         )
 
-        // Both prompts are dispatched before either can suspend past its
-        // reservation, so only the atomic reservation can serialize them.
         let first = Task {
             try await bridge.prompt(id: nil, params: [
                 "sessionId": sessionID,
                 "prompt": "first"
             ])
         }
+
+        // Pin the first prompt inside the backend before dispatching the
+        // second one: it now holds the reservation and stays suspended on
+        // `promptMayFinish`. Dispatching both tasks and opening the gate right
+        // away would be a race, because `Task` does not start its body
+        // synchronously. On a slow runner the first prompt could complete and
+        // release the reservation before the second one even began, which is
+        // correct sequential behaviour but proves nothing about concurrent
+        // reservation.
+        await promptStarted.wait()
+
         let second = Task {
             try await bridge.prompt(id: nil, params: [
                 "sessionId": sessionID,
@@ -315,17 +328,21 @@ struct ACPSessionLifecycleConcurrencyTests {
             ])
         }
 
-        promptMayFinish.open()
         var rejections = 0
-        for task in [first, second] {
-            do {
-                try await task.value
-            } catch let error as ACPError {
-                #expect(error.message.contains("already running"))
-                rejections += 1
-            } catch {
-                Issue.record("Unexpected prompt error: \(error)")
-            }
+        do {
+            try await second.value
+        } catch let error as ACPError {
+            #expect(error.message.contains("already running"))
+            rejections += 1
+        } catch {
+            Issue.record("Unexpected prompt error: \(error)")
+        }
+
+        promptMayFinish.open()
+        do {
+            try await first.value
+        } catch {
+            Issue.record("Unexpected prompt error: \(error)")
         }
 
         #expect(rejections == 1)
