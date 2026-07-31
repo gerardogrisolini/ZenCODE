@@ -10,11 +10,27 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-07-31
+
 ### Added
 
 - Downloadable macOS arm64 and Linux x86_64 binaries from successful CI runs,
   retained as workflow artifacts for 30 days. Verified tag builds also publish
   versioned archives and SHA-256 checksums as persistent GitHub Release assets.
+  This is the first release whose assets are actually published, see the fix
+  below.
+
+### Fixed
+
+- Release workflow now publishes the verified binaries it builds. The release
+  gate ran the test suite in parallel, which could park Foundation's
+  process-global lifecycle state and stall the step until the job timeout, so
+  the archive, upload, and publish steps were skipped and every GitHub Release
+  from v1.0.0 to v1.0.8 was created without assets. The gate now matches CI with
+  `swift test --no-parallel`, and its timeout allows for the clean, uncached
+  build it performs.
+- Removed an unsupported `timeoutSeconds` argument from the `feature.build`
+  invocation in `SwiftFeatureManagementTests`.
 
 ## [1.0.8] - 2026-07-30
 
@@ -243,7 +259,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.8...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.9...HEAD
+[1.0.9]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.5...v1.0.6
