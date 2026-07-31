@@ -101,15 +101,16 @@ enum ZenCODEOptionalFeatureInstaller {
             let feature = featuresByID[id]
             let title = feature.map { "\($0.displayName) [\($0.id)]" } ?? "[\(id)]"
             writeStatus("\nInstalling optional feature \(title)\n")
-            writeStatus("  Copying source package and creating feature manifest…\n")
-            writeStatus("  Building the release product after the copy; this can take a moment…\n")
 
             do {
                 let report = try await runtime.installOptionalFeature(
                     id: id,
                     zenPackageRootURL: sourceRootURL,
                     build: true,
-                    enable: true
+                    enable: true,
+                    progress: { message in
+                        writeStatus("  • \(message)\n")
+                    }
                 )
                 if report.ok {
                     if report.copied {

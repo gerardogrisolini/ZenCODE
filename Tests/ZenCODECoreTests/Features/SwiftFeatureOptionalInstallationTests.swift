@@ -271,11 +271,16 @@ struct SwiftFeatureOptionalInstallationTests {
             atomically: true,
             encoding: .utf8
         )
+        let progressRecorder = OptionalFeatureInstallProgressRecorder()
         let report = try await runtime.installOptionalFeature(
             id: definition.id,
             zenPackageRootURL: checkoutURL,
-            timeoutSeconds: 30
+            timeoutSeconds: 30,
+            progress: { message in
+                await progressRecorder.append(message)
+            }
         )
+        let progressMessages = await progressRecorder.snapshot()
 
         #expect(!report.ok)
         #expect(!report.copied)
@@ -299,6 +304,9 @@ struct SwiftFeatureOptionalInstallationTests {
         )
         #expect(record.manifestEnabled)
         #expect(record.executableAvailable)
+        #expect(progressMessages.contains("Running: swift build -c release --product git-tools-feature"))
+        #expect(progressMessages.contains { $0.hasPrefix("SwiftPM build finished in ") })
+        #expect(!progressMessages.contains { $0.hasPrefix("Publishing feature to ") })
     }
 
     @Test
@@ -345,12 +353,17 @@ struct SwiftFeatureOptionalInstallationTests {
             encoding: .utf8
         )
 
+        let progressRecorder = OptionalFeatureInstallProgressRecorder()
         let secondReport = try await runtime.installOptionalFeature(
             id: definition.id,
             zenPackageRootURL: checkoutURL,
             build: false,
-            enable: false
+            enable: false,
+            progress: { message in
+                await progressRecorder.append(message)
+            }
         )
+        let progressMessages = await progressRecorder.snapshot()
         #expect(secondReport.ok)
         #expect(secondReport.copied)
         #expect(
@@ -367,6 +380,11 @@ struct SwiftFeatureOptionalInstallationTests {
             try FileManager.default.contentsOfDirectory(atPath: featureRootURL.path)
                 .allSatisfy { !$0.hasPrefix(".zencode-feature-") }
         )
+        #expect(progressMessages.first == "Resolving ZenCODE source checkout…")
+        #expect(progressMessages.contains { $0.hasPrefix("Source package: ") })
+        #expect(progressMessages.contains("Validating staged package and feature manifest…"))
+        #expect(progressMessages.contains { $0.hasPrefix("Publishing feature to ") })
+        #expect(progressMessages.last == "Refreshing the feature registry…")
     }
 
     @Test
@@ -631,5 +649,17 @@ struct SwiftFeatureOptionalInstallationTests {
             [.posixPermissions: 0o755],
             ofItemAtPath: executableURL.path
         )
+    }
+}
+
+private actor OptionalFeatureInstallProgressRecorder {
+    private var messages: [String] = []
+
+    func append(_ message: String) {
+        messages.append(message)
+    }
+
+    func snapshot() -> [String] {
+        messages
     }
 }

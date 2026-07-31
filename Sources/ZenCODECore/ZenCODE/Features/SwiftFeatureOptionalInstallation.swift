@@ -122,6 +122,10 @@ public struct SwiftFeatureOptionalInstallReport: Codable, Sendable {
     }
 }
 
+/// Receives ordered, human-readable status updates while an optional feature
+/// package is prepared, built, and published.
+public typealias SwiftFeatureOptionalInstallProgress = @Sendable (String) async -> Void
+
 extension SwiftFeatureRuntime {
     /// Marker line that precedes the ZenCODE `.package(path:)` dependency in
     /// every optional feature `Package.swift`. Copying a feature package out of
@@ -137,6 +141,8 @@ extension SwiftFeatureRuntime {
         "Not installed. Install it from zen --setup (Features) or the installer."
 
     public static let defaultOptionalFeatureInstallTimeoutSeconds: TimeInterval = 900
+
+    private static let optionalFeatureBuildProgressIntervalSeconds = 15
 
     // MARK: - Catalog
 
@@ -400,7 +406,8 @@ extension SwiftFeatureRuntime {
         zenPackageRootURL explicitZenPackageRootURL: URL? = nil,
         build shouldBuild: Bool = true,
         enable shouldEnable: Bool = true,
-        timeoutSeconds: TimeInterval = SwiftFeatureRuntime.defaultOptionalFeatureInstallTimeoutSeconds
+        timeoutSeconds: TimeInterval = SwiftFeatureRuntime.defaultOptionalFeatureInstallTimeoutSeconds,
+        progress: SwiftFeatureOptionalInstallProgress? = nil
     ) async throws -> SwiftFeatureOptionalInstallReport {
         guard explicitFeatures == nil else {
             throw DirectToolError.permissionDenied(
@@ -423,6 +430,7 @@ extension SwiftFeatureRuntime {
             )
         }
 
+        await progress?("Resolving ZenCODE source checkout…")
         let zenPackageRootURL = try Self.zenCODESourceCheckoutURL(
             explicitURL: explicitZenPackageRootURL,
             fileManager: fileManager
@@ -443,6 +451,9 @@ extension SwiftFeatureRuntime {
             .appendingPathComponent("release", isDirectory: true)
             .appendingPathComponent(definition.executableName)
 
+        await progress?("Source package: \(sourceDirectoryURL.path)")
+        await progress?("Preparing staged package for \(destinationDirectoryURL.path)…")
+
         // The manifest is written disabled: enabling happens only after the
         // release product exists, exactly like a Builder-created feature.
         let staged = try stageOptionalFeaturePackage(
@@ -454,6 +465,7 @@ extension SwiftFeatureRuntime {
         )
         defer { try? fileManager.removeItem(at: staged.destinationDirectoryURL) }
 
+        await progress?("Validating staged package and feature manifest…")
         let validation = try validateFeature(
             arguments: ["manifestPath": staged.manifestURL.path]
         )
@@ -511,12 +523,63 @@ extension SwiftFeatureRuntime {
 
         var buildReport: SwiftFeatureBuildReport?
         if shouldBuild {
-            buildReport = try await buildFeature(
-                arguments: [
-                    "manifestPath": staged.manifestURL.path,
-                    "timeoutSeconds": Int(timeoutSeconds)
-                ]
-            )
+            await progress?("Running: \(command.joined(separator: " "))")
+            await progress?("Build directory: \(staged.destinationDirectoryURL.path)")
+
+            let buildStartedAt = Date()
+            var buildProgressTask: Task<Void, Never>?
+            if let progress {
+                let intervalSeconds = Self.optionalFeatureBuildProgressIntervalSeconds
+                buildProgressTask = Task(
+                    name: "optional feature \(id) SwiftPM build progress"
+                ) {
+                    var elapsedSeconds = intervalSeconds
+                    while !Task.isCancelled {
+                        do {
+                            try await Task.sleep(for: .seconds(intervalSeconds))
+                        } catch {
+                            return
+                        }
+                        guard !Task.isCancelled else {
+                            return
+                        }
+                        await progress(
+                            "Still building \(definition.executableName)… "
+                                + "\(elapsedSeconds)s elapsed."
+                        )
+                        elapsedSeconds += intervalSeconds
+                    }
+                }
+            }
+
+            do {
+                buildReport = try await buildFeature(
+                    arguments: [
+                        "manifestPath": staged.manifestURL.path,
+                        "timeoutSeconds": Int(timeoutSeconds)
+                    ]
+                )
+            } catch {
+                buildProgressTask?.cancel()
+                if let buildProgressTask {
+                    await buildProgressTask.value
+                }
+                throw error
+            }
+            buildProgressTask?.cancel()
+            if let buildProgressTask {
+                await buildProgressTask.value
+            }
+            if let buildReport {
+                let elapsedSeconds = max(
+                    0,
+                    Int(Date().timeIntervalSince(buildStartedAt))
+                )
+                await progress?(
+                    "SwiftPM build finished in \(elapsedSeconds)s "
+                        + "(exit code \(buildReport.exitCode))."
+                )
+            }
         }
 
         let built = buildReport?.ok ?? false
@@ -552,16 +615,19 @@ extension SwiftFeatureRuntime {
         // discovers the live package and would leave a successfully replaced
         // package disabled if that post-swap mutation failed.
         if shouldEnable {
+            await progress?("Enabling the feature manifest…")
             try SwiftFeatureRegistry.setFeatureManifestEnabled(
                 manifestURL: staged.manifestURL,
                 enabled: true,
                 fileManager: fileManager
             )
         }
+        await progress?("Publishing feature to \(destinationDirectoryURL.path)…")
         try publishStagedOptionalFeaturePackage(
             stagedDirectoryURL: staged.destinationDirectoryURL,
             destinationDirectoryURL: destinationDirectoryURL
         )
+        await progress?("Refreshing the feature registry…")
         reloadFeatureBundles()
 
         return SwiftFeatureOptionalInstallReport(

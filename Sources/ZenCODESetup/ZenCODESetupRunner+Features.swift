@@ -192,7 +192,13 @@ extension ZenCODESetupRunner {
     ) async -> Bool {
         let verb = isUpdate ? "update" : "install"
         do {
-            let report = try await runtime.installOptionalFeature(id: id, enable: enable)
+            let report = try await runtime.installOptionalFeature(
+                id: id,
+                enable: enable,
+                progress: { message in
+                    AgentOutput.standardError.writeString("  • \(message)\n")
+                }
+            )
             guard report.ok else {
                 let details = report.errors.isEmpty
                     ? "The build or enable step did not complete."
