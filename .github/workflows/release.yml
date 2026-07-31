@@ -83,6 +83,10 @@ jobs:
             os: ubuntu-24.04
             container: swift:6.3-noble
             platform: linux-x86_64
+          - name: Ubuntu 24.04 ARM64
+            os: ubuntu-24.04-arm
+            container: swift:6.3-noble
+            platform: linux-arm64
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container || null }}
     steps:
@@ -187,16 +191,32 @@ jobs:
 
           tag="v${VERSION}"
           assets=(artifacts/*.tar.gz artifacts/*.sha256)
-          if [ "${#assets[@]}" -ne 4 ]; then
-            echo "::error::Expected two release archives and two checksums, found ${#assets[@]}."
+          expected_assets=(
+            "artifacts/zen-${VERSION}-macos-arm64.tar.gz"
+            "artifacts/zen-${VERSION}-macos-arm64.tar.gz.sha256"
+            "artifacts/zen-${VERSION}-linux-x86_64.tar.gz"
+            "artifacts/zen-${VERSION}-linux-x86_64.tar.gz.sha256"
+            "artifacts/zen-${VERSION}-linux-arm64.tar.gz"
+            "artifacts/zen-${VERSION}-linux-arm64.tar.gz.sha256"
+          )
+
+          if [ "${#assets[@]}" -ne "${#expected_assets[@]}" ]; then
+            echo "::error::Expected three release archives and three checksums, found ${#assets[@]}."
             printf 'Found: %s\n' "${assets[@]}"
             exit 1
           fi
 
+          for asset in "${expected_assets[@]}"; do
+            if [ ! -f "$asset" ]; then
+              echo "::error::Missing expected release asset: $asset"
+              exit 1
+            fi
+          done
+
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "${assets[@]}" --clobber
+            gh release upload "$tag" "${expected_assets[@]}" --clobber
           else
-            gh release create "$tag" "${assets[@]}" \
+            gh release create "$tag" "${expected_assets[@]}" \
               --verify-tag \
               --title "ZenCODE $tag" \
               --generate-notes

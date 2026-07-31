@@ -110,8 +110,18 @@ jobs:
           overwrite: true
 
   linux:
-    name: Ubuntu 24.04 (Swift 6.3)
-    runs-on: ubuntu-24.04
+    name: Ubuntu 24.04 ${{ matrix.arch }} (Swift 6.3)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            os: ubuntu-24.04
+            platform: linux-x86_64
+          - arch: arm64
+            os: ubuntu-24.04-arm
+            platform: linux-arm64
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     container: swift:6.3-noble
     steps:
@@ -128,9 +138,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: .build
-          key: spm-ubuntu-24.04-${{ hashFiles('Package.resolved') }}
+          key: spm-ubuntu-24.04-${{ matrix.arch }}-${{ hashFiles('Package.resolved') }}
           restore-keys: |
-            spm-ubuntu-24.04-
+            spm-ubuntu-24.04-${{ matrix.arch }}-
 
       - name: Assert live provider suites are disabled
         run: |
@@ -173,7 +183,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive="zen-${GITHUB_SHA}-linux-x86_64.tar.gz"
+          archive="zen-${GITHUB_SHA}-${{ matrix.platform }}.tar.gz"
           mkdir -p artifacts
           tar -C .build/release -czf "artifacts/$archive" zen
           (
@@ -184,7 +194,7 @@ jobs:
       - name: Upload downloadable build
         uses: actions/upload-artifact@v7
         with:
-          name: zen-${{ github.sha }}-linux-x86_64
+          name: zen-${{ github.sha }}-${{ matrix.platform }}
           path: artifacts/
           if-no-files-found: error
           retention-days: 30

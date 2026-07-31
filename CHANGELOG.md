@@ -10,6 +10,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Native Linux arm64 CI and release artifacts alongside the existing Linux
+  x86_64 builds, providing downloadable binaries for ARM servers and devices
+  such as Raspberry Pi.
+
 ## [1.0.10] - 2026-07-31
 
 v1.0.9 was tagged but never published: its Linux release gate failed on the
