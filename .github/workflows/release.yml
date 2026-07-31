@@ -105,7 +105,9 @@ jobs:
         run: swift build --target ZenCODECore
 
       - name: Test
-        run: swift test
+        # Match CI: process lifecycle suites share Foundation.Process state and
+        # can fail or hang when Swift Testing runs cases concurrently.
+        run: swift test --no-parallel
 
       - name: Build release product
         run: swift build -c release --product zen
