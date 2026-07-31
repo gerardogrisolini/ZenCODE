@@ -10,6 +10,35 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-07-30
+
+### Changed
+
+- `xcode-tools` is now a fully self-contained macOS-only optional package. The
+  former root `XcodeToolsFeature` library product was removed: its MCP bridge
+  discovery and policy, request compatibility normalization, workspace matching,
+  execution, presentation, and tests now live entirely in the package-local
+  implementation. The root graph exports no Xcode feature product, `ZenCODECore`
+  imports no Xcode implementation module, and Linux builds no longer compile
+  Xcode runtime metadata or compatibility shims (removed
+  `LinuxXcodeToolCompatibility`).
+- Telegram runtime files reorganized out of `ZenCODETUI` into
+  `Sources/ZenCODECore/ZenCODE/Telegram`, with the `TerminalChat+Telegram`
+  adapter moved under `Chat/Telegram`, keeping terminal presentation separate
+  from the Telegram runtime.
+- Simplified the direct MCP tool runtime (`DirectMCPToolRuntime`), the direct
+  tool executor, the memory service, and tool-selection presentation across the
+  root package.
+
+### Fixed
+
+- Optional-feature upgrade and installation from setup: bounded installation
+  diagnostics and logging, executable resolution validation, and feature
+  management rendering across `SwiftFeatureOptionalInstallation`,
+  `SwiftFeatureManagementTools`, `SwiftFeatureRuntimeValidation`, and the setup
+  runner.
+- Linux test compatibility for the bundled-feature catalog parity suite.
+
 ## [1.0.7] - 2026-07-30
 
 ### Added
@@ -208,7 +237,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.7...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.8...HEAD
+[1.0.8]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.4...v1.0.5
