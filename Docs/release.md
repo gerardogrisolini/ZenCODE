@@ -22,7 +22,7 @@ but it is not a reproducible release input.
 
    ```bash
    swift build --target ZenCODECore
-   swift test --no-parallel
+   swift test
    swift build -c release --product zen
    bash -n Scripts/*.sh
    git diff --check
