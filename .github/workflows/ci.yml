@@ -170,6 +170,7 @@ jobs:
         run: git diff --check
 
       - name: Package downloadable build
+        shell: bash
         run: |
           set -euo pipefail
           archive="zen-${GITHUB_SHA}-linux-x86_64.tar.gz"
