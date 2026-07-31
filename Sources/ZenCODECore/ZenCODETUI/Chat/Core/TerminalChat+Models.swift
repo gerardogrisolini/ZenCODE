@@ -8,9 +8,47 @@ import Foundation
 enum TerminalSubmittedLineAction {
     case continueChat
     case exitChat
+    case requestSetup
     case runPrompt(String)
     case runHiddenPrompt(String, purpose: TerminalPromptPurpose)
     case prefillPrompt(String)
+}
+
+/// In-memory state carried across the coarse runtime restart requested by
+/// `/setup`. Configuration-derived state is intentionally absent: the relaunched
+/// chat must use the providers, model, agent, tools, and skills just written by
+/// setup rather than restoring their previous values.
+public struct TerminalChatResumeSnapshot: Sendable {
+    public let sessionID: String
+    public let cacheKey: String?
+    public let history: [AgentRuntimeMessage]
+    public let transcriptHistory: [AgentRuntimeMessage]
+    public let activePlan: TerminalSessionPlan?
+    public let checkpointTree: SessionCheckpointTree?
+    public let savedSessionName: String?
+
+    public init(
+        sessionID: String,
+        cacheKey: String?,
+        history: [AgentRuntimeMessage],
+        transcriptHistory: [AgentRuntimeMessage],
+        activePlan: TerminalSessionPlan?,
+        checkpointTree: SessionCheckpointTree?,
+        savedSessionName: String?
+    ) {
+        self.sessionID = sessionID
+        self.cacheKey = cacheKey
+        self.history = history
+        self.transcriptHistory = transcriptHistory
+        self.activePlan = activePlan
+        self.checkpointTree = checkpointTree
+        self.savedSessionName = savedSessionName
+    }
+}
+
+public enum TerminalChatRunOutcome: Sendable {
+    case exited
+    case setupRequested(TerminalChatResumeSnapshot)
 }
 
 enum TerminalPromptPurpose: Sendable, Equatable {

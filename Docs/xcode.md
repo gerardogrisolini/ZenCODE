@@ -4,10 +4,11 @@ Xcode can run `zen` as an ACP stdio coding agent.
 
 ## Prerequisites
 
-1. Install `ZenCODE` and run setup at least once:
+1. Install `ZenCODE` and run it once. Setup opens automatically when the
+   configuration is missing:
 
    ```bash
-   zen --setup
+   zen
    ```
 
 2. If you want the optional Xcode-native tools, install their macOS-only feature package:
@@ -72,5 +73,5 @@ Environment:
 
 - **Xcode cannot start the agent**: use an absolute executable path, not just `zen`.
 - **Xcode tools are unavailable**: install or update `xcode-tools` with `zen --install-features xcode-tools`, keep Xcode open, enable the package in `/tools`, and approve any MCP/automation prompt shown by Xcode.
-- **No model is configured**: run `zen --setup` in Terminal and configure at least one provider/model.
+- **No model is configured**: run `zen` in Terminal; setup opens automatically. If the TUI is already running, use `/setup`.
 - **“This provider requires authentication” in Xcode 27 beta 3**: update ZenCODE, select **Continue with ZenCODE**, then retry the session. This is an Xcode ACP compatibility acknowledgment, not provider authentication.

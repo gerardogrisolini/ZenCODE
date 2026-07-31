@@ -12,6 +12,20 @@ import Testing
 @Suite
 struct AgentConfigurationTests {
     @Test
+    func syntaxValidationRejectsRemovedSetupOptionWithoutLoadingConfiguration() throws {
+        #expect(throws: AgentConfigurationError.self) {
+            try AgentConfiguration.validateArguments(["zen", "--setup"])
+        }
+        try AgentConfiguration.validateArguments([
+            "zen",
+            "--agent",
+            "Developer",
+            "--cwd",
+            "/tmp",
+        ])
+    }
+
+    @Test
     func explicitWorkingDirectoryIsNeverReplacedByLaunchFallbacks() throws {
         let executableURL = try #require(Bundle.main.executableURL)
         let explicitDirectory = executableURL

@@ -155,6 +155,9 @@ extension TerminalChat {
                 continue
             case .exitChat:
                 return
+            case .requestSetup:
+                requestedRuntimeSetup = true
+                return
             case let .runPrompt(prompt):
                 await runPromptBlocking(promptAttempt(prompt: prompt))
             case let .runHiddenPrompt(prompt, purpose):
@@ -292,6 +295,10 @@ extension TerminalChat {
                 }
                 return true
             case .exitChat:
+                generationTask?.cancel()
+                return false
+            case .requestSetup:
+                requestedRuntimeSetup = true
                 generationTask?.cancel()
                 return false
             case let .runPrompt(prompt):

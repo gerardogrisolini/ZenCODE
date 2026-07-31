@@ -16,6 +16,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
   x86_64 builds, providing downloadable binaries for ARM servers and devices
   such as Raspberry Pi.
 
+### Changed
+
+- Interactive setup is now part of `ZenCODECore`: first-run setup opens
+  automatically when required, `/setup` rebuilds the runtime and restores the
+  active conversation, and setup tests now live with the Core test target.
+
+### Removed
+
+- The separate public `ZenCODESetup` product and target. Setup APIs such as
+  `ZenCODESetupRunner` are now exported by `ZenCODECore`.
+
 ## [1.0.10] - 2026-07-31
 
 v1.0.9 was tagged but never published: its Linux release gate failed on the

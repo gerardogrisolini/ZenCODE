@@ -138,7 +138,7 @@ extension SwiftFeatureRuntime {
 
     /// Issue reported for an optional feature that has not been installed yet.
     public static let optionalFeatureNotInstalledIssue =
-        "Not installed. Install it from zen --setup (Features) or the installer."
+        "Not installed. Install it from the /setup command in zen (Features) or the installer."
 
     public static let defaultOptionalFeatureInstallTimeoutSeconds: TimeInterval = 900
 

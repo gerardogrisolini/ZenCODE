@@ -7,7 +7,6 @@
 
 import Foundation
 import ZenCODECore
-import ZenCODESetup
 import ZenPackageMetadata
 
 @main
@@ -15,24 +14,10 @@ struct ZenCODEMain {
     static func main() async {
         let arguments = ZenCODECommandLineArgumentSanitizer.sanitized(CommandLine.arguments)
 
-        // This must run before every setup path. Optional features are useful on
-        // a fresh installation, where no remote provider or model has been
-        // configured yet.
+        // This must run before the configuration gate. Optional features are
+        // useful on a fresh installation, where no provider or model exists yet.
         if ZenCODEOptionalFeatureInstaller.shouldRun(arguments: arguments) {
             Foundation.exit(await ZenCODEOptionalFeatureInstaller.run(arguments: arguments))
-        }
-
-        let didRequestSetup = ZenCODESetupMenuRunner.shouldRun(arguments: arguments)
-        if didRequestSetup {
-            do {
-                _ = try await ZenCODESetupRunner.run()
-            } catch {
-                AgentOutput.standardError.writeString(
-                    "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"
-                )
-                Foundation.exit(1)
-            }
-            return
         }
 
         if arguments.dropFirst().contains(where: { $0 == "--help" || $0 == "-h" }) {
@@ -55,20 +40,16 @@ struct ZenCODEMain {
             Foundation.exit(exitCode)
         }
 
-        if let option = ZenCODESetupMenuRunner.movedSetupOption(in: arguments) {
-            AgentOutput.standardError.writeString(
-                "ZenCODE: \(ZenCODESetupMenuError.setupActionMovedToSetup(option).localizedDescription)\n"
-            )
+        do {
+            try AgentConfiguration.validateArguments(arguments)
+        } catch {
+            AgentOutput.standardError.writeString("ZenCODE: \(error.localizedDescription)\n")
             Foundation.exit(1)
         }
 
-        if ZenInspector.status().requiresSetup || requiresRemoteModelSetup() {
+        if requiresInteractiveSetup() {
             do {
-                // Start the interactive runner only when setup produced a usable
-                // configuration. A cancellation or a reset leaves the CLI to a
-                // later invocation instead of launching the chat half-configured.
-                let outcome = try await ZenCODESetupRunner.run()
-                guard outcome == .configured else {
+                guard try await runInteractiveSetup() else {
                     Foundation.exit(0)
                 }
             } catch {
@@ -79,26 +60,47 @@ struct ZenCODEMain {
             }
         }
 
-        await ZenCODECommandLineRunner.main(arguments: arguments)
+        await ZenCODECommandLineRunner.main(
+            arguments: arguments,
+            setupHandler: {
+                try await runInteractiveSetup()
+            }
+        )
     }
 
-    private static func requiresRemoteModelSetup() -> Bool {
-        guard let manifest = try? AgentSettingsManifestStore.loadRequired(
+    private static func requiresInteractiveSetup() -> Bool {
+        let manifest = try? AgentSettingsManifestStore.loadRequired(
             from: AgentSettingsManifestStore.settingsURL()
-        ) else {
-            return false
+        )
+        return ZenCODESetupRequirement.isRequired(
+            manifest: manifest,
+            status: ZenInspector.status()
+        )
+    }
+
+    private static func runInteractiveSetup() async throws -> Bool {
+        while true {
+            let outcome = try await ZenCODESetupRunner.run()
+            switch outcome {
+            case .configured:
+                return !requiresInteractiveSetup()
+            case .cancelled:
+                return !requiresInteractiveSetup()
+            case .reset:
+                // Reset deliberately removes the active configuration. Stay in
+                // the same process and immediately offer setup again; if the next
+                // run is cancelled, the validity check above ends the app cleanly.
+                continue
+            }
         }
-        return manifest.models.isEmpty
     }
 }
 
 private enum ZenCODEStandaloneHelp {
     static var text: String {
-        let usage = "zen [--setup] [--doctor] [--install-features [id,id,...]] [--acp]"
-        let setupDetail = "remote providers, models, agents"
+        let usage = "zen [--doctor] [--install-features [id,id,...]] [--acp]"
         let options = """
           --acp                  ACP JSON-RPC over stdio for compatible clients.
-          --setup                Open setup for \(setupDetail).
           --doctor               Print a redacted diagnostic report (environment, configuration, permissions) and exit. Non-interactive; never starts setup or reveals secrets.
           --install-features [id,id,...]
                                  Select and install optional Swift feature packages. Repeat the option or separate ids with commas for a non-interactive install.

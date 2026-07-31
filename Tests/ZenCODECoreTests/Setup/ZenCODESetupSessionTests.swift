@@ -4,8 +4,7 @@
 //
 
 import Foundation
-import ZenCODECore
-@testable import ZenCODESetup
+@testable import ZenCODECore
 import Testing
 
 @Suite
@@ -41,6 +40,40 @@ struct ZenCODESetupSessionTests {
             provider: provider
         )
         return manifest(models: [model], commands: commands)
+    }
+
+    @Test
+    func startupSetupRequirementRejectsMissingInvalidAndModelFreeConfiguration() {
+        let settingsURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("settings.json")
+
+        #expect(
+            ZenCODESetupRequirement.isRequired(
+                manifest: nil,
+                status: .missingSettings(settingsFileURL: settingsURL)
+            )
+        )
+        #expect(
+            ZenCODESetupRequirement.isRequired(
+                manifest: Self.emptyManifest(),
+                status: .ready(settingsFileURL: settingsURL)
+            )
+        )
+        #expect(
+            ZenCODESetupRequirement.isRequired(
+                manifest: Self.remoteManifest(),
+                status: .invalidSettings(
+                    settingsFileURL: settingsURL,
+                    message: "invalid"
+                )
+            )
+        )
+        #expect(
+            !ZenCODESetupRequirement.isRequired(
+                manifest: Self.remoteManifest(),
+                status: .ready(settingsFileURL: settingsURL)
+            )
+        )
     }
 
     @Test

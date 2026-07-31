@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import ZenCODECore
 
 extension ZenCODESetupRunner {
     /// Prompts for the natural-language response language, defaulting to the

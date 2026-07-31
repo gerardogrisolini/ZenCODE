@@ -11,7 +11,6 @@ import Darwin
 import Glibc
 #endif
 import Foundation
-import ZenCODECore
 
 extension ZenCODESetupRunner {
     static func promptString(

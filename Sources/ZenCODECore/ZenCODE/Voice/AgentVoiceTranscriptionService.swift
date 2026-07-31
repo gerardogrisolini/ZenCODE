@@ -362,7 +362,7 @@ public enum AgentVoiceTranscriptionError: LocalizedError, Sendable, Equatable {
     public var errorDescription: String? {
         switch self {
         case .missingConfiguration:
-            return "Voice input is not configured. Run zen --setup and enable voice input."
+            return "Voice input is not configured. Run the /setup command in zen and enable voice input."
         case let .missingAudioFile(path):
             return "Voice audio file does not exist: \(path)"
         case .emptyTranscript:

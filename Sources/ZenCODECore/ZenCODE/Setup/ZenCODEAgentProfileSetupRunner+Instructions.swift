@@ -6,7 +6,6 @@
 import Dispatch
 import Foundation
 import ToolCore
-import ZenCODECore
 
 extension ZenCODEAgentProfileSetupRunner {
     static func promptInstructions(defaultValue: String?) throws -> String? {

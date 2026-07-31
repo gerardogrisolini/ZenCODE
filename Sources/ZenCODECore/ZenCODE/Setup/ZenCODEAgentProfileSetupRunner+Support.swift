@@ -4,7 +4,6 @@
 //
 
 import Foundation
-import ZenCODECore
 
 extension ZenCODEAgentProfileSetupRunner {
     static func printAgents(_ agents: [AgentProfile]) {
@@ -143,11 +142,5 @@ private extension String {
             .joined(separator: " ")
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .lowercased()
-    }
-}
-
-private extension FileHandle {
-    func writeString(_ string: String) {
-        try? write(contentsOf: Data(string.utf8))
     }
 }

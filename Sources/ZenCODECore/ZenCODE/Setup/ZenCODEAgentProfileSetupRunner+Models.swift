@@ -7,7 +7,6 @@
 
 import Foundation
 import ToolCore
-import ZenCODECore
 
 extension ZenCODEAgentProfileSetupRunner {
     private enum AgentModelBindingMenuAction: Hashable {

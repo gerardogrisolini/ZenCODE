@@ -380,6 +380,58 @@ struct AgentCoreSessionRunnerTests {
     }
 
     @Test
+    func sessionCloseAndRecreationPreserveTaskGraphForRuntimeSetup() async throws {
+        let backend = CapturingAgentRuntimeBackend()
+        let taskOrchestrator = SessionTaskOrchestrator()
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in backend },
+            taskOrchestrator: taskOrchestrator,
+            taskGraphStore: nil
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "model-a",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["tasks.list"]
+        )
+
+        try await runner.createSession(configuration: configuration)
+        _ = try await taskOrchestrator.createGraph(
+            sessionID: sessionID,
+            id: "setup-preserved-graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "task-a", title: "A")]
+        )
+
+        await runner.closeSession(id: sessionID)
+        #expect(
+            try await runner.taskGraphSnapshot(sessionID: sessionID)?.tasks.map(\.id)
+                == ["task-a"]
+        )
+
+        await runner.shutdownBackendKeepingExternalTools()
+        try await runner.createSession(configuration: configuration)
+        #expect(
+            try await runner.taskGraphSnapshot(sessionID: sessionID)?.tasks.map(\.id)
+                == ["task-a"]
+        )
+    }
+
+    @Test
+    func runtimeSetupResetsFullAccessModeToStandard() async {
+        let runner = AgentCoreSessionRunner(taskGraphStore: nil)
+
+        #expect(await runner.toggleLocalExecAccessMode() == .fullAccess)
+        await runner.resetLocalExecAccessMode()
+        #expect(await runner.localExecAccessMode() == .standard)
+    }
+
+    @Test
     func localExecAccessModeRoutesDefaultAndPerPromptAuthorization() async throws {
         let defaultAuthorizer = AuthorizationRecorder(decision: false)
         let promptAuthorizer = AuthorizationRecorder(decision: false)

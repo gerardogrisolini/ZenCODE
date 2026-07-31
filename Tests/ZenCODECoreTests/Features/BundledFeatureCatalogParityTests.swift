@@ -86,7 +86,6 @@ struct BundledFeatureCatalogParityTests {
 
         let rootSourceDirectories = [
             "Sources/ZenCODECore",
-            "Sources/ZenCODESetup",
             "Sources/ZenPackageMetadata",
             "Sources/zen",
             "Sources/FeatureKit",

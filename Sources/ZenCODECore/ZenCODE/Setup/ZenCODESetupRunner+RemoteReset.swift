@@ -4,7 +4,6 @@
 //
 
 import Foundation
-import ZenCODECore
 
 struct RemoteConfigurationResetResult: Equatable {
     let removedURLs: [URL]

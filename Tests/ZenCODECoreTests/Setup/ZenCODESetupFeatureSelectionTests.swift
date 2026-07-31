@@ -4,7 +4,7 @@
 //
 
 import Foundation
-@testable import ZenCODESetup
+@testable import ZenCODECore
 import Testing
 
 @Suite

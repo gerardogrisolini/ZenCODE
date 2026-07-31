@@ -49,6 +49,7 @@ public struct AgentConfiguration: Sendable {
       --verbose               Show status/tool progress on stderr. Default: quiet chat output.
 
     Tool discovery:
+      In chat mode, use /setup to reconfigure ZenCODE and restore the current session without restarting the app.
       In chat mode, use /agents to switch agent profiles without restarting the TUI.
       In chat mode, use /tools to enable local, shell, search, git, memory, sub-agent, or optional feature tools.
       In chat mode, use the Builder agent to create and manage generated Swift feature packages with /feature.
@@ -92,6 +93,29 @@ public struct AgentConfiguration: Sendable {
     public init(
         arguments rawArguments: [String],
         appModeOverride: Bool? = nil
+    ) throws {
+        try self.init(
+            arguments: rawArguments,
+            appModeOverride: appModeOverride,
+            loadPersistedConfiguration: true
+        )
+    }
+
+    /// Validates command-line syntax without requiring settings or agent files.
+    /// The executable uses this before first-run setup so an unknown option
+    /// cannot accidentally launch a mutating setup flow.
+    public static func validateArguments(_ rawArguments: [String]) throws {
+        _ = try Self(
+            arguments: rawArguments,
+            appModeOverride: false,
+            loadPersistedConfiguration: false
+        )
+    }
+
+    private init(
+        arguments rawArguments: [String],
+        appModeOverride: Bool?,
+        loadPersistedConfiguration: Bool
     ) throws {
         let arguments = ZenCODECommandLineArgumentSanitizer.sanitized(rawArguments)
         let environment = ProcessInfo.processInfo.environment
@@ -202,7 +226,7 @@ public struct AgentConfiguration: Sendable {
         let settingsManifest: AgentSettingsManifest?
         let selectedAgent: AgentProfile?
         let agentName: String?
-        if shouldPrintHelp || shouldPrintVersion || shouldPrintDoctor {
+        if shouldPrintHelp || shouldPrintVersion || shouldPrintDoctor || !loadPersistedConfiguration {
             settingsManifest = nil
             selectedAgent = nil
             agentName = requestedAgentName

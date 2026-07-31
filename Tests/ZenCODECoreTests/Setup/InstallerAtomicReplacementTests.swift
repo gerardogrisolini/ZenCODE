@@ -46,10 +46,7 @@ struct InstallerAtomicReplacementTests {
             try? oldExecutableHandle.close()
         }
 
-        let packageRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
+        let packageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
         let helperURL = packageRoot
             .appendingPathComponent("Scripts", isDirectory: true)
             .appendingPathComponent("install-support.sh")

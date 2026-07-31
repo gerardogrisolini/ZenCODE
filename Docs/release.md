@@ -106,7 +106,7 @@ directory, and when bootstrapped from a temporary URL checkout retain a
 source-only copy under `~/.zencode/source/`. A local-checkout installer uses its
 existing checkout instead. The installers no longer offer an optional-feature
 picker: features are installed, updated, enabled, and disabled from the Features
-step of `zen --setup`. Its `Update installed` group appears only for packages
+step of `/setup`. Its `Update installed` group appears only for packages
 whose installed source differs from the current checkout, then reinstalls the
 selected package. Each selection is copied and compiled on demand into
 `~/.zencode/features/<id>/` through the same runtime path as

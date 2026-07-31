@@ -41,8 +41,13 @@ tree and creates a new conversational branch.
 ## First Setup
 
 ```bash
-zen --setup
+zen
 ```
+
+When required configuration is missing or invalid (`settings.json` or
+`agents.json`), or when no model is configured, `zen` opens setup automatically before starting the chat. Use `/setup` later to
+reconfigure ZenCODE; the TUI saves the current session, rebuilds the runtime,
+and restores the conversation without closing the app.
 
 Creates files under `~/.zencode/`:
 
@@ -58,10 +63,9 @@ Creates files under `~/.zencode/`:
 ## Command Line Options
 
 ```text
-zen [--setup] [--doctor] [--acp] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--agent NAME] [--model MODEL_ID] [--cwd PATH] [--skills LIST]
+zen [--doctor] [--acp] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--agent NAME] [--model MODEL_ID] [--cwd PATH] [--skills LIST]
 ```
 
-- `--setup`: open setup, then exit.
 - `--doctor`: print a redacted, read-only diagnostic report and exit. It never
   starts setup, accesses a provider, creates configuration, or writes a log.
 - `--acp`: run ACP JSON-RPC over stdio.
@@ -99,7 +103,7 @@ uninstalled feature remains visible as installable but contributes no available
 tools to a profile or `/tools` selection. After installation, its package can be
 selected and managed exactly like a local Builder feature.
 
-The **Features** step of `zen --setup` covers the same lifecycle. Its rows are
+The **Features** step of `/setup` covers the same lifecycle. Its rows are
 grouped as `Bundled`/`Generated` (check to enable, uncheck to disable),
 `Installable` (not installed yet), and, only when source changes are available,
 `Update installed`. That last group is hidden when every installed package
@@ -173,6 +177,7 @@ Commands start with `/`:
 
 **Setup and navigation:**
 - `/help` — show command help.
+- `/setup` — save the current session, open setup, rebuild the runtime from the updated configuration, and restore the conversation.
 - `/models` — show every configured model and choose the model for the current session.
 - `/agents [list|<name>|<number>]` — switch agent profile.
 - `/bindings` — show every agent profile's model bindings, including defaults, capability, and thinking settings. Takes no arguments. See [bindings.md](bindings.md).
@@ -360,8 +365,8 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, a
 
 ## Recommended Workflow
 
-1. `zen --setup` — configure providers, models, agents.
-2. `cd /path/to/project && zen` — start in the target project.
+1. `cd /path/to/project && zen` — start in the target project; first-run setup opens automatically when required.
+2. `/setup` — reconfigure providers, models, agents, or features later without leaving the TUI.
 3. `/make-agents` — always create or refresh project-level guidance when first opening a new or updated project; review the resulting `AGENTS.md`.
 4. `/tools` and `/skills` — select tools and skills.
 5. `/plan <goal>` or `/workflow <goal>` — optional planning before editing. `/plan` delegates to a Planner sub-agent with an approval step; `/workflow` plans directly and delegates all implementation to sub-agents.
@@ -373,7 +378,7 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, a
 
 ## Troubleshooting
 
-- **Setup starts automatically**: required `~/.zencode` files are missing; complete `--setup`.
+- **Setup starts automatically**: required configuration (`settings.json` or `agents.json`) is missing or invalid, or no model is configured; complete setup before the chat starts. Use `/setup` later to reconfigure.
 - **Model not found**: run `/models` or check `settings.json`.
 - **A profile is never chosen for delegation**: check its role compatibility, its tool grant, and that it has a model binding with a capability — see [bindings.md](bindings.md).
 - **No tools available**: use `/tools`, switch profile, or check ACP client tool exposure.

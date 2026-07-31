@@ -7,34 +7,25 @@ import Foundation
 
 /// Shared entry points for launching ZenCODE terminal and ACP runtimes.
 public enum AgentRuntimeLauncher {
-    /// Runs terminal chat, shutting down an explicitly supplied runner when the chat ends or fails.
-    ///
-    /// `TerminalChat` is isolated to ``TerminalChatActor``, so both its
-    /// construction and its `run()` happen on that actor.
+    /// Runs one terminal-chat lifecycle. The caller owns the supplied runner so
+    /// it can preserve the task orchestrator while rebuilding the chat after
+    /// `/setup`.
     @TerminalChatActor
     public static func runTerminalChat(
         configuration: AgentConfiguration,
         stdinIsTerminal: Bool,
-        sessionRunner: AgentCoreSessionRunner? = nil
-    ) async throws {
+        sessionRunner: AgentCoreSessionRunner? = nil,
+        permissionAuthorizer: LocalExecPermissionAuthorizer? = nil,
+        runtimeSetupResumeSnapshot: TerminalChatResumeSnapshot? = nil
+    ) async throws -> TerminalChatRunOutcome {
         let terminal = TerminalChat(
             configuration: configuration,
             stdinIsTerminal: stdinIsTerminal,
-            sessionRunner: sessionRunner
+            sessionRunner: sessionRunner,
+            permissionAuthorizer: permissionAuthorizer,
+            runtimeSetupResumeSnapshot: runtimeSetupResumeSnapshot
         )
-
-        guard let sessionRunner else {
-            try await terminal.run()
-            return
-        }
-
-        do {
-            try await terminal.run()
-            await sessionRunner.shutdown()
-        } catch {
-            await sessionRunner.shutdown()
-            throw error
-        }
+        return try await terminal.run()
     }
 
     /// Reads ACP requests from standard input and shuts down the bridge when input ends.

@@ -42,6 +42,14 @@ public actor LocalExecPermissionAuthorizer {
 
     public init() {}
 
+    /// Drops process-local authorization state so a completed setup run is
+    /// reconciled from the current permissions manifest. This is especially
+    /// important after setup reset removes that manifest.
+    func reloadPersistedPermissions() {
+        alwaysAllowedKeys.removeAll()
+        didLoadPersistedAllowedCommands = false
+    }
+
     /// Returns `true` when this request needs no dialog: either the tool is not
     /// gated, or a previous decision already covers it.
     ///

@@ -14,12 +14,22 @@ import Glibc
 import Dispatch
 import Foundation
 
+/// Runs the interactive setup owned by the executable composition root. The
+/// return value says whether a usable configuration remains available for
+/// rebuilding the chat.
+public typealias ZenCODEInteractiveSetupHandler = @Sendable () async throws -> Bool
+
 public enum ZenCODECommandLineRunner {
-    public static func main() async {
-        await main(arguments: CommandLine.arguments)
+    public static func main(
+        setupHandler: ZenCODEInteractiveSetupHandler? = nil
+    ) async {
+        await main(arguments: CommandLine.arguments, setupHandler: setupHandler)
     }
 
-    public static func main(arguments rawArguments: [String]) async {
+    public static func main(
+        arguments rawArguments: [String],
+        setupHandler: ZenCODEInteractiveSetupHandler? = nil
+    ) async {
         do {
             SwiftPMResourceBundleDirectory.configure()
 
@@ -30,7 +40,7 @@ public enum ZenCODECommandLineRunner {
                 // or is rejected as an unknown argument.
                 Foundation.exit(ZenCODEDoctorRunner.run())
             }
-            let configuration = try AgentConfiguration(
+            var configuration = try AgentConfiguration(
                 arguments: sanitizedArguments
             )
             if configuration.printHelp {
@@ -52,11 +62,47 @@ public enum ZenCODECommandLineRunner {
                 AgentOutput.silenceInheritedProcessOutput(
                     keepStandardError: configuration.verboseLogging
                 )
-                try await AgentRuntimeLauncher.runTerminalChat(
-                    configuration: configuration,
-                    stdinIsTerminal: interactiveInputAvailable
+                let permissionAuthorizer = LocalExecPermissionAuthorizer()
+                let sessionRunner = AgentCoreSessionRunner(
+                    defaultToolAuthorizationHandler: { request in
+                        await permissionAuthorizer.authorize(request)
+                    }
                 )
-                return
+                var resumeSnapshot: TerminalChatResumeSnapshot?
+                do {
+                    while true {
+                        let outcome = try await AgentRuntimeLauncher.runTerminalChat(
+                            configuration: configuration,
+                            stdinIsTerminal: interactiveInputAvailable,
+                            sessionRunner: sessionRunner,
+                            permissionAuthorizer: permissionAuthorizer,
+                            runtimeSetupResumeSnapshot: resumeSnapshot
+                        )
+                        switch outcome {
+                        case .exited:
+                            await sessionRunner.shutdown()
+                            return
+                        case let .setupRequested(snapshot):
+                            await sessionRunner.shutdownBackendKeepingExternalTools()
+                            guard let setupHandler else {
+                                throw ZenCODECommandLineRunnerError.setupUnavailable
+                            }
+                            guard try await setupHandler() else {
+                                await sessionRunner.shutdown()
+                                return
+                            }
+                            await permissionAuthorizer.reloadPersistedPermissions()
+                            await sessionRunner.resetLocalExecAccessMode()
+                            resumeSnapshot = snapshot
+                            configuration = try AgentConfiguration(
+                                arguments: sanitizedArguments
+                            )
+                        }
+                    }
+                } catch {
+                    await sessionRunner.shutdown()
+                    throw error
+                }
             case .acp:
                 if !configuration.verboseLogging {
                     AgentOutput.silenceInheritedProcessError()
@@ -117,5 +163,16 @@ public enum ZenCODECommandLineRunner {
             || argument == "--max-tool-rounds"
             || argument == "--max-output-tokens"
             || argument == "--verbose"
+    }
+}
+
+private enum ZenCODECommandLineRunnerError: LocalizedError {
+    case setupUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .setupUnavailable:
+            return "Interactive setup is unavailable in this executable."
+        }
     }
 }

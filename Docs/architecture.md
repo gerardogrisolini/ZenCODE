@@ -11,8 +11,8 @@ The following surface is stable unless a separately announced compatibility
 migration says otherwise:
 
 - package identity `ZenCODE` and Swift tools version 6.3;
-- library products and imports `ZenCODECore`, `ZenCODESetup`, `FeatureKit`,
-  `ToolCore`, `FeatureMCPBridgeKit`, and `LocalToolsSupport`;
+- library products and imports `ZenCODECore`, `FeatureKit`, `ToolCore`,
+  `FeatureMCPBridgeKit`, and `LocalToolsSupport`;
 - executable `zen` and its ACP entry point;
 - optional feature IDs, executable product names, tool names, selection
   prefixes, source-relative paths,
@@ -172,8 +172,9 @@ generation transport.
 
 ## Target Layout
 
-The established public products remain stable while internal targets and source
-layout are made explicit.
+The root product surface is intentionally simplified: interactive setup now
+belongs to `ZenCODECore`, and the former `ZenCODESetup` product/target has been
+removed as an explicit migration.
 
 | Area | Intended responsibility and directory layout |
 | --- | --- |
@@ -187,19 +188,17 @@ layout are made explicit.
 | `Sources/LocalToolsSupport` | Reusable local file, search, text, and patch tooling. |
 | `Sources/ZenPackageMetadata` | Internal bundled-feature distribution metadata used for catalog parity; it is not a public product. |
 | `Sources/Features/<Feature>` | A self-contained optional SwiftPM package with its own `Package.swift`, `Sources/<product-name>/`, and package-local `Tests/`. It is outside the root graph; keep the entry point thin and place implementation in feature-owned support or library targets. The marker `// zencode:package-path` must immediately precede the root `.package(path: "../../..")` dependency so installation can rewrite only that path. |
-| `Sources/ZenCODECore/ZenCODE` | Runtime domains: `Agent`, `Remote`, `Tools`, `Features`, `Context`, `Memory`, `FileChanges`, `Runtime`, `Telegram`, and `Support`; `ZenCODETUI` and ACP remain source areas within this target. |
+| `Sources/ZenCODECore/ZenCODE` | Runtime domains: `Agent`, `Remote`, `Tools`, `Features`, `Context`, `Memory`, `FileChanges`, `Runtime`, `Setup`, `Telegram`, and `Support`; `ZenCODETUI` and ACP remain source areas within this target. |
+| `Sources/ZenCODECore/ZenCODE/Setup` | Interactive first-run and in-process configuration for providers, models, agents, feature packages, Telegram, voice, and response language. Setup remains invoked by the executable composition root even though its implementation and contracts belong to Core. |
 | `Sources/ZenCODECore/ZenCODE/Runtime/Sessions` | Neutral session state and persistence, including the authoritative task DAG, attempt fencing, execution scopes, atomic task-graph checkpoints, startup enumeration/recovery, and the session checkpoint tree (`SessionCheckpointTree`). Workflow-sourced graphs require sub-agent execution attempts, while coordinator tool grants remain independent of that lifecycle constraint. Startup recovery is graph-specific: the orchestrator restores the owning session, interrupts persisted active attempts, activates exactly the operator-selected graph, archives superseded active graphs, and persists `currentGraphID` before backend creation. A negative validation persists `failed`; `tasks.retry` returns the task to `pending`, and a new `agent.create(taskID:)` claims its fresh workflow attempt rather than messaging the completed agent. `AgentCoreSessionRunner` owns one orchestrator and injects it into every backend; direct task tools are stateless adapters and TUI/ACP code only projects or requests orchestrator-owned snapshot restoration. |
 | `Sources/ZenCODECore/ZenCODE/Telegram` | Telegram remote-control runtime: Bot API transport, long-polling, pairing, channel state, voice-attachment download, tool-call permission brokering, safe tool-call presentation, and the ordered per-turn progress reporter. It depends only on `Foundation`/`FoundationNetworking`, `ToolCore`, and neutral runtime contracts (`Agent` settings, `Agent` tool-authorization requests, `ToolCallPresentation`, voice input); it must not depend on terminal presentation types. `TerminalChat+Telegram.swift` under `ZenCODETUI` is the only adapter that binds this runtime to input, rendering, and prompt-queue surfaces. |
 | `Sources/ZenCODECore/ZenCODE/ACP` | ACP protocol adaptation only: JSON-RPC routing, parsing, lifecycle, and event encoding. |
 | `Sources/ZenCODECore/ZenCODETUI` | Terminal-only state, input, rendering, and presentation. `TerminalChatRenderCoordinator` is the sole owner of stateful chat writes and streaming formatter/cursor state; its stateless text normalization lives in `TerminalChatTextFormatting`, while `TerminalMarkdownStreamFormatter` owns incremental Markdown state and `TerminalWidth` centralizes cached terminal-width probes. `TerminalStatusBar` separately owns status and input-panel rendering state. Shared runtime types must not be introduced here. Telegram runtime lives under `ZenCODE/Telegram`; `TerminalChat+Telegram.swift` is only the adapter that binds that runtime to terminal input, rendering, and prompt-queue surfaces. |
-| `Sources/ZenCODESetup` | Interactive standalone-agent setup. |
-| `Sources/zen` | The executable composition root, command-line dispatch, setup, and optional-feature installer CLI. |
-| `Tests` | Root-package unit targets: `ToolCoreTests`, `FeatureKitTests`, `FeatureMCPBridgeKitTests`, `LocalToolsSupportTests`, `ZenCODECoreTests`, and `ZenCODESetupTests`. Feature packages, including XcodeTools, own and run their package-local tests separately. |
+| `Sources/zen` | The executable composition root, command-line dispatch, automatic first-run setup, `/setup` handler injection, and optional-feature installer CLI. Core reports a setup request with an in-memory conversational snapshot and `ZenCODECommandLineRunner` rebuilds `AgentConfiguration` plus the TUI while reusing the session runner; the composition root invokes `ZenCODESetupRunner`, so the task graph remains owned by the same orchestrator. |
+| `Tests` | Root-package unit targets: `ToolCoreTests`, `FeatureKitTests`, `FeatureMCPBridgeKitTests`, `LocalToolsSupportTests`, and `ZenCODECoreTests`. Setup suites live under `Tests/ZenCODECoreTests/Setup`. Feature packages, including XcodeTools, own and run their package-local tests separately. |
 
-The names of existing targets, products, executables, and feature roots are not
-renamed during the first reorganisation pass. A future target split is allowed
-only after the destination boundary has focused tests and a compatibility facade
-where external imports require one.
+The former public `ZenCODESetup` module is intentionally folded into
+`ZenCODECore`; repository consumers import `ZenCODECore` for setup APIs.
 
 ## Dependency Direction
 
@@ -212,9 +211,9 @@ ToolCore ──→ FeatureKit ──→ LocalToolsSupport
     └────────────────────→ FeatureMCPBridgeKit
 FeatureKit ──────────────→ FeatureMCPBridgeKit
 
-ZenPackageMetadata ─────→ ZenCODECore ──→ ZenCODESetup
+ZenPackageMetadata ─────→ ZenCODECore
 
-ZenCODECore / ZenCODESetup / ZenPackageMetadata ───────────────→ zen
+ZenCODECore / ZenPackageMetadata ───────────────────────────────→ zen
 
 ZenCODE root products ──→ Sources/Features/<Feature>/Package.swift
                               ├───────────────────────────────→ package-local implementation
@@ -227,8 +226,8 @@ package-local `browser-tools-feature` executable; the package-local
 `XcodeToolsFeature` implementation depends on the generic MCP support products
 and is composed only by its package-local `xcode-tools-feature` executable;
 `LocalToolsSupport` depends on `FeatureKit`; and `ZenCODECore` consumes all
-generic support targets plus `ZenPackageMetadata`. `ZenCODESetup` depends on
-`ZenCODECore`. `ZenCODETUI` and ACP may consume neutral runtime
+generic support targets plus `ZenPackageMetadata`, including the interactive
+setup implementation. `ZenCODETUI` and ACP may consume neutral runtime
 contracts, but Agent, Remote, and ACP code must not depend on terminal
 presentation types. Remote providers receive backend factories through runtime
 contracts rather than constructing Agent coordinators directly. `zen` is the
@@ -238,7 +237,9 @@ only composition root for backend selection.
 
 The remaining root library products and imports, `zen`, and generated
 Builder-feature wire and persistence contracts remain compatible. The former
-root `XcodeToolsFeature` product was intentionally removed: consumers must use
+`ZenCODESetup` product was intentionally folded into `ZenCODECore`; consumers
+that imported it must depend on and import `ZenCODECore` instead. The former
+root `XcodeToolsFeature` product was also intentionally removed: consumers must use
 the standalone optional package rather than importing its implementation.
 Optional feature executables
 are no longer installed beside the `zen` binary or built by the root package.

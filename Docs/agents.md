@@ -142,9 +142,9 @@ See the [zen.md](zen.md#task-orchestration) task orchestration section.
 
 ## Configuring Profiles
 
-```bash
-zen --setup            # create or edit profiles interactively
-/agents                # select a profile in the TUI
+```text
+/setup                # create or edit profiles interactively
+/agents               # select a profile in the TUI
 /models                # choose any configured model for the current session
 /bindings              # inspect model bindings for every configured profile
 /tools                 # expose or hide tool groups per session

@@ -52,6 +52,7 @@ public final class TerminalChat {
     public let configuration: AgentConfiguration
     public let stdinIsTerminal: Bool
     public let sessionRunner: AgentCoreSessionRunner
+    let runtimeSetupResumeSnapshot: TerminalChatResumeSnapshot?
     public let reader = StdioLineReader()
     public let interactiveReader = TerminalInteractiveLineReader()
     public let permissionAuthorizer: LocalExecPermissionAuthorizer
@@ -124,16 +125,20 @@ public final class TerminalChat {
     public let voiceRecordingService = TerminalVoiceRecordingService()
     public var activeVoiceRecordingSession: TerminalVoiceRecordingSession?
     var optionalCommandAvailability = TerminalOptionalCommandAvailability.load()
+    var requestedRuntimeSetup = false
 
     public let statusBar: TerminalStatusBar
 
     public init(
         configuration: AgentConfiguration,
         stdinIsTerminal: Bool,
-        sessionRunner: AgentCoreSessionRunner? = nil
+        sessionRunner: AgentCoreSessionRunner? = nil,
+        permissionAuthorizer: LocalExecPermissionAuthorizer? = nil,
+        runtimeSetupResumeSnapshot: TerminalChatResumeSnapshot? = nil
     ) {
         self.configuration = configuration
         self.stdinIsTerminal = stdinIsTerminal
+        self.runtimeSetupResumeSnapshot = runtimeSetupResumeSnapshot
         self.renderCoordinator = TerminalChatRenderCoordinator(
             stdinIsTerminal: stdinIsTerminal
         )
@@ -141,7 +146,7 @@ public final class TerminalChat {
             isEnabled: stdinIsTerminal
                 && Self.supportsInteractiveStatusBar()
         )
-        let permissionAuthorizer = LocalExecPermissionAuthorizer()
+        let permissionAuthorizer = permissionAuthorizer ?? LocalExecPermissionAuthorizer()
         self.permissionAuthorizer = permissionAuthorizer
         self.sessionRunner = sessionRunner ?? AgentCoreSessionRunner(
             defaultToolAuthorizationHandler: { request in
@@ -264,7 +269,7 @@ public final class TerminalChat {
         }
     }
 
-    public func run() async throws {
+    public func run() async throws -> TerminalChatRunOutcome {
         let sleepAssertion = ZenSleepAssertion(
             reason: "ZenCODE terminal session active"
         )
@@ -282,12 +287,15 @@ public final class TerminalChat {
             initialInputLine = line
         }
 
+        applyRuntimeSetupResumeSnapshotIfNeeded()
         await applyInitialAgentSelectionIfNeeded()
         try await handleMissingInitialModelSelectionIfNeeded()
         try applyInitialSkillSelectionIfNeeded()
         await ensureWorkspaceAccessIfNeeded()
 
-        let resumedTaskGraph = await applyResumableTaskGraphSessionIfNeeded()
+        let resumedTaskGraph = runtimeSetupResumeSnapshot == nil
+            ? await applyResumableTaskGraphSessionIfNeeded()
+            : nil
 
         try await createCurrentSession()
         await refreshInitialStatusBarContextWindow()
@@ -300,6 +308,10 @@ public final class TerminalChat {
         if let resumedTaskGraph {
             await writeResumedTaskGraphNotice(resumedTaskGraph)
         }
+        if let runtimeSetupResumeSnapshot {
+            await renderSavedSessionHistory(runtimeSetupResumeSnapshot.transcriptHistory)
+            await writeSystemMessage("Session restored after setup.\n")
+        }
 
         let statusBarStarted = await statusBar.start()
         await refreshStatusBarGitStatusSummary()
@@ -310,12 +322,19 @@ public final class TerminalChat {
                 try await runBlockingInputLoop(initialInputLine: initialInputLine)
             }
 
+            let outcome: TerminalChatRunOutcome
+            if requestedRuntimeSetup {
+                outcome = .setupRequested(await makeRuntimeSetupResumeSnapshot())
+            } else {
+                outcome = .exited
+            }
             await sessionRunner.closeSession(id: sessionID)
+            await stopTerminalServices()
+            return outcome
         } catch {
             await stopTerminalServices()
             throw error
         }
-        await stopTerminalServices()
     }
 
     private func stopTerminalServices() async {

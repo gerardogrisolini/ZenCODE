@@ -5,7 +5,7 @@ set -euo pipefail
 # ZenCODE Linux installer
 #
 # Builds ZenCODE and installs its binary. Optional Swift features are not
-# installed here: select them later from 'zen --setup', which builds them from
+# installed here: select them later from '/setup' in zen, which builds them from
 # source on demand. Intended for native Linux and for Windows via WSL (Ubuntu).
 # When launched outside a repository checkout, for example with curl | bash, the
 # installer keeps a source copy for those later feature builds before removing
@@ -47,7 +47,7 @@ usage() {
 ZenCODE Linux installer
 
 Builds ZenCODE and installs its binary. Optional Swift features are not
-installed here: select them later from 'zen --setup', which builds them from
+installed here: select them later from '/setup' in zen, which builds them from
 source on demand. Intended for native Linux and for Windows via WSL (Ubuntu).
 When launched outside a repository checkout, for example with curl | bash, the
 installer keeps a source copy for those later feature builds before removing its
@@ -456,5 +456,6 @@ echo "  source     → ${SOURCE_CHECKOUT_DIR}"
 echo ""
 echo "Make sure ${INSTALL_DIR} is in your PATH."
 echo ""
-echo "Configure a remote provider with: zen --setup"
-echo "Optional Swift features are installed from the Features step of that setup."
+echo "Run zen to get started; setup opens automatically when required."
+echo "Use /setup later to reconfigure ZenCODE without leaving the TUI."
+echo "Optional Swift features are installed from the Features step of /setup."

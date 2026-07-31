@@ -231,7 +231,7 @@ public enum ZenDoctor {
                     : "Not created yet at \(supportDirectory.path).",
                 remedy: supportExists
                     ? nil
-                    : "Run zen --setup to create ~/.zencode and its base files."
+                    : "Run zen; setup opens automatically and creates ~/.zencode and its base files."
             )
         )
 
@@ -308,7 +308,7 @@ public enum ZenDoctor {
                     title: "Models",
                     status: .warning,
                     detail: "No readable settings.json, so no models are configured.",
-                    remedy: "Run zen --setup to configure at least one model."
+                    remedy: "Run zen; setup opens automatically so you can configure at least one model."
                 )
             )
         }
@@ -324,7 +324,7 @@ public enum ZenDoctor {
                         ? "No agent profiles are configured."
                         : "\(agents.count) agent profile(s): \(agents.map(\.displayName).joined(separator: ", ")).",
                     remedy: agents.isEmpty
-                        ? "Run zen --setup to create the default agent profiles."
+                        ? "Run zen; setup opens automatically and creates the default agent profiles."
                         : nil
                 )
             )
@@ -358,7 +358,7 @@ public enum ZenDoctor {
                 title: "Setup",
                 status: .warning,
                 detail: "Missing agents.json at \(agentsURL.path).",
-                remedy: "Run zen --setup to create the missing configuration."
+                remedy: "Run zen; setup opens automatically to create the missing configuration."
             )
         case .invalid:
             return ZenDoctorCheck(
@@ -366,7 +366,7 @@ public enum ZenDoctor {
                 title: "Setup",
                 status: .failure,
                 detail: "agents.json at \(agentsURL.path) could not be read.",
-                remedy: "Repair or recreate the file, or run zen --setup to regenerate defaults."
+                remedy: "Repair or recreate the file, then run zen; setup opens automatically when configuration is invalid."
             )
         case .value:
             break
@@ -379,7 +379,7 @@ public enum ZenDoctor {
                 title: "Setup",
                 status: .warning,
                 detail: "Missing settings.json at \(settingsURL.path).",
-                remedy: "Run zen --setup to create the missing configuration."
+                remedy: "Run zen; setup opens automatically to create the missing configuration."
             )
         case .invalid:
             return ZenDoctorCheck(
@@ -387,7 +387,7 @@ public enum ZenDoctor {
                 title: "Setup",
                 status: .failure,
                 detail: "settings.json at \(settingsURL.path) could not be read.",
-                remedy: "Repair or recreate the file, or run zen --setup to regenerate defaults."
+                remedy: "Repair or recreate the file, then run zen; setup opens automatically when configuration is invalid."
             )
         case .value:
             return ZenDoctorCheck(
@@ -415,7 +415,7 @@ public enum ZenDoctor {
                 title: "Models",
                 status: .warning,
                 detail: "No models are configured.",
-                remedy: "Run zen --setup to configure at least one model."
+                remedy: "Run zen; setup opens automatically so you can configure at least one model."
             )
         }
 
@@ -426,7 +426,7 @@ public enum ZenDoctor {
                 title: "Models",
                 status: .warning,
                 detail: "\(count) model(s) configured; \(remoteWithoutKey.count) remote model(s) have no stored API key: \(names).",
-                remedy: "Provide an API key via zen --setup, or set ZENCODE_AGENT_BEARER_TOKEN for the run."
+                remedy: "Set ZENCODE_AGENT_BEARER_TOKEN for the next run, then use /setup to save the API key."
             )
         }
 
@@ -447,7 +447,7 @@ public enum ZenDoctor {
                 detail: "No model is selected.",
                 remedy: manifest.models.isEmpty
                     ? nil
-                    : "Select a default model with zen --setup, or pass --model for a run."
+                    : "Select a default model with the /setup command in zen, or pass --model for a run."
             )
         }
         let known = manifest.models.contains { $0.matches(selected) }
@@ -460,7 +460,7 @@ public enum ZenDoctor {
                 : "Selected model \(selected) is not among configured models.",
             remedy: known
                 ? nil
-                : "Reselect a configured model with zen --setup."
+                : "Reselect a configured model with the /setup command in zen."
         )
     }
 

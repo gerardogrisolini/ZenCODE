@@ -5,7 +5,6 @@
 
 import Foundation
 import ToolCore
-import ZenCODECore
 
 extension ZenCODEAgentProfileSetupRunner {
     static func promptToolSelection(

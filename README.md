@@ -26,7 +26,7 @@ See [Why ZenCODE](Docs/why-zen.md) for the full rationale.
 
 ## Providers
 
-ZenCODE supports several ways to run the model, all selected through `zen --setup`:
+ZenCODE supports several ways to run the model, all selected during automatic first-run setup or later with `/setup`:
 
 - **Cloud API providers** — bring an API key for any OpenAI-compatible endpoint, including OpenRouter, local servers, and any `/v1`-compatible provider.
 - **ChatGPT Subscription** — sign in with your existing ChatGPT subscription through the browser. No API key required.
@@ -74,10 +74,12 @@ curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scri
   | bash
 ```
 
-Drive the agent through configured remote providers (`zen --setup`). The
-standalone agent, TUI, and ACP bridge work normally. Optional Swift feature
-packages are selected from the Features step of `zen --setup`, or installed
-later with `zen --install-features`; they are compiled on demand under
+Drive the agent through configured remote providers. Running `zen` opens setup
+automatically when configuration is missing or invalid; use `/setup` later to
+reconfigure it without leaving the TUI. The standalone agent, TUI, and ACP bridge
+work normally. Optional Swift feature packages are selected from the Features
+step of `/setup`, or installed later with `zen --install-features`; they are
+compiled on demand under
 `~/.zencode/features/<id>/`, not distributed as executables next to `zen`.
 
 Windows is supported through WSL. Install Ubuntu first, then run the Linux
@@ -91,19 +93,22 @@ The installer reuses a Swift toolchain already available on `PATH`. If Swift is
 missing, it automatically installs the latest stable toolchain with Swiftly,
 following the [official Linux installation instructions](https://www.swift.org/install/linux/).
 
-`zen --setup` supports both subscription logins on Linux: ChatGPT uses the
+`/setup` supports both subscription logins on Linux: ChatGPT uses the
 device-code page and Claude asks for the authorization code shown by its hosted
 OAuth flow. ChatGPT generation remains WebSocket-based and, together with
 HTTP/SSE generation, uses the shared cross-platform SwiftNIO transport.
 
 ## Quick Start
 
-Choose how ZenCODE runs — a cloud API provider, or a ChatGPT or Claude subscription — during setup, then start the agent:
+Choose how ZenCODE runs — a cloud API provider, or a ChatGPT or Claude
+subscription — in the setup that opens automatically on first launch:
 
 ```bash
-zen --setup
 zen
 ```
+
+Use `/setup` from the TUI whenever you want to reconfigure it without closing
+the app.
 
 ## Build From Source
 
@@ -120,6 +125,7 @@ swift build -c release --product zen
 
 ```text
 /help        Show available commands
+/setup       Reconfigure ZenCODE, then restore the current session
 /models      Select a model for the current session
 /agents      Select an agent profile
 /bindings    Show agent model bindings (see Docs/bindings.md)
@@ -151,8 +157,7 @@ complete command reference.
 - `Sources/FeatureMCPBridgeKit`: generic MCP feature integration, transports, and injectable local-transport policies.
 - `Sources/LocalToolsSupport`: reusable local file, search, text, and patch tooling.
 - `Sources/ZenPackageMetadata`: internal bundled-feature distribution metadata and catalog parity support.
-- `Sources/ZenCODECore`: reusable agent runtime, TUI, tools, skills, ACP, config, memory, sessions, and feature management.
-- `Sources/ZenCODESetup`: interactive setup for standalone `zen`.
+- `Sources/ZenCODECore`: reusable agent runtime, interactive setup, TUI, tools, skills, ACP, config, memory, sessions, and feature management.
 - `Sources/zen`: the `zen` composition root and command-line dispatch.
 - `Sources/Features`: self-contained optional SwiftPM feature packages. They own their implementations and package-local tests, are excluded from the root graph, and are installed on demand into `~/.zencode/features/<id>/` as local Builder-compatible features. The macOS-only Xcode integration lives entirely in `Sources/Features/XcodeTools`.
 - `Tests`: SwiftPM test targets.
@@ -166,7 +171,6 @@ swift build -c release --product zen
 
 zen --help
 zen --doctor
-zen --setup
 zen --cwd /path/to/project
 zen --acp --cwd /path/to/project
 ```

@@ -16,10 +16,6 @@ let products: [Product] = [
         targets: ["ZenCODECore"]
     ),
     .library(
-        name: "ZenCODESetup",
-        targets: ["ZenCODESetup"]
-    ),
-    .library(
         name: "FeatureKit",
         targets: ["FeatureKit"]
     ),
@@ -43,7 +39,6 @@ let products: [Product] = [
 
 let zenCODEDependencies: [Target.Dependency] = [
     "ZenCODECore",
-    "ZenCODESetup",
     "ZenPackageMetadata"
 ]
 
@@ -105,13 +100,6 @@ let targets: [Target] = [
         dependencies: ["FeatureKit", "ToolCore"],
         swiftSettings: memberImportVisibilitySettings
     ),
-    .target(
-        name: "ZenCODESetup",
-        dependencies: ["ZenCODECore"],
-        swiftSettings: memberImportVisibilitySettings + [
-            .define("SWIFTPM_NON_SANDBOX_TUI")
-        ]
-    ),
     .executableTarget(
         name: "zen",
         dependencies: zenCODEDependencies,
@@ -132,14 +120,6 @@ let targets: [Target] = [
             .product(name: "NIOHTTP1", package: "swift-nio"),
             .product(name: "NIOPosix", package: "swift-nio"),
             .product(name: "NIOWebSocket", package: "swift-nio")
-        ],
-        swiftSettings: memberImportVisibilitySettings
-    ),
-    .testTarget(
-        name: "ZenCODESetupTests",
-        dependencies: [
-            "ZenCODECore",
-            "ZenCODESetup"
         ],
         swiftSettings: memberImportVisibilitySettings
     ),

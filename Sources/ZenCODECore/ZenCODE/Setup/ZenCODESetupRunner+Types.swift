@@ -7,7 +7,6 @@
 
 import Foundation
 import ToolCore
-import ZenCODECore
 
 struct SetupSectionOption {
     let section: SetupSection

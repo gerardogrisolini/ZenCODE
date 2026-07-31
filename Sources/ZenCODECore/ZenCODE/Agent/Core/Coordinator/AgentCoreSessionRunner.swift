@@ -80,6 +80,10 @@ public actor AgentCoreSessionRunner {
         return localExecAccessModeState
     }
 
+    func resetLocalExecAccessMode() {
+        localExecAccessModeState = .standard
+    }
+
     public func createSession(
         configuration: AgentCoreSessionConfiguration
     ) async throws {

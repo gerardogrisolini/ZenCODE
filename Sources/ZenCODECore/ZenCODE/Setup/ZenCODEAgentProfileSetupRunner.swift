@@ -7,7 +7,6 @@
 
 import Foundation
 import ToolCore
-import ZenCODECore
 
 public enum ZenCODEAgentProfileSetupRunner {
     struct AgentSetupModelSelection {

@@ -120,7 +120,7 @@ public enum TerminalTelegramControlError: LocalizedError, Sendable, Equatable {
     public var errorDescription: String? {
         switch self {
         case .missingConfiguration:
-            return "Telegram is not configured. Run zen --setup and enable Telegram remote control."
+            return "Telegram is not configured. Run the /setup command in zen and enable Telegram remote control."
         case .invalidToken:
             return "Telegram bot token is invalid."
         case .emptyMessage:

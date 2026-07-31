@@ -12,7 +12,7 @@ delegation lifecycle are in [agents.md](agents.md).
 
 | Concept | What it is | Where it is defined |
 | --- | --- | --- |
-| **Agent profile** | *Who* does the work: role, instructions, tools, skills | `~/.zencode/agents.json`, edited in `zen --setup` |
+| **Agent profile** | *Who* does the work: role, instructions, tools, skills | `~/.zencode/agents.json`, edited in `/setup` |
 | **Model binding** | *With which model*, at *which capability* and *thinking* level | Per profile, inside the same profile record |
 | **Workflow task** | *What* has to be done, with a complexity of 1–10 | Session task graph, created by `/plan`, `/workflow`, or `tasks.create` |
 
@@ -151,8 +151,8 @@ stay with the coordinator itself, unlike `/plan` and `/review`.
 
 ## Configuring Bindings
 
-```bash
-zen --setup     # add, edit, or remove bindings per profile
+```text
+/setup         # add, edit, or remove bindings per profile
 ```
 
 Setup asks for, per binding:

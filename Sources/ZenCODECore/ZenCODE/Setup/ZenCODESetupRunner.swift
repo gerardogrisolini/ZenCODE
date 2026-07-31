@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import ZenCODECore
 
 public enum ZenCODESetupRunner {
     public static func run() async throws -> SetupOutcome {
@@ -142,7 +141,7 @@ public enum ZenCODESetupRunner {
             """
 
             Quick setup configures a remote provider and its default model.
-            Advanced options like Telegram\(voiceHint) can be enabled later from zen --setup.
+            Advanced options like Telegram\(voiceHint) can be enabled later with /setup.
 
             """
         )

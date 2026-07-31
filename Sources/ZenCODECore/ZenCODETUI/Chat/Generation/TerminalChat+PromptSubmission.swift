@@ -78,6 +78,15 @@ extension TerminalChat {
         case "/help":
             await writeSystemMessage(renderHelpTextForCurrentAgent())
             return .continueChat
+        case "/setup":
+            guard stdinIsTerminal else {
+                await writeFailureMessage("ZenCODE: /setup requires an interactive terminal.\n")
+                return .continueChat
+            }
+            return .requestSetup
+        case let command where command.hasPrefix("/setup "):
+            await writeFailureMessage("ZenCODE: /setup does not accept arguments.\n")
+            return .continueChat
         case "/models":
             do {
                 try await selectModelInteractively()

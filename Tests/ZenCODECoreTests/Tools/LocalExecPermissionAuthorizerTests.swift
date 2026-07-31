@@ -421,6 +421,26 @@ struct LocalExecPermissionAuthorizerTests {
     }
 
     @Test
+    func setupReloadDropsSessionAuthorizationCache() async {
+        let authorizer = LocalExecPermissionAuthorizer()
+        let recorder = FakeConsentReader(answers: ["a", "c"])
+        await authorizer.setConsentReader({ prompt in await recorder.next(prompt: prompt) })
+        let request = Self.destructiveConsentRequest(
+            toolCallID: "setup-reset",
+            command: "delete setup-reset"
+        )
+
+        #expect(await authorizer.authorize(request))
+        #expect(await authorizer.isAlreadyAuthorized(request))
+
+        await authorizer.reloadPersistedPermissions()
+
+        #expect(!(await authorizer.isAlreadyAuthorized(request)))
+        #expect(!(await authorizer.authorize(request)))
+        #expect(await recorder.recordedPrompts().count == 2)
+    }
+
+    @Test
     func presentDialogReturnsNilOnImmediateEOF() async {
         let authorizer = LocalExecPermissionAuthorizer()
         let recorder = FakeConsentReader(answers: [nil])

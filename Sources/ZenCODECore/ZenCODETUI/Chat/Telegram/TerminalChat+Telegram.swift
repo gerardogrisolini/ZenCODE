@@ -86,7 +86,7 @@ extension TerminalChat {
 
         guard telegramLinkedChatID != nil else {
             await sendTelegramSystemMessage(
-                "Telegram is not paired. Run zen --setup to pair this bot.",
+                "Telegram is not paired. Run the /setup command in zen to pair this bot.",
                 to: message.chatID
             )
             return
@@ -138,7 +138,7 @@ extension TerminalChat {
     ) async {
         guard isVoiceConfigured() else {
             await sendTelegramSystemMessage(
-                "Voice input is not configured. Run zen --setup and enable voice input.",
+                "Voice input is not configured. Run the /setup command in zen and enable voice input.",
                 to: chatID
             )
             return
@@ -215,7 +215,7 @@ extension TerminalChat {
         }
         guard let settings = AgentSettingsManifestStore.load()?.telegram,
               let linkedChatID = settings.linkedChatID else {
-            await writeFailureMessage("ZenCODE: Telegram is not paired. Run zen --setup.\n")
+            await writeFailureMessage("ZenCODE: Telegram is not paired. Run the /setup command in zen.\n")
             return
         }
 

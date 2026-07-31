@@ -208,6 +208,11 @@ extension TerminalChat {
             help: "/help shows this command list."
         ),
         TerminalChatCommandDescriptor(
+            command: "/setup",
+            summary: "configure ZenCODE",
+            help: "/setup saves the current session, opens setup, then restores the session with the new configuration."
+        ),
+        TerminalChatCommandDescriptor(
             command: "/models",
             summary: "switch model",
             help: "/models shows configured models and lets you switch the current session model."
