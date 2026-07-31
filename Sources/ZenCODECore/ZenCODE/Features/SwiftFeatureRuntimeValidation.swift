@@ -124,24 +124,155 @@ extension SwiftFeatureRuntime {
         ".DS_Store"
     ]
 
-    static func swiftExecutableURL(fileManager: FileManager) -> URL {
-        let environment = ProcessInfo.processInfo.environment
-        var candidates = [
-            environment["SWIFT_EXECUTABLE"],
+    static func swiftExecutableURL(
+        fileManager: FileManager,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        standardCandidatePaths: [String]? = nil
+    ) throws -> URL {
+        var candidates: [String] = []
+        if let explicitPath = environment["SWIFT_EXECUTABLE"]?.nilIfBlank {
+            if explicitPath.contains("/") {
+                candidates.append(expandedPath(explicitPath, environment: environment))
+            } else {
+                appendExecutablePaths(
+                    named: explicitPath,
+                    searchPath: environment["PATH"],
+                    environment: environment,
+                    to: &candidates
+                )
+            }
+        }
+
+        if let swiftlyBinDirectory = environment["SWIFTLY_BIN_DIR"]?.nilIfBlank {
+            candidates.append(
+                executablePath(
+                    named: "swift",
+                    directoryPath: swiftlyBinDirectory,
+                    environment: environment
+                )
+            )
+        }
+        appendExecutablePaths(
+            named: "swift",
+            searchPath: environment["PATH"],
+            environment: environment,
+            to: &candidates
+        )
+
+        if let swiftlyHomeDirectory = environment["SWIFTLY_HOME_DIR"]?.nilIfBlank {
+            candidates.append(
+                executablePath(
+                    named: "swift",
+                    directoryPath: "\(swiftlyHomeDirectory)/bin",
+                    environment: environment
+                )
+            )
+        }
+        if let xdgDataHome = environment["XDG_DATA_HOME"]?.nilIfBlank {
+            candidates.append(
+                executablePath(
+                    named: "swift",
+                    directoryPath: "\(xdgDataHome)/swiftly/bin",
+                    environment: environment
+                )
+            )
+        }
+        if let homeDirectory = environment["HOME"]?.nilIfBlank {
+            candidates.append(
+                executablePath(
+                    named: "swift",
+                    directoryPath: "\(homeDirectory)/.local/share/swiftly/bin",
+                    environment: environment
+                )
+            )
+        }
+
+        candidates.append(contentsOf: standardCandidatePaths ?? standardSwiftExecutablePaths)
+        var checkedPaths: [String] = []
+        var seenPaths = Set<String>()
+        for candidate in candidates {
+            let candidateURL = URL(
+                fileURLWithPath: expandedPath(candidate, environment: environment)
+            ).standardizedFileURL
+            guard seenPaths.insert(candidateURL.path).inserted else {
+                continue
+            }
+            checkedPaths.append(candidateURL.path)
+            if fileManager.isExecutableFile(atPath: candidateURL.path) {
+                return candidateURL
+            }
+        }
+
+        throw DirectToolError.processFailed(
+            "Swift executable not found. Checked: \(checkedPaths.joined(separator: ", ")). "
+                + "Ensure 'swift --version' works in the environment that launches ZenCODE, "
+                + "source the Swiftly env.sh file, or set SWIFT_EXECUTABLE to the Swift binary."
+        )
+    }
+
+    private static func appendExecutablePaths(
+        named executableName: String,
+        searchPath: String?,
+        environment: [String: String],
+        to candidates: inout [String]
+    ) {
+        for directoryPath in searchPath?.split(separator: ":").map(String.init) ?? [] {
+            let trimmedPath = directoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedPath.isEmpty else {
+                continue
+            }
+            candidates.append(
+                executablePath(
+                    named: executableName,
+                    directoryPath: trimmedPath,
+                    environment: environment
+                )
+            )
+        }
+    }
+
+    private static func executablePath(
+        named executableName: String,
+        directoryPath: String,
+        environment: [String: String]
+    ) -> String {
+        URL(
+            fileURLWithPath: expandedPath(directoryPath, environment: environment),
+            isDirectory: true
+        )
+        .appendingPathComponent(executableName)
+        .path
+    }
+
+    private static func expandedPath(
+        _ path: String,
+        environment: [String: String]
+    ) -> String {
+        guard let homeDirectory = environment["HOME"]?.nilIfBlank else {
+            return path
+        }
+        if path == "~" {
+            return homeDirectory
+        }
+        if path.hasPrefix("~/") {
+            return homeDirectory + path.dropFirst()
+        }
+        return path
+    }
+
+    private static var standardSwiftExecutablePaths: [String] {
+        var paths = [
             "/usr/bin/swift",
-            "/Library/Developer/CommandLineTools/usr/bin/swift",
-            "/usr/local/bin/swift"
-        ].compactMap { $0?.nilIfBlank }
+            "/usr/local/bin/swift",
+            "/usr/local/swift/usr/bin/swift",
+            "/opt/swift/usr/bin/swift"
+        ]
         #if os(macOS)
-        candidates.insert(
-            "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift",
-            at: min(3, candidates.count)
+        paths.append("/Library/Developer/CommandLineTools/usr/bin/swift")
+        paths.append(
+            "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
         )
         #endif
-
-        for candidate in candidates where fileManager.isExecutableFile(atPath: candidate) {
-            return URL(fileURLWithPath: candidate)
-        }
-        return URL(fileURLWithPath: "/usr/bin/swift")
+        return paths
     }
 }

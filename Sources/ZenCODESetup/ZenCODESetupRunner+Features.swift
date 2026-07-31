@@ -198,8 +198,9 @@ extension ZenCODESetupRunner {
                     ? "The build or enable step did not complete."
                     : report.errors.joined(separator: " ")
                 AgentOutput.standardError.writeString(
-                    "Could not \(verb) optional feature \(id): \(details) " +
-                    "Retry from a ZenCODE checkout or pass --zen-package-path to zen --install-features.\n"
+                    "Could not \(verb) optional feature \(id): \(details) "
+                        + "Resolve the reported issue, then retry with "
+                        + "zen --install-features \(id).\n"
                 )
                 // A failed materialization still replaced the package contents,
                 // so report it as a change rather than claiming nothing moved.
@@ -213,8 +214,9 @@ extension ZenCODESetupRunner {
             return true
         } catch {
             AgentOutput.standardError.writeString(
-                "Could not \(verb) optional feature \(id): \(error.localizedDescription) " +
-                "Retry from a ZenCODE checkout or pass --zen-package-path to zen --install-features.\n"
+                "Could not \(verb) optional feature \(id): \(error.localizedDescription) "
+                    + "Resolve the reported issue, then retry with "
+                    + "zen --install-features \(id).\n"
             )
             return false
         }

@@ -275,13 +275,35 @@ extension SwiftFeatureRuntime {
             product
         ] + build.arguments
         let timeout = TimeInterval(arguments.int("timeoutSeconds", "timeout") ?? 300)
-        let result = try await AsyncProcessRunner.run(
-            executableURL: Self.swiftExecutableURL(fileManager: fileManager),
-            arguments: commandArguments,
-            workingDirectory: packageDirectoryURL,
-            environment: DeveloperToolEnvironment.processEnvironment(),
-            timeout: timeout
+        let baseEnvironment = ProcessInfo.processInfo.environment
+        let swiftExecutableURL = try Self.swiftExecutableURL(
+            fileManager: fileManager,
+            environment: baseEnvironment
         )
+        var processEnvironment = DeveloperToolEnvironment.processEnvironment(base: baseEnvironment)
+        let swiftBinPath = swiftExecutableURL.deletingLastPathComponent().path
+        let processSearchPaths = processEnvironment["PATH"]?
+            .split(separator: ":")
+            .map(String.init) ?? []
+        if !processSearchPaths.contains(swiftBinPath) {
+            processEnvironment["PATH"] = ([swiftBinPath] + processSearchPaths)
+                .joined(separator: ":")
+        }
+        let result: AsyncProcessResult
+        do {
+            result = try await AsyncProcessRunner.run(
+                executableURL: swiftExecutableURL,
+                arguments: commandArguments,
+                workingDirectory: packageDirectoryURL,
+                environment: processEnvironment,
+                timeout: timeout
+            )
+        } catch {
+            throw DirectToolError.processFailed(
+                "Could not launch Swift at \(swiftExecutableURL.path) to build feature "
+                    + "'\(record.id)' in \(packageDirectoryURL.path): \(error.localizedDescription)"
+            )
+        }
         let executableAvailable = fileManager.isExecutableFile(
             atPath: record.executableURL.path
         )

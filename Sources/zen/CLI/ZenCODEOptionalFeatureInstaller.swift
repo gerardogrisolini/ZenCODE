@@ -131,8 +131,8 @@ enum ZenCODEOptionalFeatureInstaller {
                 didFail = true
                 writeError("  ✗ Could not install \(title): \(error.localizedDescription)\n")
                 writeError(
-                    "    Verify the feature id and source checkout, then retry: zen --install-features \(id)" +
-                    sourcePathHint(request.zenPackagePath) + "\n"
+                    "    Resolve the reported issue, then retry: zen --install-features \(id)" +
+                        sourcePathHint(request.zenPackagePath) + "\n"
                 )
             }
         }
