@@ -302,6 +302,74 @@ struct SwiftFeatureOptionalInstallationTests {
     }
 
     @Test
+    func optionalFeatureReinstallReplacesAnExistingPackage() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("optional-reinstall-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        let featureRootURL = rootURL.appendingPathComponent("features", isDirectory: true)
+        let checkoutURL = rootURL.appendingPathComponent("checkout", isDirectory: true)
+        try Self.writeZenPackageRoot(at: checkoutURL)
+
+        let runtime = SwiftFeatureRuntime(featureSearchRoots: [featureRootURL])
+        let definition = try #require(SwiftFeatureRuntime.bundledFeatureDefinition(id: "git-tools"))
+        let sourceURL = try #require(definition.sourceRelativePath)
+            .split(separator: "/")
+            .reduce(checkoutURL) { partialURL, component in
+                partialURL.appendingPathComponent(String(component), isDirectory: true)
+            }
+        try Self.writeFeaturePackage(at: sourceURL, productName: definition.executableName)
+
+        let firstReport = try await runtime.installOptionalFeature(
+            id: definition.id,
+            zenPackageRootURL: checkoutURL,
+            build: false,
+            enable: false
+        )
+        #expect(firstReport.ok)
+        #expect(firstReport.copied)
+
+        let installedDirectoryURL = featureRootURL
+            .appendingPathComponent(definition.id, isDirectory: true)
+        let obsoleteURL = installedDirectoryURL.appendingPathComponent("obsolete.txt")
+        try "old package only\n".write(to: obsoleteURL, atomically: true, encoding: .utf8)
+
+        let sourceMainURL = sourceURL
+            .appendingPathComponent("Sources", isDirectory: true)
+            .appendingPathComponent(definition.executableName, isDirectory: true)
+            .appendingPathComponent("main.swift")
+        try "print(\"updated version\")\n".write(
+            to: sourceMainURL,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let secondReport = try await runtime.installOptionalFeature(
+            id: definition.id,
+            zenPackageRootURL: checkoutURL,
+            build: false,
+            enable: false
+        )
+        #expect(secondReport.ok)
+        #expect(secondReport.copied)
+        #expect(
+            try String(
+                contentsOf: installedDirectoryURL
+                    .appendingPathComponent("Sources", isDirectory: true)
+                    .appendingPathComponent(definition.executableName, isDirectory: true)
+                    .appendingPathComponent("main.swift"),
+                encoding: .utf8
+            ) == "print(\"updated version\")\n"
+        )
+        #expect(!FileManager.default.fileExists(atPath: obsoleteURL.path))
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: featureRootURL.path)
+                .allSatisfy { !$0.hasPrefix(".zencode-feature-") }
+        )
+    }
+
+    @Test
     func optionalFeatureCannotBeEnabledWhenBuildIsSkipped() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("optional-build-enable-\(UUID().uuidString)", isDirectory: true)

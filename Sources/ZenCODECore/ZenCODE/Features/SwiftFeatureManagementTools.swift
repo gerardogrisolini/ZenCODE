@@ -323,9 +323,9 @@ extension SwiftFeatureRuntime {
         }
 
         // Render the scaffold outside the live destination. Once every file is
-        // present, `installFeatureDirectory` swaps the complete sibling staging
-        // directory atomically, so an overwrite can never expose a half-written
-        // Package.swift/source/manifest set.
+        // present, `installFeatureDirectory` publishes the complete sibling
+        // staging directory with rollback, so an overwrite can never expose a
+        // half-written Package.swift/source/manifest set.
         let stagingDirectoryURL = directoryURL.deletingLastPathComponent()
             .appendingPathComponent(".zencode-feature-scaffold-\(UUID().uuidString)", isDirectory: true)
         defer { try? fileManager.removeItem(at: stagingDirectoryURL) }

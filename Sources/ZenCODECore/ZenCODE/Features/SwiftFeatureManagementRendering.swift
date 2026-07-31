@@ -149,11 +149,11 @@ extension SwiftFeatureRuntime {
         throw DirectToolError.missingArgument("path")
     }
 
-    /// Copies a feature package into `destinationDirectoryURL` atomically.
+    /// Copies a feature package into `destinationDirectoryURL` transactionally.
     ///
-    /// `prepare` runs on the fully copied staging directory before it is swapped
-    /// in, so generated files (rewritten `Package.swift`, `feature.json`) become
-    /// visible together with the sources instead of appearing afterwards.
+    /// `prepare` runs on the fully copied staging directory before it is
+    /// published, so generated files (rewritten `Package.swift`, `feature.json`)
+    /// become visible together with the sources instead of appearing afterwards.
     func installFeatureDirectory(
         sourceDirectoryURL: URL,
         destinationDirectoryURL: URL,
@@ -198,17 +198,72 @@ extension SwiftFeatureRuntime {
             to: stagingURL
         )
         try prepare?(stagingURL)
-        if fileManager.fileExists(atPath: destinationURL.path) {
-            _ = try fileManager.replaceItemAt(
-                destinationURL,
-                withItemAt: stagingURL,
-                backupItemName: nil,
-                options: []
-            )
-        } else {
-            try fileManager.moveItem(at: stagingURL, to: destinationURL)
-        }
+        try replaceFeatureDirectory(
+            stagedDirectoryURL: stagingURL,
+            destinationDirectoryURL: destinationURL
+        )
         return true
+    }
+
+    /// Publishes a fully prepared feature directory while preserving the
+    /// previous directory for rollback.
+    ///
+    /// `FileManager.replaceItemAt` cannot be used on Linux because its
+    /// implementation can remove the destination and then fail with Cocoa error
+    /// 4 ("The file doesn’t exist"). Explicit sibling moves provide equivalent
+    /// publication behavior there and retain the old package if publishing the
+    /// candidate fails.
+    func replaceFeatureDirectory(
+        stagedDirectoryURL: URL,
+        destinationDirectoryURL: URL
+    ) throws {
+        let stagedURL = stagedDirectoryURL.standardizedFileURL
+        let destinationURL = destinationDirectoryURL.standardizedFileURL
+        guard fileManager.fileExists(atPath: stagedURL.path) else {
+            throw DirectToolError.permissionDenied(
+                "Staged feature directory not found: \(stagedURL.path)."
+            )
+        }
+
+        guard fileManager.fileExists(atPath: destinationURL.path) else {
+            try fileManager.moveItem(at: stagedURL, to: destinationURL)
+            return
+        }
+
+#if os(Linux)
+        let backupURL = destinationURL.deletingLastPathComponent()
+            .appendingPathComponent(
+                ".zencode-feature-backup-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try fileManager.moveItem(at: destinationURL, to: backupURL)
+        do {
+            try fileManager.moveItem(at: stagedURL, to: destinationURL)
+            try? fileManager.removeItem(at: backupURL)
+        } catch {
+            let publishError = error
+            do {
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try fileManager.removeItem(at: destinationURL)
+                }
+                try fileManager.moveItem(at: backupURL, to: destinationURL)
+            } catch {
+                throw DirectToolError.permissionDenied(
+                    "Feature publication failed and the previous package could not be restored. "
+                        + "Backup: \(backupURL.path). Publication error: "
+                        + "\(publishError.localizedDescription). Restore error: \(error.localizedDescription)"
+                )
+            }
+            throw publishError
+        }
+#else
+        _ = try fileManager.replaceItemAt(
+            destinationURL,
+            withItemAt: stagedURL,
+            backupItemName: nil,
+            options: []
+        )
+#endif
     }
 
     func copyFeatureDirectoryContents(

@@ -695,26 +695,17 @@ extension SwiftFeatureRuntime {
         )
     }
 
-    /// Publishes a candidate only after it has passed validation/build. Replacing
-    /// sibling directories is atomic on the feature-root volume, preserving the
-    /// installed directory if the replacement itself cannot be completed.
+    /// Publishes a candidate only after it has passed validation/build. The
+    /// complete sibling candidate replaces the installed directory with backup
+    /// rollback if publication cannot be completed.
     func publishStagedOptionalFeaturePackage(
         stagedDirectoryURL: URL,
         destinationDirectoryURL: URL
     ) throws {
-        if fileManager.fileExists(atPath: destinationDirectoryURL.path) {
-            _ = try fileManager.replaceItemAt(
-                destinationDirectoryURL,
-                withItemAt: stagedDirectoryURL,
-                backupItemName: nil,
-                options: []
-            )
-        } else {
-            try fileManager.moveItem(
-                at: stagedDirectoryURL,
-                to: destinationDirectoryURL
-            )
-        }
+        try replaceFeatureDirectory(
+            stagedDirectoryURL: stagedDirectoryURL,
+            destinationDirectoryURL: destinationDirectoryURL
+        )
     }
 
     /// Copies a feature package into the user feature root and turns it into a
