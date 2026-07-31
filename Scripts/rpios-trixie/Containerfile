@@ -1,0 +1,92 @@
+# Raspberry Pi OS Lite 64-bit (Debian 13 trixie) — container machine image
+# for cross-platform build and test of ZenCODE on Linux/arm64.
+#
+# Usage:
+#   container build -t local/rpios-trixie-swift:latest Scripts/rpios-trixie/
+#   container machine create local/rpios-trixie-swift:latest --name zencode-rpios --cpus 4 --memory 8G --set-default
+
+FROM oclabsnl/raspbian:trixie-lite
+
+# --- systemd / container-machine requirements ---
+# container machine requires /sbin/init (systemd) and the standard
+# machine-id / dbus setup documented in container-machine.md.
+ENV container=container
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        dbus systemd systemd-sysv openssh-server \
+        net-tools iproute2 iputils-ping \
+        sudo ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN >/etc/machine-id && \
+    >/var/lib/dbus/machine-id
+
+RUN systemctl set-default multi-user.target && \
+    systemctl mask \
+      dev-hugepages.mount \
+      sys-fs-fuse-connections.mount \
+      systemd-update-utmp.service \
+      systemd-tmpfiles-setup.service \
+      console-getty.service && \
+    systemctl disable networkd-dispatcher.service 2>/dev/null || true
+
+RUN sed -i -e 's/^AcceptEnv LANG LC_\*$/#AcceptEnv LANG LC_*/' /etc/ssh/sshd_config 2>/dev/null || true
+
+# --- Swift build dependencies ---
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        git build-essential pkg-config binutils libc6-dev \
+        libcurl4-openssl-dev libedit-dev libsqlite3-dev libxml2-dev libz3-dev \
+        tzdata unzip zlib1g-dev libssl-dev tar \
+        libicu-dev libncurses-dev uuid-dev libstdc++-12-dev \
+        libpython3-dev curl gnupg && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# --- swiftly + Swift 6.3.3 toolchain ---
+# swiftly is used to install and manage the toolchain, but we symlink the
+# REAL toolchain binaries to /usr/local/bin so subprocesses (and tests)
+# resolve them directly without going through the swiftly proxy, which
+# causes "Circular swiftly proxy invocation" on non-interactive shells.
+ARG SWIFTLY_VERSION=1.1.2
+ARG SWIFT_PLATFORM=debian12
+ENV SWIFTLY_HOME_DIR=/opt/swiftly
+ENV SWIFTLY_BIN_DIR=/opt/swiftly/bin
+
+RUN mkdir -p /opt/swiftly/bin && \
+    cd /tmp && \
+    curl -fLO "https://download.swift.org/swiftly/linux/swiftly-${SWIFTLY_VERSION}-aarch64.tar.gz" && \
+    tar -zxf "swiftly-${SWIFTLY_VERSION}-aarch64.tar.gz" && \
+    ./swiftly init --assume-yes --platform "${SWIFT_PLATFORM}" && \
+    rm -f "swiftly-${SWIFTLY_VERSION}-aarch64.tar.gz" swiftly && \
+    chmod -R a+rX /opt/swiftly
+
+# Symlink real toolchain binaries to /usr/local/bin (bypass proxy).
+# Find the toolchain wherever swiftly placed it.
+RUN TC_DIR="$(ls -d /opt/swiftly/toolchains/*/usr/bin 2>/dev/null | head -1)" && \
+    if [ -z "$TC_DIR" ]; then TC_DIR="$(ls -d /root/.local/share/swiftly/toolchains/*/usr/bin 2>/dev/null | head -1)"; fi && \
+    TC_ROOT="$(dirname "$(dirname "$TC_DIR")")" && \
+    TC_VER="$(basename "$TC_ROOT")" && \
+    echo "Toolchain: $TC_ROOT (version $TC_VER)" && \
+    mkdir -p /opt/swift && \
+    mv "$TC_ROOT" /opt/swift/"$TC_VER" && \
+    chmod -R a+rX /opt/swift && \
+    for bin in swift swiftc swift-build swift-package swift-test sourcekit-lsp lldb; do \
+        [ -f "/opt/swift/$TC_VER/usr/bin/$bin" ] && ln -sf "/opt/swift/$TC_VER/usr/bin/$bin" /usr/local/bin/"$bin" || true; \
+    done
+
+# Make swiftly itself available system-wide for toolchain management.
+RUN ln -sf /opt/swiftly/bin/swiftly /usr/local/bin/swiftly 2>/dev/null || \
+    ln -sf /root/.local/share/swiftly/bin/swiftly /usr/local/bin/swiftly
+
+# Clean up swiftly's PATH modifications from profiles so /bin/sh (dash)
+# doesn't choke on the bash-only [[ syntax in env.sh.
+RUN sed -i '/swiftly/d' /root/.profile /root/.bashrc /etc/profile.d/swiftly*.sh 2>/dev/null || true
+
+# --- Pre-create workspace build-cache directory ---
+# The repo's .build/ is shared with macOS and contains incompatible
+# artifacts. Tests/builds use --build-path to a container-local path.
+RUN mkdir -p /tmp/zencode-build && chmod 1777 /tmp/zencode-build
+
+# Sanity check
+RUN swift --version && git --version
