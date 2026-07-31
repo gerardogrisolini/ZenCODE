@@ -266,8 +266,7 @@ extension SwiftFeatureRuntimeTests {
                 id: "feature-build-mcp",
                 name: "feature.build",
                 argumentsObject: [
-                    "id": "linear-mcp",
-                    "timeoutSeconds": 120
+                    "id": "linear-mcp"
                 ],
                 argumentsJSON: "{}"
             )
