@@ -25,17 +25,23 @@ public struct MemoryToolContext: Sendable {
 }
 
 public enum MemoryTool {
+    private enum RenderDetail: String {
+        case full
+        case index
+    }
+
     public static let toolDescriptors: [ToolDescriptor] = [
         ToolDescriptor(
             name: "memory.read",
             title: "Memory Read",
-            description: "Reads durable entries from the project MEMORY.md journal for the current workspace.",
+            description: "Reads durable project MEMORY.md entries. Use detail=index for compact Summary/timestamp/ID results before loading full content.",
             inputSchema: """
             {
               "type": "object",
               "properties": {
                 "includeArchived": { "type": "boolean" },
-                "limit": { "type": "number" }
+                "limit": { "type": "number" },
+                "detail": { "type": "string", "enum": ["full", "index"] }
               }
             }
             """,
@@ -48,14 +54,15 @@ public enum MemoryTool {
         ToolDescriptor(
             name: "memory.search",
             title: "Memory Search",
-            description: "Searches durable entries in the project MEMORY.md journal for codebase history and resume points.",
+            description: "Searches durable project memory with weighted exact phrase, Summary, State, and term coverage ranking.",
             inputSchema: """
             {
               "type": "object",
               "properties": {
                 "query": { "type": "string" },
                 "includeArchived": { "type": "boolean" },
-                "limit": { "type": "number" }
+                "limit": { "type": "number" },
+                "detail": { "type": "string", "enum": ["full", "index"] }
               },
               "required": ["query"]
             }
@@ -70,7 +77,7 @@ public enum MemoryTool {
         ToolDescriptor(
             name: "memory.write",
             title: "Memory Write",
-            description: "Appends one durable entry to the project MEMORY.md journal. Use concise end-of-turn entries with Timestamp, Summary, State, and Next. If the entry omits Timestamp, the tool adds the current local timestamp.",
+            description: "Appends one new durable entry to the project MEMORY.md journal. Use concise entries with Timestamp, Summary, State, and Next; the current local Timestamp is added when missing.",
             inputSchema: """
             {
               "type": "object",
@@ -84,6 +91,27 @@ public enum MemoryTool {
                 title: "Project memory",
                 action: "Write",
                 kind: .edit
+            )
+        ),
+        ToolDescriptor(
+            name: "memory.update",
+            title: "Memory Update",
+            description: "Replaces the full content of one durable memory entry while preserving its id and archive state. It preserves the original Timestamp and adds the current Updated timestamp when those fields are omitted.",
+            inputSchema: """
+            {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "content": { "type": "string" }
+              },
+              "required": ["id", "content"]
+            }
+            """,
+            presentation: .standard(
+                title: "Memory entry",
+                action: "Update",
+                kind: .edit,
+                targetKeyPaths: ["id"]
             )
         ),
         ToolDescriptor(
@@ -136,6 +164,12 @@ public enum MemoryTool {
                 context: context,
                 memoryService: memoryService
             )
+        case "memory.update":
+            return try update(
+                arguments: request.arguments,
+                context: context,
+                memoryService: memoryService
+            )
         case "memory.archive":
             return try archive(
                 arguments: request.arguments,
@@ -154,8 +188,9 @@ public enum MemoryTool {
     ) throws -> ToolExecutionOutput {
         let includeArchived = parsedIncludeArchived(from: arguments)
         let limit = parsedLimit(from: arguments)
+        let detail = parsedDetail(from: arguments)
 
-        let resolvedEntries = memoryService.readEntries(
+        let resolvedEntries = try memoryService.readEntriesChecked(
             scope: .project,
             workingDirectory: context.workingDirectory,
             includeArchived: includeArchived,
@@ -163,10 +198,11 @@ public enum MemoryTool {
         )
 
         return ToolExecutionOutput(
-            text: renderEntries(resolvedEntries),
+            text: renderEntries(resolvedEntries, detail: detail),
             rawResult: .object([
                 "count": .number(Double(resolvedEntries.count)),
-                "entries": .array(resolvedEntries.map(memoryJSONValue))
+                "detail": .string(detail.rawValue),
+                "entries": .array(resolvedEntries.map { memoryJSONValue($0, detail: detail) })
             ])
         )
     }
@@ -184,8 +220,9 @@ public enum MemoryTool {
 
         let includeArchived = parsedIncludeArchived(from: arguments)
         let limit = parsedLimit(from: arguments)
+        let detail = parsedDetail(from: arguments)
 
-        let entries = memoryService.searchEntries(
+        let entries = try memoryService.searchEntriesChecked(
             query: query,
             scope: .project,
             workingDirectory: context.workingDirectory,
@@ -196,12 +233,13 @@ public enum MemoryTool {
         return ToolExecutionOutput(
             text: """
             Query: \(query)
-            \(renderEntries(entries))
+            \(renderEntries(entries, detail: detail))
             """,
             rawResult: .object([
                 "query": .string(query),
                 "count": .number(Double(entries.count)),
-                "entries": .array(entries.map(memoryJSONValue))
+                "detail": .string(detail.rawValue),
+                "entries": .array(entries.map { memoryJSONValue($0, detail: detail) })
             ])
         )
     }
@@ -233,6 +271,44 @@ public enum MemoryTool {
             """,
             rawResult: .object([
                 "written": .bool(true),
+                "entry": memoryJSONValue(entry)
+            ])
+        )
+    }
+
+    private static func update(
+        arguments: [String: JSONValue],
+        context: MemoryToolContext,
+        memoryService: MemoryService
+    ) throws -> ToolExecutionOutput {
+        guard let rawIdentifier = arguments["id"]?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawIdentifier.isEmpty else {
+            throw MemoryServiceError.missingField("id")
+        }
+        guard let id = UUID(uuidString: rawIdentifier) else {
+            throw MemoryServiceError.invalidIdentifier(rawIdentifier)
+        }
+        guard let content = parsedContent(from: arguments) else {
+            throw MemoryServiceError.missingField("content")
+        }
+
+        let entry = try memoryService.updateEntry(
+            id: id,
+            content: content,
+            scope: .project,
+            workspaceRootURL: context.workingDirectory?.standardizedFileURL,
+            updatedAt: context.currentDate,
+            timeZone: context.currentTimeZone
+        )
+
+        return ToolExecutionOutput(
+            text: """
+            Updated memory entry.
+            \(renderEntry(entry))
+            """,
+            rawResult: .object([
+                "updated": .bool(true),
                 "entry": memoryJSONValue(entry)
             ])
         )
@@ -289,19 +365,20 @@ public enum MemoryTool {
     }
 
     private static func contentContainsTimestamp(_ content: String) -> Bool {
-        content
-            .components(separatedBy: .newlines)
-            .contains { line in
-                line.trimmingCharacters(in: .whitespaces)
-                    .lowercased()
-                    .hasPrefix("timestamp:")
-            }
+        MemoryEntryMetadata(content: content).timestamp != nil
     }
 
     private static func parsedIncludeArchived(from arguments: [String: JSONValue]) -> Bool {
         arguments["includeArchived"]?.boolValue
             ?? arguments["include_archived"]?.boolValue
             ?? false
+    }
+
+    private static func parsedDetail(from arguments: [String: JSONValue]) -> RenderDetail {
+        let rawValue = arguments["detail"]?.stringValue
+            ?? arguments["mode"]?.stringValue
+            ?? RenderDetail.full.rawValue
+        return RenderDetail(rawValue: rawValue.lowercased()) ?? .full
     }
 
     private static func parsedLimit(from arguments: [String: JSONValue]) -> Int {
@@ -313,18 +390,27 @@ public enum MemoryTool {
         return Int(exactly: clampedLimit.rounded(.towardZero)) ?? 8
     }
 
-    private static func renderEntries(_ entries: [MemoryEntry]) -> String {
+    private static func renderEntries(
+        _ entries: [MemoryEntry],
+        detail: RenderDetail
+    ) -> String {
         guard !entries.isEmpty else {
             return "No memory entries matched."
         }
 
         let renderedEntries = entries.enumerated().map { index, entry in
-            "\(index + 1). \(renderEntry(entry))"
+            let renderedEntry = detail == .index
+                ? renderIndexEntry(entry)
+                : renderEntry(entry)
+            return "\(index + 1). \(renderedEntry)"
         }
         .joined(separator: "\n\n")
 
+        let heading = detail == .index
+            ? "Project MEMORY.md index:"
+            : "Project MEMORY.md:"
         return """
-        Project MEMORY.md:
+        \(heading)
         \(renderedEntries)
         """
     }
@@ -340,12 +426,65 @@ public enum MemoryTool {
         return lines.joined(separator: "\n")
     }
 
+    private static func renderIndexEntry(_ entry: MemoryEntry) -> String {
+        let metadata = entry.metadata
+        var lines = ["[\(entry.scope.rawValue)] \(entry.title)"]
+        if let timestamp = metadata.timestamp {
+            lines.append("Timestamp: \(timestamp)")
+        }
+        if let updated = metadata.updated {
+            lines.append("Updated: \(updated)")
+        }
+        lines.append("ID: \(entry.id.uuidString)")
+        if entry.isArchived {
+            lines.append("Archived: true")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private static func memoryJSONValue(_ entry: MemoryEntry) -> JSONValue {
-        .object([
+        memoryJSONValue(entry, detail: .full)
+    }
+
+    private static func memoryJSONValue(
+        _ entry: MemoryEntry,
+        detail: RenderDetail
+    ) -> JSONValue {
+        var result: [String: JSONValue] = [
             "id": .string(entry.id.uuidString),
             "scope": .string(entry.scope.rawValue),
-            "content": .string(entry.content),
-            "archived": .bool(entry.isArchived)
-        ])
+            "title": .string(entry.title),
+            "archived": .bool(entry.isArchived),
+            "metadata": metadataJSONValue(entry.metadata, detail: detail),
+        ]
+        if detail == .full {
+            result["content"] = .string(entry.content)
+        }
+        return .object(result)
+    }
+
+    private static func metadataJSONValue(
+        _ metadata: MemoryEntryMetadata,
+        detail: RenderDetail
+    ) -> JSONValue {
+        var result: [String: JSONValue] = [:]
+        if let timestamp = metadata.timestamp {
+            result["timestamp"] = .string(timestamp)
+        }
+        if let updated = metadata.updated {
+            result["updated"] = .string(updated)
+        }
+        if let summary = metadata.summary {
+            result["summary"] = .string(summary)
+        }
+        if detail == .full {
+            if let state = metadata.state {
+                result["state"] = .string(state)
+            }
+            if let next = metadata.next {
+                result["next"] = .string(next)
+            }
+        }
+        return .object(result)
     }
 }

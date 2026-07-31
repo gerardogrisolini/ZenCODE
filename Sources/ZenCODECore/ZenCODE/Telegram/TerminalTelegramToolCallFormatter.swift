@@ -226,6 +226,8 @@ enum TerminalTelegramToolCallFormatter {
             return [("action", ["action"])]
         case "memory.search":
             return [("query", ["query"])]
+        case "memory.update", "memory.archive":
+            return [("id", ["id"])]
         case "memory.write":
             return [("title", ["title"])]
         case "todo.write":

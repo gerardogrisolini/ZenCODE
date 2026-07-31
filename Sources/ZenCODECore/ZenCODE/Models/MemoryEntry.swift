@@ -30,10 +30,11 @@ public nonisolated struct MemoryEntry: Identifiable, Codable, Hashable, Sendable
     }
 
     public var title: String {
-        let firstLine = content
-            .components(separatedBy: .newlines)
-            .first?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let firstLine = metadata.summary
+            ?? content
+                .components(separatedBy: .newlines)
+                .first?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             ?? "Memory"
         guard firstLine.count > 80 else {
             return firstLine.isEmpty ? "Memory" : firstLine

@@ -3,6 +3,7 @@
 //  ZenCODE
 //
 
+import Crypto
 import Foundation
 
 extension MemoryService {
@@ -91,6 +92,8 @@ extension MemoryService {
         var sectionIsArchived = false
         var currentEntryLines: [String] = []
         var currentEntryIsArchived = false
+        var entryOrdinal = 0
+        var encounteredInvalidEntry = false
 
         func flushCurrentEntry() {
             guard !currentEntryLines.isEmpty else {
@@ -98,12 +101,19 @@ extension MemoryService {
             }
             defer {
                 currentEntryLines.removeAll()
+                entryOrdinal += 1
             }
             guard let entry = Self.entry(
                 fromEntryContent: currentEntryLines.joined(separator: "\n"),
                 scope: document.scope,
-                isArchived: currentEntryIsArchived
+                isArchived: currentEntryIsArchived,
+                legacyOrdinal: entryOrdinal
             ) else {
+                encounteredInvalidEntry = true
+                return
+            }
+            guard !entries.contains(where: { $0.id == entry.id }) else {
+                encounteredInvalidEntry = true
                 return
             }
             entries.append(entry)
@@ -138,13 +148,14 @@ extension MemoryService {
             currentEntryLines.append(continuationLine)
         }
         flushCurrentEntry()
-        return entries
+        return encounteredInvalidEntry ? nil : entries
     }
 
     static func entry(
         fromEntryContent content: String,
         scope: MemoryScope,
-        isArchived: Bool
+        isArchived: Bool,
+        legacyOrdinal: Int = 0
     ) -> MemoryEntry? {
         let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedContent.isEmpty else {
@@ -152,8 +163,10 @@ extension MemoryService {
         }
 
         let idPrefix = "[id:"
-        if trimmedContent.lowercased().hasPrefix(idPrefix),
-           let closingBracket = trimmedContent.firstIndex(of: "]") {
+        if trimmedContent.lowercased().hasPrefix(idPrefix) {
+            guard let closingBracket = trimmedContent.firstIndex(of: "]") else {
+                return nil
+            }
             let rawID = trimmedContent[trimmedContent.index(trimmedContent.startIndex, offsetBy: idPrefix.count)..<closingBracket]
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let content = trimmedContent[trimmedContent.index(after: closingBracket)...]
@@ -172,8 +185,41 @@ extension MemoryService {
         return MemoryEntry(
             content: trimmedContent,
             scope: scope,
+            id: legacyIdentifier(
+                content: trimmedContent,
+                scope: scope,
+                isArchived: isArchived,
+                ordinal: legacyOrdinal
+            ),
             isArchived: isArchived
         )
+    }
+
+    /// Legacy entries have no persisted identifier. Derive a stable UUIDv8 from
+    /// their document position and content so a later mutation can address them;
+    /// the next successful write persists that identifier in MEMORY.md.
+    static func legacyIdentifier(
+        content: String,
+        scope: MemoryScope,
+        isArchived: Bool,
+        ordinal: Int
+    ) -> UUID {
+        let seed = [
+            "zencode-memory-entry-v1",
+            scope.rawValue,
+            isArchived ? "archived" : "active",
+            String(ordinal),
+            MemoryEntry.normalizedContent(content),
+        ].joined(separator: "|")
+        var bytes = Array(SHA256.hash(data: Data(seed.utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0F) | 0x80
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
     }
 
     static func entryContinuationLine(from line: String) -> String? {
@@ -251,11 +297,39 @@ extension MemoryService {
         return "\(formatter.string(from: date)) \(timeZone.identifier)"
     }
 
-    func searchScore(entry: MemoryEntry, terms: [String]) -> Int {
+    func searchScore(
+        entry: MemoryEntry,
+        query: String,
+        terms: [String]
+    ) -> Int {
         let content = entry.content.lowercased()
+        let metadata = entry.metadata
+        let summary = metadata.summary?.lowercased() ?? ""
+        let state = metadata.state?.lowercased() ?? ""
         var score = 0
-        for term in terms where content.contains(term) {
+        var matchedTerms = 0
+
+        if content.contains(query) {
+            score += 50
+        }
+        if summary.contains(query) {
+            score += 100
+        }
+        for term in terms {
+            guard content.contains(term) else {
+                continue
+            }
+            matchedTerms += 1
             score += 10
+            if summary.contains(term) {
+                score += 30
+            }
+            if state.contains(term) {
+                score += 15
+            }
+        }
+        if matchedTerms == terms.count {
+            score += 25
         }
         return score
     }
@@ -285,7 +359,7 @@ public enum MemoryServiceError: LocalizedError {
         case let .invalidIdentifier(identifier):
             return "Invalid memory identifier: \(identifier)."
         case let .entryNotFound(identifier):
-            return "No active memory entry was found for \(identifier)."
+            return "No memory entry was found for \(identifier)."
         case let .documentUnreadable(path):
             return "MEMORY.md could not be read safely at \(path); it was left unchanged."
         case let .invalidDocument(path):

@@ -329,8 +329,18 @@ Durable context is separated by responsibility:
 
 - Project `AGENTS.md` — workspace-specific constraints and workflows. Check into version control.
 - Global `~/.zencode/AGENTS.md` — cross-workspace operating rules.
-- Project `MEMORY.md` — codebase journal with `Timestamp`, `Summary`, `State`, `Next` entries.
+- Project `MEMORY.md` — codebase journal with `Timestamp`, `Summary`, `State`, and `Next`; `Updated` records changes to an existing entry.
 - Global `~/.zencode/MEMORY.md` — lightweight resume index only.
+
+The Memory tool group supports maintaining the journal without accumulating avoidable duplicates:
+
+- `memory.read` reads recent entries; use `detail: "index"` for a compact summary/ID view and the default `detail: "full"` for complete content.
+- `memory.search` ranks exact phrases and structured `Summary`/`State` matches ahead of incidental body mentions.
+- `memory.write` appends a new entry.
+- `memory.update` brings an existing entry current without changing its ID or archive state; it preserves the original `Timestamp` and adds `Updated` when omitted.
+- `memory.archive` removes stale entries from normal resume context without deleting their history.
+
+Before writing, search for an active entry about the same durable project fact. Update it when appropriate instead of appending a duplicate, and do not write when nothing materially changed. The journal remains ordinary Markdown: existing entries and the `## Active` / `## Archived` format require no migration. Legacy entries without an `[id: …]` marker receive a deterministic ID when read; their next successful mutation persists that ID. Mutations are serialized within one ZenCODE process; separate processes editing the same `MEMORY.md` are not coordinated.
 
 ZenCODE reads `AGENTS.md` from the working directory when present. Startup never creates or rewrites it.
 
