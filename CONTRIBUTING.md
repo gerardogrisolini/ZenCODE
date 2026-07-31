@@ -94,7 +94,8 @@ same commit.
 Releases follow [Docs/release.md](Docs/release.md): update
 `ZenPackageMetadata.version`, resolve and commit the lockfile, run the release
 gate, then push the matching annotated `vX.Y.Z` tag. The release workflow
-verifies the tag contract; it does not publish artifacts.
+verifies the tag contract and platform gates before publishing the archives and
+SHA-256 checksums to the matching GitHub Release.
 
 ## Security
 

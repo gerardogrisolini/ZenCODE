@@ -34,16 +34,40 @@ but it is not a reproducible release input.
    `swift test` inside every changed `Sources/Features/<Feature>` package as
    part of its feature-specific release validation.
 4. Commit the version and lockfile, then create and push the matching annotated
-   tag `vX.Y.Z`. The **Release verification** workflow accepts the broad GitHub
+   tag `vX.Y.Z`. The **Release** workflow accepts the broad GitHub
    tag glob `v*`, then enforces the strict `vX.Y.Z` shape and requires it to
-   match `ZenPackageMetadata.version`. It only verifies the release; it does
-   not publish or mutate a GitHub Release.
+   match `ZenPackageMetadata.version`. After both platform gates pass, it creates
+   or updates the matching GitHub Release and attaches the verified macOS arm64
+   and Linux x86_64 archives plus their SHA-256 checksums.
 
 The regular **CI** workflow runs on macOS 26 and Ubuntu 24.04 with Swift 6.3.0,
 uses the resolved lockfile without updating it, runs the full non-live test
 suite, builds `ZenCODECore` and the release `zen` product, checks shell syntax,
 and rejects whitespace errors. Provider-backed checks remain opt-in and are not
-run by CI.
+run by CI. Every successful platform job also uploads its release binary as a
+downloadable workflow artifact retained for 30 days.
+
+## Download a prebuilt binary
+
+Successful **CI** runs expose `zen-<commit>-macos-arm64` and
+`zen-<commit>-linux-x86_64` in the run's **Artifacts** section. These development
+artifacts contain a `tar.gz` archive and its `.sha256` checksum and are retained
+for 30 days.
+
+Tagged builds are available from the repository's **Releases** page as
+`zen-X.Y.Z-macos-arm64.tar.gz` and `zen-X.Y.Z-linux-x86_64.tar.gz`. Release
+assets do not expire with the Actions artifact retention window; they remain
+available for as long as the GitHub Release exists. The archives preserve the
+executable bit and contain the single `zen` binary. Optional Swift features are
+still installed and compiled on demand rather than bundled beside it.
+
+Verify and extract a downloaded archive, for example:
+
+```bash
+sha256sum -c zen-X.Y.Z-linux-x86_64.tar.gz.sha256
+tar -xzf zen-X.Y.Z-linux-x86_64.tar.gz
+./zen --version
+```
 
 ## Install an immutable release
 

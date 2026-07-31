@@ -10,6 +10,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Downloadable macOS arm64 and Linux x86_64 binaries from successful CI runs,
+  retained as workflow artifacts for 30 days. Verified tag builds also publish
+  versioned archives and SHA-256 checksums as persistent GitHub Release assets.
+
 ## [1.0.8] - 2026-07-30
 
 ### Changed

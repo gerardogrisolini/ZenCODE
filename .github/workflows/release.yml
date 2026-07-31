@@ -1,6 +1,7 @@
-name: Release verification
+name: Release
 
-# Verifies a release tag. It does not publish or mutate a GitHub Release.
+# Verifies a release tag, builds downloadable archives, and publishes them to
+# the matching GitHub Release only after every platform gate succeeds.
 #
 # GitHub only accepts a broad tag glob here, so the workflow matches `v*` and
 # then enforces the strict `vX.Y.Z` contract from Docs/release.md, requiring the
@@ -75,9 +76,11 @@ jobs:
           - name: macOS 26
             os: macos-26
             container: ""
+            platform: macos-arm64
           - name: Ubuntu 24.04
             os: ubuntu-24.04
             container: swift:6.3-noble
+            platform: linux-x86_64
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container || null }}
     steps:
@@ -123,3 +126,69 @@ jobs:
 
       - name: Check whitespace errors
         run: git diff --check
+
+      - name: Package release archive
+        run: |
+          set -euo pipefail
+          archive="zen-${{ needs.verify-tag.outputs.version }}-${{ matrix.platform }}.tar.gz"
+          mkdir -p artifacts
+          tar -C .build/release -czf "artifacts/$archive" zen
+          (
+            cd artifacts
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$archive" > "$archive.sha256"
+            else
+              shasum -a 256 "$archive" > "$archive.sha256"
+            fi
+          )
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: zen-${{ needs.verify-tag.outputs.version }}-${{ matrix.platform }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          overwrite: true
+
+  publish-release:
+    name: Publish downloadable release
+    needs: [verify-tag, release-gate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified release archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: zen-${{ needs.verify-tag.outputs.version }}-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.verify-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          tag="v${VERSION}"
+          assets=(artifacts/*.tar.gz artifacts/*.sha256)
+          if [ "${#assets[@]}" -ne 4 ]; then
+            echo "::error::Expected two release archives and two checksums, found ${#assets[@]}."
+            printf 'Found: %s\n' "${assets[@]}"
+            exit 1
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber
+          else
+            gh release create "$tag" "${assets[@]}" \
+              --verify-tag \
+              --title "ZenCODE $tag" \
+              --generate-notes
+          fi

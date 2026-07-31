@@ -88,6 +88,27 @@ jobs:
       - name: Check whitespace errors
         run: git diff --check
 
+      - name: Package downloadable build
+        run: |
+          set -euo pipefail
+          archive="zen-${GITHUB_SHA}-macos-arm64.tar.gz"
+          mkdir -p artifacts
+          tar -C .build/release -czf "artifacts/$archive" zen
+          (
+            cd artifacts
+            shasum -a 256 "$archive" > "$archive.sha256"
+          )
+
+      - name: Upload downloadable build
+        uses: actions/upload-artifact@v7
+        with:
+          name: zen-${{ github.sha }}-macos-arm64
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          overwrite: true
+
   linux:
     name: Ubuntu 24.04 (Swift 6.3)
     runs-on: ubuntu-24.04
@@ -147,3 +168,24 @@ jobs:
 
       - name: Check whitespace errors
         run: git diff --check
+
+      - name: Package downloadable build
+        run: |
+          set -euo pipefail
+          archive="zen-${GITHUB_SHA}-linux-x86_64.tar.gz"
+          mkdir -p artifacts
+          tar -C .build/release -czf "artifacts/$archive" zen
+          (
+            cd artifacts
+            sha256sum "$archive" > "$archive.sha256"
+          )
+
+      - name: Upload downloadable build
+        uses: actions/upload-artifact@v7
+        with:
+          name: zen-${{ github.sha }}-linux-x86_64
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          overwrite: true
