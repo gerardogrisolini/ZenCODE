@@ -343,10 +343,10 @@ actor TerminalChatRenderCoordinator {
         if !thoughtStreamingState.isStreaming {
             thoughtStreamingState.isStreaming = true
             thoughtWrapColumn = 0
-            // Render the title one shade lighter than the dimmed thinking
-            // body (`[90m`) so the label stands apart from the reasoning text.
+            // Render the title one shade lighter than the dimmed thinking body
+            // so the label stands apart from the reasoning text.
             let title = standardErrorIsTerminal
-                ? "\u{1B}[38;5;144m🤔 Thinking:\u{1B}[0m"
+                ? "\(TerminalStyle.Thinking.title)🤔 Thinking:\(TerminalStyle.reset)"
                 : "🤔 Thinking:"
             writeStreamingChat("\(title)\n", to: .standardError)
         }
@@ -588,9 +588,9 @@ actor TerminalChatRenderCoordinator {
         // behind the next turn's prompt or separator.
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
-        let background = "\u{1B}[48;5;236m"
+        let background = TerminalStyle.Prompt.background
         let clearToEnd = "\u{1B}[K"
-        let reset = "\u{1B}[0m"
+        let reset = TerminalStyle.reset
         let renderedLines = prompt
             .split(separator: "\n", omittingEmptySubsequences: false)
             .enumerated()
@@ -617,7 +617,7 @@ actor TerminalChatRenderCoordinator {
         guard standardErrorIsTerminal else {
             return rule
         }
-        return "\u{1B}[90m\(rule)\u{1B}[0m"
+        return "\(TerminalStyle.Prompt.turnSeparator)\(rule)\(TerminalStyle.reset)"
     }
 
     func writeOutput(_ text: String, preservesSpacing: Bool = false) {
@@ -1038,7 +1038,7 @@ actor TerminalChatRenderCoordinator {
         _ rows: [TerminalChat.DetailedToolRow],
         codeLanguage: String? = nil
     ) {
-        let reset = "\u{1B}[0m"
+        let reset = TerminalStyle.reset
         let text = rows
             .map {
                 "\(lineInset)\(TerminalChat.renderDetailedToolRow($0, codeLanguage: codeLanguage))\(reset)"

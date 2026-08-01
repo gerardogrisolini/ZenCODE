@@ -160,15 +160,13 @@ extension LocalExecPermissionAuthorizer {
         return "\n\(box)\n"
     }
 
-    /// ANSI accents reused across the consent card. Kept private so the
-    /// dialog owns its palette without leaking terminal styling elsewhere.
-    /// The card border stays orange; the footer choices use the TUI's cyan
-    /// (38;5;81) and warm-gold (38;5;220) accents in non-bold weight.
-    private static let ansiOrange = "\u{1B}[38;5;208m"
-    private static let ansiCyan = "\u{1B}[38;5;81m"
-    private static let ansiCyanBold = "\u{1B}[1;38;5;81m"
-    private static let ansiDim = "\u{1B}[38;5;244m"
-    private static let ansiReset = "\u{1B}[0m"
+    /// ANSI accents reused across the consent card. They are aliases of the
+    /// shared TUI style so this dialog stays consistent with other surfaces.
+    private static let ansiOrange = TerminalStyle.Permission.border
+    private static let ansiCyan = TerminalStyle.Permission.choice
+    private static let ansiCyanBold = TerminalStyle.Permission.emphasizedChoice
+    private static let ansiDim = TerminalStyle.Permission.metadata
+    private static let ansiReset = TerminalStyle.reset
 
     private static func wrap(_ text: String, code: String, colored: Bool) -> String {
         colored ? "\(code)\(text)\(Self.ansiReset)" : text
@@ -320,7 +318,7 @@ extension LocalExecPermissionAuthorizer {
             return line
         }
         let accent = Self.ansiCyanBold
-        let reset = "\u{1B}[0m"
+        let reset = Self.ansiReset
         return "\(accent)\(line)\(reset)"
     }
 

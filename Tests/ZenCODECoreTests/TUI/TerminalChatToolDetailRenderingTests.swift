@@ -509,7 +509,7 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func expandedParametersReuseCompactToolValueOrange() throws {
+    func expandedParametersUseMutedNeutralColor() throws {
         let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.readFile",
@@ -531,17 +531,18 @@ extension TerminalChatRenderingTests {
             columnWidth: 24
         )
 
-        // The target is Swift, but parameter metadata must render in the same
-        // peach-orange as compact tool values rather than inheriting Swift's
-        // green string highlighting or a multicolored JSON palette.
+        // The target is Swift, but parameter metadata must stay neutral rather
+        // than inheriting Swift's green string highlighting or a multicolored
+        // JSON palette.
         let rendered = TerminalChat.renderDetailedToolRow(
             parameterRow,
             codeLanguage: "swift"
         )
 
-        // The entire line — keys, values, punctuation — is prefixed with the
-        // compact value orange and carries no other SGR color codes.
-        #expect(TerminalChat.toolParameterBaseColor == TerminalChat.toolValueColor)
+        // The entire line — keys, values and punctuation — uses one readable,
+        // secondary gray and carries no other SGR color codes.
+        #expect(TerminalChat.toolParameterBaseColor == TerminalStyle.Tool.parameter)
+        #expect(TerminalChat.toolParameterBaseColor != TerminalChat.toolValueColor)
         #expect(rendered.hasPrefix(TerminalChat.toolParameterBaseColor))
         #expect(rendered.contains("\"path\""))
         #expect(rendered.contains("\"/tmp/project/Sources/App.swift\""))
@@ -549,7 +550,7 @@ extension TerminalChatRenderingTests {
         #expect(!rendered.contains(TerminalMarkdownPalette.dark.syntaxString))
         #expect(!rendered.contains(TerminalMarkdownPalette.light.syntaxString))
         #expect(!rendered.contains(TerminalChat.toolLabelColor))
-        #expect(rendered.contains(TerminalChat.toolValueColor))
+        #expect(!rendered.contains(TerminalChat.toolValueColor))
         #expect(TerminalANSIText.stripANSI(rendered) == parameterRow.plainText)
         #expect(wrappedParameterRows.allSatisfy { row in
             if case .parameter = row { return true }
@@ -558,9 +559,9 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func expandedParametersRenderAllJsonTypesInCompactToolValueOrange() throws {
+    func expandedParametersRenderAllJsonTypesInMutedNeutralColor() throws {
         // Keys, strings, numbers, booleans, null and nested structures must all
-        // share the compact value orange with no multicolored JSON highlighting.
+        // share the same neutral gray with no multicolored JSON highlighting.
         let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.readFile",
@@ -586,11 +587,11 @@ extension TerminalChatRenderingTests {
                 row,
                 codeLanguage: "swift"
             )
-            // Every parameter line starts with the compact value orange and
+            // Every parameter line starts with the neutral parameter color and
             // contains no other SGR color codes.
             #expect(rendered.hasPrefix(TerminalChat.toolParameterBaseColor))
             #expect(!rendered.contains(TerminalChat.toolLabelColor))
-            #expect(rendered.contains(TerminalChat.toolValueColor))
+            #expect(!rendered.contains(TerminalChat.toolValueColor))
             #expect(!rendered.contains(TerminalChat.toolTitleColor))
             #expect(!rendered.contains(TerminalMarkdownPalette.dark.syntaxString))
             #expect(!rendered.contains(TerminalMarkdownPalette.light.syntaxString))
@@ -616,14 +617,14 @@ extension TerminalChatRenderingTests {
 
     @Test
     func expandedMetadataLabelsStayMutedWhileValuesReuseCompactOrange() {
-        // Labeled rows ("label: value") keep the label in muted orange while the
-        // value uses the same peach-orange as compact tool values and parameter
-        // JSON.
+        // Labeled rows ("label: value") keep the label in muted orange while
+        // the value uses the same peach-orange as compact tool values. The
+        // neutral parameter color is reserved for JSON payload rows.
         let rendered = TerminalChat.renderDetailedToolLine("action: Write")
 
         #expect(rendered.contains("\(TerminalChat.toolLabelColor)action:"))
-        #expect(rendered.contains("\(TerminalChat.toolParameterBaseColor) Write"))
-        #expect(rendered.contains(TerminalChat.toolValueColor))
+        #expect(rendered.contains("\(TerminalChat.toolValueColor) Write"))
+        #expect(!rendered.contains(TerminalChat.toolParameterBaseColor))
         #expect(ansiStripped(rendered) == "action: Write")
     }
 

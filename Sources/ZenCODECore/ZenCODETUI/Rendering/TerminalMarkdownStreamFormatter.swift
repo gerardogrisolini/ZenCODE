@@ -9,8 +9,8 @@ import Foundation
 import Markdown
 
 public struct TerminalMarkdownStreamFormatter {
-    private static let reset = "\u{1B}[0m"
-    private static let dim = "\u{1B}[90m"
+    private static let reset = TerminalStyle.reset
+    private static let dim = TerminalStyle.Markdown.dim
     private static let maxBufferedLineLength = 240
     private static let maxMarkdownBufferedLineLength = 2_000
     // Soft safety net that drives incremental streaming. Kept low so list-heavy

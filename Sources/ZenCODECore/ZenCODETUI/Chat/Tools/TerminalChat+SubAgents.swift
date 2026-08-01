@@ -409,13 +409,13 @@ extension TerminalChat {
 
         var segments = ["\(snapshots.count) total"]
         if activeCount > 0 {
-            segments.append(colorText("▸ \(activeCount) active", code: "\u{1B}[38;5;208m"))
+            segments.append(colorText("▸ \(activeCount) active", code: TerminalStyle.Status.active))
         }
         if completedCount > 0 {
-            segments.append(colorText("✓ \(completedCount) completed", code: "\u{1B}[32m"))
+            segments.append(colorText("✓ \(completedCount) completed", code: TerminalStyle.Status.success))
         }
         if failedCount > 0 {
-            segments.append(colorText("✗ \(failedCount) failed", code: "\u{1B}[31m"))
+            segments.append(colorText("✗ \(failedCount) failed", code: TerminalStyle.Status.failure))
         }
         if closedCount > 0 {
             segments.append(dimText("· \(closedCount) closed"))
@@ -653,19 +653,23 @@ extension TerminalChat {
         }
 
         let color = statusColorCode(for: snapshot)
-        return "\(color)[\(text)]\u{1B}[0m"
+        return "\(color)[\(text)]\(TerminalStyle.reset)"
     }
 
     private nonisolated static func boldText(_ text: String) -> String {
-        AgentOutput.standardErrorIsTerminal ? "\u{1B}[1m\(text)\u{1B}[0m" : text
+        AgentOutput.standardErrorIsTerminal
+            ? "\(TerminalStyle.Attribute.bold)\(text)\(TerminalStyle.reset)"
+            : text
     }
 
     private nonisolated static func dimText(_ text: String) -> String {
-        AgentOutput.standardErrorIsTerminal ? "\u{1B}[90m\(text)\u{1B}[0m" : text
+        AgentOutput.standardErrorIsTerminal
+            ? "\(TerminalStyle.Text.muted)\(text)\(TerminalStyle.reset)"
+            : text
     }
 
     private nonisolated static func colorText(_ text: String, code: String) -> String {
-        AgentOutput.standardErrorIsTerminal ? "\(code)\(text)\u{1B}[0m" : text
+        AgentOutput.standardErrorIsTerminal ? "\(code)\(text)\(TerminalStyle.reset)" : text
     }
 
     private nonisolated static func displayStatus(
@@ -683,17 +687,17 @@ extension TerminalChat {
     ) -> String {
         switch snapshot.status {
         case .queued:
-            return "\u{1B}[33m"
+            return TerminalStyle.Status.queued
         case .running:
-            return "\u{1B}[38;5;208m"
+            return TerminalStyle.Status.active
         case .idle:
             return snapshot.latestOutput?.nilIfBlank == nil
-                ? "\u{1B}[90m"
-                : "\u{1B}[32m"
+                ? TerminalStyle.Status.inactive
+                : TerminalStyle.Status.success
         case .failed:
-            return "\u{1B}[31m"
+            return TerminalStyle.Status.failure
         case .closed:
-            return "\u{1B}[90m"
+            return TerminalStyle.Status.inactive
         }
     }
 
@@ -706,7 +710,7 @@ extension TerminalChat {
         }
 
         let color = statusColorCode(for: snapshot)
-        return "\(color)\(marker)\u{1B}[0m"
+        return "\(color)\(marker)\(TerminalStyle.reset)"
     }
 
     private nonisolated static func renderSubAgentOverviewLines(_ lines: [SubAgentOverviewLine]) -> String {
@@ -729,9 +733,9 @@ extension TerminalChat {
             columns - horizontalInset - subAgentOverviewReservedColumns
         )
         let linePrefix = String(repeating: " ", count: horizontalInset)
-        let orange = "\u{1B}[38;5;208m"
-        let dim = "\u{1B}[90m"
-        let reset = "\u{1B}[0m"
+        let orange = TerminalStyle.Accent.primary
+        let dim = TerminalStyle.Text.muted
+        let reset = TerminalStyle.reset
         let title = AgentOutput.standardErrorIsTerminal
             ? "👥 \(orange)Sub-Agents:\(reset)"
             : "👥 Sub-Agents:"

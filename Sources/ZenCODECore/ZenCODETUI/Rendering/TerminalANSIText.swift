@@ -8,7 +8,7 @@
 import Foundation
 
 enum TerminalANSIText {
-    private static let reset = "\u{1B}[0m"
+    private static let reset = TerminalStyle.reset
     
     /// Number of visible terminal columns in `text`, ignoring ANSI escape
     /// sequences and accounting for common double-width grapheme clusters such
@@ -157,7 +157,7 @@ enum TerminalANSIText {
                 result += sequence
                 if sequence.hasSuffix("m") && !sequence.contains("[0m") {
                     hasStyle = true
-                } else if sequence == "\u{1B}[0m" {
+                } else if sequence == reset {
                     hasStyle = false
                 }
                 if let hyperlink = osc8HyperlinkState(for: sequence) {

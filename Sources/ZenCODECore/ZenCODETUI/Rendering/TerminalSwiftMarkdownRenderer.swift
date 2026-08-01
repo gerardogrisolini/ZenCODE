@@ -11,16 +11,16 @@ import Markdown
 struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     typealias Result = String
 
-    private static let reset = "\u{1B}[0m"
-    private static let bold = "\u{1B}[1m"
-    private static let italic = "\u{1B}[3m"
-    private static let strikethrough = "\u{1B}[9m"
-    private static let dim = "\u{1B}[90m"
-    private static let bullet = "\u{1B}[38;5;244m"
-    private static let link = "\u{1B}[38;5;75m"
-    private static let quoteBar = "\u{1B}[38;5;108m"
-    private static let tableBorder = "\u{1B}[38;5;240m"
-    private static let tableHeader = "\u{1B}[1;38;5;81m"
+    private static let reset = TerminalStyle.reset
+    private static let bold = TerminalStyle.Attribute.bold
+    private static let italic = TerminalStyle.Attribute.italic
+    private static let strikethrough = TerminalStyle.Attribute.strikethrough
+    private static let dim = TerminalStyle.Markdown.dim
+    private static let bullet = TerminalStyle.Markdown.bullet
+    private static let link = TerminalStyle.Markdown.link
+    private static let quoteBar = TerminalStyle.Markdown.quoteBar
+    private static let tableBorder = TerminalStyle.Markdown.tableBorder
+    private static let tableHeader = TerminalStyle.Markdown.tableHeader
 
     /// Sentinel text placed in every cell of a body row to request an in-table
     /// horizontal separator instead of a normal data row. The renderer detects

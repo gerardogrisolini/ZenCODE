@@ -116,11 +116,11 @@ extension TerminalChat {
     }
 
     private nonisolated static func renderFileChangeDiffLine(_ line: String) -> String {
-        let reset = "\u{1B}[0m"
-        let meta = "\u{1B}[38;5;244m"
-        let hunk = "\u{1B}[38;5;141m"
-        let addition = "\u{1B}[38;5;114m"
-        let deletion = "\u{1B}[38;5;203m"
+        let reset = TerminalStyle.reset
+        let meta = TerminalStyle.FileChange.metadata
+        let hunk = TerminalStyle.FileChange.hunk
+        let addition = TerminalStyle.FileChange.addition
+        let deletion = TerminalStyle.FileChange.deletion
 
         guard !line.isEmpty else {
             return line

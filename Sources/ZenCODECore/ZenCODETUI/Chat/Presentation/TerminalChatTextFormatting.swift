@@ -294,7 +294,7 @@ enum TerminalChatTextFormatting {
         }
 
         let color = systemMessageANSIColor
-        let reset = "\u{1B}[0m"
+        let reset = TerminalStyle.reset
         return text
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { line in
@@ -303,7 +303,7 @@ enum TerminalChatTextFormatting {
             .joined(separator: "\n")
     }
 
-    static let systemMessageANSIColor = "\u{1B}[38;5;110m"
+    static let systemMessageANSIColor = TerminalStyle.Text.systemMessage
 
     static func fileChangeSummaryColorApplied(to text: String, isEnabled: Bool) -> String {
         guard isEnabled, !text.isEmpty else {
@@ -342,12 +342,12 @@ enum TerminalChatTextFormatting {
     )
 
     static func colorFileChangeSummaryHeader(_ line: String) -> String {
-        let reset = "\u{1B}[0m"
+        let reset = TerminalStyle.reset
         let color = fileChangeSummaryHeaderANSIColor
-        let count = "\u{1B}[38;5;81m"
-        let white = "\u{1B}[97m"
-        let addition = "\u{1B}[38;5;114m"
-        let deletion = "\u{1B}[38;5;203m"
+        let count = TerminalStyle.FileChange.count
+        let white = TerminalStyle.FileChange.path
+        let addition = TerminalStyle.FileChange.addition
+        let deletion = TerminalStyle.FileChange.deletion
         guard let regex = fileChangeSummaryHeaderRegex,
               let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
               match.numberOfRanges == 5,
@@ -381,12 +381,12 @@ enum TerminalChatTextFormatting {
     }
 
     static func colorFileChangeSummaryEntry(_ line: String) -> String {
-        let reset = "\u{1B}[0m"
-        let status = "\u{1B}[38;5;244m"
-        let path = "\u{1B}[97m"
-        let addition = "\u{1B}[38;5;114m"
-        let deletion = "\u{1B}[38;5;203m"
-        let binary = "\u{1B}[38;5;244m"
+        let reset = TerminalStyle.reset
+        let status = TerminalStyle.FileChange.metadata
+        let path = TerminalStyle.FileChange.path
+        let addition = TerminalStyle.FileChange.addition
+        let deletion = TerminalStyle.FileChange.deletion
+        let binary = TerminalStyle.FileChange.binary
         guard let regex = fileChangeSummaryEntryRegex,
               let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
               match.numberOfRanges == 6,
@@ -406,9 +406,9 @@ enum TerminalChatTextFormatting {
     }
 
     static func colorFileChangeSummaryHint(_ line: String) -> String {
-        let reset = "\u{1B}[0m"
-        let dim = "\u{1B}[38;5;250m"
-        let count = "\u{1B}[38;5;81m"
+        let reset = TerminalStyle.reset
+        let dim = TerminalStyle.FileChange.hint
+        let count = TerminalStyle.FileChange.count
         var rendered = "\(dim)\(line)\(reset)"
         for token in ["/undo", "/changes diff"] {
             rendered = rendered.replacingOccurrences(
@@ -421,7 +421,7 @@ enum TerminalChatTextFormatting {
 
     /// Warm gold distinguishes the summary heading while staying harmonious with
     /// the orange card accents, yellow highlights, and muted gray metadata.
-    static let fileChangeSummaryHeaderANSIColor = "\u{1B}[38;5;208m"
+    static let fileChangeSummaryHeaderANSIColor = TerminalStyle.FileChange.summaryHeader
 
     static func failureMessageColorApplied(to text: String, isEnabled: Bool) -> String {
         guard isEnabled, !text.isEmpty else {
@@ -429,7 +429,7 @@ enum TerminalChatTextFormatting {
         }
 
         let color = failureMessageANSIColor
-        let reset = "\u{1B}[0m"
+        let reset = TerminalStyle.reset
         return text
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { line in
@@ -438,14 +438,14 @@ enum TerminalChatTextFormatting {
             .joined(separator: "\n")
     }
 
-    static let failureMessageANSIColor = "\u{1B}[38;5;203m"
+    static let failureMessageANSIColor = TerminalStyle.Text.failureMessage
 
     static func operationalMessageColorApplied(to text: String, isEnabled: Bool) -> String {
         guard isEnabled, !text.isEmpty else {
             return text
         }
 
-        return "\u{1B}[38;5;75m\(text)\u{1B}[0m"
+        return "\(TerminalStyle.Text.operationalMessage)\(text)\(TerminalStyle.reset)"
     }
 
     static func renderThoughtMarkdown(
@@ -457,8 +457,8 @@ enum TerminalChatTextFormatting {
             return renderedMarkdown
         }
 
-        let gray = "\u{1B}[90m"
-        let reset = "\u{1B}[0m"
+        let gray = TerminalStyle.Thinking.body
+        let reset = TerminalStyle.reset
         var output = gray
         var cursor = renderedMarkdown.startIndex
 
@@ -537,30 +537,15 @@ enum TerminalChatTextFormatting {
         if let mutedAccent {
             preservedCodes.append(contentsOf: [38, 5, mutedAccent])
         } else {
-            preservedCodes.append(90)
+            preservedCodes.append(TerminalStyle.Thinking.bodyCode)
         }
-        let renderedCodes = preservedCodes
-            .map(String.init)
-            .joined(separator: ";")
-        return "\u{1B}[\(renderedCodes)m"
+        return TerminalStyle.sequence(codes: preservedCodes)
     }
 
     /// Returns a desaturated 256-color index for a renderer accent so that
     /// emphasis survives the thinking dim pass without overpowering the muted
     /// gray body text. Returns nil for colors that should fall back to gray.
     static func mutedThoughtAccent(for color: Int) -> Int? {
-        switch color {
-        case 81, 75, 111, 110, 109, 117:
-            // Heading / link / type accents -> muted steel-teal.
-            return 109
-        case 180, 222, 144:
-            // Inline code -> muted tan.
-            return 144
-        case 108:
-            // Blockquote bar -> muted sage.
-            return 108
-        default:
-            return nil
-        }
+        TerminalStyle.Thinking.mutedAccent(for: color)
     }
 }

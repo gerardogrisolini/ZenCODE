@@ -37,65 +37,8 @@ struct TerminalMarkdownPalette: Equatable, Sendable {
     let diffHunk: String
     let diffHeader: String
 
-    static let dark = TerminalMarkdownPalette(
-        appearance: .dark,
-        inlineCodeForeground: "\u{1B}[38;5;180m",
-        inlineCodeBackground: "\u{1B}[48;5;236m",
-        codeForeground: "\u{1B}[38;5;252m",
-        codeBackground: "\u{1B}[48;5;236m",
-        codeHeaderForeground: "\u{1B}[1;38;5;117m",
-        codeHeaderBackground: "\u{1B}[48;5;238m",
-        headingStyles: [
-            "\u{1B}[1;38;5;81m",
-            "\u{1B}[1;38;5;75m",
-            "\u{1B}[1;38;5;111m",
-            "\u{1B}[38;5;111m",
-            "\u{1B}[38;5;110m",
-            "\u{1B}[38;5;109m"
-        ],
-        syntaxKeyword: "\u{1B}[38;5;141m",
-        syntaxType: "\u{1B}[38;5;81m",
-        syntaxString: "\u{1B}[38;5;114m",
-        syntaxComment: "\u{1B}[38;5;244m",
-        syntaxNumber: "\u{1B}[38;5;215m",
-        syntaxAttribute: "\u{1B}[38;5;214m",
-        syntaxFunction: "\u{1B}[38;5;117m",
-        syntaxProperty: "\u{1B}[38;5;109m",
-        diffAddition: "\u{1B}[38;5;114m",
-        diffRemoval: "\u{1B}[38;5;210m",
-        diffHunk: "\u{1B}[1;38;5;81m",
-        diffHeader: "\u{1B}[38;5;180m"
-    )
-
-    static let light = TerminalMarkdownPalette(
-        appearance: .light,
-        inlineCodeForeground: "\u{1B}[38;5;94m",
-        inlineCodeBackground: "\u{1B}[48;5;254m",
-        codeForeground: "\u{1B}[38;5;235m",
-        codeBackground: "\u{1B}[48;5;254m",
-        codeHeaderForeground: "\u{1B}[1;38;5;25m",
-        codeHeaderBackground: "\u{1B}[48;5;252m",
-        headingStyles: [
-            "\u{1B}[1;38;5;25m",
-            "\u{1B}[1;38;5;31m",
-            "\u{1B}[1;38;5;61m",
-            "\u{1B}[38;5;61m",
-            "\u{1B}[38;5;60m",
-            "\u{1B}[38;5;59m"
-        ],
-        syntaxKeyword: "\u{1B}[38;5;90m",
-        syntaxType: "\u{1B}[38;5;24m",
-        syntaxString: "\u{1B}[38;5;28m",
-        syntaxComment: "\u{1B}[38;5;242m",
-        syntaxNumber: "\u{1B}[38;5;130m",
-        syntaxAttribute: "\u{1B}[38;5;130m",
-        syntaxFunction: "\u{1B}[38;5;25m",
-        syntaxProperty: "\u{1B}[38;5;30m",
-        diffAddition: "\u{1B}[38;5;28m",
-        diffRemoval: "\u{1B}[38;5;124m",
-        diffHunk: "\u{1B}[1;38;5;25m",
-        diffHeader: "\u{1B}[38;5;94m"
-    )
+    static let dark = TerminalStyle.Markdown.darkPalette
+    static let light = TerminalStyle.Markdown.lightPalette
 
     /// Process-wide palette selected once from startup environment metadata.
     /// Explicit `current(environment:)` calls remain available for tests and

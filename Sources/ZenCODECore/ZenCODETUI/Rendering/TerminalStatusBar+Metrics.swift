@@ -29,10 +29,10 @@ extension TerminalStatusBar {
     }
     
     static func gitStatusFragment(summary: TerminalGitStatusSummary) -> String {
-        let reset = "\u{1B}[0m"
-        let count = "\u{1B}[38;5;81m"
-        let addition = "\u{1B}[38;5;114m"
-        let deletion = "\u{1B}[38;5;203m"
+        let reset = TerminalStyle.reset
+        let count = TerminalStyle.FileChange.count
+        let addition = TerminalStyle.FileChange.addition
+        let deletion = TerminalStyle.FileChange.deletion
         return "\(count)\(summary.changedFileCount)\(reset) files "
         + "\(addition)+\(summary.additions)\(reset) "
         + "\(deletion)-\(summary.deletions)\(reset)"

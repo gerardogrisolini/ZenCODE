@@ -123,8 +123,8 @@ extension TerminalCheckboxMenu {
         let renderedLines = lines.map { padded(fitLine($0, width: contentWidth), width: contentWidth) }
         let frameHeight = renderedLines.count + 2
         let startRow = max(1, availableRows - frameHeight + 1)
-        let borderColor = "\u{1B}[38;5;208m"
-        let resetColor = "\u{1B}[0m"
+        let borderColor = TerminalStyle.Chrome.border
+        let resetColor = TerminalStyle.reset
         let horizontalRule = String(repeating: "─", count: max(0, boxWidth - 2))
 
         if reserveSpaceBeforeDrawing {

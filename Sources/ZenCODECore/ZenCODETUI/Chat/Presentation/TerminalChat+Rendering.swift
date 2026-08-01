@@ -181,8 +181,8 @@ extension TerminalChat {
         let horizontalInset = terminalBoxHorizontalInset(columns: columns)
         let contentWidth = max(20, columns - horizontalInset * 2)
                 let linePrefix = String(repeating: " ", count: horizontalInset)
-        let orange = "\u{1B}[38;5;208m"
-        let reset  = "\u{001B}[0m"
+        let orange = TerminalStyle.Accent.primary
+        let reset = TerminalStyle.reset
 
         var output: [String] = ["\(orange)\(TerminalChat.zenCODEHeader)\(reset)"]
         for line in lines {
@@ -208,8 +208,8 @@ extension TerminalChat {
         _ line: String,
         isContinuation: Bool
     ) -> String {
-        let orange = "\u{1B}[38;5;208m"
-        let gray = "\u{1B}[38;5;253m"
+        let orange = TerminalStyle.Accent.primary
+        let gray = TerminalStyle.Text.secondary
 
         guard !isContinuation,
               let colonIndex = line.firstIndex(of: ":") else {

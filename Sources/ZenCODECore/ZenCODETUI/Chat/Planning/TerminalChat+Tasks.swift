@@ -215,8 +215,8 @@ extension TerminalChat {
         if blocked > 0 { summary.append("\(blocked) blocked") }
         if failed > 0 { summary.append("\(failed) failed") }
 
-        let orange = "\u{1B}[38;5;208m"
-        let reset = "\u{1B}[0m"
+        let orange = TerminalStyle.Accent.primary
+        let reset = TerminalStyle.reset
         var lines = [
             "🫧 \(orange)Tasks:\(reset)",
             "**Graph:** `\(graph.id)` · **state:** `\(graph.state.rawValue)` · **revision:** \(graph.revision)",

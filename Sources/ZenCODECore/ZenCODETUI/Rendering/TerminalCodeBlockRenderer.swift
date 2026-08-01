@@ -8,7 +8,7 @@
 import Foundation
 
 enum TerminalCodeBlockRenderer {
-    static let reset = "\u{1B}[0m"
+    static let reset = TerminalStyle.reset
 
     /// Optional data-language overrides used by presentation surfaces that need
     /// a quieter JSON hierarchy than normal source-code highlighting.

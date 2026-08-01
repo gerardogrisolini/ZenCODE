@@ -18,7 +18,9 @@ extension TerminalChat {
             return
         }
 
-        await writeChatError("\u{1B}[90m[ZenCODE] \(message)\u{1B}[0m\n")
+        await writeChatError(
+            "\(TerminalStyle.Text.muted)[ZenCODE] \(message)\(TerminalStyle.reset)\n"
+        )
     }
 
     public func writeThought(_ delta: String) async {

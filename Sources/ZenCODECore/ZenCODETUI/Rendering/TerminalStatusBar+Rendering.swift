@@ -139,9 +139,9 @@ extension TerminalStatusBar {
         let topRow = max(1, state.row - reservedRows + 1)
         let startColumn = statusBoxStartColumnLocked(state: &state)
         let boxWidth = statusBoxWidthLocked(state: &state)
-        let orange = "\u{1B}[38;5;208m"
-        let dim = "\u{1B}[90m"
-        let reset = "\u{1B}[0m"
+        let orange = TerminalStyle.Chrome.border
+        let dim = TerminalStyle.Chrome.suggestion
+        let reset = TerminalStyle.reset
         let horizontalRule = String(repeating: "─", count: max(0, boxWidth - 2))
         let contentWidth = statusBoxContentWidthLocked(state: &state)
         let inputRows = inputPanelDisplayRowsLocked(
@@ -250,8 +250,8 @@ extension TerminalStatusBar {
         let startColumn = statusBoxStartColumnLocked(state: &state)
         let boxWidth = statusBoxWidthLocked(state: &state)
         let contentWidth = statusBoxContentWidthLocked(state: &state)
-        let orange = "\u{1B}[38;5;208m"
-        let reset = "\u{1B}[0m"
+        let orange = TerminalStyle.Chrome.border
+        let reset = TerminalStyle.reset
         let horizontalRule = String(repeating: "─", count: max(0, boxWidth - 2))
         let text = Self.fit(statusTextLocked(state: &state), width: contentWidth)
         let padding = max(0, contentWidth - Self.visibleCharacterCount(text))
@@ -401,7 +401,7 @@ extension TerminalStatusBar {
         case .standard:
             return nil
         case .fullAccess:
-            return "\u{1B}[31m●\u{1B}[0m"
+            return "\(TerminalStyle.Status.failure)●\(TerminalStyle.reset)"
         }
     }
     

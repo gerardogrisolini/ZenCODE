@@ -143,7 +143,7 @@ extension TerminalChat {
         newline: Bool = false,
         terminator: String = "\n"
     ) -> String {
-        let reset = "\u{1B}[0m"
+        let reset = TerminalStyle.reset
         let suffix = newline ? "\n" : ""
         let text = lines
             .enumerated()
@@ -744,24 +744,24 @@ extension TerminalChat {
             return renderCodeAreaLine(line, language: codeLanguage)
         }
         // Split labeled metadata rows ("label: value") so the label keeps a
-        // peach-orange used by compact tool values. The title row (icon + tool
-        // name, no leading label colon) stays full orange.
+        // muted orange while the value uses the peach-orange of compact tool
+        // values. The title row (icon + tool name, no leading label colon)
+        // stays full orange.
         if let colonIndex = line.firstIndex(of: ":"),
            isDetailedToolLabel(line[..<colonIndex]) {
             let label = line[...colonIndex]
             let value = line[line.index(after: colonIndex)...]
-            return "\(toolLabelColor)\(label)\(toolParameterBaseColor)\(value)"
+            return "\(toolLabelColor)\(label)\(toolValueColor)\(value)"
         }
         return "\(toolTitleColor)\(line)"
     }
 
-    /// Parameter JSON is presentation metadata rather than source code. It is
-    /// rendered in the same peach-orange used for compact tool values, with no
-    /// per-token syntax highlighting, so parentheses, punctuation, keys,
-    /// strings, numbers, booleans and `null`
-    /// all share one color and a target file's language hint can never recolor
-    /// the parameter block. There is no code-area background so the parameters
-    /// blend into the surrounding tool block.
+    /// Parameter JSON is presentation metadata rather than source code. It uses
+    /// one neutral gray for punctuation, keys and every value type, keeping the
+    /// payload readable but visually secondary to the orange tool identity.
+    /// Avoiding per-token syntax highlighting also ensures a target file's
+    /// language hint can never recolor the block. There is no code-area
+    /// background, so the parameters blend into the surrounding tool block.
     nonisolated static func renderDetailedToolParameterLine(_ line: String) -> String {
         "\(toolParameterBaseColor)\(line)"
     }
@@ -838,9 +838,9 @@ extension TerminalChat {
         let markerColor: String
         switch marker {
         case "-":
-            markerColor = "\u{1B}[38;5;203m"
+            markerColor = TerminalStyle.FileChange.deletion
         case "+":
-            markerColor = "\u{1B}[38;5;114m"
+            markerColor = TerminalStyle.FileChange.addition
         default:
             markerColor = codeAreaBackgroundColor
         }
@@ -851,7 +851,7 @@ extension TerminalChat {
         _ line: String,
         language: String?
     ) -> String {
-        let reset = "\u{1B}[0m"
+        let reset = TerminalStyle.reset
         return TerminalCodeBlockRenderer
             // Expanded tool snippets always paint their own dark code surface,
             // regardless of the host terminal theme. Keep token colors paired
@@ -870,19 +870,18 @@ extension TerminalChat {
         return trimmed.allSatisfy { $0.isLowercase || $0.isLetter }
     }
 
-    // Orange-family palette: full identity orange for titles and a muted
-    // terracotta for labels. Expanded metadata values and parameter JSON reuse
-    // the peach-orange of compact tool values, keeping both modes visually
-    // consistent while retaining a clear hierarchy.
-    nonisolated static let toolTitleColor = "\u{1B}[38;5;208m"
-    nonisolated static let toolLabelColor = "\u{1B}[38;5;173m"
-    nonisolated static let toolValueColor = "\u{1B}[38;5;215m"
-    nonisolated static let toolDurationColor = "\u{1B}[90m"
-    nonisolated static let toolParameterBaseColor = toolValueColor
-    nonisolated static let toolCodeGutterColor = "\u{1B}[90m"
+    // Orange-family palette: full identity orange for titles, muted terracotta
+    // for labels, and peach-orange for compact and expanded metadata values.
+    // Parameter JSON uses a neutral gray so large payloads remain secondary.
+    nonisolated static let toolTitleColor = TerminalStyle.Tool.title
+    nonisolated static let toolLabelColor = TerminalStyle.Tool.label
+    nonisolated static let toolValueColor = TerminalStyle.Tool.value
+    nonisolated static let toolDurationColor = TerminalStyle.Tool.duration
+    nonisolated static let toolParameterBaseColor = TerminalStyle.Tool.parameter
+    nonisolated static let toolCodeGutterColor = TerminalStyle.Tool.codeGutter
     // Dark gray background framing the code areas of expanded tool blocks,
     // matching the background used for submitted prompts.
-    nonisolated static let codeAreaBackgroundColor = "\u{1B}[48;5;236m"
+    nonisolated static let codeAreaBackgroundColor = TerminalStyle.Tool.codeBackground
     nonisolated static let expandedSnippetLineLimit = 100
     nonisolated static let expandedSnippetCharacterLimit = 10_000
 }
