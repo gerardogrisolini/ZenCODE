@@ -38,7 +38,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == ["🛠️  agent.message:", "worker: fix the tests ✅"])
+        #expect(lines == ["🛠️  agent.message", "worker: fix the tests ✅"])
     }
 
     @Test
@@ -65,7 +65,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == ["🛠️  agent.message:", "worker: fix the tests now ✅"])
+        #expect(lines == ["🛠️  agent.message", "worker: fix the tests now ✅"])
     }
 
     @Test
@@ -87,7 +87,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == ["🛠️  agent.message:", "please review the diff ⏳"])
+        #expect(lines == ["🛠️  agent.message", "please review the diff ⏳"])
     }
 
     @Test
@@ -132,7 +132,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == ["🛠️  agent.create:", "worker fix the tests ✅"])
+        #expect(lines == ["🛠️  agent.create", "worker fix the tests ✅"])
     }
 
     @Test
@@ -189,7 +189,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == ["🛠️  agent.create:", "worker, builder ✅"])
+        #expect(lines == ["🛠️  agent.create", "worker, builder ✅"])
     }
 
     @Test
@@ -316,7 +316,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == ["🛠️  agent.get:", "worker ✅"])
+        #expect(lines == ["🛠️  agent.get", "worker ✅"])
     }
 
     @Test
@@ -350,7 +350,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == ["🛠️  agent.list:", "Agents ✅"])
+        #expect(lines == ["🛠️  agent.list", "Agents ✅"])
     }
 
     // MARK: - Multi-recipient ids forms, status, precedence
@@ -460,7 +460,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == ["🛠️  agent.message:", "worker, builder: fix the tests ✅"])
+        #expect(lines == ["🛠️  agent.message", "worker, builder: fix the tests ✅"])
     }
 
     @Test
@@ -499,7 +499,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == ["🛠️  agent.close:", "stale-worker ✅"])
+        #expect(lines == ["🛠️  agent.close", "stale-worker ✅"])
     }
 
     @Test
@@ -538,7 +538,7 @@ extension TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == ["🛠️  agent.list:", "idle ✅"])
+        #expect(lines == ["🛠️  agent.list", "idle ✅"])
     }
 
     // MARK: - Alias-conflict precedence (aligned with runtime lookup)

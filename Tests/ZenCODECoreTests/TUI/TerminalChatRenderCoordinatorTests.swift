@@ -1548,7 +1548,7 @@ struct TerminalChatRenderCoordinatorTests {
                 .joined()
         )
 
-        #expect(stderr.contains("🛠️  agent.wait:"))
+        #expect(stderr.contains("🛠️  agent.wait"))
         #expect(stderr.contains("Agent ⏳"))
         #expect(!stderr.contains("thinking lines omitted"))
         #expect(stderr.contains("first hidden"))
@@ -1692,7 +1692,7 @@ struct TerminalChatRenderCoordinatorTests {
         await renderer.writeThought("Planning")
         let afterThought = await renderer.capturedWriteEvents()
         #expect(afterThought.allSatisfy { $0.channel == .standardError })
-        #expect(afterThought.map(\.text).joined().contains("Thinking:"))
+        #expect(afterThought.map(\.text).joined().contains("🤔"))
 
         // Cross-channel switch to assistant on stdout. writeAssistantContent
         // first finishes the pending thought (flushing the coalesced body and
@@ -1740,7 +1740,7 @@ struct TerminalChatRenderCoordinatorTests {
         let events = await renderer.capturedWriteEvents()
         let combined = events.map(\.text).joined()
 
-        #expect(combined.components(separatedBy: "🤔 Thinking:").count == 2)
+        #expect(combined.components(separatedBy: "🤔 Thinking").count == 2)
         #expect(combined.contains("Planning safely"))
         #expect(combined.contains("Answer"))
         #expect(!combined.contains("\n\n\n"))
@@ -1973,7 +1973,7 @@ struct TerminalChatRenderCoordinatorTests {
             .filter { $0.channel == .standardError }
             .map(\.text)
             .joined()
-        #expect(stderr.contains("🤔 Thinking:"))
+        #expect(stderr.contains("🤔 Thinking"))
         #expect(stderr.contains("*"))
     }
 

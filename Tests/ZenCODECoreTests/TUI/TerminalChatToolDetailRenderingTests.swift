@@ -108,13 +108,13 @@ extension TerminalChatRenderingTests {
 
         let lines = TerminalChat.compactToolLines(for: toolCall, statusIcon: "⏳")
 
-        #expect(lines == ["🛠️  local.editFile:", "Sources/App.swift ⏳"])
+        #expect(lines == ["🛠️  local.editFile", "Sources/App.swift ⏳"])
     }
 
     @Test
     func compactToolTerminalTextDoesNotInsertBlankRows() {
         let rendered = TerminalChat.compactToolTerminalText(
-            ["🛠️  Read:", "Sources/App.swift ⏳"],
+            ["🛠️  Read", "Sources/App.swift ⏳"],
             lineInset: " "
         )
 
@@ -213,7 +213,7 @@ extension TerminalChatRenderingTests {
         let lines = TerminalChat.compactToolLines(for: toolCall, statusIcon: "✅")
 
         #expect(lines.count == 2)
-        #expect(lines[0] == "🛠️  local.exec:")
+        #expect(lines[0] == "🛠️  local.exec")
         #expect(lines[1].hasSuffix("✅"))
     }
 

@@ -472,7 +472,7 @@ struct TerminalChatRenderingTests {
             contentInsetWidth: 0
         )
 
-        #expect(lines == ["🛠️  local.applyPatch:", "Sources/App.swift ✅"])
+        #expect(lines == ["🛠️  local.applyPatch", "Sources/App.swift ✅"])
     }
 
     @Test

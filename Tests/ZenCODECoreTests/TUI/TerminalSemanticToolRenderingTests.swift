@@ -58,7 +58,7 @@ struct TerminalSemanticToolRenderingTests {
             columnWidth: 80
         )
 
-        #expect(lines == ["🛠️  thirdparty.edit:", "/tmp/App.swift ⏳"])
+        #expect(lines == ["🛠️  thirdparty.edit", "/tmp/App.swift ⏳"])
     }
 
     @Test
@@ -82,7 +82,7 @@ struct TerminalSemanticToolRenderingTests {
             columnWidth: 80
         )
 
-        #expect(lines == ["🛠️  thirdparty.inspect:", "node-42 ✅ 0.03s"])
+        #expect(lines == ["🛠️  thirdparty.inspect", "node-42 ✅ 0.03s"])
     }
 
     @Test
@@ -96,13 +96,13 @@ struct TerminalSemanticToolRenderingTests {
                 listDescriptor,
                 [:],
                 "0.03s",
-                ["🛠️  skills.list:", "Prompt skills ✅ 0.03s"]
+                ["🛠️  skills.list", "Prompt skills ✅ 0.03s"]
             ),
             (
                 writeDescriptor,
                 ["content": "Summary: completed"],
                 "0.01s",
-                ["🛠️  memory.write:", "Project memory ✅ 0.01s"]
+                ["🛠️  memory.write", "Project memory ✅ 0.01s"]
             )
         ]
 
@@ -174,7 +174,7 @@ struct TerminalSemanticToolRenderingTests {
                     statusDetail: duration,
                     columnWidth: 100
                 ) == [
-                    "🛠️  \(name):",
+                    "🛠️  \(name)",
                     "\(path) ✅ \(duration)"
                 ]
             )
@@ -206,7 +206,7 @@ struct TerminalSemanticToolRenderingTests {
         )
 
         #expect(
-            lines == ["🛠️  tasks.list:", "pending ✅ 0.02s"]
+            lines == ["🛠️  tasks.list", "pending ✅ 0.02s"]
         )
     }
 
@@ -230,7 +230,7 @@ struct TerminalSemanticToolRenderingTests {
             columnWidth: 80
         )
 
-        #expect(lines == ["🛠️  feature.list:", "true ✅ 0.02s"])
+        #expect(lines == ["🛠️  feature.list", "true ✅ 0.02s"])
     }
 
     @Test

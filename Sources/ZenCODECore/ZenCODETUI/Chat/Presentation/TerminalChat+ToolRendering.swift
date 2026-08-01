@@ -189,7 +189,7 @@ extension TerminalChat {
             ]
         }
         return [
-            "\(icon)  \(title):",
+            "\(icon)  \(title)",
             compactToolStatusLine(
                 target: target,
                 statusIcon: statusIcon,

@@ -167,7 +167,7 @@ actor TerminalTelegramTurnProgressReporter {
         }
         pendingThought.removeAll(keepingCapacity: true)
         publishedThoughtCount += text.count
-        enqueue("🤔 Thinking:\n\(text)")
+        enqueue("🤔 Thinking\n\(text)")
     }
 
     private func enqueue(_ message: String) {
