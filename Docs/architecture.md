@@ -130,10 +130,16 @@ scope key combines the logical session with its installation generation, remains
 independent of the rotating WebSocket transport ID, and survives continuation
 resets without leaking into a recreated session incarnation. Closing that
 incarnation fences late activation and cancels any HTTP stream that is opening or
-active. Events that already emitted replay-unsafe reasoning, refusal, content,
-or tool output are never replayed or moved between transports. HTTP/SSE
+active. The transport client never replays events after replay-unsafe reasoning,
+refusal, content, or tool output crosses its callback boundary. At the generation
+boundary, an unexpected transient transport interruption receives one bounded
+full-turn retry on a fresh transport connection even when provisional stream
+callbacks have started: final assistant content and tool calls remain buffered
+until a terminal event, so the failed accumulator can be discarded without
+duplicating a committed assistant response or executing a tool twice. HTTP/SSE
 completion requires a terminal Responses event; `[DONE]` or EOF alone cannot
-commit partial output. Structured `error` events use stable transient identifiers
+commit partial output.
+Structured `error` events use stable transient identifiers
 (`server_error`, `server_is_overloaded`, `slow_down`,
 `websocket_connection_limit_reached`, or `previous_response_not_found`) or a
 wrapped 5xx status. A `response.failed` event is also retryable by event

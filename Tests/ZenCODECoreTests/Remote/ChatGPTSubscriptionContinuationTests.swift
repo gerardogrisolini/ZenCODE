@@ -202,6 +202,10 @@ extension RemoteSessionSnapshotTests {
         let applicationError = ChatGPTSubscriptionGenerationError.responseFailed(
             "The model produced an invalid tool call."
         )
+        let replayUnsafeClosed = ChatGPTSubscriptionResponsesClient
+            .ReplayUnsafeStreamFailure(underlying: RemoteTransportError.closed)
+        let replayUnsafeApplicationError = ChatGPTSubscriptionResponsesClient
+            .ReplayUnsafeStreamFailure(underlying: applicationError)
 
         #expect(
             ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
@@ -219,9 +223,36 @@ extension RemoteSessionSnapshotTests {
             )
         )
         #expect(
-            ChatGPTSubscriptionGenerationClient.streamInterruptionRetryDiagnostic()
-                .contains("full conversation replay")
+            ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
+                replayUnsafeClosed
+            )
         )
+        #expect(
+            ChatGPTSubscriptionGenerationClient.shouldRetryStreamInterruption(
+                replayUnsafeClosed,
+                completedRetries: 0
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionGenerationClient.shouldRetryStreamInterruption(
+                replayUnsafeClosed,
+                completedRetries: ChatGPTSubscriptionGenerationClient
+                    .maxStreamInterruptionRetries
+            )
+        )
+        #expect(
+            !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
+                replayUnsafeApplicationError
+            )
+        )
+        #expect(
+            replayUnsafeClosed.localizedDescription
+                == "Remote transport connection is closed."
+        )
+        let diagnostic = ChatGPTSubscriptionGenerationClient
+            .streamInterruptionRetryDiagnostic()
+        #expect(diagnostic.contains("reopening the connection"))
+        #expect(diagnostic.contains("full conversation replay"))
     }
 
     @Test
@@ -1992,7 +2023,7 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionNIOClientDoesNotReplayAfterUnsafeStreamEvent() async {
+    func chatGPTSubscriptionNIOClientDefersUnsafeTransportRecoveryToGenerationClient() async {
         let task = ChatGPTSubscriptionTestWebSocketTask(
             receiveOutcomes: [
                 .success(
@@ -2028,12 +2059,13 @@ extension RemoteSessionSnapshotTests {
                 textVerbosity: "medium",
                 sessionID: "unsafe-event"
             ) { _ in }
-            Issue.record("A replay-unsafe stream unexpectedly retried.")
+            Issue.record("A replay-unsafe stream unexpectedly completed.")
         } catch let failure as ChatGPTSubscriptionResponsesClient.ReplayUnsafeStreamFailure {
             #expect((failure.underlying as? RemoteTransportError) == .closed)
             #expect(
-                !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
-                    failure
+                ChatGPTSubscriptionGenerationClient.shouldRetryStreamInterruption(
+                    failure,
+                    completedRetries: 0
                 )
             )
         } catch {

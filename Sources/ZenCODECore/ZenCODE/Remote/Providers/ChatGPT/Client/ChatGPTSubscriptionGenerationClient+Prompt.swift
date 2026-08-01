@@ -220,11 +220,18 @@ extension ChatGPTSubscriptionGenerationClient {
                         || ChatGPTSubscriptionResponsesClient.isCancellationError(error) {
                         throw error
                     }
-                    if error is ChatGPTSubscriptionResponsesClient.ReplayUnsafeStreamFailure {
-                        // Reasoning, content, or tool output already crossed the
-                        // callback boundary. Never replay this request or switch
-                        // transports, even when the underlying failure is
-                        // otherwise transient.
+                    let shouldRetryStreamInterruption =
+                        Self.shouldRetryStreamInterruption(
+                            error,
+                            completedRetries: streamInterruptionRetries
+                        )
+                    if error is ChatGPTSubscriptionResponsesClient.ReplayUnsafeStreamFailure,
+                       !shouldRetryStreamInterruption {
+                        // A callback error or a non-transport stream failure may
+                        // have crossed a side-effecting boundary and must not be
+                        // replayed. A transient transport interruption is handled
+                        // below by discarding this attempt's accumulator and
+                        // reopening the turn on a fresh connection.
                         throw error
                     }
                     if hasContinuationReplay,
@@ -243,13 +250,15 @@ extension ChatGPTSubscriptionGenerationClient {
                         )
                         continue
                     }
-                    if streamInterruptionRetries < Self.maxStreamInterruptionRetries,
-                       Self.isRetryableStreamInterruption(error) {
+                    if shouldRetryStreamInterruption {
+                        let interruptionError = Self.underlyingStreamInterruptionError(
+                            error
+                        )
                         // A 401/403 from either transport means the access token
                         // is stale on the server even though the local expiry
                         // window passed. Force a refresh before rebuilding the
                         // client and retrying on the session's active transport.
-                        if Self.isAuthenticationFailure(error) {
+                        if Self.isAuthenticationFailure(interruptionError) {
                             do {
                                 let refreshed = try await ChatGPTSubscriptionAuthService
                                     .refresh(credentials: credentials)
@@ -269,11 +278,11 @@ extension ChatGPTSubscriptionGenerationClient {
                                 }
                             }
                         }
-                        // A transport failure that the streaming client could
-                        // not retry safely (for example the socket closed after
-                        // output already streamed). Content deltas are buffered
-                        // until the terminal event, so replaying the turn over a
-                        // fresh connection does not duplicate assistant output.
+                        // The transport client could not replay after provisional
+                        // stream callbacks. At this generation boundary, final
+                        // content and tool calls are still buffered, so discarding
+                        // the failed accumulator and replaying on a fresh connection
+                        // cannot duplicate a committed assistant response or tool.
                         streamInterruptionRetries += 1
                         guard mutateSession(for: lease, { session in
                             resetContinuationAndTransport(session: &session)
@@ -444,8 +453,8 @@ extension ChatGPTSubscriptionGenerationClient {
     static let maxStreamInterruptionRetries = 1
 
     static func streamInterruptionRetryDiagnostic() -> String {
-        "ChatGPT Subscription response was interrupted by a transient WebSocket "
-            + "failure; retrying this turn on a fresh connection with "
+        "ChatGPT Subscription response was interrupted by a transient transport "
+            + "failure; reopening the connection and retrying this turn with "
             + "a full conversation replay."
     }
 
@@ -454,7 +463,27 @@ extension ChatGPTSubscriptionGenerationClient {
             + "streaming after a recoverable WebSocket backend failure."
     }
 
+    static func shouldRetryStreamInterruption(
+        _ error: Error,
+        completedRetries: Int
+    ) -> Bool {
+        guard completedRetries >= 0,
+              completedRetries < maxStreamInterruptionRetries else {
+            return false
+        }
+        return isRetryableStreamInterruption(error)
+    }
+
+    static func underlyingStreamInterruptionError(_ error: Error) -> Error {
+        if let failure = error as?
+            ChatGPTSubscriptionResponsesClient.ReplayUnsafeStreamFailure {
+            return failure.underlying
+        }
+        return error
+    }
+
     static func isRetryableStreamInterruption(_ error: Error) -> Bool {
+        let error = underlyingStreamInterruptionError(error)
         guard !ChatGPTSubscriptionResponsesClient.isCancellationError(error) else {
             return false
         }
