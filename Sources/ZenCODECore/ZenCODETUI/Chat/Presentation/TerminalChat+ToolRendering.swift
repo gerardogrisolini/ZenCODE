@@ -744,9 +744,8 @@ extension TerminalChat {
             return renderCodeAreaLine(line, language: codeLanguage)
         }
         // Split labeled metadata rows ("label: value") so the label keeps a
-        // muted orange while the value drops to medium gray, matching the
-        // parameter JSON. The title row (icon + tool name, no leading label
-        // colon) stays full orange.
+        // peach-orange used by compact tool values. The title row (icon + tool
+        // name, no leading label colon) stays full orange.
         if let colonIndex = line.firstIndex(of: ":"),
            isDetailedToolLabel(line[..<colonIndex]) {
             let label = line[...colonIndex]
@@ -757,8 +756,9 @@ extension TerminalChat {
     }
 
     /// Parameter JSON is presentation metadata rather than source code. It is
-    /// rendered in a single medium gray with no per-token syntax highlighting,
-    /// so parentheses, punctuation, keys, strings, numbers, booleans and `null`
+    /// rendered in the same peach-orange used for compact tool values, with no
+    /// per-token syntax highlighting, so parentheses, punctuation, keys,
+    /// strings, numbers, booleans and `null`
     /// all share one color and a target file's language hint can never recolor
     /// the parameter block. There is no code-area background so the parameters
     /// blend into the surrounding tool block.
@@ -871,14 +871,14 @@ extension TerminalChat {
     }
 
     // Orange-family palette: full identity orange for titles and a muted
-    // terracotta for labels. Expanded metadata values and parameter JSON both
-    // use medium gray so the block reads as orange labels over gray content.
-    // `toolValueColor` (peach-orange) is retained for compact tool rendering.
+    // terracotta for labels. Expanded metadata values and parameter JSON reuse
+    // the peach-orange of compact tool values, keeping both modes visually
+    // consistent while retaining a clear hierarchy.
     nonisolated static let toolTitleColor = "\u{1B}[38;5;208m"
     nonisolated static let toolLabelColor = "\u{1B}[38;5;173m"
     nonisolated static let toolValueColor = "\u{1B}[38;5;215m"
     nonisolated static let toolDurationColor = "\u{1B}[90m"
-    nonisolated static let toolParameterBaseColor = "\u{1B}[38;5;244m"
+    nonisolated static let toolParameterBaseColor = toolValueColor
     nonisolated static let toolCodeGutterColor = "\u{1B}[90m"
     // Dark gray background framing the code areas of expanded tool blocks,
     // matching the background used for submitted prompts.

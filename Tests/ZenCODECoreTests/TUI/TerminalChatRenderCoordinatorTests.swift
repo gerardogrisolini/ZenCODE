@@ -392,7 +392,7 @@ struct TerminalChatRenderCoordinatorTests {
 
     @Test
     func detailedMultiEditCompletionRewritesPendingTitleWithDiffs() async {
-        let maximumInPlaceRows = 12
+        let maximumInPlaceRows = 11
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
             columnWidthProvider: { 100 }
@@ -431,6 +431,10 @@ struct TerminalChatRenderCoordinatorTests {
         )
         let rewriteSequence = completionEvents.first?.text ?? ""
 
+        #expect(
+            started.activeDetailedToolRenderedRowCount
+                == maximumInPlaceRows - 1
+        )
         #expect(
             rewriteSequence.hasPrefix(
                 "\u{1B}[\(started.activeDetailedToolRenderedRowCount)A\r"
@@ -609,8 +613,8 @@ struct TerminalChatRenderCoordinatorTests {
     @Test
     func detailedToolPendingBeyondScrollRegionIsBoundedAndRewritten() async {
         let scrollableRows = 12
-        // A large pending payload is bounded before it is written, retaining an
-        // owned block that completion can replace instead of duplicating.
+        // A large pending payload is bounded one row below the scrolling
+        // capacity, retaining the cursor row required to replace it cleanly.
         let script = (0..<40)
             .map { "echo line\($0)" }
             .joined(separator: "\n")
@@ -648,7 +652,9 @@ struct TerminalChatRenderCoordinatorTests {
             .map(\.text)
             .joined()
 
-        #expect(started.activeDetailedToolRenderedRowCount == scrollableRows)
+        #expect(
+            started.activeDetailedToolRenderedRowCount == scrollableRows - 1
+        )
         #expect(containsCursorUpSequence(completionText))
         #expect(
             completionText.components(separatedBy: "\u{1B}[2K").count - 1
@@ -707,7 +713,9 @@ struct TerminalChatRenderCoordinatorTests {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
 
-        #expect(started.activeDetailedToolRenderedRowCount == scrollableRows)
+        #expect(
+            started.activeDetailedToolRenderedRowCount == scrollableRows - 1
+        )
         #expect(containsCursorUpSequence(completionText))
         #expect(
             completionText.components(separatedBy: "\u{1B}[2K").count - 1

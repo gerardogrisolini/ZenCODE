@@ -854,10 +854,11 @@ actor TerminalChatRenderCoordinator {
                 // completed block.
                 //
                 // A block that exceeded the scrolling region has already
-                // lost its earliest rows to scrollback. Cursor-up is clamped
-                // at the top of the terminal (not the scrolling margin), so
-                // clearing its original row count would descend through the
-                // reserved input/status overlay. Append its completion instead.
+                // lost its earliest rows to scrollback. The same is true when
+                // its content consumes the whole region: the terminating
+                // newline needs one physical cursor row and scrolls the title
+                // beyond the top margin. Cursor-up / erase can no longer reach
+                // that title, leaving it above the completed redraw.
                 //
                 // A completion may be taller than the region. That does not make
                 // clearing unsafe when the pending block itself is still fully
@@ -865,15 +866,17 @@ actor TerminalChatRenderCoordinator {
                 // scrolling region. Bounding detailed pending blocks at start
                 // keeps them rewritable and avoids leaving the hourglass copy in
                 // the transcript beside a long completed result.
-                let maximumSafeRows = min(
-                    block.maximumInPlaceRows ?? Int.max,
-                    maximumInPlaceRows ?? Int.max
+                let maximumReplaceableRows = min(
+                    replaceableToolRowCapacity(
+                        block.maximumInPlaceRows
+                    ) ?? Int.max,
+                    replaceableToolRowCapacity(maximumInPlaceRows) ?? Int.max
                 )
                 return block.id == toolCall.id
                     && block.style == style
                     && standardErrorIsTerminal
                     && block.columnWidth == columnWidth
-                    && block.rows <= maximumSafeRows
+                    && block.rows <= maximumReplaceableRows
             } ?? false
 
             // Starts transfer the one physical rewrite slot to the newest
@@ -898,6 +901,10 @@ actor TerminalChatRenderCoordinator {
     }
 
     /// Keeps a detailed pending block inside the rewriteable scrolling region.
+    /// One row is reserved for the cursor after the block's terminating newline;
+    /// otherwise a block that exactly fills the region scrolls its title beyond
+    /// the top margin before completion can replace it.
+    ///
     /// Large edit/write payloads are shown in full by the completion; while the
     /// tool is running, retain a bounded prefix plus status so that completion
     /// can replace rather than duplicate the pending block.
@@ -905,24 +912,36 @@ actor TerminalChatRenderCoordinator {
         _ rows: [TerminalChat.DetailedToolRow],
         maximumInPlaceRows: Int?
     ) -> [TerminalChat.DetailedToolRow] {
-        guard let maximumInPlaceRows,
-              rows.count > maximumInPlaceRows else {
+        guard let maximumReplaceableRows = replaceableToolRowCapacity(
+            maximumInPlaceRows
+        ), rows.count > maximumReplaceableRows else {
             return rows
         }
-        guard maximumInPlaceRows > 0 else {
+        guard maximumReplaceableRows > 0 else {
             return rows.last.map { [$0] } ?? []
         }
-        guard maximumInPlaceRows > 1 else {
+        guard maximumReplaceableRows > 1 else {
             return rows.last.map { [$0] } ?? []
         }
-        guard maximumInPlaceRows > 2 else {
+        guard maximumReplaceableRows > 2 else {
             return [rows[0], rows[rows.count - 1]]
         }
 
-        return Array(rows.prefix(maximumInPlaceRows - 2)) + [
+        return Array(rows.prefix(maximumReplaceableRows - 2)) + [
             .text("... details shown on completion"),
             rows[rows.count - 1]
         ]
+    }
+
+    /// Converts the scrolling-region height into the number of content rows
+    /// that remain cursor-reachable after `writeToolBlock` appends its newline.
+    private func replaceableToolRowCapacity(
+        _ maximumInPlaceRows: Int?
+    ) -> Int? {
+        guard let maximumInPlaceRows else {
+            return nil
+        }
+        return maximumInPlaceRows > 0 ? maximumInPlaceRows - 1 : 0
     }
 
     private func toolBlockStyle(

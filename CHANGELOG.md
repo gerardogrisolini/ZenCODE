@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-08-01
+
 ### Added
 
 - Native Linux arm64 CI and release artifacts alongside the existing Linux
@@ -21,11 +23,22 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Interactive setup is now part of `ZenCODECore`: first-run setup opens
   automatically when required, `/setup` rebuilds the runtime and restores the
   active conversation, and setup tests now live with the Core test target.
+- Expanded tool parameter JSON and metadata values now reuse the peach-orange of
+  compact tool values instead of medium gray, keeping both presentation modes
+  visually consistent while preserving the orange-title-over-content hierarchy.
 
 ### Removed
 
 - The separate public `ZenCODESetup` product and target. Setup APIs such as
   `ZenCODESetupRunner` are now exported by `ZenCODECore`.
+
+### Fixed
+
+- A detailed in-progress tool block that exactly filled the scrolling region
+  scrolled its title past the top margin before completion could replace it,
+  leaving a stale hourglass copy in the transcript beside the completed result.
+  The rewriteable row capacity now reserves the cursor row needed after the
+  block's terminating newline.
 
 ## [1.0.10] - 2026-07-31
 
