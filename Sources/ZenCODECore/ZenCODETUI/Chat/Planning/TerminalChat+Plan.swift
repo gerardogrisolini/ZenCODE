@@ -45,8 +45,10 @@ extension TerminalChat {
     ]
 
     func handlePlanCommand(_ command: String) async -> TerminalSubmittedLineAction {
-        let argument = String(command.dropFirst("/plan".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let argument = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/plan"
+        )
 
         switch argument.lowercased() {
         case "status":

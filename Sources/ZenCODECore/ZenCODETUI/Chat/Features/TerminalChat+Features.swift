@@ -16,8 +16,10 @@ enum TerminalFeatureCommandResult: Sendable {
 
 extension TerminalChat {
     func handleFeatureCommand(_ command: String) async -> TerminalFeatureCommandResult {
-        let rawArguments = String(command.dropFirst("/feature".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawArguments = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/feature"
+        )
 
         if rawArguments.isEmpty {
             guard stdinIsTerminal else {

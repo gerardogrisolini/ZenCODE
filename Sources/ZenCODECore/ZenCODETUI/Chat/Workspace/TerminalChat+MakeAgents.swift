@@ -9,8 +9,10 @@ extension TerminalChat {
     func handleMakeAgentsCommand(
         _ command: String
     ) async -> TerminalSubmittedLineAction {
-        let argument = String(command.dropFirst("/make-agents".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let argument = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/make-agents"
+        )
         guard argument.isEmpty else {
             await writeFailureMessage(
                 "ZenCODE: /make-agents does not accept arguments; it updates AGENTS.md in the current working directory.\n"

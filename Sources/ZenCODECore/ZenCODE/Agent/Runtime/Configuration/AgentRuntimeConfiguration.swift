@@ -384,16 +384,6 @@ public struct AgentRuntimeConfiguration: Sendable {
         )
     }
 
-    public func withLocalModelSettings(
-        configuredContextWindowLimit: Int?,
-        generationParameterOverrides: AgentGenerationParameterOverrides?
-    ) -> AgentRuntimeConfiguration {
-        withModelSettings(
-            configuredContextWindowLimit: configuredContextWindowLimit,
-            generationParameterOverrides: generationParameterOverrides
-        )
-    }
-
     public func withModelSettings(
         configuredContextWindowLimit: Int?,
         generationParameterOverrides: AgentGenerationParameterOverrides?

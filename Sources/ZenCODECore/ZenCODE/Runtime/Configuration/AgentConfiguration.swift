@@ -329,17 +329,13 @@ public struct AgentConfiguration: Sendable {
         }
     }
 
+    /// Projects only the shared runtime fields. The context window limit and
+    /// the generation parameter overrides are intentionally omitted: the CLI
+    /// configuration does not own them, so the runtime defaults apply.
+    @available(*, deprecated, message: "Use AgentCoreSessionConfiguration.runtimeConfiguration")
     public var runtimeConfiguration: AgentRuntimeConfiguration {
-        AgentRuntimeConfiguration(
-            modelID: effectiveModelID,
-            bearerToken: bearerToken,
-            workingDirectory: workingDirectory,
-            maxToolRounds: maxToolRounds,
-            maxOutputTokens: maxOutputTokens,
-            verboseLogging: verboseLogging,
-            appMode: appMode,
-            locksModelToSession: hostedAgentProfiles != nil,
-            toolAuthorizationHandler: nil
+        projectedRuntimeConfiguration(
+            locksModelToSession: hostedAgentProfiles != nil
         )
     }
 
@@ -427,14 +423,14 @@ public struct AgentConfiguration: Sendable {
             return try AgentProfileStore.developerProfile(in: availableAgents)
         }
 
-        let normalizedName = normalizedAgentLookupValue(rawAgentName)
+        let normalizedName = TextUtilities.normalizedLookupValue(rawAgentName)
         guard !normalizedName.isEmpty else {
             return nil
         }
 
         if let agent = availableAgents.first(where: { agent in
-            normalizedAgentLookupValue(agent.id) == normalizedName
-                || normalizedAgentLookupValue(agent.name) == normalizedName
+            TextUtilities.normalizedLookupValue(agent.id) == normalizedName
+                || TextUtilities.normalizedLookupValue(agent.name) == normalizedName
         }) {
             return agent
         }
@@ -445,12 +441,6 @@ public struct AgentConfiguration: Sendable {
         )
     }
 
-    private static func normalizedAgentLookupValue(_ value: String) -> String {
-        value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            .lowercased()
-    }
 }
 
 public enum AgentConfigurationError: LocalizedError {

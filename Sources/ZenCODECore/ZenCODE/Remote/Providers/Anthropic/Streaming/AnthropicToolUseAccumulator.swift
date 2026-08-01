@@ -19,7 +19,7 @@ struct AnthropicToolUseAccumulator {
     private var partialsByIndex: [Int: PartialToolUse] = [:]
 
     mutating func ingestContentBlockStart(_ object: [String: Any]) {
-        guard let index = AnthropicSubscriptionGenerationClient.intValue(object["index"]),
+        guard let index = JSONValue.intValue(fromJSONObject: object["index"]),
               let contentBlock = object["content_block"] as? [String: Any],
               AnthropicSubscriptionGenerationClient.stringValue(contentBlock["type"])?.lowercased() == "tool_use",
               let id = AnthropicSubscriptionGenerationClient.stringValue(contentBlock["id"])?.nilIfBlank,

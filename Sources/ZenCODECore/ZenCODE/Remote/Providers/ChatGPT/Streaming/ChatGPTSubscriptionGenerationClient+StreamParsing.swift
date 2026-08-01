@@ -659,10 +659,6 @@ extension ChatGPTSubscriptionGenerationClient {
         return nil
     }
 
-    static func intValue(_ value: Any?) -> Int? {
-        JSONValue(jsonObject: value).intValue
-    }
-
     /// True when a reasoning output item carries state that can be replayed on a
     /// later request while `store` is disabled.
     static func reasoningItemHasReplayableContent(_ item: [String: Any]) -> Bool {
@@ -680,7 +676,7 @@ extension ChatGPTSubscriptionGenerationClient {
         in object: [String: Any]
     ) -> Int? {
         for key in keys {
-            if let value = intValue(object[key]) {
+            if let value = JSONValue.intValue(fromJSONObject: object[key]) {
                 return value
             }
         }

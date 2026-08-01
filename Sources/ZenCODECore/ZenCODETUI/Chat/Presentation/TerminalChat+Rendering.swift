@@ -324,7 +324,7 @@ extension TerminalChat {
     }
 
     public nonisolated static func memoryToolEnabled(_ allowedToolNames: Set<String>) -> Bool {
-        allowedToolNames.contains { $0.hasPrefix("memory.") }
+        AgentSessionComposition.memoryToolEnabled(allowedToolNames)
     }
 
     /// Collapses `text` to a single line and truncates it to at most `limit`

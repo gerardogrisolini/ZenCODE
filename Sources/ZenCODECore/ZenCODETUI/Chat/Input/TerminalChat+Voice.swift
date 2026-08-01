@@ -9,8 +9,10 @@ import Foundation
 
 extension TerminalChat {
     func handleVoiceCommand(_ command: String) async {
-        let argument = String(command.dropFirst("/voice".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let argument = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/voice"
+        )
         guard argument.isEmpty else {
             await writeSystemMessage("Usage: /voice\n")
             return

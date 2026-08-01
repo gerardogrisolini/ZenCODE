@@ -7,8 +7,10 @@ import Foundation
 
 extension TerminalChat {
     func handleWorkflowCommand(_ command: String) async -> TerminalSubmittedLineAction {
-        let argument = String(command.dropFirst("/workflow".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let argument = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/workflow"
+        )
 
         guard !argument.isEmpty else {
             await writeFailureMessage(Self.workflowMissingGoalMessage)

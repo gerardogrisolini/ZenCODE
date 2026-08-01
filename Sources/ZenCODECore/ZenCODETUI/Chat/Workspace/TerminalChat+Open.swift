@@ -24,8 +24,10 @@ struct TerminalOpenCandidate: Equatable {
 
 extension TerminalChat {
     public func handleOpenCommand(_ command: String) async {
-        let argument = String(command.dropFirst("/open".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let argument = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/open"
+        )
 
         // Direct form: `/open <file-or-url>` opens the argument without a menu.
         if !argument.isEmpty {
@@ -268,7 +270,10 @@ extension TerminalChat {
             return nil
         }
 
-        let resolved = resolveOpenURL(from: token, workingDirectory: workingDirectory)
+        let resolved = resolvedWorkspaceFileURL(
+            from: token,
+            workingDirectory: workingDirectory
+        )
         guard FileManager.default.fileExists(atPath: resolved.path) else {
             return nil
         }
@@ -280,31 +285,10 @@ extension TerminalChat {
     }
 
     private func resolvedOpenURL(from rawPath: String) -> URL {
-        Self.resolveOpenURL(from: rawPath, workingDirectory: configuration.workingDirectory)
-    }
-
-    private nonisolated static func resolveOpenURL(
-        from rawPath: String,
-        workingDirectory: URL
-    ) -> URL {
-        let expandedPath: String
-        if rawPath == "~" {
-            expandedPath = UserHomeDirectory.current().path
-        } else if rawPath.hasPrefix("~/") {
-            expandedPath = UserHomeDirectory.current()
-                .appendingPathComponent(String(rawPath.dropFirst(2)))
-                .path
-        } else {
-            expandedPath = rawPath
-        }
-
-        if expandedPath.hasPrefix("/") {
-            return URL(fileURLWithPath: expandedPath).standardizedFileURL
-        }
-
-        return workingDirectory
-            .appendingPathComponent(expandedPath)
-            .standardizedFileURL
+        Self.resolvedWorkspaceFileURL(
+            from: rawPath,
+            workingDirectory: configuration.workingDirectory
+        )
     }
 
     nonisolated static func renderOpenCandidateList(_ candidates: [TerminalOpenCandidate]) -> String {

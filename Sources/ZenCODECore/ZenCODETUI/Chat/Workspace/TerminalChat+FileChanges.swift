@@ -31,9 +31,10 @@ extension TerminalChat {
     }
 
     public func handleChangesCommand(_ command: String) async {
-        let arguments = String(command.dropFirst("/changes".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
+        let arguments = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/changes"
+        ).lowercased()
         let includeDiff = arguments == "diff" || arguments == "--diff"
 
         guard let summary = lastFileChangeSummary else {

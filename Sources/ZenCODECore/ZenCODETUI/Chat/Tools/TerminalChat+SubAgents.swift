@@ -652,21 +652,7 @@ extension TerminalChat {
             return "[\(text)]"
         }
 
-        let color: String
-        switch snapshot.status {
-        case .queued:
-            color = "\u{1B}[33m"
-        case .running:
-            color = "\u{1B}[38;5;208m"
-        case .idle:
-            color = snapshot.latestOutput?.nilIfBlank == nil
-                ? "\u{1B}[90m"
-                : "\u{1B}[32m"
-        case .failed:
-            color = "\u{1B}[31m"
-        case .closed:
-            color = "\u{1B}[90m"
-        }
+        let color = statusColorCode(for: snapshot)
         return "\(color)[\(text)]\u{1B}[0m"
     }
 
@@ -692,6 +678,25 @@ extension TerminalChat {
         return snapshot.status.rawValue
     }
 
+    private nonisolated static func statusColorCode(
+        for snapshot: DirectSubAgentRuntime.AgentSnapshot
+    ) -> String {
+        switch snapshot.status {
+        case .queued:
+            return "\u{1B}[33m"
+        case .running:
+            return "\u{1B}[38;5;208m"
+        case .idle:
+            return snapshot.latestOutput?.nilIfBlank == nil
+                ? "\u{1B}[90m"
+                : "\u{1B}[32m"
+        case .failed:
+            return "\u{1B}[31m"
+        case .closed:
+            return "\u{1B}[90m"
+        }
+    }
+
     private nonisolated static func coloredStatusMarker(
         for snapshot: DirectSubAgentRuntime.AgentSnapshot
     ) -> String {
@@ -700,21 +705,7 @@ extension TerminalChat {
             return marker
         }
 
-        let color: String
-        switch snapshot.status {
-        case .queued:
-            color = "\u{1B}[33m"
-        case .running:
-            color = "\u{1B}[38;5;208m"
-        case .idle:
-            color = snapshot.latestOutput?.nilIfBlank == nil
-                ? "\u{1B}[90m"
-                : "\u{1B}[32m"
-        case .failed:
-            color = "\u{1B}[31m"
-        case .closed:
-            color = "\u{1B}[90m"
-        }
+        let color = statusColorCode(for: snapshot)
         return "\(color)\(marker)\u{1B}[0m"
     }
 

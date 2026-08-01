@@ -15,8 +15,10 @@ import Foundation
 
 extension TerminalChat {
     public func handleAgentsCommand(_ command: String) async throws {
-        let rawArguments = String(command.dropFirst("/agents".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawArguments = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/agents"
+        )
 
         if rawArguments.isEmpty {
             guard stdinIsTerminal else {

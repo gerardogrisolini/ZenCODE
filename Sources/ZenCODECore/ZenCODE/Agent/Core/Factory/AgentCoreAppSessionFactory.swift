@@ -105,7 +105,7 @@ public enum AgentCoreAppSessionFactory {
             preserveThinking: request.preserveThinking
         )
 
-        return AgentCoreSessionConfiguration(
+        return AgentCoreSessionConfigurationBuilder(
             sessionID: request.sessionID,
             modelID: effectiveModelID,
             bearerToken: request.bearerToken ?? agentConfiguration.bearerToken,
@@ -121,6 +121,7 @@ public enum AgentCoreAppSessionFactory {
             thinkingSelection: thinkingSelection,
             preserveThinking: request.preserveThinking
         )
+        .makeConfiguration()
     }
 
     public static func resolvedSystemPrompt(
@@ -130,47 +131,23 @@ public enum AgentCoreAppSessionFactory {
         allowedToolNames: Set<String>?,
         selectedSkillIDs: Set<String> = []
     ) -> String {
-        let memoryToolEnabled = memoryToolEnabled(allowedToolNames)
-        let selectedAgentSection = selectedAgent?.promptSection(memoryToolEnabled: memoryToolEnabled)
-        let selectedSkillSection = SystemPromptBuilder.staticSkillSection
-        let providedSystemPrompt = providedSystemPrompt?.nilIfBlank
-
-        if let providedSystemPrompt {
-            let alreadyHasSkillSection = providedSystemPrompt.contains(
-                SystemPromptBuilder.staticSkillSectionMarker
-            )
-            let contextSections = [
-                selectedAgentSection,
-                alreadyHasSkillSection ? nil : selectedSkillSection
-            ]
-            .compactMap { $0?.nilIfBlank }
-            let sections = contextSections + [
+        if let providedSystemPrompt = providedSystemPrompt?.nilIfBlank {
+            return AgentSessionComposition.appProvidedSystemPrompt(
                 providedSystemPrompt,
-                SystemPromptBuilder.taskOrchestrationSection(
-                    allowedToolNames: allowedToolNames
-                ),
-                SystemPromptBuilder.responseLanguageSection()
-            ]
-            .compactMap { $0?.nilIfBlank }
-            return sections
-                .joined(separator: "\n\n")
+                allowedToolNames: allowedToolNames,
+                selectedAgent: selectedAgent
+            )
         }
 
-        let basePrompt = AgentStandaloneSystemPrompt.prompt(
+        return AgentSessionComposition.standardSystemPrompt(
             cwd: cwd,
-            memoryToolEnabled: memoryToolEnabled,
             allowedToolNames: allowedToolNames,
-            selectedAgentSection: selectedAgentSection,
-            selectedSkillSection: selectedSkillSection
+            selectedAgent: selectedAgent
         )
-        return basePrompt
     }
 
     public static func memoryToolEnabled(_ allowedToolNames: Set<String>?) -> Bool {
-        guard let allowedToolNames else {
-            return true
-        }
-        return allowedToolNames.contains { $0.hasPrefix("memory.") }
+        AgentSessionComposition.memoryToolEnabled(allowedToolNames)
     }
 
     private static func resolvedAgentConfiguration(
@@ -225,14 +202,11 @@ public enum AgentCoreAppSessionFactory {
         } else {
             resolvedToolNames = selectedAgent?.allowedToolNames()
         }
-        let resolved = ExternalToolAvailability.resolvedAllowedToolNames(resolvedToolNames)
-        guard var resolved else {
-            return resolved
-        }
         // Both skill tools are intrinsic and always-on, so they must remain in
         // any explicit allowlist regardless of the user's tool selection.
-        resolved.formUnion(PromptSkillToolProvider.toolNames)
-        return resolved
+        return AgentSessionComposition.allowedToolNamesIncludingIntrinsicSkillTools(
+            ExternalToolAvailability.resolvedAllowedToolNames(resolvedToolNames)
+        )
     }
 
     private static func intrinsicAllowedToolNames(for selectedAgent: AgentProfile?) -> Set<String> {

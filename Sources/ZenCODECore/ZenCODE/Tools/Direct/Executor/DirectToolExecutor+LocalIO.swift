@@ -170,10 +170,11 @@ extension DirectToolExecutor {
     }
 
     public func truncated(_ text: String) -> String {
-        guard text.count > outputLimit else {
-            return text
-        }
-        return String(text.prefix(outputLimit)) + "\n... truncated to \(outputLimit) characters ..."
+        TextUtilities.truncate(
+            text: text,
+            limit: outputLimit,
+            footer: "\n... truncated to \(outputLimit) characters ..."
+        )
     }
 
     public func modelOutput(

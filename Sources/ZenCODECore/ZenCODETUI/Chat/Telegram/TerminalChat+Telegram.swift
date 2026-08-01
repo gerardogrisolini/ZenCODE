@@ -10,9 +10,10 @@ import ToolCore
 
 extension TerminalChat {
     func handleTelegramCommand(_ command: String) async {
-        let argument = String(command.dropFirst("/telegram".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
+        let argument = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/telegram"
+        ).lowercased()
 
         switch TerminalTelegramCommandAction(argument: argument) {
         case .status:

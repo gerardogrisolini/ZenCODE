@@ -25,13 +25,13 @@ extension DirectSubAgentRuntime {
         let candidates = rawCandidates.compactMap { $0?.nilIfBlank }
 
         for candidate in candidates {
-            let lookupValue = normalizedAgentLookupValue(candidate)
+            let lookupValue = TextUtilities.normalizedLookupValue(candidate)
             guard !lookupValue.isEmpty else {
                 continue
             }
             if let agent = agents.first(where: { agent in
-                normalizedAgentLookupValue(agent.id) == lookupValue
-                    || normalizedAgentLookupValue(agent.name) == lookupValue
+                TextUtilities.normalizedLookupValue(agent.id) == lookupValue
+                    || TextUtilities.normalizedLookupValue(agent.name) == lookupValue
             }) {
                 return agent
             }
@@ -205,13 +205,6 @@ extension DirectSubAgentRuntime {
 
     public static func jsonValue(from value: Any) -> JSONValue {
         JSONValue(jsonObject: value)
-    }
-
-    private static func normalizedAgentLookupValue(_ value: String) -> String {
-        value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            .lowercased()
     }
 
     public static func requestedAgentIdentifiers(

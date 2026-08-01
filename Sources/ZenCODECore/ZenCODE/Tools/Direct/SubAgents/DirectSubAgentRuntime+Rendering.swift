@@ -92,10 +92,11 @@ extension DirectSubAgentRuntime {
         _ text: String,
         limit: Int
     ) -> String {
-        guard text.count > limit else {
-            return text
-        }
-        return String(text.prefix(limit)) + "\n... truncated ..."
+        TextUtilities.truncate(
+            text: text,
+            limit: limit,
+            footer: "\n... truncated ..."
+        )
     }
 
     static func agentSortOrder(

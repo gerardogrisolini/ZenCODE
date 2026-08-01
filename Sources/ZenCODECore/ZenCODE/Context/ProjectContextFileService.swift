@@ -56,7 +56,7 @@ public struct ProjectContextFileService {
     ) -> ProjectContextDocument? {
         let standardizedRootURL = rootURL.standardizedFileURL
         let fileURL = standardizedRootURL.appendingPathComponent(kind.filename)
-        guard case let .loaded(content) = readFile(at: fileURL) else {
+        guard case let .loaded(content) = readContextFile(at: fileURL, fileManager: fileManager) else {
             return nil
         }
 
@@ -82,7 +82,7 @@ public struct ProjectContextFileService {
     ) throws -> ProjectContextDocument {
         let standardizedRootURL = rootURL.standardizedFileURL
         let fileURL = standardizedRootURL.appendingPathComponent(kind.filename)
-        switch readFile(at: fileURL) {
+        switch readContextFile(at: fileURL, fileManager: fileManager) {
         case .missing:
             break
         case .unreadable:
@@ -206,17 +206,6 @@ public struct ProjectContextFileService {
         return document
     }
 
-    private func readFile(at fileURL: URL) -> ProjectContextFileReadState {
-        guard fileManager.fileExists(atPath: fileURL.path) else {
-            return .missing
-        }
-        do {
-            return .loaded(try String(contentsOf: fileURL, encoding: .utf8))
-        } catch {
-            return .unreadable
-        }
-    }
-
     private static func headingTitle(from line: String) -> String? {
         let trimmedLine = line.trimmingCharacters(in: .whitespaces)
         guard trimmedLine.hasPrefix("#") else {
@@ -237,20 +226,8 @@ public struct ProjectContextFileService {
     }
 
     public static func digest(_ value: String) -> String {
-        var hash: UInt64 = 14_695_981_039_346_656_037
-        let prime: UInt64 = 1_099_511_628_211
-        for byte in value.utf8 {
-            hash ^= UInt64(byte)
-            hash &*= prime
-        }
-        return String(format: "%016llx", hash)
+        String(format: "%016llx", fnv1aHash(value))
     }
-}
-
-private enum ProjectContextFileReadState {
-    case missing
-    case loaded(String)
-    case unreadable
 }
 
 public enum ProjectContextFileServiceError: LocalizedError {

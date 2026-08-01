@@ -15,8 +15,10 @@ import Foundation
 
 extension TerminalChat {
     public func handleToolsCommand(_ command: String) async {
-        let rawArguments = String(command.dropFirst("/tools".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawArguments = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/tools"
+        )
 
         if rawArguments.isEmpty {
             guard stdinIsTerminal else {
@@ -216,8 +218,10 @@ extension TerminalChat {
     }
 
     public func handleSkillsCommand(_ command: String) async {
-        let rawArguments = String(command.dropFirst("/skills".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawArguments = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/skills"
+        )
 
         if Self.isSkillInstallRequest(rawArguments),
            Self.githubSkillInstallURL(from: rawArguments) == nil,

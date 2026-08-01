@@ -39,7 +39,7 @@ extension AnthropicSubscriptionGenerationClient {
             return
         }
 
-        let body = try await collectErrorBody(from: response.body)
+        let body = try await RemoteStreamTransport.collectErrorBody(from: response.body)
         var details: [String] = []
         if response.status == 429,
            let resumeMessage = limitReachedMessage(fromHeaders: response.headers) {
@@ -64,21 +64,6 @@ extension AnthropicSubscriptionGenerationClient {
         throw RemoteGenerationClientError.remoteFailure(
             "Anthropic Subscription returned HTTP \(response.status)\(suffix)"
         )
-    }
-
-    static func collectErrorBody(
-        from body: RemoteHTTPBody,
-        limit: Int = 64 * 1024
-    ) async throws -> String {
-        var data = Data()
-        for try await chunk in body {
-            if data.count >= limit {
-                break
-            }
-            let remaining = limit - data.count
-            data.append(contentsOf: chunk.prefix(remaining))
-        }
-        return String(decoding: data, as: UTF8.self)
     }
 
     static func errorMessage(fromJSONString string: String) -> String? {
@@ -238,9 +223,5 @@ extension AnthropicSubscriptionGenerationClient {
 
     static func stringValue(_ value: Any?) -> String? {
         RemoteGenerationClient.stringValue(value)
-    }
-
-    static func intValue(_ value: Any?) -> Int? {
-        JSONValue(jsonObject: value).intValue
     }
 }

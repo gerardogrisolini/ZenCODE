@@ -116,18 +116,12 @@ public struct AgentCoreSessionConfiguration: Sendable {
         workingDirectory.path
     }
 
+    /// Projects the shared runtime fields and adds the model-scoped settings
+    /// this session owns.
     public var runtimeConfiguration: AgentRuntimeConfiguration {
-        AgentRuntimeConfiguration(
-            modelID: modelID,
-            bearerToken: bearerToken,
-            workingDirectory: workingDirectory,
+        projectedRuntimeConfiguration(
             configuredContextWindowLimit: configuredContextWindowLimit,
-            generationParameterOverrides: generationParameterOverrides,
-            maxToolRounds: maxToolRounds,
-            maxOutputTokens: maxOutputTokens,
-            verboseLogging: verboseLogging,
-            appMode: appMode,
-            toolAuthorizationHandler: nil
+            generationParameterOverrides: generationParameterOverrides
         )
     }
 

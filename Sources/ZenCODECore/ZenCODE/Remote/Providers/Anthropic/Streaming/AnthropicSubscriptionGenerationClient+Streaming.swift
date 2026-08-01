@@ -180,7 +180,7 @@ extension AnthropicSubscriptionGenerationClient {
                 }
             case "content_block_delta":
                 markFirstDelta()
-                if let index = Self.intValue(object["index"]),
+                if let index = JSONValue.intValue(fromJSONObject: object["index"]),
                    let delta = object["delta"] as? [String: Any] {
                     thinkingAccumulator.ingestDelta(index: index, delta: delta)
                     let deltaType = Self.stringValue(delta["type"])?.lowercased() ?? ""

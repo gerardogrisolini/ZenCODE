@@ -122,7 +122,7 @@ public final class AgentsContextService {
     public func ensureGlobalAgentsFileExists() -> URL? {
         let fileURL = globalAgentsFileURL()
 
-        switch readFile(at: fileURL) {
+        switch readContextFile(at: fileURL, fileManager: fileManager) {
         case .loaded:
             // A readable existing file is owned by the user, including an
             // intentionally empty one. Defaults are created only for missing
@@ -169,7 +169,10 @@ public final class AgentsContextService {
         scope: AgentsContextDocument.Scope
     ) -> AgentsContextDocument? {
         let standardizedFileURL = fileURL.standardizedFileURL
-        guard case let .loaded(content) = readFile(at: standardizedFileURL) else {
+        guard case let .loaded(content) = readContextFile(
+            at: standardizedFileURL,
+            fileManager: fileManager
+        ) else {
             return nil
         }
 
@@ -184,17 +187,6 @@ public final class AgentsContextService {
             content: normalizedContent,
             digest: Self.digest(normalizedContent)
         )
-    }
-
-    private func readFile(at fileURL: URL) -> ContextFileReadState {
-        guard fileManager.fileExists(atPath: fileURL.path) else {
-            return .missing
-        }
-        do {
-            return .loaded(try String(contentsOf: fileURL, encoding: .utf8))
-        } catch {
-            return .unreadable
-        }
     }
 
     private func renderDocument(_ document: AgentsContextDocument) -> String? {
@@ -321,17 +313,6 @@ public final class AgentsContextService {
     }
 
     private static func digest(_ value: String) -> String {
-        var hash: UInt64 = 14_695_981_039_346_656_037
-        for byte in value.utf8 {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
-        return String(hash, radix: 16)
+        String(fnv1aHash(value), radix: 16)
     }
-}
-
-private enum ContextFileReadState {
-    case missing
-    case loaded(String)
-    case unreadable
 }

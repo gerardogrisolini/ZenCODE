@@ -23,8 +23,10 @@ enum TerminalSavedSessionCommandAction: Equatable, Sendable {
 
 extension TerminalChat {
     public func handleSessionsCommand(_ command: String) async {
-        let rawArguments = String(command.dropFirst("/sessions".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawArguments = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/sessions"
+        )
 
         switch Self.savedSessionCommandAction(rawArguments: rawArguments) {
         case .list:

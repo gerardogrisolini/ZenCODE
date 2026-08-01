@@ -8,6 +8,12 @@
 import Foundation
 import ToolCore
 
+extension JSONValue {
+    static func intValue(fromJSONObject value: Any?) -> Int? {
+        JSONValue(jsonObject: value).intValue
+    }
+}
+
 /// Stateless HTTP/SSE transport helpers for remote generation streaming.
 public enum RemoteStreamTransport {
 

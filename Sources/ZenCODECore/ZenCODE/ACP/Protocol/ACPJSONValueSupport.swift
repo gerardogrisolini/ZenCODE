@@ -17,13 +17,6 @@ extension JSONValue {
         JSONValue(jsonObject: value)
     }
 
-    public static func acpRequestID(from value: Any?) -> JSONValue? {
-        guard let value else {
-            return nil
-        }
-        return acpValue(from: value)
-    }
-
     public var acpStringValue: String? {
         guard case let .string(value) = self else {
             return nil

@@ -56,7 +56,7 @@ extension TerminalChat {
         let systemPrompt = includesActivePlanProgress
             ? systemPromptWithActivePlanProgress(baseSystemPrompt)
             : baseSystemPrompt
-        return AgentCoreSessionConfiguration(
+        return AgentCoreSessionConfigurationBuilder(
             sessionID: sessionID,
             modelID: currentEffectiveModelID(),
             bearerToken: configuration.bearerToken,
@@ -73,29 +73,23 @@ extension TerminalChat {
             thinkingSelection: currentAgentThinkingSelection(),
             preserveThinking: false
         )
+        .makeConfiguration()
     }
 
     private func allowedToolNamesIncludingSelectedPromptSkills(
         _ allowedToolNames: Set<String>
     ) -> Set<String> {
-        // Both skill tools are intrinsic and always-on, so they remain in the
-        // allowlist regardless of the current selection. This keeps the tool
-        // schema (and therefore the remote cache identity) stable across
-        // selection changes.
-        var effectiveAllowedToolNames = allowedToolNames
-        effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
-        return effectiveAllowedToolNames
+        AgentSessionComposition.allowedToolNamesIncludingIntrinsicSkillTools(
+            allowedToolNames
+        )
     }
 
     public func currentSystemPrompt(allowedToolNames: Set<String>) -> String {
-        let memoryToolEnabled = Self.memoryToolEnabled(allowedToolNames)
-        return AgentStandaloneSystemPrompt.prompt(
+        AgentSessionComposition.standardSystemPrompt(
             cwd: configuration.workingDirectory.path,
-            memoryToolEnabled: memoryToolEnabled,
             allowedToolNames: allowedToolNames,
+            selectedAgent: selectedAgent,
             locksModelToSession: configuration.hostedAgentProfiles != nil,
-            selectedAgentSection: selectedAgent?.promptSection(memoryToolEnabled: memoryToolEnabled),
-                        selectedSkillSection: SystemPromptBuilder.staticSkillSection,
             responseLanguageSection: responseLanguageSystemPromptSection()
         )
     }

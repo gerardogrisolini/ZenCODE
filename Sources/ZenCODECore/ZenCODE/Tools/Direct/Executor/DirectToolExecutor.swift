@@ -9,6 +9,12 @@ import FeatureMCPBridgeKit
 import Foundation
 import ToolCore
 
+private struct DirectToolPayloadInput {
+    let name: String
+    let description: String
+    let parameters: Any
+}
+
 public actor DirectToolExecutor {
     public static let defaultModelOutputLimit = 12_000
 
@@ -231,17 +237,14 @@ public actor DirectToolExecutor {
     public func chatCompletionToolPayloads(
         allowedToolNames: Set<String>? = nil
     ) async -> [[String: Any]] {
-        let descriptors = await descriptors(allowedToolNames: allowedToolNames)
-        return descriptors.compactMap { descriptor in
-            guard let schema = descriptor.schemaObject else {
-                return nil
-            }
-            return [
+        let inputs = await toolPayloadInputs(allowedToolNames: allowedToolNames)
+        return inputs.map { input in
+            [
                 "type": "function",
                 "function": [
-                    "name": descriptor.name,
-                    "description": descriptor.description,
-                    "parameters": schema
+                    "name": input.name,
+                    "description": input.description,
+                    "parameters": input.parameters
                 ]
             ]
         }
@@ -250,17 +253,30 @@ public actor DirectToolExecutor {
     public func responsesToolPayloads(
         allowedToolNames: Set<String>? = nil
     ) async -> [[String: Any]] {
+        let inputs = await toolPayloadInputs(allowedToolNames: allowedToolNames)
+        return inputs.map { input in
+            [
+                "type": "function",
+                "name": input.name,
+                "description": input.description,
+                "parameters": input.parameters
+            ]
+        }
+    }
+
+    private func toolPayloadInputs(
+        allowedToolNames: Set<String>?
+    ) async -> [DirectToolPayloadInput] {
         let descriptors = await descriptors(allowedToolNames: allowedToolNames)
         return descriptors.compactMap { descriptor in
-            guard let schema = descriptor.schemaObject else {
+            guard let parameters = descriptor.schemaObject else {
                 return nil
             }
-            return [
-                "type": "function",
-                "name": descriptor.name,
-                "description": descriptor.description,
-                "parameters": schema
-            ]
+            return DirectToolPayloadInput(
+                name: descriptor.name,
+                description: descriptor.description,
+                parameters: parameters
+            )
         }
     }
 
@@ -288,21 +304,20 @@ public actor DirectToolExecutor {
                 workingDirectory: workingDirectory,
                 allowedToolNames: allowedToolNames
             )
-            let output = execution.output
-            return DirectAgentToolResult(
-                output: truncated(output),
-                summary: summary(from: output),
-                modelOutput: modelOutput(from: output, toolName: toolCall.name),
+            return result(
+                output: execution.output,
+                toolName: toolCall.name,
+                status: .completed,
                 attachments: execution.attachments
             )
         } catch {
             if let executorError = error as? DirectToolExecutorError,
                case let .authorizationDenied(denialOutput) = executorError {
-                return DirectAgentToolResult(
-                    output: truncated(denialOutput),
-                    summary: summary(from: denialOutput),
-                    modelOutput: modelOutput(from: denialOutput, toolName: toolCall.name),
-                    status: .permissionDenied
+                return result(
+                    output: denialOutput,
+                    toolName: toolCall.name,
+                    status: .permissionDenied,
+                    attachments: []
                 )
             }
             let output = "Tool error: \(error.localizedDescription)"
@@ -312,6 +327,21 @@ public actor DirectToolExecutor {
                 status: Self.toolResultStatus(for: error)
             )
         }
+    }
+
+    private func result(
+        output: String,
+        toolName: String,
+        status: DirectAgentToolResult.Status,
+        attachments: [AgentRuntimeAttachment]
+    ) -> DirectAgentToolResult {
+        DirectAgentToolResult(
+            output: truncated(output),
+            summary: summary(from: output),
+            modelOutput: modelOutput(from: output, toolName: toolName),
+            status: status,
+            attachments: attachments
+        )
     }
 
     private static func toolResultStatus(for error: Error) -> DirectAgentToolResult.Status {

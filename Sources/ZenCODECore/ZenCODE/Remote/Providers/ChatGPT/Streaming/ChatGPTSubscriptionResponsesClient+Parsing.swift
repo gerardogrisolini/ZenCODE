@@ -193,7 +193,7 @@ extension ChatGPTSubscriptionResponsesClient {
         let hasRetryableIdentifier = identifiers.contains {
             retryableBackendErrorIdentifiers.contains($0)
         }
-        let status = ChatGPTSubscriptionGenerationClient.intValue(
+        let status = JSONValue.intValue(fromJSONObject:
             object["status"] ?? object["status_code"]
         )
         let hasRetryableStatus = normalizedType == "error"

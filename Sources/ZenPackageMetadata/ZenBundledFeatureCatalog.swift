@@ -95,10 +95,6 @@ public enum ZenBundledFeatureCatalog {
         all.first { $0.id == id }
     }
 
-    public static var macOSInstallerProductNames: [String] {
-        all.map(\.productName)
-    }
-
     public static var linuxInstallerProductNames: [String] {
         all
             .filter(\.isInstalledOnLinux)

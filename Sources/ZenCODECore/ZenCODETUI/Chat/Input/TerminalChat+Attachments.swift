@@ -10,8 +10,10 @@ import ToolCore
 
 extension TerminalChat {
     public func handleAttachCommand(_ command: String) async throws {
-        let rawArguments = String(command.dropFirst("/attach".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawArguments = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/attach"
+        )
         guard !rawArguments.isEmpty else {
             await writeSystemMessage(Self.renderAttachmentUsage())
             return
@@ -187,29 +189,11 @@ extension TerminalChat {
     }
 
     private func resolvedAttachmentURL(from rawPath: String) -> URL {
-        let expandedPath: String
-        if rawPath == "~" {
-            expandedPath = UserHomeDirectory.current().path
-        } else if rawPath.hasPrefix("~/") {
-            expandedPath = UserHomeDirectory.current()
-                .appendingPathComponent(String(rawPath.dropFirst(2)))
-                .path
-        } else {
-            expandedPath = rawPath
-        }
-
-        if let fileURL = URL(string: expandedPath),
-           fileURL.isFileURL {
-            return fileURL.standardizedFileURL
-        }
-
-        if expandedPath.hasPrefix("/") {
-            return URL(fileURLWithPath: expandedPath).standardizedFileURL
-        }
-
-        return configuration.workingDirectory
-            .appendingPathComponent(expandedPath)
-            .standardizedFileURL
+        Self.resolvedWorkspaceFileURL(
+            from: rawPath,
+            workingDirectory: configuration.workingDirectory,
+            recognizingFileURLs: true
+        )
     }
 
     private nonisolated static func renderByteCount(_ byteCount: Int) -> String {

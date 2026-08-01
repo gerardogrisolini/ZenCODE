@@ -27,8 +27,10 @@ extension TerminalChat {
   ]
 
   func handleReviewCommand(_ command: String) async -> TerminalSubmittedLineAction {
-    let argument = String(command.dropFirst("/review".count))
-      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let argument = Self.slashCommandArguments(
+      from: command,
+      commandPrefix: "/review"
+    )
 
     if !isSubAgentToolEnabled {
       await writeFailureMessage(

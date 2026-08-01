@@ -125,8 +125,10 @@ extension TerminalChat {
 
     func handleTasksCommand(_ command: String) async {
         await writeSubmittedPrompt(command)
-        let argument = String(command.dropFirst("/tasks".count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let argument = Self.slashCommandArguments(
+            from: command,
+            commandPrefix: "/tasks"
+        )
         let components = argument.split(whereSeparator: \.isWhitespace).map(String.init)
         let action = components.first?.lowercased() ?? "status"
 

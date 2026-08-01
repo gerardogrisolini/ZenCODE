@@ -23,7 +23,7 @@ struct AnthropicThinkingBlockAccumulator {
     private var partialsByIndex: [Int: PartialThinkingBlock] = [:]
 
     mutating func ingestContentBlockStart(_ object: [String: Any]) {
-        guard let index = AnthropicSubscriptionGenerationClient.intValue(object["index"]),
+        guard let index = JSONValue.intValue(fromJSONObject: object["index"]),
               let contentBlock = object["content_block"] as? [String: Any] else {
             return
         }

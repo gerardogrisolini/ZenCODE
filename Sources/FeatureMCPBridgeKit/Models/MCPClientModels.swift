@@ -53,24 +53,6 @@ public nonisolated struct MCPErrorResponse: Decodable {
 
 public nonisolated struct MCPListToolsResult: Codable, Sendable {
     public let tools: [MCPRemoteTool]
-
-    public func prettyPrintedJSON() throws -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
-
-        let data = try encoder.encode(self)
-        guard let json = String(data: data, encoding: .utf8) else {
-            throw EncodingError.invalidValue(
-                self,
-                EncodingError.Context(
-                    codingPath: [],
-                    debugDescription: "Unable to encode tools/list payload as UTF-8 text."
-                )
-            )
-        }
-
-        return json
-    }
 }
 
 public nonisolated struct MCPRemoteTool: Codable, Hashable, Sendable {
