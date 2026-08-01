@@ -246,12 +246,12 @@ struct TerminalSemanticToolRenderingTests {
             contentWidth: 100
         )
 
-        #expect(started.prefix(4) == [
+        #expect(started.prefix(3) == [
             "🛠️  thirdparty.edit",
             "kind: edit",
-            "action: Edit",
-            "target: /tmp/App.swift"
+            "action: Edit"
         ])
+        #expect(!started.contains { $0.hasPrefix("target: ") })
         #expect(started.contains("kind: edit"))
         #expect(started.contains("mode: replace"))
         #expect(!started.contains("parameters:"))

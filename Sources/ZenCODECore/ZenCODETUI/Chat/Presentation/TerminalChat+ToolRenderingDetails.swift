@@ -129,9 +129,6 @@ extension TerminalChat {
         if let action = presentation.action.flatMap(sanitizedMetadataText) {
             rows.append(.text("action: \(action)"))
         }
-        if let target = presentation.target.flatMap(sanitizedMetadataText) {
-            rows.append(.text("target: \(target)"))
-        }
         for item in presentation.metadata {
             guard let label = sanitizedMetadataText(item.label),
                   let value = sanitizedMetadataText(item.value) else {

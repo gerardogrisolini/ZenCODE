@@ -1389,10 +1389,9 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func terminalThinkingFoldsAcrossDeltasAndReportsOmittedLines() async {
+    func terminalThinkingShowsAllLinesAcrossDeltas() async {
         let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            terminalThoughtLineLimit: 2
+            standardErrorIsTerminal: true
         )
 
         await renderer.writeThought("first\nsecond\n")
@@ -1409,17 +1408,16 @@ struct TerminalChatRenderCoordinatorTests {
 
         #expect(stderr.contains("first"))
         #expect(stderr.contains("second"))
-        #expect(!stderr.contains("third"))
-        #expect(!stderr.contains("fourth"))
-        #expect(stderr.contains("… 2 thinking lines omitted"))
+        #expect(stderr.contains("third"))
+        #expect(stderr.contains("fourth"))
+        #expect(!stderr.contains("thinking lines omitted"))
     }
 
     @Test
-    func terminalThinkingFoldsNoNewlineTextByPhysicalTerminalRows() async {
+    func terminalThinkingWrapsNoNewlineTextByPhysicalRows() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
-            columnWidthProvider: { 8 },
-            terminalThoughtLineLimit: 2
+            columnWidthProvider: { 8 }
         )
 
         // With one trailing terminal cell reserved, each physical thought row
@@ -1436,15 +1434,14 @@ struct TerminalChatRenderCoordinatorTests {
         )
 
         #expect(stderr.contains("abcdefg\nhijklmn\n"))
-        #expect(!stderr.contains("opqrst"))
-        #expect(stderr.contains("… 1 thinking lines omitted"))
+        #expect(stderr.contains("opqrst"))
+        #expect(!stderr.contains("thinking lines omitted"))
     }
 
     @Test
-    func terminalThinkingCountsAnUnterminatedHiddenTail() async {
+    func terminalThinkingShowsUnterminatedTail() async {
         let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            terminalThoughtLineLimit: 1
+            standardErrorIsTerminal: true
         )
 
         await renderer.writeThought("visible\n")
@@ -1459,15 +1456,14 @@ struct TerminalChatRenderCoordinatorTests {
         )
 
         #expect(stderr.contains("visible"))
-        #expect(!stderr.contains("hidden tail without newline"))
-        #expect(stderr.contains("… 1 thinking lines omitted"))
+        #expect(stderr.contains("hidden tail without newline"))
+        #expect(!stderr.contains("thinking lines omitted"))
     }
 
     @Test
-    func nonTerminalThinkingNeverFolds() async {
+    func nonTerminalThinkingPassesThroughUnchanged() async {
         let renderer = makeRenderer(
-            standardErrorIsTerminal: false,
-            terminalThoughtLineLimit: 1
+            standardErrorIsTerminal: false
         )
 
         await renderer.writeThought("first\nsecond\n")
@@ -1484,10 +1480,9 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func terminalThinkingFoldResetsForTheNextStream() async {
+    func terminalThinkingShowsAllContentAcrossStreams() async {
         let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            terminalThoughtLineLimit: 1
+            standardErrorIsTerminal: true
         )
 
         await renderer.writeThought("first visible\nfirst hidden\n")
@@ -1504,28 +1499,27 @@ struct TerminalChatRenderCoordinatorTests {
 
         #expect(stderr.contains("first visible"))
         #expect(stderr.contains("second visible"))
-        #expect(!stderr.contains("first hidden"))
-        #expect(!stderr.contains("second hidden"))
-        #expect(stderr.components(separatedBy: "… 1 thinking lines omitted").count - 1 == 2)
+        #expect(stderr.contains("first hidden"))
+        #expect(stderr.contains("second hidden"))
+        #expect(!stderr.contains("thinking lines omitted"))
     }
 
     @Test
-    func thoughtFoldingSurvivesToolAndAssistantInterleavingWithoutLosingAssistantContent() async {
+    func terminalThinkingShowsAllContentAcrossInterleavingWithoutLosingAssistantContent() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
-            standardOutputIsTerminal: true,
-            terminalThoughtLineLimit: 1
+            standardOutputIsTerminal: true
         )
         let toolCall = presentedToolCall(
-            id: "thought-fold-interleave",
+            id: "thought-interleave",
             name: "agent.wait",
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
 
         await renderer.writeThought("first visible\nfirst hidden\n")
-        // Starting a tool completes the first thought stream and must publish
-        // its fold notice before the tool owns the terminal rows.
+        // Starting a tool completes the first thought stream before the tool
+        // owns the terminal rows.
         await renderer.writeToolCallStarted(toolCall)
         await renderer.writeAssistantContent("Assistant answer survives")
         await renderer.finishAssistantContent()
@@ -1548,9 +1542,9 @@ struct TerminalChatRenderCoordinatorTests {
 
         #expect(stderr.contains("🛠️  agent.wait:"))
         #expect(stderr.contains("Agent ⏳"))
-        #expect(stderr.components(separatedBy: "… 1 thinking lines omitted").count - 1 == 2)
-        #expect(!stderr.contains("first hidden"))
-        #expect(!stderr.contains("second hidden"))
+        #expect(!stderr.contains("thinking lines omitted"))
+        #expect(stderr.contains("first hidden"))
+        #expect(stderr.contains("second hidden"))
         #expect(stdout.contains("Assistant answer survives"))
     }
 
@@ -2111,7 +2105,7 @@ struct TerminalChatRenderCoordinatorTests {
         // No screen-clear or cursor-home sequence may survive anywhere.
         #expect(!text.contains("\u{1B}[2J"))
         #expect(!text.contains("\u{1B}[1;1H"))
-        #expect(visibleRows.contains { $0.hasPrefix("target: Sources/") })
+        #expect(!visibleRows.contains { $0.hasPrefix("target: ") })
         #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 100 })
     }
 
@@ -2146,7 +2140,7 @@ struct TerminalChatRenderCoordinatorTests {
             .map(String.init)
 
         #expect(!text.contains("\u{1B}[2J"))
-        #expect(visibleRows.contains { $0.hasPrefix("target: Sources/") })
+        #expect(!visibleRows.contains { $0.hasPrefix("target: ") })
         #expect(visibleRows.filter { !$0.hasPrefix("  ") }.allSatisfy { !$0.contains("\u{1B}") })
         #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 100 })
     }
@@ -2199,8 +2193,10 @@ struct TerminalChatRenderCoordinatorTests {
         )
 
         // An empty descriptor value is absent; a literal marker remains source
-        // content and receives its own numbered line.
-        #expect(emptyText.contains("target: Sources/Empty.swift"))
+        // content and receives its own numbered line. The target row is no
+        // longer rendered, but the path still reaches the parameter block.
+        #expect(!emptyText.contains("target: "))
+        #expect(emptyText.contains("Sources/Empty.swift"))
         #expect(!emptyText.contains("<empty>"))
         #expect(literalText.contains("1 │ <empty>"))
     }
@@ -2218,7 +2214,6 @@ struct TerminalChatRenderCoordinatorTests {
         },
         columnWidthProvider: (@Sendable () -> Int)? = nil,
         freshColumnWidthProvider: (@Sendable () -> Int)? = nil,
-        terminalThoughtLineLimit: Int = 12,
         cursorTopology: TerminalChatRenderCoordinator.CursorTopology? = nil
     ) -> TerminalChatRenderCoordinator {
         let resolvedTopology: TerminalChatRenderCoordinator.CursorTopology?
@@ -2243,8 +2238,7 @@ struct TerminalChatRenderCoordinatorTests {
             streamingNow: streamingNow,
             toolNow: toolNow,
             columnWidthProvider: columnWidthProvider,
-            freshColumnWidthProvider: freshColumnWidthProvider,
-            terminalThoughtLineLimit: terminalThoughtLineLimit
+            freshColumnWidthProvider: freshColumnWidthProvider
         )
     }
 }
@@ -2553,7 +2547,7 @@ struct TerminalChatToolBlockResizeTests {
         // semantic kind as a detail row.
         #expect(completionText.contains("thirdparty.edit"))
         #expect(completionText.contains("kind: edit"))
-        #expect(completionText.contains("target: /tmp/App.swift"))
+        #expect(!completionText.contains("target: /tmp/App.swift"))
         #expect(completionText.contains("status: ✅"))
         #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
     }

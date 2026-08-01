@@ -499,7 +499,7 @@ struct TerminalChatRenderingTests {
         )
 
         #expect(lines.contains("action: Apply"))
-        #expect(lines.contains("target: Sources/App.swift"))
+        #expect(!lines.contains { $0.hasPrefix("target: ") })
         #expect(lines.contains("patch:"))
     }
 

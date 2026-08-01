@@ -152,54 +152,6 @@ actor TerminalChatRenderCoordinator {
     /// Incremental accounting for a terminal thought stream. Visible text is
     /// hard-wrapped to a terminal-safe width before it is emitted, so the budget
     /// describes physical terminal rows rather than source newline count.
-    private struct ThoughtFoldingState: Sendable {
-        let lineLimit: Int
-        /// Number of completed physical rows already allowed through the fold.
-        var visibleLineCount = 0
-        /// Number of physical rows withheld after the visible prefix.
-        var omittedLineCount = 0
-        /// Visible-cell position within the current physical row. It persists
-        /// across streaming deltas so a long no-newline paragraph cannot bypass
-        /// the folding budget by arriving token-by-token.
-        var currentColumn = 0
-        /// A non-empty omitted line is counted when its first visible character
-        /// arrives. The flag prevents its later newline from counting it again.
-        var omittedLineHasContent = false
-
-        init(lineLimit: Int) {
-            self.lineLimit = max(0, lineLimit)
-        }
-
-        var rendersCurrentLine: Bool {
-            visibleLineCount < lineLimit
-        }
-
-        mutating func recordOmittedContent() {
-            guard !omittedLineHasContent else {
-                return
-            }
-            omittedLineCount += 1
-            omittedLineHasContent = true
-        }
-
-        mutating func finishOmittedLine() {
-            if !omittedLineHasContent {
-                // An empty rendered row is still a row omitted from the stream.
-                omittedLineCount += 1
-            }
-            omittedLineHasContent = false
-        }
-
-        mutating func finishCurrentPhysicalLine() {
-            if rendersCurrentLine {
-                visibleLineCount += 1
-            } else {
-                finishOmittedLine()
-            }
-            currentColumn = 0
-        }
-    }
-
     private enum OverviewContent: Sendable {
         case markdown(String)
         case subAgents(
@@ -244,10 +196,6 @@ actor TerminalChatRenderCoordinator {
     /// Production bypasses the short-lived width cache; injected providers keep
     /// their existing behavior unless an explicit fresh provider is supplied.
     private let freshColumnWidthProvider: @Sendable () -> Int
-    /// The terminal-only thought prefix budget. Production keeps the transcript
-    /// readable while tests may inject a smaller value for concise fixtures.
-    private let terminalThoughtLineLimit: Int
-
     private var nextWriteSequence: UInt64 = 0
     /// Counts every physical emission, whether or not writes are captured.
     /// The sub-agent overview uses it to detect that some other output was
@@ -265,7 +213,10 @@ actor TerminalChatRenderCoordinator {
 
     private var assistantStreamingState: StreamingContentState
     private var thoughtStreamingState: StreamingContentState
-    private var thoughtFoldingState: ThoughtFoldingState
+    /// Visible-cell position within the current physical thought row. It
+    /// persists across streaming deltas so a long no-newline paragraph wraps
+    /// consistently even when arriving token-by-token.
+    private var thoughtWrapColumn = 0
     /// A submitted prompt starts a transcript turn. The first prompt remains
     /// unadorned; every later one receives exactly one visual turn separator.
     private var hasWrittenSubmittedPrompt = false
@@ -309,8 +260,7 @@ actor TerminalChatRenderCoordinator {
             ContinuousClock().now
         },
         columnWidthProvider: (@Sendable () -> Int)? = nil,
-        freshColumnWidthProvider: (@Sendable () -> Int)? = nil,
-        terminalThoughtLineLimit: Int = 12
+        freshColumnWidthProvider: (@Sendable () -> Int)? = nil
     ) {
         self.standardOutput = standardOutput
         self.standardError = standardError
@@ -327,7 +277,6 @@ actor TerminalChatRenderCoordinator {
         self.streamingFlushDelay = streamingFlushDelay
         self.streamingNow = streamingNow
         self.toolNow = toolNow
-        self.terminalThoughtLineLimit = max(0, terminalThoughtLineLimit)
         if let columnWidthProvider {
             self.columnWidthProvider = columnWidthProvider
             self.freshColumnWidthProvider = freshColumnWidthProvider
@@ -350,9 +299,6 @@ actor TerminalChatRenderCoordinator {
                 isEnabled: standardErrorIsTerminal,
                 removesUnbalancedStrongMarkers: true
             )
-        )
-        self.thoughtFoldingState = ThoughtFoldingState(
-            lineLimit: terminalThoughtLineLimit
         )
     }
 
@@ -396,9 +342,7 @@ actor TerminalChatRenderCoordinator {
         finishAssistantContentFormatting()
         if !thoughtStreamingState.isStreaming {
             thoughtStreamingState.isStreaming = true
-            thoughtFoldingState = ThoughtFoldingState(
-                lineLimit: terminalThoughtLineLimit
-            )
+            thoughtWrapColumn = 0
             // Render the title one shade lighter than the dimmed thinking
             // body (`[90m`) so the label stands apart from the reasoning text.
             let title = standardErrorIsTerminal
@@ -477,32 +421,18 @@ actor TerminalChatRenderCoordinator {
         guard let renderedThought = Self.finishStreamingContent(
             in: &thoughtStreamingState
         ) else {
-            thoughtFoldingState = ThoughtFoldingState(
-                lineLimit: terminalThoughtLineLimit
-            )
             return
         }
         writeRenderedThought(renderedThought)
-        if standardErrorIsTerminal, thoughtFoldingState.omittedLineCount > 0 {
-            let notice = "\u{1B}[90m… \(thoughtFoldingState.omittedLineCount) thinking lines omitted\u{1B}[0m"
-            writeStreamingChat(
-                notice,
-                to: .standardError,
-                preservesSpacing: true
-            )
-        }
-        thoughtFoldingState = ThoughtFoldingState(
-            lineLimit: terminalThoughtLineLimit
-        )
+        thoughtWrapColumn = 0
         writeStreamingChat("\n\n", to: .standardError)
         flushPendingStreamingWrites()
     }
 
-    /// Filters terminal thinking after Markdown has been rendered, so the line
-    /// budget matches the actual terminal transcript rather than raw model
-    /// source. ANSI control sequences are copied as indivisible tokens and the
-    /// dimming pass runs afterwards, guaranteeing every emitted chunk closes its
-    /// own rendition with a reset.
+    /// Wraps terminal thinking after Markdown has been rendered so long
+    /// paragraphs do not rely on the terminal's own auto-wrap. ANSI control
+    /// sequences are copied through as indivisible tokens. All thinking lines
+    /// are emitted — no content is folded or omitted.
     private func writeRenderedThought(_ renderedThought: String) {
         let filteredThought = filteredTerminalThought(renderedThought)
         let markdown = TerminalChatTextFormatting.renderThoughtMarkdown(
@@ -525,7 +455,7 @@ actor TerminalChatRenderCoordinator {
 
         // Every emitted row receives `lineInset`; keep one trailing cell unused
         // to avoid terminal-dependent auto-wrap at exactly the final column.
-        // Because wrapping is explicit, the row count below remains stable both
+        // Because wrapping is explicit, the row count remains stable both
         // in captured tests and in a real TTY.
         let physicalLineWidth = max(
             1,
@@ -539,36 +469,25 @@ actor TerminalChatRenderCoordinator {
                    in: renderedThought,
                    from: index
                ) {
-                if thoughtFoldingState.rendersCurrentLine {
-                    output += renderedThought[index..<escapeEnd]
-                }
+                output += renderedThought[index..<escapeEnd]
                 index = escapeEnd
                 continue
             }
 
             let character = renderedThought[index]
             if Self.isTerminalLineBreak(character) {
-                if thoughtFoldingState.rendersCurrentLine {
-                    output.append(character)
-                }
-                thoughtFoldingState.finishCurrentPhysicalLine()
+                output.append(character)
+                thoughtWrapColumn = 0
             } else {
                 let characterWidth = TerminalANSIText.visibleWidth(of: character)
-                if thoughtFoldingState.currentColumn > 0,
-                   thoughtFoldingState.currentColumn + characterWidth > physicalLineWidth {
-                    let wrappedVisibleRow = thoughtFoldingState.rendersCurrentLine
-                    thoughtFoldingState.finishCurrentPhysicalLine()
-                    if wrappedVisibleRow {
-                        output.append("\n")
-                    }
+                if thoughtWrapColumn > 0,
+                   thoughtWrapColumn + characterWidth > physicalLineWidth {
+                    output.append("\n")
+                    thoughtWrapColumn = 0
                 }
 
-                if thoughtFoldingState.rendersCurrentLine {
-                    output.append(character)
-                } else {
-                    thoughtFoldingState.recordOmittedContent()
-                }
-                thoughtFoldingState.currentColumn += characterWidth
+                output.append(character)
+                thoughtWrapColumn += characterWidth
             }
             index = renderedThought.index(after: index)
         }
