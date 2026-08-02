@@ -57,6 +57,7 @@ Creates files under `~/.zencode/`:
 - `AGENTS.md` — global operating guidance.
 - `MEMORY.md` — lightweight global resume index.
 - `sessions/` — saved session snapshots grouped by project.
+- `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans.
 - `features/` — generated Builder packages and installed optional feature packages.
 - `source/` — persistent ZenCODE checkout retained by the platform installer for later optional-feature builds.
 
@@ -216,6 +217,8 @@ Commands start with `/`:
 
 **Agentic workflow:**
 - `/plan <goal>` — delegate planning to a read-only `Planner` sub-agent. See [planner.md](planner.md).
+- `/plan save` — persist the active plan (or the latest assistant response) in the project task-graph checkpoint.
+- `/plan load` — load the latest saved project plan into the current session as unapproved and pending.
 - `/plan status` — show plan progress from the graph state.
 - `/plan approve` — activate the plan and start implementation.
 - `/plan clear` — archive the graph and remove the active plan.
@@ -266,6 +269,14 @@ When work has multiple units, dependencies, or concurrent delegation, the coordi
 `/workflow` uses a distinct graph source. Its tasks must declare `execution.executor: sub_agent`, and the orchestrator rejects coordinator attempts or graph replacement while that workflow is active. This enforces delegation at the task lifecycle boundary rather than by applying a read-only tool policy to the coordinator. A coordinator without `agent.create` may work directly only in a graph that permits coordinator execution; it must never create or directly execute a workflow task.
 
 Checkpoints are written atomically under `~/.zencode/task-graphs/<project>/`.
+`/plan save` reuses this checkpoint directory rather than creating a separate
+plan store. It writes to a stable project plan-library logical session, so
+`/sessions new` may delete the live chat checkpoint without deleting explicitly
+saved plans. Todo-derived items remain graph tasks, while optional metadata
+carries the full goal and plan text needed by `/plan load`. Saved unapproved
+drafts are excluded from the interrupted-work startup picker; loading one is an
+explicit handoff and does not activate its source session or resume old execution
+state.
 At interactive startup, ZenCODE enumerates every incomplete graph for the
 current project and lets the operator resume one or delete obsolete graphs. A
 selection is keyed by `sessionID + graphID`: the orchestrator restores the

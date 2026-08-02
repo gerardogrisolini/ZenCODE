@@ -158,6 +158,28 @@ extension SessionTaskOrchestrator {
         guard graph.tasks.count <= limits.maximumTasksPerGraph else {
             throw SessionTaskOrchestratorError.taskLimitExceeded(limits.maximumTasksPerGraph)
         }
+        if let savedPlan = graph.savedPlan {
+            guard graph.source.planID == graph.id,
+                  savedPlan.plan.id == graph.id else {
+                throw SessionTaskOrchestratorError.invalidSnapshot(
+                    "saved plan metadata does not match graph \(graph.id)"
+                )
+            }
+            guard savedPlan.plan.originalGoal.nilIfBlank != nil,
+                  savedPlan.plan.consolidatedText.nilIfBlank != nil else {
+                throw SessionTaskOrchestratorError.invalidSnapshot(
+                    "saved plan metadata for \(graph.id) is empty"
+                )
+            }
+            let savedPointIDs = savedPlan.plan.points.map(\.id)
+            guard savedPointIDs.allSatisfy({ $0.nilIfBlank != nil }),
+                  Set(savedPointIDs).count == savedPointIDs.count,
+                  Set(savedPointIDs) == Set(graph.tasks.map(\.id)) else {
+                throw SessionTaskOrchestratorError.invalidSnapshot(
+                    "saved plan points do not match graph \(graph.id)"
+                )
+            }
+        }
 
         var tasksByID: [String: TaskRecord] = [:]
         for task in graph.tasks {

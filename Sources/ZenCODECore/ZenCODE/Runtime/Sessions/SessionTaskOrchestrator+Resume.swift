@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ToolCore
 
 /// A lightweight summary of an incomplete task graph persisted by a previous
 /// session, suitable for offering the user a choice at startup.
@@ -41,7 +42,37 @@ public struct ResumableTaskGraph: Equatable, Sendable, Identifiable {
     }
 }
 
+/// A reusable plan found in a project-scoped task-graph checkpoint. Unlike a
+/// resumable execution graph, loading this value starts from an unapproved plan
+/// in the new session rather than taking over the source session's work state.
+public struct SavedTaskPlan: Equatable, Sendable, Identifiable {
+    public let librarySessionID: String
+    public let graph: TaskGraphSnapshot
+    public let snapshot: TaskGraphSavedPlan
+
+    public var id: String { "\(librarySessionID)/\(graph.id)" }
+
+    public init(
+        librarySessionID: String,
+        graph: TaskGraphSnapshot,
+        snapshot: TaskGraphSavedPlan
+    ) {
+        self.librarySessionID = librarySessionID
+        self.graph = graph
+        self.snapshot = snapshot
+    }
+}
+
 extension SessionTaskOrchestrator {
+    /// Stable logical session used only as the project plan library. Keeping
+    /// saved plans outside the live chat session lets `/sessions new` discard
+    /// that chat's execution checkpoint without deleting explicit plan saves.
+    public nonisolated static func savedPlanLibrarySessionID(
+        for workingDirectory: URL
+    ) -> String {
+        "saved-plans-\(TerminalSessionStore.projectKey(for: workingDirectory))"
+    }
+
     /// Returns the incomplete task graphs persisted for a working directory,
     /// most recently updated first. A graph is resumable when it is not in a
     /// terminal state and still has at least one non-terminal task. This is a
@@ -51,8 +82,11 @@ extension SessionTaskOrchestrator {
     ) -> [ResumableTaskGraph] {
         guard let store else { return [] }
         let checkpoints = store.loadCheckpoints(workingDirectory: workingDirectory)
+        let planLibrarySessionID = Self.savedPlanLibrarySessionID(
+            for: workingDirectory
+        )
         var resumable: [ResumableTaskGraph] = []
-        for checkpoint in checkpoints {
+        for checkpoint in checkpoints where checkpoint.sessionID != planLibrarySessionID {
             for graph in checkpoint.graphs where !graph.state.isTerminal {
                 let pendingCount = graph.tasks.lazy.filter { !$0.status.isTerminal }.count
                 guard pendingCount > 0 else { continue }
@@ -70,6 +104,43 @@ extension SessionTaskOrchestrator {
             }
         }
         return resumable.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// Enumerates complete saved-plan payloads for a project, newest explicit
+    /// save first. Corrupt or mismatched graph metadata is ignored by the store
+    /// decoder/validation path so one bad checkpoint cannot hide other plans.
+    public func savedTaskPlans(
+        workingDirectory: URL
+    ) -> [SavedTaskPlan] {
+        guard let store else { return [] }
+        let librarySessionID = Self.savedPlanLibrarySessionID(
+            for: workingDirectory
+        )
+        return store.loadCheckpoints(workingDirectory: workingDirectory)
+            .filter { $0.sessionID == librarySessionID }
+            .flatMap { checkpoint in
+                checkpoint.graphs.compactMap { graph -> SavedTaskPlan? in
+                    guard (try? validate(graph)) != nil,
+                          let snapshot = graph.savedPlan,
+                          graph.source.planID == graph.id,
+                          snapshot.plan.id == graph.id,
+                          snapshot.plan.originalGoal.nilIfBlank != nil,
+                          snapshot.plan.consolidatedText.nilIfBlank != nil else {
+                        return nil
+                    }
+                    return SavedTaskPlan(
+                        librarySessionID: checkpoint.sessionID,
+                        graph: graph,
+                        snapshot: snapshot
+                    )
+                }
+            }
+            .sorted { lhs, rhs in
+                if lhs.snapshot.savedAt == rhs.snapshot.savedAt {
+                    return lhs.id < rhs.id
+                }
+                return lhs.snapshot.savedAt > rhs.snapshot.savedAt
+            }
     }
 
     /// Restores the selected checkpoint session and makes the exact graph the

@@ -166,6 +166,29 @@ public struct TaskExecutionSpec: Codable, Equatable, Sendable {
     }
 }
 
+/// Optional plan payload embedded in a task-graph checkpoint. Planner-authored
+/// todo items remain represented by the graph's tasks; this snapshot preserves
+/// the goal and full prose needed to review or revise that plan in another
+/// session without restoring the complete conversation.
+public struct TaskGraphSavedPlan: Codable, Equatable, Sendable {
+    public let plan: TerminalSessionPlan
+    public let savedAt: Date
+    public let savingAgentID: String?
+    public let savingAgentName: String?
+
+    public init(
+        plan: TerminalSessionPlan,
+        savedAt: Date = Date(),
+        savingAgentID: String? = nil,
+        savingAgentName: String? = nil
+    ) {
+        self.plan = plan
+        self.savedAt = savedAt
+        self.savingAgentID = savingAgentID?.nilIfBlank
+        self.savingAgentName = savingAgentName?.nilIfBlank
+    }
+}
+
 public enum TaskAttemptStatus: String, Codable, Equatable, Sendable {
     case queued
     case running
@@ -397,6 +420,9 @@ public struct TaskGraphSnapshot: Codable, Equatable, Sendable, Identifiable {
     public var state: TaskGraphState
     public var revision: Int
     public var tasks: [TaskRecord]
+    /// Additive, optional metadata. Its absence keeps schema-1 checkpoints
+    /// written by earlier releases decodable without migration.
+    public var savedPlan: TaskGraphSavedPlan?
     public let createdAt: Date
     public var updatedAt: Date
 
@@ -407,6 +433,7 @@ public struct TaskGraphSnapshot: Codable, Equatable, Sendable, Identifiable {
         state: TaskGraphState,
         revision: Int = 1,
         tasks: [TaskRecord] = [],
+        savedPlan: TaskGraphSavedPlan? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -416,6 +443,7 @@ public struct TaskGraphSnapshot: Codable, Equatable, Sendable, Identifiable {
         self.state = state
         self.revision = revision
         self.tasks = tasks
+        self.savedPlan = savedPlan
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

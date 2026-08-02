@@ -212,6 +212,10 @@ actor TerminalChatRenderCoordinator {
     private var lastStreamingFlushInstant: ContinuousClock.Instant?
 
     private var assistantStreamingState: StreamingContentState
+    /// Whether the 💬 prefix still needs to be emitted at the leading edge
+    /// of the next assistant response. Reset to `true` after each response
+    /// finishes so every turn gets exactly one prefix.
+    private var assistantBubblePrefixPending = true
     private var thoughtStreamingState: StreamingContentState
     /// Visible-cell position within the current physical thought row. It
     /// persists across streaming deltas so a long no-newline paragraph wraps
@@ -368,7 +372,11 @@ actor TerminalChatRenderCoordinator {
         guard !normalizedDelta.isEmpty else {
             return
         }
-        let renderedContent = assistantStreamingState.markdownFormatter.consume(normalizedDelta)
+        var renderedContent = assistantStreamingState.markdownFormatter.consume(normalizedDelta)
+        if assistantBubblePrefixPending, !renderedContent.isEmpty {
+            renderedContent = "💬 " + renderedContent
+            assistantBubblePrefixPending = false
+        }
         if !renderedContent.isEmpty {
             writeStreamingChat(
                 renderedContent,
@@ -400,6 +408,7 @@ actor TerminalChatRenderCoordinator {
         ) else {
             return
         }
+        assistantBubblePrefixPending = true
         if !renderedContent.isEmpty {
             writeStreamingChat(
                 renderedContent,

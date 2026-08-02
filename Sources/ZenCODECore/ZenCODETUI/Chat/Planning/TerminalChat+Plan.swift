@@ -51,6 +51,14 @@ extension TerminalChat {
         )
 
         switch argument.lowercased() {
+        case "save":
+            await writeSubmittedPrompt(command)
+            await saveReusablePlan()
+            return .continueChat
+        case "load":
+            await writeSubmittedPrompt(command)
+            await loadReusablePlan()
+            return .continueChat
         case "status":
             await writeSubmittedPrompt(command)
             guard let activePlan else {
@@ -99,7 +107,8 @@ extension TerminalChat {
                         archivePreviousCurrent: true
                     )
                 }
-                if try await sessionRunner.taskGraphSnapshot(
+                if !plan.points.isEmpty,
+                   try await sessionRunner.taskGraphSnapshot(
                     sessionID: sessionID,
                     graphID: plan.id
                 ) != nil {
@@ -114,9 +123,10 @@ extension TerminalChat {
             }
             plan.isApproved = true
             activePlan = plan
-            await writeSystemMessage(
-                "Approved the active plan and activated its task graph. Starting implementation now; /review will verify task claims against real files.\n\n"
-            )
+            let approvalMessage = plan.points.isEmpty
+                ? "Approved the active plan. Starting implementation now; /review will verify the result against real files.\n\n"
+                : "Approved the active plan and activated its task graph. Starting implementation now; /review will verify task claims against real files.\n\n"
+            await writeSystemMessage(approvalMessage)
             return .runHiddenPrompt(
                 Self.planImplementationPrompt(for: plan),
                 purpose: .normal
@@ -188,6 +198,228 @@ extension TerminalChat {
     nonisolated static let planUnavailableForApprovalMessage =
         "ZenCODE: no completed plan is available to approve. "
         + "Run /plan <goal> and wait for it to finish successfully.\n"
+
+    nonisolated static let planUnavailableForSavingMessage =
+        "ZenCODE: no plan is available to save. Run /plan <goal>, or ask an agent "
+        + "to produce a plan before using /plan save.\n"
+
+    nonisolated static let savedPlanUnavailableMessage =
+        "ZenCODE: no saved plan is available for this project. Use /plan save first.\n"
+
+    func saveReusablePlan(savedAt: Date = Date()) async {
+        guard let plan = reusablePlanCandidate(createdAt: savedAt) else {
+            await writeFailureMessage(Self.planUnavailableForSavingMessage)
+            return
+        }
+
+        let storedPlan = Self.planPreparedForSaving(plan)
+        let savedPlan = taskGraphSavedPlan(for: storedPlan, savedAt: savedAt)
+        let librarySessionID = SessionTaskOrchestrator.savedPlanLibrarySessionID(
+            for: configuration.workingDirectory
+        )
+        do {
+            try await sessionRunner.taskOrchestrator.registerSession(
+                id: librarySessionID,
+                workingDirectory: configuration.workingDirectory
+            )
+            _ = try await sessionRunner.taskOrchestrator.savePlanDraft(
+                savedPlan,
+                sessionID: librarySessionID,
+                tasks: Self.taskDefinitions(for: storedPlan.points)
+            )
+        } catch {
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            return
+        }
+
+        activePlan = plan
+        await writeSystemMessage(
+            "Saved plan: \(plan.id). Use /plan load in a new session to review or revise it.\n"
+        )
+    }
+
+    func loadReusablePlan() async {
+        guard activePlan == nil else {
+            await writeFailureMessage(
+                "ZenCODE: an active plan already exists. Use /plan clear before loading a saved plan.\n"
+            )
+            return
+        }
+        guard let savedPlan = await sessionRunner.savedTaskPlans(
+            workingDirectory: configuration.workingDirectory
+        ).first else {
+            await writeFailureMessage(Self.savedPlanUnavailableMessage)
+            return
+        }
+
+        let plan = Self.planPreparedForReuse(savedPlan)
+        let contextMessage = AgentRuntimeMessage(
+            role: .user,
+            content: Self.savedPlanContextMessage(savedPlan, plan: plan)
+        )
+        let replacementHistory = activeSessionHistory + [contextMessage]
+
+        if await sessionRunner.snapshotSession(id: sessionID) != nil {
+            guard await sessionRunner.replaceSessionHistory(
+                id: sessionID,
+                history: replacementHistory
+            ) else {
+                await writeFailureMessage(
+                    "ZenCODE: the saved plan could not be added to the current session context.\n"
+                )
+                return
+            }
+        }
+
+        activeSessionHistory = replacementHistory
+        activeSessionTranscript.append(contextMessage)
+        activePlan = plan
+        await writeMarkdownMessage(
+            "Loaded saved plan `\(plan.id)` as an unapproved active plan.\n\n"
+                + plan.consolidatedText
+                + "\n\nUse /plan approve when it is ready to implement."
+        )
+    }
+
+    func reusablePlanCandidate(createdAt: Date = Date()) -> TerminalSessionPlan? {
+        if let activePlan,
+           activePlan.originalGoal.nilIfBlank != nil,
+           activePlan.consolidatedText.nilIfBlank != nil {
+            return activePlan
+        }
+        if let plan = Self.planFromLatestAssistantMessage(
+            in: activeSessionTranscript,
+            createdAt: createdAt
+        ) {
+            return plan
+        }
+        return Self.planFromLatestAssistantMessage(
+            in: activeSessionHistory,
+            createdAt: createdAt
+        )
+    }
+
+    func taskGraphSavedPlan(
+        for plan: TerminalSessionPlan,
+        savedAt: Date = Date()
+    ) -> TaskGraphSavedPlan {
+        TaskGraphSavedPlan(
+            plan: plan,
+            savedAt: savedAt,
+            savingAgentID: selectedAgent?.id,
+            savingAgentName: selectedAgent?.name
+        )
+    }
+
+    nonisolated static func planPreparedForSaving(
+        _ plan: TerminalSessionPlan
+    ) -> TerminalSessionPlan {
+        TerminalSessionPlan(
+            id: plan.id,
+            originalGoal: plan.originalGoal,
+            consolidatedText: plan.consolidatedText,
+            createdAt: plan.createdAt,
+            isApproved: false,
+            points: plan.points.map { point in
+                TerminalSessionPlanPoint(
+                    id: point.id,
+                    text: point.text,
+                    dependsOn: point.dependsOn,
+                    hasExplicitDependencies: point.hasExplicitDependencies
+                )
+            }
+        )
+    }
+
+    nonisolated static func planFromLatestAssistantMessage(
+        in messages: [AgentRuntimeMessage],
+        createdAt: Date = Date()
+    ) -> TerminalSessionPlan? {
+        guard let assistantIndex = messages.indices.reversed().first(where: { index in
+            messages[index].role == .assistant
+                && messages[index].content.nilIfBlank != nil
+        }), let content = messages[assistantIndex].content.nilIfBlank else {
+            return nil
+        }
+
+        let originalGoal = messages[..<assistantIndex]
+            .reversed()
+            .first(where: { message in
+                message.role == .user && message.content.nilIfBlank != nil
+            })?
+            .content
+            .nilIfBlank
+            ?? "Saved plan"
+        return TerminalSessionPlan(
+            originalGoal: originalGoal,
+            consolidatedText: content,
+            createdAt: createdAt
+        )
+    }
+
+    nonisolated static func planPreparedForReuse(
+        _ savedPlan: SavedTaskPlan
+    ) -> TerminalSessionPlan {
+        let sourcePlan = savedPlan.snapshot.plan
+        let savedPointsByID = Dictionary(
+            sourcePlan.points.map { ($0.id, $0) },
+            uniquingKeysWith: { current, _ in current }
+        )
+        let points: [TerminalSessionPlanPoint]
+        if savedPlan.graph.tasks.isEmpty {
+            points = sourcePlan.points.map { point in
+                TerminalSessionPlanPoint(
+                    id: point.id,
+                    text: point.text,
+                    dependsOn: point.dependsOn,
+                    hasExplicitDependencies: point.hasExplicitDependencies
+                )
+            }
+        } else {
+            points = savedPlan.graph.tasks
+                .sorted { lhs, rhs in
+                    if lhs.order == rhs.order { return lhs.id < rhs.id }
+                    return lhs.order < rhs.order
+                }
+                .map { task in
+                    TerminalSessionPlanPoint(
+                        id: task.id,
+                        text: task.title,
+                        dependsOn: task.dependsOn,
+                        hasExplicitDependencies: savedPointsByID[task.id]?
+                            .hasExplicitDependencies ?? !task.dependsOn.isEmpty
+                    )
+                }
+        }
+        return TerminalSessionPlan(
+            id: sourcePlan.id,
+            originalGoal: sourcePlan.originalGoal,
+            consolidatedText: sourcePlan.consolidatedText,
+            createdAt: sourcePlan.createdAt,
+            isApproved: false,
+            points: points
+        )
+    }
+
+    nonisolated static func savedPlanContextMessage(
+        _ savedPlan: SavedTaskPlan,
+        plan: TerminalSessionPlan
+    ) -> String {
+        let savingAgent = savedPlan.snapshot.savingAgentName?.nilIfBlank.map {
+            "\nSaved by agent: \($0)"
+        } ?? ""
+        return """
+        [Saved plan handoff]
+        A plan from an earlier ZenCODE session has been loaded for review and further elaboration. \
+        Treat it as unapproved until the user explicitly runs /plan approve.\(savingAgent)
+
+        Original goal:
+        \(plan.originalGoal)
+
+        Saved plan:
+        \(plan.consolidatedText)
+        """
+    }
 
     nonisolated static let planAuthorAgentName = "plan-author"
 

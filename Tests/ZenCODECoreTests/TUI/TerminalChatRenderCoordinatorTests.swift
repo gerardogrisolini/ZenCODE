@@ -1031,7 +1031,7 @@ struct TerminalChatRenderCoordinatorTests {
             .filter { $0.channel == .standardOutput }
             .map(\.text)
             .joined()
-        #expect(output == "Answer\n")
+        #expect(output == "💬 Answer\n")
     }
 
     @Test
@@ -1567,7 +1567,7 @@ struct TerminalChatRenderCoordinatorTests {
             .filter { $0.channel == .standardOutput }
             .map(\.text)
             .joined()
-        #expect(stdout == "Answer*")
+        #expect(stdout == "💬 Answer*")
     }
 
     @Test
@@ -1938,7 +1938,7 @@ struct TerminalChatRenderCoordinatorTests {
             .filter { $0.channel == .standardOutput }
             .map(\.text)
             .joined()
-        #expect(TerminalANSIText.stripANSI(stdout) == "Answer\n")
+        #expect(TerminalANSIText.stripANSI(stdout) == "💬 Answer\n")
     }
 
     @Test
@@ -1959,7 +1959,7 @@ struct TerminalChatRenderCoordinatorTests {
             .joined()
         // The shared stderr newline already closed the physical row, so stdout
         // must not add a duplicate line boundary.
-        #expect(TerminalANSIText.stripANSI(stdout) == "Answer")
+        #expect(TerminalANSIText.stripANSI(stdout) == "💬 Answer")
     }
 
     @Test

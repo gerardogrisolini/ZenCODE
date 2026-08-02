@@ -47,6 +47,8 @@ struct PlanCommandTests {
 
         #expect(descriptor.requiresArgument)
         #expect(descriptor.help.contains("/plan <goal>"))
+        #expect(descriptor.help.contains("/plan save"))
+        #expect(descriptor.help.contains("/plan load"))
         #expect(descriptor.help.contains("/plan status"))
         #expect(descriptor.help.contains("/plan approve"))
         #expect(descriptor.help.contains("start implementation immediately"))
@@ -211,6 +213,177 @@ struct PlanCommandTests {
         default:
             Issue.record("Bare /plan should only continue the chat after reporting the missing goal")
         }
+    }
+
+    @Test
+    func planSavePersistsTodoDerivedDraftAndLoadRehydratesANewSession() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PlanSaveTests-\(UUID().uuidString)", isDirectory: true)
+        let support = root.appendingPathComponent("support", isDirectory: true)
+        let workingDirectory = root.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: workingDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SessionTaskGraphStore(supportDirectoryURL: support)
+        let configuration = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: workingDirectory
+        )
+        let source = TerminalChat(
+            configuration: configuration,
+            stdinIsTerminal: false,
+            sessionRunner: AgentCoreSessionRunner(taskGraphStore: store)
+        )
+        try await source.sessionRunner.taskOrchestrator.registerSession(
+            id: source.sessionID,
+            workingDirectory: workingDirectory
+        )
+        let createdAt = Date(timeIntervalSince1970: 100)
+        source.activePlan = TerminalSessionPlan(
+            id: "plan-handoff",
+            originalGoal: "Carry the plan into another session",
+            consolidatedText: "1. Inspect\n2. Implement",
+            createdAt: createdAt,
+            isApproved: true,
+            points: [
+                TerminalSessionPlanPoint(
+                    id: "plan-handoff-1",
+                    text: "Inspect",
+                    status: .completed,
+                    hasExplicitDependencies: true
+                ),
+                TerminalSessionPlanPoint(
+                    id: "plan-handoff-2",
+                    text: "Implement",
+                    status: .inProgress,
+                    dependsOn: ["plan-handoff-1"],
+                    hasExplicitDependencies: true
+                ),
+            ]
+        )
+
+        #expect(isContinueChat(await source.handlePlanCommand("/plan save")))
+
+        let storedPlans = await source.sessionRunner.savedTaskPlans(
+            workingDirectory: workingDirectory
+        )
+        let stored = try #require(storedPlans.first)
+        #expect(stored.librarySessionID == SessionTaskOrchestrator.savedPlanLibrarySessionID(
+            for: workingDirectory
+        ))
+        #expect(stored.graph.state == .draft)
+        #expect(stored.graph.tasks.map(\.title) == ["Inspect", "Implement"])
+        #expect(stored.graph.tasks[1].dependsOn == ["plan-handoff-1"])
+        #expect(stored.snapshot.plan.id == source.activePlan?.id)
+        #expect(stored.snapshot.plan.consolidatedText == source.activePlan?.consolidatedText)
+        #expect(stored.snapshot.plan.isApproved == false)
+        #expect(stored.snapshot.plan.points.map(\.status) == [.pending, .pending])
+        #expect(await source.sessionRunner.resumableTaskGraphCheckpoints(
+            workingDirectory: workingDirectory
+        ).isEmpty)
+
+        let sourceSessionID = source.sessionID
+        await source.startNewSession()
+        #expect(source.sessionID != sourceSessionID)
+        #expect(source.activePlan == nil)
+        #expect(isContinueChat(await source.handlePlanCommand("/plan load")))
+
+        let loaded = try #require(source.activePlan)
+        #expect(loaded.id == "plan-handoff")
+        #expect(loaded.originalGoal == "Carry the plan into another session")
+        #expect(loaded.consolidatedText == "1. Inspect\n2. Implement")
+        #expect(loaded.createdAt == createdAt)
+        #expect(loaded.isApproved == false)
+        #expect(loaded.points.map(\.status) == [.pending, .pending])
+        #expect(loaded.points[1].dependsOn == ["plan-handoff-1"])
+        #expect(source.activeSessionHistory.last?.role == .user)
+        #expect(source.activeSessionHistory.last?.content.contains("[Saved plan handoff]") == true)
+        #expect(source.activeSessionHistory.last?.content.contains("1. Inspect") == true)
+    }
+
+    @Test
+    func planSaveCanPromoteAnotherAgentsLatestResponse() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PlanSaveFallbackTests-\(UUID().uuidString)", isDirectory: true)
+        let support = root.appendingPathComponent("support", isDirectory: true)
+        let workingDirectory = root.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: workingDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let runner = AgentCoreSessionRunner(
+            taskGraphStore: SessionTaskGraphStore(supportDirectoryURL: support)
+        )
+        let terminal = TerminalChat(
+            configuration: try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                workingDirectory: workingDirectory
+            ),
+            stdinIsTerminal: false,
+            sessionRunner: runner
+        )
+        terminal.selectedAgent = AgentProfile(
+            id: "architect-agent",
+            name: "Architect"
+        )
+        terminal.activeSessionTranscript = [
+            AgentRuntimeMessage(role: .user, content: "Design the migration"),
+            AgentRuntimeMessage(role: .assistant, content: "First inspect, then migrate and test."),
+        ]
+
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan save")))
+
+        let promoted = try #require(terminal.activePlan)
+        #expect(promoted.originalGoal == "Design the migration")
+        #expect(promoted.consolidatedText == "First inspect, then migrate and test.")
+        #expect(promoted.points.isEmpty)
+        let stored = try #require(await runner.savedTaskPlans(
+            workingDirectory: workingDirectory
+        ).first)
+        #expect(stored.snapshot.plan == promoted)
+        #expect(stored.graph.tasks.isEmpty)
+        #expect(stored.snapshot.savingAgentName == "Architect")
+        let context = TerminalChat.savedPlanContextMessage(stored, plan: promoted)
+        #expect(context.contains("Saved by agent: Architect"))
+        #expect(!context.contains("Source agent:"))
+    }
+
+    @Test
+    func planSaveWithoutAPlanDoesNotCreateCheckpoint() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PlanSaveEmptyTests-\(UUID().uuidString)", isDirectory: true)
+        let support = root.appendingPathComponent("support", isDirectory: true)
+        let workingDirectory = root.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: workingDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runner = AgentCoreSessionRunner(
+            taskGraphStore: SessionTaskGraphStore(supportDirectoryURL: support)
+        )
+        let terminal = TerminalChat(
+            configuration: try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                workingDirectory: workingDirectory
+            ),
+            stdinIsTerminal: false,
+            sessionRunner: runner
+        )
+
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan save")))
+        #expect(terminal.activePlan == nil)
+        #expect(await runner.savedTaskPlans(workingDirectory: workingDirectory).isEmpty)
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan load")))
+        #expect(terminal.activePlan == nil)
     }
 
     @Test

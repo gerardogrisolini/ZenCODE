@@ -346,6 +346,68 @@ public actor SessionTaskOrchestrator {
         return graph
     }
 
+    /// Atomically materializes an unapproved plan as a non-current draft graph.
+    /// Existing terminal/draft copies with the same plan ID are replaced in one
+    /// checkpoint commit so a validation or write failure cannot erase the last
+    /// successfully saved version.
+    @discardableResult
+    public func savePlanDraft(
+        _ savedPlan: TaskGraphSavedPlan,
+        sessionID rawSessionID: String,
+        tasks definitions: [TaskDefinition]
+    ) throws -> TaskGraphSnapshot {
+        let sessionID = try requireRootAccess(rawSessionID)
+        let graphID = try normalizedGraphID(savedPlan.plan.id)
+        guard !savedPlan.plan.isApproved else {
+            throw SessionTaskOrchestratorError.invalidSnapshot(
+                "an approved plan cannot be saved as a draft"
+            )
+        }
+
+        var sessionState = sessionStates[sessionID] ?? SessionState(
+            currentGraphID: nil,
+            graphs: [:]
+        )
+        let isNewGraph = sessionState.graphs[graphID] == nil
+        let now = Date()
+        let records = try makeTaskRecords(definitions, existingTasks: [], now: now)
+        var graph: TaskGraphSnapshot
+        if let existing = sessionState.graphs[graphID] {
+            guard existing.source.planID == graphID,
+                  existing.state != .active,
+                  !existing.tasks.contains(where: { $0.activeAttemptID != nil }) else {
+                throw SessionTaskOrchestratorError.graphNotMutable(graphID)
+            }
+            graph = existing
+            graph.state = .draft
+            graph.tasks = records
+            graph.savedPlan = savedPlan
+            touchGraph(&graph, at: now)
+            if sessionState.currentGraphID == graphID {
+                sessionState.currentGraphID = nil
+            }
+        } else {
+            graph = TaskGraphSnapshot(
+                id: graphID,
+                source: .plan(planID: graphID),
+                state: .draft,
+                tasks: records,
+                savedPlan: savedPlan,
+                createdAt: now,
+                updatedAt: now
+            )
+        }
+        try validate(graph)
+        sessionState.graphs[graphID] = graph
+        try commit(
+            sessionID: sessionID,
+            state: sessionState,
+            eventKind: isNewGraph ? .created : .updated,
+            graphID: graphID
+        )
+        return graph
+    }
+
     @discardableResult
     public func createTasks(
         sessionID rawSessionID: String,

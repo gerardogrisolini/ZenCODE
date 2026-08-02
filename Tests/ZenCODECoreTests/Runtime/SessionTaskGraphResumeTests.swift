@@ -120,6 +120,120 @@ struct SessionTaskGraphResumeTests {
     }
 
     @Test
+    func savedPlanDraftIsDiscoverableWithoutLookingLikeInterruptedWork() async throws {
+        let (root, support, working) = try makeTemp()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SessionTaskGraphStore(supportDirectoryURL: support)
+        let writer = SessionTaskOrchestrator(store: store)
+        let savedAt = Date(timeIntervalSince1970: 200)
+        let plan = TerminalSessionPlan(
+            id: "plan-saved",
+            originalGoal: "Persist a plan",
+            consolidatedText: "Inspect, implement, and test.",
+            createdAt: Date(timeIntervalSince1970: 100),
+            points: [
+                TerminalSessionPlanPoint(id: "plan-saved-1", text: "Inspect")
+            ]
+        )
+        let librarySessionID = SessionTaskOrchestrator.savedPlanLibrarySessionID(
+            for: working
+        )
+        try await writer.registerSession(
+            id: librarySessionID,
+            workingDirectory: working
+        )
+        _ = try await writer.savePlanDraft(
+            TaskGraphSavedPlan(
+                plan: plan,
+                savedAt: savedAt,
+                savingAgentName: "Planner"
+            ),
+            sessionID: librarySessionID,
+            tasks: [TaskDefinition(id: "plan-saved-1", title: "Inspect")]
+        )
+
+        let reader = SessionTaskOrchestrator(store: store)
+        #expect(await reader.resumableTaskGraphCheckpoints(
+            workingDirectory: working
+        ).isEmpty)
+        let savedPlans = await reader.savedTaskPlans(workingDirectory: working)
+        let saved = try #require(savedPlans.first)
+        #expect(saved.librarySessionID == librarySessionID)
+        #expect(saved.graph.id == plan.id)
+        #expect(saved.snapshot.plan == plan)
+        #expect(saved.snapshot.savedAt == savedAt)
+        #expect(saved.snapshot.savingAgentName == "Planner")
+        let otherProject = root.appendingPathComponent("other-project", isDirectory: true)
+        #expect(await reader.savedTaskPlans(workingDirectory: otherProject).isEmpty)
+    }
+
+    @Test
+    func savedPlanEnumerationSkipsMalformedPointMetadata() async throws {
+        let (root, support, working) = try makeTemp()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SessionTaskGraphStore(supportDirectoryURL: support)
+        let librarySessionID = SessionTaskOrchestrator.savedPlanLibrarySessionID(
+            for: working
+        )
+        let malformedPlan = TerminalSessionPlan(
+            id: "plan-malformed",
+            originalGoal: "Malformed plan",
+            consolidatedText: "Duplicate point identifiers",
+            points: [
+                TerminalSessionPlanPoint(id: "plan-malformed-1", text: "First"),
+                TerminalSessionPlanPoint(id: "plan-malformed-1", text: "Duplicate"),
+            ]
+        )
+        let graph = TaskGraphSnapshot(
+            id: malformedPlan.id,
+            source: .plan(planID: malformedPlan.id),
+            state: .draft,
+            tasks: [TaskRecord(id: "plan-malformed-1", title: "First", order: 1)],
+            savedPlan: TaskGraphSavedPlan(plan: malformedPlan)
+        )
+        try store.save(
+            SessionTaskGraphCheckpoint(
+                sessionID: librarySessionID,
+                currentGraphID: nil,
+                graphs: [graph]
+            ),
+            workingDirectory: working
+        )
+
+        let reader = SessionTaskOrchestrator(store: store)
+        #expect(await reader.savedTaskPlans(workingDirectory: working).isEmpty)
+    }
+
+    @Test
+    func taskGraphWithoutSavedPlanStillDecodesAsSchemaOne() throws {
+        let graph = TaskGraphSnapshot(
+            id: "legacy-graph",
+            source: .manual,
+            state: .draft,
+            tasks: [TaskRecord(id: "task", title: "Task", order: 1)]
+        )
+        let encoder = PropertyListEncoder()
+        let data = try encoder.encode(graph)
+        let propertyList = try #require(
+            try PropertyListSerialization.propertyList(
+                from: data,
+                options: [],
+                format: nil
+            ) as? [String: Any]
+        )
+        #expect(propertyList["savedPlan"] == nil)
+
+        let decoded = try PropertyListDecoder().decode(
+            TaskGraphSnapshot.self,
+            from: data
+        )
+        #expect(decoded == graph)
+        #expect(decoded.savedPlan == nil)
+    }
+
+    @Test
     func activeGraphWithOnlyCompletedTasksIsNotResumable() async throws {
         let (root, support, working) = try makeTemp()
         defer { try? FileManager.default.removeItem(at: root) }

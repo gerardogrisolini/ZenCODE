@@ -30,6 +30,14 @@ public extension AgentCoreSessionRunner {
         )
     }
 
+    func savedTaskPlans(
+        workingDirectory: URL
+    ) async -> [SavedTaskPlan] {
+        await taskOrchestrator.savedTaskPlans(
+            workingDirectory: workingDirectory
+        )
+    }
+
     func removeResumableTaskGraphs(
         _ graphs: [ResumableTaskGraph],
         workingDirectory: URL
