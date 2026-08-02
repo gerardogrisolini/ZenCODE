@@ -254,6 +254,53 @@ struct TelegramTUITests {
         #expect(terminal.makeTelegramTurnProgressReporter(for: .local) == nil)
     }
 
+    @Test
+    func telegramTurnProgressReportingFollowsOnOffDuringLocalRequest() async throws {
+        let configuration = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
+        )
+        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false)
+        terminal.telegramLinkedChatID = 42
+        terminal.telegramControlState = TerminalTelegramControlState(
+            isConfigured: true,
+            isActive: false,
+            statusText: "Configured",
+            botUsername: nil,
+            lastError: nil,
+            lastMessagePreview: nil
+        )
+
+        // A local turn begins while Telegram is off. Its origin is retained so
+        // `/telegram on` can attach the in-flight request immediately.
+        terminal.beginTelegramTurnProgressReporting(for: .local)
+        #expect(terminal.activeTelegramTurnOrigin == .local)
+        #expect(terminal.activeTelegramProgressReporter == nil)
+
+        terminal.telegramControlState.isActive = true
+        terminal.synchronizeTelegramTurnProgressReporting()
+        let firstReporter = try #require(terminal.activeTelegramProgressReporter)
+        let firstChatID = await firstReporter.chatID
+        #expect(firstChatID == 42)
+
+        // `/telegram off` detaches the same in-flight turn, and turning it back
+        // on does not require a Telegram-originated prompt.
+        terminal.telegramControlState.isActive = false
+        terminal.synchronizeTelegramTurnProgressReporting()
+        #expect(terminal.activeTelegramProgressReporter == nil)
+
+        terminal.telegramControlState.isActive = true
+        terminal.synchronizeTelegramTurnProgressReporting()
+        let secondReporter = try #require(terminal.activeTelegramProgressReporter)
+        let secondChatID = await secondReporter.chatID
+        #expect(secondChatID == 42)
+
+        terminal.endTelegramTurnProgressReporting()
+        #expect(terminal.activeTelegramTurnOrigin == nil)
+        #expect(terminal.activeTelegramProgressReporter == nil)
+    }
+
     /// While Telegram mirrors the session every turn owns an authorization
     /// handler: a mirrored turn must never fall back to a terminal dialog that
     /// the remote operator cannot answer, and the local operator must not lose

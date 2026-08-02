@@ -36,13 +36,8 @@ extension TerminalChat {
             baseDirectoryURL: configuration.workingDirectory
         )
         await fileChanges.prepareForTurn()
-        let telegramProgressReporter = telegramControlState.isActive
-            ? makeTelegramTurnProgressReporter(for: attempt.origin)
-            : nil
-        // Publish the turn's channel so the authorization handler enqueues its
-        // permission dialogue in the same order as the tool activity.
-        activeTelegramProgressReporter = telegramProgressReporter
-        defer { activeTelegramProgressReporter = nil }
+        beginTelegramTurnProgressReporting(for: attempt.origin)
+        defer { endTelegramTurnProgressReporting() }
         do {
             var sessionConfiguration = await currentSessionConfiguration()
             if case .plan = attempt.purpose {
@@ -109,7 +104,7 @@ extension TerminalChat {
                     case let .thought(message):
                         await transcriptTurn.appendThought(message)
                         await self.writeThought(message)
-                        await telegramProgressReporter?.reportThought(message)
+                        await self.activeTelegramProgressReporter?.reportThought(message)
                     case let .modelLoaded(modelID):
                         await self.printModelIfNeeded(modelID)
                     case let .metrics(metrics):
@@ -125,11 +120,11 @@ extension TerminalChat {
                         }
                         await transcriptTurn.appendAssistantContent(delta)
                         await self.writeAssistantContent(delta)
-                        await telegramProgressReporter?.reportAssistantContent(delta)
+                        await self.activeTelegramProgressReporter?.reportAssistantContent(delta)
                     case let .toolCallStarted(toolCall):
                         await transcriptTurn.appendToolCallStarted(toolCall)
                         await self.writeToolCallStarted(toolCall)
-                        if let telegramProgressReporter = telegramProgressReporter {
+                        if let telegramProgressReporter = self.activeTelegramProgressReporter {
                             await telegramProgressReporter.reportToolCall(
                                 toolCall,
                                 workingDirectory: self.configuration.workingDirectory
@@ -144,7 +139,7 @@ extension TerminalChat {
                     case let .toolCallCompleted(toolCall, result):
                         await transcriptTurn.appendToolCallCompleted(toolCall, result: result)
                         await self.writeToolCallCompleted(toolCall, result: result)
-                        await telegramProgressReporter?.reportToolResult(
+                        await self.activeTelegramProgressReporter?.reportToolResult(
                             toolCall,
                             result: result
                         )
@@ -233,7 +228,7 @@ extension TerminalChat {
             )
             let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
             await stopSubAgentOverviewRefresh()
-            await telegramProgressReporter?.flush()
+            await activeTelegramProgressReporter?.flush()
             if case .plan = attempt.purpose {
                 await writeAssistantContent(response.text)
             }
@@ -252,7 +247,7 @@ extension TerminalChat {
             activeSessionTranscript.append(contentsOf: await transcriptTurn.messages())
             let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
             await stopSubAgentOverviewRefresh()
-            await telegramProgressReporter?.flush()
+            await activeTelegramProgressReporter?.flush()
             throw TerminalChatGenerationRunError(
                 underlying: error,
                 fileChangeSummary: fileChangeSummary

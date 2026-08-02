@@ -118,6 +118,10 @@ public final class TerminalChat {
     public var telegramControlState = TerminalTelegramControlState.inactive()
     public var telegramLinkedChatID: Int64?
     public var telegramLinkedChatTitle: String?
+    /// Origin of the turn currently generating. Unlike the reporter itself,
+    /// this remains populated while Telegram is off so `/telegram on` can attach
+    /// the in-flight turn without waiting for the next prompt.
+    var activeTelegramTurnOrigin: TerminalPromptOrigin?
     /// Ordered Telegram channel of the turn currently generating, when that
     /// turn's progress is mirrored to the linked chat. Permission dialogue is
     /// enqueued here so it cannot overtake the tool activity that raised it.

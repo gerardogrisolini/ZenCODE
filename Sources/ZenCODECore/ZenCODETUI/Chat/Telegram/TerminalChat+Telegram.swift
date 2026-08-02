@@ -223,7 +223,8 @@ extension TerminalChat {
         do {
             telegramLinkedChatID = linkedChatID
             telegramLinkedChatTitle = settings.linkedChatTitle
-                        telegramControlState = try await telegramControlService.start()
+            telegramControlState = try await telegramControlService.start()
+            synchronizeTelegramTurnProgressReporting()
             let chatTitle = telegramLinkedChatTitle?.nilIfBlank ?? "chat \(linkedChatID)"
             await writeSystemMessage(
                 """
@@ -232,19 +233,26 @@ extension TerminalChat {
 
                 """
             )
-            await sendTelegramSystemMessage(
-                """
-                ZenCODE remote control is active. Send a prompt or /help to begin.
-                """,
+            let activationMessage = activeTelegramTurnOrigin == nil
+                ? "ZenCODE remote control is active. Send a prompt or /help to begin."
+                : "ZenCODE remote control is active. The current ZenCODE request is now being mirrored."
+            await sendTelegramTurnMessage(
+                activationMessage,
                 to: linkedChatID
             )
         } catch {
+            telegramControlState = await telegramControlService.currentState()
             telegramControlState.lastError = error.localizedDescription
+            synchronizeTelegramTurnProgressReporting()
             await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
     }
 
     func stopTelegramControl() async {
+        // Disconnect the current turn before hopping to the service actor, so
+        // events emitted while `stop()` is in flight cannot enqueue more output.
+        telegramControlState.isActive = false
+        synchronizeTelegramTurnProgressReporting()
         telegramControlState = await telegramControlService.stop()
         telegramLinkedChatID = nil
         telegramLinkedChatTitle = nil
@@ -254,6 +262,36 @@ extension TerminalChat {
     func printTelegramStatus() async {
         telegramControlState = await telegramControlService.currentState()
         await writeSystemMessage(telegramStatusText() + "\n")
+    }
+
+    /// Starts tracking a turn even when Telegram is currently disabled. Keeping
+    /// the origin lets `/telegram on` attach a reporter to an already-running
+    /// local request; previously the reporter was a one-time snapshot created at
+    /// turn start, so enabling Telegram mid-turn had no effect.
+    func beginTelegramTurnProgressReporting(for origin: TerminalPromptOrigin) {
+        activeTelegramProgressReporter = nil
+        activeTelegramTurnOrigin = origin
+        synchronizeTelegramTurnProgressReporting()
+    }
+
+    /// Reconciles the current turn with the latest Telegram on/off state.
+    /// Existing reporters are retained for the same chat so buffered narration
+    /// and tool events keep their ordering across a repeated `/telegram on`.
+    func synchronizeTelegramTurnProgressReporting() {
+        guard let origin = activeTelegramTurnOrigin,
+              let chatID = telegramOutgoingChatID(for: origin) else {
+            activeTelegramProgressReporter = nil
+            return
+        }
+        guard activeTelegramProgressReporter?.chatID != chatID else {
+            return
+        }
+        activeTelegramProgressReporter = makeTelegramTurnProgressReporter(for: origin)
+    }
+
+    func endTelegramTurnProgressReporting() {
+        activeTelegramProgressReporter = nil
+        activeTelegramTurnOrigin = nil
     }
 
     /// Returns the authorization handler for a turn whose progress is mirrored
@@ -461,6 +499,10 @@ extension TerminalChat {
     /// there is no queue to preserve, so the message is sent directly.
     @discardableResult
     func sendTelegramTurnMessage(_ message: String, to chatID: Int64) async -> Bool {
+        guard telegramControlState.isActive,
+              telegramLinkedChatID == chatID else {
+            return false
+        }
         if let reporter = activeTelegramProgressReporter, reporter.chatID == chatID {
             return await reporter.send(message)
         }
@@ -553,6 +595,15 @@ extension TerminalChat {
         """
     }
 
+    @discardableResult
+    private func sendTelegramProgressMessage(_ message: String, to chatID: Int64) async -> Bool {
+        guard telegramControlState.isActive,
+              telegramLinkedChatID == chatID else {
+            return false
+        }
+        return await sendTelegramSystemMessage(message, to: chatID)
+    }
+
     func makeTelegramTurnProgressReporter(
         for origin: TerminalPromptOrigin
     ) -> TerminalTelegramTurnProgressReporter? {
@@ -561,7 +612,7 @@ extension TerminalChat {
         }
 
         return TerminalTelegramTurnProgressReporter(chatID: chatID) { [weak self] message, chatID in
-            await self?.sendTelegramSystemMessage(message, to: chatID) ?? false
+            await self?.sendTelegramProgressMessage(message, to: chatID) ?? false
         }
     }
 
