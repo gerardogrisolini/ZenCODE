@@ -31,14 +31,14 @@ struct DirectToolCatalogSchemaTests {
             "text.head", "text.tail", "text.sort", "text.wc",
             "skills.list", "skills.read",
             "memory.read", "memory.search",
-            "todo.read", "tasks.list", "tasks.get",
+            "todo.read", "tasks.list", "tasks.get", "tasks.update",
             "agent.list", "agent.get", "agent.wait"
         ]
         var expectedMutatingNames: Set<String> = [
             "local.writeFile", "local.replace", "local.editFile", "local.multiEdit",
             "local.append", "local.mkdir", "local.delete", "local.move", "local.applyPatch",
             "memory.write", "memory.update", "memory.archive",
-            "todo.write", "tasks.create", "tasks.update", "tasks.retry", "tasks.cancel",
+            "todo.write", "tasks.create", "tasks.retry", "tasks.cancel",
             "agent.create", "agent.message", "agent.close"
         ]
 #if canImport(Darwin) || canImport(Glibc)

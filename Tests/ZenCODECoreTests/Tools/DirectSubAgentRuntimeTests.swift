@@ -167,7 +167,7 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func readOnlyTaskBoundAgentGrantExcludesMutableCoreToolsAddedByRuntime() async throws {
+    func readOnlyTaskBoundAgentGrantRetainsTaskUpdateAndExcludesOtherMutableCoreTools() async throws {
         let rawCompatibilityAlias = "agent.spawn"
         let reviewer = AgentProfile(
             id: "reviewer-profile",
@@ -209,7 +209,7 @@ struct DirectSubAgentRuntimeTests {
         #expect(allowedToolNames.contains("local.readFile"))
         #expect(allowedToolNames.contains("tasks.list"))
         #expect(allowedToolNames.contains("tasks.get"))
-        #expect(!allowedToolNames.contains("tasks.update"))
+        #expect(allowedToolNames.contains("tasks.update"))
         #expect(allowedToolNames.contains(rawCompatibilityAlias))
         #expect(
             !DirectToolExecutor.isCoreCoordinationToolAllowed(

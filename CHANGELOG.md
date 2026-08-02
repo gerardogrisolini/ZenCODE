@@ -10,12 +10,53 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-02
+
 ### Added
 
 - `/plan save` persists the active plan, or the latest non-empty assistant
   response, in the project task-graph plan library; `/plan load` restores the
   latest save as an unapproved plan in a session without an active plan and
   never resumes old execution state.
+- Agent profiles now have a backwards-compatible `readOnly` setting that
+  centrally removes mutable catalog-owned core tools. Existing manifests decode
+  a missing value as `false`; the default Planner and Reviewer enable it.
+- Task-graph checkpoints can carry optional saved-plan metadata while remaining
+  compatible with existing schema-1 checkpoints.
+
+### Changed
+
+- Delegated agents now derive their tool grant exclusively from a selected,
+  configured profile, and the model-visible workflow policy prefers suitable
+  sub-agents for non-trivial, independently scoped work. **Migration:**
+  `agent.create` now requires `profile` (or `agent`) and rejects request-level
+  tool overrides such as `toolNames`; configure the required tools on the
+  profile instead.
+- Conversation compaction now uses provider-aware prompt budgets, preserves a
+  larger useful suffix and bounded summaries, accounts for transport overhead,
+  and applies conservative retry targets after context-window failures.
+- Xcode feature descriptors now direct models to prefer applicable Xcode tools
+  over shell, filesystem, search, SwiftPM, or `xcodebuild` alternatives.
+- Terminal presentation now uses centralized semantic styling for thinking,
+  tools, sub-agent activity, status, Markdown, and permission dialogs, with
+  tool output visually attenuated without dimming model responses.
+
+### Fixed
+
+- Concurrent ACP prompts now share one in-flight runtime-backend preparation;
+  actor reentrancy during asynchronous backend hydration can no longer invoke
+  the backend factory multiple times for the same runner.
+- Read-only agents assigned to a task retain `tasks.update` for attempt progress
+  and lifecycle reporting, while `tasks.create`, `tasks.retry`, `tasks.cancel`,
+  and other mutating core tools remain restricted.
+- `/telegram on` can attach an already-running local turn to Telegram and keeps
+  progress reporting synchronized when Telegram is enabled or disabled during
+  generation.
+- Voice transcription handling, terminal first-row and streamed-thinking
+  rendering, sub-agent activity presentation, and related color consistency.
+- Context compaction edge cases across shared runtime, ChatGPT, and Anthropic,
+  including tiny transcripts, impossible budgets, provider payload inflation,
+  cache invalidation, and retry convergence.
 
 ## [1.0.11] - 2026-08-01
 
@@ -307,7 +348,9 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.10...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.11...v1.1.0
+[1.0.11]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.8...v1.0.10
 [1.0.8]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.6...v1.0.7

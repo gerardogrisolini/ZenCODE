@@ -97,8 +97,10 @@ Write authority comes from the selected profile's configured tools:
   inputs, and child intrinsics. Optional feature packages, MCP tools, and other
   external grants are not classified or changed by this setting.
 - **A child bound to a task** additionally receives the intrinsic `tasks.list`,
-  `tasks.get`, and `tasks.update` tools needed to report its attempt; a
-  read-only child retains only the non-mutating `tasks.list` and `tasks.get`.
+  `tasks.get`, and `tasks.update` tools needed to report its attempt. A
+  read-only child retains all three because `tasks.update` is classified as a
+  reporting/control-plane operation; `tasks.create`, `tasks.retry`, and
+  `tasks.cancel` remain restricted.
 - Every child receives the intrinsic `skills.list` and `skills.read` tools.
 
 `/plan`, `/review`, and `/workflow` all delegate with the selected profile's own

@@ -24,6 +24,11 @@ public actor AgentCoreBackend {
     private let configuration: AgentRuntimeConfiguration
     private let mcpRuntime: DirectMCPToolRuntime
     private var activeBackend: (any AgentRuntimeBackend)?
+    /// Single-flight guard for resolving and hydrating the runtime backend.
+    /// Actor reentrancy allows another caller into `resolveBackend` whenever
+    /// installation awaits an actor-backed runtime; all callers must join the
+    /// same preparation instead of invoking the factory again.
+    private var backendPreparation: Task<any AgentRuntimeBackend, Error>?
     /// Fences an in-flight backend installation when shutdown releases the
     /// runtime while one of its asynchronous setup calls is suspended.
     private var backendGeneration: UInt64 = 0
@@ -215,6 +220,8 @@ public actor AgentCoreBackend {
 
     public func shutdown() async {
         backendGeneration &+= 1
+        backendPreparation?.cancel()
+        backendPreparation = nil
         sessions.removeAll()
         toolProvidersBySessionID.removeAll()
         let backend = activeBackend
@@ -305,8 +312,42 @@ public actor AgentCoreBackend {
         if let activeBackend {
             return activeBackend
         }
-        let generation = backendGeneration
+        if let backendPreparation {
+            return try await backendPreparation.value
+        }
 
+        let generation = backendGeneration
+        let preparation = Task(
+            name: "Agent runtime backend preparation"
+        ) { [weak self] () throws -> any AgentRuntimeBackend in
+            guard let self else {
+                throw CancellationError()
+            }
+            return try await self.prepareBackend(
+                onEvent: onEvent,
+                generation: generation
+            )
+        }
+        backendPreparation = preparation
+
+        do {
+            let backend = try await preparation.value
+            if backendPreparation == preparation {
+                backendPreparation = nil
+            }
+            return backend
+        } catch {
+            if backendPreparation == preparation {
+                backendPreparation = nil
+            }
+            throw error
+        }
+    }
+
+    private func prepareBackend(
+        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void,
+        generation: UInt64
+    ) async throws -> any AgentRuntimeBackend {
         if let backendFactory {
             let backend = try backendFactory(configuration, mcpRuntime)
             do {
