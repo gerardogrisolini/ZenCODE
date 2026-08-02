@@ -14,66 +14,31 @@ import ToolCore
 @Suite
 struct DirectSubAgentRuntimeTests {
     @Test
-    func agentWithoutResolvedProfileInheritsParentGrant() async throws {
+    func agentWithoutProfileIsRejectedInsteadOfInheritingParentGrant() async throws {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend },
             profileResolver: { _ in nil }
         )
 
-        _ = try await runtime.execute(
-            rootSessionID: "root",
-            toolCall: presentedToolCall(
-                id: "create-worker",
-                name: "agent.create",
-                argumentsObject: [
-                    "name": "worker-1",
-                    "role": "worker",
-                    "prompt": "Do the delegated work"
-                ],
-                argumentsJSON: #"{"name":"worker-1","role":"worker","prompt":"Do the delegated work"}"#
-            ),
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-inheritance-tests"),
-            allowedToolNames: nil
-        )
-        let unrestrictedSession = try #require(await backend.createdSessions().first)
-        #expect(unrestrictedSession.allowedToolNames == nil)
-
-        _ = try await runtime.execute(
-            rootSessionID: "root",
-            toolCall: presentedToolCall(
-                id: "create-worker-2",
-                name: "agent.create",
-                argumentsObject: [
-                    "name": "worker-2",
-                    "role": "worker",
-                    "prompt": "Do more delegated work"
-                ],
-                argumentsJSON: #"{"name":"worker-2","role":"worker","prompt":"Do more delegated work"}"#
-            ),
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-inheritance-tests"),
-            allowedToolNames: ["local.readFile", "local.writeFile"]
-        )
-        let restrictedSession = try #require(await backend.createdSessions().last)
-        #expect(restrictedSession.allowedToolNames == ["local.readFile", "local.writeFile", "skills.list", "skills.read"])
-
-        _ = try await runtime.execute(
-            rootSessionID: "root",
-            toolCall: presentedToolCall(
-                id: "create-worker-3",
-                name: "agent.create",
-                argumentsObject: [
-                    "name": "worker-3",
-                    "role": "worker",
-                    "toolNames": ["local.readFile", "git.status"]
-                ],
-                argumentsJSON: #"{"name":"worker-3","role":"worker","toolNames":["local.readFile","git.status"]}"#
-            ),
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-inheritance-tests"),
-            allowedToolNames: ["local.readFile", "local.writeFile"]
-        )
-        let narrowedSession = try #require(await backend.createdSessions().last)
-        #expect(narrowedSession.allowedToolNames == ["local.readFile", "skills.list", "skills.read"])
+        await #expect(throws: DirectSubAgentRuntimeError.self) {
+            _ = try await runtime.execute(
+                rootSessionID: "root",
+                toolCall: presentedToolCall(
+                    id: "create-worker",
+                    name: "agent.create",
+                    argumentsObject: [
+                        "name": "worker",
+                        "role": "worker",
+                        "prompt": "Do the delegated work"
+                    ],
+                    argumentsJSON: #"{"name":"worker","role":"worker","prompt":"Do the delegated work"}"#
+                ),
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
+                allowedToolNames: ["local.readFile", "local.writeFile"]
+            )
+        }
+        #expect(await backend.createdSessions().isEmpty)
         await runtime.shutdown()
     }
 
@@ -105,7 +70,7 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func explicitToolsOnlyNarrowResolvedProfileGrant() async throws {
+    func agentCreateRejectsToolOverrides() async throws {
         let developer = AgentProfile(
             id: "developer-profile",
             name: "Developer",
@@ -117,21 +82,19 @@ struct DirectSubAgentRuntimeTests {
             profileResolver: { _ in developer }
         )
 
-        _ = try await runtime.createAgents(
-            arguments: [
-                "name": .string("implementation-worker"),
-                "profile": .string("Developer"),
-                "toolNames": .array([
-                    .string("local.writeFile"),
-                    .string("git.status")
-                ])
-            ],
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
-            parentAllowedToolNames: ["git.status"]
-        )
+        await #expect(throws: DirectSubAgentRuntimeError.self) {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "name": .string("implementation-worker"),
+                    "profile": .string("Developer"),
+                    "toolNames": .array([.string("local.writeFile")])
+                ],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
+                parentAllowedToolNames: ["git.status"]
+            )
+        }
 
-        let session = try #require(await backend.createdSessions().first)
-        #expect(session.allowedToolNames == ["local.writeFile", "skills.list", "skills.read"])
+        #expect(await backend.createdSessions().isEmpty)
         await runtime.shutdown()
     }
 
@@ -204,6 +167,60 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func readOnlyTaskBoundAgentGrantExcludesMutableCoreToolsAddedByRuntime() async throws {
+        let rawCompatibilityAlias = "agent.spawn"
+        let reviewer = AgentProfile(
+            id: "reviewer-profile",
+            name: "Reviewer",
+            readOnly: true,
+            tools: ["files", "memory", "sub-agents", rawCompatibilityAlias]
+        )
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "review", title: "Review findings")]
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in reviewer }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("reviewer"),
+                "profile": .string("Reviewer"),
+                "taskID": .string("review")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
+            parentAllowedToolNames: ["local.writeFile"],
+            rootSessionID: "root"
+        )
+
+        let session = try #require(await backend.createdSessions().first)
+        let allowedToolNames = try #require(session.allowedToolNames)
+        let mutatingCoreNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+
+        #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))
+        #expect(allowedToolNames.contains("local.readFile"))
+        #expect(allowedToolNames.contains("tasks.list"))
+        #expect(allowedToolNames.contains("tasks.get"))
+        #expect(!allowedToolNames.contains("tasks.update"))
+        #expect(allowedToolNames.contains(rawCompatibilityAlias))
+        #expect(
+            !DirectToolExecutor.isCoreCoordinationToolAllowed(
+                rawCompatibilityAlias,
+                allowedToolNames: allowedToolNames
+            )
+        )
+        await runtime.shutdown()
+    }
+
+    @Test
     func skillToolsAreAlwaysOnAndProviderPropagatesToSubAgentBackend() async throws {
         let skillProvider = PromptSkillSessionProvider(
             skills: [
@@ -220,7 +237,8 @@ struct DirectSubAgentRuntimeTests {
 
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in backend }
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in AgentProfile(id: "worker", name: "Worker", tools: []) }
         )
         await runtime.installPromptSkillToolProvider(skillProvider)
 
@@ -228,14 +246,14 @@ struct DirectSubAgentRuntimeTests {
             arguments: [
                 "name": .string("worker"),
                 "role": .string("worker"),
-                "toolNames": .array([.string("local.readFile")])
+                "profile": .string("Worker")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-skill-propagation-tests"),
             parentAllowedToolNames: ["local.readFile", "local.writeFile"]
         )
 
         // The intrinsic prompt-skill tools must be present in every
-        // sub-agent allowlist, regardless of the narrowed tool request.
+        // sub-agent allowlist, regardless of the profile grant.
         let session = try #require(await backend.createdSessions().first)
         #expect(session.allowedToolNames?.isSuperset(of: PromptSkillToolProvider.toolNames) == true)
 
@@ -256,14 +274,16 @@ struct DirectSubAgentRuntimeTests {
     func skillProviderNotRegisteredWhenAbsent() async throws {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in backend }
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in AgentProfile(id: "worker", name: "Worker", tools: []) }
         )
         // No promptSkillToolProvider installed.
 
         _ = try await runtime.createAgents(
             arguments: [
                 "name": .string("worker"),
-                "role": .string("worker")
+                "role": .string("worker"),
+                "profile": .string("Worker")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-skill-absent-tests"),
             parentAllowedToolNames: ["local.readFile"]
@@ -289,6 +309,7 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "name": .string("thinking-worker"),
+                "profile": .string("Developer"),
                 "prompt": .string("Investigate the issue")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-thinking-tests"),
@@ -332,6 +353,7 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "name": .string("tool-worker"),
+                "profile": .string("Developer"),
                 "prompt": .string("Investigate the issue")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-content-tests"),
@@ -428,9 +450,10 @@ struct DirectSubAgentRuntimeTests {
                 name: "agent.create",
                 argumentsObject: [
                     "name": "plan-author",
+                    "profile": "Developer",
                     "prompt": "Write the complete plan"
                 ],
-                argumentsJSON: #"{"name":"plan-author","prompt":"Write the complete plan"}"#
+                argumentsJSON: #"{"name":"plan-author","profile":"Developer","prompt":"Write the complete plan"}"#
             ),
             workingDirectory: workingDirectory
         )
@@ -468,7 +491,7 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func createAgentsUsesMatchedProfileModelFromRole() async throws {
+    func createAgentsUsesExplicitProfileModel() async throws {
         let planner = AgentProfile(
             id: "planner-profile",
             name: "Planner",
@@ -494,7 +517,8 @@ struct DirectSubAgentRuntimeTests {
         let output = try await runtime.createAgents(
             arguments: [
                 "name": .string("planning-pass"),
-                "role": .string("Planner")
+                "role": .string("Planner"),
+                "profile": .string("Planner")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
             parentAllowedToolNames: nil
@@ -602,7 +626,7 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func createAgentsRejectsExplicitModelWithoutProfile() async throws {
+    func createAgentsRejectsMissingProfileEvenWithExplicitModel() async throws {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend },
@@ -619,30 +643,32 @@ struct DirectSubAgentRuntimeTests {
                 parentAllowedToolNames: nil
             )
             Issue.record("Expected an explicit model without a profile to be rejected.")
-        } catch DirectSubAgentRuntimeError.explicitModelRequiresProfile(let modelID) {
-            #expect(modelID == "other-model")
+        } catch DirectSubAgentRuntimeError.missingArgument(let argument) {
+            #expect(argument == "profile or agent")
         }
     }
 
     @Test
-    func createAgentsWarnsWhenRequestedProfileDoesNotMatch() async throws {
+    func createAgentsRejectsUnknownProfile() async throws {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend },
             profileResolver: { _ in nil }
         )
 
-        let output = try await runtime.createAgents(
-            arguments: [
-                "name": .string("review-pass"),
-                "profile": .string("Rewiever")
-            ],
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
-            parentAllowedToolNames: nil
-        )
-
-        #expect(output.contains("Warning: requested profile \"Rewiever\""))
-        #expect(output.contains("inherits the parent session's model"))
+        do {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "name": .string("review-pass"),
+                    "profile": .string("Rewiever")
+                ],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
+                parentAllowedToolNames: nil
+            )
+            Issue.record("Expected an unknown profile to be rejected.")
+        } catch DirectSubAgentRuntimeError.agentProfileNotFound(let profile) {
+            #expect(profile == "Rewiever")
+        }
     }
 
     @Test
@@ -735,13 +761,14 @@ struct DirectSubAgentRuntimeTests {
         #expect(descriptor.description.contains(TaskRecord.agentSelectionPolicy))
         #expect(descriptor.description.contains("Give each sub-agent an explicit role and scope"))
         #expect(descriptor.description.contains(
-            "A resolved profile grants its configured tools to the sub-agent"
+            "The sub-agent receives the tools configured on that profile"
         ))
         #expect(descriptor.description.contains(
-            "Only when no profile resolves does the sub-agent inherit the parent session's enabled tools"
+            "the request is rejected when that profile does not resolve"
         ))
         #expect(descriptor.description.contains("authorized bindings"))
         #expect(descriptor.inputSchema.contains("\"modelID\""))
+        #expect(!descriptor.inputSchema.contains("toolNames"))
     }
 
     @Test
@@ -769,7 +796,8 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "name": .string("quick-task"),
-                "role": .string("Minimal")
+                "role": .string("Minimal"),
+                "profile": .string("Minimal")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
             parentAllowedToolNames: nil
@@ -865,10 +893,12 @@ struct DirectSubAgentRuntimeTests {
                 "agents": .array([
                     .object([
                         "name": .string("planner-one"),
+                        "profile": .string("Developer"),
                         "prompt": .string("Plan one")
                     ]),
                     .object([
                         "name": .string("planner-two"),
+                        "profile": .string("Developer"),
                         "prompt": .string("Plan two")
                     ])
                 ])
@@ -902,8 +932,8 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "agents": .array([
-                    .object(["name": .string("first-a")]),
-                    .object(["name": .string("first-b")])
+                    .object(["name": .string("first-a"), "profile": .string("Developer")]),
+                    .object(["name": .string("first-b"), "profile": .string("Developer")])
                 ])
             ],
             workingDirectory: workingDirectory,
@@ -914,7 +944,7 @@ struct DirectSubAgentRuntimeTests {
         #expect(Set(firstOverview.map(\.name)) == ["first-a", "first-b"])
 
         _ = try await runtime.createAgents(
-            arguments: ["name": .string("second")],
+            arguments: ["name": .string("second"), "profile": .string("Developer")],
             workingDirectory: workingDirectory,
             parentAllowedToolNames: nil
         )
@@ -946,6 +976,7 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "name": .string("reporter"),
+                "profile": .string("Developer"),
                 "taskID": .string("task-a"),
                 "prompt": .string("Do the report"),
             ],
@@ -991,6 +1022,7 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "name": .string("worker-1"),
+                "profile": .string("Developer"),
                 "taskID": .string("implementation"),
                 "prompt": .string("Implement the change"),
             ],
@@ -1039,6 +1071,7 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "name": .string("worker-2"),
+                "profile": .string("Developer"),
                 "taskID": .string("implementation"),
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -1085,7 +1118,7 @@ struct DirectSubAgentRuntimeTests {
         await runtime.installTaskOrchestrator(orchestrator)
 
         _ = try await runtime.createAgents(
-            arguments: ["name": .string("focused-lookup")],
+            arguments: ["name": .string("focused-lookup"), "profile": .string("Developer")],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
             parentAllowedToolNames: nil,
             rootSessionID: "root"
@@ -1128,7 +1161,7 @@ struct DirectSubAgentRuntimeTests {
         await runtime.installTaskOrchestrator(orchestrator)
 
         _ = try await runtime.createAgents(
-            arguments: ["name": .string("focused-lookup")],
+            arguments: ["name": .string("focused-lookup"), "profile": .string("Developer")],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
             parentAllowedToolNames: nil,
             rootSessionID: "root"
@@ -1136,7 +1169,7 @@ struct DirectSubAgentRuntimeTests {
 
         do {
             _ = try await runtime.createAgents(
-                arguments: ["name": .string("second-lookup")],
+                arguments: ["name": .string("second-lookup"), "profile": .string("Developer")],
                 workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
                 parentAllowedToolNames: nil,
                 rootSessionID: "root"
@@ -1182,6 +1215,7 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "name": .string("lookup"),
+                "profile": .string("Developer"),
                 "prompt": .string("Inspect the current concern")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -1228,8 +1262,8 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "agents": .array([
-                    .object(["name": .string("first")]),
-                    .object(["name": .string("second")]),
+                    .object(["name": .string("first"), "profile": .string("Developer")]),
+                    .object(["name": .string("second"), "profile": .string("Developer")]),
                 ])
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -1267,8 +1301,8 @@ struct DirectSubAgentRuntimeTests {
             _ = try await runtime.createAgents(
                 arguments: [
                     "agents": .array([
-                        .object(["name": .string("first")]),
-                        .object(["name": .string("second")]),
+                        .object(["name": .string("first"), "profile": .string("Developer")]),
+                        .object(["name": .string("second"), "profile": .string("Developer")]),
                     ])
                 ],
                 workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -1309,8 +1343,12 @@ struct DirectSubAgentRuntimeTests {
             _ = try await runtime.createAgents(
                 arguments: [
                     "agents": .array([
-                        .object(["name": .string("tracked"), "taskID": .string("tracked")]),
-                        .object(["name": .string("untracked")]),
+                        .object([
+                            "name": .string("tracked"),
+                            "profile": .string("Developer"),
+                            "taskID": .string("tracked"),
+                        ]),
+                        .object(["name": .string("untracked"), "profile": .string("Developer")]),
                     ])
                 ],
                 workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -1351,7 +1389,7 @@ struct DirectSubAgentRuntimeTests {
         await runtime.installTaskOrchestrator(orchestrator)
 
         _ = try await runtime.createAgents(
-            arguments: ["name": .string("plan-author")],
+            arguments: ["name": .string("plan-author"), "profile": .string("Planner")],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
             parentAllowedToolNames: nil,
             rootSessionID: "root"
@@ -1373,6 +1411,7 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "name": .string("first"),
+                "profile": .string("Developer"),
                 "prompt": .string("Investigate the first concern")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -1382,7 +1421,7 @@ struct DirectSubAgentRuntimeTests {
 
         do {
             _ = try await runtime.createAgents(
-                arguments: ["name": .string("second")],
+                arguments: ["name": .string("second"), "profile": .string("Developer")],
                 workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
                 parentAllowedToolNames: nil,
                 rootSessionID: "root"
@@ -1420,8 +1459,16 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "agents": .array([
-                    .object(["name": .string("first"), "taskID": .string("first")]),
-                    .object(["name": .string("second"), "task_id": .string("second")]),
+                    .object([
+                        "name": .string("first"),
+                        "profile": .string("Developer"),
+                        "taskID": .string("first"),
+                    ]),
+                    .object([
+                        "name": .string("second"),
+                        "profile": .string("Developer"),
+                        "task_id": .string("second"),
+                    ]),
                 ])
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -1449,8 +1496,8 @@ struct DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "agents": .array([
-                    .object(["name": .string("first")]),
-                    .object(["name": .string("second")]),
+                    .object(["name": .string("first"), "profile": .string("Developer")]),
+                    .object(["name": .string("second"), "profile": .string("Developer")]),
                 ])
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -1473,8 +1520,8 @@ struct DirectSubAgentRuntimeTests {
             _ = try await runtime.createAgents(
                 arguments: [
                     "agents": .array([
-                        .object(["name": .string("first")]),
-                        .object(["name": .string("second")]),
+                        .object(["name": .string("first"), "profile": .string("Developer")]),
+                        .object(["name": .string("second"), "profile": .string("Developer")]),
                     ])
                 ],
                 workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -1506,6 +1553,7 @@ struct DirectSubAgentRuntimeTests {
 
         _ = try await runtime.createAgents(
             arguments: [
+                "profile": .string("Developer"),
                 "taskID": .string("task-a"),
                 "prompt": .string("Implement"),
             ],
@@ -1543,8 +1591,16 @@ struct DirectSubAgentRuntimeTests {
             _ = try await runtime.createAgents(
                 arguments: [
                     "agents": .array([
-                        .object(["name": .string("a"), "taskID": .string("task-a")]),
-                        .object(["name": .string("b"), "taskID": .string("task-b")]),
+                        .object([
+                            "name": .string("a"),
+                            "profile": .string("Developer"),
+                            "taskID": .string("task-a"),
+                        ]),
+                        .object([
+                            "name": .string("b"),
+                            "profile": .string("Developer"),
+                            "taskID": .string("task-b"),
+                        ]),
                     ])
                 ],
                 workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -1573,7 +1629,10 @@ struct DirectSubAgentRuntimeTests {
             contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
         )
         await runtime.installTaskOrchestrator(orchestrator)
-        let arguments: [String: JSONValue] = ["taskID": .string("task-a")]
+        let arguments: [String: JSONValue] = [
+            "profile": .string("Developer"),
+            "taskID": .string("task-a"),
+        ]
         _ = try await runtime.createAgents(
             arguments: arguments,
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
@@ -1610,7 +1669,11 @@ struct DirectSubAgentRuntimeTests {
         )
         await runtime.installTaskOrchestrator(orchestrator)
         _ = try await runtime.createAgents(
-            arguments: ["name": .string("closer"), "taskID": .string("close-task")],
+            arguments: [
+                "name": .string("closer"),
+                "profile": .string("Developer"),
+                "taskID": .string("close-task"),
+            ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
             parentAllowedToolNames: nil,
             rootSessionID: "root"
@@ -1622,7 +1685,11 @@ struct DirectSubAgentRuntimeTests {
         ).task.status == .cancelled)
 
         _ = try await runtime.createAgents(
-            arguments: ["name": .string("shutdown"), "taskID": .string("shutdown-task")],
+            arguments: [
+                "name": .string("shutdown"),
+                "profile": .string("Developer"),
+                "taskID": .string("shutdown-task"),
+            ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
             parentAllowedToolNames: nil,
             rootSessionID: "root"
@@ -1673,6 +1740,7 @@ struct DirectSubAgentRuntimeTests {
             _ = try await runtime.createAgents(
                 arguments: [
                     "name": .string(sessionID),
+                    "profile": .string("Developer"),
                     "taskID": .string("shared-task"),
                     "prompt": .string("Wait"),
                 ],

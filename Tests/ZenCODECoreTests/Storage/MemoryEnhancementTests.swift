@@ -454,14 +454,14 @@ struct MemoryEnhancementTests {
     }
 
     @Test
-    func descriptorsAndPlannerExposeOnlyTheUsefulNewCapability() throws {
+    func descriptorsAndPlannerExposeConfiguredMemoryCapabilities() throws {
         let names = Set(MemoryTool.toolDescriptors.map(\.name))
         let planner = try #require(
             AgentProfileStore.defaultProfiles().first {
                 $0.id == AgentProfileStore.plannerAgentID.uuidString
             }
         )
-        let resolvedPlannerTools = Set(TerminalChat.plannerSubAgentToolNames(for: planner))
+        let resolvedPlannerTools = planner.allowedToolNames()
 
         #expect(names == Set([
             "memory.read",
@@ -470,8 +470,7 @@ struct MemoryEnhancementTests {
             "memory.update",
             "memory.archive",
         ]))
-        #expect(!TerminalChat.plannerReadOnlyToolNames.contains("memory.update"))
-        #expect(!resolvedPlannerTools.contains("memory.update"))
+        #expect(resolvedPlannerTools.isSuperset(of: names))
     }
 }
 

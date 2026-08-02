@@ -148,20 +148,17 @@ public struct TaskExecutionSpec: Codable, Equatable, Sendable {
     public var executor: TaskExecutorKind
     public var profile: String?
     public var role: String?
-    public var toolNames: [String]
     public var fileScopes: [String]
 
     public init(
         executor: TaskExecutorKind = .coordinator,
         profile: String? = nil,
         role: String? = nil,
-        toolNames: [String] = [],
         fileScopes: [String] = []
     ) {
         self.executor = executor
         self.profile = profile?.nilIfBlank
         self.role = role?.nilIfBlank
-        self.toolNames = toolNames.compactMap(\.nilIfBlank)
         self.fileScopes = fileScopes.compactMap(\.nilIfBlank)
     }
 }

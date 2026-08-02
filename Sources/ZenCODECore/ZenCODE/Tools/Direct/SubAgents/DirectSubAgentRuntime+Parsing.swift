@@ -21,23 +21,14 @@ extension DirectSubAgentRuntime {
         matching payload: RequestedAgentPayload,
         in agents: [AgentProfile]
     ) -> AgentProfile? {
-        let rawCandidates: [String?] = [payload.profileReference, payload.name, payload.role]
-        let candidates = rawCandidates.compactMap { $0?.nilIfBlank }
-
-        for candidate in candidates {
-            let lookupValue = TextUtilities.normalizedLookupValue(candidate)
-            guard !lookupValue.isEmpty else {
-                continue
-            }
-            if let agent = agents.first(where: { agent in
-                TextUtilities.normalizedLookupValue(agent.id) == lookupValue
-                    || TextUtilities.normalizedLookupValue(agent.name) == lookupValue
-            }) {
-                return agent
-            }
+        guard let profileReference = payload.profileReference?.nilIfBlank else {
+            return nil
         }
-
-        return nil
+        let lookupValue = TextUtilities.normalizedLookupValue(profileReference)
+        return agents.first { agent in
+            TextUtilities.normalizedLookupValue(agent.id) == lookupValue
+                || TextUtilities.normalizedLookupValue(agent.name) == lookupValue
+        }
     }
 
     public static func backendContext(
@@ -58,15 +49,8 @@ extension DirectSubAgentRuntime {
     /// delegation cannot bypass a profile's model policy.
     public static func resolvingModelBinding(
         for payload: RequestedAgentPayload,
-        profile: AgentProfile?
+        profile: AgentProfile
     ) throws -> RequestedAgentPayload {
-        guard let profile else {
-            if let requestedModelID = payload.requestedModelID {
-                throw DirectSubAgentRuntimeError.explicitModelRequiresProfile(requestedModelID)
-            }
-            return payload
-        }
-
         guard !profile.modelBindings.isEmpty else {
             if let requestedModelID = payload.requestedModelID {
                 throw DirectSubAgentRuntimeError.modelNotAllowedForProfile(
@@ -119,6 +103,17 @@ extension DirectSubAgentRuntime {
             object = [:]
         }
 
+        let toolOverrideKeys = [
+            "allowedTools", "allowed_tools", "toolNames", "tool_names",
+            "toolKinds", "tool_kinds", "tools",
+        ]
+        if let toolOverrideKey = toolOverrideKeys.first(where: { object[$0] != nil }) {
+            throw DirectSubAgentRuntimeError.invalidArgument(
+                "\(toolOverrideKey) is not supported by agent.create; "
+                    + "delegated tools are configured on the selected agent profile"
+            )
+        }
+
         return RequestedAgentPayload(
             name: firstString(["name", "title"], in: object) ?? "sub-agent-\(fallbackIndex + 1)",
             role: firstString(["role"], in: object) ?? "worker",
@@ -128,63 +123,8 @@ extension DirectSubAgentRuntime {
             )?.nilIfBlank,
             taskID: firstString(["taskID", "task_id"], in: object)?.nilIfBlank,
             prompt: firstString(["prompt", "message", "initialPrompt", "initial_prompt"], in: object)?.nilIfBlank,
-            allowedToolNames: try explicitAllowedToolNames(from: object),
             modelID: firstString(["modelID", "model_id", "model"], in: object)?.nilIfBlank
         )
-    }
-
-    public static func explicitAllowedToolNames(
-        from arguments: [String: JSONValue]
-    ) throws -> Set<String>? {
-        let keys = ["allowedTools", "allowed_tools", "toolNames", "tool_names", "toolKinds", "tool_kinds", "tools"]
-        guard let key = keys.first(where: { arguments[$0] != nil }) else {
-            // Omitted means inherit from the resolved parent/profile.
-            return nil
-        }
-        guard let rawToolNames = firstStringList([key], in: arguments) else {
-            throw DirectSubAgentRuntimeError.invalidArgument("\(key) must be a string or an array of strings")
-        }
-        let toolNames = try rawToolNames.map { rawValue -> String in
-            let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedValue.isEmpty else {
-                throw DirectSubAgentRuntimeError.invalidArgument("\(key) contains an empty tool name")
-            }
-            if let canonicalSubAgentToolName = canonicalSubAgentToolName(for: trimmedValue) {
-                return canonicalSubAgentToolName
-            }
-            guard trimmedValue.contains(".") else {
-                throw DirectSubAgentRuntimeError.invalidArgument("\(key) contains invalid tool name '\(trimmedValue)'")
-            }
-            return trimmedValue
-        }
-        // A present empty array is an explicit zero-tool grant, not inheritance.
-        return Set(toolNames)
-    }
-
-    public static func resolvedAllowedToolNames(
-        requestedToolNames: Set<String>?,
-        parentAllowedToolNames: Set<String>?,
-        profile: AgentProfile? = nil
-    ) -> Set<String>? {
-        // A resolved profile owns the child grant, including an intentionally
-        // empty tool set. Only an unresolved profile falls back to the parent.
-        let baseAllowedToolNames = profile.map { $0.allowedToolNames() }
-            ?? parentAllowedToolNames
-
-        guard let baseAllowedToolNames else {
-            return requestedToolNames
-        }
-
-        guard let requestedToolNames else {
-            return baseAllowedToolNames
-        }
-
-        return requestedToolNames.filter {
-            DirectToolExecutor.isAllowed(
-                $0,
-                allowedToolNames: baseAllowedToolNames
-            )
-        }
     }
 
     public static func normalizedToolRequest(

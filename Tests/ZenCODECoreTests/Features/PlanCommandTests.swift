@@ -620,80 +620,6 @@ struct PlanCommandTests {
     }
 
     @Test
-    func plannerToolAllowlistExcludesMutatingTools() {
-        let planner = AgentProfile(
-            id: AgentProfileStore.plannerAgentID.uuidString,
-            name: AgentProfileStore.plannerAgentName,
-            tools: [
-                "local.readFile",
-                "local.inspectFile",
-                "local.writeFile",
-                "local.exec",
-                "search.locate",
-                "git.diff",
-                "git.add",
-                "memory.read",
-                "memory.write",
-                "tasks.list",
-                "tasks.update",
-                "web.search"
-            ]
-        )
-
-        let tools = TerminalChat.plannerSubAgentToolNames(for: planner)
-
-        #expect(tools.contains("local.readFile"))
-        #expect(tools.contains("local.inspectFile"))
-        #expect(tools.contains("search.locate"))
-        #expect(tools.contains("git.diff"))
-        #expect(tools.contains("memory.read"))
-        #expect(tools.contains("tasks.list"))
-        #expect(tools.contains("web.search"))
-        #expect(!tools.contains("local.writeFile"))
-        #expect(!tools.contains("local.exec"))
-        #expect(!tools.contains("git.add"))
-        #expect(!tools.contains("memory.write"))
-        #expect(!tools.contains("tasks.update"))
-    }
-
-    @Test
-    func plannerToolAllowlistDoesNotExpandAnEmptyProfile() {
-        let planner = AgentProfile(
-            id: AgentProfileStore.plannerAgentID.uuidString,
-            name: AgentProfileStore.plannerAgentName,
-            tools: []
-        )
-
-        #expect(TerminalChat.plannerSubAgentToolNames(for: planner).isEmpty)
-    }
-
-    @Test
-    func defaultPlannerToolGroupsResolveAvailableReadOnlySubAgentTools() throws {
-        let planner = try #require(
-            AgentProfileStore.defaultProfiles().first(where: TerminalChat.isPlannerProfile)
-        )
-
-        let tools = TerminalChat.plannerSubAgentToolNames(for: planner)
-        let resolvedProfileTools = planner.allowedToolNames()
-
-        #expect(planner.tools == AgentProfileStore.plannerToolNames)
-        #expect(!planner.tools.contains("shell"))
-        #expect(!planner.tools.contains("local.readFile"))
-        #expect(tools.contains("local.readFile"))
-        #expect(tools.contains("local.inspectFile"))
-        // Optional packages remain in the profile selection, but only an
-        // installed and available package can add its read-only tools.
-        #expect(tools.contains("search.locate") == resolvedProfileTools.contains("search.locate"))
-        #expect(tools.contains("git.diff") == resolvedProfileTools.contains("git.diff"))
-        #expect(tools.contains("memory.read"))
-        #expect(tools.contains("web.search") == resolvedProfileTools.contains("web.search"))
-        #expect(!tools.contains("local.exec"))
-        #expect(!tools.contains("local.writeFile"))
-        #expect(!tools.contains("git.add"))
-        #expect(!tools.contains("memory.write"))
-    }
-
-    @Test
     func planDelegationPromptMakesOnePlannerTheSolePlanAuthor() {
         let planner = AgentProfile(
             id: AgentProfileStore.plannerAgentID.uuidString,
@@ -713,7 +639,7 @@ struct PlanCommandTests {
         #expect(prompt.contains("role \"Planner\""))
         #expect(prompt.contains("profile \"\(planner.id)\""))
         #expect(prompt.contains("The Planner must not edit files or run mutating commands"))
-        #expect(prompt.contains("toolNames:"))
+        #expect(!prompt.contains("toolNames"))
         #expect(prompt.contains("agent.wait"))
         #expect(prompt.contains("same Planner to correct it with agent.message"))
         #expect(prompt.contains("call todo.write once with mode \"upsert\""))

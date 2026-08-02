@@ -37,11 +37,10 @@ extension DirectSubAgentRuntime {
         .argument(["prompt", "message", "initialPrompt", "initial_prompt"])
     ], separator: " ")
 
-    static let toolDescriptors: [DirectToolDescriptor] = [
-        DirectToolDescriptor(
+    private static let createDescriptor = DirectToolDescriptor(
             name: "agent.create",
-            description: "Creates up to 8 delegated sub-agents; independent sub-agents run in parallel. For coordinated work, define the session task graph first and pass taskID to atomically claim each runnable task and record a fenced execution attempt. A taskID is required while a task graph is active and for parallel or concurrent delegation when task workflow tools are available. A single self-contained delegation may omit taskID. Agent selection policy: \(TaskRecord.agentSelectionPolicy) Pass profile (or agent) to run the sub-agent with one of the agent profiles from agents.json, matched by name, role, or profile. When a profile has model bindings, pass model/modelID only to select one of that profile's authorized bindings; an unbound model is rejected. Otherwise the sub-agent uses the session's model. Give each sub-agent an explicit role and scope. A resolved profile grants its configured tools to the sub-agent, and toolNames can only narrow that grant. Only when no profile resolves does the sub-agent inherit the parent session's enabled tools, again narrowed by toolNames. Task-bound children also receive intrinsic tasks.list, tasks.get, and tasks.update tools for attempt reporting.",
-            inputSchema: #"{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"model":{"type":"string"},"modelID":{"type":"string"},"model_id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}},"agents":{"type":"array","maxItems":8,"items":{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"model":{"type":"string"},"modelID":{"type":"string"},"model_id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"toolNames":{"type":"array","items":{"type":"string"}}}}},"items":{"type":"array","items":{"type":"object"}}}}"#,
+            description: "Creates up to 8 delegated sub-agents; independent sub-agents run in parallel. For coordinated work, define the session task graph first and pass taskID to atomically claim each runnable task and record a fenced execution attempt. A taskID is required while a task graph is active and for parallel or concurrent delegation when task workflow tools are available. A single self-contained delegation may omit taskID. Agent selection policy: \(TaskRecord.agentSelectionPolicy) Pass profile (or agent) to select one configured agent profile from agents.json; the request is rejected when that profile does not resolve. The sub-agent receives the tools configured on that profile. When a profile has model bindings, pass model/modelID only to select one of its authorized bindings; an unbound model is rejected. Otherwise the sub-agent uses the session's model. Give each sub-agent an explicit role and scope. Task-bound children also receive intrinsic tasks.list, tasks.get, and tasks.update tools for attempt reporting.",
+            inputSchema: #"{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"model":{"type":"string"},"modelID":{"type":"string"},"model_id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"agents":{"type":"array","maxItems":8,"items":{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"model":{"type":"string"},"modelID":{"type":"string"},"model_id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"}}}},"items":{"type":"array","items":{"type":"object"}}}}"#,
             presentation: ToolPresentationDefinition(
                 title: "Agent",
                 action: "Create",
@@ -50,14 +49,16 @@ extension DirectSubAgentRuntime {
                 sections: [.parameters()],
                 summary: ToolPresentationSummaryDefinition(value: .resultSummary(), strategy: .firstLine, label: "summary")
             )
-        ),
-        DirectToolDescriptor(
+        )
+
+    private static let listDescriptor = DirectToolDescriptor(
             name: "agent.list",
             description: "Lists delegated sub-agents, optionally filtered by status.",
             inputSchema: #"{"type":"object","properties":{"status":{"type":"string"}}}"#,
             presentation: .standard(title: "Agents", action: "List", kind: .read, targetKeyPaths: ["status"])
-        ),
-        DirectToolDescriptor(
+        )
+
+    private static let getDescriptor = DirectToolDescriptor(
             name: "agent.get",
             description: "Returns status and latest output for delegated sub-agents. Reference an agent by id, name, task_id, or ids.",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"task_id":{"type":"string"},"ids":{"type":"array","items":{"type":"string"}}}}"#,
@@ -69,8 +70,9 @@ extension DirectSubAgentRuntime {
                 sections: [.parameters()],
                 summary: ToolPresentationSummaryDefinition(value: .resultSummary(), strategy: .firstLine, label: "summary")
             )
-        ),
-        DirectToolDescriptor(
+        )
+
+    private static let messageDescriptor = DirectToolDescriptor(
             name: "agent.message",
             description: "Queues a follow-up prompt for one or more delegated sub-agents. Reference an agent by id, name, task_id, or ids. Do not use it to reopen a completed /workflow task: record negative validation as failure, call tasks.retry, then use a new agent.create(taskID:).",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"task_id":{"type":"string"},"ids":{"type":"array","items":{"type":"string"}},"message":{"type":"string"},"prompt":{"type":"string"},"input":{"type":"string"}},"required":["message"]}"#,
@@ -82,8 +84,9 @@ extension DirectSubAgentRuntime {
                 sections: [.parameters()],
                 summary: ToolPresentationSummaryDefinition(value: .resultSummary(), strategy: .firstLine, label: "summary")
             )
-        ),
-        DirectToolDescriptor(
+        )
+
+    private static let waitDescriptor = DirectToolDescriptor(
             name: "agent.wait",
             description: "Waits until delegated sub-agents finish their pending work or a timeout elapses.",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"task_id":{"type":"string"},"ids":{"type":"array","items":{"type":"string"}},"timeoutSeconds":{"type":"number"},"pollIntervalSeconds":{"type":"number"}}}"#,
@@ -95,8 +98,9 @@ extension DirectSubAgentRuntime {
                 sections: [.parameters()],
                 summary: ToolPresentationSummaryDefinition(value: .resultSummary(), strategy: .firstLine, label: "summary")
             )
-        ),
-        DirectToolDescriptor(
+        )
+
+    private static let closeDescriptor = DirectToolDescriptor(
             name: "agent.close",
             description: "Closes a delegated sub-agent and cancels pending work.",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"task_id":{"type":"string"}}}"#,
@@ -109,5 +113,25 @@ extension DirectSubAgentRuntime {
                 summary: ToolPresentationSummaryDefinition(value: .resultSummary(), strategy: .firstLine, label: "summary")
             )
         )
+
+    static let readOnlyToolDescriptors: [DirectToolDescriptor] = [
+        listDescriptor,
+        getDescriptor,
+        waitDescriptor
+    ]
+
+    static let mutatingToolDescriptors: [DirectToolDescriptor] = [
+        createDescriptor,
+        messageDescriptor,
+        closeDescriptor
+    ]
+
+    static let toolDescriptors: [DirectToolDescriptor] = [
+        createDescriptor,
+        listDescriptor,
+        getDescriptor,
+        messageDescriptor,
+        waitDescriptor,
+        closeDescriptor
     ]
 }

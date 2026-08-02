@@ -30,15 +30,21 @@ A graph or approved plan enables coverage-only review even without tracked chang
 
 Requires the `sub-agents` tool group. Enable it with `/tools sub-agents` or switch to a profile that includes it.
 
-## Read-Only Safety
+## Profile Tools
 
-`/review` delegates with an explicit read-only tool allowlist: local read/list, text, and search tools. It intentionally excludes Git and memory tools so a review cannot expand beyond the current session changes.
+`/review` selects the `Reviewer` profile explicitly. Each delegated Reviewer
+receives exactly the tools configured on that profile, plus runtime-intrinsic
+tools; `agent.create` does not construct a separate tool list. The built-in
+profile has `readOnly: true`, which centrally removes mutable catalog-owned core
+tools even after `/tools`, app, ACP, or task-bound runtime grants are resolved.
+Optional feature, MCP, and other external grants remain outside that
+classification.
 
 ## How Delegation Works
 
 1. The current agent remains the review director — it does not switch profiles.
 2. With an active task graph, the director adds one independent review task per `Reviewer`, including a focused reviewer, then selects runnable work. Without a graph, a single focused review can create a `Reviewer` directly.
-3. Each Reviewer receives a focused prompt, the read-only tool list, and a `taskID` for graph work.
+3. Each Reviewer receives a focused prompt and a `taskID` for graph work; its tools come from the selected profile.
 4. Independent reviews run in parallel when the surface can be partitioned by file, module, or concern.
 5. At least one coverage Reviewer verifies task/plan claims against current files when a graph or plan exists.
 6. The director consolidates findings and summarizes by severity plus task/plan coverage.

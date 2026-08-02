@@ -23,6 +23,39 @@ struct DirectToolCatalogSchemaTests {
     }
 
     @Test
+    func coreReadAndMutatingDescriptorsPartitionTheClassifiedCoreCatalog() {
+        let readNames = Set(DirectToolCatalog.coreReadDescriptors.map(\.name))
+        let mutatingNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+        let expectedReadNames: Set<String> = [
+            "local.pwd", "local.ls", "local.readFile", "local.readFiles", "local.inspectFile",
+            "text.head", "text.tail", "text.sort", "text.wc",
+            "skills.list", "skills.read",
+            "memory.read", "memory.search",
+            "todo.read", "tasks.list", "tasks.get",
+            "agent.list", "agent.get", "agent.wait"
+        ]
+        var expectedMutatingNames: Set<String> = [
+            "local.writeFile", "local.replace", "local.editFile", "local.multiEdit",
+            "local.append", "local.mkdir", "local.delete", "local.move", "local.applyPatch",
+            "memory.write", "memory.update", "memory.archive",
+            "todo.write", "tasks.create", "tasks.update", "tasks.retry", "tasks.cancel",
+            "agent.create", "agent.message", "agent.close"
+        ]
+#if canImport(Darwin) || canImport(Glibc)
+        expectedMutatingNames.formUnion(["local.exec", "exec.job"])
+#endif
+        let coreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
+        let unclassifiedNames = Set(DirectToolCatalog.featureDescriptors.map(\.name))
+            .union(DirectToolCatalog.localSearchDescriptors.map(\.name))
+
+        #expect(readNames == expectedReadNames)
+        #expect(mutatingNames == expectedMutatingNames)
+        #expect(readNames.isDisjoint(with: mutatingNames))
+        #expect(coreNames == readNames.union(mutatingNames))
+        #expect(coreNames.isDisjoint(with: unclassifiedNames))
+    }
+
+    @Test
     func tasksCreateBatchSchemaExposesExecutionExecutor() throws {
         let descriptor = try #require(
             DirectToolCatalog.todoTaskDescriptors.first { $0.name == "tasks.create" }

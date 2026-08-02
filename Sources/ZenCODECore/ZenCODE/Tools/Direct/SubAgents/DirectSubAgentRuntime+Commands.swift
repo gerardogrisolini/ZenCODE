@@ -32,7 +32,12 @@ extension DirectSubAgentRuntime {
         let previousOverviewBatchID = latestOverviewBatchID
 
         let prepared = try payloads.enumerated().map { offset, payload in
-            let profile = profileResolver(payload)
+            guard let profileReference = payload.profileReference?.nilIfBlank else {
+                throw DirectSubAgentRuntimeError.missingArgument("profile or agent")
+            }
+            guard let profile = profileResolver(payload) else {
+                throw DirectSubAgentRuntimeError.agentProfileNotFound(profileReference)
+            }
             return (
                 offset: offset,
                 payload: try Self.resolvingModelBinding(for: payload, profile: profile),
@@ -83,14 +88,6 @@ extension DirectSubAgentRuntime {
                 let payload = item.payload
                 let id = item.id
                 let sessionID = "\(id)_session"
-                if item.profile == nil,
-                   let requestedProfile = payload.profileReference?.nilIfBlank {
-                    advisories.append(
-                        "Warning: requested profile \"\(requestedProfile)\" for agent "
-                            + "\"\(payload.name)\" did not match any configured agent profile; "
-                            + "the sub-agent inherits the parent session's model."
-                    )
-                }
                 let backendContext = Self.backendContext(
                     for: payload,
                     profile: item.profile
@@ -114,7 +111,7 @@ extension DirectSubAgentRuntime {
                         advisories.append(
                             "Warning: task \"\(receipt.taskID)\" has complexity "
                                 + "\(taskView.task.complexity) but agent \"\(payload.name)\" "
-                                + "uses profile \"\(item.profile?.name ?? "unknown")\" with "
+                                + "uses profile \"\(item.profile.name)\" with "
                                 + "model \"\(payload.modelID ?? "unknown")\" at capability "
                                 + "\(capability)/10, a capability gap of "
                                 + "\(capabilityGap). Use this profile only when no "
@@ -134,23 +131,20 @@ extension DirectSubAgentRuntime {
                     )
                 }
 
-                var childAllowedToolNames = Self.resolvedAllowedToolNames(
-                    requestedToolNames: payload.allowedToolNames,
-                    parentAllowedToolNames: parentAllowedToolNames,
-                    profile: item.profile
-                )
-                if payload.taskID != nil, childAllowedToolNames != nil {
+                var childAllowedToolNames = item.profile.allowedToolNames()
+                if payload.taskID != nil {
                     // Assigned task attempts need these intrinsic reporting tools
                     // even when the selected profile does not coordinate tasks.
-                    childAllowedToolNames?.formUnion(["tasks.list", "tasks.get", "tasks.update"])
+                    childAllowedToolNames.formUnion(["tasks.list", "tasks.get", "tasks.update"])
                 }
-                if childAllowedToolNames != nil {
-                    // Prompt-skill tools are intrinsic and always-on: every
-                    // delegated sub-agent must be able to discover and read
-                    // selected prompt-skill guidance, mirroring the top-level
-                    // session allowlist resolved by AgentCoreAppSessionFactory.
-                    childAllowedToolNames?.formUnion(PromptSkillToolProvider.toolNames)
-                }
+                // Prompt-skill tools are intrinsic and always-on: every
+                // delegated sub-agent must be able to discover and read
+                // selected prompt-skill guidance, mirroring the top-level
+                // session allowlist resolved by AgentCoreAppSessionFactory.
+                childAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
+                childAllowedToolNames = item.profile.resolvedAllowedToolNames(
+                    childAllowedToolNames
+                )
                 await backend.createSession(
                     id: sessionID,
                     cwd: workingDirectory.path,
@@ -188,8 +182,8 @@ extension DirectSubAgentRuntime {
                     tasklessDelegationReservationID: reservationIDsByAgentID[id],
                     name: payload.name.nilIfBlank ?? "sub-agent-\(item.offset + 1)",
                     role: payload.role.nilIfBlank ?? "worker",
-                    profileID: item.profile?.id,
-                    profileName: item.profile?.name,
+                    profileID: item.profile.id,
+                    profileName: item.profile.name,
                     overviewBatchID: overviewBatchID,
                     backend: backend,
                     createdAt: now,

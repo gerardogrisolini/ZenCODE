@@ -356,6 +356,39 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    @TerminalChatActor
+    func toolsSelectionCannotReenableMutableCoreToolsForReadOnlyProfile() async throws {
+        let profile = AgentProfile(
+            id: "read-only",
+            name: "Read Only",
+            readOnly: true
+        )
+        let configuration = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles() + [profile],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-read-only-tools")
+        )
+        let terminal = TerminalChat(
+            configuration: configuration,
+            stdinIsTerminal: false,
+            sessionRunner: AgentCoreSessionRunner()
+        )
+        terminal.selectedAgent = profile
+        terminal.selectedToolKeys = ["shell", "files", "memory", "sub-agents"]
+
+        let allowedToolNames = await terminal.selectedAllowedToolNames(
+            discoverExternalTools: false
+        )
+        let mutatingCoreNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+
+        #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))
+        #expect(allowedToolNames.contains("local.readFile"))
+        #expect(allowedToolNames.contains("memory.read"))
+        #expect(allowedToolNames.contains("agent.list"))
+        #expect(allowedToolNames.contains("tasks.list"))
+    }
+
+    @Test
     func groupedModelTitlesOmitRedundantProviderFallback() throws {
         let providerID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
         let fallbackTitleModel = AgentSettingsModelManifestFactory.remoteAPIModel(

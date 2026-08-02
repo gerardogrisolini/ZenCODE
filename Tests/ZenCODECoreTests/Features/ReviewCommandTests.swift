@@ -23,42 +23,6 @@ struct ReviewCommandTests {
     }
 
     @Test
-    func reviewerToolAllowlistExcludesGitAndMemory() {
-        let reviewer = AgentProfile(
-            id: AgentProfileStore.reviewerAgentID.uuidString,
-            name: AgentProfileStore.reviewerAgentName,
-            tools: [
-                "local.readFile",
-                "local.inspectFile",
-                "search.grep",
-                "search.locate",
-                "git.diff",
-                "memory.read"
-            ]
-        )
-
-        let tools = TerminalChat.reviewerSubAgentToolNames(for: reviewer)
-
-        #expect(tools.contains("local.readFile"))
-        #expect(tools.contains("local.inspectFile"))
-        #expect(tools.contains("search.grep"))
-        #expect(tools.contains("search.locate"))
-        #expect(!tools.contains("git.diff"))
-        #expect(!tools.contains("memory.read"))
-    }
-
-    @Test
-    func reviewerToolAllowlistDoesNotExpandAnEmptyProfile() {
-        let reviewer = AgentProfile(
-            id: AgentProfileStore.reviewerAgentID.uuidString,
-            name: AgentProfileStore.reviewerAgentName,
-            tools: []
-        )
-
-        #expect(TerminalChat.reviewerSubAgentToolNames(for: reviewer).isEmpty)
-    }
-
-    @Test
     func reviewDelegationPromptUsesOnlySessionChangeSummaryForScope() {
         let summary = TurnFileChangeSummary(entries: [
             TurnFileChangeSummary.Entry(
@@ -97,6 +61,8 @@ struct ReviewCommandTests {
         #expect(prompt.contains("diff --git a/Sources/Example.swift b/Sources/Example.swift"))
         #expect(prompt.contains("Review focus requested by the user: focus on errors"))
         #expect(prompt.contains("Apply this focus only within the tracked file changes"))
+        #expect(prompt.contains("profile \"\(reviewer.id)\""))
+        #expect(!prompt.contains("toolNames"))
         #expect(!prompt.contains("git status"))
         #expect(!prompt.contains("recent log"))
         #expect(!prompt.contains("project journal"))

@@ -46,6 +46,9 @@ extension DirectToolExecutor {
             toolCall.name,
             allowedToolNames: allowedToolNames
         )
+        let canonicalCoreCoordinationToolName = Self.canonicalCoreCoordinationToolName(
+            for: toolCall.name
+        )
         let featureAllowed = await swiftFeatureRuntime.featureToolIsAllowed(
             toolName: toolCall.name,
             allowedToolNames: allowedToolNames
@@ -122,7 +125,14 @@ extension DirectToolExecutor {
                 output: try await mcpRuntime.execute(toolCall: toolCall)
             )
         }
-        if directlyAllowed,
+        if canonicalCoreCoordinationToolName != nil,
+           !Self.isCoreCoordinationToolAllowed(
+               toolCall.name,
+               allowedToolNames: allowedToolNames
+           ) {
+            throw DirectToolExecutorError.toolNotAllowed(toolCall.name)
+        }
+        if canonicalCoreCoordinationToolName != nil,
            let borrowedSubAgentToolExecutor,
            Self.isSubAgentCoordinationToolName(toolCall.name) {
             return DirectToolExecutionOutput(
@@ -135,7 +145,8 @@ extension DirectToolExecutor {
                 )
             )
         }
-        if directlyAllowed, DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
+        if canonicalCoreCoordinationToolName != nil,
+           DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
             return DirectToolExecutionOutput(
                 output: try await subAgentRuntime.execute(
                     rootSessionID: sessionID,
@@ -145,7 +156,8 @@ extension DirectToolExecutor {
                 )
             )
         }
-        if directlyAllowed, DirectTodoRuntime.isTodoToolName(toolCall.name) {
+        if canonicalCoreCoordinationToolName != nil,
+           DirectTodoRuntime.isTodoToolName(toolCall.name) {
             return DirectToolExecutionOutput(
                 output: try await todoRuntime.execute(
                     sessionID: sessionID,
@@ -153,7 +165,8 @@ extension DirectToolExecutor {
                 )
             )
         }
-        if directlyAllowed, DirectTaskToolAdapter.isTaskToolName(toolCall.name) {
+        if canonicalCoreCoordinationToolName != nil,
+           DirectTaskToolAdapter.isTaskToolName(toolCall.name) {
             let output = try await taskToolAdapter.execute(
                 sessionID: sessionID,
                 toolCall: toolCall

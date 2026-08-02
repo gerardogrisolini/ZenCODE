@@ -202,10 +202,13 @@ public enum AgentCoreAppSessionFactory {
         } else {
             resolvedToolNames = selectedAgent?.allowedToolNames()
         }
+        let profileResolvedToolNames = resolvedToolNames.map { toolNames in
+            selectedAgent?.resolvedAllowedToolNames(toolNames) ?? toolNames
+        }
         // Both skill tools are intrinsic and always-on, so they must remain in
         // any explicit allowlist regardless of the user's tool selection.
         return AgentSessionComposition.allowedToolNamesIncludingIntrinsicSkillTools(
-            ExternalToolAvailability.resolvedAllowedToolNames(resolvedToolNames)
+            ExternalToolAvailability.resolvedAllowedToolNames(profileResolvedToolNames)
         )
     }
 

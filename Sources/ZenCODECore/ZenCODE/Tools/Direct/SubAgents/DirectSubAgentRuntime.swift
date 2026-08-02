@@ -172,7 +172,6 @@ public actor DirectSubAgentRuntime {
         public let profileReference: String?
         public let taskID: String?
         public let prompt: String?
-        public let allowedToolNames: Set<String>?
 
         /// The model reference supplied to `agent.create`, before it is
         /// checked against the resolved profile. A reference may name either
@@ -204,7 +203,6 @@ public actor DirectSubAgentRuntime {
             profileReference: String? = nil,
             taskID: String? = nil,
             prompt: String? = nil,
-            allowedToolNames: Set<String>? = nil,
             modelID: String? = nil,
             modelBinding: AgentModelBinding? = nil
         ) {
@@ -213,7 +211,6 @@ public actor DirectSubAgentRuntime {
             self.profileReference = profileReference?.nilIfBlank
             self.taskID = taskID?.nilIfBlank
             self.prompt = prompt?.nilIfBlank
-            self.allowedToolNames = allowedToolNames
             self.requestedModelID = modelID?.nilIfBlank
             self.modelBinding = modelBinding
         }
@@ -227,7 +224,6 @@ public actor DirectSubAgentRuntime {
                 profileReference: profileReference,
                 taskID: taskID,
                 prompt: prompt,
-                allowedToolNames: allowedToolNames,
                 modelID: requestedModelID,
                 modelBinding: modelBinding
             )

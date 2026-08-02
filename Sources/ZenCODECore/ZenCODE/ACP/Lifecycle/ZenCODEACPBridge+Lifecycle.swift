@@ -122,6 +122,11 @@ extension ZenCODEACPBridge {
             effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
             allowedToolNames = effectiveAllowedToolNames
         }
+        if let selectedAgent, let effectiveAllowedToolNames = allowedToolNames {
+            allowedToolNames = selectedAgent.resolvedAllowedToolNames(
+                effectiveAllowedToolNames
+            )
+        }
         await verboseACPLog(
             "session/new allowedTools=\(Self.verboseToolNameSummary(allowedToolNames))"
         )
@@ -721,6 +726,11 @@ extension ZenCODEACPBridge {
         if var effectiveAllowedToolNames = allowedToolNames {
             effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
             allowedToolNames = effectiveAllowedToolNames
+        }
+        if let selectedAgent, let effectiveAllowedToolNames = allowedToolNames {
+            allowedToolNames = selectedAgent.resolvedAllowedToolNames(
+                effectiveAllowedToolNames
+            )
         }
         let systemPrompt = resolvedSystemPrompt(
             providedSystemPrompt: nil,

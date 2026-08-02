@@ -9,23 +9,6 @@ import Foundation
 import ToolCore
 
 extension TerminalChat {
-  /// Read-only canonical tool names a Reviewer sub-agent may use, regardless of
-  /// how the Reviewer profile is configured. Acts as a safety allowlist so the
-  /// delegated reviewers can inspect only the session change surface and current
-  /// files, but never mutate the workspace or broaden scope through git/memory.
-  public nonisolated static let reviewerReadOnlyToolNames: Set<String> = [
-    "local.pwd",
-    "local.ls",
-    "local.readFile",
-    "local.inspectFile",
-    "search.glob",
-    "search.grep",
-    "search.locate",
-    "text.head",
-    "text.tail",
-    "text.wc",
-  ]
-
   func handleReviewCommand(_ command: String) async -> TerminalSubmittedLineAction {
     let argument = Self.slashCommandArguments(
       from: command,
@@ -101,13 +84,6 @@ extension TerminalChat {
       || agent.name.caseInsensitiveCompare(AgentProfileStore.reviewerAgentName) == .orderedSame
   }
 
-  /// Canonical, read-only tool names a Reviewer sub-agent may receive: the
-  /// profile's own tools intersected with the read-only safety allowlist.
-  nonisolated static func reviewerSubAgentToolNames(for reviewer: AgentProfile) -> [String] {
-    let profileTools = reviewer.allowedToolNames()
-    return profileTools.intersection(reviewerReadOnlyToolNames).sorted()
-  }
-
   nonisolated static func reviewDelegationPrompt(
     scope: String,
     reviewer: AgentProfile,
@@ -135,10 +111,6 @@ extension TerminalChat {
         \(taskGraphReviewSection(graph))
         """
     } ?? "No task graph snapshot is available; classify plan coverage from files and mark unverifiable claims unverified."
-
-    let toolList = reviewerSubAgentToolNames(for: reviewer)
-      .map { "\"\($0)\"" }
-      .joined(separator: ", ")
 
     let scopeSection: String
     if scope.isEmpty, approvedPlan != nil {
@@ -225,10 +197,8 @@ extension TerminalChat {
       - A task in awaiting_validation is not completed and must never be reported as validated.
 
       Delegation rules:
-      - Create the sub-agents with agent.create using role "Reviewer"; Reviewers are \
-      read-only and must not edit files.
-      - Restrict each Reviewer to this read-only toolset by passing \
-      toolNames: [\(toolList)].
+      - Create the sub-agents with agent.create using role "Reviewer" and profile \
+      "\(reviewer.id)"; Reviewers must not edit files.
       - If a task graph is active, append one independent review task per Reviewer to that \
       graph, including a single Reviewer; call tasks.list with runnableOnly=true and pass each \
       runnable taskID to agent.create. Without an active graph, define that workflow before \
@@ -327,9 +297,6 @@ extension TerminalChat {
     reviewer: AgentProfile,
     changeSummary: TurnFileChangeSummary
   ) -> String {
-    let toolList = reviewerSubAgentToolNames(for: reviewer)
-      .map { "\"\($0)\"" }
-      .joined(separator: ", ")
     let scopeSection: String
     if scope.isEmpty {
       scopeSection = """
@@ -357,10 +324,8 @@ extension TerminalChat {
       \(reviewChangeSummarySection(changeSummary))
 
       Delegation rules:
-      - Create the sub-agents with agent.create using role "Reviewer"; Reviewers are \
-      read-only and must not edit files.
-      - Restrict each Reviewer to this read-only toolset by passing \
-      toolNames: [\(toolList)].
+      - Create the sub-agents with agent.create using role "Reviewer" and profile \
+      "\(reviewer.id)"; Reviewers must not edit files.
       - When the review surface can be partitioned into independent areas (for \
       example distinct files, modules, or concerns), first call tasks.create once \
       with one independent review task per area, then call tasks.list with \

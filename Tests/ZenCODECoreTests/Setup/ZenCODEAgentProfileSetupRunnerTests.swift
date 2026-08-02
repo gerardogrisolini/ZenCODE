@@ -65,6 +65,7 @@ struct ZenCODEAgentProfileSetupRunnerTests {
         let original = AgentProfile(
             id: "developer",
             name: "Developer",
+            readOnly: true,
             tools: ["shell"],
             modelBindings: [
                 AgentModelBinding(id: "fast", modelID: "fast-model", capability: 4),
@@ -85,6 +86,7 @@ struct ZenCODEAgentProfileSetupRunnerTests {
         )
 
         #expect(updated.tools == ["shell"])
+        #expect(updated.readOnly)
         #expect(updated.modelBindings.count == 2)
         #expect(updated.defaultModelBinding?.id == "deep")
         #expect(updated.defaultModelBinding?.thinkingSelection == .high)

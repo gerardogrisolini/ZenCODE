@@ -448,6 +448,42 @@ public actor DirectToolExecutor {
         return false
     }
 
+    /// Returns the catalog-owned coordination tool reached by a compatibility
+    /// alias, if any. This intentionally recognizes only names that the direct
+    /// executor can dispatch to its Todo, Task, or Sub-Agent runtimes.
+    ///
+    /// Provider, feature, and MCP dispatch retain precedence over this fallback
+    /// path, so an externally registered raw tool name is never reclassified
+    /// merely because it resembles a legacy coordination alias.
+    static func canonicalCoreCoordinationToolName(
+        for rawToolName: String
+    ) -> String? {
+        guard let canonicalName = SubAgentToolRequestCompatibility.canonicalToolName(
+            for: rawToolName
+        ), DirectToolCatalog.coreDescriptors.contains(where: { descriptor in
+            descriptor.name == canonicalName
+        }) else {
+            return nil
+        }
+        return canonicalName
+    }
+
+    /// Authorization for a compatibility-dispatched coordination tool must be
+    /// evaluated against its canonical catalog name, not the raw alias. A
+    /// read-only profile may retain an external grant named like an alias, but
+    /// that grant cannot unlock the core action reached by fallback dispatch.
+    static func isCoreCoordinationToolAllowed(
+        _ rawToolName: String,
+        allowedToolNames: Set<String>?
+    ) -> Bool {
+        guard let canonicalName = canonicalCoreCoordinationToolName(
+            for: rawToolName
+        ) else {
+            return false
+        }
+        return isAllowed(canonicalName, allowedToolNames: allowedToolNames)
+    }
+
     public static func isSubAgentCoordinationToolName(_ toolName: String) -> Bool {
         DirectSubAgentRuntime.isSubAgentToolName(toolName)
             || DirectTodoTaskRuntime.isTodoOrTaskToolName(toolName)

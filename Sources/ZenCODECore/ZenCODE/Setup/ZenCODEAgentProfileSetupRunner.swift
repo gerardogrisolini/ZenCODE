@@ -238,6 +238,10 @@ public enum ZenCODEAgentProfileSetupRunner {
             defaultValue: defaultAgent?.symbolName,
             allowEmpty: true
         ).nilIfBlank
+        let readOnly = try promptYesNo(
+            "Read-only agent?",
+            defaultValue: defaultAgent?.readOnly ?? false
+        )
         let tools = promptToolSelection(
             title: "Tools for \(name)",
             defaultTools: defaultAgent?.tools ?? AgentProfileStore.developerToolNames
@@ -253,6 +257,7 @@ public enum ZenCODEAgentProfileSetupRunner {
             name: name,
             instructions: instructions,
             symbolName: symbolName,
+            readOnly: readOnly,
             tools: tools,
             skills: skills,
             modelBindings: defaultAgent?.modelBindings ?? [],

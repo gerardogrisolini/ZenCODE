@@ -57,6 +57,7 @@ extension AgentConfigurationTests {
         #expect(profiles["Xcode"] == nil)
         #expect(reviewerProfile.tools == AgentProfileStore.reviewerToolNames)
         #expect(reviewerProfile.instructions?.contains("Reviewer agent") == true)
+        #expect(reviewerProfile.readOnly)
         #expect(!reviewerProfile.tools.contains("sub-agents"))
         #expect(!reviewerProfile.tools.contains("shell"))
         #expect(reporterProfile.tools == AgentProfileStore.reporterToolNames)
@@ -79,6 +80,7 @@ extension AgentConfigurationTests {
         #expect(plannerProfile.tools == AgentProfileStore.plannerToolNames)
         #expect(plannerProfile.tools == ["files", searchKey, "text", gitKey, "memory", webKey])
         #expect(plannerProfile.instructions?.contains("Planner agent") == true)
+        #expect(plannerProfile.readOnly)
         #expect(!plannerProfile.tools.contains("sub-agents"))
         #expect(!plannerProfile.tools.contains("shell"))
         #expect(!plannerProfile.tools.contains("local.exec"))
@@ -92,6 +94,17 @@ extension AgentConfigurationTests {
         #expect(optionalFeatureKeys.allSatisfy { key in
             !toolSelectionItems.contains { $0.key == key }
         })
+        let mutatingCoreNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+        #expect(
+            reviewerProfile.allowedToolNames(
+                featureStatuses: unavailableOptionalFeatureStatuses
+            ).isDisjoint(with: mutatingCoreNames)
+        )
+        #expect(
+            plannerProfile.allowedToolNames(
+                featureStatuses: unavailableOptionalFeatureStatuses
+            ).isDisjoint(with: mutatingCoreNames)
+        )
 
         for profile in profiles.values where profile.name != "Planner" {
             #expect(!profile.tools.contains(xcodeKey))
@@ -201,6 +214,56 @@ extension AgentConfigurationTests {
 
         #expect(normalized.thinkingSelection == .high)
         #expect(decoded.agents.first?.thinkingSelection == .high)
+    }
+
+    @Test
+    func agentProfileReadOnlyFlagRoundTripsAndDefaultsForLegacyManifests() throws {
+        let profile = AgentProfile(
+            id: "read-only",
+            name: "Read Only",
+            readOnly: true,
+            tools: ["files"]
+        )
+        let normalized = AgentProfileStore.normalizedAgentForSave(profile)
+        let decoded = try JSONDecoder().decode(
+            AgentProfileManifest.self,
+            from: JSONEncoder().encode(AgentProfileManifest(agents: [normalized]))
+        )
+        let legacyProfile = try JSONDecoder().decode(
+            AgentProfile.self,
+            from: #"{"id":"legacy","name":"Legacy","tools":[]}"#.data(using: .utf8)!
+        )
+
+        #expect(normalized.readOnly)
+        #expect(decoded.agents.first?.readOnly == true)
+        #expect(legacyProfile.readOnly == false)
+    }
+
+    @Test
+    func readOnlyProfileKeepsOnlyCoreReadDescriptorsAndPreservesNonCoreGrants() {
+        let profile = AgentProfile(
+            id: "read-only",
+            name: "Read Only",
+            readOnly: true
+        )
+        let coreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
+        let coreReadNames = Set(DirectToolCatalog.coreReadDescriptors.map(\.name))
+        let nonCoreNames: Set<String> = ["search.", "external.inspect"]
+
+        let resolved = profile.resolvedAllowedToolNames(coreNames.union(nonCoreNames))
+        let broadGrantResolved = profile.resolvedAllowedToolNames(["local.", "search."])
+        let mutableLocalNames = Set(
+            DirectToolCatalog.coreMutatingLocalFileAndTextDescriptors.map(\.name)
+        )
+
+        #expect(resolved == coreReadNames.union(nonCoreNames))
+        #expect(
+            AgentProfile(id: "writable", name: "Writable").resolvedAllowedToolNames(coreNames)
+                == coreNames
+        )
+        #expect(broadGrantResolved.contains("search."))
+        #expect(broadGrantResolved.isDisjoint(with: mutableLocalNames))
+        #expect(broadGrantResolved.contains("local.readFile"))
     }
 
     @Test
@@ -461,6 +524,35 @@ extension AgentConfigurationTests {
         #expect(builderAllowedToolNames?.contains("feature.scaffold") == true)
         #expect(customAllowedToolNames?.contains("local.exec") == true)
         #expect(customAllowedToolNames?.contains("feature.list") == false)
+    }
+
+    @Test
+    func appSessionToolOverridesCannotRestoreReadOnlyCoreMutators() {
+        let profile = AgentProfile(
+            id: "read-only",
+            name: "Read Only",
+            readOnly: true
+        )
+        let rawCompatibilityAlias = "agent.spawn"
+        let requestedToolNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
+            .union(["external.inspect", rawCompatibilityAlias])
+
+        let allowedToolNames = AgentCoreAppSessionFactory.resolvedAllowedToolNames(
+            selectedToolKeys: nil,
+            explicitAllowedToolNames: requestedToolNames,
+            selectedAgent: profile
+        )
+
+        let expectedToolNames = Set(DirectToolCatalog.coreReadDescriptors.map(\.name))
+            .union(["external.inspect", rawCompatibilityAlias])
+            .union(PromptSkillToolProvider.toolNames)
+        #expect(allowedToolNames == expectedToolNames)
+        #expect(
+            !DirectToolExecutor.isCoreCoordinationToolAllowed(
+                rawCompatibilityAlias,
+                allowedToolNames: allowedToolNames
+            )
+        )
     }
 
     @Test
@@ -748,7 +840,8 @@ struct DelegatableAgentsSectionTests {
         #expect(!section.contains("Report findings with file and line references."))
         #expect(section.contains(TaskRecord.agentSelectionPolicy))
         #expect(section.contains("model id as `model` or `modelID`"))
-        #expect(section.contains("effective tools come from the parent grant"))
-        #expect(section.contains("`toolNames` can only narrow that grant"))
+        #expect(section.contains("The selected profile is required"))
+        #expect(section.contains("supplies the sub-agent's tools"))
+        #expect(section.contains("agent.create cannot override them"))
     }
 }

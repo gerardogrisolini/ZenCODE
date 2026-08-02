@@ -151,9 +151,9 @@ writes to stdout, so ACP JSON-RPC output remains clean. See
 ## Agent Profiles
 
 Agent profiles live in `~/.zencode/agents.json` and are managed in setup. The
-recommended profiles are `Developer`, `Builder`, `Minimal`, `Xcode`, `Planner`,
-`Reviewer`, and `Reporter`. Each defines tools, skills, instructions, and model
-bindings.
+recommended profiles are `Developer`, `Builder`, `Minimal`, `Planner`,
+`Reviewer`, and `Reporter`. Each defines tools, an optional enforced `readOnly`
+core-tool policy, skills, instructions, and model bindings.
 
 Switch profiles in the TUI without restarting:
 
@@ -216,14 +216,14 @@ Commands start with `/`:
 - `/tasks clear` — remove all task graphs for the logical session.
 
 **Agentic workflow:**
-- `/plan <goal>` — delegate planning to a read-only `Planner` sub-agent. See [planner.md](planner.md).
+- `/plan <goal>` — delegate planning to a sub-agent using the configured `Planner` profile. See [planner.md](planner.md).
 - `/plan save` — persist the active plan (or the latest assistant response) in the project task-graph checkpoint.
 - `/plan load` — load the latest saved project plan into the current session as unapproved and pending.
 - `/plan status` — show plan progress from the graph state.
 - `/plan approve` — activate the plan and start implementation.
 - `/plan clear` — archive the graph and remove the active plan.
 - `/workflow <goal>` — plan and delegate all work to sub-agents. It creates an active workflow graph up front; every graph task is enforced as a sub-agent execution attempt. It refuses to start while an active `/plan` exists; finish that plan or use `/plan clear` first. The current agent stays as coordinator and final reviewer, retaining its normal tool grant for that work. No separate Planner sub-agent or approval step. Use `/tasks` to monitor progress.
-- `/review [focus]` — delegate review to read-only `Reviewer` sub-agents. See [reviewer.md](reviewer.md).
+- `/review [focus]` — delegate review to sub-agents using the configured `Reviewer` profile. See [reviewer.md](reviewer.md).
 - `/make-agents` — ask the model to create or update `AGENTS.md` for the current directory. Always run it when first opening a new or updated project so its workspace guidance stays current. Requires the `Files` tool group.
 - `/feature` — manage Swift feature packages (Builder profile only). See [builder.md](builder.md).
 
@@ -231,7 +231,7 @@ Commands start with `/`:
 
 | | `/plan` | `/workflow` |
 |---|---|---|
-| **Planning** | Delegated to a read-only Planner sub-agent | Done by the current agent directly |
+| **Planning** | Delegated to a sub-agent using the configured Planner profile | Done by the current agent directly |
 | **Approval step** | Yes — `/plan approve` activates the graph | No — starts immediately |
 | **Task implementation** | The current agent works freely: directly or by delegating, as it sees fit | Every graph task must be claimed by a sub-agent; coordinator task attempts are rejected while its normal tool grant remains unchanged |
 | **Sub-agent selection** | The model decides per task if and when to delegate | The model must assign the best-matching profile to every task |

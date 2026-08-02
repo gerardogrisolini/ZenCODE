@@ -79,9 +79,11 @@ extension TerminalChat {
     private func allowedToolNamesIncludingSelectedPromptSkills(
         _ allowedToolNames: Set<String>
     ) -> Set<String> {
-        AgentSessionComposition.allowedToolNamesIncludingIntrinsicSkillTools(
+        let allowedToolNames = AgentSessionComposition.allowedToolNamesIncludingIntrinsicSkillTools(
             allowedToolNames
         )
+        return selectedAgent?.resolvedAllowedToolNames(allowedToolNames)
+            ?? allowedToolNames
     }
 
     public func currentSystemPrompt(allowedToolNames: Set<String>) -> String {

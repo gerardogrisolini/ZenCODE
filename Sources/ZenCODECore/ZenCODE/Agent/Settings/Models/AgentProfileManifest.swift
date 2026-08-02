@@ -82,6 +82,11 @@ public struct AgentProfile: Codable, Hashable, Sendable {
     public let name: String
     public let instructions: String?
     public let symbolName: String?
+    /// Limits configured core tools to their non-mutating descriptors.
+    ///
+    /// Missing values in persisted manifests decode as `false` for backwards
+    /// compatibility with profiles saved before this setting existed.
+    public let readOnly: Bool
     public let tools: [String]
     public let skills: [AgentProfileSkill]
     public let modelBindings: [AgentModelBinding]
@@ -147,6 +152,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         name: String,
         instructions: String? = nil,
         symbolName: String? = nil,
+        readOnly: Bool = false,
         tools: [String] = [],
         skills: [AgentProfileSkill] = [],
         modelID: String? = nil,
@@ -161,6 +167,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         self.name = name.nilIfBlank ?? AgentProfileStore.developerAgentName
         self.instructions = instructions?.nilIfBlank
         self.symbolName = symbolName?.nilIfBlank
+        self.readOnly = readOnly
         self.tools = tools
         self.skills = skills
 
@@ -195,6 +202,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         self.name = try container.decode(String.self, forKey: .name)
         self.instructions = try container.decodeIfPresent(String.self, forKey: .instructions)?.nilIfBlank
         self.symbolName = try container.decodeIfPresent(String.self, forKey: .symbolName)?.nilIfBlank
+        self.readOnly = try container.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
         self.tools = try container.decodeIfPresent([String].self, forKey: .tools) ?? []
         self.skills = try container.decodeIfPresent([AgentProfileSkill].self, forKey: .skills) ?? []
 
@@ -247,6 +255,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         try container.encode(name, forKey: .name)
         try container.encodeIfPresent(instructions, forKey: .instructions)
         try container.encodeIfPresent(symbolName, forKey: .symbolName)
+        try container.encode(readOnly, forKey: .readOnly)
         try container.encode(tools, forKey: .tools)
         try container.encode(skills, forKey: .skills)
         if !modelBindings.isEmpty {
@@ -260,6 +269,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         case name
         case instructions
         case symbolName
+        case readOnly
         case tools
         case skills
         case modelID
@@ -406,7 +416,49 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         if AgentProfileStore.isBuilderAgent(self) {
             allowedToolNames.formUnion(AgentProfileStore.featureManagementToolNames)
         }
+        return resolvedAllowedToolNames(allowedToolNames)
+    }
+
+    /// Applies this profile's core-tool policy to an already-resolved grant.
+    ///
+    /// A read-only profile can retain every grant that does not cover a core
+    /// descriptor. When a grant is an exact core name or a prefix that covers
+    /// core descriptors, it is replaced by the exact read-only core descriptors
+    /// it permits. This prevents broad grants such as `local.` from restoring
+    /// mutable core tools while leaving optional feature, MCP, and external
+    /// tool grants unchanged.
+    public func resolvedAllowedToolNames(
+        _ allowedToolNames: Set<String>
+    ) -> Set<String> {
+        guard readOnly, !allowedToolNames.isEmpty else {
+            return allowedToolNames
+        }
+
+        let coreDescriptors = DirectToolCatalog.coreDescriptors
+        let coreReadDescriptors = DirectToolCatalog.coreReadDescriptors
+        let coreGrantNames = Set(allowedToolNames.filter { allowedToolName in
+            let grant = Set([allowedToolName])
+            return coreDescriptors.contains { descriptor in
+                DirectToolExecutor.isAllowed(
+                    descriptor.name,
+                    allowedToolNames: grant
+                )
+            }
+        })
+
+        guard !coreGrantNames.isEmpty else {
+            return allowedToolNames
+        }
+
+        let readOnlyCoreToolNames = Set(coreReadDescriptors.compactMap { descriptor in
+            DirectToolExecutor.isAllowed(
+                descriptor.name,
+                allowedToolNames: allowedToolNames
+            ) ? descriptor.name : nil
+        })
         return allowedToolNames
+            .subtracting(coreGrantNames)
+            .union(readOnlyCoreToolNames)
     }
 
     public func selectedSkillIDs(availableSkills: [PromptSkill]) -> Set<String> {
@@ -660,6 +712,7 @@ public enum AgentProfileStore {
                 Report correctness bugs, regressions, security and concurrency issues, missing tests, and style or convention violations. Reference findings with file:line and a severity, and group the summary by severity.
                 """,
                 symbolName: "magnifyingglass.circle",
+                readOnly: true,
                 tools: reviewerToolNames
             ),
             AgentProfile(
@@ -682,6 +735,7 @@ public enum AgentProfileStore {
                 Report likely files or areas to change, implementation phases, dependencies, risks, edge cases, validation steps, and where to run /review after the work is implemented.
                 """,
                 symbolName: "list.bullet.clipboard",
+                readOnly: true,
                 tools: plannerToolNames
             )
         ]
@@ -707,6 +761,7 @@ public enum AgentProfileStore {
             name: agent.name,
             instructions: agent.instructions,
             symbolName: agent.symbolName,
+            readOnly: agent.readOnly,
             tools: tools,
             skills: agent.skills,
             modelBindings: agent.modelBindings,

@@ -16,7 +16,7 @@ public enum DirectSubAgentRuntimeError: LocalizedError {
     case agentLimitExceeded(Int)
     case taskGraphRequiredForCoordinatedDelegation
     case taskIDRequiredForActiveTaskGraph(String)
-    case explicitModelRequiresProfile(String)
+    case agentProfileNotFound(String)
     case modelNotAllowedForProfile(modelID: String, profile: String)
 
     public var errorDescription: String? {
@@ -37,8 +37,8 @@ public enum DirectSubAgentRuntimeError: LocalizedError {
             return "Coordinated delegation requires a task graph. Create the workflow with tasks.create, use tasks.list with runnableOnly=true, then pass taskID for every delegated task."
         case let .taskIDRequiredForActiveTaskGraph(graphID):
             return "Active task graph '\(graphID)' requires every delegated sub-agent to include taskID. Call tasks.list with runnableOnly=true and delegate a runnable task."
-        case let .explicitModelRequiresProfile(modelID):
-            return "Model '\(modelID)' requires a resolved agent profile with an authorized model binding."
+        case let .agentProfileNotFound(profile):
+            return "No configured agent profile matched '\(profile)'."
         case let .modelNotAllowedForProfile(modelID, profile):
             return "Model '\(modelID)' is not an authorized binding for agent profile '\(profile)'."
         }

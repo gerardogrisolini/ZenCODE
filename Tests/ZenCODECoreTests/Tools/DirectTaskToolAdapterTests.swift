@@ -72,6 +72,7 @@ struct DirectTaskToolAdapterTests {
         #expect(createDescriptor.description.contains("safe, useful parallelism"))
         #expect(createDescriptor.description.contains("execution.executor as sub_agent"))
         #expect(createDescriptor.inputSchema.contains("\"sub_agent\""))
+        #expect(!createDescriptor.inputSchema.contains("toolNames"))
         #expect(createDescriptor.schemaObject != nil)
     }
 

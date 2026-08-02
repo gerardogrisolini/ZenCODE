@@ -8,8 +8,10 @@
 import Foundation
 @testable import ZenCODECore
 import FeatureKit
+import FeatureMCPBridgeKit
 import LocalToolsSupport
 import Testing
+import ToolCore
 
 @Suite
 struct DirectToolExecutorLocalIOTests {
@@ -713,6 +715,235 @@ struct DirectToolExecutorLocalIOTests {
         #expect(output.contains("targetFeature"))
         #expect(output.contains("suggested_reads:"))
         #expect(output.contains("local.readFile path=\"\(source.path)\""))
+    }
+}
+
+@Suite
+struct DirectToolExecutorAuthorizationTests {
+    @Test
+    func readOnlyProfilesRejectMutableCoreCompatibilityAliases() async {
+        let profile = AgentProfile(
+            id: "read-only",
+            name: "Read Only",
+            readOnly: true
+        )
+        let executor = makeExecutor()
+        let aliases = [
+            "agent.spawn",
+            "agent_spawn",
+            "subagent.create",
+            "todo.update",
+            "todo_update",
+            "tasks_update",
+            "AGENT.SPAWN"
+        ]
+
+        for alias in aliases {
+            let allowedToolNames = profile.resolvedAllowedToolNames([alias])
+            let result = await executor.execute(
+                sessionID: "read-only-alias",
+                toolCall: toolCall(named: alias),
+                workingDirectory: URL(fileURLWithPath: "/tmp"),
+                allowedToolNames: allowedToolNames
+            )
+
+            #expect(result.status == .permissionDenied, "Expected \(alias) to be denied.")
+            #expect(result.isPermissionDenied)
+        }
+
+        await executor.shutdown()
+    }
+
+    @Test
+    func compatibilityAliasUsesCanonicalGrantWhenItIsAuthorized() async {
+        let executor = makeExecutor()
+        let result = await executor.execute(
+            sessionID: "canonical-alias",
+            toolCall: toolCall(
+                named: "todo_update",
+                arguments: ["content": "Keep this todo."]
+            ),
+            workingDirectory: URL(fileURLWithPath: "/tmp"),
+            allowedToolNames: ["todo.write"]
+        )
+
+        #expect(result.status == .completed)
+        #expect(result.output.contains("Keep this todo."))
+        await executor.shutdown()
+    }
+
+    @Test
+    func externalPrefixCannotFallBackToAMutableCoreCompatibilityTool() async {
+        let profile = AgentProfile(
+            id: "read-only",
+            name: "Read Only",
+            readOnly: true
+        )
+        let executor = makeExecutor()
+        let rawToolName = "search.agent.create"
+
+        #expect(
+            SubAgentToolRequestCompatibility.canonicalToolName(for: rawToolName)
+                == "agent.create"
+        )
+        let result = await executor.execute(
+            sessionID: "external-prefix-fallback",
+            toolCall: toolCall(named: rawToolName),
+            workingDirectory: URL(fileURLWithPath: "/tmp"),
+            allowedToolNames: profile.resolvedAllowedToolNames(["search."])
+        )
+
+        #expect(result.status == .permissionDenied)
+        #expect(result.isPermissionDenied)
+        await executor.shutdown()
+    }
+
+    @Test
+    func registeredExternalToolKeepsPriorityOverCompatibilityFallback() async {
+        let executor = makeExecutor()
+        let rawToolName = "search.agent.create"
+        await executor.updateToolProviders([
+            AgentToolProvider(
+                tools: [
+                    ToolDescriptor(
+                        name: rawToolName,
+                        description: "External provider fixture.",
+                        inputSchema: #"{"type":"object","properties":{}}"#
+                    )
+                ],
+                executor: { _ in "external provider handled the raw tool" }
+            )
+        ])
+
+        let result = await executor.execute(
+            sessionID: nil,
+            toolCall: toolCall(named: rawToolName),
+            workingDirectory: URL(fileURLWithPath: "/tmp"),
+            allowedToolNames: ["search."]
+        )
+
+        #expect(result.status == .completed)
+        #expect(result.output == "external provider handled the raw tool")
+        await executor.shutdown()
+    }
+
+    @Test
+    func registeredFeatureToolKeepsPriorityOverCompatibilityFallback() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("feature-core-alias-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+        let executableURL = rootURL.appendingPathComponent("feature")
+        try """
+        #!/bin/sh
+        cat >/dev/null
+        printf '{"ok":true,"output":"external feature handled the raw tool"}\n'
+        """.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+
+        let rawToolName = "search.agent.create"
+        let executor = DirectToolExecutor(
+            swiftFeatureRuntime: SwiftFeatureRuntime(
+                features: [
+                    SwiftFeatureBundle(
+                        id: "external-feature-fixture",
+                        executableURL: executableURL,
+                        tools: [
+                            ToolDescriptor(
+                                name: rawToolName,
+                                description: "External feature fixture.",
+                                inputSchema: #"{"type":"object","properties":{}}"#
+                            )
+                        ]
+                    )
+                ]
+            ),
+            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+        )
+
+        let result = await executor.execute(
+            sessionID: nil,
+            toolCall: toolCall(named: rawToolName),
+            workingDirectory: rootURL,
+            allowedToolNames: ["search."]
+        )
+
+        #expect(result.status == .completed)
+        #expect(result.output == "external feature handled the raw tool")
+        await executor.shutdown()
+    }
+
+    @Test
+    func registeredMCPToolKeepsPriorityOverCompatibilityFallback() async {
+        let rawToolName = "search.agent.create"
+        let mcpRuntime = DirectMCPToolRuntime()
+        let remoteExecutor = RemoteMCPToolExecutor(
+            configuration: MCPServerConfiguration(
+                executablePath: "/usr/bin/false",
+                arguments: [],
+                environment: [:]
+            ),
+            toolNamePrefix: "search."
+        )
+        _ = await mcpRuntime.installBorrowedExternalExecutor(
+            name: "search",
+            executor: remoteExecutor,
+            tools: [
+                ToolDescriptor(
+                    name: "agent.create",
+                    description: "External MCP fixture.",
+                    inputSchema: #"{"type":"object","properties":{}}"#
+                )
+            ]
+        )
+        let executor = DirectToolExecutor(
+            mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+        )
+
+        let result = await executor.execute(
+            sessionID: nil,
+            toolCall: toolCall(named: rawToolName),
+            workingDirectory: URL(fileURLWithPath: "/tmp"),
+            allowedToolNames: ["search."]
+        )
+
+        // The borrowed executor intentionally fails its transport connection.
+        // Reaching that failure instead of permissionDenied proves MCP dispatch
+        // retains priority over the compatibility fallback.
+        #expect(result.status == .failed)
+        #expect(!result.isPermissionDenied)
+        await executor.shutdown()
+        await remoteExecutor.disconnect()
+    }
+
+    private func makeExecutor() -> DirectToolExecutor {
+        DirectToolExecutor(
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+        )
+    }
+
+    private func toolCall(
+        named name: String,
+        arguments: [String: Any] = [:]
+    ) -> DirectAgentToolCall {
+        let data = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys])
+        return DirectAgentToolCall(
+            id: UUID().uuidString,
+            name: name,
+            argumentsObject: arguments,
+            argumentsJSON: data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        )
     }
 }
 

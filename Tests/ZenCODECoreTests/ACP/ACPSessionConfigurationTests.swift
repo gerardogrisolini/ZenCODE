@@ -151,6 +151,96 @@ extension ACPCompatibilityTests {
     }
 
     @Test
+    func acpReadOnlyProfileCannotRestoreMutableCoreToolsFromClientSelection() async throws {
+        let profile = AgentProfile(
+            id: "read-only",
+            name: "Read Only",
+            readOnly: true
+        )
+        let rawCompatibilityAlias = "agent.spawn"
+        let bridge = try makeBridge(
+            models: [
+                AgentSettingsModelManifest(
+                    id: "test-model",
+                    kind: .remoteAPI,
+                    modelID: "local/test-model"
+                )
+            ],
+            availableAgents: [profile],
+            agentName: profile.name
+        )
+
+        try await bridge.newSession(id: nil, params: [
+            "cwd": "/tmp/acp-read-only-tools",
+            "agentId": profile.id,
+            "allowed_tools": ["shell", "files", "custom.", rawCompatibilityAlias] as [String]
+        ])
+
+        let configuration = try #require(await bridge.sessionConfigurationsForTesting().first)
+        let allowedToolNames = try #require(configuration.allowedToolNames)
+        let mutatingCoreNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+
+        #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))
+        #expect(allowedToolNames.contains("local.readFile"))
+        #expect(allowedToolNames.contains("custom."))
+        #expect(allowedToolNames.contains(rawCompatibilityAlias))
+        #expect(
+            !DirectToolExecutor.isCoreCoordinationToolAllowed(
+                rawCompatibilityAlias,
+                allowedToolNames: allowedToolNames
+            )
+        )
+    }
+
+    @Test
+    func acpAgentMentionReappliesReadOnlyCoreToolPolicy() async throws {
+        let developer = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            tools: ["shell", "files"]
+        )
+        let reviewer = AgentProfile(
+            id: "reviewer",
+            name: "Reviewer",
+            readOnly: true,
+            tools: ["shell", "files"]
+        )
+        let bridge = try makeBridge(
+            models: [
+                AgentSettingsModelManifest(
+                    id: "test-model",
+                    kind: .remoteAPI,
+                    modelID: "local/test-model"
+                )
+            ],
+            availableAgents: [developer, reviewer],
+            agentName: developer.name,
+            backendFactory: { _, _ in CapturingACPBackend() }
+        )
+
+        try await bridge.newSession(id: nil, params: [
+            "cwd": "/tmp/acp-read-only-agent-switch",
+            "agentId": developer.id,
+            "allowed_tools": ["shell", "files"] as [String]
+        ])
+        let sessionID = try #require(
+            await bridge.sessionConfigurationsForTesting().first?.sessionID
+        )
+
+        try await bridge.prompt(id: nil, params: [
+            "sessionId": sessionID,
+            "prompt": "@Reviewer inspect the change"
+        ])
+
+        let configuration = try #require(await bridge.sessionConfigurationsForTesting().first)
+        let allowedToolNames = try #require(configuration.allowedToolNames)
+        let mutatingCoreNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+
+        #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))
+        #expect(allowedToolNames.contains("local.readFile"))
+    }
+
+    @Test
     func newSessionIgnoresNonStandardSystemPromptParameter() async throws {
         let bridge = try makeBridge(
             models: [

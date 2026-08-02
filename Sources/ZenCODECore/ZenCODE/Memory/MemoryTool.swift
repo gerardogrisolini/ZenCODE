@@ -30,8 +30,7 @@ public enum MemoryTool {
         case index
     }
 
-    public static let toolDescriptors: [ToolDescriptor] = [
-        ToolDescriptor(
+    private static let readDescriptor = ToolDescriptor(
             name: "memory.read",
             title: "Memory Read",
             description: "Reads durable project MEMORY.md entries. Use detail=index for compact Summary/timestamp/ID results before loading full content.",
@@ -50,8 +49,9 @@ public enum MemoryTool {
                 action: "Read",
                 kind: .read
             )
-        ),
-        ToolDescriptor(
+        )
+
+    private static let searchDescriptor = ToolDescriptor(
             name: "memory.search",
             title: "Memory Search",
             description: "Searches durable project memory with weighted exact phrase, Summary, State, and term coverage ranking.",
@@ -73,8 +73,9 @@ public enum MemoryTool {
                 kind: .search,
                 targetKeyPaths: ["query"]
             )
-        ),
-        ToolDescriptor(
+        )
+
+    private static let writeDescriptor = ToolDescriptor(
             name: "memory.write",
             title: "Memory Write",
             description: "Appends one new durable entry to the project MEMORY.md journal. Use concise entries with Timestamp, Summary, State, and Next; the current local Timestamp is added when missing.",
@@ -92,8 +93,9 @@ public enum MemoryTool {
                 action: "Write",
                 kind: .edit
             )
-        ),
-        ToolDescriptor(
+        )
+
+    private static let updateDescriptor = ToolDescriptor(
             name: "memory.update",
             title: "Memory Update",
             description: "Replaces the full content of one durable memory entry while preserving its id and archive state. It preserves the original Timestamp and adds the current Updated timestamp when those fields are omitted.",
@@ -113,8 +115,9 @@ public enum MemoryTool {
                 kind: .edit,
                 targetKeyPaths: ["id"]
             )
-        ),
-        ToolDescriptor(
+        )
+
+    private static let archiveDescriptor = ToolDescriptor(
             name: "memory.archive",
             title: "Memory Archive",
             description: "Archives a durable memory or journal entry by id so it no longer influences future resume context.",
@@ -134,6 +137,26 @@ public enum MemoryTool {
                 targetKeyPaths: ["id"]
             )
         )
+
+    /// Core memory descriptors that do not mutate durable project memory.
+    public static let readOnlyToolDescriptors: [ToolDescriptor] = [
+        readDescriptor,
+        searchDescriptor
+    ]
+
+    /// Core memory descriptors that can mutate durable project memory.
+    public static let mutatingToolDescriptors: [ToolDescriptor] = [
+        writeDescriptor,
+        updateDescriptor,
+        archiveDescriptor
+    ]
+
+    public static let toolDescriptors: [ToolDescriptor] = [
+        readDescriptor,
+        searchDescriptor,
+        writeDescriptor,
+        updateDescriptor,
+        archiveDescriptor
     ]
 
     public static func isMemoryToolName(_ toolName: String) -> Bool {

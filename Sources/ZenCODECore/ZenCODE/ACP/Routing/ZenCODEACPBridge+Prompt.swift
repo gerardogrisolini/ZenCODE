@@ -640,6 +640,11 @@ extension ZenCODEACPBridge {
             effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
             allowedToolNames = effectiveAllowedToolNames
         }
+        if let effectiveAllowedToolNames = allowedToolNames {
+            allowedToolNames = agent.resolvedAllowedToolNames(
+                effectiveAllowedToolNames
+            )
+        }
         let modelID = agent.modelID ?? baseConfiguration.modelID
         let systemPrompt = AgentCoreAppSessionFactory.resolvedSystemPrompt(
             providedSystemPrompt: nil,

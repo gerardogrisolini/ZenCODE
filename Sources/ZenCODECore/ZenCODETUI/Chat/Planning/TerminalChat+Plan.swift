@@ -9,41 +9,6 @@ import Foundation
 import ToolCore
 
 extension TerminalChat {
-    /// Read-only canonical tool names a Planner sub-agent may use while preparing
-    /// an implementation plan. Planners can inspect the workspace, project
-    /// context, memory, web references, and non-mutating Git state, but must not
-    /// edit files, run shell commands, or perform mutating Git/memory/task work.
-    public nonisolated static let plannerReadOnlyToolNames: Set<String> = [
-        "local.pwd",
-        "local.ls",
-        "local.readFile",
-        "local.readFiles",
-        "local.inspectFile",
-        "search.glob",
-        "search.grep",
-        "search.locate",
-        "text.head",
-        "text.tail",
-        "text.sort",
-        "text.wc",
-        "git.status",
-        "git.diff",
-        "git.show",
-        "git.log",
-        "git.branch",
-        "git.remote",
-        "git.lsFiles",
-        "git.grep",
-        "git.blame",
-        "memory.read",
-        "memory.search",
-        "todo.read",
-        "tasks.list",
-        "tasks.get",
-        "web.search",
-        "web.fetch",
-    ]
-
     func handlePlanCommand(_ command: String) async -> TerminalSubmittedLineAction {
         let argument = Self.slashCommandArguments(
             from: command,
@@ -745,21 +710,10 @@ extension TerminalChat {
             || agent.name.caseInsensitiveCompare(AgentProfileStore.plannerAgentName) == .orderedSame
     }
 
-    /// Canonical, read-only tool names a Planner sub-agent may receive: the
-    /// profile's own tools intersected with the read-only planning allowlist.
-    nonisolated static func plannerSubAgentToolNames(for planner: AgentProfile) -> [String] {
-        let profileTools = planner.allowedToolNames()
-        return profileTools.intersection(plannerReadOnlyToolNames).sorted()
-    }
-
     nonisolated static func planDelegationPrompt(
         goal: String,
         planner: AgentProfile
     ) -> String {
-        let toolList = plannerSubAgentToolNames(for: planner)
-            .map { "\"\($0)\"" }
-            .joined(separator: ", ")
-
         let goalSection = """
             Planning goal requested by the user: \(goal)
             Plan only this requested activity unless the conversation clearly provides \
@@ -777,8 +731,6 @@ extension TerminalChat {
             - Create exactly one sub-agent with agent.create. Use name \
             "\(planAuthorAgentName)", role "Planner", and profile "\(planner.id)". The Planner \
             must not edit files or run mutating commands.
-            - Restrict the Planner to this read-only planning toolset by passing \
-            toolNames: [\(toolList)].
             - Give that Planner the complete requested goal and every relevant constraint \
             from the conversation. Explicitly tell it that it, not the current coordinator, \
             must inspect the workspace as needed and write the complete final plan.

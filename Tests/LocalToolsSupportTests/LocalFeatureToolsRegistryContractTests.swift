@@ -22,6 +22,24 @@ struct LocalFeatureToolsRegistryContractTests {
     }
 
     @Test
+    func fileToolAccessPartitionsAreExplicitAndLossless() {
+        let expectedReadOnly = [
+            "local.pwd", "local.ls", "local.readFile", "local.readFiles", "local.inspectFile"
+        ]
+        let expectedMutating = [
+            "local.writeFile", "local.replace", "local.editFile", "local.multiEdit",
+            "local.append", "local.mkdir", "local.delete", "local.move", "local.applyPatch"
+        ]
+
+        #expect(LocalFeatureTools.readOnlyFileTools().map(\.descriptor.name) == expectedReadOnly)
+        #expect(LocalFeatureTools.mutatingFileTools().map(\.descriptor.name) == expectedMutating)
+        #expect(
+            LocalFeatureTools.fileTools().map(\.descriptor.name)
+                == expectedReadOnly + expectedMutating
+        )
+    }
+
+    @Test
     func fileListInspectAndWriteAdvertiseARequiredPathArgument() throws {
         let descriptors = LocalFeatureTools.fileTools().map(\.descriptor)
 

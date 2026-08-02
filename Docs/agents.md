@@ -16,6 +16,7 @@ start by `AgentProfileStore`.
 | `name` | Human- and model-visible label |
 | `instructions` | System-prompt fragment defining the role and constraints |
 | `tools` | Allowed tool groups and feature packages |
+| `readOnly` | Enforces only non-mutating catalog-owned core tools (`false` by default) |
 | `skills` | Optional prompt skills from the app catalog |
 | `modelBindings` | Models explicitly authorized for the profile — see [bindings.md](bindings.md) |
 | `defaultModelBindingID` | Binding used when no model is selected explicitly |
@@ -41,9 +42,9 @@ resets the conversation so the new system prompt and tools apply cleanly.
 | `Developer` | General development and coordination | coding + web + sub-agents |
 | `Builder` | Swift feature packages | coding + web |
 | `Minimal` | Essential tools, brief replies | shell, files, text |
-| `Reviewer` | Read-only code review | coding without shell |
+| `Reviewer` | Read-only code review | coding without shell; `readOnly` enforced |
 | `Reporter` | Code analysis and evidence-based reports | files, search, text, git |
-| `Planner` | Read-only planning | files, search, text, git, memory, web |
+| `Planner` | Read-only planning | files, search, text, git, memory, web; `readOnly` enforced |
 
 Profiles are examples — edit, add, or remove optional profiles in setup.
 `Developer` and `Builder` must always remain present: runtime fallback paths
@@ -73,7 +74,8 @@ Lifecycle:
    has more than one binding, a `model` or `modelID`.
 2. The runtime resolves the profile, then resolves the binding only within that
    profile's authorized bindings.
-3. The sub-agent inherits the workspace and its profile's tool allowlist.
+3. The sub-agent inherits the workspace and receives the tools configured on
+   that profile. `agent.create` cannot replace or narrow them.
 4. While the child is active, the coordinator uses `agent.message`,
    `agent.wait`, `agent.get`, and `agent.close`.
 
@@ -85,20 +87,22 @@ attempt.
 
 ### Tool Authority
 
-Write authority comes from the sub-agent's **effective tool allowlist**:
+Write authority comes from the selected profile's configured tools:
 
-- **When a profile resolves,** its configured tools are the child grant, and
-  `toolNames` can only narrow that grant.
-- **When no profile resolves,** the child inherits the parent session's enabled
-  tools, again narrowed by `toolNames`.
+- `profile` (or its `agent` alias) is required and must resolve to a configured
+  profile; otherwise `agent.create` fails.
+- The request cannot assign, add, remove, or override the profile's tools.
+- When `readOnly` is `true`, the runtime removes mutable descriptors from the
+  catalog-owned core grant after resolving profile tools, `/tools`, app/ACP
+  inputs, and child intrinsics. Optional feature packages, MCP tools, and other
+  external grants are not classified or changed by this setting.
 - **A child bound to a task** additionally receives the intrinsic `tasks.list`,
-  `tasks.get`, and `tasks.update` tools needed to report its attempt.
+  `tasks.get`, and `tasks.update` tools needed to report its attempt; a
+  read-only child retains only the non-mutating `tasks.list` and `tasks.get`.
+- Every child receives the intrinsic `skills.list` and `skills.read` tools.
 
-Command-specific behavior builds on these rules:
-
-- `/plan` and `/review` narrow their selected profile to read-only tools.
-- `/workflow` delegates implementation with the selected profile's own tools, so
-  that profile must include the necessary editing tools.
+`/plan`, `/review`, and `/workflow` all delegate with the selected profile's own
+tools. Configure each profile with exactly the access required for its role.
 
 ### Model Selection
 
@@ -136,6 +140,9 @@ See the [zen.md](zen.md#task-orchestration) task orchestration section.
   capability and thinking settings. See [bindings.md](bindings.md).
 - **Tools** — restricts what the profile can call. Safety mechanism: `Reviewer`
   drops `shell`, `Minimal` keeps only essentials.
+- **Read-only agent?** — persistently restricts catalog-owned core tools to
+  their non-mutating descriptors, even if a later session tool selection asks
+  for a mutable core group. Existing manifests default this field to `false`.
 - **Skills** — optional reusable prompt fragments from the catalog.
 - **Instructions** — the role definition, edited in a real text editor.
 - **Symbol** — SF Symbol for the TUI picker (presentational).

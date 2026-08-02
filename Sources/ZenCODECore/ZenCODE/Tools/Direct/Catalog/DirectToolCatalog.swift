@@ -44,6 +44,44 @@ public enum DirectToolCatalog {
 #endif
     }
 
+    /// All built-in descriptors whose mutability is owned by this catalog.
+    ///
+    /// Optional feature, MCP, and externally provided descriptors deliberately
+    /// do not appear here: their authorization remains unchanged by an agent
+    /// profile's `readOnly` setting.
+    public static var coreDescriptors: [DirectToolDescriptor] {
+#if canImport(Darwin) || canImport(Glibc)
+        coreLocalFileAndTextDescriptors + coreProcessDescriptors + skillToolDescriptors + memoryDescriptors + todoTaskDescriptors + subAgentDescriptors
+#else
+        coreLocalFileAndTextDescriptors + skillToolDescriptors + memoryDescriptors + todoTaskDescriptors + subAgentDescriptors
+#endif
+    }
+
+    /// The non-mutating subset of `coreDescriptors`.
+    public static var coreReadDescriptors: [DirectToolDescriptor] {
+        coreReadLocalFileAndTextDescriptors
+            + skillToolDescriptors
+            + coreReadMemoryDescriptors
+            + coreReadTodoTaskDescriptors
+            + coreReadSubAgentDescriptors
+    }
+
+    /// The mutating subset of `coreDescriptors`.
+    public static var coreMutatingDescriptors: [DirectToolDescriptor] {
+#if canImport(Darwin) || canImport(Glibc)
+        coreMutatingLocalFileAndTextDescriptors
+            + coreProcessDescriptors
+            + coreMutatingMemoryDescriptors
+            + coreMutatingTodoTaskDescriptors
+            + coreMutatingSubAgentDescriptors
+#else
+        coreMutatingLocalFileAndTextDescriptors
+            + coreMutatingMemoryDescriptors
+            + coreMutatingTodoTaskDescriptors
+            + coreMutatingSubAgentDescriptors
+#endif
+    }
+
     /// Intrinsic, always-on prompt-skill tools (`skills.list`, `skills.read`).
     /// They are not user-selectable from `/tools` and remain available even when
     /// every user tool group is disabled.
@@ -56,9 +94,23 @@ public enum DirectToolCatalog {
     }
 
     public static var coreLocalFileAndTextDescriptors: [DirectToolDescriptor] {
-        filesystemDescriptors.filter {
-            $0.name.hasPrefix("local.") || $0.name.hasPrefix("text.")
-        }
+        (
+            LocalFeatureTools.fileTools()
+                + LocalFeatureTools.textTools()
+        ).map(\.descriptor.toolDescriptor).map(DirectToolDescriptor.init)
+    }
+
+    public static var coreReadLocalFileAndTextDescriptors: [DirectToolDescriptor] {
+        (
+            LocalFeatureTools.readOnlyFileTools()
+                + LocalFeatureTools.textTools()
+        ).map(\.descriptor.toolDescriptor).map(DirectToolDescriptor.init)
+    }
+
+    public static var coreMutatingLocalFileAndTextDescriptors: [DirectToolDescriptor] {
+        LocalFeatureTools.mutatingFileTools()
+            .map(\.descriptor.toolDescriptor)
+            .map(DirectToolDescriptor.init)
     }
 
     public static var localSearchDescriptors: [DirectToolDescriptor] {
@@ -74,6 +126,12 @@ public enum DirectToolCatalog {
     public static let memoryDescriptors: [DirectToolDescriptor] =
         MemoryTool.toolDescriptors.map(DirectToolDescriptor.init)
 
+    public static let coreReadMemoryDescriptors: [DirectToolDescriptor] =
+        MemoryTool.readOnlyToolDescriptors.map(DirectToolDescriptor.init)
+
+    public static let coreMutatingMemoryDescriptors: [DirectToolDescriptor] =
+        MemoryTool.mutatingToolDescriptors.map(DirectToolDescriptor.init)
+
     public static var featureDescriptors: [DirectToolDescriptor] {
         SwiftFeatureRuntime.managementToolDescriptors
     }
@@ -88,8 +146,24 @@ public enum DirectToolCatalog {
         DirectTodoRuntime.toolDescriptors
     }
 
+    public static var coreReadTodoTaskDescriptors: [DirectToolDescriptor] {
+        DirectTodoRuntime.readOnlyToolDescriptors
+    }
+
+    public static var coreMutatingTodoTaskDescriptors: [DirectToolDescriptor] {
+        DirectTodoRuntime.mutatingToolDescriptors
+    }
+
     public static var subAgentDescriptors: [DirectToolDescriptor] {
         DirectSubAgentRuntime.toolDescriptors
+    }
+
+    public static var coreReadSubAgentDescriptors: [DirectToolDescriptor] {
+        DirectSubAgentRuntime.readOnlyToolDescriptors
+    }
+
+    public static var coreMutatingSubAgentDescriptors: [DirectToolDescriptor] {
+        DirectSubAgentRuntime.mutatingToolDescriptors
     }
 }
 

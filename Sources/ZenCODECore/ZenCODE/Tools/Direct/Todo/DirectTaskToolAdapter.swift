@@ -241,10 +241,6 @@ extension DirectTaskToolAdapter {
                     in: executionObject
                 ),
                 role: DirectTodoRuntime.firstString(["role"], in: executionObject),
-                toolNames: DirectTodoRuntime.firstStringList(
-                    ["toolNames", "tool_names", "tools"],
-                    in: executionObject
-                ) ?? [],
                 fileScopes: DirectTodoRuntime.firstStringList(
                     ["fileScopes", "file_scopes"],
                     in: executionObject

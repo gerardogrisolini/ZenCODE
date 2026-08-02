@@ -33,14 +33,19 @@ A goal is required. Examples:
 
 Requires the `sub-agents` tool group. Enable it with `/tools sub-agents` or switch to a profile that includes it (such as `Developer`).
 
-## Read-Only Safety
+## Profile Tools
 
-`/plan` delegates with an explicit read-only tool allowlist: files, search, non-mutating Git, read-only memory/task tools, and web. The Planner cannot edit files, run shell commands, or perform mutating operations.
+`/plan` selects the `Planner` profile explicitly. The delegated Planner receives
+exactly the tools configured on that profile, plus runtime-intrinsic tools;
+`agent.create` does not construct a separate tool list. The built-in profile has
+`readOnly: true`, which centrally removes mutable catalog-owned core tools even
+after `/tools`, app, ACP, or task-bound runtime grants are resolved. Optional
+feature, MCP, and other external grants remain outside that classification.
 
 ## How Delegation Works
 
 1. The current agent stays as coordinator only — it cannot draft, consolidate, or rewrite the plan.
-2. One read-only sub-agent named `plan-author` is created with profile `Planner`.
+2. One sub-agent named `plan-author` is created with profile `Planner`.
 3. The Planner receives the complete goal and writes the final plan itself.
 4. The coordinator copies the Planner's numbered points into a `todo.write` bootstrap. The TUI validates those in-memory todo items as a DAG and records them in the active, unapproved plan.
 5. If the output is incomplete, the coordinator asks the same Planner to revise — it never fills gaps itself.

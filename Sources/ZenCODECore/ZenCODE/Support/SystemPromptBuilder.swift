@@ -221,8 +221,8 @@ public enum SystemPromptBuilder {
         Agent selection policy: \(TaskRecord.agentSelectionPolicy)
         Pass the selected profile name as `profile` or `agent` and its selected binding id or \
         model id as `model` or `modelID` in agent.create. Give the sub-agent an explicit role \
-        and scope. Its effective tools come from the parent grant; `toolNames` can only narrow \
-        that grant.
+        and scope. The selected profile is required and supplies the sub-agent's tools; \
+        agent.create cannot override them.
         """
     }
 

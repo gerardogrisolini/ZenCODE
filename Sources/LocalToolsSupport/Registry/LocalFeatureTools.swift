@@ -11,12 +11,21 @@ import FeatureKit
 
 public enum LocalFeatureTools {
     public static func fileTools() -> [AnyFeatureTool] {
+        readOnlyFileTools() + mutatingFileTools()
+    }
+
+    public static func readOnlyFileTools() -> [AnyFeatureTool] {
         [
             AnyFeatureTool(LocalPwdTool()),
             AnyFeatureTool(LocalListDirectoryTool()),
             AnyFeatureTool(LocalReadFileTool()),
             AnyFeatureTool(LocalReadFilesTool()),
-            AnyFeatureTool(LocalInspectFileTool()),
+            AnyFeatureTool(LocalInspectFileTool())
+        ]
+    }
+
+    public static func mutatingFileTools() -> [AnyFeatureTool] {
+        [
             AnyFeatureTool(LocalWriteFileTool()),
             AnyFeatureTool(LocalReplaceTool()),
             AnyFeatureTool(LocalEditFileTool()),
