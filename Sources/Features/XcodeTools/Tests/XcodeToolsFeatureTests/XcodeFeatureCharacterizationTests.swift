@@ -193,17 +193,20 @@ struct XcodeFeatureCharacterizationTests {
         #expect(toolName == "xcode.XcodeRead")
         #expect(workingDirectory?.path == "/tmp/Workspace")
 
-        let listData = try FeatureProcessProtocol.renderJSON(FeatureListToolsResponse(
-            tools: [FeatureToolDescriptor(
+        let listedTool = XcodeToolsFeatureRunner.featureToolDescriptor(
+            for: ToolDescriptor(
                 name: "xcode.XcodeRead",
-                description: "Xcode: Reads a file",
+                description: "Reads a file",
                 inputSchema: "{}",
                 presentation: .standard(
                     title: "Xcode file",
                     action: "Read",
                     kind: .read
                 )
-            )]
+            )
+        )
+        let listData = try FeatureProcessProtocol.renderJSON(FeatureListToolsResponse(
+            tools: [listedTool]
         ))
         let invokeData = try FeatureProcessProtocol.renderJSON(
             FeatureInvocationResponse<String>(output: "ok")
@@ -217,6 +220,9 @@ struct XcodeFeatureCharacterizationTests {
         let tools = try #require(list["tools"] as? [[String: Any]])
 
         #expect(try #require(tools.first?["name"] as? String) == "xcode.XcodeRead")
+        let listedDescription = try #require(tools.first?["description"] as? String)
+        #expect(listedDescription.hasPrefix(XcodeToolIntegration.priorityDescriptionPrefix))
+        #expect(listedDescription.hasSuffix("Reads a file"))
         #expect(try #require(invoke["ok"] as? Bool))
         #expect(try #require(invoke["output"] as? String) == "ok")
         #expect(invoke["error"] == nil)

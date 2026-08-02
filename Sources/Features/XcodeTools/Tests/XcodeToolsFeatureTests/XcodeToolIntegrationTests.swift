@@ -1,4 +1,5 @@
 import FeatureMCPBridgeKit
+import FeatureKit
 import Foundation
 import ToolCore
 @testable import XcodeToolsFeature
@@ -48,7 +49,36 @@ struct XcodeToolIntegrationTests {
         #expect(XcodeToolIntegration.publicToolName(for: "xcode.XcodeRead") == "xcode.XcodeRead")
         #expect(XcodeToolIntegration.canonicalAllowedToolName("xcode") == "xcode.")
         #expect(XcodeToolIntegration.presentationKind(for: "xcode.XcodeUpdate") == "edit")
-        #expect(XcodeToolIntegration.publicDescription("Reads a file") == "Xcode: Reads a file")
+        let preferredDescription = XcodeToolIntegration.publicDescription("Reads a file")
+        #expect(preferredDescription.hasPrefix(XcodeToolIntegration.priorityDescriptionPrefix))
+        #expect(preferredDescription.hasSuffix("Reads a file"))
+        #expect(XcodeToolIntegration.publicDescription("Xcode: Reads a file") == preferredDescription)
+        #expect(XcodeToolIntegration.publicDescription(preferredDescription) == preferredDescription)
+    }
+
+    @Test
+    func featureDescriptorPublishesXcodePriorityOnlyFromOptionalPackage() throws {
+        let source = ToolDescriptor(
+            name: "xcode.XcodeRead",
+            title: "Xcode file",
+            description: "Reads a file from the current Xcode project.",
+            inputSchema: "{}",
+            presentation: .standard(
+                title: "Xcode file",
+                action: "Read",
+                kind: .read
+            )
+        )
+
+        let descriptor = XcodeToolsFeatureRunner.featureToolDescriptor(for: source)
+
+        #expect(descriptor.name == source.name)
+        #expect(descriptor.description.hasPrefix(XcodeToolIntegration.priorityDescriptionPrefix))
+        #expect(descriptor.description.contains("generic shell"))
+        #expect(descriptor.description.contains("xcodebuild"))
+        #expect(descriptor.description.hasSuffix(source.description))
+        #expect(descriptor.inputSchema == source.inputSchema)
+        #expect(descriptor.presentation == XcodeToolIntegration.presentation(for: source))
     }
 
     @Test

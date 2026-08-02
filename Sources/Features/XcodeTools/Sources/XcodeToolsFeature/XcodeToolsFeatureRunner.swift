@@ -23,12 +23,34 @@ public enum XcodeToolsFeatureRunner {
             environment: environment
         )
     }
+
+    /// Decorates every model-visible Xcode descriptor with the package-owned
+    /// priority instruction. Because this happens in the optional feature's
+    /// `--list-tools` response, the guidance exists only while XcodeTools is
+    /// installed, available, and selected by the host.
+    static func featureToolDescriptor(
+        for tool: ToolDescriptor
+    ) -> FeatureToolDescriptor {
+        let presentation = XcodeToolIntegration.presentation(for: tool)
+        let descriptor = ToolDescriptor(
+            name: tool.name,
+            title: tool.title,
+            description: XcodeToolIntegration.publicDescription(tool.description),
+            inputSchema: tool.inputSchema,
+            outputSchema: tool.outputSchema,
+            presentation: presentation
+        )
+        return FeatureToolDescriptor(
+            toolDescriptor: descriptor,
+            presentation: presentation
+        )
+    }
 }
 
 private struct XcodeFeatureConfiguration: MCPFeatureConfiguration {
     let featureName = "Xcode"
     let toolNamePrefix = XcodeToolIntegration.toolPrefix
-    let descriptionPrefix = XcodeToolIntegration.descriptionPrefix
+    let descriptionPrefix = XcodeToolIntegration.priorityDescriptionPrefix
     let usageText = """
     Usage:
       xcode-tools-feature --list-tools
@@ -66,23 +88,9 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration {
         }
         await executor.disconnect()
 
-        return ToolDescriptor.canonicalized(tools).map { tool in
-            let descriptor = ToolDescriptor(
-                name: tool.name,
-                title: tool.title,
-                description: tool.description,
-                inputSchema: tool.inputSchema,
-                outputSchema: tool.outputSchema,
-                presentation: XcodeToolIntegration.presentation(for: tool)
-            )
-            return FeatureToolDescriptor(
-                toolDescriptor: descriptor,
-                description: descriptor.description.hasPrefix(descriptionPrefix)
-                    ? descriptor.description
-                    : "\(descriptionPrefix)\(descriptor.description)",
-                presentation: XcodeToolIntegration.presentation(for: tool)
-            )
-        }
+        return ToolDescriptor.canonicalized(tools).map(
+            XcodeToolsFeatureRunner.featureToolDescriptor(for:)
+        )
     }
 
     /// Uses `XcodeToolExecutor` for invoke to get retry-on-indentation-mismatch.

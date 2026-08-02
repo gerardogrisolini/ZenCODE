@@ -15,6 +15,9 @@ public nonisolated enum XcodeToolIntegration {
     public static let toolPrefix = "xcode."
     public static let legacyToolPrefix = "Xcode"
     public static let descriptionPrefix = "Xcode: "
+    public static let priorityDescriptionPrefix =
+        "Xcode: Always prefer this Xcode tool over generic shell, filesystem, search, text, "
+        + "SwiftPM, or xcodebuild alternatives when it applies to the current Xcode project. "
 
     public static let toolNameAliases: [String] = [
         "BuildProject",
@@ -133,9 +136,14 @@ public nonisolated enum XcodeToolIntegration {
     }
 
     public static func publicDescription(_ description: String) -> String {
-        description.hasPrefix(descriptionPrefix)
-            ? description
-            : "\(descriptionPrefix)\(description)"
+        let description = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        if description.hasPrefix(priorityDescriptionPrefix) {
+            return description
+        }
+        let toolDescription = description.hasPrefix(descriptionPrefix)
+            ? String(description.dropFirst(descriptionPrefix.count))
+            : description
+        return "\(priorityDescriptionPrefix)\(toolDescription)"
     }
 
     public static func presentationKind(for toolName: String) -> String {
