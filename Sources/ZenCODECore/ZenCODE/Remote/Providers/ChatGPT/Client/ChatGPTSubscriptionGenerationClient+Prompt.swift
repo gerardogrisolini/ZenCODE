@@ -103,6 +103,7 @@ extension ChatGPTSubscriptionGenerationClient {
         var accumulatedText = ""
         var generationStats: [RemoteGenerationStats] = []
         var didRetryAfterContextLimit = false
+        var didReportUnsatisfiableBudget = false
         var streamInterruptionRetries = 0
 
 
@@ -122,6 +123,12 @@ extension ChatGPTSubscriptionGenerationClient {
                 await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
             }
 
+            // The preflight may only compact a bounded number of times per
+            // round. Every successful compaction strictly shrinks the prompt,
+            // so this cap is a safety net rather than the termination
+            // argument, but it keeps a mis-estimated overhead from spinning.
+            var preflightCompactionAttempts = 0
+            var lastRequestEstimate = SubscriptionCompactionSupport.RequestEstimate.unmeasured
             while true {
                 guard let turnSession = currentSession(for: lease) else {
                     throw ChatGPTSubscriptionGenerationError.missingSession
@@ -162,27 +169,56 @@ extension ChatGPTSubscriptionGenerationClient {
                 let instructions = requestPayload.instructions?.nilIfBlank
                     ?? "You are a helpful coding assistant."
                 let toolPayloads = toolCatalog.responsesToolPayloads
-                let estimatedRequestInput = usesFreshContinuationReplay
-                    ? (requestPayload.cachedWebSocketInput ?? requestPayload.input)
-                    : requestPayload.input
-                let estimatedContextTokens = ChatGPTSubscriptionRequestBuilder
-                    .estimatedContextTokenCount(
-                        instructions: instructions,
-                        input: estimatedRequestInput,
-                        toolPayloads: toolPayloads
+                // Always estimated against the full history, never against the
+                // continuation delta: both the preflight and the context-limit
+                // retry compact `session.messages`, and a delta-sized estimate
+                // would describe a different request than the one being fixed.
+                let requestEstimate = Self.requestEstimate(
+                    instructions: instructions,
+                    fullHistoryInput: requestPayload.input,
+                    toolPayloads: toolPayloads
+                )
+                if preflightCompactionAttempts
+                    < AgentConversationCompactionPolicy.maximumPreflightCompactionAttempts {
+                    let outcome = compactSessionForEstimatedContextIfNeeded(
+                        &session,
+                        estimate: requestEstimate,
+                        maxTokens: maxContextWindowTokens,
+                        maxOutputTokens: configuration.maxOutputTokens
                     )
-                if let result = compactSessionForEstimatedContextIfNeeded(
-                    &session,
-                    estimatedContextTokens: estimatedContextTokens,
-                    maxTokens: maxContextWindowTokens,
-                    maxOutputTokens: configuration.maxOutputTokens
-                ) {
-                    guard mutateSession(for: lease, { $0 = session }) else {
-                        throw ChatGPTSubscriptionGenerationError.missingSession
+                    switch outcome {
+                    case let .compacted(result):
+                        guard mutateSession(for: lease, { $0 = session }) else {
+                            throw ChatGPTSubscriptionGenerationError.missingSession
+                        }
+                        preflightCompactionAttempts += 1
+                        await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
+                        continue
+                    case let .unsatisfiableBudget(
+                        contextWindowTokens,
+                        reservedOutputTokens,
+                        overheadTokens
+                    ):
+                        // Compaction cannot make this request fit at all. Say so
+                        // once and let the provider answer or fail, instead of
+                        // repeating a pass that can never reach its target.
+                        if !didReportUnsatisfiableBudget {
+                            didReportUnsatisfiableBudget = true
+                            await onEvent(
+                                .diagnostic(
+                                    Self.unsatisfiableBudgetDiagnostic(
+                                        contextWindowTokens: contextWindowTokens,
+                                        maxOutputTokens: reservedOutputTokens,
+                                        overheadTokens: overheadTokens
+                                    )
+                                )
+                            )
+                        }
+                    case .notNeeded:
+                        break
                     }
-                    await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
-                    continue
                 }
+                lastRequestEstimate = requestEstimate
                 let expectsPromptCache = RemoteGenerationClient.messagesExpectPromptCache(
                     session.messages
                 )
@@ -301,7 +337,8 @@ extension ChatGPTSubscriptionGenerationClient {
                           let result = compactSessionForContextLimitRetry(
                               &latestSession,
                               maxTokens: maxContextWindowTokens,
-                              maxOutputTokens: configuration.maxOutputTokens
+                              maxOutputTokens: configuration.maxOutputTokens,
+                              estimate: lastRequestEstimate
                           ) else {
                         await onEvent(.diagnostic(Self.contextLimitRetryUnavailableDiagnostic()))
                         throw error

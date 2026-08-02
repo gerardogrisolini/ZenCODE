@@ -269,7 +269,15 @@ extension RemoteSessionSnapshotTests {
         #expect(preCompactionPayload.previousResponseID == "resp_before_compaction")
         #expect(preCompactionPayload.cachedWebSocketInput != nil)
         #expect(result.wasCompacted)
-        #expect(result.maxTokens == policyMaxTokens)
+        // The reported window stays the model's real context window; the
+        // reserved output is applied to the compaction target instead.
+        #expect(result.maxTokens == maxTokens)
+        #expect(policyMaxTokens == usableTokens)
+        #expect(
+            result.estimatedTokenCount
+                <= AgentConversationCompactionPolicy.targetTokenCount(for: policyMaxTokens)
+        )
+        #expect(result.estimatedTokenCount + (maxTokens - usableTokens) <= maxTokens)
         #expect(compactedMessages.count < messages.count)
         #expect(
             result.compactedSystemPrompt?.contains(
@@ -300,7 +308,7 @@ extension RemoteSessionSnapshotTests {
             descriptors: [
                 DirectToolDescriptor(
                     name: "local.exec",
-                    description: String(repeating: "large tool description ", count: 7_000),
+                    description: String(repeating: "large tool description ", count: 4_000),
                     inputSchema: #"{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}"#
                 )
             ]
@@ -318,9 +326,18 @@ extension RemoteSessionSnapshotTests {
                 maxOutputTokens: maxOutputTokens
             )
         )
+        let requestEstimate = ChatGPTSubscriptionGenerationClient.requestEstimate(
+            instructions: requestPayload.instructions,
+            fullHistoryInput: requestPayload.input,
+            toolPayloads: toolPayloads
+        )
+        let overhead = SubscriptionCompactionSupport.requestOverhead(
+            estimate: requestEstimate,
+            messages: messages
+        )
         let preflightResult = ChatGPTSubscriptionGenerationClient.compactedMessagesForEstimatedContextIfNeeded(
             messages,
-            estimatedContextTokens: estimatedContextTokens,
+            estimate: requestEstimate,
             maxTokens: maxTokens,
             maxOutputTokens: maxOutputTokens
         )
@@ -328,6 +345,218 @@ extension RemoteSessionSnapshotTests {
         #expect(normalResult.wasCompacted == false)
         #expect(estimatedContextTokens > AgentConversationCompactionPolicy.triggerTokenCount(for: policyMaxTokens))
         #expect(preflightResult?.wasCompacted == true)
+        let compacted = try #require(preflightResult)
+        #expect(compacted.estimatedTokenCount < compacted.originalEstimatedTokenCount)
+        // The compacted conversation has to fit next to the tool catalogue and
+        // the reserved output, which is the whole point of the preflight. The
+        // conversation is charged at the provider's own rate, not at the plain
+        // estimator's.
+        #expect(
+            Int(
+                Double(compacted.estimatedTokenCount)
+                    * overhead.conversationInflationFactor
+            )
+                + overhead.staticOverheadTokens
+                + ChatGPTSubscriptionGenerationClient.compactionReserveTokenCount
+                <= maxTokens
+        )
+    }
+
+    @Test
+    func chatGPTSubscriptionPreflightReportsAnUnsatisfiableBudgetInsteadOfLooping() throws {
+        // A tool catalogue this large leaves no room for any conversation once
+        // the reserved output is subtracted. Compaction must refuse explicitly
+        // rather than "succeed" against a floored, unreachable target.
+        let maxTokens = 50_000
+        let messages = chatGPTPreflightCompactionMessages()
+        let requestPayload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: messages,
+            continuation: nil
+        )
+        let toolPayloads = RemoteToolWireCatalog(
+            descriptors: [
+                DirectToolDescriptor(
+                    name: "local.exec",
+                    description: String(repeating: "large tool description ", count: 7_000),
+                    inputSchema: #"{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}"#
+                )
+            ]
+        ).responsesToolPayloads
+        let requestEstimate = ChatGPTSubscriptionGenerationClient.requestEstimate(
+            instructions: requestPayload.instructions,
+            fullHistoryInput: requestPayload.input,
+            toolPayloads: toolPayloads
+        )
+
+        let outcome = SubscriptionCompactionSupport.preflightCompaction(
+            messages,
+            estimate: requestEstimate,
+            maxTokens: maxTokens,
+            maxOutputTokens: 1_000,
+            reserveTokenCount: ChatGPTSubscriptionGenerationClient.compactionReserveTokenCount
+        )
+
+        guard case let .unsatisfiableBudget(
+            contextWindowTokens,
+            reservedOutputTokens,
+            overheadTokens
+        ) = outcome else {
+            Issue.record("Expected an unsatisfiable preflight budget, got \(outcome).")
+            return
+        }
+        #expect(contextWindowTokens == maxTokens)
+        #expect(reservedOutputTokens + overheadTokens >= maxTokens)
+        // No result means the loop stops here: the request is sent as-is and
+        // the provider outcome is surfaced.
+        #expect(
+            ChatGPTSubscriptionGenerationClient.compactedMessagesForEstimatedContextIfNeeded(
+                messages,
+                estimate: requestEstimate,
+                maxTokens: maxTokens,
+                maxOutputTokens: 1_000
+            ) == nil
+        )
+        #expect(
+            ChatGPTSubscriptionGenerationClient.unsatisfiableBudgetDiagnostic(
+                contextWindowTokens: contextWindowTokens,
+                maxOutputTokens: reservedOutputTokens,
+                overheadTokens: overheadTokens
+            ).contains("cannot fit")
+        )
+    }
+
+    @Test
+    func chatGPTSubscriptionContextLimitRetryRemovesASubstantialPartOfTheHistory() {
+        let maxTokens = 200_000
+        let maxOutputTokens = 8_000
+        let messages = chatGPTPreflightCompactionMessages()
+        let rawTokenCount = AgentConversationCompactionSupport.estimatedTokenCount(
+            for: RemoteGenerationClient.agentRuntimeMessages(from: messages)
+        )
+        // The rejected prompt is far below the window, so a manual force
+        // retains at most floor(raw * 0.9); the context-limit retry must still
+        // cut to 50% to make materially more room.
+        let forced = ChatGPTSubscriptionGenerationClient.compactedMessagesIfNeeded(
+            messages,
+            maxTokens: maxTokens,
+            maxOutputTokens: maxOutputTokens,
+            force: true
+        )
+        let retry = ChatGPTSubscriptionGenerationClient.compactedMessagesForContextLimitRetry(
+            messages,
+            maxTokens: maxTokens,
+            maxOutputTokens: maxOutputTokens,
+            overhead: SubscriptionCompactionSupport.RequestOverhead(
+                staticOverheadTokens: 60_000,
+                conversationInflationFactor: 1.0
+            )
+        )
+
+        #expect(forced.wasCompacted)
+        #expect(
+            forced.estimatedTokenCount
+                <= Int((Double(rawTokenCount) * 0.9).rounded(.down))
+        )
+        #expect(retry.wasCompacted)
+        #expect(
+            Double(retry.estimatedTokenCount)
+                <= Double(rawTokenCount)
+                    * AgentConversationCompactionPolicy.contextLimitRetryRetentionFraction
+        )
+        #expect(retry.estimatedTokenCount < forced.estimatedTokenCount)
+        #expect(
+            retry.keptRecentMessageCount
+                >= AgentConversationCompactionPolicy.minimumRecentMessageCount
+        )
+        #expect(retry.maxTokens == maxTokens)
+    }
+
+    @Test
+    func chatGPTFreshContinuationPreflightUsesFullUnicodeHistoryNotDelta() throws {
+        // A fresh continuation puts only the last turn on the WebSocket, but a
+        // compaction/retry resets that continuation and replays the *entire*
+        // history. Unicode plus JSON escapes make the full provider estimate
+        // materially larger than the shared runtime estimate; measuring the
+        // delta would therefore miss the preflight entirely.
+        var messages = RemoteGenerationClient.initialMessages(
+            cwd: "/tmp/project",
+            systemPrompt: "System prompt",
+            history: [],
+            allowedToolNames: []
+        )
+        let unicodePayload = String(repeating: "\\\"🙂 e\u{301}\n", count: 300)
+        for index in 0..<120 {
+            messages.append(
+                RemoteGenerationClient.remoteMessage(
+                    role: index.isMultiple(of: 2) ? "user" : "assistant",
+                    content: "history \(index) \(unicodePayload)",
+                    attachments: []
+                )
+            )
+        }
+        let continuation = ChatGPTSubscriptionContinuationState(
+            responseID: "resp_fresh_continuation",
+            messageCount: messages.count - 1,
+            instructions: "System prompt",
+            allowsFreshTransport: true
+        )
+        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
+            from: messages,
+            continuation: continuation
+        )
+        let cachedDelta = try #require(payload.cachedWebSocketInput)
+        let toolPayloads = RemoteToolWireCatalog(
+            descriptors: [
+                DirectToolDescriptor(
+                    name: "local.exec",
+                    description: "Run a command.",
+                    inputSchema: #"{"type":"object","properties":{"command":{"type":"string"}}}"#
+                )
+            ]
+        ).responsesToolPayloads
+        let fullEstimate = ChatGPTSubscriptionGenerationClient.requestEstimate(
+            instructions: payload.instructions,
+            fullHistoryInput: payload.input,
+            toolPayloads: toolPayloads
+        )
+        // This deliberately models the historical bug: using the fresh
+        // continuation delta to size a compaction that will replay full history.
+        let deltaEstimate = ChatGPTSubscriptionGenerationClient.requestEstimate(
+            instructions: payload.instructions,
+            fullHistoryInput: cachedDelta,
+            toolPayloads: toolPayloads
+        )
+        let maxTokens = 100_000
+
+        #expect(payload.previousResponseID == "resp_fresh_continuation")
+        #expect(cachedDelta.count < payload.input.count)
+        #expect(fullEstimate.totalTokens > deltaEstimate.totalTokens * 10)
+
+        let fullOutcome = SubscriptionCompactionSupport.preflightCompaction(
+            messages,
+            estimate: fullEstimate,
+            maxTokens: maxTokens,
+            maxOutputTokens: 1_000,
+            reserveTokenCount: ChatGPTSubscriptionGenerationClient.compactionReserveTokenCount
+        )
+        let deltaOutcome = SubscriptionCompactionSupport.preflightCompaction(
+            messages,
+            estimate: deltaEstimate,
+            maxTokens: maxTokens,
+            maxOutputTokens: 1_000,
+            reserveTokenCount: ChatGPTSubscriptionGenerationClient.compactionReserveTokenCount
+        )
+
+        guard case let .compacted(fullResult) = fullOutcome else {
+            Issue.record("The full-history estimate must compact a fresh continuation: \(fullOutcome).")
+            return
+        }
+        #expect(fullResult.estimatedTokenCount < fullResult.originalEstimatedTokenCount)
+        if case .notNeeded = deltaOutcome {
+            // Expected: this is precisely why the runtime must never select it.
+        } else {
+            Issue.record("The continuation delta unexpectedly represented the full-history preflight: \(deltaOutcome).")
+        }
     }
 
     @Test

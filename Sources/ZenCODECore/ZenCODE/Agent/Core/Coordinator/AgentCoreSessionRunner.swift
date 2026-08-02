@@ -1002,7 +1002,10 @@ public actor AgentCoreSessionRunner {
 
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             currentSnapshot.compactionInputMessages,
-            maxTokens: maxTokensOverride ?? baseConfiguration.configuredContextWindowLimit,
+            budget: AgentConversationCompactionBudget(
+                contextWindowTokens: maxTokensOverride ?? baseConfiguration.configuredContextWindowLimit,
+                maxOutputTokens: baseConfiguration.maxOutputTokens
+            ),
             force: force
         )
         guard result.wasCompacted else {

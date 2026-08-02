@@ -11,17 +11,37 @@ import os
 #endif
 
 extension ChatGPTSubscriptionGenerationClient {
+    /// Compacts after the provider refused the request for context length.
+    ///
+    /// `estimate` describes the *full* conversation that is about to be
+    /// compacted, not the continuation delta that happened to be on the wire:
+    /// the retry always replays the whole history, so a delta-sized estimate
+    /// would hide the tool catalogue and mis-size the reduction.
     func compactSessionForContextLimitRetry(
         _ session: inout AgentSession,
         maxTokens: Int?,
-        maxOutputTokens: Int?
+        maxOutputTokens: Int?,
+        estimate: SubscriptionCompactionSupport.RequestEstimate
     ) -> AgentConversationCompactionResult? {
-        compactSession(
-            &session,
+        let result = Self.compactedMessagesForContextLimitRetry(
+            session.messages,
             maxTokens: maxTokens,
             maxOutputTokens: maxOutputTokens,
-            force: true
+            overhead: SubscriptionCompactionSupport.requestOverhead(
+                estimate: estimate,
+                messages: session.messages
+            )
         )
+        guard result.wasCompacted else {
+            return nil
+        }
+
+        session.messages = RemoteGenerationClient.remoteMessages(
+            compactionResult: result,
+            preservingRecentFrom: session.messages
+        )
+        resetContinuationAndTransport(session: &session)
+        return result
     }
 
     func compactSessionIfNeeded(
@@ -90,17 +110,19 @@ extension ChatGPTSubscriptionGenerationClient {
 
     func compactSessionForEstimatedContextIfNeeded(
         _ session: inout AgentSession,
-        estimatedContextTokens: Int?,
+        estimate: SubscriptionCompactionSupport.RequestEstimate,
         maxTokens: Int?,
         maxOutputTokens: Int?
-    ) -> AgentConversationCompactionResult? {
-        guard let result = Self.compactedMessagesForEstimatedContextIfNeeded(
+    ) -> SubscriptionCompactionSupport.PreflightOutcome {
+        let outcome = SubscriptionCompactionSupport.preflightCompaction(
             session.messages,
-            estimatedContextTokens: estimatedContextTokens,
+            estimate: estimate,
             maxTokens: maxTokens,
-            maxOutputTokens: maxOutputTokens
-        ) else {
-            return nil
+            maxOutputTokens: maxOutputTokens,
+            reserveTokenCount: Self.compactionReserveTokenCount
+        )
+        guard case let .compacted(result) = outcome else {
+            return outcome
         }
 
         session.messages = RemoteGenerationClient.remoteMessages(
@@ -108,7 +130,7 @@ extension ChatGPTSubscriptionGenerationClient {
             preservingRecentFrom: session.messages
         )
         resetContinuationAndTransport(session: &session)
-        return result
+        return outcome
     }
 
     func resetContinuationAndTransport(session: inout AgentSession) {
@@ -136,26 +158,56 @@ extension ChatGPTSubscriptionGenerationClient {
 
     static func compactedMessagesForEstimatedContextIfNeeded(
         _ messages: [[String: Any]],
-        estimatedContextTokens: Int?,
+        estimate: SubscriptionCompactionSupport.RequestEstimate,
         maxTokens: Int?,
         maxOutputTokens: Int? = nil
     ) -> AgentConversationCompactionResult? {
-        guard shouldCompactEstimatedContext(
-            estimatedContextTokens: estimatedContextTokens,
+        SubscriptionCompactionSupport.compactedMessagesForEstimatedContextIfNeeded(
+            messages,
+            estimate: estimate,
             maxTokens: maxTokens,
             maxOutputTokens: maxOutputTokens,
-            messageCount: conversationMessageCount(in: messages)
-        ) else {
-            return nil
-        }
+            reserveTokenCount: compactionReserveTokenCount
+        )
+    }
 
-        let result = compactedMessagesIfNeeded(
+    static func compactedMessagesForContextLimitRetry(
+        _ messages: [[String: Any]],
+        maxTokens: Int?,
+        maxOutputTokens: Int? = nil,
+        overhead: SubscriptionCompactionSupport.RequestOverhead = .none
+    ) -> AgentConversationCompactionResult {
+        SubscriptionCompactionSupport.compactedMessagesForContextLimitRetry(
             messages,
             maxTokens: maxTokens,
             maxOutputTokens: maxOutputTokens,
-            force: true
+            reserveTokenCount: compactionReserveTokenCount,
+            overhead: overhead
         )
-        return result.wasCompacted ? result : nil
+    }
+
+    /// Splits a ChatGPT request estimate into the part compaction cannot remove
+    /// (tool catalogue) and the part it can (instructions plus conversation).
+    ///
+    /// Both halves come from the same builder, so no heterogeneous subtraction
+    /// is involved and the static half cannot grow with the history.
+    static func requestEstimate(
+        instructions: String?,
+        fullHistoryInput: [Any],
+        toolPayloads: [[String: Any]]
+    ) -> SubscriptionCompactionSupport.RequestEstimate {
+        SubscriptionCompactionSupport.RequestEstimate(
+            totalTokens: ChatGPTSubscriptionRequestBuilder.estimatedContextTokenCount(
+                instructions: instructions,
+                input: fullHistoryInput,
+                toolPayloads: toolPayloads
+            ),
+            staticOverheadTokens: ChatGPTSubscriptionRequestBuilder.estimatedContextTokenCount(
+                instructions: nil,
+                input: [],
+                toolPayloads: toolPayloads
+            )
+        )
     }
 
     static func compactionPolicyMaxTokens(
@@ -166,26 +218,6 @@ extension ChatGPTSubscriptionGenerationClient {
             for: maxTokens,
             maxOutputTokens: maxOutputTokens,
             reserveTokenCount: compactionReserveTokenCount
-        )
-    }
-
-    static func shouldCompactEstimatedContext(
-        estimatedContextTokens: Int?,
-        maxTokens: Int?,
-        maxOutputTokens: Int?,
-        messageCount: Int
-    ) -> Bool {
-        guard let estimatedContextTokens,
-              let compactionLimit = compactionPolicyMaxTokens(
-                  for: maxTokens,
-                  maxOutputTokens: maxOutputTokens
-              ) else {
-            return false
-        }
-        return AgentConversationCompactionPolicy.shouldCompactHistory(
-            usedTokens: estimatedContextTokens,
-            maxTokens: compactionLimit,
-            messageCount: messageCount
         )
     }
 
@@ -211,6 +243,19 @@ extension ChatGPTSubscriptionGenerationClient {
     static func contextLimitRetryUnavailableDiagnostic() -> String {
         SubscriptionCompactionSupport.contextLimitRetryUnavailableDiagnostic(
             provider: "ChatGPT Subscription"
+        )
+    }
+
+    static func unsatisfiableBudgetDiagnostic(
+        contextWindowTokens: Int,
+        maxOutputTokens: Int,
+        overheadTokens: Int
+    ) -> String {
+        SubscriptionCompactionSupport.unsatisfiableBudgetDiagnostic(
+            provider: "ChatGPT Subscription",
+            contextWindowTokens: contextWindowTokens,
+            maxOutputTokens: maxOutputTokens,
+            overheadTokens: overheadTokens
         )
     }
 

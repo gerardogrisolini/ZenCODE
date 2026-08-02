@@ -212,6 +212,20 @@ extension RemoteSessionSnapshotTests {
         ]
     }
 
+    /// A conversation large enough that compacting it genuinely reclaims
+    /// context, used together with an oversized tool catalogue to exercise the
+    /// overhead-aware preflight.
+    func preflightCompactionHistory() -> [AgentRuntimeMessage] {
+        (0..<120).map { index in
+            AgentRuntimeMessage(
+                role: index.isMultiple(of: 2) ? .user : .assistant,
+                content: "brief message \(index) " + String(repeating: "detail ", count: 30)
+            )
+        }
+    }
+
+    /// The same conversation in provider wire form, prefixed by the system
+    /// message the client would install.
     func chatGPTPreflightCompactionMessages() -> [[String: Any]] {
         var messages: [[String: Any]] = [
             [
@@ -219,12 +233,11 @@ extension RemoteSessionSnapshotTests {
                 "content": "System prompt"
             ]
         ]
-        for index in 0..<6 {
-            let role = index.isMultiple(of: 2) ? "user" : "assistant"
+        for message in preflightCompactionHistory() {
             messages.append(
                 RemoteGenerationClient.remoteMessage(
-                    role: role,
-                    content: "brief message \(index) " + String(repeating: "detail ", count: 20),
+                    role: message.role.rawValue,
+                    content: message.content,
                     attachments: []
                 )
             )
@@ -290,6 +303,15 @@ final class CapturedDirectAgentEvents: Sendable {
                 return nil
             }
             return status
+        }
+    }
+
+    func diagnostics() -> [String] {
+        lockedEvents().compactMap { event in
+            guard case let .diagnostic(message) = event else {
+                return nil
+            }
+            return message
         }
     }
 

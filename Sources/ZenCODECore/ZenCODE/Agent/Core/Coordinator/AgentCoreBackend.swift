@@ -456,7 +456,10 @@ public actor AgentCoreBackend {
     ) -> AgentRuntimeSessionCompactionResult? {
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             snapshot.compactionInputMessages,
-            maxTokens: maxTokens,
+            budget: AgentConversationCompactionBudget(
+                contextWindowTokens: maxTokens,
+                maxOutputTokens: configuration.maxOutputTokens
+            ),
             force: force
         )
         guard result.wasCompacted else {

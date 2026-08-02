@@ -259,7 +259,10 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         }
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             Self.agentRuntimeMessages(from: session.messages),
-            maxTokens: configuration.configuredContextWindowLimit,
+            budget: AgentConversationCompactionBudget(
+                contextWindowTokens: configuration.configuredContextWindowLimit,
+                maxOutputTokens: configuration.maxOutputTokens
+            ),
             force: force
         )
         guard result.wasCompacted else {

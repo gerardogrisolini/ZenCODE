@@ -86,12 +86,18 @@ extension AnthropicSubscriptionGenerationClient {
         session.thinkingSelection = thinkingSelection
         session.preserveThinking = preserveThinking
         sessions[id] = session
+        // The system prompt and the allowed tool set are exactly what the
+        // cached overhead measured; keeping it would reserve tokens this
+        // session no longer spends and over-compact the conversation.
+        invalidateRequestOverhead(sessionID: id)
     }
 
     public func updateBorrowedSubAgentToolExecutor(
         _ executor: AgentBorrowedToolExecutor?
     ) async {
         await toolExecutor.updateBorrowedSubAgentToolExecutor(executor)
+        // Borrowed sub-agent tools change the catalogue of every session.
+        invalidateRequestOverhead(sessionID: nil)
     }
 
     public func updateToolProviders(
@@ -99,11 +105,15 @@ extension AnthropicSubscriptionGenerationClient {
         sessionID: String? = nil
     ) async {
         await toolExecutor.updateToolProviders(providers, sessionID: sessionID)
+        // A different tool catalogue means a different static overhead; a
+        // global update invalidates every session's measurement.
+        invalidateRequestOverhead(sessionID: sessionID)
     }
 
     public func shutdown() async {
         sessions.removeAll()
         sessionGenerations.removeAll()
+        invalidateRequestOverhead(sessionID: nil)
         await toolExecutor.shutdown()
         if ownsTransport {
             try? await transport.shutdown()

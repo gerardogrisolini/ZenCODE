@@ -9,21 +9,37 @@ import Foundation
 import ToolCore
 
 extension AnthropicSubscriptionGenerationClient {
+    /// Streams one Anthropic request for the session owned by `lease`.
+    ///
+    /// The session is addressed through the lease rather than an `inout` copy
+    /// so that a preflight compaction is persisted into the actor-owned
+    /// session the moment it happens. A local copy would have been discarded by
+    /// the caller, which only writes the assistant reply back, so the very next
+    /// round (and every snapshot) would have replayed the uncompacted history.
     func streamAnthropicMessages(
-        session: inout AgentSession,
+        lease: SessionLease,
         modelID: String,
         modelLLMID: String,
         credentials: AnthropicSubscriptionCredentials,
         includeThinkingBlocks: Bool = true,
+        preflightCompactionAttempt: Int = 0,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> RemoteStreamResult {
+        guard let initialSession = currentSession(for: lease) else {
+            throw RemoteGenerationClientError.missingSession
+        }
         let toolDescriptors = await toolExecutor.descriptors(
-            allowedToolNames: session.allowedToolNames,
-            preferredWorkspaceRootURL: session.cwd,
-            sessionID: session.id
+            allowedToolNames: initialSession.allowedToolNames,
+            preferredWorkspaceRootURL: initialSession.cwd,
+            sessionID: initialSession.id
         )
         if configuration.verboseLogging {
             await onEvent(.diagnostic(RemoteStreamTransport.toolExposureDiagnostic(from: toolDescriptors)))
+        }
+        // Re-read after the tool-descriptor suspension: the actor may have
+        // accepted a compaction or a new turn in the meantime.
+        guard let session = currentSession(for: lease) else {
+            throw RemoteGenerationClientError.missingSession
         }
         let toolCatalog = RemoteToolWireCatalog(descriptors: toolDescriptors)
         let thinkingEnabled = Self.supportsThinking(modelID: modelID)
@@ -53,21 +69,66 @@ extension AnthropicSubscriptionGenerationClient {
                 messages: requestMessages,
                 tools: tools
             )
-        if let result = compactSessionForEstimatedContextIfNeeded(
-            &session,
+        // Split with a single estimator: the tool catalogue and the provider's
+        // own system blocks are static, while JSON wrappers and escaping stay
+        // attached to the conversation as a scale-free rate.
+        let requestEstimate = Self.requestEstimate(
             estimatedContextTokens: estimatedContextTokens,
-            modelLLMID: modelLLMID,
-            maxOutputTokens: maxOutputTokens
-        ) {
-            await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
-            return try await streamAnthropicMessages(
-                session: &session,
-                modelID: modelID,
+            tools: tools
+        )
+        // Remember what this request costs beyond the conversation itself, so a
+        // context-limit retry can subtract the real tool/system overhead.
+        recordRequestOverhead(
+            estimate: requestEstimate,
+            messages: session.messages,
+            for: lease
+        )
+        // Bounded: each successful compaction is guaranteed to shrink the
+        // prompt, and the attempt cap keeps a pathological overhead estimate
+        // (huge tool catalogue, oversized output reservation) from recursing.
+        if preflightCompactionAttempt
+            < AgentConversationCompactionPolicy.maximumPreflightCompactionAttempts {
+            switch compactSessionForEstimatedContextIfNeeded(
+                lease: lease,
+                estimate: requestEstimate,
                 modelLLMID: modelLLMID,
-                credentials: credentials,
-                includeThinkingBlocks: includeThinkingBlocks,
-                onEvent: onEvent
-            )
+                maxOutputTokens: maxOutputTokens
+            ) {
+            case let .compacted(result):
+                await onEvent(.diagnostic(Self.compactionDiagnostic(from: result)))
+                return try await streamAnthropicMessages(
+                    lease: lease,
+                    modelID: modelID,
+                    modelLLMID: modelLLMID,
+                    credentials: credentials,
+                    includeThinkingBlocks: includeThinkingBlocks,
+                    preflightCompactionAttempt: preflightCompactionAttempt + 1,
+                    onEvent: onEvent
+                )
+            case let .unsatisfiableBudget(
+                contextWindowTokens,
+                reservedOutputTokens,
+                overheadTokens
+            ):
+                // No conversation fits next to this reservation, so compaction
+                // is skipped explicitly and the provider outcome is surfaced
+                // instead of recursing towards an unreachable target. The
+                // subsequent context-limit retry rebuilds this stream, so only
+                // the first preflight of the user turn may publish the reason.
+                if claimUnsatisfiableBudgetDiagnostic(for: lease) {
+                    await onEvent(
+                        .diagnostic(
+                            Self.unsatisfiableBudgetDiagnostic(
+                                contextWindowTokens: contextWindowTokens,
+                                maxOutputTokens: reservedOutputTokens,
+                                overheadTokens: overheadTokens
+                            )
+                        )
+                    )
+                }
+            case .notNeeded:
+                break
+            }
         }
 
         var body: [String: Any] = [

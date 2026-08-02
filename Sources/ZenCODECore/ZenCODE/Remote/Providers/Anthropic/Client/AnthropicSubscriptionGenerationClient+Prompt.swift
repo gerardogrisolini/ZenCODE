@@ -28,6 +28,14 @@ extension AnthropicSubscriptionGenerationClient {
                 attachments: attachments
             )
         )
+        // A new user turn deserves its own explicit preflight diagnostic. A
+        // retry of this same turn shares the flag and is therefore silent.
+        session.didReportUnsatisfiableBudget = false
+        // The cached rate includes the serialized conversation, not only the
+        // static tool/system reservation. A user append can change that rate
+        // radically (for example with escaped Unicode), so it must never be
+        // reused for the new request.
+        invalidateRequestOverhead(sessionID: sessionID)
         // Persist before the first suspension. A session lease keeps a later
         // close/recreate from being overwritten by this in-flight turn.
         sessions[sessionID] = session
@@ -63,13 +71,10 @@ extension AnthropicSubscriptionGenerationClient {
             }
 
             while true {
-                guard var session = currentSession(for: lease) else {
-                    throw RemoteGenerationClientError.missingSession
-                }
                 let streamResult: RemoteStreamResult
                 do {
                     streamResult = try await streamAnthropicMessages(
-                        session: &session,
+                        lease: lease,
                         modelID: modelID,
                         modelLLMID: modelLLMID,
                         credentials: credentials,
@@ -87,6 +92,7 @@ extension AnthropicSubscriptionGenerationClient {
                         }) else {
                             throw RemoteGenerationClientError.missingSession
                         }
+                        invalidateRequestOverhead(sessionID: lease.id)
                         await onEvent(
                             .diagnostic(
                                 "Anthropic rejected saved thinking blocks; retrying without replaying prior thinking blocks."
@@ -120,6 +126,10 @@ extension AnthropicSubscriptionGenerationClient {
                 }) else {
                     throw RemoteGenerationClientError.missingSession
                 }
+                // The static overhead remains valid, but the cached inflation
+                // was measured for the preceding conversation and is invalid
+                // after every assistant append.
+                invalidateRequestOverhead(sessionID: lease.id)
                 if let metrics = RemoteGenerationClient.generationMetrics(generationStats) {
                     await Self.publishAnthropicSubscriptionMetrics(
                         metrics,
@@ -163,6 +173,11 @@ extension AnthropicSubscriptionGenerationClient {
                     }) else {
                         throw RemoteGenerationClientError.missingSession
                     }
+                    // Tool payloads are frequently the largest and most
+                    // escaped part of an Anthropic turn; do not carry their
+                    // predecessor's conversation inflation into the next
+                    // preflight.
+                    invalidateRequestOverhead(sessionID: lease.id)
                 }
 
                 if round == configuration.maxToolRounds - 1 {

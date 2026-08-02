@@ -286,37 +286,34 @@ struct RemoteGenerationMetricsTests {
             maxTokens: maxTokens,
             maxOutputTokens: maxOutputTokens
         )
+        let toolCatalog = RemoteToolWireCatalog(
+            descriptors: [
+                DirectToolDescriptor(
+                    name: "tool_large_context",
+                    description: String(repeating: "large tool description ", count: 3_000),
+                    inputSchema: #"{"type":"object","properties":{"query":{"type":"string"}}}"#
+                )
+            ]
+        )
+        // The estimate must describe the very messages that are compacted,
+        // otherwise the decomposition measures one request and the policy
+        // rewrites another.
+        let anthropicPayload = AnthropicSubscriptionGenerationClient.anthropicMessagesPayload(
+            from: toolCatalog.wireMessages(from: messages),
+            includeThinkingBlocks: false
+        )
+        let anthropicTools = AnthropicSubscriptionGenerationClient.anthropicTools(
+            from: toolCatalog.bindings
+        )
         let estimatedContextTokens = try #require(
             AnthropicSubscriptionRequestBuilder.estimatedContextTokenCount(
-                system: [
-                    [
-                        "type": "text",
-                        "text": "System prompt"
-                    ]
-                ],
-                messages: [
-                    [
-                        "role": "user",
-                        "content": [
-                            [
-                                "type": "text",
-                                "text": "Current request"
-                            ]
-                        ]
-                    ] as [String: Any]
-                ],
-                tools: [
-                    [
-                        "name": "tool_large_context",
-                        "description": String(repeating: "large tool description ", count: 6_000),
-                        "input_schema": [
-                            "type": "object",
-                            "properties": [
-                                "query": ["type": "string"]
-                            ]
-                        ]
-                    ] as [String: Any]
-                ]
+                system: AnthropicSubscriptionGenerationClient.subscriptionSystemBlocks(
+                    userSystemPrompt: anthropicPayload.system
+                ),
+                messages: AnthropicSubscriptionGenerationClient.addingCacheControlBreakpoints(
+                    anthropicPayload.messages
+                ),
+                tools: anthropicTools
             )
         )
         let policyMaxTokens = try #require(
@@ -325,10 +322,18 @@ struct RemoteGenerationMetricsTests {
                 maxOutputTokens: maxOutputTokens
             )
         )
+        let requestEstimate = AnthropicSubscriptionGenerationClient.requestEstimate(
+            estimatedContextTokens: estimatedContextTokens,
+            tools: anthropicTools
+        )
+        let overhead = SubscriptionCompactionSupport.requestOverhead(
+            estimate: requestEstimate,
+            messages: messages
+        )
         let preflightResult = try #require(
             AnthropicSubscriptionGenerationClient.compactedMessagesForEstimatedContextIfNeeded(
                 messages,
-                estimatedContextTokens: estimatedContextTokens,
+                estimate: requestEstimate,
                 maxTokens: maxTokens,
                 maxOutputTokens: maxOutputTokens
             )
@@ -339,10 +344,98 @@ struct RemoteGenerationMetricsTests {
         )
 
         #expect(normalResult.wasCompacted == false)
-        #expect(AgentConversationCompactionPolicy.triggerTokenCount(for: policyMaxTokens) == maxTokens - maxOutputTokens)
+        // The policy budget is now the tokens the conversation may actually
+        // occupy, so it equals the window minus the reserved output.
+        #expect(policyMaxTokens == maxTokens - maxOutputTokens)
         #expect(estimatedContextTokens > AgentConversationCompactionPolicy.triggerTokenCount(for: policyMaxTokens))
         #expect(preflightResult.wasCompacted)
+        #expect(preflightResult.estimatedTokenCount < preflightResult.originalEstimatedTokenCount)
         #expect(compactedMessages.count < messages.count)
+        #expect(
+            Int(
+                Double(preflightResult.estimatedTokenCount)
+                    * overhead.conversationInflationFactor
+            )
+                + overhead.staticOverheadTokens
+                + maxOutputTokens <= maxTokens
+        )
+    }
+
+    @Test
+    func anthropicSubscriptionContextLimitRetryRemovesASubstantialPartOfTheHistory() throws {
+        let maxTokens = 200_000
+        let maxOutputTokens = 32_000
+        let messages = anthropicPreflightCompactionMessages()
+        let rawTokenCount = AgentConversationCompactionSupport.estimatedTokenCount(
+            for: RemoteGenerationClient.agentRuntimeMessages(from: messages)
+        )
+        // The conversation is far below the window, so an ordinary manual
+        // force retains at most floor(raw * 0.9). The provider-rejected retry
+        // must still make the more aggressive 50% cut.
+        let forced = AnthropicSubscriptionGenerationClient.compactedMessagesIfNeeded(
+            messages,
+            maxTokens: maxTokens,
+            maxOutputTokens: maxOutputTokens,
+            force: true
+        )
+        let retry = AnthropicSubscriptionGenerationClient.compactedMessagesForContextLimitRetry(
+            messages,
+            maxTokens: maxTokens,
+            maxOutputTokens: maxOutputTokens,
+            overhead: SubscriptionCompactionSupport.RequestOverhead(
+                staticOverheadTokens: 40_000,
+                conversationInflationFactor: 1.0
+            )
+        )
+
+        #expect(forced.wasCompacted)
+        #expect(
+            forced.estimatedTokenCount
+                <= Int((Double(rawTokenCount) * 0.9).rounded(.down))
+        )
+        #expect(retry.wasCompacted)
+        #expect(
+            Double(retry.estimatedTokenCount)
+                <= Double(rawTokenCount)
+                    * AgentConversationCompactionPolicy.contextLimitRetryRetentionFraction
+        )
+        #expect(retry.estimatedTokenCount < forced.estimatedTokenCount)
+        #expect(retry.keptRecentMessageCount < forced.keptRecentMessageCount)
+        #expect(
+            retry.keptRecentMessageCount
+                >= AgentConversationCompactionPolicy.minimumRecentMessageCount
+        )
+        #expect(retry.messages.first?.role == .system)
+        #expect(retry.maxTokens == maxTokens)
+    }
+
+    @Test
+    func anthropicSubscriptionContextLimitRetryStillShrinksWithoutAKnownWindow() {
+        let messages = anthropicPreflightCompactionMessages()
+        let rawTokenCount = AgentConversationCompactionSupport.estimatedTokenCount(
+            for: RemoteGenerationClient.agentRuntimeMessages(from: messages)
+        )
+        let retry = AnthropicSubscriptionGenerationClient.compactedMessagesForContextLimitRetry(
+            messages,
+            maxTokens: nil
+        )
+
+        // Without a declared context window the ordinary policy cannot compact
+        // at all; the single retry after an explicit provider rejection still
+        // has to make room.
+        #expect(
+            AnthropicSubscriptionGenerationClient.compactedMessagesIfNeeded(
+                messages,
+                maxTokens: nil,
+                force: true
+            ).wasCompacted == false
+        )
+        #expect(retry.wasCompacted)
+        #expect(
+            Double(retry.estimatedTokenCount)
+                <= Double(rawTokenCount)
+                    * AgentConversationCompactionPolicy.contextLimitRetryRetentionFraction
+        )
     }
 
     @Test
@@ -614,12 +707,12 @@ private func anthropicPreflightCompactionMessages() -> [[String: Any]] {
             "content": "System prompt"
         ]
     ]
-    for index in 0..<6 {
+    for index in 0..<120 {
         let role = index.isMultiple(of: 2) ? "user" : "assistant"
         messages.append(
             RemoteGenerationClient.remoteMessage(
                 role: role,
-                content: "brief message \(index) " + String(repeating: "detail ", count: 20),
+                content: "brief message \(index) " + String(repeating: "detail ", count: 30),
                 attachments: []
             )
         )

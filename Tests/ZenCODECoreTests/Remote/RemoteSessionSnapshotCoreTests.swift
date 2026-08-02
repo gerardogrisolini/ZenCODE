@@ -209,26 +209,29 @@ extension RemoteSessionSnapshotTests {
                 tools: [
                     ToolDescriptor(
                         name: "custom.large",
-                        description: String(repeating: "large tool description ", count: 6_000),
+                        description: String(repeating: "large tool description ", count: 3_000),
                         inputSchema: #"{"type":"object","properties":{"query":{"type":"string"}}}"#
                     )
                 ],
                 executor: { _ in "" }
             )
         ])
-        var session = AnthropicSubscriptionGenerationClient.AgentSession(
-            id: "session-anthropic-preflight",
-            cwd: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
+        let sessionID = "session-anthropic-preflight"
+        let history = preflightCompactionHistory()
+        await client.createSession(
+            id: sessionID,
+            cwd: "/tmp/project",
             systemPrompt: "System prompt",
-            cacheKey: nil,
-            allowedToolNames: ["custom.large"],
-            thinkingSelection: nil,
-            preserveThinking: false,
-            messages: chatGPTPreflightCompactionMessages()
+            history: history,
+            allowedToolNames: ["custom.large"]
         )
+        let lease = try #require(await client.sessionLease(for: sessionID))
+        let originalHistoryCount = try #require(
+            await client.snapshotSession(id: sessionID)
+        ).history.count
 
         let result = try await client.streamAnthropicMessages(
-            session: &session,
+            lease: lease,
             modelID: "claude-haiku-4-5",
             modelLLMID: "claude-haiku-4-5",
             credentials: AnthropicSubscriptionCredentials(
@@ -245,10 +248,49 @@ extension RemoteSessionSnapshotTests {
         let systemBlocks = try #require(body["system"] as? [[String: Any]])
         let systemText = systemBlocks.compactMap { $0["text"] as? String }
             .joined(separator: "\n")
+        let wireMessages = try #require(body["messages"] as? [[String: Any]])
+        let snapshot = try #require(await client.snapshotSession(id: sessionID))
 
         #expect(result.text == "ok")
         #expect(requests.count == 1)
         #expect(systemText.contains(AgentConversationCompactionSupport.memorySummaryHeader))
+        // The compaction that produced this request must live in the session
+        // owned by the actor, not in a discarded copy: the wire payload and the
+        // snapshot have to agree, and the next round must start from here.
+        #expect(originalHistoryCount == history.count)
+        #expect(snapshot.history.count < originalHistoryCount)
+        #expect(snapshot.history.count == wireMessages.count)
+        #expect(
+            snapshot.systemPrompt?
+                .contains(AgentConversationCompactionSupport.memorySummaryHeader) == true
+        )
+        #expect(
+            snapshot.history.last?.content.hasPrefix("brief message 119 detail") == true
+        )
+
+        // Second round on the same lease: the persisted compaction is the new
+        // starting point, so the preflight is a no-op and the wire payload does
+        // not grow back to the uncompacted history.
+        let secondResult = try await client.streamAnthropicMessages(
+            lease: lease,
+            modelID: "claude-haiku-4-5",
+            modelLLMID: "claude-haiku-4-5",
+            credentials: AnthropicSubscriptionCredentials(
+                accessToken: "test-access-token",
+                refreshToken: "test-refresh-token",
+                expiresAt: Date().addingTimeInterval(3600)
+            ),
+            onEvent: { _ in }
+        )
+        let secondRequests = fixture.capturedRequests()
+        let secondBody = try #require(secondRequests.last).jsonObject()
+        let secondWireMessages = try #require(secondBody["messages"] as? [[String: Any]])
+        let secondSnapshot = try #require(await client.snapshotSession(id: sessionID))
+
+        #expect(secondResult.text == "ok")
+        #expect(secondRequests.count == 2)
+        #expect(secondWireMessages.count == wireMessages.count)
+        #expect(secondSnapshot.history.count == snapshot.history.count)
     }
 #endif
 

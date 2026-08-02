@@ -45,11 +45,11 @@ struct AnthropicSubscriptionNIOStreamingTests {
             fixture.beginShutdown()
         }
         let client = makeClient(fixture: fixture)
-        var session = makeSession()
+        let lease = try await installedLease(in: client)
         let events = CapturedDirectAgentEvents()
 
         let result = try await client.streamAnthropicMessages(
-            session: &session,
+            lease: lease,
             modelID: "claude-haiku-4-5",
             modelLLMID: "claude-haiku-4-5",
             credentials: credentials(),
@@ -99,11 +99,11 @@ struct AnthropicSubscriptionNIOStreamingTests {
             fixture.beginShutdown()
         }
         let client = makeClient(fixture: fixture)
-        var session = makeSession()
+        let lease = try await installedLease(in: client)
 
         do {
             _ = try await client.streamAnthropicMessages(
-                session: &session,
+                lease: lease,
                 modelID: "claude-haiku-4-5",
                 modelLLMID: "claude-haiku-4-5",
                 credentials: credentials(),
@@ -135,11 +135,11 @@ struct AnthropicSubscriptionNIOStreamingTests {
             fixture.beginShutdown()
         }
         let client = makeClient(fixture: fixture)
-        var session = makeSession()
+        let lease = try await installedLease(in: client)
 
         do {
             _ = try await client.streamAnthropicMessages(
-                session: &session,
+                lease: lease,
                 modelID: "claude-haiku-4-5",
                 modelLLMID: "claude-haiku-4-5",
                 credentials: credentials(),
@@ -153,15 +153,221 @@ struct AnthropicSubscriptionNIOStreamingTests {
         #expect(fixture.capturedRequests().count == 1)
     }
 
+    @Test("unsatisfiable preflight budget is diagnosed once across rebuilt streams")
+    func unsatisfiablePreflightBudgetDiagnosticIsEmittedOnce() async throws {
+        let response = """
+        data: {"type":"message_start","message":{"usage":{"input_tokens":1,"output_tokens":0}}}
+
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"ok"}}
+
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
+
+        """
+        let fixture = try await RemoteNIOStreamingFixture.start(responseBody: Data(response.utf8))
+        defer {
+            fixture.beginShutdown()
+        }
+        let client = makeClient(
+            fixture: fixture,
+            configuredContextWindowLimit: 128,
+            maxOutputTokens: 128
+        )
+        let lease = try await installedLease(in: client)
+        let events = CapturedDirectAgentEvents()
+
+        // A real context-limit retry re-enters `streamAnthropicMessages` on the
+        // same lease. Calling the stream twice exercises that lifecycle without
+        // relying on credentials or a live provider response.
+        for _ in 0..<2 {
+            _ = try await client.streamAnthropicMessages(
+                lease: lease,
+                modelID: "claude-haiku-4-5",
+                modelLLMID: "claude-haiku-4-5",
+                credentials: credentials(),
+                onEvent: { event in
+                    events.append(event)
+                }
+            )
+        }
+
+        let diagnostics = events.diagnostics().filter {
+            $0.contains("request cannot fit") && $0.contains("Skipping compaction")
+        }
+        #expect(diagnostics.count == 1)
+        #expect(fixture.capturedRequests().count == 2)
+    }
+
+    @Test("cached Anthropic overhead is dropped by conversation appends and lifecycle changes")
+    func cachedRequestOverheadIsInvalidatedAcrossConversationAndLifecycle() async throws {
+        let fixture = try await RemoteNIOStreamingFixture.start(responseBody: Data())
+        defer {
+            fixture.beginShutdown()
+        }
+        let client = makeClient(fixture: fixture)
+        let sessionID = "anthropic-overhead-lifecycle"
+        let messages = (0..<120).map { index in
+            RemoteGenerationClient.remoteMessage(
+                role: index.isMultiple(of: 2) ? "user" : "assistant",
+                content: "turn \(index) " + String(repeating: "payload ", count: 80),
+                attachments: []
+            )
+        }
+        await client.createSession(
+            id: sessionID,
+            cwd: "/tmp/project",
+            history: RemoteGenerationClient.agentRuntimeMessages(from: messages),
+            allowedToolNames: []
+        )
+        guard let lease = await client.sessionLease(for: sessionID) else {
+            Issue.record("Expected the lifecycle test session to have a lease.")
+            return
+        }
+        let runtimeTokens = AgentConversationCompactionSupport.estimatedTokenCount(
+            for: RemoteGenerationClient.agentRuntimeMessages(from: messages)
+        )
+        let measuredEstimate = SubscriptionCompactionSupport.RequestEstimate(
+            totalTokens: runtimeTokens + 16_000,
+            staticOverheadTokens: 16_000
+        )
+
+        await client.recordRequestOverhead(
+            estimate: measuredEstimate,
+            runtimeConversationTokens: runtimeTokens,
+            for: lease
+        )
+        let staleOverhead = await client.requestOverhead(forSessionID: sessionID)
+        let staleResult = AnthropicSubscriptionGenerationClient.compactedMessagesIfNeeded(
+            messages,
+            maxTokens: 30_000,
+            maxOutputTokens: 1_000,
+            overhead: staleOverhead
+        )
+        let freshResult = AnthropicSubscriptionGenerationClient.compactedMessagesIfNeeded(
+            messages,
+            maxTokens: 30_000,
+            maxOutputTokens: 1_000
+        )
+
+        // This proves why invalidation matters: carrying the old reservation
+        // into a changed session would compact a history that otherwise fits.
+        #expect(staleOverhead.staticOverheadTokens == 16_000)
+        #expect(staleResult.wasCompacted)
+        #expect(freshResult.wasCompacted == false)
+
+        // Each wire role can carry a radically different UTF-8/JSON ratio.
+        // The actor-level mutation boundary is shared by assistant and tool
+        // commits, so every append must drop the cached conversation rate.
+        for role in ["user", "assistant", "tool"] {
+            await client.recordRequestOverhead(
+                estimate: measuredEstimate,
+                runtimeConversationTokens: runtimeTokens,
+                for: lease
+            )
+            _ = await client.mutateSession(for: lease) { session in
+                session.messages.append(
+                    RemoteGenerationClient.remoteMessage(
+                        role: role,
+                        content: "changed \(role) 👩🏽‍💻\u{301}\\\"",
+                        attachments: []
+                    )
+                )
+            }
+            #expect(await client.requestOverhead(forSessionID: sessionID) == .none)
+        }
+
+        await client.updateSessionOptions(
+            id: sessionID,
+            systemPrompt: "changed system prompt",
+            allowedToolNames: [],
+            thinkingSelection: nil,
+            preserveThinking: false
+        )
+        #expect(await client.requestOverhead(forSessionID: sessionID) == .none)
+
+        await client.recordRequestOverhead(
+            estimate: measuredEstimate,
+            runtimeConversationTokens: runtimeTokens,
+            for: lease
+        )
+        await client.updateToolProviders([], sessionID: sessionID)
+        #expect(await client.requestOverhead(forSessionID: sessionID) == .none)
+
+        await client.recordRequestOverhead(
+            estimate: measuredEstimate,
+            runtimeConversationTokens: runtimeTokens,
+            for: lease
+        )
+        await client.updateToolProviders([])
+        #expect(await client.requestOverhead(forSessionID: sessionID) == .none)
+
+        await client.recordRequestOverhead(
+            estimate: measuredEstimate,
+            runtimeConversationTokens: runtimeTokens,
+            for: lease
+        )
+        await client.shutdown()
+        #expect(await client.requestOverhead(forSessionID: sessionID) == .none)
+    }
+
+    @Test("manual Anthropic compaction drops the cached conversation inflation factor")
+    func manualCompactionInvalidatesCachedConversationInflationFactor() async throws {
+        let fixture = try await RemoteNIOStreamingFixture.start(responseBody: Data())
+        defer {
+            fixture.beginShutdown()
+        }
+        let client = makeClient(
+            fixture: fixture,
+            configuredContextWindowLimit: 100_000
+        )
+        let sessionID = "anthropic-manual-compaction-overhead"
+        let history = (0..<120).map { index in
+            AgentRuntimeMessage(
+                role: index.isMultiple(of: 2) ? .user : .assistant,
+                content: "turn \(index) " + String(repeating: "payload ", count: 80)
+            )
+        }
+        await client.createSession(
+            id: sessionID,
+            cwd: "/tmp/project",
+            history: history,
+            allowedToolNames: []
+        )
+        let lease = try #require(await client.sessionLease(for: sessionID))
+        let runtimeTokens = AgentConversationCompactionSupport.estimatedTokenCount(for: history)
+        await client.recordRequestOverhead(
+            estimate: SubscriptionCompactionSupport.RequestEstimate(
+                totalTokens: runtimeTokens * 2,
+                staticOverheadTokens: 0
+            ),
+            runtimeConversationTokens: runtimeTokens,
+            for: lease
+        )
+
+        let cachedOverhead = await client.requestOverhead(forSessionID: sessionID)
+        let result = try #require(await client.compactSession(id: sessionID, force: true))
+
+        #expect(cachedOverhead.conversationInflationFactor == 2.0)
+        #expect(result.wasCompacted)
+        #expect(result.estimatedTokenCount < result.originalEstimatedTokenCount)
+        // The persisted session no longer contains the conversation from which
+        // this factor was measured, so retaining it would poison the next
+        // compaction budget.
+        #expect(await client.requestOverhead(forSessionID: sessionID) == .none)
+    }
+
     private func makeClient(
-        fixture: RemoteNIOStreamingFixture
+        fixture: RemoteNIOStreamingFixture,
+        configuredContextWindowLimit: Int? = nil,
+        maxOutputTokens: Int? = nil
     ) -> AnthropicSubscriptionGenerationClient {
         AnthropicSubscriptionGenerationClient(
             configuration: AgentRuntimeConfiguration(
                 modelID: "claude-haiku-4-5",
                 bearerToken: nil,
                 workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
+                configuredContextWindowLimit: configuredContextWindowLimit,
                 maxToolRounds: 4,
+                maxOutputTokens: maxOutputTokens,
                 verboseLogging: false,
                 toolAuthorizationHandler: nil
             ),
@@ -176,17 +382,20 @@ struct AnthropicSubscriptionNIOStreamingTests {
         )
     }
 
-    private func makeSession() -> AnthropicSubscriptionGenerationClient.AgentSession {
-        AnthropicSubscriptionGenerationClient.AgentSession(
-            id: "anthropic-nio-session",
-            cwd: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
-            systemPrompt: nil,
-            cacheKey: nil,
-            allowedToolNames: [],
-            thinkingSelection: nil,
-            preserveThinking: false,
-            messages: [["role": "user", "content": "hello"]]
+    /// Creates the fixture session inside the actor and returns its lease.
+    /// Streaming addresses the session through the actor, so a preflight
+    /// compaction is persisted where the next round will read it.
+    private func installedLease(
+        in client: AnthropicSubscriptionGenerationClient
+    ) async throws -> AnthropicSubscriptionGenerationClient.SessionLease {
+        let sessionID = "anthropic-nio-session"
+        await client.createSession(
+            id: sessionID,
+            cwd: "/tmp/project",
+            history: [AgentRuntimeMessage(role: .user, content: "hello")],
+            allowedToolNames: []
         )
+        return try #require(await client.sessionLease(for: sessionID))
     }
 
     private func credentials() -> AnthropicSubscriptionCredentials {

@@ -16,6 +16,10 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
         public var allowedToolNames: Set<String>?
         public var thinkingSelection: AgentThinkingSelection?
         public var preserveThinking: Bool
+        /// A preflight budget can be impossible even for a tiny history. The
+        /// diagnostic is useful once per user turn, but a context-limit retry
+        /// rebuilds the request and must not emit it again.
+        var didReportUnsatisfiableBudget = false
         public var messages: [[String: Any]]
     }
 
@@ -48,6 +52,11 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
     /// only `AgentRuntimeSessionSnapshot` through `snapshotSession(id:)`.
     var sessions: [String: AgentSession] = [:]
     var sessionGenerations: [String: UInt64] = [:]
+    /// Non-conversation tokens (tool catalogue, provider system blocks) and
+    /// the provider's per-conversation inflation rate, measured on the last
+    /// request of each session so compaction can reserve what it is unable to
+    /// remove. Invalidated by every lifecycle change that can move either.
+    var sessionRequestOverhead: [String: SubscriptionCompactionSupport.RequestOverhead] = [:]
     private var nextSessionGeneration: UInt64 = 0
     let messagesEndpointURLOverride: URL?
 
@@ -105,12 +114,14 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
         nextSessionGeneration &+= 1
         sessionGenerations[id] = nextSessionGeneration
         sessions[id] = session
+        sessionRequestOverhead.removeValue(forKey: id)
     }
 
     func invalidateSession(id: String) {
         nextSessionGeneration &+= 1
         sessionGenerations[id] = nextSessionGeneration
         sessions.removeValue(forKey: id)
+        sessionRequestOverhead.removeValue(forKey: id)
     }
 
     func sessionLease(for id: String) -> SessionLease? {
@@ -138,6 +149,11 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
         }
         mutation(&session)
         sessions[lease.id] = session
+        // A session mutation may append user, assistant, or tool wire content.
+        // The cached request rate is content-dependent, so favour correctness
+        // over attempting to infer which mutation leaves it unchanged. Static
+        // provider overhead is measured again with the next wire payload.
+        sessionRequestOverhead.removeValue(forKey: lease.id)
         return true
     }
 }
