@@ -1571,6 +1571,23 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func assistantBubblePrefixesMarkdownFirstEmittedAtFinish() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: false,
+            standardOutputIsTerminal: true
+        )
+
+        await renderer.writeAssistantContent("**Answer**")
+        await renderer.finishStreamingOutput()
+
+        let stdout = await renderer.capturedWriteEvents()
+            .filter { $0.channel == .standardOutput }
+            .map(\.text)
+            .joined()
+        #expect(TerminalANSIText.stripANSI(stdout) == "💬 Answer\n")
+    }
+
+    @Test
     func scheduledFlushKeepsAQuietStreamResponsive() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: false,

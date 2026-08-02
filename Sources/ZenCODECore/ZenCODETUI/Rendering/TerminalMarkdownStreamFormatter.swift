@@ -252,6 +252,20 @@ public struct TerminalMarkdownStreamFormatter {
         return rendered
     }
 
+    /// Reserves terminal cells already occupied by presentation text that is
+    /// emitted outside the Markdown formatter on the current physical line.
+    ///
+    /// The reservation affects wrapping only: it deliberately does not mark a
+    /// Markdown prefix as emitted, so a leading heading, list, quote, or fence
+    /// is still parsed as a block construct. This is used by the chat renderer
+    /// for decorations such as the assistant's `💬 ` prefix.
+    mutating func reserveLeadingOutputColumns(_ columns: Int) {
+        guard isEnabled, !hasEmittedPendingPrefix else {
+            return
+        }
+        emittedPendingPrefixColumn = max(0, columns)
+    }
+
     /// Appends a no-newline input segment and updates all state whose cost must
     /// be proportional to that segment, never to the complete pending line.
     private mutating func appendToPendingLine(_ segment: Substring) {
@@ -282,7 +296,10 @@ public struct TerminalMarkdownStreamFormatter {
         } else {
             rendered = handleCompleteLine(completedLine)
         }
-        resetPendingLineState()
+        // A buffered block (list, quote, or table candidate) may not emit
+        // anything for its first source line. Keep an external leading-column
+        // reservation until the block actually reaches the terminal.
+        resetPendingLineState(preservingOutputColumn: rendered.isEmpty)
         return rendered
     }
 
@@ -314,11 +331,14 @@ public struct TerminalMarkdownStreamFormatter {
     /// Clears the full set of line-local streaming state. It is deliberately
     /// shared by normal newline handling, safety flushes, and `finish()` so a
     /// formatter can safely be reused after any of those paths.
-    private mutating func resetPendingLineState() {
+    private mutating func resetPendingLineState(
+        preservingOutputColumn: Bool = false
+    ) {
+        let outputColumn = emittedPendingPrefixColumn
         pendingLine = ""
         pendingLineScalarCount = 0
         hasEmittedPendingPrefix = false
-        emittedPendingPrefixColumn = 0
+        emittedPendingPrefixColumn = preservingOutputColumn ? outputColumn : 0
         pendingLineStartState = .leadingWhitespace
     }
 
@@ -1296,7 +1316,15 @@ public struct TerminalMarkdownStreamFormatter {
         // Chat output receives a leading inset after Markdown is rendered. Give
         // tables the same one-column reservation already used by wrapIfNeeded,
         // otherwise their right edge can extend beyond the terminal viewport.
-        let rendererWidth = renderWidth > 0 ? max(1, renderWidth - 1) : 0
+        // An external prefix (for example `💬 `) shares only the first output
+        // row. Account for it while rendering a block surface; streamed prose
+        // tails use `wrapWithColumnOffset` instead.
+        let externalPrefixWidth = hasEmittedPendingPrefix
+            ? 0
+            : emittedPendingPrefixColumn
+        let rendererWidth = renderWidth > 0
+            ? max(1, renderWidth - 1 - externalPrefixWidth)
+            : 0
         return TerminalSwiftMarkdownRenderer(
             supportsHyperlinks: supportsHyperlinks,
             renderWidth: rendererWidth,
@@ -1308,7 +1336,13 @@ public struct TerminalMarkdownStreamFormatter {
     /// and therefore reserves the same one-column chat inset as a complete
     /// Markdown renderer created above.
     private var codeBlockWidth: Int {
-        renderWidth > 0 ? max(1, renderWidth - 1) : 0
+        guard renderWidth > 0 else {
+            return 0
+        }
+        let externalPrefixWidth = hasEmittedPendingPrefix
+            ? 0
+            : emittedPendingPrefixColumn
+        return max(1, renderWidth - 1 - externalPrefixWidth)
     }
     
     /// Reflows rendered output to the terminal width, but never tables or other
@@ -1320,7 +1354,11 @@ public struct TerminalMarkdownStreamFormatter {
             return text
         }
         // Leave one column for the chat inset prefix.
-        return TerminalANSIText.wrap(text, width: max(8, renderWidth - 1))
+        return TerminalANSIText.wrap(
+            text,
+            width: max(8, renderWidth - 1),
+            startingAtColumn: emittedPendingPrefixColumn
+        )
     }
     
     private func shouldFlushPendingLineForStreaming(_ line: String) -> Bool {

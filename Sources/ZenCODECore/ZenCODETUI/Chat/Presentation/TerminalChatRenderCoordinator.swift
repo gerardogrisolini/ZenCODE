@@ -12,6 +12,7 @@ import Foundation
 /// performs no suspension while it mutates formatter or cursor-ownership state.
 actor TerminalChatRenderCoordinator {
     private static let streamingFlushByteThreshold = 1_024
+    private static let assistantBubblePrefix = "💬 "
 
     enum OverviewKind: Hashable, Sendable {
         case taskGraph
@@ -372,9 +373,14 @@ actor TerminalChatRenderCoordinator {
         guard !normalizedDelta.isEmpty else {
             return
         }
+        if assistantBubblePrefixPending {
+            assistantStreamingState.markdownFormatter.reserveLeadingOutputColumns(
+                TerminalANSIText.visibleWidth(Self.assistantBubblePrefix)
+            )
+        }
         var renderedContent = assistantStreamingState.markdownFormatter.consume(normalizedDelta)
         if assistantBubblePrefixPending, !renderedContent.isEmpty {
-            renderedContent = "💬 " + renderedContent
+            renderedContent = Self.assistantBubblePrefix + renderedContent
             assistantBubblePrefixPending = false
         }
         if !renderedContent.isEmpty {
@@ -408,10 +414,14 @@ actor TerminalChatRenderCoordinator {
         ) else {
             return
         }
-        assistantBubblePrefixPending = true
-        if !renderedContent.isEmpty {
+        var completedContent = renderedContent
+        if assistantBubblePrefixPending, !completedContent.isEmpty {
+            completedContent = Self.assistantBubblePrefix + completedContent
+            assistantBubblePrefixPending = false
+        }
+        if !completedContent.isEmpty {
             writeStreamingChat(
-                renderedContent,
+                completedContent,
                 to: .standardOutput,
                 preservesSpacing: true
             )
@@ -422,6 +432,7 @@ actor TerminalChatRenderCoordinator {
         if standardOutputIsTerminal, currentOutputTrailingNewlineCount == 0 {
             writeStreamingChat("\n", to: .standardOutput)
         }
+        assistantBubblePrefixPending = true
         flushPendingStreamingWrites()
         synchronizeStandardOutput()
     }

@@ -305,6 +305,31 @@ struct TerminalMarkdownStreamFormatterTests {
         }
     }
 
+    @Test
+    func tailWrappingIncludesExternalEmojiPrefixColumns() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 20,
+            supportsHyperlinks: false
+        )
+        let bubble = "💬 "
+        formatter.reserveLeadingOutputColumns(
+            TerminalANSIText.visibleWidth(bubble)
+        )
+
+        let first = formatter.consume("1234567890 ")
+        let rest = formatter.consume("`code` word word word\n")
+        let rendered = bubble + first + rest
+
+        for line in rendered.components(separatedBy: "\n") {
+            let width = TerminalANSIText.visibleWidth(line)
+            // The formatter reserves the twentieth terminal cell for the chat
+            // inset, including the wide emoji in the first row's calculation.
+            #expect(width <= 19, "Line too wide (\(width)): \(line)")
+        }
+        #expect(!TerminalANSIText.stripANSI(rendered).contains("`code`"))
+    }
+
     // MARK: (f) Unicode boundaries across deltas
 
     @Test
