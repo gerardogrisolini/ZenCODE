@@ -306,7 +306,7 @@ struct PlanCommandTests {
     }
 
     @Test
-    func planSaveCanPromoteAnotherAgentsLatestResponse() async throws {
+    func planSaveCanPromoteTextOnlyResponseAndApprovalMaterializesItAfterLoad() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("PlanSaveFallbackTests-\(UUID().uuidString)", isDirectory: true)
         let support = root.appendingPathComponent("support", isDirectory: true)
@@ -353,6 +353,35 @@ struct PlanCommandTests {
         let context = TerminalChat.savedPlanContextMessage(stored, plan: promoted)
         #expect(context.contains("Saved by agent: Architect"))
         #expect(!context.contains("Source agent:"))
+
+        await terminal.startNewSession()
+        #expect(terminal.activePlan == nil)
+        #expect(!terminal.didLockResponseLanguage)
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan load")))
+        #expect(terminal.activePlan?.id == promoted.id)
+        #expect(terminal.activePlan?.points.isEmpty == true)
+
+        let approval = await terminal.handlePlanCommand("/plan approve")
+        guard case let .runHiddenPrompt(prompt, purpose) = approval else {
+            Issue.record("Approval should materialize a loaded text-only plan")
+            return
+        }
+        #expect(purpose == .normal)
+        #expect(terminal.didLockResponseLanguage)
+        #expect(prompt.contains("session response language from the system prompt"))
+        #expect(prompt.contains("Do not answer in English merely because this internal prompt is in English."))
+
+        let taskID = "\(promoted.id)-implementation"
+        let graph = try #require(try await runner.taskGraphSnapshot(
+            sessionID: terminal.sessionID,
+            graphID: promoted.id
+        ))
+        #expect(graph.state == .active)
+        #expect(graph.source == .plan(planID: promoted.id))
+        #expect(graph.tasks.map(\.id) == [taskID])
+        #expect(graph.tasks.map(\.title) == ["Implement approved plan: Design the migration"])
+        #expect(terminal.activePlan?.isApproved == true)
+        #expect(terminal.activePlan?.points.map(\.id) == [taskID])
     }
 
     @Test
@@ -1115,5 +1144,58 @@ struct PlanCommandTests {
             createdAt: Date(timeIntervalSince1970: 50),
             updatedAt: updatedAt
         )
+    }
+}
+
+@TerminalChatActor
+@Suite(.serialized)
+struct PlanApprovalResponseLanguageTests {
+    @Test
+    func approvalUsesConfiguredItalianResponseLanguageForItsInternalPrompt() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PlanApprovalLanguageTests-\(UUID().uuidString)", isDirectory: true)
+        let supportDirectory = root.appendingPathComponent("support", isDirectory: true)
+        let workingDirectory = root.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: workingDirectory,
+            withIntermediateDirectories: true
+        )
+        AppStorageDirectory.configureSupportDirectoryURL(supportDirectory)
+        AgentSettingsManifestStore.resetDefaultCacheForTesting()
+        defer {
+            AppStorageDirectory.configureSupportDirectoryURL(nil)
+            AgentSettingsManifestStore.resetDefaultCacheForTesting()
+            try? FileManager.default.removeItem(at: root)
+        }
+        try AgentSettingsManifestStore.save(
+            AgentSettingsManifest(models: [], responseLanguage: "it")
+        )
+
+        let terminal = TerminalChat(
+            configuration: try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                workingDirectory: workingDirectory
+            ),
+            stdinIsTerminal: false
+        )
+        terminal.activePlan = TerminalSessionPlan(
+            originalGoal: "Correggere la lingua del piano",
+            consolidatedText: "Implementa e valida la correzione."
+        )
+
+        #expect(!terminal.didLockResponseLanguage)
+        guard case .runHiddenPrompt = await terminal.handlePlanCommand("/plan approve") else {
+            Issue.record("Approval should start the internal implementation prompt")
+            return
+        }
+
+        #expect(terminal.didLockResponseLanguage)
+        #expect(terminal.activeResponseLanguageName == "Italian")
+        let systemPrompt = try #require(
+            terminal.currentSessionConfiguration(allowedToolNames: []).systemPrompt
+        )
+        #expect(systemPrompt.contains("locked to Italian"))
+        #expect(systemPrompt.contains("Use Italian for all natural-language replies"))
     }
 }

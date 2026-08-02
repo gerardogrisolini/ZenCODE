@@ -8,7 +8,7 @@
 import Foundation
 
 extension TerminalChat {
-  func lockResponseLanguageIfNeeded(from prompt: String) {
+  func lockResponseLanguageIfNeeded() {
     guard !didLockResponseLanguage else {
       return
     }

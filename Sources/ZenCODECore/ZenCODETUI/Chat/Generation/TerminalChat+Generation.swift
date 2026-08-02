@@ -26,7 +26,7 @@ extension TerminalChat {
             preexistingSubAgentIDs = []
         }
         if attempt.locksResponseLanguage {
-            lockResponseLanguageIfNeeded(from: attempt.prompt)
+            lockResponseLanguageIfNeeded()
         }
         let transcriptTurn = TerminalSessionTranscriptTurn(
             prompt: attempt.prompt,

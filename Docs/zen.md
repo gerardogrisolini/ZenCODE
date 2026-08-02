@@ -217,8 +217,8 @@ Commands start with `/`:
 
 **Agentic workflow:**
 - `/plan <goal>` — delegate planning to a sub-agent using the configured `Planner` profile. See [planner.md](planner.md).
-- `/plan save` — persist the active plan (or the latest assistant response) in the project task-graph checkpoint.
-- `/plan load` — load the latest saved project plan into the current session as unapproved and pending.
+- `/plan save` — save the active plan, or the latest non-empty assistant response, as a reusable unapproved draft in the current project's plan library.
+- `/plan load` — when no plan is active, load the latest saved project plan into the current context as unapproved and pending. Use `/plan clear` first to replace an active plan; loading never resumes old execution attempts.
 - `/plan status` — show plan progress from the graph state.
 - `/plan approve` — activate the plan and start implementation.
 - `/plan clear` — archive the graph and remove the active plan.
@@ -237,6 +237,26 @@ Commands start with `/`:
 | **Sub-agent selection** | The model decides per task if and when to delegate | The model must assign the best-matching profile to every task |
 | **Role of current agent** | Implementer (can delegate when useful) | Coordinator and final reviewer only |
 | **Monitor progress** | `/plan status` or `/tasks` | `/tasks` |
+
+### Saving and Loading Plans
+
+`/plan save` stores a reusable copy for the current working directory. It uses
+the active plan when one exists; otherwise it can promote the latest non-empty
+assistant response into a text-only plan. The saved copy is reset to an
+unapproved draft with pending task statuses, while the currently active plan is
+left unchanged.
+
+To hand a plan to another session, start a new session with `/sessions new` (or
+use any session for the same working directory with no active plan), then run
+`/plan load`. The command selects the newest saved plan, displays it, and adds a
+handoff message to the model context. It refuses to replace an active plan, so
+run `/plan clear` first when necessary. Loading does not restore the source
+session, its active attempts, or its execution progress; review or revise the
+draft, then run `/plan approve` to begin implementation.
+
+Approval creates and activates the plan's task graph in the receiving session.
+For a saved text-only plan with no structured items, ZenCODE creates one stable
+implementation task rather than guessing a task breakdown from prose.
 
 **Optional integrations:**
 - `/telegram` / `/telegram on` / `/telegram off` — remote control (requires setup). Available even while a prompt is running.
@@ -270,13 +290,15 @@ When work has multiple units, dependencies, or concurrent delegation, the coordi
 
 Checkpoints are written atomically under `~/.zencode/task-graphs/<project>/`.
 `/plan save` reuses this checkpoint directory rather than creating a separate
-plan store. It writes to a stable project plan-library logical session, so
+plan store. It writes a draft copy of the active plan, or the latest non-empty
+assistant response, to a stable project plan-library logical session, so
 `/sessions new` may delete the live chat checkpoint without deleting explicitly
 saved plans. Todo-derived items remain graph tasks, while optional metadata
-carries the full goal and plan text needed by `/plan load`. Saved unapproved
-drafts are excluded from the interrupted-work startup picker; loading one is an
-explicit handoff and does not activate its source session or resume old execution
-state.
+carries the full goal and plan text needed by `/plan load`. `/plan load` selects
+the newest saved draft only when no plan is active, adds its handoff to the
+current model context, and does not activate its source session or resume old
+execution state. Saved drafts are excluded from the interrupted-work startup
+picker.
 At interactive startup, ZenCODE enumerates every incomplete graph for the
 current project and lets the operator resume one or delete obsolete graphs. A
 selection is keyed by `sessionID + graphID`: the orchestrator restores the

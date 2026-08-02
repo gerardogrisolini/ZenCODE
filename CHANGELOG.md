@@ -12,9 +12,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
-- `/plan save` persists the active plan, or another agent's latest response, in
-  the project task-graph plan library; `/plan load` restores the latest save as
-  an unapproved plan in a new session without resuming old execution state.
+- `/plan save` persists the active plan, or the latest non-empty assistant
+  response, in the project task-graph plan library; `/plan load` restores the
+  latest save as an unapproved plan in a session without an active plan and
+  never resumes old execution state.
 
 ## [1.0.11] - 2026-08-01
 

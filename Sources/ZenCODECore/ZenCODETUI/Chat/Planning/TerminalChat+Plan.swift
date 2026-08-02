@@ -47,16 +47,18 @@ extension TerminalChat {
                 await writeFailureMessage(Self.planUnavailableForApprovalMessage)
                 return .continueChat
             }
+            plan = Self.planMaterializedForApproval(plan)
             do {
                 // The task graph is created exclusively at approval time so that
                 // changes made to the plan before approval are always reflected.
                 // On first approval, remove any stale graph and (re)create it from
                 // the current plan points. On re-approval, preserve progress.
-                if !plan.isApproved, !plan.points.isEmpty {
-                    if try await sessionRunner.taskGraphSnapshot(
-                        sessionID: sessionID,
-                        graphID: plan.id
-                    ) != nil {
+                let existingGraph = try await sessionRunner.taskGraphSnapshot(
+                    sessionID: sessionID,
+                    graphID: plan.id
+                )
+                if !plan.isApproved || existingGraph == nil || existingGraph?.tasks.isEmpty == true {
+                    if existingGraph != nil {
                         _ = try await sessionRunner.removeTaskGraph(
                             id: plan.id,
                             sessionID: sessionID
@@ -72,26 +74,23 @@ extension TerminalChat {
                         archivePreviousCurrent: true
                     )
                 }
-                if !plan.points.isEmpty,
-                   try await sessionRunner.taskGraphSnapshot(
-                    sessionID: sessionID,
-                    graphID: plan.id
-                ) != nil {
-                    _ = try await sessionRunner.activateTaskGraph(
-                        id: plan.id,
-                        sessionID: sessionID
-                    )
-                }
+                _ = try await sessionRunner.activateTaskGraph(
+                    id: plan.id,
+                    sessionID: sessionID
+                )
             } catch {
                 await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
                 return .continueChat
             }
             plan.isApproved = true
             activePlan = plan
-            let approvalMessage = plan.points.isEmpty
-                ? "Approved the active plan. Starting implementation now; /review will verify the result against real files.\n\n"
-                : "Approved the active plan and activated its task graph. Starting implementation now; /review will verify task claims against real files.\n\n"
-            await writeSystemMessage(approvalMessage)
+            // A loaded plan can be the first turn in a new session. Lock the
+            // configured/system response language before its internal English
+            // implementation prompt is sent to the model.
+            lockResponseLanguageIfNeeded()
+            await writeSystemMessage(
+                "Approved the active plan and activated its task graph. Starting implementation now; /review will verify task claims against real files.\n\n"
+            )
             return .runHiddenPrompt(
                 Self.planImplementationPrompt(for: plan),
                 purpose: .normal
@@ -366,6 +365,27 @@ extension TerminalChat {
         )
     }
 
+    /// Gives a legacy text-only plan one stable task at approval time rather
+    /// than attempting to infer an unreliable task breakdown from prose.
+    /// This keeps every approved plan on the same task-graph control plane.
+    nonisolated static func planMaterializedForApproval(
+        _ plan: TerminalSessionPlan
+    ) -> TerminalSessionPlan {
+        guard plan.points.isEmpty else {
+            return plan
+        }
+
+        var materializedPlan = plan
+        materializedPlan.points = [
+            TerminalSessionPlanPoint(
+                id: "\(plan.id)-implementation",
+                text: "Implement approved plan: \(plan.originalGoal)",
+                hasExplicitDependencies: true
+            )
+        ]
+        return materializedPlan
+    }
+
     nonisolated static func savedPlanContextMessage(
         _ savedPlan: SavedTaskPlan,
         plan: TerminalSessionPlan
@@ -389,19 +409,6 @@ extension TerminalChat {
     nonisolated static let planAuthorAgentName = "plan-author"
 
     nonisolated static func planImplementationPrompt(for plan: TerminalSessionPlan) -> String {
-        guard !plan.points.isEmpty else {
-            return """
-            Implement the active approved legacy plan now. Work through its written steps in \
-            order, validate the changes, and stop when implementation is complete or a real \
-            blocker is reached. This saved plan has no structured task graph, so do not invent \
-            task IDs or replace the plan.
-
-            Goal: \(plan.originalGoal)
-
-            Approved plan:
-            \(plan.consolidatedText)
-            """
-        }
         return """
         Implement the active approved plan now, using the session task graph as the control \
         plane. Complete every task in the graph, deciding for yourself whether to work \
@@ -413,6 +420,9 @@ extension TerminalChat {
 
         Approved plan:
         \(plan.consolidatedText)
+
+        Your final summary must follow the session response language from the system prompt. \
+        Do not answer in English merely because this internal prompt is in English.
         """
     }
 

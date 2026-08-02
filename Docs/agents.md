@@ -3,7 +3,7 @@
 How agent profiles work and how the runtime delegates to sub-agents.
 
 - Model bindings, capability routing, and the `/bindings` table: [bindings.md](bindings.md).
-- Per-profile guides: [builder.md](builder.md), [planner.md](planner.md), [reviewer.md](reviewer.md), [reporter.md](reporter.md), [xcode.md](xcode.md).
+- Per-profile guides: [builder.md](builder.md), [planner.md](planner.md), [reviewer.md](reviewer.md), [reporter.md](reporter.md).
 
 ## Agent Profiles
 

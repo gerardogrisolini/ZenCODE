@@ -17,8 +17,8 @@ The Planner inspects only the context needed to make a plan concrete, then ident
 
 ```text
 /plan <goal>          # delegate planning to a read-only Planner
-/plan save            # persist the current plan for this project
-/plan load            # load the latest saved plan as unapproved
+/plan save            # persist a reusable plan draft for this project
+/plan load            # load the latest saved draft as unapproved
 /plan status          # show plan progress from the graph state
 /plan approve         # activate the plan and start implementation
 /plan clear           # archive the graph and remove the active plan
@@ -53,22 +53,44 @@ feature, MCP, and other external grants remain outside that classification.
 
 If no completed Planner output or valid graph is available, the turn fails rather than falling back to a plan from another profile.
 
-## Saving A Plan For Another Session
+## Saving and Loading Plans
 
-`/plan save` stores the active plan in a stable project-scoped plan-library checkpoint owned by the existing task-graph store. The graph tasks contain the structured items produced through `todo.write`; optional checkpoint metadata retains the original goal and complete plan text. No separate plan store or directory is created, and `/sessions new` can discard the live chat checkpoint without deleting the saved plan.
+`/plan save` writes a reusable copy of the active plan to a stable,
+project-scoped plan-library checkpoint owned by the existing task-graph store.
+The graph tasks contain the structured items produced through `todo.write`;
+optional checkpoint metadata retains the original goal and complete plan text.
+The saved copy is reset to an unapproved draft with pending task statuses, so it
+does not carry execution progress or active attempts into another session. It
+does not alter the plan that remains active in the current session. No separate
+plan store or directory is created, and `/sessions new` can discard the live
+chat checkpoint without deleting the saved plan.
 
-If the current agent produced a plan outside `/plan`, `/plan save` can promote its latest non-empty assistant response into an unstructured active plan and persist it through the same checkpoint mechanism.
+If no plan is active, `/plan save` can promote the latest non-empty assistant
+response into an unstructured active plan and persist it through the same
+checkpoint mechanism. This supports plans written outside `/plan`; a text-only
+save receives one stable implementation task at approval time rather than an
+invented task breakdown.
 
-In another session for the same working directory, `/plan load` loads the newest saved plan, displays it, adds it to the model context, and resets it to **unapproved** with pending task statuses so it can be reviewed or revised safely. It does not resume old execution attempts and never starts implementation automatically. Use `/plan approve` only after the loaded plan is ready.
+In a session for the same working directory with **no active plan**, `/plan load`
+retrieves the newest saved plan, displays it, adds it to the model context, and
+resets it to **unapproved** with pending task statuses so it can be reviewed or
+revised safely. It refuses to replace an active plan; run `/plan clear` first
+when replacing one. Loading does not resume old execution attempts or the source
+session and never starts implementation automatically. Use `/plan approve` only
+after the loaded plan is ready.
 
 `todo.write` itself is session-scoped in-memory compatibility state; durable plan data belongs to `SessionTaskOrchestrator` and its atomic task-graph checkpoint.
 
 ## After Approval
 
-`/plan approve` activates the graph and immediately starts implementation with the current profile — no additional prompt is needed. Use `/plan status` during implementation to see graph-projected progress (`pending`, `in_progress`, `awaiting_validation`, `completed`, `blocked`, `failed`, `cancelled`).
+`/plan approve` creates and activates the graph in the current session, then
+immediately starts implementation with the current profile — no additional
+prompt is needed. Use `/plan status` during implementation to see graph-projected
+progress (`pending`, `in_progress`, `awaiting_validation`, `completed`,
+`blocked`, `failed`, `cancelled`).
 
 The intended loop:
 
 ```text
-/plan <goal> -> /plan approve -> implementation -> /review -> corrections -> /review
+/plan <goal> -> /plan save -> /sessions new (or /plan clear) -> /plan load -> review/revise -> /plan approve -> implementation -> /review
 ```

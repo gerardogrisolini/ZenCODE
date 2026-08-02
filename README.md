@@ -16,8 +16,8 @@ Windows (via WSL), all the way down to a Raspberry Pi.
 - **Provider-agnostic** — any OpenAI-compatible endpoint (OpenRouter, local servers, any `/v1` API), or a browser sign-in with your ChatGPT or Claude subscription.
 - **Native Swift, tiny footprint** — a single compiled binary with no interpreter or Node event loop; around 20 MB of RAM at startup, small enough to run on constrained ARM boards.
 - **Runs everywhere** — macOS, Linux, and Windows (via WSL); model inference stays on the remote provider, so even a single-board computer can host the agent.
-- **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, with a dedicated agent profile.
-- **Agentic workflows** — dependency-aware task graph with `/plan`, `/workflow`, and `/review`, plus [capability-based delegation](Docs/bindings.md) to specialized sub-agents.
+- **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, as a native coding agent.
+- **Agentic workflows** — dependency-aware task graph with `/plan`, `/workflow`, and `/review`; `/plan save` and `/plan load` hand plans between sessions of the same project, plus [capability-based delegation](Docs/bindings.md) to specialized sub-agents.
 - **Task recovery at startup** — incomplete task graphs are detected per project and presented in a scrollable picker, so you can resume the exact graph you selected or remove obsolete work before starting a new session.
 - **Full control over tools** — granular `/tools` selection (filesystem, shell, Git, search, memory, sub-agents, Xcode, Figma, features), with change tracking and `/undo` as a safety net.
 - **Extensible** — the Builder generates reusable Dynamic Swift Features as durable tools; skills are selectable per session and installable from GitHub or a local folder.
@@ -136,7 +136,7 @@ swift build -c release --product zen
 /changes     Review the latest tracked file changes
 /undo        Revert the latest tracked agent changes
 /tasks       Inspect, retry, cancel, or clear the session task graph
-/plan        Create, approve, inspect, or clear a delegated session plan
+/plan        Create, save, load, approve, inspect, or clear a delegated session plan
 /workflow    Plan and delegate all work to sub-agents
 /review      Review tracked changes and verify task/plan claims
 /feature     Manage Swift features with the Builder agent
@@ -149,6 +149,13 @@ swift build -c release --product zen
 (`save`, `new`, `compact`, `delete`, `tree`, `branches`, `checkpoint`,
 `restore`). See the [ZenCODE guide](Docs/zen.md#terminal-tui-commands) for the
 complete command reference.
+
+`/plan save` writes the active plan — or the latest non-empty assistant response
+when no plan is active — to the current project's reusable plan library. In a
+session with no active plan, `/plan load` presents the latest saved plan as an
+unapproved draft for review; use `/plan approve` only when it is ready to
+implement. The [Planner guide](Docs/planner.md#saving-and-loading-plans)
+describes the complete handoff flow.
 
 ## Layout
 
