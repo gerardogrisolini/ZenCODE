@@ -45,7 +45,8 @@ extension ZenCODESetupRunner {
             """
 
             Voice uses the built-in macOS speech frameworks.
-            Speech-to-text uses SFSpeechRecognizer.
+            Speech-to-text uses SFSpeechRecognizer in dictation mode.
+            For better accuracy, macOS may send audio to Apple's speech service.
             No external executable or API key is required.
 
             """

@@ -546,7 +546,7 @@ extension TerminalChat {
         var lines: [SubAgentOverviewLine] = []
 
         if let currentActivity {
-            if currentActivity == "🤔 Thinking…" {
+            if currentActivity == "🤔 thinking…" {
                 lines.append(.regular(currentActivity, maxWrappedLines: 1))
             } else {
                 lines.append(
@@ -570,7 +570,7 @@ extension TerminalChat {
         }
 
         if lines.isEmpty, snapshot.pending {
-            lines.append(.regular("🤔 Thinking…", maxWrappedLines: 1))
+            lines.append(.regular("🤔 thinking…", maxWrappedLines: 1))
         }
 
         // The most specific entry is appended last, so a capped presentation

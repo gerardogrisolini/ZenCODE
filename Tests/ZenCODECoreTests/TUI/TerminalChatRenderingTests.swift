@@ -2394,7 +2394,7 @@ struct TerminalChatRenderingTests {
             role: "researcher",
             status: .running,
             pending: true,
-            currentActivity: "🤔 Thinking…",
+            currentActivity: "🤔 thinking…",
             latestContentPreview: "private reasoning delta that must stay hidden",
             latestOutput: nil,
             latestError: nil,
@@ -2404,7 +2404,7 @@ struct TerminalChatRenderingTests {
 
         let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
 
-        #expect(rendered.components(separatedBy: "🤔 Thinking…").count - 1 == 1)
+        #expect(rendered.components(separatedBy: "🤔 thinking…").count - 1 == 1)
         #expect(!rendered.contains("private reasoning delta"))
         #expect(!rendered.contains("💬"))
     }
@@ -2436,7 +2436,7 @@ struct TerminalChatRenderingTests {
 
         #expect(target == "needle")
         #expect(rendered.contains("🛠️  \(toolCall.name) needle"))
-        #expect(!rendered.contains("🤔 Thinking…"))
+        #expect(!rendered.contains("🤔 thinking…"))
     }
 
     @Test

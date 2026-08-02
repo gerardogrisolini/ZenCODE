@@ -1757,7 +1757,7 @@ struct TerminalChatRenderCoordinatorTests {
         let events = await renderer.capturedWriteEvents()
         let combined = events.map(\.text).joined()
 
-        #expect(combined.components(separatedBy: "🤔 Thinking").count == 2)
+        #expect(combined.components(separatedBy: "🤔 thinking…").count == 2)
         #expect(combined.contains("Planning safely"))
         #expect(combined.contains("Answer"))
         #expect(!combined.contains("\n\n\n"))
@@ -1990,7 +1990,7 @@ struct TerminalChatRenderCoordinatorTests {
             .filter { $0.channel == .standardError }
             .map(\.text)
             .joined()
-        #expect(stderr.contains("🤔 Thinking"))
+        #expect(stderr.contains("🤔 thinking…"))
         #expect(stderr.contains("*"))
     }
 

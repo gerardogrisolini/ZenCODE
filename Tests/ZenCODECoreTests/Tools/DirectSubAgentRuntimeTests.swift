@@ -323,7 +323,7 @@ struct DirectSubAgentRuntimeTests {
         await runtime.recordEvent(.thought("Considering the "), agentID: agentID)
         let firstSnapshot = try #require(await runtime.snapshots().first)
         let firstSignature = TerminalChat.subAgentOverviewSignature([firstSnapshot])
-        #expect(firstSnapshot.currentActivity == "🤔 Thinking…")
+        #expect(firstSnapshot.currentActivity == "🤔 thinking…")
         #expect(firstSnapshot.currentActivity?.contains("Considering") == false)
 
         await runtime.recordEvent(.thought("available evidence"), agentID: agentID)
@@ -334,7 +334,7 @@ struct DirectSubAgentRuntimeTests {
         await runtime.recordEvent(.thought("additional delta"), agentID: agentID)
         let latestSnapshot = try #require(await runtime.snapshots().first)
 
-        #expect(latestSnapshot.currentActivity == "🤔 Thinking…")
+        #expect(latestSnapshot.currentActivity == "🤔 thinking…")
         #expect(
             TerminalChat.subAgentOverviewSignature([latestSnapshot])
                 == firstSignature
@@ -371,7 +371,7 @@ struct DirectSubAgentRuntimeTests {
         await runtime.recordEvent(.content("I’ll inspect "), agentID: agentID)
         await runtime.recordEvent(.content("the matching files."), agentID: agentID)
         let streamingSnapshot = try #require(await runtime.snapshots().first)
-        #expect(streamingSnapshot.currentActivity == "🤔 Thinking…")
+        #expect(streamingSnapshot.currentActivity == "🤔 thinking…")
         #expect(
             TerminalChat.subAgentOverviewSignature([streamingSnapshot])
                 == thinkingSignature

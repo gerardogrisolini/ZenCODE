@@ -428,7 +428,7 @@ struct TelegramTUITests {
 
         #expect(
             await collector.allMessages() == [
-                "🤔 Thinking\nValuto quale file leggere.",
+                "🤔 thinking…\nValuto quale file leggere.",
                 "Ora leggo il file.",
                 "🛠️ local.readFile\nSources/Main.swift",
                 "🔐 Permission required\nRequest ID: A1"
@@ -450,7 +450,7 @@ struct TelegramTUITests {
         await reporter.reportAssistantContent("Questa è la risposta finale.")
         await reporter.flush()
 
-        #expect(await collector.allMessages() == ["🤔 Thinking\nNessun tool serve."])
+        #expect(await collector.allMessages() == ["🤔 thinking…\nNessun tool serve."])
     }
 
     @Test

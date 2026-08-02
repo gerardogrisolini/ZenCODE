@@ -127,7 +127,7 @@ extension DirectSubAgentRuntime {
             // are intentionally private here: publish one stable state for the
             // entire thinking phase so signature-based rendering can dedupe all
             // subsequent deltas.
-            agent.currentActivity = "🤔 Thinking…"
+            agent.currentActivity = "🤔 thinking…"
             agent.currentToolName = nil
             agent.currentToolTarget = nil
             agent.latestContentPreview = nil

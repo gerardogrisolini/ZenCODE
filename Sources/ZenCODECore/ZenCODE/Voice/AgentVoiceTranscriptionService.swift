@@ -115,10 +115,7 @@ public actor AgentVoiceTranscriptionService {
         recognizer: SFSpeechRecognizer
     ) async throws -> String {
         let request = SFSpeechURLRecognitionRequest(url: fileURL)
-        request.shouldReportPartialResults = false
-        if recognizer.supportsOnDeviceRecognition {
-            request.requiresOnDeviceRecognition = true
-        }
+        configureRecognitionRequest(request)
 
         // Coordinator that strongly retains the recognition task (SFSpeechRecognizer
         // only keeps a weak reference, so without retention the task is deallocated and
@@ -146,6 +143,16 @@ public actor AgentVoiceTranscriptionService {
         } onCancel: {
             state.cancelAndFinish(throwing: CancellationError())
         }
+    }
+
+    static func configureRecognitionRequest(_ request: SFSpeechRecognitionRequest) {
+        request.shouldReportPartialResults = false
+        request.taskHint = .dictation
+        request.addsPunctuation = true
+
+        // Apple documents that forcing on-device recognition reduces accuracy.
+        // Leave the system free to use the best available recognizer instead.
+        request.requiresOnDeviceRecognition = false
     }
 
     private static func locale(for language: String?) -> Locale {

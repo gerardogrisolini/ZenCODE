@@ -8,6 +8,8 @@
 import Foundation
 
 extension TerminalChat {
+    private static let voiceRecordingTailDuration: Duration = .milliseconds(350)
+
     func handleVoiceCommand(_ command: String) async {
         let argument = Self.slashCommandArguments(
             from: command,
@@ -48,9 +50,16 @@ extension TerminalChat {
         eventQueue: TerminalChatEventQueue
     ) async -> Task<Void, Never> {
         do {
-            let audio = try voiceRecordingService.stopRecording()
-            activeVoiceRecordingSession = nil
             await interactiveReader.setPanelText("")
+            await interactiveReader.setPanelOverlay(
+                TerminalPanelModeOverride(
+                    modeText: "Finishing voice",
+                    helpText: "Please wait"
+                ),
+                isProcessing: true
+            )
+            let audio = try await stopVoiceRecordingAfterTail()
+            activeVoiceRecordingSession = nil
             await interactiveReader.setPanelOverlay(
                 TerminalPanelModeOverride(
                     modeText: "Transcribing voice",
@@ -76,7 +85,7 @@ extension TerminalChat {
 
     func stopVoiceRecordingAndRunPromptBlocking() async {
         do {
-            let audio = try voiceRecordingService.stopRecording()
+            let audio = try await stopVoiceRecordingAfterTail()
             activeVoiceRecordingSession = nil
             await writeSystemMessage("Transcribing voice...\n")
             let transcript = try await AgentVoiceTranscriptionService()
@@ -95,6 +104,13 @@ extension TerminalChat {
             await clearVoicePanelMode()
             await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
+    }
+
+    private func stopVoiceRecordingAfterTail() async throws -> AgentVoiceAudioInput {
+        // Keep recording briefly after Enter so a key press at the end of speech
+        // cannot truncate the final phoneme before AVAudioRecorder is stopped.
+        try? await Task.sleep(for: Self.voiceRecordingTailDuration)
+        return try voiceRecordingService.stopRecording()
     }
 
     func clearVoicePanelMode() async {
