@@ -139,6 +139,7 @@ swift build -c release --product zen
 /plan        Create, save, load, approve, inspect, or clear a delegated session plan
 /workflow    Plan and delegate all work to sub-agents
 /review      Review tracked changes and verify task/plan claims
+/make-agents Create or refresh AGENTS.md guidance for the current workspace
 /feature     Manage Swift features with the Builder agent
 /telegram    Turn Telegram remote control on/off when paired in setup
 /voice       Record a voice prompt when local voice tools are enabled

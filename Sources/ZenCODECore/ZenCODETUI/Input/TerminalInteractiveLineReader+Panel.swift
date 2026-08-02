@@ -133,12 +133,8 @@ extension TerminalInteractiveLineReader {
                     ? 0
                     : min(state.panelCommandSuggestionIndex, commandSuggestions.count - 1)
             } else {
-                state.panelCommandSuggestionIndex = 0
-                state.panelBuffer.removeAll()
-                state.panelCursorIndex = 0
+                state.editor = TerminalPromptEditor()
                 state.panelOverlayOverride = nil
-                state.historyIndex = nil
-                state.draftBeforeHistory.removeAll()
             }
             return .admitted
         }
@@ -293,6 +289,7 @@ extension TerminalInteractiveLineReader {
         withPanelLock { state in
             state.panelCommandSuggestions = suggestions
             state.panelCommandSuggestionIndex = 0
+            state.editor.areSuggestionsDismissed = false
         }
         await renderPanel()
     }
@@ -300,6 +297,23 @@ extension TerminalInteractiveLineReader {
     public func setQueuedPromptCount(_ count: Int) async {
         withPanelLock { state in
             state.panelQueuedPromptCount = max(0, count)
+        }
+        await renderPanel()
+    }
+
+    /// Publishes how many attachments are staged for the next prompt so the
+    /// panel can say so without the operator running `/attach list`.
+    public func setPendingAttachmentCount(_ count: Int) async {
+        let didChange = withPanelLock { state -> Bool in
+            let bounded = max(0, count)
+            guard state.panelPendingAttachmentCount != bounded else {
+                return false
+            }
+            state.panelPendingAttachmentCount = bounded
+            return true
+        }
+        guard didChange else {
+            return
         }
         await renderPanel()
     }
@@ -318,17 +332,20 @@ extension TerminalInteractiveLineReader {
                 state.panelIsProcessing = isProcessing
             }
             state.panelCommandSuggestionIndex = 0
+            // An overlay owns the keyboard; a modal search left running
+            // underneath would swallow the overlay's own keys.
+            state.editor.reverseSearch = nil
         }
         await renderPanel()
     }
 
     public func setPanelText(_ text: String, cursorIndex: Int? = nil) async {
         withPanelLock { state in
+            // Programmatic text replaces the draft outright, so every piece of
+            // navigation state derived from the old draft has to go with it.
+            state.editor = TerminalPromptEditor()
             state.panelBuffer = Array(text)
             state.panelCursorIndex = min(max(0, cursorIndex ?? state.panelBuffer.count), state.panelBuffer.count)
-            state.panelCommandSuggestionIndex = 0
-            state.historyIndex = nil
-            state.draftBeforeHistory.removeAll()
         }
         await renderPanel()
     }
@@ -416,192 +433,55 @@ extension TerminalInteractiveLineReader {
         return nil
     }
 
+    /// Applies one key through the shared editor reducer and dispatches the
+    /// resulting effect.
+    ///
+    /// The reducer runs entirely under the panel lock because it is pure and
+    /// cannot suspend; every `await` (rendering, event delivery) happens after
+    /// the lock has been released.
     func handlePanelKey(
         _ key: Key,
         onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
     ) async {
-        switch key {
-        case let .character(text), let .paste(text):
-            let characters = Array(text)
-            guard !characters.isEmpty else {
-                return
+        let effect = withPanelLock { state -> TerminalPromptEditorEffect in
+            let effect = state.editor.apply(key, context: editorContextLocked(state: state))
+            if case let .submitted(line) = effect {
+                recordHistoryLocked(line, state: &state)
             }
-            withPanelLock { state in
-                state.panelBuffer.insert(contentsOf: characters, at: state.panelCursorIndex)
-                state.panelCursorIndex += characters.count
-                state.historyIndex = nil
-            }
+            return effect
+        }
+
+        switch effect {
+        case .ignored:
+            return
+        case .changed:
             await renderPanel()
-        case .enter:
-            if let submission = withPanelLock({ state -> CommandSuggestionSelection? in
-                acceptPanelCommandSuggestionLocked(
-                    submitCommandWithoutArguments: true,
-                    state: &state
-                )
-            }) {
-                if let submittedLine = submission.submittedLine {
-                    recordHistory(submittedLine)
-                    onEvent(.submitted(submittedLine))
-                }
-                await renderPanel()
-                return
-            }
-
-            let line = withPanelLock { state -> String in
-                let line = String(state.panelBuffer)
-                state.panelBuffer.removeAll()
-                state.panelCursorIndex = 0
-                state.historyIndex = nil
-                state.draftBeforeHistory.removeAll()
-                return line
-            }
-
-            if !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                recordHistory(line)
-            }
+        case let .submitted(line):
             onEvent(.submitted(line))
             await renderPanel()
-        case .tab:
-            let accepted = withPanelLock { state -> Bool in
-                acceptPanelCommandSuggestionLocked(
-                    submitCommandWithoutArguments: false,
-                    state: &state
-                ) != nil
-            }
-            if accepted {
-                await renderPanel()
-            }
-        case .newline:
-            withPanelLock { state in
-                state.panelBuffer.insert("\n", at: state.panelCursorIndex)
-                state.panelCursorIndex += 1
-                state.panelCommandSuggestionIndex = 0
-                state.historyIndex = nil
-            }
+        case .cancelRequested:
+            onEvent(.cancelRequested)
             await renderPanel()
-        case .backspace:
-            let didChange = withPanelLock { state -> Bool in
-                guard state.panelCursorIndex > 0 else {
-                    return false
-                }
-                state.panelBuffer.remove(at: state.panelCursorIndex - 1)
-                state.panelCursorIndex -= 1
-                return true
-            }
-            if didChange {
-                await renderPanel()
-            }
-        case .delete:
-            let didChange = withPanelLock { state -> Bool in
-                guard state.panelCursorIndex < state.panelBuffer.count else {
-                    return false
-                }
-                state.panelBuffer.remove(at: state.panelCursorIndex)
-                return true
-            }
-            if didChange {
-                await renderPanel()
-            }
-        case .left:
-            withPanelLock { state in
-                if state.panelCursorIndex > 0 {
-                    state.panelCursorIndex -= 1
-                }
-                state.panelCommandSuggestionIndex = 0
-            }
-            await renderPanel()
-        case .right:
-            withPanelLock { state in
-                if state.panelCursorIndex < state.panelBuffer.count {
-                    state.panelCursorIndex += 1
-                }
-                state.panelCommandSuggestionIndex = 0
-            }
-            await renderPanel()
-        case .up:
-            withPanelLock { state in
-                if hasActiveCommandSuggestionsLocked(state: state) {
-                    movePanelCommandSuggestionSelectionLocked(delta: -1, state: &state)
-                } else if let previous = previousHistoryLocked(
-                    currentBuffer: state.panelBuffer,
-                    state: &state
-                ) {
-                    state.panelBuffer = previous
-                    state.panelCursorIndex = state.panelBuffer.count
-                }
-            }
-            await renderPanel()
-        case .down:
-            withPanelLock { state in
-                if hasActiveCommandSuggestionsLocked(state: state) {
-                    movePanelCommandSuggestionSelectionLocked(delta: 1, state: &state)
-                } else if let next = nextHistoryLocked(state: &state) {
-                    state.panelBuffer = next
-                    state.panelCursorIndex = state.panelBuffer.count
-                }
-            }
-            await renderPanel()
-        case .home:
-            withPanelLock { state in
-                state.panelCursorIndex = 0
-                state.panelCommandSuggestionIndex = 0
-            }
-            await renderPanel()
-        case .end:
-            withPanelLock { state in
-                state.panelCursorIndex = state.panelBuffer.count
-                state.panelCommandSuggestionIndex = 0
-            }
-            await renderPanel()
-        case .clearBeforeCursor:
-            withPanelLock { state in
-                if state.panelCursorIndex > 0 {
-                    state.panelBuffer.removeSubrange(0..<state.panelCursorIndex)
-                    state.panelCursorIndex = 0
-                }
-                state.panelCommandSuggestionIndex = 0
-            }
-            await renderPanel()
-        case .clearAfterCursor:
-            withPanelLock { state in
-                if state.panelCursorIndex < state.panelBuffer.count {
-                    state.panelBuffer.removeSubrange(state.panelCursorIndex..<state.panelBuffer.count)
-                }
-                state.panelCommandSuggestionIndex = 0
-            }
-            await renderPanel()
+        case .endOfInput:
+            onEvent(.endOfInput)
         case .toggleToolDetails:
             onEvent(.toggleToolDetailsRequested)
             await renderPanel()
         case .toggleAccessMode:
             onEvent(.toggleAccessModeRequested)
             await renderPanel()
-        case .cancel:
-            let isProcessing = withPanelLock { state -> Bool in
-                let isProcessing = state.panelIsProcessing
-                if !isProcessing {
-                    state.panelBuffer.removeAll()
-                    state.panelCursorIndex = 0
-                    state.panelCommandSuggestionIndex = 0
-                    state.historyIndex = nil
-                    state.draftBeforeHistory.removeAll()
-                }
-                return isProcessing
-            }
-            if isProcessing {
-                onEvent(.cancelRequested)
-            }
-            await renderPanel()
-        case .endOfInput:
-            let isEmpty = withPanelLock { state in
-                state.panelBuffer.isEmpty
-            }
-            if isEmpty {
-                onEvent(.endOfInput)
-            }
-        case .unknown:
-            return
         }
+    }
+
+    func editorContextLocked(state: State) -> TerminalPromptEditorContext {
+        TerminalPromptEditorContext(
+            history: state.history,
+            suggestions: state.panelCommandSuggestions,
+            isOverlayActive: state.panelOverlayOverride != nil,
+            isProcessing: state.panelIsProcessing,
+            supportsCompletions: true,
+            clearsDraftOnCancel: true
+        )
     }
 
     func renderPanel() async {
@@ -623,7 +503,7 @@ extension TerminalInteractiveLineReader {
                 modeText: panelModeTextLocked(state: state),
                 helpText: panelHelpTextLocked(state: state),
                 compactHelpText: panelCompactHelpTextLocked(state: state),
-                suggestionLines: panelCommandSuggestionLinesLocked(state: &state),
+                suggestionLines: panelCommandSuggestionLinesLocked(state: state),
                 revision: state.panelRenderRevision
             )
         }
@@ -639,79 +519,65 @@ extension TerminalInteractiveLineReader {
         )
     }
 
+    /// Compact, single-line status of the draft.
+    ///
+    /// The panel is one row tall, so state the operator cannot otherwise see —
+    /// which line of a multi-line draft the cursor is on, staged attachments,
+    /// queued prompts — is summarised here rather than spent on extra rows.
     func panelModeTextLocked(state: State) -> String {
         if let modeText = state.panelOverlayOverride?.modeText {
             return modeText
         }
+        if let search = state.editor.reverseSearch {
+            return "History search: \(String(search.query))"
+        }
 
         var modeText = state.panelIsProcessing ? "Next prompt" : "Prompt"
+        let lineCount = state.editor.logicalLineCount
+        if lineCount > 1 {
+            modeText += " · ln \(state.editor.cursorLineIndex + 1)/\(lineCount)"
+        }
+        if state.panelPendingAttachmentCount > 0 {
+            modeText += " · attach \(state.panelPendingAttachmentCount)"
+        }
         if state.panelQueuedPromptCount > 0 {
             modeText += " · queued \(state.panelQueuedPromptCount)"
         }
         return modeText
     }
 
+    /// Help for the mode the prompt is actually in, so a key it lists is a key
+    /// that currently does something.
     func panelHelpTextLocked(state: State) -> String {
         if let helpText = state.panelOverlayOverride?.helpText {
             return helpText
         }
 
-        if hasActiveCommandSuggestionsLocked(state: state) {
-            return "↑/↓ select · Tab complete · Enter choose"
+        if state.editor.reverseSearch != nil {
+            return "Ctrl+R/↑ older · ↓ newer · Enter accept · Esc cancel"
         }
-        return "Enter queue · Option+Enter newline · Ctrl+T tools · Ctrl+A access · Esc stop"
+        if state.panelIsProcessing {
+            if hasActiveCommandSuggestionsLocked(state: state) {
+                return "↑/↓ select · Tab complete · Enter choose · Esc stop"
+            }
+            return "Enter queue · Shift/Option+Enter newline · Ctrl+T tools · Ctrl+A access · Esc stop"
+        }
+        if hasActiveCommandSuggestionsLocked(state: state) {
+            return "↑/↓ select · Tab complete · Enter choose · Esc dismiss"
+        }
+        return "Enter send · Shift/Option+Enter newline · Ctrl+T tools · Ctrl+A access · Ctrl+R history · Esc clear"
     }
 
     func panelCompactHelpTextLocked(state: State) -> String? {
         guard state.panelOverlayOverride == nil,
+              state.editor.reverseSearch == nil,
               !hasActiveCommandSuggestionsLocked(state: state) else {
             return nil
         }
-        return "Ctrl+T · Ctrl+A access"
-    }
-
-    struct CommandSuggestionSelection: Sendable {
-        let submittedLine: String?
-    }
-
-    func acceptPanelCommandSuggestionLocked(
-        submitCommandWithoutArguments: Bool,
-        state: inout State
-    ) -> CommandSuggestionSelection? {
-        guard let selectedSuggestion = selectedPanelCommandSuggestionLocked(state: &state) else {
-            return nil
+        if state.panelIsProcessing {
+            return "Enter queue · Esc stop · Ctrl+A access"
         }
-
-        let replacement = selectedSuggestion.requiresArgument
-            ? "\(selectedSuggestion.command) "
-            : selectedSuggestion.command
-        state.panelBuffer = Array(replacement)
-        state.panelCursorIndex = state.panelBuffer.count
-        state.panelCommandSuggestionIndex = 0
-        state.historyIndex = nil
-        state.draftBeforeHistory.removeAll()
-
-        guard submitCommandWithoutArguments,
-              !selectedSuggestion.requiresArgument else {
-            return CommandSuggestionSelection(submittedLine: nil)
-        }
-
-        let submittedLine = String(state.panelBuffer)
-        state.panelBuffer.removeAll()
-        state.panelCursorIndex = 0
-        return CommandSuggestionSelection(submittedLine: submittedLine)
-    }
-
-    func selectedPanelCommandSuggestionLocked(state: inout State) -> TerminalCommandSuggestion? {
-        let suggestions = activeCommandSuggestionsLocked(state: state)
-        guard !suggestions.isEmpty else {
-            return nil
-        }
-        state.panelCommandSuggestionIndex = min(
-            max(0, state.panelCommandSuggestionIndex),
-            suggestions.count - 1
-        )
-        return suggestions[state.panelCommandSuggestionIndex]
+        return "Enter send · Esc clear · Ctrl+A access"
     }
 
     func hasActiveCommandSuggestionsLocked(state: State) -> Bool {
@@ -719,34 +585,35 @@ extension TerminalInteractiveLineReader {
     }
 
     func movePanelCommandSuggestionSelectionLocked(delta: Int, state: inout State) {
-        let suggestions = activeCommandSuggestionsLocked(state: state)
-        guard !suggestions.isEmpty else {
-            state.panelCommandSuggestionIndex = 0
-            return
-        }
-        let count = suggestions.count
-        state.panelCommandSuggestionIndex = (state.panelCommandSuggestionIndex + delta + count) % count
+        state.editor.moveSuggestionSelection(
+            delta: delta,
+            context: editorContextLocked(state: state)
+        )
     }
 
-    func panelCommandSuggestionLinesLocked(state: inout State) -> [String] {
+    /// Pure projection of the menu.
+    ///
+    /// Rendering must not repair the selection: the reducer already reconciled
+    /// it after the key that changed the match set, and a second, hidden
+    /// mutation here would make the visible state depend on how often the panel
+    /// happened to redraw.
+    func panelCommandSuggestionLinesLocked(state: State) -> [String] {
         let suggestions = activeCommandSuggestionsLocked(state: state)
         guard !suggestions.isEmpty else {
-            state.panelCommandSuggestionIndex = 0
             return []
         }
 
-        state.panelCommandSuggestionIndex = min(
+        let selectedIndex = min(
             max(0, state.panelCommandSuggestionIndex),
             suggestions.count - 1
         )
-
         let visibleSuggestions = Self.visiblePanelCommandSuggestionWindow(
             suggestions: suggestions,
-            selectedIndex: state.panelCommandSuggestionIndex,
+            selectedIndex: selectedIndex,
             maximumLineCount: Self.maximumPanelCommandSuggestionLines
         )
         return visibleSuggestions.map { item in
-            let marker = item.index == state.panelCommandSuggestionIndex ? "›" : " "
+            let marker = item.index == selectedIndex ? "›" : " "
             return "\(marker) \(item.suggestion.command)  \(item.suggestion.summary)"
         }
     }
@@ -774,66 +641,41 @@ extension TerminalInteractiveLineReader {
         }
     }
 
+    /// Completion matches for the token under the cursor.
+    ///
+    /// Kept as the shared entry point for both the command token and the
+    /// subcommand slot, so callers never have to know which one is being
+    /// completed.
     static func matchingPanelCommandSuggestions(
         text: String,
         cursorIndex: Int,
         suggestions: [TerminalCommandSuggestion]
     ) -> [TerminalCommandSuggestion] {
-        guard let commandPrefix = commandPrefixForSuggestions(
-            text: text,
-            cursorIndex: cursorIndex
-        ) else {
-            return []
-        }
-
-        let normalizedPrefix = commandPrefix.lowercased()
-        let matches = suggestions.filter { suggestion in
-            suggestion.command.lowercased().hasPrefix(normalizedPrefix)
-        }
-        let exactMatches = matches.filter { suggestion in
-            suggestion.command.lowercased() == normalizedPrefix
-        }
-        guard !exactMatches.isEmpty else {
-            return matches
-        }
-        return exactMatches + matches.filter { suggestion in
-            suggestion.command.lowercased() != normalizedPrefix
-        }
-    }
-
-    func activeCommandSuggestionsLocked(state: State) -> [TerminalCommandSuggestion] {
-        guard state.panelOverlayOverride == nil else {
-            return []
-        }
-
-        return Self.matchingPanelCommandSuggestions(
-            text: String(state.panelBuffer),
-            cursorIndex: state.panelCursorIndex,
-            suggestions: state.panelCommandSuggestions
+        TerminalPromptCompletion.matches(
+            buffer: Array(text),
+            cursorIndex: cursorIndex,
+            commands: suggestions
         )
     }
 
+    func activeCommandSuggestionsLocked(state: State) -> [TerminalCommandSuggestion] {
+        state.editor.visibleSuggestions(context: editorContextLocked(state: state))
+    }
+
+    /// Text matched against the completion catalogue.
+    ///
+    /// It stops at the cursor rather than at the end of the token: with
+    /// `/fea|ture` the operator is narrowing `/fea`, and matching the whole
+    /// token would keep offering only what is already typed.
     static func commandPrefixForSuggestions(
         text: String,
         cursorIndex: Int
     ) -> String? {
-        guard text.hasPrefix("/"), !text.contains("\n") else {
-            return nil
-        }
-
-        let characters = Array(text)
-        let boundedCursorIndex = min(max(0, cursorIndex), characters.count)
-        let tokenEnd = characters.firstIndex { character in
-            character.unicodeScalars.allSatisfy {
-                CharacterSet.whitespacesAndNewlines.contains($0)
-            }
-        } ?? characters.count
-        guard boundedCursorIndex <= tokenEnd else {
-            return nil
-        }
-
-        let prefix = String(characters.prefix(tokenEnd))
-        return prefix.isEmpty ? nil : prefix
+        let prefix = TerminalPromptCompletion.completion(
+            buffer: Array(text),
+            cursorIndex: cursorIndex
+        )?.prefix
+        return (prefix?.isEmpty ?? true) ? nil : prefix
     }
 
 }

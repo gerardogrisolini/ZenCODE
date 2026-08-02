@@ -30,6 +30,17 @@ public final class TerminalInteractiveLineReader: Sendable {
         case down
         case home
         case end
+        /// Start/end of the whole draft (`Ctrl+Home`/`Ctrl+End`).
+        case bufferStart
+        case bufferEnd
+        /// Word-wise motion (`Alt+←/→`, `Ctrl+←/→`, `ESC b`/`ESC f`).
+        case wordLeft
+        case wordRight
+        /// Word-wise deletion (`Ctrl+W`, `Alt+Backspace`, `Alt+D`).
+        case deleteWordBefore
+        case deleteWordAfter
+        /// Modal reverse history search (`Ctrl+R`).
+        case reverseSearch
         case clearBeforeCursor
         case clearAfterCursor
         case toggleToolDetails
@@ -55,6 +66,13 @@ public final class TerminalInteractiveLineReader: Sendable {
     static let bracketedPasteByteTimeout: Int32 = 2000
     static let escapeSequenceMaximumLength = 24
     static let maximumPanelCommandSuggestionLines = 6
+    /// Upper bound on retained history entries.
+    ///
+    /// The history lives for the whole process and is copied into the editor
+    /// context on every keystroke, so it must not grow without limit in a long
+    /// session. Two hundred entries cover realistic recall while keeping the
+    /// copy cheap.
+    static let maximumHistoryEntryCount = 200
 
     /// Ownership of the terminal by the input panel.
     ///
@@ -96,25 +114,51 @@ public final class TerminalInteractiveLineReader: Sendable {
     /// update from the other.
     struct State {
         var history: [String] = []
-        var historyIndex: Int?
-        var draftBeforeHistory: [Character] = []
         var panelTask: Task<Void, Never>?
         var panelLifecycle: PanelLifecycleState = .idle
         /// Callers parked until the in-flight start or stop reaches a settled state.
         var panelTransitionWaiters: [CheckedContinuation<Void, Never>] = []
         var panelStatusBar: TerminalStatusBar?
-        var panelBuffer: [Character] = []
-        var panelCursorIndex = 0
+        /// All draft semantics live in the pure reducer; the mutex only owns
+        /// the value, never the behaviour.
+        var editor = TerminalPromptEditor()
         var panelIsProcessing = false
         var panelQueuedPromptCount = 0
+        var panelPendingAttachmentCount = 0
         var panelOverlayOverride: TerminalPanelModeOverride?
         var panelCommandSuggestions: [TerminalCommandSuggestion] = []
-        var panelCommandSuggestionIndex = 0
         /// Cancellation token of the panel loop's in-flight blocking read. Stopping
         /// the panel cancels it so the loop unwinds at once instead of waiting out
         /// the current read timeout while the caller awaits the task.
         var panelReadToken: TerminalBlockingReadToken?
         var panelRenderRevision: UInt64 = 0
+
+        // Projections kept so existing call sites and lifecycle tests keep
+        // addressing the draft by name instead of reaching into the reducer.
+        var panelBuffer: [Character] {
+            get { editor.buffer }
+            set { editor.buffer = newValue }
+        }
+
+        var panelCursorIndex: Int {
+            get { editor.cursorIndex }
+            set { editor.cursorIndex = newValue }
+        }
+
+        var historyIndex: Int? {
+            get { editor.historyIndex }
+            set { editor.historyIndex = newValue }
+        }
+
+        var draftBeforeHistory: [Character] {
+            get { editor.draftBeforeHistory }
+            set { editor.draftBeforeHistory = newValue }
+        }
+
+        var panelCommandSuggestionIndex: Int {
+            get { editor.suggestionIndex }
+            set { editor.suggestionIndex = newValue }
+        }
     }
 
     let rawInput: TerminalRawInput
@@ -232,13 +276,15 @@ public final class TerminalInteractiveLineReader: Sendable {
         prompt: String,
         shouldCancel: (@Sendable () -> Bool)?
     ) -> String? {
-        var buffer: [Character] = []
-        var cursorIndex = 0
+        // The fallback reader owns a private editor value: it runs only when
+        // the panel cannot, and sharing the reducer here is what keeps a single
+        // definition of motion, word edits and history for both paths.
+        var editor = TerminalPromptEditor()
         let initialTerminalColumns = TerminalChat.terminalColumnCount(forceRefresh: true)
         let initialLayout = Self.renderLayout(
             prompt: prompt,
-            buffer: buffer,
-            cursorIndex: cursorIndex,
+            buffer: editor.buffer,
+            cursorIndex: editor.cursorIndex,
             terminalColumns: initialTerminalColumns
         )
         var renderedLineCount = initialLayout.lineCount
@@ -259,8 +305,8 @@ public final class TerminalInteractiveLineReader: Sendable {
                 AgentOutput.standardError.writeString(
                     Self.redrawSequence(
                         prompt: prompt,
-                        buffer: buffer,
-                        cursorIndex: cursorIndex,
+                        buffer: editor.buffer,
+                        cursorIndex: editor.cursorIndex,
                         previousLineCount: renderedLineCount,
                         previousCursorRow: renderedCursorRow,
                         terminalColumns: terminalColumns
@@ -268,8 +314,8 @@ public final class TerminalInteractiveLineReader: Sendable {
                 )
                 let layout = Self.renderLayout(
                     prompt: prompt,
-                    buffer: buffer,
-                    cursorIndex: cursorIndex,
+                    buffer: editor.buffer,
+                    cursorIndex: editor.cursorIndex,
                     terminalColumns: terminalColumns
                 )
                 renderedLineCount = layout.lineCount
@@ -296,109 +342,26 @@ public final class TerminalInteractiveLineReader: Sendable {
                     return nil
                 }
 
-                switch key {
-                case let .character(text), let .paste(text):
-                    let characters = Array(text)
-                    guard !characters.isEmpty else {
-                        continue
-                    }
-                    buffer.insert(contentsOf: characters, at: cursorIndex)
-                    cursorIndex += characters.count
+                // The blocking reader has no completion menu and must not
+                // discard a half-typed answer on `Esc`.
+                let context = TerminalPromptEditorContext(
+                    history: withPanelLock { $0.history },
+                    supportsCompletions: false,
+                    clearsDraftOnCancel: false
+                )
+
+                switch editor.apply(key, context: context) {
+                case .ignored, .toggleToolDetails, .toggleAccessMode, .cancelRequested:
+                    continue
+                case .changed:
                     redrawBuffer()
-                case .enter:
-                    let line = String(buffer)
+                case let .submitted(line):
                     AgentOutput.standardError.writeString("\n")
                     recordHistory(line)
                     return line
-                case .newline:
-                    buffer.insert("\n", at: cursorIndex)
-                    cursorIndex += 1
-                    redrawBuffer()
-                case .tab:
-                    continue
-                case .backspace:
-                    guard cursorIndex > 0 else {
-                        continue
-                    }
-                    buffer.remove(at: cursorIndex - 1)
-                    cursorIndex -= 1
-                    redrawBuffer()
-                case .delete:
-                    guard cursorIndex < buffer.count else {
-                        continue
-                    }
-                    buffer.remove(at: cursorIndex)
-                    redrawBuffer()
-                case .left:
-                    guard cursorIndex > 0 else {
-                        continue
-                    }
-                    cursorIndex -= 1
-                    redrawBuffer()
-                case .right:
-                    guard cursorIndex < buffer.count else {
-                        continue
-                    }
-                    cursorIndex += 1
-                    redrawBuffer()
-                case .up:
-                    guard let previous = previousHistory(currentBuffer: buffer) else {
-                        continue
-                    }
-                    buffer = previous
-                    cursorIndex = buffer.count
-                    redrawBuffer()
-                case .down:
-                    guard let next = nextHistory() else {
-                        continue
-                    }
-                    buffer = next
-                    cursorIndex = buffer.count
-                    redrawBuffer()
-                case .home:
-                    let lineStart = Self.homeCursorIndex(
-                        in: buffer,
-                        cursorIndex: cursorIndex
-                    )
-                    guard cursorIndex != lineStart else {
-                        continue
-                    }
-                    cursorIndex = lineStart
-                    redrawBuffer()
-                case .end:
-                    let lineEnd = Self.endCursorIndex(
-                        in: buffer,
-                        cursorIndex: cursorIndex
-                    )
-                    guard cursorIndex != lineEnd else {
-                        continue
-                    }
-                    cursorIndex = lineEnd
-                    redrawBuffer()
-                case .clearBeforeCursor:
-                    guard cursorIndex > 0 else {
-                        continue
-                    }
-                    buffer.removeSubrange(0..<cursorIndex)
-                    cursorIndex = 0
-                    redrawBuffer()
-                case .clearAfterCursor:
-                    guard cursorIndex < buffer.count else {
-                        continue
-                    }
-                    buffer.removeSubrange(cursorIndex..<buffer.count)
-                    redrawBuffer()
-                case .toggleToolDetails, .toggleAccessMode:
-                    continue
                 case .endOfInput:
-                    if buffer.isEmpty {
-                        AgentOutput.standardError.writeString("\n")
-                        return nil
-                    }
-                case .cancel:
-                    continue
-                case .unknown:
-                    continue
+                    AgentOutput.standardError.writeString("\n")
+                    return nil
                 }
             }
         }

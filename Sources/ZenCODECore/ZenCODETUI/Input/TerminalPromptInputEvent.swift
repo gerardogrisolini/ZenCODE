@@ -13,7 +13,7 @@ public enum TerminalPromptInputEvent: Sendable {
     case endOfInput
 }
 
-public struct TerminalCommandSuggestion: Sendable {
+public struct TerminalCommandSuggestion: Sendable, Equatable {
     public let command: String
     public let summary: String
     public let requiresArgument: Bool

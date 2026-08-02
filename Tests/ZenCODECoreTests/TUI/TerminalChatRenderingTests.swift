@@ -629,17 +629,28 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func narrowPanelHelpKeepsAccessShortcutVisible() {
-        let line = TerminalStatusBar.inputPanelModeLineText(
+    func compactPanelHelpAtEightyColumnsKeepsProcessingActionsAndAccessShortcutVisible() {
+        let processingLine = TerminalStatusBar.inputPanelModeLineText(
             modeText: "Prompt",
-            helpText: "Enter queue · Option+Enter newline · Ctrl+T tools · Ctrl+A access · Esc stop",
-            compactHelpText: "Ctrl+T · Ctrl+A access",
-            width: 36
+            helpText: "Enter queue · Shift/Option+Enter newline · Ctrl+T tools · Ctrl+A access · Esc stop",
+            compactHelpText: "Enter queue · Esc stop · Ctrl+A access",
+            width: 80
         )
 
-        #expect(line.contains("Ctrl+T"))
-        #expect(line.contains("Ctrl+A access"))
-        #expect(TerminalStatusBar.visibleCharacterCount(line) <= 36)
+        #expect(processingLine.contains("Enter queue"))
+        #expect(processingLine.contains("Esc stop"))
+        #expect(processingLine.contains("Ctrl+A access"))
+        #expect(TerminalStatusBar.visibleCharacterCount(processingLine) <= 80)
+
+        let idleLine = TerminalStatusBar.inputPanelModeLineText(
+            modeText: "Prompt",
+            helpText: "Enter send · Shift/Option+Enter newline · Ctrl+T tools · Ctrl+A access · Ctrl+R history · Esc clear",
+            compactHelpText: "Enter send · Esc clear · Ctrl+A access",
+            width: 80
+        )
+        #expect(idleLine.contains("Enter send"))
+        #expect(idleLine.contains("Esc clear"))
+        #expect(idleLine.contains("Ctrl+A access"))
     }
 
     @Test

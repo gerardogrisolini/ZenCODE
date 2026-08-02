@@ -53,8 +53,10 @@ extension TerminalInteractiveLineReader {
         case 0x01: return .toggleAccessMode
         case 0x05: return .end
         case 0x0B: return .clearAfterCursor
+        case 0x12: return .reverseSearch
         case 0x15: return .clearBeforeCursor
         case 0x14: return .toggleToolDetails
+        case 0x17: return .deleteWordBefore
         case 0x0D: return .enter
         case 0x09: return .tab
         case 0x7F, 0x08: return .backspace
@@ -76,6 +78,17 @@ extension TerminalInteractiveLineReader {
             return readCSIKey()
         case 0x4F:
             return readSS3Key()
+        // Legacy Meta encodings: terminals that send Alt as an ESC prefix
+        // rather than a CSI modifier, which is still the default on macOS
+        // Terminal.app and many `xterm` configurations.
+        case 0x62, 0x42:
+            return .wordLeft
+        case 0x66, 0x46:
+            return .wordRight
+        case 0x64, 0x44:
+            return .deleteWordAfter
+        case 0x7F, 0x08:
+            return .deleteWordBefore
         default:
             drainPendingEscapeSequence()
             return .unknown
@@ -128,22 +141,66 @@ extension TerminalInteractiveLineReader {
         }
 
         switch finalByte {
+        case 0x41, 0x42, 0x43, 0x44, 0x46, 0x48:
+            let components = Self.csiComponents(bytes)
+            return Self.cursorKey(
+                finalByte: finalByte,
+                modifierBits: Self.cursorModifierBits(components: components)
+            )
+        case 0x7E:
+            return tildeTerminatedKey(bytes)
+        case 0x75:
+            return csiUKey(bytes)
+        default:
+            return .unknown
+        }
+    }
+
+    static func csiComponents(_ bytes: [UInt8]) -> [String] {
+        guard let sequence = String(validating: bytes.dropLast(), as: UTF8.self) else {
+            return []
+        }
+        return sequence.split(separator: ";", omittingEmptySubsequences: false).map(String.init)
+    }
+
+    /// Modifier bitmask of a cursor sequence.
+    ///
+    /// The canonical form is `CSI 1;<modifier><final>`, but several terminals
+    /// (rxvt derivatives, some tmux versions) drop the leading `1` and send the
+    /// modifier alone. Reading a lone parameter as a modifier only when it is
+    /// greater than one keeps the unmodified `CSI 1D` unaffected.
+    static func cursorModifierBits(components: [String]) -> Int {
+        if components.count >= 2, let modifier = integerPrefix(in: components[1]), modifier > 0 {
+            return modifier - 1
+        }
+        if components.count == 1,
+           let modifier = integerPrefix(in: components[0]),
+           modifier > 1 {
+            return modifier - 1
+        }
+        return 0
+    }
+
+    /// Ctrl and Alt are treated as equivalent "jump" modifiers because the two
+    /// conventions are split across platforms: macOS terminals send Alt for
+    /// word motion, Linux consoles and PuTTY send Ctrl.
+    static func cursorKey(finalByte: UInt8, modifierBits: Int) -> Key {
+        let isJumpModified = (modifierBits & 0b110) != 0
+        let isControlModified = (modifierBits & 0b100) != 0
+
+        switch finalByte {
         case 0x41:
             return .up
         case 0x42:
             return .down
         case 0x43:
-            return .right
+            return isJumpModified ? .wordRight : .right
         case 0x44:
-            return .left
+            return isJumpModified ? .wordLeft : .left
         case 0x46:
-            return .end
+            return isControlModified ? .bufferEnd : .end
         case 0x48:
-            return .home
-        case 0x7E:
-            return tildeTerminatedKey(bytes)
-        case 0x75:
-            return csiUKey(bytes)
+            return isControlModified ? .bufferStart : .home
         default:
             return .unknown
         }
@@ -161,6 +218,11 @@ extension TerminalInteractiveLineReader {
             return key
         }
         let numericPrefix = components.first
+        let modifierBits = components.count >= 2
+            ? max(0, (Self.integerPrefix(in: components[1]) ?? 1) - 1)
+            : 0
+        let isJumpModified = (modifierBits & 0b110) != 0
+        let isControlModified = (modifierBits & 0b100) != 0
 
         switch numericPrefix {
         case "200":
@@ -168,11 +230,11 @@ extension TerminalInteractiveLineReader {
         case "201":
             return .unknown
         case "1", "7":
-            return .home
+            return isControlModified ? .bufferStart : .home
         case "3":
-            return .delete
+            return isJumpModified ? .deleteWordAfter : .delete
         case "4", "8":
-            return .end
+            return isControlModified ? .bufferEnd : .end
         default:
             return .unknown
         }
@@ -189,7 +251,21 @@ extension TerminalInteractiveLineReader {
         if let key = Self.shiftReturnKey(components: components, keyCodeIndex: 0, modifierIndex: 1) {
             return key
         }
+        if let key = Self.fundamentalControlKey(
+            components: components,
+            keyCodeIndex: 0,
+            modifierIndex: 1
+        ) {
+            return key
+        }
         if let key = Self.shiftReturnKey(components: components, keyCodeIndex: 2, modifierIndex: 1) {
+            return key
+        }
+        if let key = Self.fundamentalControlKey(
+            components: components,
+            keyCodeIndex: 2,
+            modifierIndex: 1
+        ) {
             return key
         }
         if let key = Self.controlShortcutKey(components: components, keyCodeIndex: 0, modifierIndex: 1) {
@@ -274,9 +350,68 @@ extension TerminalInteractiveLineReader {
             return nil
         }
         return shiftReturnKey(components: components, keyCodeIndex: 2, modifierIndex: 1)
+        ?? fundamentalControlKey(components: components, keyCodeIndex: 2, modifierIndex: 1)
         ?? controlShortcutKey(components: components, keyCodeIndex: 2, modifierIndex: 1)
     }
 
+    /// C0 keys may be reported either as their control-code value or as the
+    /// printable key plus a Ctrl modifier.  Kitty and xterm use both forms
+    /// depending on terminal/version, so keep the raw C0 meanings before
+    /// considering modified printable shortcuts.
+    static func fundamentalControlKey(
+        components: [String],
+        keyCodeIndex: Int,
+        modifierIndex: Int
+    ) -> Key? {
+        guard components.indices.contains(keyCodeIndex),
+              let keyCode = Self.integerPrefix(in: components[keyCodeIndex]) else {
+            return nil
+        }
+
+        // C0 values have meanings only in their plain form. Enhanced keyboard
+        // protocols also report e.g. Shift+Tab and Alt+Tab as C0 9; treating
+        // those as plain Tab would silently accept a completion. Printable
+        // Ctrl/Alt shortcuts are handled below by `controlShortcutKey`.
+        if components.indices.contains(modifierIndex) {
+            guard Self.integerPrefix(in: components[modifierIndex]) == 1 else {
+                return nil
+            }
+        }
+
+        switch keyCode {
+        case 27:
+            return .cancel
+        case 9:
+            return .tab
+        case 8, 127:
+            return .backspace
+        case 1:
+            return .toggleAccessMode
+        case 4:
+            return .endOfInput
+        case 5:
+            return .end
+        case 11:
+            return .clearAfterCursor
+        case 18:
+            return .reverseSearch
+        case 20:
+            return .toggleToolDetails
+        case 21:
+            return .clearBeforeCursor
+        case 23:
+            return .deleteWordBefore
+        default:
+            return nil
+        }
+    }
+
+    /// Maps a modified printable key reported through Kitty's CSI-u protocol or
+    /// xterm's `modifyOtherKeys`.
+    ///
+    /// Each shortcut demands its own modifier: Ctrl+A toggles access mode while
+    /// Alt+A is not a binding at all, and accepting either would swallow a key
+    /// the operator meant for something else.
     static func controlShortcutKey(
         components: [String],
         keyCodeIndex: Int,
@@ -286,16 +421,40 @@ extension TerminalInteractiveLineReader {
               let keyCode = Self.integerPrefix(in: components[keyCodeIndex]),
               components.indices.contains(modifierIndex),
               let modifier = Self.integerPrefix(in: components[modifierIndex]),
-              modifier > 0,
-              ((modifier - 1) & 0b100) != 0 else {
+              modifier > 0 else {
             return nil
         }
 
+        let modifierBits = modifier - 1
+        let isControlModified = (modifierBits & 0b100) != 0
+        let isAltModified = (modifierBits & 0b010) != 0
+
         switch keyCode {
-        case 97:
+        case 97 where isControlModified:
             return .toggleAccessMode
-        case 116:
+        case 100 where isControlModified:
+            // Ctrl+D is end-of-input, never the Alt+D delete-word binding.
+            return .endOfInput
+        case 107 where isControlModified:
+            return .clearAfterCursor
+        case 116 where isControlModified:
             return .toggleToolDetails
+        case 117 where isControlModified:
+            return .clearBeforeCursor
+        case 114 where isControlModified:
+            return .reverseSearch
+        case 101 where isControlModified:
+            return .end
+        case 119 where isControlModified:
+            return .deleteWordBefore
+        case 98 where isAltModified:
+            return .wordLeft
+        case 102 where isAltModified:
+            return .wordRight
+        case 100 where isAltModified:
+            return .deleteWordAfter
+        case 127 where isAltModified, 8 where isAltModified:
+            return .deleteWordBefore
         default:
             return nil
         }

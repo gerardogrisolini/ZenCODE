@@ -28,56 +28,30 @@ extension TerminalInteractiveLineReader {
             return
         }
         state.history.append(trimmedLine)
-    }
-
-    func previousHistory(currentBuffer: [Character]) -> [Character]? {
-        withPanelLock { state in
-            previousHistoryLocked(currentBuffer: currentBuffer, state: &state)
-        }
-    }
-
-    func previousHistoryLocked(
-        currentBuffer: [Character],
-        state: inout State
-    ) -> [Character]? {
-        guard !state.history.isEmpty else {
-            return nil
-        }
-
-        if let index = state.historyIndex {
-            guard index > 0 else {
-                return Array(state.history[0])
+        // The history outlives every prompt and is copied into the editor
+        // context on each keystroke, so it is bounded rather than allowed to
+        // grow for the lifetime of the process.
+        if state.history.count > Self.maximumHistoryEntryCount {
+            let overflow = state.history.count - Self.maximumHistoryEntryCount
+            state.history.removeFirst(overflow)
+            if let index = state.historyIndex {
+                state.historyIndex = index >= overflow ? index - overflow : nil
             }
-            let previousIndex = index - 1
-            state.historyIndex = previousIndex
-            return Array(state.history[previousIndex])
-        }
-
-        state.draftBeforeHistory = currentBuffer
-        let previousIndex = state.history.count - 1
-        state.historyIndex = previousIndex
-        return Array(state.history[previousIndex])
-    }
-
-    func nextHistory() -> [Character]? {
-        withPanelLock { state in
-            nextHistoryLocked(state: &state)
         }
     }
 
-    func nextHistoryLocked(state: inout State) -> [Character]? {
-        guard let index = state.historyIndex else {
-            return nil
-        }
+    /// Line-scoped `Home`/`End` targets, shared with the reducer's geometry so
+    /// both agree on what a logical line is.
+    static func homeCursorIndex(in buffer: [Character], cursorIndex: Int) -> Int {
+        var editor = TerminalPromptEditor()
+        editor.buffer = buffer
+        return editor.lineRange(containing: cursorIndex).lowerBound
+    }
 
-        let nextIndex = index + 1
-        guard nextIndex < state.history.count else {
-            state.historyIndex = nil
-            return state.draftBeforeHistory
-        }
-
-        state.historyIndex = nextIndex
-        return Array(state.history[nextIndex])
+    static func endCursorIndex(in buffer: [Character], cursorIndex: Int) -> Int {
+        var editor = TerminalPromptEditor()
+        editor.buffer = buffer
+        return editor.lineRange(containing: cursorIndex).upperBound
     }
 
     struct RenderLayout: Equatable {
@@ -265,16 +239,6 @@ extension TerminalInteractiveLineReader {
             cursorIndex: buffer.count,
             terminalColumns: terminalColumns
         ).lineCount
-    }
-
-    static func homeCursorIndex(in buffer: [Character], cursorIndex: Int) -> Int {
-        let boundedCursorIndex = min(max(cursorIndex, 0), buffer.count)
-        return buffer[..<boundedCursorIndex].lastIndex(of: "\n").map { $0 + 1 } ?? 0
-    }
-
-    static func endCursorIndex(in buffer: [Character], cursorIndex: Int) -> Int {
-        let boundedCursorIndex = min(max(cursorIndex, 0), buffer.count)
-        return buffer[boundedCursorIndex...].firstIndex(of: "\n") ?? buffer.count
     }
 
     static func redrawSequence(

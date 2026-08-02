@@ -12,6 +12,13 @@ import Dispatch
 import Foundation
 
 extension TerminalChat {
+    /// Mirrors staged attachments into the input panel.  `promptAttempt`
+    /// consumes local attachments synchronously, so callers invoke this as
+    /// soon as they create an attempt rather than waiting for generation end.
+    func synchronizePanelPendingAttachmentCount() async {
+        await interactiveReader.setPendingAttachmentCount(pendingAttachments.count)
+    }
+
     func synchronizeLocalExecAccessModeStatusBar() async {
         let accessMode = await sessionRunner.localExecAccessMode()
         await statusBar.update(localExecAccessMode: accessMode)
@@ -203,6 +210,7 @@ extension TerminalChat {
             }
             await interactiveReader.setPanelProcessing(isGenerating)
             await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+            await synchronizePanelPendingAttachmentCount()
             return true
         }
 
@@ -214,6 +222,10 @@ extension TerminalChat {
             isGenerating = true
             didReceiveMetricsForCurrentPrompt = false
             didRefreshGitStatusDuringCurrentPrompt = false
+            // `promptAttempt` has already consumed local staged attachments.
+            // Update the panel before the response starts, not only once it
+            // completes, so its badge never advertises stale attachments.
+            await synchronizePanelPendingAttachmentCount()
             await statusBar.beginRequest()
             await statusBar.setProcessing(true)
             await interactiveReader.setPanelProcessing(true)
@@ -401,6 +413,9 @@ extension TerminalChat {
                 isGenerating = false
                 await statusBar.setProcessing(false)
                 await interactiveReader.setPanelProcessing(false)
+                // The prompt consumed whatever was staged, so the indicator must
+                // not keep advertising attachments that already left.
+                await synchronizePanelPendingAttachmentCount()
                 await finishPromptResult(result)
                 await refreshStatusBarGitStatusSummaryAfterPromptIfNeeded()
                 scheduleQueuedPromptIfNeeded()

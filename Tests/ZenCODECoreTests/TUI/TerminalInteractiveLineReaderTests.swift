@@ -384,7 +384,7 @@ struct TerminalInteractiveLineReaderTests {
         #expect(reader.keyFromCSI(Array("97;2u".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("27;3;97~".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("108;5u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("27;5;117~".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("27;5;113~".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("97;5:2u".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("97;5:3u".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("97;5:4u".utf8)) == .unknown)
@@ -456,7 +456,7 @@ struct TerminalInteractiveLineReaderTests {
             reader.panelHelpTextLocked(state: $0).contains("Ctrl+T tools · Ctrl+A access")
         })
         #expect(reader.withPanelLock {
-            reader.panelCompactHelpTextLocked(state: $0) == "Ctrl+T · Ctrl+A access"
+            reader.panelCompactHelpTextLocked(state: $0) == "Enter send · Esc clear · Ctrl+A access"
         })
     }
 
