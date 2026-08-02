@@ -1971,6 +1971,14 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func thinkingTitleUsesTaskValueColor() {
+        #expect(
+            TerminalStyle.Thinking.title
+                == TerminalMarkdownPalette.detected.inlineCodeForeground
+        )
+    }
+
+    @Test
     func dimmedANSISequenceCollapsesResetToGray() {
         let dimmed = TerminalChatTextFormatting.dimmedANSISequence(
             "\u{1B}[0m",
@@ -2176,6 +2184,27 @@ struct TerminalChatRenderingTests {
         if let roleIndex, let agentIndex {
             #expect(agentIndex > roleIndex)
         }
+    }
+
+    @Test
+    func subAgentMetadataUsesMutedLabelsAndTaskValueColor() {
+        let rendered = TerminalChat.subAgentMetadataText(
+            label: "role:",
+            value: "Reviewer",
+            ansiEnabled: true
+        )
+
+        #expect(
+            rendered == "\(TerminalStyle.Text.muted)role:\(TerminalStyle.reset) "
+                + "\(TerminalMarkdownPalette.detected.inlineCodeForeground)Reviewer\(TerminalStyle.reset)"
+        )
+        #expect(
+            TerminalChat.subAgentMetadataText(
+                label: "role:",
+                value: "Reviewer",
+                ansiEnabled: false
+            ) == "role: Reviewer"
+        )
     }
 
     @Test

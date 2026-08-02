@@ -86,7 +86,7 @@ enum TerminalStyle {
     }
 
     enum Thinking {
-        static let title = TerminalStyle.sequence(38, 5, 144)
+        static let title = TerminalMarkdownPalette.detected.inlineCodeForeground
         static let bodyCode = 90
         static let body = TerminalStyle.sequence(bodyCode)
 

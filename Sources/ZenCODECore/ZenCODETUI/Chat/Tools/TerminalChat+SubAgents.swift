@@ -307,17 +307,32 @@ extension TerminalChat {
 
             lines.append(.regular(renderSubAgentHeader(snapshot)))
             if density.includesMetadata {
-                lines.append(.regular(dimText("id: \(snapshot.id)"), maxWrappedLines: 1))
+                lines.append(
+                    .regular(
+                        subAgentMetadataText(label: "id:", value: snapshot.id),
+                        maxWrappedLines: 1
+                    )
+                )
                 if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    lines.append(.regular("\(dimText("role:")) \(snapshot.role)"))
+                    lines.append(
+                        .regular(subAgentMetadataText(label: "role:", value: snapshot.role))
+                    )
                 }
                 if let profileName = snapshot.profileName?.nilIfBlank {
-                    lines.append(.regular("\(dimText("agent:")) \(profileName)"))
+                    lines.append(
+                        .regular(subAgentMetadataText(label: "agent:", value: profileName))
+                    )
                 }
                 if let taskID = snapshot.taskID?.nilIfBlank {
-                    var taskText = "\(dimText("task:")) \(inlineText(taskID))"
+                    var taskText = subAgentMetadataText(
+                        label: "task:",
+                        value: inlineText(taskID)
+                    )
                     if let attempt = snapshot.taskAttemptOrdinal {
-                        taskText += " · \(dimText("attempt:")) \(attempt)"
+                        taskText += " · " + subAgentMetadataText(
+                            label: "attempt:",
+                            value: String(attempt)
+                        )
                     }
                     lines.append(.regular(taskText, maxWrappedLines: 2))
                 }
@@ -439,7 +454,10 @@ extension TerminalChat {
         guard let modelID = snapshot.modelID?.nilIfBlank else {
             return nil
         }
-        return "\(dimText("model:")) \(inlineText(modelTitleResolver(modelID)))"
+        return subAgentMetadataText(
+            label: "model:",
+            value: inlineText(modelTitleResolver(modelID))
+        )
     }
 
     /// Builds the model title resolver used by the instance overview renderer.
@@ -666,6 +684,19 @@ extension TerminalChat {
         AgentOutput.standardErrorIsTerminal
             ? "\(TerminalStyle.Text.muted)\(text)\(TerminalStyle.reset)"
             : text
+    }
+
+    /// Keeps metadata labels muted while matching Task inline-code values.
+    nonisolated static func subAgentMetadataText(
+        label: String,
+        value: String,
+        ansiEnabled: Bool = AgentOutput.standardErrorIsTerminal
+    ) -> String {
+        guard ansiEnabled else {
+            return "\(label) \(value)"
+        }
+        return "\(TerminalStyle.Text.muted)\(label)\(TerminalStyle.reset) "
+            + "\(TerminalMarkdownPalette.detected.inlineCodeForeground)\(value)\(TerminalStyle.reset)"
     }
 
     private nonisolated static func colorText(_ text: String, code: String) -> String {
