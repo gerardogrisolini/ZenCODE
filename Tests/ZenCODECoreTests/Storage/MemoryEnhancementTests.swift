@@ -454,7 +454,7 @@ struct MemoryEnhancementTests {
     }
 
     @Test
-    func descriptorsAndPlannerExposeConfiguredMemoryCapabilities() throws {
+    func descriptorsAndPlannerExposeConfiguredReadOnlyMemoryCapabilities() throws {
         let names = Set(MemoryTool.toolDescriptors.map(\.name))
         let planner = try #require(
             AgentProfileStore.defaultProfiles().first {
@@ -470,7 +470,12 @@ struct MemoryEnhancementTests {
             "memory.update",
             "memory.archive",
         ]))
-        #expect(resolvedPlannerTools.isSuperset(of: names))
+        let readOnlyMemoryNames: Set<String> = ["memory.read", "memory.search"]
+        let mutatingMemoryNames = names.subtracting(readOnlyMemoryNames)
+
+        #expect(planner.readOnly)
+        #expect(resolvedPlannerTools.isSuperset(of: readOnlyMemoryNames))
+        #expect(resolvedPlannerTools.isDisjoint(with: mutatingMemoryNames))
     }
 }
 

@@ -1974,7 +1974,7 @@ struct TerminalChatRenderingTests {
     func thinkingTitleUsesTaskValueColor() {
         #expect(
             TerminalStyle.Thinking.title
-                == TerminalMarkdownPalette.detected.inlineCodeForeground
+                == TerminalStyle.sequence(90)
         )
     }
 

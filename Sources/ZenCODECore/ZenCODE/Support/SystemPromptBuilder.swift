@@ -105,18 +105,24 @@ public enum SystemPromptBuilder {
         let delegationInstruction: String
         if agentDelegationIsAvailable(allowedToolNames) {
             delegationInstruction = """
-            When you choose to delegate graph work, pass its taskID to agent.create so the \
-            assignment and execution attempt are recorded atomically. If you delegate, select \
-            the most suitable agent profile and one of its authorized model bindings from the \
-            delegatable roster: determine the task type and required tools, then choose the \
-            lowest-capability binding that meets the task complexity. Delegate independent \
+            Prefer delegation for non-trivial graph work whenever a compatible profile has the \
+            tools required to perform it. Execute graph work directly only when the work is \
+            trivial, delegation offers no meaningful benefit, no compatible profile can perform \
+            it, or shared mutable state makes delegation unsafe. When delegating graph work, pass \
+            its taskID to agent.create so the assignment and execution attempt are recorded \
+            atomically. Select the most suitable agent profile and one of its authorized model \
+            bindings from the delegatable roster: determine the task type and required tools, then \
+            choose the lowest-capability binding that meets the task complexity. Delegate independent \
             runnable tasks together when \
             parallel execution is safe and useful; serialize work that mutates overlapping \
             files or shared state. When a task graph is already active, every delegated agent \
             must use taskID; do not create taskless agents outside that workflow. A `/workflow` \
             graph requires every task to be delegated through agent.create(taskID:); the \
             coordinator cannot start a task attempt directly, although its normal tool grant \
-            remains unchanged. For other task graphs, you remain free to execute tasks directly. \
+            remains unchanged. For other task graphs, coordinator execution remains permitted \
+            only under the fallback conditions above. For substantial self-contained work that \
+            fits one compatible sub-agent, prefer a single delegation without manufacturing a \
+            task graph. \
             After a `/workflow` implementation task completes, validate its result. If validation \
             is negative, record the task as failed, call tasks.retry, then claim the new attempt \
             with a new agent.create(taskID:); do not use agent.message to reopen a completed \

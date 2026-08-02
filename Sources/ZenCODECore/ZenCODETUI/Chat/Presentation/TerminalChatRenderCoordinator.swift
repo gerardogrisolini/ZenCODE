@@ -350,9 +350,7 @@ actor TerminalChatRenderCoordinator {
             thoughtWrapColumn = 0
             // Render the title one shade lighter than the dimmed thinking body
             // so the label stands apart from the reasoning text.
-            let title = standardErrorIsTerminal
-                ? "\(TerminalStyle.Thinking.title)🤔 thinking…\(TerminalStyle.reset)"
-                : "🤔 thinking…"
+            let title = "\(TerminalStyle.Thinking.title)🤔 thinking…\(TerminalStyle.reset)"
             writeStreamingChat("\(title)\n", to: .standardError)
         }
         let renderedThought = thoughtStreamingState.markdownFormatter.consume(normalizedDelta)

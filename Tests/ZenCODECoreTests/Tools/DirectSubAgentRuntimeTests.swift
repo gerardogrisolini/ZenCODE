@@ -759,6 +759,12 @@ struct DirectSubAgentRuntimeTests {
         )
 
         #expect(descriptor.description.contains(TaskRecord.agentSelectionPolicy))
+        #expect(descriptor.description.contains(
+            "Prefer delegation for non-trivial, cleanly scoped work"
+        ))
+        #expect(descriptor.description.contains(
+            "use the coordinator directly only when delegation offers no meaningful benefit"
+        ))
         #expect(descriptor.description.contains("Give each sub-agent an explicit role and scope"))
         #expect(descriptor.description.contains(
             "The sub-agent receives the tools configured on that profile"
