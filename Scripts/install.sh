@@ -330,6 +330,15 @@ if [ ! -x "${BIN_PATH}/zen" ]; then
     exit 1
 fi
 
+if [ "$BUILD_CONFIG" = "release" ]; then
+    if ! command -v strip &>/dev/null; then
+        echo "Error: 'strip' is required to prepare the release binary." >&2
+        exit 1
+    fi
+    echo "Stripping local symbols from the release binary..."
+    strip -u -r "${BIN_PATH}/zen"
+fi
+
 SUDO=""
 if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
     if command -v sudo &>/dev/null; then

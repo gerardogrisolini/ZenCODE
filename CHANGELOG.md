@@ -10,6 +10,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Release builds of `zen` now strip local symbols before the binary is verified,
+  archived, or installed. CI, the release workflow, and both install scripts run
+  `strip -u -r` on macOS and `strip --strip-all` on Linux, and optional Swift
+  features are stripped with `strip -S` after a successful release build.
+
 ## [1.1.1] - 2026-08-03
 
 ### Added

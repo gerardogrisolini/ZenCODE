@@ -309,18 +309,72 @@ extension SwiftFeatureRuntime {
             atPath: record.executableURL.path
         )
 
+        guard result.exitCode == 0,
+              executableAvailable,
+              configuration.lowercased() == "release" else {
+            return SwiftFeatureBuildReport(
+                ok: result.exitCode == 0 && executableAvailable,
+                id: record.id,
+                command: ["swift"] + commandArguments,
+                workingDirectory: packageDirectoryURL.path,
+                executablePath: record.executableURL.path,
+                exitCode: result.exitCode,
+                timedOut: result.timedOut,
+                stdout: result.stdout,
+                stderr: executableAvailable
+                    ? result.stderr
+                    : result.stderr + "\nExecutable not found after build: \(record.executableURL.path)"
+            )
+        }
+
+        let stripExecutableURL = URL(fileURLWithPath: "/usr/bin/strip")
+        guard fileManager.isExecutableFile(atPath: stripExecutableURL.path) else {
+            return SwiftFeatureBuildReport(
+                ok: false,
+                id: record.id,
+                command: ["swift"] + commandArguments,
+                workingDirectory: packageDirectoryURL.path,
+                executablePath: record.executableURL.path,
+                exitCode: 1,
+                timedOut: false,
+                stdout: result.stdout,
+                stderr: result.stderr + "\nRelease builds require strip at \(stripExecutableURL.path)."
+            )
+        }
+
+        let stripResult: AsyncProcessResult
+        do {
+            stripResult = try await AsyncProcessRunner.run(
+                executableURL: stripExecutableURL,
+                arguments: ["-S", record.executableURL.path],
+                workingDirectory: packageDirectoryURL,
+                environment: processEnvironment,
+                timeout: timeout
+            )
+        } catch {
+            return SwiftFeatureBuildReport(
+                ok: false,
+                id: record.id,
+                command: ["swift"] + commandArguments,
+                workingDirectory: packageDirectoryURL.path,
+                executablePath: record.executableURL.path,
+                exitCode: 1,
+                timedOut: false,
+                stdout: result.stdout,
+                stderr: result.stderr + "\nCould not launch strip: \(error.localizedDescription)"
+            )
+        }
+
         return SwiftFeatureBuildReport(
-            ok: result.exitCode == 0 && executableAvailable,
+            ok: stripResult.exitCode == 0 && !stripResult.timedOut,
             id: record.id,
             command: ["swift"] + commandArguments,
             workingDirectory: packageDirectoryURL.path,
             executablePath: record.executableURL.path,
-            exitCode: result.exitCode,
-            timedOut: result.timedOut,
-            stdout: result.stdout,
-            stderr: executableAvailable
-                ? result.stderr
-                : result.stderr + "\nExecutable not found after build: \(record.executableURL.path)"
+            exitCode: stripResult.exitCode,
+            timedOut: stripResult.timedOut,
+            stdout: result.stdout + stripResult.stdout,
+            stderr: result.stderr + stripResult.stderr
         )
     }
 

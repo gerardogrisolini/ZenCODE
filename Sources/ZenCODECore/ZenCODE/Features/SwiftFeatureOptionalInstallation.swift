@@ -586,7 +586,8 @@ extension SwiftFeatureRuntime {
         var errors: [String] = []
         if let buildReport, !buildReport.ok {
             errors.append(
-                "swift build failed for product '\(definition.executableName)' (exit code \(buildReport.exitCode))."
+                "Feature build or release-symbol stripping failed for product '\(definition.executableName)' "
+                    + "(exit code \(buildReport.exitCode))."
             )
         }
 

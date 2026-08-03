@@ -33,6 +33,12 @@ but it is not a reproducible release input.
    verifies that the root SwiftPM graph does not expose feature products. Run
    `swift test` inside every changed `Sources/Features/<Feature>` package as
    part of its feature-specific release validation.
+
+   CI, the release workflow, and both install scripts strip the release binary
+   before it is verified, archived, or installed: `strip -u -r` on macOS and
+   `strip --strip-all` on Linux. The local gate above does not strip
+   `.build/release/zen`, so a local artifact is expected to be larger than the
+   published one.
 4. Commit the version and lockfile, then create and push the matching annotated
    tag `vX.Y.Z`. The **Release** workflow accepts the broad GitHub
    tag glob `v*`, then enforces the strict `vX.Y.Z` shape and requires it to

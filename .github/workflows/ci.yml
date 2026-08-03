@@ -79,6 +79,12 @@ jobs:
       - name: Build release product
         run: swift build -c release --product zen
 
+      - name: Strip release binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          strip -u -r .build/release/zen
+
       - name: Verify release binary
         run: .build/release/zen --version
 
@@ -169,6 +175,12 @@ jobs:
 
       - name: Build release product
         run: swift build -c release --product zen
+
+      - name: Strip release binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          strip --strip-all .build/release/zen
 
       - name: Verify release binary
         run: .build/release/zen --version

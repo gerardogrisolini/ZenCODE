@@ -121,6 +121,19 @@ jobs:
       - name: Build release product
         run: swift build -c release --product zen
 
+      - name: Strip release binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(uname -s)" = "Darwin" ]; then
+            # -u -r is the maximum stripping level for a dynamically linked
+            # executable: it keeps only undefined symbols and symbols referenced
+            # dynamically. See strip(1).
+            strip -u -r .build/release/zen
+          else
+            strip --strip-all .build/release/zen
+          fi
+
       - name: Verify reported version matches the tag
         shell: bash
         run: |
