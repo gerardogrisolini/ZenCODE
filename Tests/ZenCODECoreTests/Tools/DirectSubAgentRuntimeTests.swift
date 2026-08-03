@@ -819,7 +819,6 @@ struct DirectSubAgentRuntimeTests {
     func applyingSubAgentBackendContextSwapsModelWhenProfileHasModel() {
         let parentConfig = AgentRuntimeConfiguration(
             modelID: "parent-model",
-            bearerToken: nil,
             workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
             maxToolRounds: 4,
             verboseLogging: false,
@@ -843,7 +842,6 @@ struct DirectSubAgentRuntimeTests {
     func applyingSubAgentBackendContextPreservesModelWhenProfileHasNoModel() {
         let parentConfig = AgentRuntimeConfiguration(
             modelID: "parent-model",
-            bearerToken: nil,
             workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
             maxToolRounds: 4,
             verboseLogging: false,
@@ -866,7 +864,6 @@ struct DirectSubAgentRuntimeTests {
     func applyingSubAgentBackendContextPreservesModelWhenLockedToSession() {
         let parentConfig = AgentRuntimeConfiguration(
             modelID: "local-model",
-            bearerToken: nil,
             workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
             maxToolRounds: 4,
             verboseLogging: false,

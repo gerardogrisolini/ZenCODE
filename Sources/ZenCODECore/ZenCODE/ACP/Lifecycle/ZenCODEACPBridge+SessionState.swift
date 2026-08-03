@@ -160,7 +160,6 @@ extension ZenCODEACPBridge {
         AgentCoreSessionConfiguration(
             sessionID: configuration.sessionID,
             modelID: configuration.modelID,
-            bearerToken: configuration.bearerToken,
             workingDirectory: configuration.workingDirectory,
             systemPrompt: configuration.systemPrompt,
             cacheKey: configuration.cacheKey,
@@ -195,7 +194,6 @@ extension ZenCODEACPBridge {
             configuration: AgentCoreSessionConfiguration(
                 sessionID: snapshot.sessionID,
                 modelID: snapshot.modelID ?? configuration.effectiveModelID,
-                bearerToken: configuration.bearerToken,
                 workingDirectory: snapshot.workingDirectoryPath,
                 systemPrompt: snapshot.systemPrompt,
                 cacheKey: snapshot.cacheKey,

@@ -217,7 +217,6 @@ struct SubscriptionPromptCacheIntegrationTests {
     ) -> AgentRuntimeConfiguration {
         AgentRuntimeConfiguration(
             modelID: modelID,
-            bearerToken: nil,
             workingDirectory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
             configuredContextWindowLimit: contextWindow,
             generationParameterOverrides: overrides ?? AgentGenerationParameterOverrides(),

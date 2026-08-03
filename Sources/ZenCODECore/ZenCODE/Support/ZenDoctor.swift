@@ -401,12 +401,18 @@ public enum ZenDoctor {
 
     private static func modelsCheck(_ manifest: AgentSettingsManifest) -> ZenDoctorCheck {
         let count = manifest.models.count
-        let remoteWithoutKey = manifest.models.filter { model in
-            model.kind == .remoteAPI
-                && (model.provider?.id).map { providerID in
-                    manifest.remoteAPIKeysByProviderID[providerID.uuidString]?.nilIfBlank == nil
-                        && model.apiKey?.nilIfBlank == nil
-                } ?? false
+        let remoteProvidersWithoutKey = manifest.models.compactMap { model -> AgentRemoteProvider? in
+            guard model.kind == .remoteAPI,
+                  let provider = model.provider,
+                  provider.requiresAPIKey else {
+                return nil
+            }
+            let providerKey = provider.id.uuidString.lowercased()
+            guard manifest.remoteAPIKeysByProviderID[providerKey]?.nilIfBlank == nil,
+                  model.apiKey?.nilIfBlank == nil else {
+                return nil
+            }
+            return provider
         }
 
         if count == 0 {
@@ -419,14 +425,37 @@ public enum ZenDoctor {
             )
         }
 
-        if !remoteWithoutKey.isEmpty {
-            let names = remoteWithoutKey.map(\.displayTitle).joined(separator: ", ")
+        if !remoteProvidersWithoutKey.isEmpty {
+            let modelsByProviderID = Dictionary(grouping: remoteProvidersWithoutKey) { provider in
+                provider.id
+            }
+            let providers: [(id: UUID, title: String, modelCount: Int)] = modelsByProviderID.map { entry in
+                let provider = entry.value[0]
+                return (
+                    id: entry.key,
+                    title: provider.displayTitle,
+                    modelCount: entry.value.count
+                )
+            }.sorted { lhs, rhs in
+                let titleComparison = lhs.title.compare(
+                    rhs.title,
+                    options: String.CompareOptions.caseInsensitive,
+                    locale: Locale(identifier: "en_US_POSIX")
+                )
+                if titleComparison == .orderedSame {
+                    return lhs.id.uuidString < rhs.id.uuidString
+                }
+                return titleComparison == .orderedAscending
+            }
+            let summary = providers.map { provider in
+                "\(provider.title) (\(provider.modelCount) model(s))"
+            }.joined(separator: ", ")
             return ZenDoctorCheck(
                 id: "configuration.models",
                 title: "Models",
                 status: .warning,
-                detail: "\(count) model(s) configured; \(remoteWithoutKey.count) remote model(s) have no stored API key: \(names).",
-                remedy: "Set ZENCODE_AGENT_BEARER_TOKEN for the next run, then use /setup to save the API key."
+                detail: "\(count) model(s) configured; \(providers.count) remote provider(s) have no stored API key: \(summary).",
+                remedy: "Run /setup to save an API key for each provider."
             )
         }
 

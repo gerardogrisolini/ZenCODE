@@ -121,6 +121,109 @@ struct ZenDiagnosticsTests {
     }
 
     @Test
+    func doctorReportsOnlyKeyRequiringProvidersWithoutStoredKeys() throws {
+        let root = try temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let duplicateFirstProvider = AgentRemoteProvider(
+            id: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000001001")),
+            name: "Duplicate provider",
+            baseURL: AgentRemoteProvider.defaultOpenRouterBaseURL,
+            modelID: "duplicate-first"
+        )
+        let duplicateSecondProvider = AgentRemoteProvider(
+            id: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000001002")),
+            name: "Duplicate provider",
+            baseURL: AgentRemoteProvider.defaultOpenRouterBaseURL,
+            modelID: "duplicate-second"
+        )
+        let missingKeyProvider = AgentRemoteProvider(
+            id: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000001003")),
+            name: "OpenRouter",
+            baseURL: AgentRemoteProvider.defaultOpenRouterBaseURL,
+            modelID: "missing-key"
+        )
+        let storedKeyProvider = AgentRemoteProvider(
+            id: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000001004")),
+            name: "Stored key",
+            baseURL: AgentRemoteProvider.defaultOpenRouterBaseURL,
+            modelID: "stored-key"
+        )
+        let subscriptionProvider = AgentRemoteProvider(
+            id: AgentRemoteProvider.chatGPTSubscriptionProviderID,
+            name: "Subscription",
+            baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
+            modelID: "subscription-model"
+        )
+        let customKeylessProvider = AgentRemoteProvider(
+            id: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000001005")),
+            name: "Custom keyless",
+            baseURL: "https://custom.example.test/v1",
+            modelID: "custom-keyless-model"
+        )
+        let models = [
+            AgentSettingsModelManifest(
+                kind: .remoteAPI,
+                modelID: "stored-key",
+                provider: storedKeyProvider
+            ),
+            AgentSettingsModelManifest(
+                kind: .remoteAPI,
+                modelID: "duplicate-second",
+                provider: duplicateSecondProvider
+            ),
+            AgentSettingsModelManifest(
+                kind: .remoteAPI,
+                modelID: "subscription-model",
+                provider: subscriptionProvider
+            ),
+            AgentSettingsModelManifest(
+                kind: .remoteAPI,
+                modelID: "custom-keyless-model",
+                provider: customKeylessProvider
+            ),
+            AgentSettingsModelManifest(
+                kind: .remoteAPI,
+                modelID: "missing-key",
+                provider: missingKeyProvider
+            ),
+            AgentSettingsModelManifest(
+                kind: .remoteAPI,
+                modelID: "duplicate-first-1",
+                provider: duplicateFirstProvider
+            ),
+            AgentSettingsModelManifest(
+                kind: .remoteAPI,
+                modelID: "duplicate-first-2",
+                provider: duplicateFirstProvider
+            ),
+        ]
+        let manifest = AgentSettingsManifest(
+            models: models,
+            remoteAPIKeysByProviderID: [
+                storedKeyProvider.id.uuidString.lowercased(): "stored-key-value"
+            ]
+        )
+        try JSONEncoder()
+            .encode(manifest)
+            .write(to: root.appendingPathComponent("settings.json"))
+
+        let report = ZenDoctor.runReport(supportDirectory: root)
+        let modelsCheck = try #require(report.allChecks.first { $0.id == "configuration.models" })
+
+        #expect(modelsCheck.status == .warning)
+        #expect(
+            modelsCheck.detail == "7 model(s) configured; 3 remote provider(s) have no stored API key: Duplicate provider (2 model(s)), Duplicate provider (1 model(s)), OpenRouter (1 model(s))."
+        )
+        #expect(!modelsCheck.detail.contains("Stored key"))
+        #expect(!modelsCheck.detail.contains("Subscription"))
+        #expect(!modelsCheck.detail.contains("Custom keyless"))
+        #expect(modelsCheck.remedy == "Run /setup to save an API key for each provider.")
+    }
+
+    @Test
     func reportRendererReceivesOnlyRedactedFields() {
         let secret = "sk-abcdefghijklmnopqrstuvwxyz123456"
         let report = ZenDoctorReport(sections: [

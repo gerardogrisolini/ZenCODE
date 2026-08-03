@@ -383,7 +383,6 @@ private extension ACPCompatibilityTests {
         let configuration = AgentCoreSessionConfiguration(
             sessionID: "session-thinking",
             modelID: "thinking-model",
-                                    bearerToken: nil,
             workingDirectory: FileManager.default.temporaryDirectory,
             systemPrompt: nil,
             cacheKey: nil,

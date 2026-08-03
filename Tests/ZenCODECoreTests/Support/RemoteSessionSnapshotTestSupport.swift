@@ -76,7 +76,6 @@ extension RemoteSessionSnapshotTests {
     func remoteStreamingConfiguration() -> AgentRuntimeConfiguration {
         AgentRuntimeConfiguration(
             modelID: "unit-model",
-            bearerToken: nil,
             workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
             maxToolRounds: 4,
             verboseLogging: false,

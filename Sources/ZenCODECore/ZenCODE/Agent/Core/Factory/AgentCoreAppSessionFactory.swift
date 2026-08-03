@@ -12,7 +12,6 @@ public struct AgentCoreAppSessionRequest: Sendable {
     public let sessionID: String
     public let modelID: String?
     public let agentName: String?
-    public let bearerToken: String?
     public let workingDirectory: URL
     public let systemPrompt: String?
     public let cacheKey: String?
@@ -30,7 +29,6 @@ public struct AgentCoreAppSessionRequest: Sendable {
         sessionID: String,
         modelID: String? = nil,
         agentName: String? = nil,
-        bearerToken: String? = nil,
         workingDirectory: URL,
         systemPrompt: String? = nil,
         cacheKey: String? = nil,
@@ -47,7 +45,6 @@ public struct AgentCoreAppSessionRequest: Sendable {
         self.sessionID = sessionID
         self.modelID = modelID
         self.agentName = agentName
-        self.bearerToken = bearerToken
         self.workingDirectory = workingDirectory
         self.systemPrompt = systemPrompt
         self.cacheKey = cacheKey
@@ -108,7 +105,6 @@ public enum AgentCoreAppSessionFactory {
         return AgentCoreSessionConfigurationBuilder(
             sessionID: request.sessionID,
             modelID: effectiveModelID,
-            bearerToken: request.bearerToken ?? agentConfiguration.bearerToken,
             workingDirectory: request.workingDirectory,
             systemPrompt: systemPrompt,
             cacheKey: cacheKey,
@@ -166,9 +162,6 @@ public enum AgentCoreAppSessionFactory {
         }
         if let agentName = request.agentName?.nilIfBlank {
             arguments.append(contentsOf: ["--agent", agentName])
-        }
-        if let bearerToken = request.bearerToken?.nilIfBlank {
-            arguments.append(contentsOf: ["--bearer-token", bearerToken])
         }
         if let maxOutputTokens = request.maxOutputTokens {
             arguments.append(contentsOf: ["--max-output-tokens", "\(max(1, maxOutputTokens))"])

@@ -81,7 +81,7 @@ zen [--doctor] [--acp] [--install-features [id,id,...]] [--no-features] [--zen-p
 - `--max-output-tokens N`: maximum generated tokens per model call.
 - `--verbose`: show status/tool progress on stderr.
 
-Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, `ZENCODE_AGENT_MODEL`, `ZENCODE_AGENT_CWD`, `ZENCODE_AGENT_SKILLS`, `ZENCODE_AGENT_VERBOSE`, `ZENCODE_AGENT_BEARER_TOKEN`.
+Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, `ZENCODE_AGENT_MODEL`, `ZENCODE_AGENT_CWD`, `ZENCODE_AGENT_SKILLS`, `ZENCODE_AGENT_VERBOSE`.
 
 ## Optional Feature Packages
 

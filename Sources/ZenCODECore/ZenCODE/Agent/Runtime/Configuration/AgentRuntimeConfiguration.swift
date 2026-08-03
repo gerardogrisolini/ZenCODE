@@ -329,7 +329,6 @@ public struct AgentRuntimeSessionCompactionResult: Sendable {
 
 public struct AgentRuntimeConfiguration: Sendable {
     public let modelID: String?
-    public let bearerToken: String?
     public let workingDirectory: URL
     public let configuredContextWindowLimit: Int?
     public let generationParameterOverrides: AgentGenerationParameterOverrides
@@ -342,7 +341,6 @@ public struct AgentRuntimeConfiguration: Sendable {
 
     public init(
         modelID: String?,
-        bearerToken: String?,
         workingDirectory: URL,
         configuredContextWindowLimit: Int? = nil,
         generationParameterOverrides: AgentGenerationParameterOverrides = AgentGenerationParameterOverrides(),
@@ -354,7 +352,6 @@ public struct AgentRuntimeConfiguration: Sendable {
         toolAuthorizationHandler: AgentToolAuthorizationHandler?
     ) {
         self.modelID = modelID?.nilIfBlank
-        self.bearerToken = bearerToken?.nilIfBlank
         self.workingDirectory = workingDirectory
         self.configuredContextWindowLimit = configuredContextWindowLimit.map {
             min(max($0, 1), 1_048_576)
@@ -371,7 +368,6 @@ public struct AgentRuntimeConfiguration: Sendable {
     public func withModelID(_ modelID: String?) -> AgentRuntimeConfiguration {
         AgentRuntimeConfiguration(
             modelID: modelID?.nilIfBlank,
-            bearerToken: bearerToken,
             workingDirectory: workingDirectory,
             configuredContextWindowLimit: configuredContextWindowLimit,
             generationParameterOverrides: generationParameterOverrides,
@@ -390,7 +386,6 @@ public struct AgentRuntimeConfiguration: Sendable {
     ) -> AgentRuntimeConfiguration {
         AgentRuntimeConfiguration(
             modelID: modelID,
-            bearerToken: bearerToken,
             workingDirectory: workingDirectory,
             configuredContextWindowLimit: configuredContextWindowLimit.map {
                 min(max($0, 1), 1_048_576)
@@ -412,7 +407,6 @@ public struct AgentRuntimeConfiguration: Sendable {
     ) -> AgentRuntimeConfiguration {
         AgentRuntimeConfiguration(
             modelID: modelID,
-            bearerToken: bearerToken,
             workingDirectory: workingDirectory,
             configuredContextWindowLimit: configuredContextWindowLimit,
             generationParameterOverrides: generationParameterOverrides,

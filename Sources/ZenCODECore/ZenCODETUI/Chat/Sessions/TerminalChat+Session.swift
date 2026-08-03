@@ -59,7 +59,6 @@ extension TerminalChat {
         return AgentCoreSessionConfigurationBuilder(
             sessionID: sessionID,
             modelID: currentEffectiveModelID(),
-            bearerToken: configuration.bearerToken,
             workingDirectory: configuration.workingDirectory,
             systemPrompt: systemPrompt,
             cacheKey: activeSessionCacheKey ?? sessionID,

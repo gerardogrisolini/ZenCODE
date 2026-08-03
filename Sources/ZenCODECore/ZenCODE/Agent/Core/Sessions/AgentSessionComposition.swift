@@ -129,7 +129,6 @@ public enum AgentSessionComposition {
 public struct AgentCoreSessionConfigurationBuilder: Sendable {
     public var sessionID: String
     public var modelID: String?
-    public var bearerToken: String?
     public var workingDirectory: URL
     public var systemPrompt: String?
     public var cacheKey: String?
@@ -146,7 +145,6 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
     public init(
         sessionID: String,
         modelID: String?,
-        bearerToken: String? = nil,
         workingDirectory: URL,
         systemPrompt: String?,
         cacheKey: String?,
@@ -162,7 +160,6 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
     ) {
         self.sessionID = sessionID
         self.modelID = modelID
-        self.bearerToken = bearerToken
         self.workingDirectory = workingDirectory
         self.systemPrompt = systemPrompt
         self.cacheKey = cacheKey
@@ -183,7 +180,6 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
         AgentCoreSessionConfiguration(
             sessionID: sessionID,
             modelID: modelID,
-            bearerToken: bearerToken,
             workingDirectory: workingDirectory,
             systemPrompt: systemPrompt,
             cacheKey: cacheKey,

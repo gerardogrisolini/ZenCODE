@@ -187,7 +187,6 @@ extension AgentCoreSessionConfiguration {
         AgentCoreSessionConfiguration(
             sessionID: snapshot.sessionID,
             modelID: snapshot.modelID ?? modelID,
-            bearerToken: bearerToken,
             workingDirectory: URL(fileURLWithPath: snapshot.workingDirectoryPath),
             systemPrompt: snapshot.systemPrompt,
             cacheKey: snapshot.cacheKey,

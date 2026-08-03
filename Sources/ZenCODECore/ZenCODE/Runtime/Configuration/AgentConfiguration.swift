@@ -67,7 +67,6 @@ public struct AgentConfiguration: Sendable {
       ZENCODE_AGENT_CWD            Working directory for local tools.
       ZENCODE_AGENT_SKILLS         Initial chat skill selection by name/number, all, or none.
       ZENCODE_AGENT_VERBOSE        1/true to show status/tool progress on stderr.
-      ZENCODE_AGENT_BEARER_TOKEN   Fallback bearer token for configured remote providers.
 
     In ACP mode stdout contains only ACP JSON-RPC messages. In chat mode stdout contains only assistant text.
     """
@@ -76,7 +75,6 @@ public struct AgentConfiguration: Sendable {
     public let agentName: String?
     public let selectedAgent: AgentProfile?
     public let effectiveModelID: String?
-    public let bearerToken: String?
     public let runMode: AgentRunMode
     public let workingDirectory: URL
     public let initialSkillSelection: String?
@@ -127,7 +125,6 @@ public struct AgentConfiguration: Sendable {
             ?? agentEnvironmentValue("NAME")
             ?? agentEnvironmentValue("AGENT")
         var rawModelID = agentEnvironmentValue("MODEL")
-        var rawBearerToken = agentEnvironmentValue("BEARER_TOKEN")
         var rawRunMode = agentEnvironmentValue("MODE") ?? "automatic"
         let environmentWorkingDirectory = agentEnvironmentValue("CWD")?.nilIfBlank
         var hasExplicitWorkingDirectory = environmentWorkingDirectory != nil
@@ -164,12 +161,6 @@ public struct AgentConfiguration: Sendable {
                     throw AgentConfigurationError.missingValue(argument)
                 }
                 rawAgentName = arguments[index]
-            case "--bearer-token":
-                index += 1
-                guard index < arguments.count else {
-                    throw AgentConfigurationError.missingValue(argument)
-                }
-                rawBearerToken = arguments[index]
             case "--acp":
                 rawRunMode = AgentRunMode.acp.rawValue
             case "--cwd":
@@ -251,7 +242,6 @@ public struct AgentConfiguration: Sendable {
         self.agentName = agentName
         self.selectedAgent = selectedAgent
         self.effectiveModelID = effectiveModelID
-        self.bearerToken = rawBearerToken?.nilIfBlank
         self.runMode = runMode
         self.workingDirectory = workingDirectory
         self.initialSkillSelection = rawInitialSkillSelection?.nilIfBlank
@@ -273,7 +263,6 @@ public struct AgentConfiguration: Sendable {
         availableAgents: [AgentProfile] = AgentProfileStore.defaultProfiles(),
         availableModels: [AgentSettingsModelManifest] = [],
         cacheAgentProfiles: Bool = true,
-        bearerToken: String? = nil,
         runMode: AgentRunMode = .chat,
         workingDirectory: URL,
         initialSkillSelection: String? = nil,
@@ -303,7 +292,6 @@ public struct AgentConfiguration: Sendable {
         self.agentName = requestedAgentName ?? selectedAgent?.displayName
         self.selectedAgent = selectedAgent
         self.effectiveModelID = effectiveModelID
-        self.bearerToken = bearerToken?.nilIfBlank
         self.runMode = runMode
         self.workingDirectory = workingDirectory
         self.initialSkillSelection = initialSkillSelection?.nilIfBlank

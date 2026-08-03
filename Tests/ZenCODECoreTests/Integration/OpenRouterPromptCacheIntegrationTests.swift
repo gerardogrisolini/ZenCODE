@@ -23,7 +23,6 @@ struct OpenRouterPromptCacheIntegrationTests {
         let client = RemoteGenerationClient(
             configuration: AgentRuntimeConfiguration(
                 modelID: selection.modelID,
-                bearerToken: nil,
                 workingDirectory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
                 configuredContextWindowLimit: selection.configuredContextWindowLimit,
                 generationParameterOverrides: selection.generationParameterOverrides

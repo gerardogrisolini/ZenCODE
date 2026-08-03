@@ -130,7 +130,6 @@ extension RemoteSessionSnapshotTests {
         let history = remoteHistory()
         let configuration = AgentRuntimeConfiguration(
             modelID: "remote-model",
-            bearerToken: nil,
             workingDirectory: URL(fileURLWithPath: "/tmp/project"),
             maxToolRounds: 4,
             verboseLogging: false,
@@ -185,7 +184,6 @@ extension RemoteSessionSnapshotTests {
         }
         let configuration = AgentRuntimeConfiguration(
             modelID: "claude-haiku-4-5",
-            bearerToken: nil,
             workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
             configuredContextWindowLimit: 30_000,
             maxToolRounds: 4,

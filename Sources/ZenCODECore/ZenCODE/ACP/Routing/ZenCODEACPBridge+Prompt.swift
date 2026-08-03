@@ -656,7 +656,6 @@ extension ZenCODEACPBridge {
         return AgentCoreSessionConfiguration(
             sessionID: baseConfiguration.sessionID,
             modelID: modelID,
-            bearerToken: baseConfiguration.bearerToken,
             workingDirectory: baseConfiguration.workingDirectory,
             systemPrompt: systemPrompt,
             cacheKey: baseConfiguration.cacheKey,

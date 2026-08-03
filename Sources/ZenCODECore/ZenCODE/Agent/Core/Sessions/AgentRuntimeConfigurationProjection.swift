@@ -17,7 +17,6 @@ import Foundation
 /// into one DTO.
 protocol AgentRuntimeConfigurationProjecting {
     var projectedRuntimeModelID: String? { get }
-    var projectedRuntimeBearerToken: String? { get }
     var projectedRuntimeWorkingDirectory: URL { get }
     var projectedRuntimeMaxToolRounds: Int { get }
     var projectedRuntimeMaxOutputTokens: Int? { get }
@@ -40,7 +39,6 @@ extension AgentRuntimeConfigurationProjecting {
     ) -> AgentRuntimeConfiguration {
         AgentRuntimeConfiguration(
             modelID: projectedRuntimeModelID,
-            bearerToken: projectedRuntimeBearerToken,
             workingDirectory: projectedRuntimeWorkingDirectory,
             configuredContextWindowLimit: configuredContextWindowLimit,
             generationParameterOverrides: generationParameterOverrides,
@@ -58,7 +56,6 @@ extension AgentConfiguration: AgentRuntimeConfigurationProjecting {
     /// The CLI configuration projects the *effective* model id, which already
     /// merges the explicit flag, the agent profile, and the settings manifest.
     var projectedRuntimeModelID: String? { effectiveModelID }
-    var projectedRuntimeBearerToken: String? { bearerToken }
     var projectedRuntimeWorkingDirectory: URL { workingDirectory }
     var projectedRuntimeMaxToolRounds: Int { maxToolRounds }
     var projectedRuntimeMaxOutputTokens: Int? { maxOutputTokens }
@@ -68,7 +65,6 @@ extension AgentConfiguration: AgentRuntimeConfigurationProjecting {
 
 extension AgentCoreSessionConfiguration: AgentRuntimeConfigurationProjecting {
     var projectedRuntimeModelID: String? { modelID }
-    var projectedRuntimeBearerToken: String? { bearerToken }
     var projectedRuntimeWorkingDirectory: URL { workingDirectory }
     var projectedRuntimeMaxToolRounds: Int { maxToolRounds }
     var projectedRuntimeMaxOutputTokens: Int? { maxOutputTokens }

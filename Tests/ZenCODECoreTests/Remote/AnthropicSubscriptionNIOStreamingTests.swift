@@ -363,7 +363,6 @@ struct AnthropicSubscriptionNIOStreamingTests {
         AnthropicSubscriptionGenerationClient(
             configuration: AgentRuntimeConfiguration(
                 modelID: "claude-haiku-4-5",
-                bearerToken: nil,
                 workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
                 configuredContextWindowLimit: configuredContextWindowLimit,
                 maxToolRounds: 4,

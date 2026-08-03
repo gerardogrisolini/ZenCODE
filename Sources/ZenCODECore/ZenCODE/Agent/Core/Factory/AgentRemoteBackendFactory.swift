@@ -38,7 +38,7 @@ public enum AgentRemoteBackendFactory {
                 throw AgentCoreBackendError.missingRemoteProvider
             }
             provider = selectedProvider
-            apiKey = selection.apiKey ?? configuration.bearerToken
+            apiKey = selection.apiKey
             resolvedConfiguration = configuration
                 .withModelID(selection.modelID)
                 .withModelSettings(
@@ -54,7 +54,7 @@ public enum AgentRemoteBackendFactory {
                 modelID: modelID,
                 chatEndpoint: fallbackProvider.chatEndpoint
             )
-            apiKey = fallbackAPIKey ?? configuration.bearerToken
+            apiKey = fallbackAPIKey
             resolvedConfiguration = configuration.withModelID(modelID)
         } else {
             throw AgentCoreBackendError.missingRemoteProvider

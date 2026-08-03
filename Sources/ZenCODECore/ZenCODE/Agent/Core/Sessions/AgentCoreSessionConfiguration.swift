@@ -11,7 +11,6 @@ import ToolCore
 public struct AgentCoreSessionConfiguration: Sendable {
     public let sessionID: String
     public let modelID: String?
-    public let bearerToken: String?
     public let workingDirectory: URL
     public let systemPrompt: String?
     public let cacheKey: String?
@@ -30,7 +29,6 @@ public struct AgentCoreSessionConfiguration: Sendable {
     public init(
         sessionID: String,
         modelID: String?,
-        bearerToken: String? = nil,
         workingDirectory: URL,
         systemPrompt: String?,
         cacheKey: String?,
@@ -49,7 +47,6 @@ public struct AgentCoreSessionConfiguration: Sendable {
         self.sessionID = sessionID.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             ?? "agent-core-\(UUID().uuidString.lowercased())"
         self.modelID = modelID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        self.bearerToken = bearerToken?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.workingDirectory = workingDirectory
         self.systemPrompt = systemPrompt?.nilIfBlank
         self.cacheKey = cacheKey?.nilIfBlank
@@ -75,7 +72,6 @@ public struct AgentCoreSessionConfiguration: Sendable {
     public init(
         sessionID: String,
         modelID: String?,
-        bearerToken: String? = nil,
         workingDirectory: String,
         systemPrompt: String?,
         cacheKey: String?,
@@ -94,7 +90,6 @@ public struct AgentCoreSessionConfiguration: Sendable {
         self.init(
             sessionID: sessionID,
             modelID: modelID,
-            bearerToken: bearerToken,
             workingDirectory: URL(fileURLWithPath: workingDirectory),
             systemPrompt: systemPrompt,
             cacheKey: cacheKey,
@@ -127,7 +122,6 @@ public struct AgentCoreSessionConfiguration: Sendable {
 
     public func matchesRuntime(_ other: AgentCoreSessionConfiguration) -> Bool {
         modelID == other.modelID
-            && bearerToken == other.bearerToken
             && workingDirectory.standardizedFileURL == other.workingDirectory.standardizedFileURL
             && configuredContextWindowLimit == other.configuredContextWindowLimit
             && generationParameterOverrides == other.generationParameterOverrides
@@ -173,7 +167,6 @@ public struct AgentCoreSessionConfiguration: Sendable {
         AgentCoreSessionConfiguration(
             sessionID: sessionID,
             modelID: modelID,
-            bearerToken: bearerToken,
             workingDirectory: workingDirectory,
             systemPrompt: systemPrompt,
             cacheKey: cacheKey,

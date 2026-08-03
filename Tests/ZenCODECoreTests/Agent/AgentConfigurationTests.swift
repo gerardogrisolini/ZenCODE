@@ -26,6 +26,26 @@ struct AgentConfigurationTests {
     }
 
     @Test
+    func syntaxValidationRejectsRemovedBearerTokenOptionWithoutLoadingConfiguration() {
+        #expect(throws: AgentConfigurationError.self) {
+            try AgentConfiguration.validateArguments([
+                "zen",
+                "--bearer-token",
+                "no-longer-supported",
+            ])
+        }
+    }
+
+    @Test
+    func missingRemoteAPIKeyDirectsUsersToProviderSetup() {
+        #expect(
+            AgentCoreBackendError.missingRemoteAPIKey("Example provider")
+                .localizedDescription
+                == "No API key is stored for Example provider. Run /setup to configure that provider."
+        )
+    }
+
+    @Test
     func explicitWorkingDirectoryIsNeverReplacedByLaunchFallbacks() throws {
         let executableURL = try #require(Bundle.main.executableURL)
         let explicitDirectory = executableURL

@@ -156,7 +156,6 @@ public enum ZenCODECommandLineRunner {
             || argument == "--doctor"
             || argument == "--model"
             || argument == "--agent"
-            || argument == "--bearer-token"
             || argument == "--acp"
             || argument == "--cwd"
             || argument == "--skills"

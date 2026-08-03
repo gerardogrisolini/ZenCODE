@@ -155,7 +155,6 @@ extension ZenCODEACPBridge {
         let configuration = AgentCoreSessionConfiguration(
             sessionID: sessionID,
             modelID: modelID,
-            bearerToken: self.configuration.bearerToken,
             workingDirectory: cwd,
             systemPrompt: systemPrompt,
             cacheKey: cacheKey,
@@ -689,7 +688,6 @@ extension ZenCODEACPBridge {
         AgentCoreSessionConfiguration(
             sessionID: sessionID,
             modelID: configuration.effectiveModelID,
-            bearerToken: configuration.bearerToken,
             workingDirectory: configuration.workingDirectory,
             systemPrompt: nil,
             cacheKey: nil,
@@ -761,7 +759,6 @@ extension ZenCODEACPBridge {
         return AgentCoreSessionConfiguration(
             sessionID: sessionID,
             modelID: modelID,
-            bearerToken: configuration.bearerToken,
             workingDirectory: workingDirectory,
             systemPrompt: systemPrompt,
             cacheKey: cacheKey,
