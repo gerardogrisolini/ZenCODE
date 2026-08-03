@@ -45,9 +45,31 @@ public enum XcodeToolsFeatureRunner {
             presentation: presentation
         )
     }
+
+    /// A normal JSON-RPC error belongs to one tool request and does not make the
+    /// authenticated Xcode connection unusable. Errors that poison or close the
+    /// transport require a fresh executor.
+    static func shouldDiscardPersistentExecutor(after error: Error) -> Bool {
+        guard let clientError = error as? MCPClientError else {
+            return false
+        }
+        switch clientError {
+        case .serverError, .invalidResponse, .unsupportedMessageID:
+            return false
+        case .missingContentLength,
+             .invalidContentLength,
+             .malformedTransport,
+             .connectionClosed,
+             .unsupportedPlatform,
+             .authorizationRequired,
+             .browserAuthenticationFailed,
+             .serverExited:
+            return true
+        }
+    }
 }
 
-private struct XcodeFeatureConfiguration: MCPFeatureConfiguration {
+private struct XcodeFeatureConfiguration: MCPFeatureConfiguration, PersistentMCPFeatureConfiguration {
     let featureName = "Xcode"
     let toolNamePrefix = XcodeToolIntegration.toolPrefix
     let descriptionPrefix = XcodeToolIntegration.priorityDescriptionPrefix
@@ -69,6 +91,22 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration {
             configuration: config,
             toolNamePrefix: toolNamePrefix,
             localTransportPolicy: XcodeToolIntegration.localTransportPolicy()
+        )
+    }
+
+    /// The generic feature runner calls this only for its private `--serve`
+    /// mode. Manual `--list-tools` / `--invoke` invocations keep using the
+    /// historical methods below and remain intentionally one-shot.
+    func makePersistentSession(
+        environment: [String: String]
+    ) async throws -> any MCPFeaturePersistentSession {
+        guard isAvailable(environment: environment),
+              let configuration = XcodeMCPServerConfiguration.configuration(fromEnvironment: environment) else {
+            throw MCPFeatureError.unavailable(featureName)
+        }
+        return XcodePersistentMCPFeatureSession(
+            configuration: configuration,
+            toolNamePrefix: toolNamePrefix
         )
     }
 
@@ -161,6 +199,78 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration {
 
     func presentation(for tool: ToolDescriptor) -> ToolPresentationDefinition {
         XcodeToolIntegration.presentation(for: tool)
+    }
+}
+
+/// Stateful implementation used exclusively by the
+/// `xcode-tools-feature --serve` subprocess. Keeping this actor package-local guarantees Xcode
+/// details never leak into ZenCODECore while the same MCP connection serves
+/// discovery and every subsequent tool call.
+actor XcodePersistentMCPFeatureSession: MCPFeaturePersistentSession {
+    private let configuration: MCPServerConfiguration
+    private let toolNamePrefix: String
+    private var executor: XcodeToolExecutor?
+
+    init(configuration: MCPServerConfiguration, toolNamePrefix: String) {
+        self.configuration = configuration
+        self.toolNamePrefix = toolNamePrefix
+    }
+
+    func listTools() async throws -> [FeatureToolDescriptor] {
+        let executor = executorOrCreate()
+        do {
+            let tools = try await executor.loadTools()
+            let publicTools = tools.map { $0.prefixed(with: toolNamePrefix) }
+            return ToolDescriptor.canonicalized(publicTools).map(
+                XcodeToolsFeatureRunner.featureToolDescriptor(for:)
+            )
+        } catch {
+            await discardExecutor()
+            throw error
+        }
+    }
+
+    func invoke(toolName: String, inputData: Data) async throws -> String {
+        let arguments = try RemoteMCPFeatureRunner.decodeArguments(from: inputData)
+        let request = ToolRequest(name: toolName, arguments: arguments)
+        guard let normalizedRequest = XcodeToolIntegration.normalizedRequest(request) else {
+            throw MCPFeatureError.unavailable("Xcode")
+        }
+
+        let rawToolName = normalizedRequest.name.hasPrefix(toolNamePrefix)
+            ? String(normalizedRequest.name.dropFirst(toolNamePrefix.count))
+            : normalizedRequest.name
+        let executor = executorOrCreate()
+        do {
+            let output = try await executor.execute(
+                ToolRequest(name: rawToolName, arguments: normalizedRequest.arguments)
+            )
+            return output.text
+        } catch {
+            if XcodeToolsFeatureRunner.shouldDiscardPersistentExecutor(after: error) {
+                await discardExecutor()
+            }
+            throw error
+        }
+    }
+
+    func shutdown() async {
+        await discardExecutor()
+    }
+
+    private func executorOrCreate() -> XcodeToolExecutor {
+        if let executor {
+            return executor
+        }
+        let executor = XcodeToolExecutor(configuration: configuration)
+        self.executor = executor
+        return executor
+    }
+
+    private func discardExecutor() async {
+        let executor = executor
+        self.executor = nil
+        await executor?.disconnect()
     }
 }
 

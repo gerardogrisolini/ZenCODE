@@ -48,6 +48,7 @@ extension SwiftFeatureRuntimeTests {
           "id": "example",
           "enabled": true,
           "executable": "feature",
+          "supports_persistent_session": true,
           "tools": [
             {
               "name": "feature.example.echo",
@@ -81,6 +82,7 @@ extension SwiftFeatureRuntimeTests {
 
         #expect(bundles.count == 1)
         #expect(bundles.first?.id == "example")
+        #expect(bundles.first?.supportsPersistentSession == true)
         #expect(bundles.first?.tools.first?.name == "feature.example.echo")
         #expect(bundles.first?.tools.first?.requiredInputArgumentNames() == ["text"])
     }
@@ -165,5 +167,250 @@ extension SwiftFeatureRuntimeTests {
             allowedToolNames: ["custom."]
         )
         #expect(descriptors.map(\.name) == ["custom.dynamic"])
+    }
+}
+
+
+extension SwiftFeatureRuntimeTests {
+    @Test
+    func persistentFeatureReusesOneProcessForDiscoveryAndInvocations() async throws {
+        let fixture = try PersistentFeatureFixture()
+        defer { fixture.remove() }
+
+        let runtime = SwiftFeatureRuntime(features: [
+            fixture.bundle(supportsPersistentSession: true)
+        ])
+        let descriptors = await runtime.descriptors(allowedToolNames: ["fixture."])
+        #expect(descriptors.map(\.name) == ["fixture.echo"])
+
+        let first = try #require(await runtime.executeIfAvailable(
+            toolCall: DirectAgentToolCall(
+                id: UUID().uuidString,
+                name: "fixture.echo",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            workingDirectory: fixture.directoryURL
+        ))
+        let second = try #require(await runtime.executeIfAvailable(
+            toolCall: DirectAgentToolCall(
+                id: UUID().uuidString,
+                name: "fixture.echo",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            workingDirectory: fixture.directoryURL
+        ))
+        #expect(first == "served")
+        #expect(second == "served")
+
+        let records = try fixture.processRecords()
+        #expect(records.count == 1)
+        #expect(records.first?.hasPrefix("serve:") == true)
+        await runtime.shutdown()
+    }
+
+    @Test
+    func nonPersistentFeatureRetainsOneShotProcessIsolation() async throws {
+        let fixture = try PersistentFeatureFixture()
+        defer { fixture.remove() }
+
+        let runtime = SwiftFeatureRuntime(features: [
+            fixture.bundle(supportsPersistentSession: false)
+        ])
+        let descriptors = await runtime.descriptors(allowedToolNames: ["fixture."])
+        #expect(descriptors.map(\.name) == ["fixture.echo"])
+
+        _ = try #require(await runtime.executeIfAvailable(
+            toolCall: DirectAgentToolCall(
+                id: UUID().uuidString,
+                name: "fixture.echo",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            workingDirectory: fixture.directoryURL
+        ))
+        _ = try #require(await runtime.executeIfAvailable(
+            toolCall: DirectAgentToolCall(
+                id: UUID().uuidString,
+                name: "fixture.echo",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            workingDirectory: fixture.directoryURL
+        ))
+
+        let records = try fixture.processRecords()
+        #expect(records.count == 3)
+        #expect(records.allSatisfy { $0.hasPrefix("single:") })
+        await runtime.shutdown()
+    }
+
+    @Test
+    func persistentFeatureDoesNotRestartAfterRuntimeShutdown() async throws {
+        let fixture = try PersistentFeatureFixture()
+        defer { fixture.remove() }
+
+        let runtime = SwiftFeatureRuntime(features: [
+            fixture.bundle(supportsPersistentSession: true)
+        ])
+        _ = await runtime.descriptors(allowedToolNames: ["fixture."])
+        await runtime.shutdown()
+
+        do {
+            _ = try await runtime.executeIfAvailable(
+                toolCall: DirectAgentToolCall(
+                    id: UUID().uuidString,
+                    name: "fixture.echo",
+                    argumentsObject: [:],
+                    argumentsJSON: "{}"
+                ),
+                workingDirectory: fixture.directoryURL
+            )
+            Issue.record("A shut down runtime must not start another persistent feature process.")
+        } catch {
+            // Terminal runtime shutdown intentionally rejects later persistent
+            // requests instead of silently creating a new child.
+        }
+
+        #expect(try fixture.processRecords().filter { $0.hasPrefix("serve:") }.count == 1)
+    }
+}
+
+private struct PersistentFeatureFixture {
+    let directoryURL: URL
+    private let executableURL: URL
+    private let processLogURL: URL
+
+    init(crashOnFirstInvocation: Bool = false) throws {
+        directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "zencode-persistent-feature-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        executableURL = directoryURL.appendingPathComponent("fixture-feature")
+        processLogURL = directoryURL.appendingPathComponent("processes.log")
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        let crashMarkerURL = crashOnFirstInvocation
+            ? directoryURL.appendingPathComponent("crash-once")
+            : nil
+        try Self.script(
+            processLogURL: processLogURL,
+            crashMarkerURL: crashMarkerURL
+        ).write(
+            to: executableURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+    }
+
+    func bundle(supportsPersistentSession: Bool) -> SwiftFeatureBundle {
+        SwiftFeatureBundle(
+            id: "persistent-fixture",
+            executableURL: executableURL,
+            tools: [],
+            toolNamePrefixes: ["fixture."],
+            discoversToolsAtRuntime: true,
+            supportsPersistentSession: supportsPersistentSession
+        )
+    }
+
+    func processRecords() throws -> [String] {
+        try String(contentsOf: processLogURL, encoding: .utf8)
+            .split(separator: "\n")
+            .map(String.init)
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: directoryURL)
+    }
+
+    private static func script(processLogURL: URL, crashMarkerURL: URL?) -> String {
+        let listResponse = #"{"tools":[{"name":"fixture.echo","description":"Fixture echo","inputSchema":"{}","presentation":{"title":"Echo","action":"Echo","kind":"other","metadata":[],"sections":[]}}]}"#
+        let invocationResponse = #"{"ok":true,"output":"served"}"#
+        return """
+        #!/bin/sh
+        process_log='\(processLogURL.path)'
+        crash_marker='\(crashMarkerURL?.path ?? "")'
+        list_response=$(printf '%s' '\(listResponse)' | base64 | tr -d '\\n')
+        invocation_response=$(printf '%s' '\(invocationResponse)' | base64 | tr -d '\\n')
+        if [ "$1" = "--serve" ]; then
+          printf 'serve:%s\\n' "$$" >> "$process_log"
+          while IFS= read -r line; do
+            request_id=$(printf '%s' "$line" | sed -n 's/.*"id":"\\([^"\\]*\\)".*/\\1/p')
+            case "$line" in
+              *'"operation":"listTools"'*)
+                printf '{"id":"%s","responseData":"%s"}\\n' "$request_id" "$list_response"
+                ;;
+              *'"operation":"invoke"'*)
+                if [ -n "$crash_marker" ] && [ ! -e "$crash_marker" ]; then
+                  touch "$crash_marker"
+                  exit 9
+                fi
+                printf '{"id":"%s","responseData":"%s"}\\n' "$request_id" "$invocation_response"
+                ;;
+              *'"operation":"shutdown"'*)
+                printf '{"id":"%s","responseData":""}\\n' "$request_id"
+                exit 0
+                ;;
+            esac
+          done
+          exit 0
+        fi
+        printf 'single:%s:%s\\n' "$1" "$$" >> "$process_log"
+        if [ "$1" = "--list-tools" ]; then
+          printf '%s\\n' '\(listResponse)'
+          exit 0
+        fi
+        cat >/dev/null
+        printf '%s\\n' '\(invocationResponse)'
+        """
+    }
+}
+
+
+extension SwiftFeatureRuntimeTests {
+    @Test
+    func persistentFeatureRestartsForTheNextRequestAfterChildExit() async throws {
+        let fixture = try PersistentFeatureFixture(crashOnFirstInvocation: true)
+        defer { fixture.remove() }
+
+        let runtime = SwiftFeatureRuntime(features: [
+            fixture.bundle(supportsPersistentSession: true)
+        ])
+        _ = await runtime.descriptors(allowedToolNames: ["fixture."])
+
+        do {
+            _ = try await runtime.executeIfAvailable(
+                toolCall: DirectAgentToolCall(
+                    id: UUID().uuidString,
+                    name: "fixture.echo",
+                    argumentsObject: [:],
+                    argumentsJSON: "{}"
+                ),
+                workingDirectory: fixture.directoryURL
+            )
+            Issue.record("The first invocation should observe the fixture child exit.")
+        } catch {
+            // A request whose child dies has no exactly-once guarantee, so it is
+            // deliberately surfaced rather than replayed. The next request gets
+            // a clean process.
+        }
+
+        let output = try #require(await runtime.executeIfAvailable(
+            toolCall: DirectAgentToolCall(
+                id: UUID().uuidString,
+                name: "fixture.echo",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            workingDirectory: fixture.directoryURL
+        ))
+        #expect(output == "served")
+        #expect(try fixture.processRecords().filter { $0.hasPrefix("serve:") }.count == 2)
+        await runtime.shutdown()
     }
 }

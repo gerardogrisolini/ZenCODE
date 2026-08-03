@@ -19,31 +19,39 @@ extension SwiftFeatureRuntime {
             return cachedTools
         }
 
-        let discoveredTools = (try? await Self.discoverRuntimeTools(feature: feature)) ?? []
+        let discoveredTools = (try? await discoverRuntimeTools(feature: feature)) ?? []
         let canonicalTools = ToolDescriptor.canonicalized(feature.tools + discoveredTools)
         runtimeDiscoveredToolsByFeatureID[feature.id] = canonicalTools
         return canonicalTools
     }
 
-    private static func discoverRuntimeTools(
+    private func discoverRuntimeTools(
         feature: SwiftFeatureBundle
     ) async throws -> [ToolDescriptor] {
         // No timeout: a feature may trigger a user-consent dialog while listing
         // tools, and the process must wait until the user responds.
-        let result = try await AsyncProcessRunner.run(
-            executableURL: feature.executableURL,
-            arguments: ["--list-tools"],
-            workingDirectory: feature.executableURL.deletingLastPathComponent(),
-            environment: DeveloperToolEnvironment.processEnvironment()
-        )
-
-        guard result.exitCode == 0 else {
-            return []
+        let responseData: Data
+        if feature.supportsPersistentSession {
+            responseData = try await persistentResponse(
+                for: feature,
+                request: FeaturePersistentRequest(operation: .listTools)
+            )
+        } else {
+            let result = try await AsyncProcessRunner.run(
+                executableURL: feature.executableURL,
+                arguments: ["--list-tools"],
+                workingDirectory: feature.executableURL.deletingLastPathComponent(),
+                environment: DeveloperToolEnvironment.processEnvironment()
+            )
+            guard result.exitCode == 0 else {
+                return []
+            }
+            responseData = result.stdoutData
         }
 
         let response = try JSONDecoder().decode(
             FeatureListToolsResponse.self,
-            from: result.stdoutData
+            from: responseData
         )
         return response.tools.map(\.toolDescriptor)
     }

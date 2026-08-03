@@ -19,6 +19,7 @@ extension SwiftFeatureRuntime {
         let toolNamePrefixes: [String]
         let toolNameAliases: [String]
         let discoversToolsAtRuntime: Bool
+        let supportsPersistentSession: Bool
         let invocationTimeoutSeconds: TimeInterval?
 
         init(
@@ -31,6 +32,7 @@ extension SwiftFeatureRuntime {
             toolNamePrefixes: [String] = [],
             toolNameAliases: [String] = [],
             discoversToolsAtRuntime: Bool = false,
+            supportsPersistentSession: Bool = false,
             invocationTimeoutSeconds: TimeInterval? = nil
         ) {
             self.id = id
@@ -42,6 +44,7 @@ extension SwiftFeatureRuntime {
             self.toolNamePrefixes = toolNamePrefixes
             self.toolNameAliases = toolNameAliases
             self.discoversToolsAtRuntime = discoversToolsAtRuntime
+            self.supportsPersistentSession = supportsPersistentSession
             self.invocationTimeoutSeconds = invocationTimeoutSeconds
         }
     }
@@ -65,6 +68,7 @@ extension SwiftFeatureRuntime {
                 toolNamePrefixes: record.toolNamePrefixes,
                 toolNameAliases: record.toolNameAliases,
                 discoversToolsAtRuntime: record.discoversToolsAtRuntime,
+                supportsPersistentSession: record.supportsPersistentSession,
                 invocationTimeoutSeconds: record.invocationTimeoutSeconds,
                 source: record.source,
                 isCore: record.isCore
@@ -158,6 +162,7 @@ extension SwiftFeatureRuntime {
                 toolNamePrefixes: feature.toolNamePrefixes,
                 toolNameAliases: feature.toolNameAliases,
                 discoversToolsAtRuntime: feature.discoversToolsAtRuntime,
+                supportsPersistentSession: feature.supportsPersistentSession,
                 invocationTimeoutSeconds: feature.invocationTimeoutSeconds,
                 build: nil,
                 generated: nil,

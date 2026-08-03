@@ -10,6 +10,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Xcode tools now reuse one session-scoped feature process and MCP bridge for
+  discovery and invocation, so Xcode consent is requested once per ZenCODE
+  session instead of once per tool call.
+
 ## [1.1.0] - 2026-08-02
 
 ### Added

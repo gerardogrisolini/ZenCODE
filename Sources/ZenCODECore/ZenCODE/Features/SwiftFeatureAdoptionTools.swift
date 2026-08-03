@@ -287,6 +287,7 @@ extension SwiftFeatureRuntime {
             "enabled": enabled,
             "executable": executablePath,
             "discoversToolsAtRuntime": definition.discoversToolsAtRuntime,
+            "supportsPersistentSession": definition.supportsPersistentSession,
             "build": [
                 "system": "swiftpm",
                 "packagePath": ".",

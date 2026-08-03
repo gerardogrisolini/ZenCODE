@@ -38,11 +38,22 @@ extension SwiftFeatureRuntime {
             )
         }
 
+        return try invocationResult(result.stdoutData, feature: feature)
+    }
+
+    /// Decodes the unchanged invocation envelope returned by an opt-in
+    /// persistent feature process. The internal service transport carries these
+    /// bytes verbatim, so rendering and attachment validation remain identical
+    /// to the historical one-shot path.
+    static func invocationResult(
+        _ responseData: Data,
+        feature: SwiftFeatureBundle
+    ) throws -> SwiftFeatureInvocationResult {
         let response: SwiftFeatureInvocationResponse
         do {
             response = try JSONDecoder().decode(
                 SwiftFeatureInvocationResponse.self,
-                from: result.stdoutData
+                from: responseData
             )
         } catch {
             throw DirectToolError.invalidResponse(

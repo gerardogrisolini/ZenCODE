@@ -47,6 +47,14 @@ public enum FeatureProcessProtocol {
         }
     }
 
+    /// Returns true only for the private, opt-in session transport. Keeping it
+    /// outside `Command` avoids adding an enum case that would source-break
+    /// existing feature binaries which exhaustively switch over public
+    /// one-shot commands.
+    public static func isPersistentService(arguments: [String]) -> Bool {
+        arguments == ["--serve"]
+    }
+
     /// Encodes values using the stable formatting required by the feature
     /// process protocol.
     public static func renderJSON<T: Encodable>(_ value: T) throws -> Data {

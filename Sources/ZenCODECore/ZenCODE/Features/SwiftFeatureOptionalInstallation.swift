@@ -628,7 +628,7 @@ extension SwiftFeatureRuntime {
             destinationDirectoryURL: destinationDirectoryURL
         )
         await progress?("Refreshing the feature registry…")
-        reloadFeatureBundles()
+        await reloadFeatureBundles()
 
         return SwiftFeatureOptionalInstallReport(
             ok: true,

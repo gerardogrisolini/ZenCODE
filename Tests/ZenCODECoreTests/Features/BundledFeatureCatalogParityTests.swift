@@ -18,6 +18,12 @@ struct BundledFeatureCatalogParityTests {
             #expect(definition?.executableName == feature.productName)
             #expect(definition?.sourceRelativePath == feature.sourceRelativePath)
         }
+        #expect(
+            definitionsByID.values
+                .filter(\.supportsPersistentSession)
+                .map(\.id)
+                .sorted() == ["xcode-tools"]
+        )
     }
 
     @Test

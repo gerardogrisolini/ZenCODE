@@ -63,6 +63,24 @@ public protocol MCPFeatureConfiguration {
     func mapError(_ error: Error) -> Error
 }
 
+/// Session object owned by an opt-in persistent MCP feature process. The
+/// process runner serializes calls; implementations can therefore retain one
+/// authenticated executor/connection until `shutdown()`.
+public protocol MCPFeaturePersistentSession: Sendable {
+    func listTools() async throws -> [FeatureToolDescriptor]
+    func invoke(toolName: String, inputData: Data) async throws -> String
+    func shutdown() async
+}
+
+/// Optional refinement for MCP features that explicitly support the private
+/// `--serve` protocol. Ordinary MCP features keep using the established
+/// one-shot runner and are never made persistent merely by sharing this kit.
+public protocol PersistentMCPFeatureConfiguration: MCPFeatureConfiguration {
+    func makePersistentSession(
+        environment: [String: String]
+    ) async throws -> any MCPFeaturePersistentSession
+}
+
 // MARK: - Default executor-based implementation
 
 /// Defaults that work for standard MCP features backed by `RemoteMCPToolExecutor`.
@@ -142,9 +160,16 @@ public enum RemoteMCPFeatureRunner {
         arguments: [String] = Array(CommandLine.arguments.dropFirst()),
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) async {
-        let command = FeatureProcessProtocol.parse(arguments: arguments)
-
         do {
+            if FeatureProcessProtocol.isPersistentService(arguments: arguments) {
+                try await runPersistentService(
+                    configuration: configuration,
+                    environment: environment
+                )
+                return
+            }
+
+            let command = FeatureProcessProtocol.parse(arguments: arguments)
             switch command {
             case .listTools:
                 let tools = try await configuration.listTools(environment: environment)
@@ -186,6 +211,63 @@ public enum RemoteMCPFeatureRunner {
             )
             terminate(code: 1)
         }
+    }
+
+    private static func runPersistentService(
+        configuration: some MCPFeatureConfiguration,
+        environment: [String: String]
+    ) async throws {
+        guard let persistentConfiguration = configuration as? any PersistentMCPFeatureConfiguration else {
+            throw MCPFeatureError.unavailable(configuration.featureName)
+        }
+        let session = try await persistentConfiguration.makePersistentSession(
+            environment: environment
+        )
+        await FeaturePersistentService.run(
+            handler: { request in
+                switch request.operation {
+                case .listTools:
+                    return try FeatureProcessProtocol.renderJSON(
+                        FeatureListToolsResponse(
+                            tools: FeatureToolDescriptor.canonicalized(
+                                try await session.listTools()
+                            )
+                        )
+                    )
+                case .invoke:
+                    guard let toolName = request.toolName else {
+                        throw MCPFeatureError.invalidArguments
+                    }
+                    do {
+                        let output = try await session.invoke(
+                            toolName: toolName,
+                            inputData: request.inputData ?? Data()
+                        )
+                        return try FeatureProcessProtocol.renderJSON(
+                            InvocationResponse(
+                                ok: true,
+                                output: .string(output),
+                                error: nil
+                            )
+                        )
+                    } catch {
+                        let mapped = configuration.mapError(error)
+                        return try FeatureProcessProtocol.renderJSON(
+                            InvocationResponse(
+                                ok: false,
+                                output: nil,
+                                error: mapped.localizedDescription
+                            )
+                        )
+                    }
+                case .shutdown:
+                    return Data()
+                }
+            },
+            shutdown: {
+                await session.shutdown()
+            }
+        )
     }
 
     // MARK: - Shared utilities

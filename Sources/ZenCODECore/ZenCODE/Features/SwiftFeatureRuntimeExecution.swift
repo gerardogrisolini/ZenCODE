@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 03/06/26.
 //
 
+import FeatureKit
 import Foundation
 import ToolCore
 
@@ -79,6 +80,27 @@ extension SwiftFeatureRuntime {
     ) async throws -> SwiftFeatureInvocationResult? {
         guard let feature = features.first(where: { $0.contains(toolName: toolCall.name) }) else {
             return nil
+        }
+
+        if feature.supportsPersistentSession {
+            let responseData: Data
+            do {
+                responseData = try await persistentResponse(
+                    for: feature,
+                    request: FeaturePersistentRequest(
+                        operation: .invoke,
+                        toolName: toolCall.name,
+                        workingDirectoryPath: workingDirectory.path,
+                        inputData: Data(toolCall.argumentsJSON.utf8)
+                    ),
+                    timeout: feature.invocationTimeoutSeconds ?? 60
+                )
+            } catch let error as FeaturePersistentProcessError where error.kind == .timedOut {
+                throw DirectToolError.timedOut(
+                    "Swift feature '\(feature.id)' timed out.\n\(error.localizedDescription)"
+                )
+            }
+            return try Self.invocationResult(responseData, feature: feature)
         }
 
         let result = try await AsyncProcessRunner.run(

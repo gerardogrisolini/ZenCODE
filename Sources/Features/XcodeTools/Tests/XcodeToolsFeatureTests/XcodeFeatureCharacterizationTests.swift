@@ -55,6 +55,22 @@ struct XcodeFeatureCharacterizationTests {
         #expect(!XcodeMCPServerConfiguration.isBridgeConfiguration(unrelated))
     }
 
+    @Test
+    func persistentSessionKeepsConnectionAfterRequestError() {
+        #expect(!XcodeToolsFeatureRunner.shouldDiscardPersistentExecutor(
+            after: MCPClientError.serverError(code: -32602, message: "Invalid arguments")
+        ))
+        #expect(XcodeToolsFeatureRunner.shouldDiscardPersistentExecutor(
+            after: MCPClientError.connectionClosed
+        ))
+        #expect(XcodeToolsFeatureRunner.shouldDiscardPersistentExecutor(
+            after: MCPClientError.authorizationRequired(
+                service: "Xcode",
+                message: "Consent required"
+            )
+        ))
+    }
+
     #if os(macOS)
     @Test
     func mcpBridgeUsesOptimisticInitializedHandshake() async throws {
@@ -120,6 +136,80 @@ struct XcodeFeatureCharacterizationTests {
             return try #require(object["method"] as? String)
         }
         #expect(methods == ["initialize", "notifications/initialized"])
+    }
+
+    @Test
+    func persistentSessionReusesOneMCPBridgeForDiscoveryAndInvocations() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("xcode-mcp-persistent-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+
+        let launchesURL = rootURL.appendingPathComponent("launches.log")
+        let requestsURL = rootURL.appendingPathComponent("requests.jsonl")
+        let executableURL = rootURL.appendingPathComponent("mcpbridge")
+        try """
+        #!/bin/sh
+        printf '%s\n' "$$" >> "\(launchesURL.path)"
+        while IFS= read -r line; do
+          printf '%s\n' "$line" >> "\(requestsURL.path)"
+          case "$line" in
+            *initialized*)
+              printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}}}'
+              ;;
+            *tools*list*)
+              printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"XcodeRead","description":"Read a file","inputSchema":{"type":"object"}}]}}'
+              ;;
+            *tools*call*)
+              request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\\([0-9][0-9]*\\).*/\\1/p')
+              printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"ok"}]}}\n' "$request_id"
+              ;;
+          esac
+        done
+        """.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+
+        let session = XcodePersistentMCPFeatureSession(
+            configuration: MCPServerConfiguration(
+                executablePath: executableURL.path,
+                arguments: [],
+                environment: [:]
+            ),
+            toolNamePrefix: XcodeToolIntegration.toolPrefix
+        )
+        do {
+            let tools = try await session.listTools()
+            #expect(tools.map(\.name) == ["xcode.XcodeRead"])
+            _ = try await session.invoke(
+                toolName: "xcode.XcodeRead",
+                inputData: Data("{}".utf8)
+            )
+            _ = try await session.invoke(
+                toolName: "xcode.XcodeRead",
+                inputData: Data("{}".utf8)
+            )
+            await session.shutdown()
+        } catch {
+            await session.shutdown()
+            throw error
+        }
+
+        let launches = try String(contentsOf: launchesURL, encoding: .utf8)
+            .split(separator: "\n")
+        #expect(launches.count == 1)
+        let methods = try String(contentsOf: requestsURL, encoding: .utf8)
+            .split(separator: "\n")
+            .compactMap { line -> String? in
+                let object = try JSONSerialization.jsonObject(with: Data(line.utf8))
+                return (object as? [String: Any])?["method"] as? String
+            }
+        #expect(methods.filter { $0 == "tools/list" }.count == 1)
+        #expect(methods.filter { $0 == "tools/call" }.count == 2)
     }
 
     @Test

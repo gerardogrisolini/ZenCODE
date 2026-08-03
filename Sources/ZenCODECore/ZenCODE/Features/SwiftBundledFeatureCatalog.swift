@@ -107,6 +107,7 @@ enum SwiftBundledFeatureCatalog {
                     "RunSomeTests"
                 ],
                 discoversToolsAtRuntime: true,
+                supportsPersistentSession: true,
                 invocationTimeoutSeconds: 3_660
             ),
             SwiftFeatureRuntime.BundledFeatureDefinition(

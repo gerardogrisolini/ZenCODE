@@ -112,6 +112,7 @@ public enum SwiftFeatureRegistry {
                     toolNamePrefixes: record.toolNamePrefixes,
                     toolNameAliases: record.toolNameAliases,
                     discoversToolsAtRuntime: record.discoversToolsAtRuntime,
+                    supportsPersistentSession: record.supportsPersistentSession,
                     invocationTimeoutSeconds: record.invocationTimeoutSeconds,
                     source: .generated,
                     isCore: false
@@ -188,6 +189,7 @@ public enum SwiftFeatureRegistry {
             toolNamePrefixes: manifest.toolNamePrefixes,
             toolNameAliases: manifest.toolNameAliases,
             discoversToolsAtRuntime: manifest.discoversToolsAtRuntime,
+            supportsPersistentSession: manifest.supportsPersistentSession,
             invocationTimeoutSeconds: manifest.invocationTimeoutSeconds,
             build: manifest.build,
             generated: manifest.generated,

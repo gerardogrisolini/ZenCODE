@@ -11,7 +11,12 @@ public enum FeatureRunner {
         arguments: [String] = CommandLine.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) async {
-        let command = FeatureProcessProtocol.parse(arguments: Array(arguments.dropFirst()))
+        let featureArguments = Array(arguments.dropFirst())
+        if FeatureProcessProtocol.isPersistentService(arguments: featureArguments) {
+            await runPersistentService(tools: tools, environment: environment)
+            return
+        }
+        let command = FeatureProcessProtocol.parse(arguments: featureArguments)
         do {
             switch command {
             case .listTools:
@@ -21,23 +26,14 @@ public enum FeatureRunner {
                     )
                 )
             case let .invoke(toolName, workingDirectory):
-                guard let tool = tools.first(where: { $0.descriptor.name == toolName }) else {
-                    throw FeatureRunnerError.unknownTool(toolName)
-                }
-                let inputData = FileHandle.standardInput.readDataToEndOfFile()
-                let context = FeatureContext(
-                    workingDirectory: workingDirectory
-                        ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+                let response = try await invokeResponse(
+                    tools: tools,
+                    toolName: toolName,
+                    workingDirectory: workingDirectory,
+                    inputData: FileHandle.standardInput.readDataToEndOfFile(),
                     environment: environment
                 )
-                let invocationResult = try await tool.invokeResult(
-                    inputData: inputData,
-                    context: context
-                )
-                try FeatureProcessProtocol.emitSuccess(
-                    outputData: invocationResult.outputData,
-                    attachments: invocationResult.attachments
-                )
+                FileHandle.standardOutput.write(response)
             case .usage:
                 try FeatureProcessProtocol.emitJSON(
                     FeatureErrorResponse(error: FeatureProcessProtocol.usageText)
@@ -49,6 +45,60 @@ public enum FeatureRunner {
                 FeatureErrorResponse(error: error.localizedDescription)
             )
             FeatureProcessProtocol.terminate(code: 1)
+        }
+    }
+
+    private static func invokeResponse(
+        tools: [AnyFeatureTool],
+        toolName: String,
+        workingDirectory: URL?,
+        inputData: Data,
+        environment: [String: String]
+    ) async throws -> Data {
+        guard let tool = tools.first(where: { $0.descriptor.name == toolName }) else {
+            throw FeatureRunnerError.unknownTool(toolName)
+        }
+        let context = FeatureContext(
+            workingDirectory: workingDirectory
+                ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+            environment: environment
+        )
+        let invocationResult = try await tool.invokeResult(
+            inputData: inputData,
+            context: context
+        )
+        return try FeatureProcessProtocol.renderSuccess(
+            outputData: invocationResult.outputData,
+            attachments: invocationResult.attachments
+        )
+    }
+
+    private static func runPersistentService(
+        tools: [AnyFeatureTool],
+        environment: [String: String]
+    ) async {
+        await FeaturePersistentService.run { request in
+            switch request.operation {
+            case .listTools:
+                return try FeatureProcessProtocol.renderJSON(
+                    FeatureListToolsResponse(
+                        tools: FeatureToolDescriptor.canonicalized(tools.map(\.descriptor))
+                    )
+                )
+            case .invoke:
+                guard let toolName = request.toolName else {
+                    throw FeatureRunnerError.unknownTool("")
+                }
+                return try await invokeResponse(
+                    tools: tools,
+                    toolName: toolName,
+                    workingDirectory: request.workingDirectoryPath.map(URL.init(fileURLWithPath:)),
+                    inputData: request.inputData ?? Data(),
+                    environment: environment
+                )
+            case .shutdown:
+                return Data()
+            }
         }
     }
 }

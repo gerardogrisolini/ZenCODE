@@ -20,6 +20,9 @@ public struct SwiftFeatureBundle: Hashable, Sendable {
     public let toolNamePrefixes: [String]
     public let toolNameAliases: [String]
     public let discoversToolsAtRuntime: Bool
+    /// Opts this bundle into the private session-scoped `--serve` transport.
+    /// Defaults to false so generated and existing features remain one-shot.
+    public let supportsPersistentSession: Bool
     public let invocationTimeoutSeconds: TimeInterval?
     public let source: SwiftFeatureBundleSource
     public let isCore: Bool
@@ -31,6 +34,7 @@ public struct SwiftFeatureBundle: Hashable, Sendable {
         toolNamePrefixes: [String] = [],
         toolNameAliases: [String] = [],
         discoversToolsAtRuntime: Bool = false,
+        supportsPersistentSession: Bool = false,
         invocationTimeoutSeconds: TimeInterval? = nil,
         source: SwiftFeatureBundleSource = .generated,
         isCore: Bool = false
@@ -41,6 +45,7 @@ public struct SwiftFeatureBundle: Hashable, Sendable {
         self.toolNamePrefixes = toolNamePrefixes
         self.toolNameAliases = toolNameAliases
         self.discoversToolsAtRuntime = discoversToolsAtRuntime
+        self.supportsPersistentSession = supportsPersistentSession
         self.invocationTimeoutSeconds = invocationTimeoutSeconds
         self.source = source
         self.isCore = isCore
@@ -101,6 +106,7 @@ public struct SwiftFeatureManifest: Codable, Sendable {
     public let toolNamePrefixes: [String]
     public let toolNameAliases: [String]
     public let discoversToolsAtRuntime: Bool
+    public let supportsPersistentSession: Bool
     public let invocationTimeoutSeconds: TimeInterval?
     public let build: SwiftFeatureBuildManifest?
     public let generated: SwiftFeatureGeneratedManifest?
@@ -123,6 +129,8 @@ public struct SwiftFeatureManifest: Codable, Sendable {
         case tool_name_aliases
         case discoversToolsAtRuntime
         case discovers_tools_at_runtime
+        case supportsPersistentSession
+        case supports_persistent_session
         case invocationTimeoutSeconds
         case invocation_timeout_seconds
         case build
@@ -168,6 +176,13 @@ public struct SwiftFeatureManifest: Codable, Sendable {
             Bool.self,
             forKey: .discovers_tools_at_runtime
         ) ?? false
+        self.supportsPersistentSession = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .supportsPersistentSession
+        ) ?? container.decodeIfPresent(
+            Bool.self,
+            forKey: .supports_persistent_session
+        ) ?? false
         let invocationTimeoutSeconds = try container.decodeIfPresent(
             TimeInterval.self,
             forKey: .invocationTimeoutSeconds
@@ -197,6 +212,9 @@ public struct SwiftFeatureManifest: Codable, Sendable {
         }
         if discoversToolsAtRuntime {
             try container.encode(discoversToolsAtRuntime, forKey: .discoversToolsAtRuntime)
+        }
+        if supportsPersistentSession {
+            try container.encode(supportsPersistentSession, forKey: .supportsPersistentSession)
         }
         try container.encodeIfPresent(invocationTimeoutSeconds, forKey: .invocationTimeoutSeconds)
         try container.encodeIfPresent(build, forKey: .build)
@@ -446,6 +464,7 @@ public struct SwiftFeatureRecord: Sendable {
     public let toolNamePrefixes: [String]
     public let toolNameAliases: [String]
     public let discoversToolsAtRuntime: Bool
+    public let supportsPersistentSession: Bool
     public let invocationTimeoutSeconds: TimeInterval?
     public let build: SwiftFeatureBuildManifest?
     public let generated: SwiftFeatureGeneratedManifest?

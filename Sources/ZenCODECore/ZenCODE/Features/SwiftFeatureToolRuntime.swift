@@ -5,7 +5,9 @@
 //  Created by Gerardo Grisolini on 30/05/26.
 //
 
+import FeatureKit
 import Foundation
+import ToolCore
 
 public actor SwiftFeatureRuntime {
     public static let featurePackageToolsAllowedName = "feature.tools"
@@ -35,6 +37,16 @@ public actor SwiftFeatureRuntime {
     let fileManager: FileManager
     var features: [SwiftFeatureBundle]
     var runtimeDiscoveredToolsByFeatureID: [String: [ToolDescriptor]] = [:]
+    /// Child processes are owned by this actor, so a runtime injected into a
+    /// sub-agent retains the same feature connection for the entire root
+    /// session. Only bundles that explicitly opt in create an entry here.
+    var persistentProcessesByFeatureID: [String: FeaturePersistentProcess] = [:]
+    /// Actor methods are reentrant while a child shuts down. Gate process
+    /// creation so a concurrent invocation cannot resurrect a session during
+    /// reload or after terminal runtime shutdown.
+    var acceptsPersistentProcessRequests = true
+    var persistentProcessesWereShutDown = false
+    var persistentProcessReloadCount = 0
 
     public init(
         features explicitFeatures: [SwiftFeatureBundle]? = nil,
@@ -52,5 +64,54 @@ public actor SwiftFeatureRuntime {
                 fileManager: fileManager
             )
         }
+    }
+
+    deinit {
+        let processes = Array(persistentProcessesByFeatureID.values)
+        Task(name: "Swift feature runtime deinit shutdown") {
+            for process in processes {
+                await process.shutdown()
+            }
+        }
+    }
+
+    /// Releases all opt-in feature processes owned by this runtime. Hosts that
+    /// manage their own session lifecycle may call this explicitly; deinit also
+    /// performs a best-effort shutdown when the shared runtime is released.
+    public func shutdown() async {
+        persistentProcessesWereShutDown = true
+        acceptsPersistentProcessRequests = false
+        let processes = Array(persistentProcessesByFeatureID.values)
+        persistentProcessesByFeatureID.removeAll()
+        for process in processes {
+            await process.shutdown()
+        }
+    }
+
+    func persistentProcess(for feature: SwiftFeatureBundle) throws -> FeaturePersistentProcess {
+        guard acceptsPersistentProcessRequests else {
+            throw FeaturePersistentProcessError(
+                kind: .closed,
+                message: "Swift feature runtime is not accepting persistent requests."
+            )
+        }
+        if let existing = persistentProcessesByFeatureID[feature.id] {
+            return existing
+        }
+        let process = FeaturePersistentProcess(
+            executableURL: feature.executableURL,
+            workingDirectory: feature.executableURL.deletingLastPathComponent(),
+            environment: DeveloperToolEnvironment.processEnvironment()
+        )
+        persistentProcessesByFeatureID[feature.id] = process
+        return process
+    }
+
+    func persistentResponse(
+        for feature: SwiftFeatureBundle,
+        request: FeaturePersistentRequest,
+        timeout: TimeInterval? = nil
+    ) async throws -> Data {
+        try await persistentProcess(for: feature).response(to: request, timeout: timeout)
     }
 }

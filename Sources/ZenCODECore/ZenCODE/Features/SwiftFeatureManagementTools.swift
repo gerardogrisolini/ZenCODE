@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 03/06/26.
 //
 
+import FeatureKit
 import Foundation
 import ToolCore
 
@@ -39,16 +40,16 @@ extension SwiftFeatureRuntime {
             )
         case "feature.delete":
             let report = try await deleteFeature(arguments: arguments)
-            reloadFeatureBundles()
+            await reloadFeatureBundles()
             return try renderJSON(report)
         case "feature.edit", "feature.update":
             let report = try editFeature(arguments: arguments)
             if report.adopt != nil {
-                reloadFeatureBundles()
+                await reloadFeatureBundles()
             }
             return try renderJSON(report)
         case "feature.reload":
-            reloadFeatureBundles()
+            await reloadFeatureBundles()
             return try await renderFeatureList(
                 prefix: "Reloaded Swift features.",
                 includeTools: arguments.bool("includeTools", "include_tools") ?? true,
@@ -62,7 +63,7 @@ extension SwiftFeatureRuntime {
         case "feature.build":
             let report = try await buildFeature(arguments: arguments)
             if report.ok {
-                reloadFeatureBundles()
+                await reloadFeatureBundles()
             }
             return try renderJSON(report)
         case "feature.scaffold":
@@ -71,7 +72,7 @@ extension SwiftFeatureRuntime {
         case "feature.install":
             let report = try await installFeature(arguments: arguments)
             if report.ok {
-                reloadFeatureBundles()
+                await reloadFeatureBundles()
             }
             return try renderJSON(report)
         default:
@@ -103,7 +104,7 @@ extension SwiftFeatureRuntime {
                 enabled: enabled,
                 fileManager: fileManager
             )
-            reloadFeatureBundles()
+            await reloadFeatureBundles()
             return
         }
 
@@ -114,7 +115,7 @@ extension SwiftFeatureRuntime {
                 enabled: enabled,
                 fileManager: fileManager
             )
-            reloadFeatureBundles()
+            await reloadFeatureBundles()
             return
         }
 
@@ -522,7 +523,7 @@ extension SwiftFeatureRuntime {
             try await setFeature(id: report.id, enabled: true)
             enabled = true
         } else if buildReport?.ok == true {
-            reloadFeatureBundles()
+            await reloadFeatureBundles()
         }
 
         return SwiftFeatureScaffoldReport(
@@ -628,7 +629,7 @@ extension SwiftFeatureRuntime {
         guard validation.errors.isEmpty else {
             // Installation has deliberately not enabled the feature. Reloading
             // drops any stale discovery cache before surfacing the failure.
-            reloadFeatureBundles()
+            await reloadFeatureBundles()
             throw DirectToolError.permissionDenied(
                 "Feature validation failed before enable:\n"
                     + validation.errors.joined(separator: "\n")
@@ -654,7 +655,7 @@ extension SwiftFeatureRuntime {
            buildReport?.ok ?? !shouldBuild {
             try await setFeature(id: id, enabled: true)
         } else {
-            reloadFeatureBundles()
+            await reloadFeatureBundles()
         }
 
         return SwiftFeatureInstallReport(
@@ -722,11 +723,22 @@ extension SwiftFeatureRuntime {
         throw DirectToolError.permissionDenied("Unknown generated Swift feature: \(id).")
     }
 
-    func reloadFeatureBundles() {
+    func reloadFeatureBundles() async {
         runtimeDiscoveredToolsByFeatureID.removeAll()
+        persistentProcessReloadCount += 1
+        acceptsPersistentProcessRequests = false
+        let processes = Array(persistentProcessesByFeatureID.values)
+        persistentProcessesByFeatureID.removeAll()
+        for process in processes {
+            await process.shutdown()
+        }
         features = explicitFeatures ?? Self.defaultFeatureBundles(
             searchRoots: featureSearchRoots,
             fileManager: fileManager
         )
+        persistentProcessReloadCount -= 1
+        if persistentProcessReloadCount == 0, !persistentProcessesWereShutDown {
+            acceptsPersistentProcessRequests = true
+        }
     }
 }

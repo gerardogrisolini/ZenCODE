@@ -107,6 +107,15 @@ text tool result followed by a grouped user image message, Responses receives a
 the image content inside `tool_result`. A feature-generated image path must
 never be sent to the remote provider as a substitute for the image bytes.
 
+Feature manifests may opt into the additive `supportsPersistentSession` flag.
+For those features, the session-owned `SwiftFeatureRuntime` starts one private
+`--serve` JSON-lines process and reuses it for runtime discovery plus subsequent
+invocations; reload, explicit shutdown, or runtime teardown closes the process.
+The transport is opt-in and internal: the stable one-shot `--list-tools` and
+`--invoke` commands and their JSON envelopes remain unchanged. `xcode-tools`
+uses this mode so its package-local MCP executor and Xcode consent live for the
+whole ZenCODE session instead of being recreated for every tool call.
+
 `RemoteTransportCore()` borrows the process-wide NIO event-loop group. A client
 that constructs its own transport closes it during `shutdown()`; an explicitly
 injected transport remains owned by its embedding composition root. The ChatGPT
