@@ -46,33 +46,38 @@ extension ZenCODEACPBridge {
     }
 
     public static func toolCallCreateUpdate(
-        for toolCall: DirectAgentToolCall
+        for toolCall: DirectAgentToolCall,
+        workingDirectory: URL? = nil
     ) -> [String: Any] {
         [
             "sessionUpdate": "tool_call",
             "toolCallId": toolCall.id,
             "title": toolTitle(for: toolCall),
-            "kind": toolKind(for: toolCall),
+            "kind": toolKind(for: toolCall, workingDirectory: workingDirectory),
             "status": "pending",
             "rawInput": toolCall.argumentsObject,
             "content": [] as [Any],
-            "locations": toolLocations(for: toolCall)
+            "locations": toolLocations(for: toolCall, workingDirectory: workingDirectory)
         ]
     }
 
     /// Sendable ACP wire representation used by prompt event callbacks.
     public static func toolCallCreateJSONUpdate(
-        for toolCall: DirectAgentToolCall
+        for toolCall: DirectAgentToolCall,
+        workingDirectory: URL? = nil
     ) -> JSONValue {
         .object([
             "sessionUpdate": .string("tool_call"),
             "toolCallId": .string(toolCall.id),
             "title": .string(toolTitle(for: toolCall)),
-            "kind": .string(toolKind(for: toolCall)),
+            "kind": .string(toolKind(for: toolCall, workingDirectory: workingDirectory)),
             "status": .string("pending"),
             "rawInput": toolArgumentsJSONValue(for: toolCall),
             "content": .array([]),
-            "locations": .array(toolLocations(for: toolCall).map { JSONValue.acpValue(from: $0) })
+            "locations": .array(
+                toolLocations(for: toolCall, workingDirectory: workingDirectory)
+                    .map { JSONValue.acpValue(from: $0) }
+            )
         ])
     }
 
@@ -168,42 +173,48 @@ extension ZenCODEACPBridge {
     }
 
     public static func toolCallProgressUpdate(
-        for toolCall: DirectAgentToolCall
+        for toolCall: DirectAgentToolCall,
+        workingDirectory: URL? = nil
     ) -> [String: Any] {
         [
             "sessionUpdate": "tool_call_update",
             "toolCallId": toolCall.id,
             "title": toolTitle(for: toolCall),
-            "kind": toolKind(for: toolCall),
+            "kind": toolKind(for: toolCall, workingDirectory: workingDirectory),
             "status": "in_progress",
             "rawInput": toolCall.argumentsObject,
-            "locations": toolLocations(for: toolCall)
+            "locations": toolLocations(for: toolCall, workingDirectory: workingDirectory)
         ]
     }
 
     public static func toolCallProgressJSONUpdate(
-        for toolCall: DirectAgentToolCall
+        for toolCall: DirectAgentToolCall,
+        workingDirectory: URL? = nil
     ) -> JSONValue {
         .object([
             "sessionUpdate": .string("tool_call_update"),
             "toolCallId": .string(toolCall.id),
             "title": .string(toolTitle(for: toolCall)),
-            "kind": .string(toolKind(for: toolCall)),
+            "kind": .string(toolKind(for: toolCall, workingDirectory: workingDirectory)),
             "status": .string("in_progress"),
             "rawInput": toolArgumentsJSONValue(for: toolCall),
-            "locations": .array(toolLocations(for: toolCall).map { JSONValue.acpValue(from: $0) })
+            "locations": .array(
+                toolLocations(for: toolCall, workingDirectory: workingDirectory)
+                    .map { JSONValue.acpValue(from: $0) }
+            )
         ])
     }
 
     public static func toolCallCompletionUpdate(
         for toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult
+        result: DirectAgentToolResult,
+        workingDirectory: URL? = nil
     ) -> [String: Any] {
         return [
             "sessionUpdate": "tool_call_update",
             "toolCallId": toolCall.id,
             "title": toolTitle(for: toolCall),
-            "kind": toolKind(for: toolCall),
+            "kind": toolKind(for: toolCall, workingDirectory: workingDirectory),
             "status": result.isFailure ? "failed" : "completed",
             "rawInput": toolCall.argumentsObject,
             "rawOutput": [
@@ -219,19 +230,20 @@ extension ZenCODEACPBridge {
                     ]
                 ]
             ],
-            "locations": toolLocations(for: toolCall)
+            "locations": toolLocations(for: toolCall, workingDirectory: workingDirectory)
         ]
     }
 
     public static func toolCallCompletionJSONUpdate(
         for toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult
+        result: DirectAgentToolResult,
+        workingDirectory: URL? = nil
     ) -> JSONValue {
         .object([
             "sessionUpdate": .string("tool_call_update"),
             "toolCallId": .string(toolCall.id),
             "title": .string(toolTitle(for: toolCall)),
-            "kind": .string(toolKind(for: toolCall)),
+            "kind": .string(toolKind(for: toolCall, workingDirectory: workingDirectory)),
             "status": .string(result.isFailure ? "failed" : "completed"),
             "rawInput": toolArgumentsJSONValue(for: toolCall),
             "rawOutput": .object([
@@ -247,7 +259,10 @@ extension ZenCODEACPBridge {
                     ])
                 ])
             ]),
-            "locations": .array(toolLocations(for: toolCall).map { JSONValue.acpValue(from: $0) })
+            "locations": .array(
+                toolLocations(for: toolCall, workingDirectory: workingDirectory)
+                    .map { JSONValue.acpValue(from: $0) }
+            )
         ])
     }
 
@@ -277,16 +292,60 @@ extension ZenCODEACPBridge {
         ToolCallPresentation.toolTitle(for: toolCall)
     }
 
-    public static func toolKind(for toolCall: DirectAgentToolCall) -> String {
-        ToolCallPresentation.toolKind(for: toolCall)
+    public static func toolKind(
+        for toolCall: DirectAgentToolCall,
+        workingDirectory: URL? = nil
+    ) -> String {
+        acpToolKind(
+            ToolCallPresentation.toolKind(for: toolCall),
+            hasFileLocations: !toolLocations(
+                for: toolCall,
+                workingDirectory: workingDirectory
+            ).isEmpty
+        )
+    }
+
+    /// ACP v1 defines a closed tool-kind set: `read`, `edit`, `delete`, `move`,
+    /// `search`, `execute`, `think`, `fetch`, `switch_mode`, and `other`. The
+    /// internal presentation taxonomy is richer, so every value without a
+    /// protocol counterpart is mapped onto the nearest valid kind: a client that
+    /// decodes `kind` into that closed set cannot render an unknown value, and
+    /// the tool call degrades to an unlabeled row.
+    public static func acpToolKind(
+        _ presentationKind: String,
+        hasFileLocations: Bool = false
+    ) -> String {
+        switch presentationKind {
+        case "read", "edit", "delete", "move", "search", "execute", "think", "fetch", "switch_mode":
+            return presentationKind
+        case "inspect":
+            // Inspecting a file or a resource reads it without mutating it.
+            return "read"
+        case "create":
+            // Creating a filesystem entry is a file mutation, while creating a
+            // task or a sub-agent is not and must stay generic.
+            return hasFileLocations ? "edit" : "other"
+        case "destructive":
+            // Permission requests use this internal kind for irreversible
+            // operations; `delete` is the only protocol kind that conveys it.
+            return "delete"
+        default:
+            return "other"
+        }
     }
 
     public static func toolIcon(for toolName: String) -> String {
         ToolCallPresentation.toolIcon(for: toolName)
     }
 
-    public static func toolLocations(for toolCall: DirectAgentToolCall) -> [[String: Any]] {
-        ToolCallPresentation.toolLocations(for: toolCall)
+    public static func toolLocations(
+        for toolCall: DirectAgentToolCall,
+        workingDirectory: URL? = nil
+    ) -> [[String: Any]] {
+        ToolCallPresentation.toolLocations(
+            for: toolCall,
+            workingDirectory: workingDirectory
+        )
     }
 
     public static func displayToolTarget(for toolCall: DirectAgentToolCall) -> String? {

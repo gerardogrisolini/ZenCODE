@@ -93,18 +93,28 @@ public enum ToolCallPresentation {
         "uri"
     ]
 
-    public static func toolLocations(for toolCall: DirectAgentToolCall) -> [[String: Any]] {
+    /// `workingDirectory` is the session working directory used by the tools
+    /// themselves to resolve relative arguments. Consumers that report absolute
+    /// locations (such as ACP clients) must pass it, otherwise a relative
+    /// argument would be resolved against the agent process directory, which is
+    /// chosen by the launching client and is unrelated to the session workspace.
+    public static func toolLocations(
+        for toolCall: DirectAgentToolCall,
+        workingDirectory: URL? = nil
+    ) -> [[String: Any]] {
         var seen = Set<String>()
         var locations: [[String: Any]] = []
 
         appendLocations(
             stringArguments(from: toolCall.argumentsObject, keys: locationStringArgumentKeys),
+            workingDirectory: workingDirectory,
             seen: &seen,
             locations: &locations
         )
         if toolCall.name == "local.readFiles" {
             appendLocations(
                 pathArrayArguments(from: toolCall.argumentsObject, keys: readFilesPathArrayArgumentKeys),
+                workingDirectory: workingDirectory,
                 seen: &seen,
                 locations: &locations
             )
@@ -112,6 +122,7 @@ public enum ToolCallPresentation {
         if toolCall.name == "local.applyPatch" {
             appendLocations(
                 patchPathTargets(from: toolCall.argumentsObject),
+                workingDirectory: workingDirectory,
                 seen: &seen,
                 locations: &locations
             )
@@ -121,18 +132,34 @@ public enum ToolCallPresentation {
 
     private static func appendLocations(
         _ paths: [String],
+        workingDirectory: URL?,
         seen: inout Set<String>,
         locations: inout [[String: Any]]
     ) {
         for path in paths {
-            let normalizedPath = URL(fileURLWithPath: path)
-                .standardizedFileURL
-                .path
+            let normalizedPath = resolvedLocationPath(path, workingDirectory: workingDirectory)
             guard seen.insert(normalizedPath).inserted else {
                 continue
             }
             locations.append(["path": normalizedPath])
         }
+    }
+
+    /// Mirrors the path resolution performed by the tool runtime itself, so a
+    /// reported location points at the file the tool actually touched.
+    private static func resolvedLocationPath(
+        _ path: String,
+        workingDirectory: URL?
+    ) -> String {
+        let expandedPath = NSString(string: path).expandingTildeInPath
+        guard !expandedPath.hasPrefix("/"),
+              let workingDirectory else {
+            return URL(fileURLWithPath: expandedPath).standardizedFileURL.path
+        }
+        return workingDirectory
+            .appendingPathComponent(expandedPath)
+            .standardizedFileURL
+            .path
     }
 
     private static func locationsWithoutAncestorDuplicates(

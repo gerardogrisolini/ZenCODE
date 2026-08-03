@@ -97,7 +97,7 @@ public actor ACPPermissionBroker {
                 ],
                 "status": "pending",
                 "title": request.title,
-                "kind": request.kind,
+                "kind": ZenCODEACPBridge.acpToolKind(request.kind),
                 "content": [
                     [
                         "type": "content",

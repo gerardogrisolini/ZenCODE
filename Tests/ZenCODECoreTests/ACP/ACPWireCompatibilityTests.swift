@@ -138,6 +138,104 @@ extension ACPCompatibilityTests {
     }
 
     @Test
+    func toolCallUpdatesOnlyUseProtocolToolKinds() {
+        let acpToolKinds: Set<String> = [
+            "read", "edit", "delete", "move", "search",
+            "execute", "think", "fetch", "switch_mode", "other"
+        ]
+        let inspectToolCall = presentedToolCall(
+            id: "call_inspect",
+            name: "local.inspectFile",
+            argumentsObject: ["path": "/tmp/workspace/alpha.swift"],
+            argumentsJSON: #"{"path":"/tmp/workspace/alpha.swift"}"#
+        )
+        let directoryCreationToolCall = presentedToolCall(
+            id: "call_mkdir",
+            name: "local.mkdir",
+            argumentsObject: ["path": "/tmp/workspace/new"],
+            argumentsJSON: #"{"path":"/tmp/workspace/new"}"#
+        )
+        let taskCreationToolCall = presentedToolCall(
+            id: "call_tasks",
+            name: "tasks.create",
+            argumentsObject: ["title": "Ship the fix"],
+            argumentsJSON: #"{"title":"Ship the fix"}"#
+        )
+        let featureToolCall = presentedToolCall(
+            id: "call_feature",
+            name: "feature.enable",
+            argumentsObject: ["id": "git-tools"],
+            argumentsJSON: #"{"id":"git-tools"}"#
+        )
+
+        #expect(ZenCODEACPBridge.toolKind(for: inspectToolCall) == "read")
+        #expect(ZenCODEACPBridge.toolKind(for: directoryCreationToolCall) == "edit")
+        #expect(ZenCODEACPBridge.toolKind(for: taskCreationToolCall) == "other")
+        #expect(ZenCODEACPBridge.toolKind(for: featureToolCall) == "other")
+        #expect(ZenCODEACPBridge.acpToolKind("destructive") == "delete")
+        #expect(ZenCODEACPBridge.acpToolKind("communicate") == "other")
+        #expect(ZenCODEACPBridge.acpToolKind("search") == "search")
+
+        for toolCall in [
+            inspectToolCall,
+            directoryCreationToolCall,
+            taskCreationToolCall,
+            featureToolCall
+        ] {
+            let create = ZenCODEACPBridge.toolCallCreateUpdate(for: toolCall)
+            let progress = ZenCODEACPBridge.toolCallProgressUpdate(for: toolCall)
+            let completion = ZenCODEACPBridge.toolCallCompletionUpdate(
+                for: toolCall,
+                result: DirectAgentToolResult(output: "done", summary: "done")
+            )
+            for update in [create, progress, completion] {
+                let kind = update["kind"] as? String ?? ""
+                #expect(acpToolKinds.contains(kind))
+            }
+        }
+    }
+
+    @Test
+    func toolCallLocationsResolveRelativePathsAgainstTheSessionWorkspace() {
+        let workspaceURL = URL(fileURLWithPath: "/tmp/acp-workspace")
+        let relativeToolCall = presentedToolCall(
+            id: "call_grep",
+            name: "search.grep",
+            argumentsObject: [
+                "pattern": "needle",
+                "path": "Sources/App"
+            ],
+            argumentsJSON: #"{"pattern":"needle","path":"Sources/App"}"#
+        )
+        let absoluteToolCall = presentedToolCall(
+            id: "call_read",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/other/beta.swift"],
+            argumentsJSON: #"{"path":"/tmp/other/beta.swift"}"#
+        )
+
+        let relativeLocations = ZenCODEACPBridge.toolLocations(
+            for: relativeToolCall,
+            workingDirectory: workspaceURL
+        )
+        let absoluteLocations = ZenCODEACPBridge.toolLocations(
+            for: absoluteToolCall,
+            workingDirectory: workspaceURL
+        )
+
+        #expect(relativeLocations.count == 1)
+        #expect(relativeLocations.first?["path"] as? String == "/tmp/acp-workspace/Sources/App")
+        #expect(absoluteLocations.first?["path"] as? String == "/tmp/other/beta.swift")
+
+        let update = ZenCODEACPBridge.toolCallCreateUpdate(
+            for: relativeToolCall,
+            workingDirectory: workspaceURL
+        )
+        let updateLocations = update["locations"] as? [[String: Any]] ?? []
+        #expect(updateLocations.first?["path"] as? String == "/tmp/acp-workspace/Sources/App")
+    }
+
+    @Test
     func toolCallTitlesAppendOnlySafeFallbackTargetsWithoutPresentation() {
         let searchableToolCall = DirectAgentToolCall(
             id: "call_search",

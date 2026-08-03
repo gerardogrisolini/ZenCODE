@@ -138,6 +138,10 @@ extension ZenCODEACPBridge {
         let appMode = configuration.appMode
         let updateBuffer = appMode ? ACPPromptUpdateBuffer() : nil
         let sessionRunner = self.sessionRunner
+        // ACP locations must be absolute. Relative tool arguments are resolved
+        // by the tools against the session workspace, not against the agent
+        // process directory chosen by the launching client.
+        let workspaceURL = URL(fileURLWithPath: session.cwd)
 
         @Sendable func sendPromptUpdate(_ update: JSONValue) async {
             if let updateBuffer {
@@ -232,13 +236,24 @@ extension ZenCODEACPBridge {
                             Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: content)
                         )
                     case let .toolCallStarted(toolCall):
-                        await sendPromptUpdate(Self.toolCallCreateJSONUpdate(for: toolCall))
-                        await sendPromptUpdate(Self.toolCallProgressJSONUpdate(for: toolCall))
+                        await sendPromptUpdate(
+                            Self.toolCallCreateJSONUpdate(
+                                for: toolCall,
+                                workingDirectory: workspaceURL
+                            )
+                        )
+                        await sendPromptUpdate(
+                            Self.toolCallProgressJSONUpdate(
+                                for: toolCall,
+                                workingDirectory: workspaceURL
+                            )
+                        )
                     case let .toolCallCompleted(toolCall, result):
                         await sendPromptUpdate(
                             Self.toolCallCompletionJSONUpdate(
                                 for: toolCall,
-                                result: result
+                                result: result,
+                                workingDirectory: workspaceURL
                             )
                         )
                     case .sessionSnapshot,
