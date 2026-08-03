@@ -28,7 +28,10 @@ extension DirectSubAgentRuntime {
                 "A task-bound delegated sub-agent cannot create nested sub-agents."
             )
         }
-        let overviewBatchID = UUID()
+        // Sub-agents created while an earlier batch is still working join that
+        // batch, so sequential `agent.create` calls stay visible together in the
+        // transient overview instead of replacing each other.
+        let overviewBatchID = currentOverviewWaveID()
         let previousOverviewBatchID = latestOverviewBatchID
 
         let prepared = try payloads.enumerated().map { offset, payload in
@@ -344,6 +347,10 @@ extension DirectSubAgentRuntime {
 
         do {
             try await validateOpenMessageTargets(targetIDs)
+            // Resolved before the prompts are queued so the messaged agents join
+            // the wave that is on screen right now, instead of the one they
+            // themselves are about to make live.
+            let overviewWaveID = currentOverviewWaveID()
             for (agentID, reservationID) in reservationIDsByAgentID {
                 guard var agent = agents[agentID] else {
                     throw DirectSubAgentRuntimeError.agentNotFound(agentID)
@@ -354,6 +361,7 @@ extension DirectSubAgentRuntime {
             for id in targetIDs {
                 try queuePrompt(message, for: id)
             }
+            adoptOverviewWave(overviewWaveID, for: targetIDs)
         } catch {
             for (agentID, reservationID) in reservationIDsByAgentID {
                 if var agent = agents[agentID],

@@ -61,7 +61,10 @@ public actor DirectSubAgentRuntime {
         public let role: String
         public let profileID: String?
         public let profileName: String?
-        let overviewBatchID: UUID
+        /// Identity of the transient overview "wave" this agent belongs to.
+        /// Mutable because an agent that receives new work through
+        /// `agent.message` re-joins the wave that is currently on screen.
+        var overviewBatchID: UUID
         public let backend: any AgentRuntimeBackend
         public let createdAt: Date
         public var updatedAt: Date
@@ -82,6 +85,13 @@ public actor DirectSubAgentRuntime {
         public var latestContentPreview: String? = nil
         public var latestEventAt: Date? = nil
         public var runTask: Task<Void, Never>?
+
+        /// True while the agent still owes work: it is queued or running, or it
+        /// has prompts waiting for its work loop. The transient overview keeps
+        /// every such agent visible.
+        var hasWorkInFlight: Bool {
+            status.isPending || !pendingPrompts.isEmpty
+        }
     }
 
     public struct AgentWork {

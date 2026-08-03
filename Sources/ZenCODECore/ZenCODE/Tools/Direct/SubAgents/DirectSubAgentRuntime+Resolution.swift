@@ -104,17 +104,45 @@ extension DirectSubAgentRuntime {
         agents.values.sorted(by: Self.agentSortOrder).map(snapshot(from:))
     }
 
-    /// Returns only the most recently created `agent.create` batch for the
-    /// transient TUI overview. The full registry remains available through
-    /// `snapshots()`, `agent.list`, and the targeted agent commands.
+    /// Returns the sub-agents of the current transient overview wave: the
+    /// agents that started working together, plus any agent that still has work
+    /// in flight. The full registry remains available through `snapshots()`,
+    /// `agent.list`, and the targeted agent commands.
     public func overviewSnapshots() -> [AgentSnapshot] {
         guard let latestOverviewBatchID else {
             return []
         }
         return agents.values
-            .filter { $0.overviewBatchID == latestOverviewBatchID }
+            .filter { $0.overviewBatchID == latestOverviewBatchID || $0.hasWorkInFlight }
             .sorted(by: Self.agentSortOrder)
             .map(snapshot(from:))
+    }
+
+    /// Identity that newly started work must adopt to stay visible in the
+    /// transient overview.
+    ///
+    /// `agent.create` and `agent.message` calls issued while an earlier wave is
+    /// still working join that wave, so sub-agents started one call at a time
+    /// are presented together exactly like a single parallel batch. Work that
+    /// starts when nothing is in flight opens a fresh wave, which keeps the
+    /// section transient instead of accumulating every agent of the session.
+    func currentOverviewWaveID() -> UUID {
+        guard let latestOverviewBatchID,
+              agents.values.contains(where: {
+                  $0.overviewBatchID == latestOverviewBatchID && $0.hasWorkInFlight
+              }) else {
+            return UUID()
+        }
+        return latestOverviewBatchID
+    }
+
+    /// Re-homes agents that just received new work into `waveID` so the overview
+    /// keeps showing every sub-agent that is actually working.
+    func adoptOverviewWave(_ waveID: UUID, for agentIDs: [String]) {
+        for id in agentIDs {
+            agents[id]?.overviewBatchID = waveID
+        }
+        latestOverviewBatchID = waveID
     }
 
     public func snapshots(for ids: [String]) -> [AgentSnapshot] {
@@ -135,7 +163,7 @@ extension DirectSubAgentRuntime {
             profileID: agent.profileID,
             profileName: agent.profileName,
             status: agent.status,
-            pending: agent.status.isPending || !agent.pendingPrompts.isEmpty,
+            pending: agent.hasWorkInFlight,
             modelID: agent.modelID,
             currentActivity: agent.currentActivity,
             currentToolName: agent.currentToolName,

@@ -921,7 +921,84 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func overviewSnapshotsShowOnlyMostRecentCreateBatchWithoutPruningRegistry() async throws {
+    func overviewKeepsSequentiallyCreatedSubAgentsWhileEarlierOnesStillWork() async throws {
+        let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
+        let executor = DirectToolExecutor(
+            subAgentContextualBackendFactory: { _ in backend }
+        )
+        let runtime = await executor.subAgentRuntime
+        let workingDirectory = URL(
+            fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests",
+            isDirectory: true
+        )
+
+        for name in ["first", "second", "third"] {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "name": .string(name),
+                    "profile": .string("Developer"),
+                    "prompt": .string("Work on \(name)")
+                ],
+                workingDirectory: workingDirectory,
+                parentAllowedToolNames: nil
+            )
+        }
+
+        // One `agent.create` per call must be presented exactly like a single
+        // parallel batch: every sub-agent that is still working stays visible.
+        let overview = await executor.subAgentSnapshots()
+        #expect(Set(overview.map(\.name)) == ["first", "second", "third"])
+        #expect(Set(overview.filter(\.pending).map(\.name)) == ["first", "second", "third"])
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func overviewShowsMessagedSubAgentThatResumesWorkAfterALaterBatch() async throws {
+        let backend = CapturingSubAgentRuntimeBackend()
+        let executor = DirectToolExecutor(
+            subAgentContextualBackendFactory: { _ in backend }
+        )
+        let runtime = await executor.subAgentRuntime
+        let workingDirectory = URL(
+            fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests",
+            isDirectory: true
+        )
+
+        for name in ["first", "second"] {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "name": .string(name),
+                    "profile": .string("Developer"),
+                    "prompt": .string("Work on \(name)")
+                ],
+                workingDirectory: workingDirectory,
+                parentAllowedToolNames: nil
+            )
+            _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        }
+
+        #expect(await executor.subAgentSnapshots().map(\.name) == ["second"])
+
+        let firstID = try #require(
+            await runtime.snapshots().first { $0.name == "first" }?.id
+        )
+        _ = try await runtime.messageAgents(
+            arguments: [
+                "id": .string(firstID),
+                "message": .string("Follow up on the earlier finding")
+            ]
+        )
+
+        // A follow-up message restarts that sub-agent, so the overview has to
+        // present it instead of the finished agents of the previous batch.
+        #expect(await executor.subAgentSnapshots().map(\.name) == ["first"])
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func overviewSnapshotsStartAFreshBatchWhenNoSubAgentIsWorking() async throws {
         let backend = CapturingSubAgentRuntimeBackend()
         let executor = DirectToolExecutor(
             subAgentContextualBackendFactory: { _ in backend }
