@@ -317,7 +317,7 @@ struct TerminalSemanticToolRenderingTests {
         let update = ZenCODEACPBridge.toolCallCreateJSONUpdate(for: call)
         let object = try #require(update.objectValue)
 
-        #expect(object["title"] == .string("Edit /tmp/App.swift"))
+        #expect(object["title"] == .string("thirdparty.edit /tmp/App.swift"))
         #expect(object["kind"] == .string("edit"))
     }
 
