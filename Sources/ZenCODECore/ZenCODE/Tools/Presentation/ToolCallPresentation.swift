@@ -20,23 +20,23 @@ public enum ToolCallPresentation {
         )
     }
 
+    /// Keeps the exact tool identity visible to compact clients such as ACP,
+    /// while appending the safest available target context when one exists.
     public static func toolTitle(for toolCall: DirectAgentToolCall) -> String {
+        let target: String?
         if toolCall.presentation != nil {
-            let presentation = resolved(for: toolCall, mode: .compact)
-            let target = compactDisplayTarget(
+            target = compactDisplayTarget(
                 for: toolCall,
-                presentation: presentation
+                presentation: resolved(for: toolCall, mode: .compact)
             )
-            if let action = presentation.action,
-               let target {
-                return "\(action) \(target)"
-            }
-            if let target {
-                return "\(presentation.title) \(target)"
-            }
-            return presentation.action ?? presentation.title
+        } else {
+            target = fallbackArgumentTarget(for: toolCall)
         }
-        return toolCall.name
+
+        guard let target else {
+            return toolCall.name
+        }
+        return "\(toolCall.name) \(target)"
     }
 
     public static func toolKind(for toolCall: DirectAgentToolCall) -> String {

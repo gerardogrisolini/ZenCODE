@@ -10,11 +10,27 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-03
+
+### Added
+
+- Persistent process support for optional features (`FeaturePersistentProcess`
+  and `FeaturePersistentService`): compatible features such as Xcode tools can
+  now reuse one long-lived session-scoped process instead of spawning a new one
+  per invocation.
+
+### Changed
+
+- Prompt input field rewritten with a new `TerminalPromptEditor`, inline
+  autocompletion, refined key handling, panel layout, and history navigation.
+
 ### Fixed
 
 - Xcode tools now reuse one session-scoped feature process and MCP bridge for
   discovery and invocation, so Xcode consent is requested once per ZenCODE
   session instead of once per tool call.
+- `zen --doctor` diagnostics corrected; unused agent-runtime and ACP
+  configuration fields removed.
 
 ## [1.1.0] - 2026-08-02
 
