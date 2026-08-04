@@ -111,7 +111,9 @@ extension TerminalInteractiveLineReader {
         case 0x3E:
             return .bufferEnd
         case 0x7F, 0x08:
-            return .deleteWordBefore
+            // Alt+Backspace (macOS Option+Delete) clears the whole draft;
+            // word-wise deletion stays on Ctrl+W.
+            return .clearDraft
         default:
             drainPendingEscapeSequence()
             return .unknown
@@ -150,7 +152,7 @@ extension TerminalInteractiveLineReader {
         case .delete:
             return .deleteWordAfter
         case .backspace:
-            return .deleteWordBefore
+            return .clearDraft
         default:
             return key
         }
@@ -535,7 +537,7 @@ extension TerminalInteractiveLineReader {
         case 100 where isAltModified:
             return .deleteWordAfter
         case 127 where isAltModified, 8 where isAltModified:
-            return .deleteWordBefore
+            return .clearDraft
         // `Alt+<` / `Alt+>`; the base key is reported unshifted by terminals
         // that separate the Shift modifier from the key code.
         case 60 where isAltModified, 44 where isAltModified:

@@ -277,8 +277,9 @@ These bindings follow the Emacs/readline conventions, so they work on every term
 | Line start/end | `Ctrl+A`/`Ctrl+E`, `Home`/`End` |
 | Draft start/end | `Alt+<`/`Alt+>`, `Ctrl+Home`/`Ctrl+End` |
 | Previous/next line or history entry | `↑`/`↓`, `Ctrl+P`/`Ctrl+N` |
-| Delete word before/after | `Ctrl+W` or `Alt+Backspace` / `Alt+D` |
+| Delete word before/after | `Ctrl+W` / `Alt+D` |
 | Clear before/after cursor | `Ctrl+U`/`Ctrl+K` |
+| Clear the whole draft | `Alt+Backspace` (macOS `Option+Delete`) |
 | Reverse history search | `Ctrl+R` |
 | Newline without sending | `Shift+Enter` or `Option+Enter` |
 

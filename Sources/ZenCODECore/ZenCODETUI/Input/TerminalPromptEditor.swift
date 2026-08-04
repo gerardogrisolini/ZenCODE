@@ -219,6 +219,17 @@ struct TerminalPromptEditor: Equatable, Sendable {
             cursorIndex = 0
             didEditBuffer()
             return .changed
+        case .clearDraft:
+            // Alt+Backspace discards the whole draft in one step; an empty
+            // draft has nothing to clear.
+            guard !buffer.isEmpty else {
+                return .ignored
+            }
+            buffer.removeAll()
+            cursorIndex = 0
+            draftBeforeHistory.removeAll()
+            didEditBuffer()
+            return .changed
         case .clearAfterCursor:
             guard cursorIndex < buffer.count else {
                 return .ignored
@@ -454,11 +465,11 @@ struct TerminalPromptEditor: Equatable, Sendable {
             reverseSearch = search
             projectReverseSearchMatch(search, context: context)
             return .changed
-        case .backspace, .deleteWordBefore, .clearBeforeCursor:
+        case .backspace, .deleteWordBefore, .clearBeforeCursor, .clearDraft:
             guard !search.query.isEmpty else {
                 return .ignored
             }
-            if key == .clearBeforeCursor {
+            if key == .clearBeforeCursor || key == .clearDraft {
                 search.query.removeAll()
             } else if key == .deleteWordBefore {
                 var index = search.query.count

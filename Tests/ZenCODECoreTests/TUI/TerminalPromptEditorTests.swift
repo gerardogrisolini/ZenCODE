@@ -164,6 +164,18 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
+    func clearDraftRemovesTheWholeBufferFromAnyCursorPosition() {
+        var editor = makeEditor("alpha beta\ngamma", cursorIndex: 6)
+        let context = TerminalPromptEditorContext()
+
+        #expect(editor.apply(.clearDraft, context: context) == .changed)
+        #expect(editor.buffer.isEmpty)
+        #expect(editor.cursorIndex == 0)
+
+        #expect(editor.apply(.clearDraft, context: context) == .ignored)
+    }
+
+    @Test
     func wordBoundariesTreatUnicodeLettersDigitsAndSymbolsConsistently() {
         var editor = makeEditor("café_東京 42—done", cursorIndex: 0)
         let context = TerminalPromptEditorContext()

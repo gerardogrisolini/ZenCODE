@@ -113,8 +113,8 @@ struct TerminalPromptInputPanelTests {
         #expect(reader.keyFromCSI(Array("98;3u".utf8)) == .wordLeft)
         #expect(reader.keyFromCSI(Array("102;3u".utf8)) == .wordRight)
         #expect(reader.keyFromCSI(Array("100;3u".utf8)) == .deleteWordAfter)
-        #expect(reader.keyFromCSI(Array("127;3u".utf8)) == .deleteWordBefore)
-        #expect(reader.keyFromCSI(Array("27;3;127~".utf8)) == .deleteWordBefore)
+        #expect(reader.keyFromCSI(Array("127;3u".utf8)) == .clearDraft)
+        #expect(reader.keyFromCSI(Array("27;3;127~".utf8)) == .clearDraft)
 
         // Each shortcut demands its own modifier, so an unrelated combination
         // is not silently swallowed.
@@ -144,9 +144,13 @@ struct TerminalPromptInputPanelTests {
         #expect(key(for: [0x1B, 0x62]) == .wordLeft)
         #expect(key(for: [0x1B, 0x66]) == .wordRight)
         #expect(key(for: [0x1B, 0x64]) == .deleteWordAfter)
-        #expect(key(for: [0x1B, 0x7F]) == .deleteWordBefore)
+        #expect(key(for: [0x1B, 0x7F]) == .clearDraft)
+        #expect(key(for: [0x1B, 0x08]) == .clearDraft)
+        // Meta-prefixed CSI-u backspace (Option configured as Esc+).
+        #expect(key(for: [0x1B, 0x1B, 0x5B] + Array("127;1u".utf8)) == .clearDraft)
         #expect(key(for: [0x12]) == .reverseSearch)
         #expect(key(for: [0x17]) == .deleteWordBefore)
+        #expect(key(for: [0x7F]) == .backspace)
     }
 
     // MARK: - Panel metadata and help

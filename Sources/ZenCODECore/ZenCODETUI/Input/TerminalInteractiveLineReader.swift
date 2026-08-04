@@ -37,9 +37,11 @@ public final class TerminalInteractiveLineReader: Sendable {
         /// Word-wise motion (`Alt+←/→`, `Ctrl+←/→`, `ESC b`/`ESC f`).
         case wordLeft
         case wordRight
-        /// Word-wise deletion (`Ctrl+W`, `Alt+Backspace`, `Alt+D`).
+        /// Word-wise deletion (`Ctrl+W`, `Alt+D`).
         case deleteWordBefore
         case deleteWordAfter
+        /// Whole-draft deletion (`Alt+Backspace`, macOS `Option+Delete`).
+        case clearDraft
         /// Modal reverse history search (`Ctrl+R`).
         case reverseSearch
         case clearBeforeCursor
