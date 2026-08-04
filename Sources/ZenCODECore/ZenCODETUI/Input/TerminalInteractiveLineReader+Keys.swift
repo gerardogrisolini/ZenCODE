@@ -47,11 +47,21 @@ extension TerminalInteractiveLineReader {
         }
     }
 
+    /// Control codes are the only motion bindings that survive every terminal
+    /// configuration. Laptop keyboards without Home/End (and macOS terminals,
+    /// which never forward Command shortcuts) depend on the Emacs/readline set
+    /// below, so `Ctrl+A`/`Ctrl+E` must mean line start/end. Access mode is on
+    /// `Ctrl+G` for that reason.
     static func controlKey(for byte: UInt8) -> Key? {
         switch byte {
         case 0x04: return .endOfInput
-        case 0x01: return .toggleAccessMode
+        case 0x01: return .home
         case 0x05: return .end
+        case 0x02: return .left
+        case 0x06: return .right
+        case 0x10: return .up
+        case 0x0E: return .down
+        case 0x07: return .toggleAccessMode
         case 0x0B: return .clearAfterCursor
         case 0x12: return .reverseSearch
         case 0x15: return .clearBeforeCursor
@@ -78,6 +88,12 @@ extension TerminalInteractiveLineReader {
             return readCSIKey()
         case 0x4F:
             return readSS3Key()
+        case 0x1B:
+            // Meta-prefixed escape sequence (ESC ESC [ …): the encoding used by
+            // macOS Terminal.app and iTerm2 when the Option key is configured
+            // as Meta/"Esc+", where Option+← arrives as ESC before the plain
+            // cursor sequence instead of as a CSI modifier parameter.
+            return readMetaPrefixedEscapeKey()
         // Legacy Meta encodings: terminals that send Alt as an ESC prefix
         // rather than a CSI modifier, which is still the default on macOS
         // Terminal.app and many `xterm` configurations.
@@ -87,11 +103,56 @@ extension TerminalInteractiveLineReader {
             return .wordRight
         case 0x64, 0x44:
             return .deleteWordAfter
+        // `ESC <` / `ESC >` are the readline draft-wide motions. They are the
+        // only start/end-of-draft bindings reachable on keyboards without
+        // Home/End keys, where Ctrl+Home/Ctrl+End cannot be typed.
+        case 0x3C:
+            return .bufferStart
+        case 0x3E:
+            return .bufferEnd
         case 0x7F, 0x08:
             return .deleteWordBefore
         default:
             drainPendingEscapeSequence()
             return .unknown
+        }
+    }
+
+    /// Reads the sequence following a doubled `ESC` and reinterprets it as an
+    /// Alt-modified key. A lone doubled `ESC` stays a cancel request.
+    func readMetaPrefixedEscapeKey() -> Key {
+        guard let byte = readByte(timeoutMilliseconds: Self.escapeSequenceContinuationTimeout) else {
+            return .cancel
+        }
+
+        switch byte {
+        case 0x5B:
+            return Self.metaModified(readCSIKey())
+        case 0x4F:
+            return Self.metaModified(readSS3Key())
+        default:
+            drainPendingEscapeSequence()
+            return .unknown
+        }
+    }
+
+    /// Applies the Alt modifier to a key decoded from a meta-prefixed sequence.
+    static func metaModified(_ key: Key) -> Key {
+        switch key {
+        case .left:
+            return .wordLeft
+        case .right:
+            return .wordRight
+        case .home:
+            return .bufferStart
+        case .end:
+            return .bufferEnd
+        case .delete:
+            return .deleteWordAfter
+        case .backspace:
+            return .deleteWordBefore
+        default:
+            return key
         }
     }
 
@@ -386,11 +447,21 @@ extension TerminalInteractiveLineReader {
         case 8, 127:
             return .backspace
         case 1:
-            return .toggleAccessMode
+            return .home
+        case 2:
+            return .left
         case 4:
             return .endOfInput
         case 5:
             return .end
+        case 6:
+            return .right
+        case 7:
+            return .toggleAccessMode
+        case 14:
+            return .down
+        case 16:
+            return .up
         case 11:
             return .clearAfterCursor
         case 18:
@@ -409,9 +480,9 @@ extension TerminalInteractiveLineReader {
     /// Maps a modified printable key reported through Kitty's CSI-u protocol or
     /// xterm's `modifyOtherKeys`.
     ///
-    /// Each shortcut demands its own modifier: Ctrl+A toggles access mode while
-    /// Alt+A is not a binding at all, and accepting either would swallow a key
-    /// the operator meant for something else.
+    /// Each shortcut demands its own modifier: Ctrl+B moves one character left
+    /// while Alt+B moves one word left, and accepting either modifier would
+    /// swallow a key the operator meant for something else.
     static func controlShortcutKey(
         components: [String],
         keyCodeIndex: Int,
@@ -431,7 +502,17 @@ extension TerminalInteractiveLineReader {
 
         switch keyCode {
         case 97 where isControlModified:
+            return .home
+        case 103 where isControlModified:
             return .toggleAccessMode
+        case 98 where isControlModified:
+            return .left
+        case 102 where isControlModified:
+            return .right
+        case 112 where isControlModified:
+            return .up
+        case 110 where isControlModified:
+            return .down
         case 100 where isControlModified:
             // Ctrl+D is end-of-input, never the Alt+D delete-word binding.
             return .endOfInput
@@ -455,6 +536,12 @@ extension TerminalInteractiveLineReader {
             return .deleteWordAfter
         case 127 where isAltModified, 8 where isAltModified:
             return .deleteWordBefore
+        // `Alt+<` / `Alt+>`; the base key is reported unshifted by terminals
+        // that separate the Shift modifier from the key code.
+        case 60 where isAltModified, 44 where isAltModified:
+            return .bufferStart
+        case 62 where isAltModified, 46 where isAltModified:
+            return .bufferEnd
         default:
             return nil
         }

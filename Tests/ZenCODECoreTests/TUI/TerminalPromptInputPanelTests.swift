@@ -119,7 +119,8 @@ struct TerminalPromptInputPanelTests {
         // Each shortcut demands its own modifier, so an unrelated combination
         // is not silently swallowed.
         #expect(reader.keyFromCSI(Array("114;3u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("98;5u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("97;3u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("98;5u".utf8)) == .left)
         #expect(reader.keyFromCSI(Array("100;3u".utf8)) == .deleteWordAfter)
     }
 
@@ -182,7 +183,7 @@ struct TerminalPromptInputPanelTests {
         let idleHelp = reader.withPanelLock { reader.panelHelpTextLocked(state: $0) }
         #expect(idleHelp.contains("Enter send"))
         #expect(idleHelp.contains("Shift/Option+Enter newline"))
-        #expect(idleHelp.contains("Ctrl+T tools · Ctrl+A access"))
+        #expect(idleHelp.contains("Ctrl+T tools · Ctrl+G access"))
         #expect(idleHelp.contains("Ctrl+R history"))
 
         reader.withPanelLock { $0.panelIsProcessing = true }
@@ -192,7 +193,7 @@ struct TerminalPromptInputPanelTests {
         #expect(generatingHelp.contains("Esc stop"))
         #expect(
             reader.withPanelLock { reader.panelCompactHelpTextLocked(state: $0) }
-                == "Enter queue · Esc stop · Ctrl+A access"
+                == "Enter queue · Esc stop · Ctrl+G access"
         )
 
         reader.withPanelLock { state in
@@ -241,7 +242,7 @@ struct TerminalPromptInputPanelTests {
 
         #expect(
             reader.withPanelLock { reader.panelCompactHelpTextLocked(state: $0) }
-                == "Enter send · Esc clear · Ctrl+A access"
+                == "Enter send · Esc clear · Ctrl+G access"
         )
     }
 

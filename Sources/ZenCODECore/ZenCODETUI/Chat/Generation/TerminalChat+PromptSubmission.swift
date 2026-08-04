@@ -30,7 +30,9 @@ extension TerminalChat {
         lines.append(contentsOf: visibleCommandDescriptorsForCurrentAgent().map(\.help))
         lines.append(contentsOf: [
             "Ctrl+T toggles compact/full tool output.",
-            "Ctrl+A toggles default/full access for local.exec approvals in the interactive panel.",
+            "Ctrl+G toggles default/full access for local.exec approvals in the interactive panel.",
+            "Editing: Ctrl+A/Ctrl+E line start/end, Alt+</Alt+> draft start/end, "
+                + "Alt+←/→ (or ESC b / ESC f) word motion.",
         ])
         return lines.joined(separator: "\n") + "\n\n"
     }

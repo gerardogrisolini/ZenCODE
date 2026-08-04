@@ -28,9 +28,10 @@ public final class TerminalInteractiveLineReader: Sendable {
         case right
         case up
         case down
+        /// Start/end of the current line (`Ctrl+A`/`Ctrl+E`, `Home`/`End`).
         case home
         case end
-        /// Start/end of the whole draft (`Ctrl+Home`/`Ctrl+End`).
+        /// Start/end of the whole draft (`Alt+<`/`Alt+>`, `Ctrl+Home`/`Ctrl+End`).
         case bufferStart
         case bufferEnd
         /// Word-wise motion (`Alt+←/→`, `Ctrl+←/→`, `ESC b`/`ESC f`).
@@ -44,6 +45,7 @@ public final class TerminalInteractiveLineReader: Sendable {
         case clearBeforeCursor
         case clearAfterCursor
         case toggleToolDetails
+        /// `Ctrl+G`.
         case toggleAccessMode
         case endOfInput
         case cancel

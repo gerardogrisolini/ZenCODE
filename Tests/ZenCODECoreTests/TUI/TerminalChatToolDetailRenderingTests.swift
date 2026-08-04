@@ -218,7 +218,7 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func detailedReplaceCompletionShowsNumberedSideBySideCodeLines() {
+    func detailedEditFileRenderingShowsTargetAndNumberedSideBySideCodeLines() {
         let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.editFile",
@@ -230,14 +230,19 @@ extension TerminalChatRenderingTests {
             argumentsJSON: #"{"path":"Sources/App.swift","oldString":"let oldValue = 1","newString":"let newValue = 2"}"#
         )
 
-        let lines = TerminalChat.detailedToolCallCompletedLines(
+        let startedLines = TerminalChat.detailedToolCallStartedLines(for: toolCall)
+        let completedLines = TerminalChat.detailedToolCallCompletedLines(
             for: toolCall,
             result: DirectAgentToolResult(output: "", summary: "ok"),
             contentWidth: 88
         )
 
-        #expect(lines.contains { $0.contains("old") && $0.contains("new") })
-        #expect(lines.contains { $0.contains("1 │ let oldValue = 1") && $0.contains("1 │ let newValue = 2") })
+        for lines in [startedLines, completedLines] {
+            #expect(lines.contains("change: replace Sources/App.swift"))
+            #expect(lines.contains { $0.contains("old") && $0.contains("new") })
+            #expect(lines.contains { $0.contains("1 │ let oldValue = 1") && $0.contains("1 │ let newValue = 2") })
+            #expect(!lines.contains("parameters:"))
+        }
     }
 
     @Test

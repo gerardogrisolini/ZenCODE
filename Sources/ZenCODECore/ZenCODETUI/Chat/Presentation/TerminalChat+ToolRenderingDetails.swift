@@ -154,13 +154,35 @@ extension TerminalChat {
                 }
             }
 
+        // `local.editFile` owns a semantic diff, which normally suppresses the
+        // raw parameters but does not render the target. Use the mutation rows
+        // in the presenter so its expanded view retains the filename just like
+        // `local.multiEdit`, without changing the descriptor-owned contract.
+        let mutationToolName = normalizedMutationToolName(toolCall.name)
+        if mutationToolName == "local.editFile",
+           editFileHasSourceChanges(toolCall.argumentsObject) {
+            rows.append(contentsOf: appliedChangeDetailRows(
+                for: toolCall,
+                contentWidth: contentWidth
+            ))
+            for element in presentation.elements {
+                if case .summary = element {
+                    rows.append(contentsOf: semanticElementRows(
+                        element,
+                        contentWidth: contentWidth
+                    ))
+                }
+            }
+            return rows
+        }
+
         // A multi-edit is structurally a sequence of old/new source pairs. Its
         // declarative list element preserves that payload for generic consumers,
         // but when actual source changes are available they use the same
         // side-by-side diff rows as a single edit. Parameters are suppressed only
         // in this source-rendering branch; malformed or metadata-only calls fall
         // through and retain both the heading and their JSON payload.
-        if normalizedMutationToolName(toolCall.name) == "local.multiEdit",
+        if mutationToolName == "local.multiEdit",
            multiEditHasSourceChanges(toolCall.argumentsObject) {
             rows.append(contentsOf: multiEditChangeDetailRows(
                 toolCall.argumentsObject,
@@ -462,6 +484,13 @@ extension TerminalChat {
             rawStringArgument(edit, keys: ["oldString", "old_string"]) != nil
                 || rawStringArgument(edit, keys: ["newString", "new_string"]) != nil
         }
+    }
+
+    nonisolated static func editFileHasSourceChanges(
+        _ arguments: [String: Any]
+    ) -> Bool {
+        rawStringArgument(arguments, keys: ["oldString", "old_string"]) != nil
+            || rawStringArgument(arguments, keys: ["newString", "new_string"]) != nil
     }
 
     nonisolated static func multiEditChangeDetailRows(

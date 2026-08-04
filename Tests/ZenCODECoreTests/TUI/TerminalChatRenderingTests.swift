@@ -632,25 +632,25 @@ struct TerminalChatRenderingTests {
     func compactPanelHelpAtEightyColumnsKeepsProcessingActionsAndAccessShortcutVisible() {
         let processingLine = TerminalStatusBar.inputPanelModeLineText(
             modeText: "Prompt",
-            helpText: "Enter queue · Shift/Option+Enter newline · Ctrl+T tools · Ctrl+A access · Esc stop",
-            compactHelpText: "Enter queue · Esc stop · Ctrl+A access",
+            helpText: "Enter queue · Shift/Option+Enter newline · Ctrl+T tools · Ctrl+G access · Esc stop",
+            compactHelpText: "Enter queue · Esc stop · Ctrl+G access",
             width: 80
         )
 
         #expect(processingLine.contains("Enter queue"))
         #expect(processingLine.contains("Esc stop"))
-        #expect(processingLine.contains("Ctrl+A access"))
+        #expect(processingLine.contains("Ctrl+G access"))
         #expect(TerminalStatusBar.visibleCharacterCount(processingLine) <= 80)
 
         let idleLine = TerminalStatusBar.inputPanelModeLineText(
             modeText: "Prompt",
-            helpText: "Enter send · Shift/Option+Enter newline · Ctrl+T tools · Ctrl+A access · Ctrl+R history · Esc clear",
-            compactHelpText: "Enter send · Esc clear · Ctrl+A access",
+            helpText: "Enter send · Shift/Option+Enter newline · Ctrl+T tools · Ctrl+G access · Ctrl+R history · Esc clear",
+            compactHelpText: "Enter send · Esc clear · Ctrl+G access",
             width: 80
         )
         #expect(idleLine.contains("Enter send"))
         #expect(idleLine.contains("Esc clear"))
-        #expect(idleLine.contains("Ctrl+A access"))
+        #expect(idleLine.contains("Ctrl+G access"))
     }
 
     @Test
@@ -661,7 +661,7 @@ struct TerminalChatRenderingTests {
         #expect(
             help.contains(
                 "Ctrl+T toggles compact/full tool output.\n"
-                    + "Ctrl+A toggles default/full access for local.exec approvals in the interactive panel."
+                    + "Ctrl+G toggles default/full access for local.exec approvals in the interactive panel."
             )
         )
     }

@@ -264,7 +264,25 @@ implementation task rather than guessing a task breakdown from prose.
 
 **Interactive shortcuts:**
 - `Ctrl+T` — toggle compact/full tool output.
-- `Ctrl+A` — toggle default/full access mode (temporary, never persisted).
+- `Ctrl+G` — toggle default/full access mode (temporary, never persisted).
+
+**Prompt editing shortcuts:**
+
+These bindings follow the Emacs/readline conventions, so they work on every terminal, including laptop keyboards without `Home`/`End` keys. Terminals never receive `Command` shortcuts, so the macOS `Cmd+←`/`Cmd+→` motions are not available.
+
+| Motion | Keys |
+| --- | --- |
+| Character left/right | `←`/`→`, `Ctrl+B`/`Ctrl+F` |
+| Word left/right | `Alt+←`/`Alt+→`, `Ctrl+←`/`Ctrl+→`, `ESC b`/`ESC f` |
+| Line start/end | `Ctrl+A`/`Ctrl+E`, `Home`/`End` |
+| Draft start/end | `Alt+<`/`Alt+>`, `Ctrl+Home`/`Ctrl+End` |
+| Previous/next line or history entry | `↑`/`↓`, `Ctrl+P`/`Ctrl+N` |
+| Delete word before/after | `Ctrl+W` or `Alt+Backspace` / `Alt+D` |
+| Clear before/after cursor | `Ctrl+U`/`Ctrl+K` |
+| Reverse history search | `Ctrl+R` |
+| Newline without sending | `Shift+Enter` or `Option+Enter` |
+
+On macOS, `Option+←/→` only reaches the prompt when the terminal sends the `Option` key as `Meta`: in Terminal.app enable *Settings → Profiles → Keyboard → Use Option as Meta key*, and in iTerm2 set *Settings → Profiles → Keys → Left Option key → Esc+*. `Ctrl+←/→` is captured by macOS Mission Control unless that system shortcut is disabled. `Ctrl+A`/`Ctrl+E` and `Alt+<`/`Alt+>` need no terminal configuration.
 
 Full access bypasses only `local.exec` approval checks. It does not expose disabled tools or bypass OS permissions. The status bar shows a red dot while active.
 

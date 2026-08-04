@@ -367,13 +367,25 @@ struct TerminalInteractiveLineReaderTests {
     func controlShortcutsDecodeKittyAndModifyOtherKeysSequences() {
         let reader = TerminalInteractiveLineReader()
 
-        #expect(reader.keyFromCSI(Array("97;5u".utf8)) == .toggleAccessMode)
-        #expect(reader.keyFromCSI(Array("27;5;97~".utf8)) == .toggleAccessMode)
+        #expect(reader.keyFromCSI(Array("97;5u".utf8)) == .home)
+        #expect(reader.keyFromCSI(Array("27;5;97~".utf8)) == .home)
+        #expect(reader.keyFromCSI(Array("103;5u".utf8)) == .toggleAccessMode)
+        #expect(reader.keyFromCSI(Array("27;5;103~".utf8)) == .toggleAccessMode)
         #expect(reader.keyFromCSI(Array("116;5u".utf8)) == .toggleToolDetails)
         #expect(reader.keyFromCSI(Array("27;5;116~".utf8)) == .toggleToolDetails)
 
+        // Readline motion shortcuts distinguish Control from Alt.
+        #expect(reader.keyFromCSI(Array("98;5u".utf8)) == .left)
+        #expect(reader.keyFromCSI(Array("98;3u".utf8)) == .wordLeft)
+        #expect(reader.keyFromCSI(Array("102;5u".utf8)) == .right)
+        #expect(reader.keyFromCSI(Array("102;3u".utf8)) == .wordRight)
+        #expect(reader.keyFromCSI(Array("112;5u".utf8)) == .up)
+        #expect(reader.keyFromCSI(Array("110;5u".utf8)) == .down)
+        #expect(reader.keyFromCSI(Array("60;3u".utf8)) == .bufferStart)
+        #expect(reader.keyFromCSI(Array("62;3u".utf8)) == .bufferEnd)
+
         // An explicit Kitty press event and additional modifiers retain Control.
-        #expect(reader.keyFromCSI(Array("97;5:1u".utf8)) == .toggleAccessMode)
+        #expect(reader.keyFromCSI(Array("97;5:1u".utf8)) == .home)
         #expect(reader.keyFromCSI(Array("116;7u".utf8)) == .toggleToolDetails)
     }
 
@@ -389,10 +401,10 @@ struct TerminalInteractiveLineReaderTests {
         #expect(reader.keyFromCSI(Array("97;5:3u".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("97;5:4u".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("97;5:u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("1;5;97~".utf8)) != .toggleAccessMode)
+        #expect(reader.keyFromCSI(Array("1;5;97~".utf8)) == .bufferStart)
         #expect(reader.keyFromCSI(Array("27;5:1;97~".utf8)) == .unknown)
 
-        #expect(reader.keyFromCSI(Array("103;5u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("104;5u".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("109;5u".utf8)) == .unknown)
     }
 
@@ -403,8 +415,43 @@ struct TerminalInteractiveLineReaderTests {
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x0D) == .enter)
         #expect(reader.keyFromCSI(Array("13;5u".utf8)) == .enter)
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x14) == .toggleToolDetails)
-        #expect(TerminalInteractiveLineReader.controlKey(for: 0x01) == .toggleAccessMode)
-        #expect(TerminalInteractiveLineReader.controlKey(for: 0x07) == nil)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x01) == .home)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x05) == .end)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x02) == .left)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x06) == .right)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x10) == .up)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x0E) == .down)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x07) == .toggleAccessMode)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x0F) == nil)
+    }
+
+    @Test
+    func metaPrefixedAndReadlineEscapeSequencesDecodeDraftMotion() {
+        let pipe = Pipe()
+        let reader = TerminalInteractiveLineReader(
+            rawInput: TerminalRawInput(
+                fileDescriptor: pipe.fileHandleForReading.fileDescriptor
+            )
+        )
+
+        func decode(_ bytes: [UInt8]) -> TerminalInteractiveLineReader.Key? {
+            pipe.fileHandleForWriting.write(Data(bytes))
+            return reader.readKey(pollTimeoutMilliseconds: 500)
+        }
+
+        // macOS terminals configured with Option as Meta prefix the plain
+        // cursor sequence with ESC instead of sending a CSI modifier.
+        #expect(decode([0x1B, 0x1B, 0x5B, 0x44]) == .wordLeft)
+        #expect(decode([0x1B, 0x1B, 0x5B, 0x43]) == .wordRight)
+        #expect(decode([0x1B, 0x1B, 0x4F, 0x48]) == .bufferStart)
+        #expect(decode([0x1B, 0x1B, 0x4F, 0x46]) == .bufferEnd)
+        #expect(decode([0x1B, 0x1B, 0x5B, 0x33, 0x7E]) == .deleteWordAfter)
+
+        // Readline draft-wide motion, reachable without Home/End keys.
+        #expect(decode([0x1B, 0x3C]) == .bufferStart)
+        #expect(decode([0x1B, 0x3E]) == .bufferEnd)
+
+        pipe.fileHandleForWriting.closeFile()
     }
 
     @Test
@@ -453,10 +500,10 @@ struct TerminalInteractiveLineReaderTests {
         #expect(reader.withPanelLock { String($0.panelBuffer) } == "hello")
         #expect(reader.withPanelLock { $0.panelCursorIndex } == 2)
         #expect(reader.withPanelLock {
-            reader.panelHelpTextLocked(state: $0).contains("Ctrl+T tools · Ctrl+A access")
+            reader.panelHelpTextLocked(state: $0).contains("Ctrl+T tools · Ctrl+G access")
         })
         #expect(reader.withPanelLock {
-            reader.panelCompactHelpTextLocked(state: $0) == "Enter send · Esc clear · Ctrl+A access"
+            reader.panelCompactHelpTextLocked(state: $0) == "Enter send · Esc clear · Ctrl+G access"
         })
     }
 

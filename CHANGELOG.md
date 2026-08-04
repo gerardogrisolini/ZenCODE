@@ -12,6 +12,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Prompt editing now follows the Emacs/readline conventions so that motion works
+  on keyboards without `Home`/`End` keys: `Ctrl+A`/`Ctrl+E` move to line
+  start/end, `Ctrl+B`/`Ctrl+F` move by character, `Ctrl+P`/`Ctrl+N` move by
+  line or history entry, and `Alt+<`/`Alt+>` jump to the start/end of the whole
+  draft. Escape sequences prefixed by a second `ESC` (macOS terminals that send
+  `Option` as `Meta`) are decoded as Alt-modified keys, so `Option+←/→` performs
+  word motion there.
+- The `local.exec` access-mode toggle moved from `Ctrl+A` to `Ctrl+G`, freeing
+  the standard line-start binding. Panel hints, `/help`, and `Docs/zen.md` list
+  the current shortcuts.
 - Release builds of `zen` now strip local symbols before the binary is verified,
   archived, or installed. CI, the release workflow, and both install scripts run
   `strip -u -r` on macOS and `strip --strip-all` on Linux, and optional Swift
