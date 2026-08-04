@@ -128,7 +128,6 @@ swift build -c release --product zen
 /setup       Reconfigure ZenCODE, then restore the current session
 /models      Select a model for the current session
 /agents      Select an agent profile
-/bindings    Show agent model bindings (see Docs/bindings.md)
 /tools       Select tool groups
 /skills      Select or install prompt skills
 /sessions    Manage sessions and checkpoint trees
@@ -142,7 +141,6 @@ swift build -c release --product zen
 /make-agents Create or refresh AGENTS.md guidance for the current workspace
 /feature     Manage Swift features with the Builder agent
 /telegram    Turn Telegram remote control on/off when paired in setup
-/voice       Record a voice prompt when local voice tools are enabled
 /exit        Close the session
 ```
 

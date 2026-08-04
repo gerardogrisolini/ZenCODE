@@ -44,5 +44,5 @@ Why this project exists and where it differs from other coding agents.
 
 ## Extras
 
-- Remote control via Telegram and local voice tools (`/voice`), optional and enabled in setup.
+- Remote control via Telegram, with optional voice-message transcription configured in setup.
 - Simple installation via script.

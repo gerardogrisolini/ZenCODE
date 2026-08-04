@@ -14,8 +14,7 @@ struct TerminalChatSetupLifecycleTests {
     func setupCommandIsVisibleAndUnavailableDuringGeneration() {
         let commands = TerminalChat.visibleCommandDescriptors(
             builderAgentEnabled: false,
-            telegramEnabled: false,
-            voiceEnabled: false
+            telegramEnabled: false
         ).map(\.command)
 
         #expect(commands.contains("/setup"))

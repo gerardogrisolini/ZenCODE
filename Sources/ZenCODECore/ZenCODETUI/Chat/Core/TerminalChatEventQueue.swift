@@ -15,26 +15,15 @@ import Synchronization
 ///
 /// Lifecycle: the runtime loop calls ``finish()`` when it exits, which
 /// terminates the stream and makes every later `send(_:)` a no-op. Producers
-/// that outlive the loop for a moment (the Telegram forwarder, a voice
-/// transcription that is being cancelled, the panel task during teardown) can
-/// therefore keep calling `send(_:)` safely without their events accumulating
-/// in a buffer nobody drains.
+/// that outlive the loop for a moment (the Telegram forwarder, remote
+/// transcription work that is being cancelled, the panel task during teardown)
+/// can therefore keep calling `send(_:)` safely without their events
+/// accumulating in a buffer nobody drains.
 ///
-/// Buffering: input events are unbounded so operator keystrokes and their
-/// physical order are never dropped. Voice progress events are advisory
-/// re-renders of the same overlay, so they are bounded: only
-/// ``maximumBufferedVoiceProgressEvents`` may be in flight, and further progress
-/// updates are dropped rather than growing without limit while the consumer is
-/// busy. The bound never reorders or drops non-progress events.
+/// Buffering: events are unbounded so their physical order is never dropped.
 final class TerminalChatEventQueue: Sendable {
-    /// Upper bound on undelivered voice-progress events. Progress messages are
-    /// idempotent status refreshes, so dropping surplus ones preserves UX while
-    /// keeping the queue bounded.
-    static let maximumBufferedVoiceProgressEvents = 32
-
     private struct State {
         var isFinished = false
-        var bufferedVoiceProgressEvents = 0
     }
 
     let events: AsyncStream<TerminalChatRuntimeEvent>
@@ -57,14 +46,6 @@ final class TerminalChatEventQueue: Sendable {
             guard !state.isFinished else {
                 return false
             }
-            guard case .voicePromptProgress = event else {
-                return true
-            }
-            guard state.bufferedVoiceProgressEvents
-                < Self.maximumBufferedVoiceProgressEvents else {
-                return false
-            }
-            state.bufferedVoiceProgressEvents += 1
             return true
         }
         guard shouldSend else {
@@ -72,20 +53,6 @@ final class TerminalChatEventQueue: Sendable {
         }
         continuation.yield(event)
         return true
-    }
-
-    /// Reports that a bounded event has been consumed by the runtime loop, so
-    /// its slot becomes available again.
-    func didConsume(_ event: TerminalChatRuntimeEvent) {
-        guard case .voicePromptProgress = event else {
-            return
-        }
-        state.withLock { state in
-            state.bufferedVoiceProgressEvents = max(
-                0,
-                state.bufferedVoiceProgressEvents - 1
-            )
-        }
     }
 
     /// Terminates the stream. Idempotent, and safe to call while producers are

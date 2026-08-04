@@ -9,8 +9,7 @@ struct TaskCommandTests {
     func tasksCommandIsVisible() {
         let commands = TerminalChat.visibleCommandDescriptors(
             builderAgentEnabled: false,
-            telegramEnabled: false,
-            voiceEnabled: false
+            telegramEnabled: false
         ).map(\.command)
         #expect(commands.contains("/tasks"))
         #expect(TerminalChat.isKnownSlashCommand("/tasks status"))

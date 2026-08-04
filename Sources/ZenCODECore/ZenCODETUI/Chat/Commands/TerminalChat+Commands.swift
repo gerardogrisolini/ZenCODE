@@ -19,7 +19,6 @@ enum TerminalChatCommandAvailability: Sendable, Equatable {
     case always
     case builderAgent
     case telegramEnabled
-    case voiceEnabled
 }
 
 struct TerminalOptionalCommandAvailability: Sendable, Equatable {
@@ -75,10 +74,6 @@ extension TerminalChat {
         }
     }
 
-    nonisolated static func isVoiceCommand(_ line: String) -> Bool {
-        commandToken(from: line) == "/voice"
-    }
-
     nonisolated static func isAvailableDuringGeneration(for line: String) -> Bool {
         guard let command = commandToken(from: line) else {
             return false
@@ -110,10 +105,6 @@ extension TerminalChat {
             return isTelegramCommandVisible()
                 ? nil
                 : Self.unknownCommandMessage(for: line)
-        case "/voice":
-            return isVoiceCommandVisible()
-                ? nil
-                : Self.unknownCommandMessage(for: line)
         default:
             return nil
         }
@@ -126,9 +117,6 @@ extension TerminalChat {
         guard Self.isKnownSlashCommand(line) else {
             return Self.unknownCommandMessage(for: line)
         }
-        if Self.isVoiceCommand(line) {
-            return "ZenCODE: voice commands are unavailable while a prompt is running.\n"
-        }
         let command = Self.commandToken(from: line) ?? line.trimmingCharacters(in: .whitespacesAndNewlines)
         return "ZenCODE: command '\(command)' is unavailable while a prompt is running.\n"
     }
@@ -137,15 +125,13 @@ extension TerminalChat {
         let availability = optionalCommandAvailability
         return Self.visibleCommandDescriptors(
             builderAgentEnabled: AgentProfileStore.isBuilderAgent(selectedAgent),
-            telegramEnabled: availability.telegramEnabled,
-            voiceEnabled: availability.voiceEnabled
+            telegramEnabled: availability.telegramEnabled
         )
     }
 
     nonisolated static func visibleCommandDescriptors(
         builderAgentEnabled: Bool,
-        telegramEnabled: Bool,
-        voiceEnabled: Bool
+        telegramEnabled: Bool
     ) -> [TerminalChatCommandDescriptor] {
         allCommandDescriptors.filter { descriptor in
             switch descriptor.availability {
@@ -155,12 +141,6 @@ extension TerminalChat {
                 return builderAgentEnabled
             case .telegramEnabled:
                 return telegramEnabled
-            case .voiceEnabled:
-                #if canImport(AVFoundation)
-                return voiceEnabled
-                #else
-                return false
-                #endif
             }
         }
     }
@@ -179,10 +159,6 @@ extension TerminalChat {
 
     func isVoiceConfigured() -> Bool {
         optionalCommandAvailability.voiceEnabled
-    }
-
-    func isVoiceCommandVisible() -> Bool {
-        isVoiceConfigured()
     }
 
     nonisolated static func commandToken(from line: String) -> String? {
@@ -226,11 +202,6 @@ extension TerminalChat {
             command: "/agents",
             summary: "switch agent",
             help: "/agents selects an agent profile and resets the session."
-        ),
-        TerminalChatCommandDescriptor(
-            command: "/bindings",
-            summary: "show agent model bindings",
-            help: "/bindings shows every model authorized for each agent, including defaults, capability, and thinking settings."
         ),
         TerminalChatCommandDescriptor(
             command: "/tools",
@@ -317,12 +288,6 @@ extension TerminalChat {
             summary: "turn Telegram on/off",
             help: "/telegram shows Telegram status. Use /telegram on or /telegram off for this TUI session.",
             availability: .telegramEnabled
-        ),
-        TerminalChatCommandDescriptor(
-            command: "/voice",
-            summary: "record a voice prompt",
-            help: "/voice starts recording. Press Enter again to stop and send the transcript.",
-            availability: .voiceEnabled
         ),
         TerminalChatCommandDescriptor(
             command: "/exit",

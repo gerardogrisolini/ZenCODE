@@ -15,7 +15,7 @@ Guides for using, extending, and maintaining ZenCODE. Start with the
 | Guide | Read it for |
 | --- | --- |
 | [agents.md](agents.md) | Agent profiles, tool groups, sub-agent lifecycle, task graph |
-| [bindings.md](bindings.md) | Agent/model/workflow bindings, capability routing, `/bindings` |
+| [bindings.md](bindings.md) | Agent/model/workflow bindings, capability routing |
 | [builder.md](builder.md) | Creating Dynamic Swift Features with `/feature` |
 | [planner.md](planner.md) | Read-only planning with `/plan`, including `/plan save` and `/plan load` handoffs |
 | [reviewer.md](reviewer.md) | Read-only code review with `/review` |

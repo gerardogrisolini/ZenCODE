@@ -16,8 +16,7 @@ struct PlanCommandTests {
     func planCommandIsVisibleWithStandardCommands() {
         let commands = TerminalChat.visibleCommandDescriptors(
             builderAgentEnabled: false,
-            telegramEnabled: false,
-            voiceEnabled: false
+            telegramEnabled: false
         ).map(\.command)
 
         #expect(commands.contains("/plan"))
@@ -27,8 +26,7 @@ struct PlanCommandTests {
     func subAgentsCommandIsRemovedFromVisibleCommands() {
         let commands = TerminalChat.visibleCommandDescriptors(
             builderAgentEnabled: false,
-            telegramEnabled: false,
-            voiceEnabled: false
+            telegramEnabled: false
         ).map(\.command)
 
         #expect(!commands.contains("/subagents"))
@@ -40,8 +38,7 @@ struct PlanCommandTests {
         let descriptor = try #require(
             TerminalChat.visibleCommandDescriptors(
                 builderAgentEnabled: false,
-                telegramEnabled: false,
-                voiceEnabled: false
+                telegramEnabled: false
             ).first(where: { $0.command == "/plan" })
         )
 

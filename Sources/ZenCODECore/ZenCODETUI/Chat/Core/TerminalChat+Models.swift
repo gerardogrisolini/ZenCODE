@@ -158,16 +158,6 @@ struct TerminalVoicePromptResult: Sendable {
     }
 }
 
-struct TerminalVoicePromptProgress: Sendable {
-    let origin: TerminalPromptOrigin
-    let message: String
-
-    init(origin: TerminalPromptOrigin, message: String) {
-        self.origin = origin
-        self.message = message.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-}
-
 enum TerminalChatGenerationResult: Sendable {
     case success(TerminalChatGenerationSuccess)
     case failure(TerminalChatGenerationFailure)
@@ -178,6 +168,5 @@ enum TerminalChatRuntimeEvent: Sendable {
     case generationCompleted(TerminalChatGenerationResult)
     case startNextQueuedPrompt
     case telegramMessage(TerminalTelegramIncomingMessage)
-    case voicePromptProgress(TerminalVoicePromptProgress)
     case voicePromptCompleted(TerminalVoicePromptResult)
 }

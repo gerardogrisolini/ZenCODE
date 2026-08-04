@@ -126,8 +126,6 @@ public final class TerminalChat {
     /// turn's progress is mirrored to the linked chat. Permission dialogue is
     /// enqueued here so it cannot overtake the tool activity that raised it.
     var activeTelegramProgressReporter: TerminalTelegramTurnProgressReporter?
-    public let voiceRecordingService = TerminalVoiceRecordingService()
-    public var activeVoiceRecordingSession: TerminalVoiceRecordingSession?
     var optionalCommandAvailability = TerminalOptionalCommandAvailability.load()
     var requestedRuntimeSetup = false
 

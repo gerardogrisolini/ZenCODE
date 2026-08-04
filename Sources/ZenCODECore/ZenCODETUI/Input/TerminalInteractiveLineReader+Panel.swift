@@ -560,12 +560,12 @@ extension TerminalInteractiveLineReader {
             if hasActiveCommandSuggestionsLocked(state: state) {
                 return "↑/↓ select · Tab complete · Enter choose · Esc stop"
             }
-            return "Enter queue · Shift/Option+Enter newline · Ctrl+T tools · Ctrl+G access · Esc stop"
+            return "Enter queue · Ctrl+T tools · Ctrl+G access · Esc stop"
         }
         if hasActiveCommandSuggestionsLocked(state: state) {
             return "↑/↓ select · Tab complete · Enter choose · Esc dismiss"
         }
-        return "Enter send · Shift/Option+Enter newline · Ctrl+T tools · Ctrl+G access · Ctrl+R history · Esc clear"
+        return "Enter send · Ctrl+T tools · Ctrl+G access · Ctrl+R history · Esc clear"
     }
 
     func panelCompactHelpTextLocked(state: State) -> String? {

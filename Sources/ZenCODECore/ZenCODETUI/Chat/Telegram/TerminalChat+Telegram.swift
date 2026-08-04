@@ -139,7 +139,7 @@ extension TerminalChat {
     ) async {
         guard isVoiceConfigured() else {
             await sendTelegramSystemMessage(
-                "Voice input is not configured. Run the /setup command in zen and enable voice input.",
+                "Voice-message transcription is not configured. Run the /setup command in zen and enable voice-message transcription.",
                 to: chatID
             )
             return
@@ -163,16 +163,7 @@ extension TerminalChat {
                 let audio = try await self.telegramControlService.downloadVoiceAudio(voice)
                 try Task.checkCancellation()
                 let transcript = try await AgentVoiceTranscriptionService()
-                    .transcribe(audio) { message in
-                        eventQueue.send(
-                            .voicePromptProgress(
-                                TerminalVoicePromptProgress(
-                                    origin: .telegram(chatID: chatID),
-                                    message: message
-                                )
-                            )
-                        )
-                    }
+                    .transcribe(audio)
                 eventQueue.send(
                     .voicePromptCompleted(
                         TerminalVoicePromptResult(

@@ -12,9 +12,10 @@ extension TerminalChat {
     nonisolated static let bindingsBindingMarkerGlyph = "·"
     nonisolated static let bindingsActiveAgentGlyph = "✱"
 
-    /// Renders the `/bindings` overview as a GFM table routed through the
-    /// shared markdown renderer (`TerminalSwiftMarkdownRenderer`), reusing its
-    /// box-drawing table layout and column fitting instead of a bespoke card.
+    /// Renders the agent model bindings overview as a GFM table routed through
+    /// the shared markdown renderer (`TerminalSwiftMarkdownRenderer`), reusing
+    /// its box-drawing table layout and column fitting instead of a bespoke
+    /// card.
     ///
     /// The table is flat (one row per binding), so the profile name is shown
     /// only on the first row of each agent group. Provider and Model are shown

@@ -189,7 +189,7 @@ enum SetupSection: Equatable, Hashable {
         case .telegram:
             return ["telegram", "remote control", "bot"]
         case .voice:
-            return ["voice", "voice tools", "speech"]
+            return ["voice", "voice transcription", "voice messages", "speech"]
         case .features:
             return ["features", "feature", "tools", "swift features", "enable features", "disable features"]
         case .agents:

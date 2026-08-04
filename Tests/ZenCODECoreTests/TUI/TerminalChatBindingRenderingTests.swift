@@ -10,18 +10,6 @@ import Testing
 @Suite
 struct TerminalChatBindingRenderingTests {
     @Test
-    func bindingsCommandIsVisibleAndKnown() {
-        let commands = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: false,
-            telegramEnabled: false,
-            voiceEnabled: false
-        ).map(\.command)
-
-        #expect(commands.contains("/bindings"))
-        #expect(TerminalChat.isKnownSlashCommand("/bindings"))
-    }
-
-    @Test
     func bindingRenderingShowsEveryModelAndItsMetadata() {
         let developer = AgentProfile(
             id: "developer",
@@ -51,8 +39,7 @@ struct TerminalChatBindingRenderingTests {
         )
 
         // The table itself carries no title: the "Agent model bindings" heading
-        // belongs to the setup flow and the `/bindings` command wrapper, not to
-        // the rendered table.
+        // belongs to the setup flow, not to the rendered table.
         #expect(rendered.contains("Profile"))
         #expect(rendered.contains("Capability"))
         #expect(rendered.contains("Developer ✱"))

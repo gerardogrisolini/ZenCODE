@@ -152,11 +152,6 @@ extension TerminalChat {
                 promptInput = line
             }
 
-            if activeVoiceRecordingSession != nil {
-                await stopVoiceRecordingAndRunPromptBlocking()
-                continue
-            }
-
             switch await submittedLineAction(promptInput) {
             case .continueChat:
                 continue
@@ -181,7 +176,6 @@ extension TerminalChat {
         let eventQueue = TerminalChatEventQueue()
         var queuedPrompts: [TerminalQueuedPrompt] = []
         var generationTask: Task<Void, Never>?
-        var voiceTranscriptionTask: Task<Void, Never>?
         let remoteTranscriptions = TerminalVoiceTranscriptionRegistry()
         let telegramForwardingTask = startTelegramForwardingTask(eventQueue: eventQueue)
         var isGenerating = false
@@ -278,8 +272,6 @@ extension TerminalChat {
             // running (or keeps this chat alive) after the loop exits, and any
             // event racing the teardown is dropped instead of buffered forever.
             generationTask?.cancel()
-            voiceTranscriptionTask?.cancel()
-            voiceRecordingService.cancelRecording()
             telegramForwardingTask.cancel()
             remoteTranscriptions.cancelAll()
             eventQueue.finish()
@@ -348,18 +340,10 @@ extension TerminalChat {
         }
 
         eventLoop: for await event in eventQueue.events {
-            defer { eventQueue.didConsume(event) }
             switch event {
             case let .input(inputEvent):
                 switch inputEvent {
                 case let .submitted(line):
-                    if activeVoiceRecordingSession != nil {
-                        voiceTranscriptionTask = await stopVoiceRecordingAndTranscribe(
-                            eventQueue: eventQueue
-                        )
-                        continue
-                    }
-
                     if !isGenerating, !queuedPrompts.isEmpty {
                         queuedPrompts.append(TerminalQueuedPrompt(text: line, origin: .local))
                         await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
@@ -386,16 +370,7 @@ extension TerminalChat {
                         break eventLoop
                     }
                 case .cancelRequested:
-                    if activeVoiceRecordingSession != nil {
-                        await cancelVoiceRecording()
-                    } else if voiceTranscriptionTask != nil {
-                        voiceTranscriptionTask?.cancel()
-                        voiceTranscriptionTask = nil
-                        await clearVoicePanelMode()
-                        await writeSystemMessage("Voice transcription cancelled.\n")
-                    } else {
-                        generationTask?.cancel()
-                    }
+                    generationTask?.cancel()
                 case .toggleToolDetailsRequested:
                     await self.toggleToolDetailsOutput()
                     await interactiveReader.refreshPanel()
@@ -446,22 +421,7 @@ extension TerminalChat {
                 )
                 await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
                 scheduleQueuedPromptIfNeeded()
-            case let .voicePromptProgress(progress):
-                if progress.origin == .local {
-                    await interactiveReader.setPanelOverlay(
-                        TerminalPanelModeOverride(
-                            modeText: "Transcribing voice",
-                            helpText: progress.message
-                        ),
-                        isProcessing: true
-                    )
-                }
             case let .voicePromptCompleted(result):
-                if result.origin == .local {
-                    voiceTranscriptionTask = nil
-                    await clearVoicePanelMode()
-                    await interactiveReader.setPanelProcessing(isGenerating)
-                }
                 switch result.outcome {
                 case let .success(prompt):
                     if isGenerating || !queuedPrompts.isEmpty {

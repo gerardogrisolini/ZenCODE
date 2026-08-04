@@ -184,9 +184,9 @@ extension TerminalChat {
         return parts.joined(separator: " · ")
     }
 
-    /// Renders the `/bindings` overview as a GFM table through the shared
-    /// markdown renderer, reusing its box-drawing table layout and column
-    /// fitting. Used by both the `/bindings` command and the setup summary.
+    /// Renders the agent model bindings overview as a GFM table through the
+    /// shared markdown renderer, reusing its box-drawing table layout and
+    /// column fitting. Used by the setup summary.
     public nonisolated static func renderAgentModelBindings(
         agents: [AgentProfile],
         selectedAgent: AgentProfile?

@@ -20,11 +20,12 @@ Delegation is the act of matching the three: a task of a given complexity is
 assigned to a role-compatible profile, through one of that profile's authorized
 bindings.
 
-## Reading `/bindings`
+## Reading the Bindings Table
 
-`/bindings` prints every configured profile with its authorized bindings:
+The bindings table is shown in `/setup`, listing every configured profile with
+its authorized bindings:
 
-![The /bindings table listing every profile with its authorized model bindings](Images/bindings.png)
+![The bindings table shown in setup, listing every profile with its authorized model bindings](Images/bindings.png)
 
 | Column | Meaning |
 | --- | --- |
@@ -171,7 +172,7 @@ A binding with no capability at all is only possible in a hand-edited or legacy
 Then inspect the result:
 
 ```text
-/bindings       # table of every profile and its authorized bindings
+/setup          # add, edit, or remove bindings; the summary shows every profile's authorized bindings
 /agents         # switch profile (role, tools, instructions, default binding)
 /models         # override the model for the current session only
 ```

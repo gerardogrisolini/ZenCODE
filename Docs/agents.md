@@ -2,7 +2,7 @@
 
 How agent profiles work and how the runtime delegates to sub-agents.
 
-- Model bindings, capability routing, and the `/bindings` table: [bindings.md](bindings.md).
+- Model bindings, capability routing, and the bindings table: [bindings.md](bindings.md).
 - Per-profile guides: [builder.md](builder.md), [planner.md](planner.md), [reviewer.md](reviewer.md), [reporter.md](reporter.md).
 
 ## Agent Profiles
@@ -155,7 +155,6 @@ See the [zen.md](zen.md#task-orchestration) task orchestration section.
 /setup                # create or edit profiles interactively
 /agents               # select a profile in the TUI
 /models                # choose any configured model for the current session
-/bindings              # inspect model bindings for every configured profile
 /tools                 # expose or hide tool groups per session
 ```
 

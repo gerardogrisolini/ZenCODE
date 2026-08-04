@@ -15,8 +15,7 @@ struct MakeAgentsCommandTests {
         let descriptor = try #require(
             TerminalChat.visibleCommandDescriptors(
                 builderAgentEnabled: false,
-                telegramEnabled: false,
-                voiceEnabled: false
+                telegramEnabled: false
             ).first(where: { $0.command == "/make-agents" })
         )
 

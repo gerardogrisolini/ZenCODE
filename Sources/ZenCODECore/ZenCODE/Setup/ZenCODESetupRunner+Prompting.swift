@@ -126,9 +126,9 @@ extension ZenCODESetupRunner {
             .flatMap { $0.thinkingSelection(for: manifest.selectedThinkingSelection)?.displayTitle }
             ?? "default"
         let telegramStatus = manifest.telegram?.isEnabled == true ? "enabled" : "disabled"
-        #if canImport(AVFoundation)
+        #if canImport(Speech)
         let voiceStatus = manifest.voice?.isConfigured == true ? "enabled" : "disabled"
-        let voiceSummary = "\n  Local voice tools: \(voiceStatus)"
+        let voiceSummary = "\n  Voice-message transcription: \(voiceStatus)"
         #else
         let voiceSummary = ""
         #endif

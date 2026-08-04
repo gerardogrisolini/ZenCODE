@@ -113,21 +113,6 @@ extension TerminalChat {
                 await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
             }
             return .continueChat
-        case "/bindings":
-            do {
-                await writePreformattedMessage(
-                    Self.renderAgentModelBindings(
-                        agents: try availableAgents(),
-                        selectedAgent: selectedAgent
-                    )
-                )
-            } catch {
-                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            }
-            return .continueChat
-        case let command where command.hasPrefix("/bindings "):
-            await writeFailureMessage("ZenCODE: /bindings does not accept arguments.\n")
-            return .continueChat
         case let command where command == "/tools" || command.hasPrefix("/tools "):
             await handleToolsCommand(command)
             return .continueChat
@@ -181,11 +166,6 @@ extension TerminalChat {
         case let command where command == "/telegram" || command.hasPrefix("/telegram "):
             await handleTelegramCommand(command)
             return .continueChat
-        #if canImport(AVFoundation)
-        case let command where command == "/voice" || command.hasPrefix("/voice "):
-            await handleVoiceCommand(command)
-            return .continueChat
-        #endif
         default:
             if case .slashCommand = Self.submittedLineRole(for: prompt) {
                 await writeFailureMessage(Self.unknownCommandMessage(for: prompt))

@@ -33,7 +33,7 @@ extension ZenCODESetupRunner {
         existingSettings: AgentVoiceSettingsManifest?
     ) throws -> AgentVoiceSettingsManifest? {
         let shouldEnableVoice = try promptYesNo(
-            "Enable voice tools?",
+            "Enable voice-message transcription?",
             defaultValue: existingSettings?.isConfigured == true
         )
         guard shouldEnableVoice else {
@@ -44,8 +44,8 @@ extension ZenCODESetupRunner {
         print(
             """
 
-            Voice uses the built-in macOS speech frameworks.
-            Speech-to-text uses SFSpeechRecognizer in dictation mode.
+            Voice-message transcription uses the built-in macOS speech frameworks.
+            Telegram voice messages use SFSpeechRecognizer in dictation mode.
             For better accuracy, macOS may send audio to Apple's speech service.
             No external executable or API key is required.
 
@@ -55,7 +55,7 @@ extension ZenCODESetupRunner {
         print(
             """
 
-            Voice uses the built-in Apple speech frameworks.
+            Voice-message transcription uses the built-in Apple speech frameworks.
             No external executable or API key is required.
 
             """
@@ -63,7 +63,7 @@ extension ZenCODESetupRunner {
         #endif
 
         let language = try selectVoiceSetupOption(
-            title: "Voice language",
+            title: "Voice transcription language",
             options: voiceLanguageOptions,
             defaultValue: existingSettings?.language?.nilIfBlank
                 ?? AgentVoiceSettingsManifest.defaultLanguage

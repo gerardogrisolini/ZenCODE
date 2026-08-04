@@ -113,13 +113,11 @@ struct TelegramTUITests {
     func telegramCommandIsVisibleOnlyWhenConfigured() {
         let disabledCommands = TerminalChat.visibleCommandDescriptors(
             builderAgentEnabled: false,
-            telegramEnabled: false,
-            voiceEnabled: false
+            telegramEnabled: false
         ).map(\.command)
         let enabledCommands = TerminalChat.visibleCommandDescriptors(
             builderAgentEnabled: false,
-            telegramEnabled: true,
-            voiceEnabled: false
+            telegramEnabled: true
         ).map(\.command)
 
         #expect(!disabledCommands.contains("/telegram"))
@@ -130,8 +128,7 @@ struct TelegramTUITests {
     func builderCommandVisibilityRemainsIndependentFromTelegram() {
         let commands = TerminalChat.visibleCommandDescriptors(
             builderAgentEnabled: true,
-            telegramEnabled: false,
-            voiceEnabled: false
+            telegramEnabled: false
         ).map(\.command)
 
         #expect(commands.contains("/feature"))
@@ -146,42 +143,11 @@ struct TelegramTUITests {
         )
     }
 
-    // Voice recording requires AVFoundation, which is only available on
-    // Apple platforms. The production gate in `visibleCommandDescriptors` uses
-    // the same `canImport(AVFoundation)` condition, so this test is compiled
-    // out on Linux where `/voice` is intentionally unavailable.
-    #if canImport(AVFoundation)
-    @Test
-    func voiceCommandIsVisibleOnlyWhenConfigured() {
-        let disabledCommands = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: false,
-            telegramEnabled: false,
-            voiceEnabled: false
-        ).map(\.command)
-        let enabledCommands = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: false,
-            telegramEnabled: false,
-            voiceEnabled: true
-        ).map(\.command)
-
-        #expect(!disabledCommands.contains("/voice"))
-        #expect(enabledCommands.contains("/voice"))
-    }
-    #endif
-
-    @Test
-    func voiceCommandTokenRendersAsUnknownWhenHidden() {
-        #expect(
-            TerminalChat.unknownCommandMessage(for: "/voice")
-                == "ZenCODE: unknown command '/voice'.\n"
-        )
-    }
-
     @Test
     func submittedLineRoleSeparatesPromptsFromSlashCommands() {
         #expect(TerminalChat.submittedLineRole(for: "ciao") == .prompt)
         #expect(TerminalChat.submittedLineRole(for: "   ") == .empty)
-        #expect(TerminalChat.submittedLineRole(for: "/voice") == .slashCommand(token: "/voice"))
+        #expect(TerminalChat.submittedLineRole(for: "/telegram on") == .slashCommand(token: "/telegram"))
         #expect(TerminalChat.submittedLineRole(for: "/help extra") == .slashCommand(token: "/help"))
         #expect(TerminalChat.submittedLineRole(for: "/start 233B0EC4") == .slashCommand(token: "/start"))
     }

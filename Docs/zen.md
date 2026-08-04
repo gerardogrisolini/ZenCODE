@@ -168,7 +168,7 @@ cleanly. If the selected profile has bindings, its default is used when no model
 has been selected explicitly; `/models` always presents every configured model
 and a manual selection overrides that default for the active session.
 
-Use `/bindings` to inspect the model bindings of every profile — see
+Use `/setup` to inspect and configure the model bindings of every profile — see
 [bindings.md](bindings.md) for how bindings, capability, and task complexity
 drive delegation, and [agents.md](agents.md) for profile and sub-agent concepts.
 
@@ -181,7 +181,6 @@ Commands start with `/`:
 - `/setup` — save the current session, open setup, rebuild the runtime from the updated configuration, and restore the conversation.
 - `/models` — show every configured model and choose the model for the current session.
 - `/agents [list|<name>|<number>]` — switch agent profile.
-- `/bindings` — show every agent profile's model bindings, including defaults, capability, and thinking settings. Takes no arguments. See [bindings.md](bindings.md).
 - `/tools [all|none|tool-name|package-name|number]` — select exposed tool groups.
 - `/skills` — select or install prompt skills.
 - `/exit` — close the session.
@@ -260,7 +259,6 @@ implementation task rather than guessing a task breakdown from prose.
 
 **Optional integrations:**
 - `/telegram` / `/telegram on` / `/telegram off` — remote control (requires setup). Available even while a prompt is running.
-- `/voice` — record a voice prompt (requires setup).
 
 **Interactive shortcuts:**
 - `Ctrl+T` — toggle compact/full tool output.

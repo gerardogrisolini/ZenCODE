@@ -186,14 +186,14 @@ struct TerminalPromptInputPanelTests {
 
         let idleHelp = reader.withPanelLock { reader.panelHelpTextLocked(state: $0) }
         #expect(idleHelp.contains("Enter send"))
-        #expect(idleHelp.contains("Shift/Option+Enter newline"))
+        #expect(!idleHelp.contains("Shift/Option+Enter newline"))
         #expect(idleHelp.contains("Ctrl+T tools · Ctrl+G access"))
         #expect(idleHelp.contains("Ctrl+R history"))
 
         reader.withPanelLock { $0.panelIsProcessing = true }
         let generatingHelp = reader.withPanelLock { reader.panelHelpTextLocked(state: $0) }
         #expect(generatingHelp.contains("Enter queue"))
-        #expect(generatingHelp.contains("Shift/Option+Enter newline"))
+        #expect(!generatingHelp.contains("Shift/Option+Enter newline"))
         #expect(generatingHelp.contains("Esc stop"))
         #expect(
             reader.withPanelLock { reader.panelCompactHelpTextLocked(state: $0) }

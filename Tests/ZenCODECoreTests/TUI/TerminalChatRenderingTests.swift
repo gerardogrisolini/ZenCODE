@@ -632,7 +632,7 @@ struct TerminalChatRenderingTests {
     func compactPanelHelpAtEightyColumnsKeepsProcessingActionsAndAccessShortcutVisible() {
         let processingLine = TerminalStatusBar.inputPanelModeLineText(
             modeText: "Prompt",
-            helpText: "Enter queue · Shift/Option+Enter newline · Ctrl+T tools · Ctrl+G access · Esc stop",
+            helpText: "Enter queue · Ctrl+T tools · Ctrl+G access · Esc stop",
             compactHelpText: "Enter queue · Esc stop · Ctrl+G access",
             width: 80
         )
@@ -644,7 +644,7 @@ struct TerminalChatRenderingTests {
 
         let idleLine = TerminalStatusBar.inputPanelModeLineText(
             modeText: "Prompt",
-            helpText: "Enter send · Shift/Option+Enter newline · Ctrl+T tools · Ctrl+G access · Ctrl+R history · Esc clear",
+            helpText: "Enter send · Ctrl+T tools · Ctrl+G access · Ctrl+R history · Esc clear",
             compactHelpText: "Enter send · Esc clear · Ctrl+G access",
             width: 80
         )
