@@ -409,18 +409,30 @@ extension SwiftFeatureRuntime {
         timeoutSeconds: TimeInterval = SwiftFeatureRuntime.defaultOptionalFeatureInstallTimeoutSeconds,
         progress: SwiftFeatureOptionalInstallProgress? = nil
     ) async throws -> SwiftFeatureOptionalInstallReport {
+        guard timeoutSeconds.isFinite, timeoutSeconds > 0 else {
+            throw DirectToolError.invalidInput(
+                "timeoutSeconds must be a finite positive value (got \(timeoutSeconds))."
+            )
+        }
+        guard !inProgressInstallations.contains(id) else {
+            throw DirectToolError.invalidInput(
+                "Feature '\(id)' is already being installed. Wait for the current installation to complete."
+            )
+        }
+        inProgressInstallations.insert(id)
+        defer { inProgressInstallations.remove(id) }
         guard explicitFeatures == nil else {
             throw DirectToolError.permissionDenied(
                 "Feature installation is unavailable for an explicitly constructed runtime."
             )
         }
         guard Self.isValidFeatureID(id) else {
-            throw DirectToolError.permissionDenied(
+            throw DirectToolError.invalidInput(
                 "Feature id '\(id)' is invalid. Use letters, numbers, dots, underscores, and hyphens."
             )
         }
         guard let definition = Self.bundledFeatureDefinition(id: id), !definition.isCore else {
-            throw DirectToolError.permissionDenied("Unknown optional Swift feature: \(id).")
+            throw DirectToolError.notFound("Unknown optional Swift feature: \(id).")
         }
         guard Self.isOptionalFeatureSupportedOnCurrentPlatform(
             metadata: ZenBundledFeatureCatalog.feature(id: id)

@@ -119,7 +119,7 @@ extension SwiftFeatureRuntime {
             return
         }
 
-        throw DirectToolError.permissionDenied("Unknown Swift feature: \(id).")
+        throw DirectToolError.notFound("Unknown Swift feature: \(id).")
     }
 
     func validateFeature(
@@ -774,7 +774,7 @@ extension SwiftFeatureRuntime {
                 "Bundled Swift feature '\(id)' cannot be deleted. Use feature.disable instead."
             )
         }
-        throw DirectToolError.permissionDenied("Unknown generated Swift feature: \(id).")
+        throw DirectToolError.notFound("Unknown generated Swift feature: \(id).")
     }
 
     func reloadFeatureBundles() async {

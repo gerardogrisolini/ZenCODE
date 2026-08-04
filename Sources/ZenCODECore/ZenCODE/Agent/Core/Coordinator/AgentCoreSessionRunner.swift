@@ -637,6 +637,11 @@ public actor AgentCoreSessionRunner {
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
         _ = await interruptSubAgents(rootSessionID: sessionID)
+        // Wait for every cancelled prompt task to finish its finalisation before
+        // checkpointing. Without this, a prompt winding down can update the task
+        // graph after `flush` has already written the checkpoint, losing the
+        // update or producing an inconsistent snapshot.
+        await waitForPromptTasks(for: sessionID)
         try await taskOrchestrator.flush(sessionID: sessionID)
         promptSkillProvidersBySessionID.removeValue(forKey: sessionID)
         await backend?.closeSession(id: sessionID)

@@ -209,7 +209,17 @@ public enum TerminalSessionStore {
         let workingDirectoryPath = normalizedWorkingDirectoryPath(workingDirectory)
         return fileURLs
             .filter { $0.pathExtension == fileExtension }
-            .compactMap { try? load(from: $0) }
+            .compactMap { url in
+                do {
+                    return try load(from: url)
+                } catch {
+                    ZenLogger.warning(
+                        .sessionService,
+                        "Failed to load saved session \(url.lastPathComponent): \(error.localizedDescription)"
+                    )
+                    return nil
+                }
+            }
             .filter { $0.workingDirectoryPath == workingDirectoryPath }
             .sorted {
                 if $0.savedAt == $1.savedAt {
@@ -340,7 +350,14 @@ public enum TerminalSessionStore {
                   !fileManager.fileExists(atPath: destinationURL.path) else {
                 continue
             }
-            try? fileManager.moveItem(at: sourceURL, to: destinationURL)
+            do {
+                try fileManager.moveItem(at: sourceURL, to: destinationURL)
+            } catch {
+                ZenLogger.warning(
+                    .sessionService,
+                    "Failed to import session \(sourceURL.lastPathComponent): \(error.localizedDescription)"
+                )
+            }
         }
     }
 

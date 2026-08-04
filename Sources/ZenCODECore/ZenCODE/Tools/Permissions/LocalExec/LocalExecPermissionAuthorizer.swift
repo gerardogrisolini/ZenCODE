@@ -313,7 +313,14 @@ public actor LocalExecPermissionAuthorizer {
                 legacyIdentities
             )
         if migrated != permissions {
-            try? AgentPermissionsManifestStore.save(migrated)
+            do {
+                try AgentPermissionsManifestStore.save(migrated)
+            } catch {
+                ZenLogger.warning(
+                    .diagnostics,
+                    "Failed to persist migrated local-exec permissions: \(error.localizedDescription)"
+                )
+            }
         }
         return migrated
     }

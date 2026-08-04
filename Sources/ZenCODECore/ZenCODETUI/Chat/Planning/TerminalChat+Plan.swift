@@ -140,10 +140,6 @@ extension TerminalChat {
 
         let plannerProfile = plannerProfileForDelegation()
 
-//        await writeSystemMessage(
-//            "Starting planning pass for requested goal via Planner sub-agents...\n"
-//        )
-
         await writeSubmittedPrompt(command)
 
         return .runHiddenPrompt(

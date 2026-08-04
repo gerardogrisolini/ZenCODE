@@ -189,6 +189,19 @@ public actor AgentCoreBackend {
     public func installTaskOrchestrator(
         _ orchestrator: SessionTaskOrchestrator
     ) async {
+        if let existing = taskOrchestrator {
+            // Exclusive ownership: the orchestrator is set exactly once per
+            // backend lifetime and must not be silently replaced — doing so
+            // would lose checkpointed task-graph state and break the
+            // session-restore invariant that SessionTaskOrchestrator is the
+            // sole mutable task-graph owner.
+            guard existing === orchestrator else {
+                preconditionFailure(
+                    "Attempted to replace the existing SessionTaskOrchestrator — the task graph has a sole owner."
+                )
+            }
+            return
+        }
         taskOrchestrator = orchestrator
         await applyTaskOrchestrator(to: activeBackend)
     }

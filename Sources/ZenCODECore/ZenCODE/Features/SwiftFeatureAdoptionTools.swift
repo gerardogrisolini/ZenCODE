@@ -33,7 +33,7 @@ extension SwiftFeatureRuntime {
                     "Swift feature '\(id)' is already generated and can be edited directly."
                 )
             }
-            throw DirectToolError.permissionDenied("Unknown bundled Swift feature: \(id).")
+            throw DirectToolError.notFound("Unknown bundled Swift feature: \(id).")
         }
 
         guard !definition.isCore else {
@@ -147,7 +147,7 @@ extension SwiftFeatureRuntime {
         guard let record,
               record.source == .generated,
               let manifestURL = record.manifestURL else {
-            throw DirectToolError.permissionDenied("Unknown editable Swift feature: \(id).")
+            throw DirectToolError.notFound("Unknown editable Swift feature: \(id).")
         }
 
         return editReport(for: record, manifestURL: manifestURL, adoptReport: adoptReport)

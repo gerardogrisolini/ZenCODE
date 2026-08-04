@@ -47,6 +47,11 @@ public actor SwiftFeatureRuntime {
     var acceptsPersistentProcessRequests = true
     var persistentProcessesWereShutDown = false
     var persistentProcessReloadCount = 0
+    /// Feature IDs whose installation is currently in progress. Because actor
+    /// methods are reentrant at suspension points, two concurrent calls for the
+    /// same feature ID could race on staging directories and publication. The
+    /// second concurrent call is rejected with a clear error instead.
+    var inProgressInstallations: Set<String> = []
 
     public init(
         features explicitFeatures: [SwiftFeatureBundle]? = nil,

@@ -92,11 +92,16 @@ public struct TurnFileChangeSummary: Codable, Hashable, Sendable {
 
     public func encodedString() -> String? {
         let encoder = JSONEncoder()
-        guard let data = try? encoder.encode(self) else {
+        do {
+            let data = try encoder.encode(self)
+            return String(data: data, encoding: .utf8)
+        } catch {
+            ZenLogger.warning(
+                .turnFileChangeTracker,
+                "Failed to encode file change summary: \(error.localizedDescription)"
+            )
             return nil
         }
-
-        return String(data: data, encoding: .utf8)
     }
 
     public static func decode(from rawValue: String) -> TurnFileChangeSummary? {

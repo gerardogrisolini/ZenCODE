@@ -19,9 +19,14 @@ extension SessionTaskOrchestrator {
             markActiveAttemptsInterrupted(in: &graph)
         }
         try validate(graph)
+        // Preserve other graphs in the session: replace only the restored graph
+        // and make it current, instead of rebuilding SessionState from scratch
+        // (which would silently destroy every other graph).
+        var graphs = sessionStates[sessionID]?.graphs ?? [:]
+        graphs[graph.id] = graph
         let state = SessionState(
             currentGraphID: graph.id,
-            graphs: [graph.id: graph]
+            graphs: graphs
         )
         try commit(
             sessionID: sessionID,

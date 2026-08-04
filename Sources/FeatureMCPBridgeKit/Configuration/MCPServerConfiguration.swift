@@ -51,7 +51,15 @@ public nonisolated struct MCPBrowserOAuthConfiguration: Hashable, Sendable {
         components.host = redirectHost
         components.port = Int(redirectPort)
         components.path = redirectPath
-        return components.url!
+        guard let url = components.url else {
+            // The URL is assembled from init parameters; it can only fail if a
+            // caller supplied an invalid host or path. Fail loudly with enough
+            // context to diagnose instead of crashing on a bare force-unwrap.
+            preconditionFailure(
+                "Invalid MCP OAuth redirect URL: host=\(redirectHost), port=\(redirectPort), path=\(redirectPath)"
+            )
+        }
+        return url
     }
 }
 

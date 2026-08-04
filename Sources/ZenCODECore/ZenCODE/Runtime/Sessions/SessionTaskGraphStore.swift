@@ -161,15 +161,33 @@ public struct SessionTaskGraphStore: Sendable {
                   !isDirectory.boolValue else {
                 continue
             }
-            guard let data = try? Data(contentsOf: fileURL, options: [.mappedIfSafe]),
-                  data.count <= maximumSnapshotBytes else {
+            let data: Data
+            do {
+                data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
+            } catch {
+                ZenLogger.warning(
+                    .taskLifecycle,
+                    "Failed to read task graph checkpoint \(entry): \(error.localizedDescription)"
+                )
                 continue
             }
-            guard let checkpoint = try? PropertyListDecoder().decode(
-                SessionTaskGraphCheckpoint.self,
-                from: data
-            ),
-                checkpoint.schemaVersion == SessionTaskGraphCheckpoint.currentSchemaVersion else {
+            guard data.count <= maximumSnapshotBytes else {
+                continue
+            }
+            let checkpoint: SessionTaskGraphCheckpoint
+            do {
+                checkpoint = try PropertyListDecoder().decode(
+                    SessionTaskGraphCheckpoint.self,
+                    from: data
+                )
+            } catch {
+                ZenLogger.warning(
+                    .taskLifecycle,
+                    "Failed to decode task graph checkpoint \(entry): \(error.localizedDescription)"
+                )
+                continue
+            }
+            guard checkpoint.schemaVersion == SessionTaskGraphCheckpoint.currentSchemaVersion else {
                 continue
             }
             results.append(checkpoint)

@@ -26,6 +26,13 @@ nonisolated let workspaceRelativePathArgumentKeys: Set<String> = [
     "working_directory"
 ]
 
+/// Default file-existence checker backed by `FileManager.default`. Extracted as
+/// a top-level constant so the path-resolution functions accept an injectable
+/// closure for testing instead of touching the real filesystem directly.
+nonisolated let defaultToolPathFileExists: @Sendable (String) -> Bool = {
+    FileManager.default.fileExists(atPath: $0)
+}
+
 nonisolated func toolRequestUsesWorkspaceRelativePaths(
     _ toolName: String
 ) -> Bool {
@@ -101,7 +108,8 @@ public nonisolated func shouldDropLeadingMissingWorkspaceContainer(
 
 nonisolated func normalizedWorkspaceRelativeToolPath(
     _ rawPath: String,
-    workspaceRootPath: String?
+    workspaceRootPath: String?,
+    fileExists: @Sendable (String) -> Bool = defaultToolPathFileExists
 ) -> String? {
     guard let workspaceRootPath = normalizedWorkspaceRootPath(workspaceRootPath) else {
         return nil
@@ -109,26 +117,29 @@ nonisolated func normalizedWorkspaceRelativeToolPath(
 
     let workspaceRootURL = URL(fileURLWithPath: workspaceRootPath).standardizedFileURL
     let directURL = workspaceRootURL.appendingPathComponent(rawPath).standardizedFileURL
-    if FileManager.default.fileExists(atPath: directURL.path) {
+    if fileExists(directURL.path) {
         return nil
     }
 
     if let collapsedDuplicatedRootPath = normalizedRelativePathAvoidingDuplicatedWorkspaceRoot(
         rawPath,
-        workspaceRootURL: workspaceRootURL
+        workspaceRootURL: workspaceRootURL,
+        fileExists: fileExists
     ) {
         return collapsedDuplicatedRootPath
     }
 
     return normalizedRelativePathByDroppingLeadingMissingWorkspaceContainer(
         rawPath,
-        workspaceRootURL: workspaceRootURL
+        workspaceRootURL: workspaceRootURL,
+        fileExists: fileExists
     )
 }
 
 nonisolated func normalizedRelativePathAvoidingDuplicatedWorkspaceRoot(
     _ rawPath: String,
-    workspaceRootURL: URL
+    workspaceRootURL: URL,
+    fileExists: @Sendable (String) -> Bool
 ) -> String? {
     let rootName = workspaceRootURL.lastPathComponent
     guard !rootName.isEmpty else {
@@ -145,7 +156,7 @@ nonisolated func normalizedRelativePathAvoidingDuplicatedWorkspaceRoot(
     }
 
     let directURL = workspaceRootURL.appendingPathComponent(rawPath).standardizedFileURL
-    if FileManager.default.fileExists(atPath: directURL.path) {
+    if fileExists(directURL.path) {
         return nil
     }
 
@@ -158,9 +169,9 @@ nonisolated func normalizedRelativePathAvoidingDuplicatedWorkspaceRoot(
     let collapsedParentURL = collapsedURL.deletingLastPathComponent()
     let directParentURL = directURL.deletingLastPathComponent()
 
-    let collapsedExists = FileManager.default.fileExists(atPath: collapsedURL.path)
-    let collapsedParentExists = FileManager.default.fileExists(atPath: collapsedParentURL.path)
-    let directParentExists = FileManager.default.fileExists(atPath: directParentURL.path)
+    let collapsedExists = fileExists(collapsedURL.path)
+    let collapsedParentExists = fileExists(collapsedParentURL.path)
+    let directParentExists = fileExists(directParentURL.path)
 
     guard collapsedExists || (collapsedParentExists && !directParentExists) else {
         return nil
@@ -171,7 +182,8 @@ nonisolated func normalizedRelativePathAvoidingDuplicatedWorkspaceRoot(
 
 nonisolated func normalizedRelativePathByDroppingLeadingMissingWorkspaceContainer(
     _ rawPath: String,
-    workspaceRootURL: URL
+    workspaceRootURL: URL,
+    fileExists: @Sendable (String) -> Bool
 ) -> String? {
     let components = rawPath
         .split(separator: "/", omittingEmptySubsequences: true)
@@ -181,14 +193,14 @@ nonisolated func normalizedRelativePathByDroppingLeadingMissingWorkspaceContaine
     }
 
     let directURL = workspaceRootURL.appendingPathComponent(rawPath).standardizedFileURL
-    if FileManager.default.fileExists(atPath: directURL.path) {
+    if fileExists(directURL.path) {
         return nil
     }
 
     let firstComponentURL = workspaceRootURL
         .appendingPathComponent(components[0])
         .standardizedFileURL
-    guard !FileManager.default.fileExists(atPath: firstComponentURL.path) else {
+    guard !fileExists(firstComponentURL.path) else {
         return nil
     }
     guard shouldDropLeadingMissingWorkspaceContainer(
@@ -207,9 +219,9 @@ nonisolated func normalizedRelativePathByDroppingLeadingMissingWorkspaceContaine
     let collapsedParentURL = collapsedURL.deletingLastPathComponent()
     let directParentURL = directURL.deletingLastPathComponent()
 
-    let collapsedExists = FileManager.default.fileExists(atPath: collapsedURL.path)
-    let collapsedParentExists = FileManager.default.fileExists(atPath: collapsedParentURL.path)
-    let directParentExists = FileManager.default.fileExists(atPath: directParentURL.path)
+    let collapsedExists = fileExists(collapsedURL.path)
+    let collapsedParentExists = fileExists(collapsedParentURL.path)
+    let directParentExists = fileExists(directParentURL.path)
 
     guard collapsedExists || (collapsedParentExists && !directParentExists) else {
         return nil
@@ -220,13 +232,14 @@ nonisolated func normalizedRelativePathByDroppingLeadingMissingWorkspaceContaine
 
 nonisolated func resolvedSkillRelativeToolPath(
     _ normalizedPath: String,
-    skillRootURLs: [URL]
+    skillRootURLs: [URL],
+    fileExists: @Sendable (String) -> Bool = defaultToolPathFileExists
 ) -> String? {
     let exactMatches = skillRootURLs.compactMap { skillRootURL -> String? in
         let candidateURL = skillRootURL
             .appendingPathComponent(normalizedPath)
             .standardizedFileURL
-        guard FileManager.default.fileExists(atPath: candidateURL.path) else {
+        guard fileExists(candidateURL.path) else {
             return nil
         }
 

@@ -9,8 +9,38 @@ import ToolCore
 import FoundationNetworking
 #endif
 
+/// Abstract HTTP transport for the Telegram API client so the concrete
+/// `URLSession` can be swapped out in tests or replaced with a mock.
+protocol TelegramHTTPTransport: Sendable {
+    func data(for request: URLRequest) async throws -> (Data, URLResponse)
+    func data(from url: URL) async throws -> (Data, URLResponse)
+}
+
+/// Production transport backed by a `URLSession` (defaults to `.shared`).
+struct URLSessionTelegramHTTPTransport: TelegramHTTPTransport {
+    let session: URLSession
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        try await session.data(for: request)
+    }
+
+    func data(from url: URL) async throws -> (Data, URLResponse) {
+        try await session.data(from: url)
+    }
+}
+
 struct TerminalTelegramAPIClient: Sendable {
     let token: String
+    let transport: any TelegramHTTPTransport
+
+    init(token: String, transport: any TelegramHTTPTransport = URLSessionTelegramHTTPTransport()) {
+        self.token = token
+        self.transport = transport
+    }
 
     func getMe() async throws -> TerminalTelegramUser {
         try await request(method: "getMe", body: TerminalTelegramEmptyRequest())
@@ -63,7 +93,7 @@ struct TerminalTelegramAPIClient: Sendable {
             throw TerminalTelegramControlError.unexpectedResponse
         }
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await transport.data(from: url)
         guard let httpResponse = response as? HTTPURLResponse,
               (200..<300).contains(httpResponse.statusCode) else {
             throw TerminalTelegramControlError.unexpectedResponse
@@ -89,7 +119,7 @@ struct TerminalTelegramAPIClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await transport.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw TerminalTelegramControlError.unexpectedResponse
         }

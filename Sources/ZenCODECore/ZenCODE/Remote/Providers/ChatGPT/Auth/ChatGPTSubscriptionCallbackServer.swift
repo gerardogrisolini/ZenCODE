@@ -55,7 +55,7 @@ final class ChatGPTSubscriptionCallbackServer: Sendable {
         if let url = URL(string: value),
            let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
            components.queryItems?.contains(where: { $0.name == "code" }) == true {
-            return try authorizationCode(from: components, requireState: false)
+            return try authorizationCode(from: components, requireState: true)
         }
 
         if value.contains("#") {
@@ -76,7 +76,7 @@ final class ChatGPTSubscriptionCallbackServer: Sendable {
             let query = value.hasPrefix("?") ? String(value.dropFirst()) : value
             if let components = URLComponents(string: "http://localhost/auth/callback?\(query)"),
                components.queryItems?.contains(where: { $0.name == "code" }) == true {
-                return try authorizationCode(from: components, requireState: false)
+                return try authorizationCode(from: components, requireState: true)
             }
         }
 
@@ -277,16 +277,34 @@ final class ChatGPTSubscriptionCallbackServer: Sendable {
     }
 
     static func errorHTML(_ message: String) -> String {
-        """
+        let escaped = Self.escapeHTML(message)
+        return """
         <!doctype html>
         <html>
         <head><meta charset="utf-8"><title>ZenCODE</title></head>
         <body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:40px;">
         <h1>Sign-in failed</h1>
-        <p>\(message)</p>
+        <p>\(escaped)</p>
         </body>
         </html>
         """
+    }
+
+    static func escapeHTML(_ string: String) -> String {
+        var escaped = string
+        let replacements: [(String, String)] = [
+            ("&", "&amp;"),
+            ("<", "&lt;"),
+            (">", "&gt;"),
+            ("\"", "&quot;"),
+            ("'", "&#39;"),
+        ]
+        // Replace ampersands first to avoid double-escaping the entities
+        // introduced by later substitutions.
+        for (character, entity) in replacements {
+            escaped = escaped.replacingOccurrences(of: character, with: entity)
+        }
+        return escaped
     }
 }
 

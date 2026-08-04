@@ -50,7 +50,7 @@ extension MCPClient {
         log(buildMarker)
         log("Launching MCP bridge: \(executableURL.path) \(configuration.arguments.joined(separator: " "))")
         if !configuration.environment.isEmpty {
-            log("Bridge environment overrides: \(configuration.environment)")
+            log("Bridge environment overrides: \(Self.redactedEnvironmentDescription(configuration.environment))")
         }
 
         let standardInput = Pipe()
@@ -424,6 +424,28 @@ extension MCPClient {
             environment[key] = value
         }
         return DeveloperToolEnvironment.processEnvironment(base: environment)
+    }
+
+    /// Returns a log-safe description of an environment dictionary with values
+    /// whose keys look sensitive (token, secret, auth, key, password, credential)
+    /// replaced by a placeholder. FeatureMCPBridgeKit cannot depend on the
+    /// ZenCODECore ``ZenSecretRedactor``, so this is a conservative local
+    /// approximation that errs on the side of over-redacting.
+    nonisolated static func redactedEnvironmentDescription(
+        _ environment: [String: String]
+    ) -> String {
+        let sensitiveKeywords: Set<String> = [
+            "token", "secret", "auth", "key", "password", "credential", "passphrase",
+        ]
+        let redacted = environment.map { (key, value) -> String in
+            let lowercasedKey = key.lowercased()
+            let isSensitive = sensitiveKeywords.contains { keyword in
+                lowercasedKey.contains(keyword)
+            }
+            let displayValue = isSensitive ? "[REDACTED]" : value
+            return "\(key): \(displayValue)"
+        }
+        return "[\(redacted.joined(separator: ", "))]"
     }
 
     public func listTools() async throws -> MCPListToolsResult {
