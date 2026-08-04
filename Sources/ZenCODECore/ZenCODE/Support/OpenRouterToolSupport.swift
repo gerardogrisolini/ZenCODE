@@ -242,12 +242,14 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
             guard let schema = descriptor.schemaObject else {
                 return nil
             }
+            let sanitized = RemoteToolSchemaCompatibility
+                .chatCompletionsFunctionParameters(from: schema)
             return [
                 "type": "function",
                 "function": [
                     "name": wireName,
                     "description": descriptor.description,
-                    "parameters": schema
+                    "parameters": sanitized
                 ]
             ]
         }
@@ -573,6 +575,67 @@ public enum RemoteToolSchemaCompatibility {
         return values.compactMap { value in
             (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
         }
+    }
+
+    /// Sanitizes a JSON Schema for `/chat/completions` providers whose strict
+    /// Codable decoders reject constructs valid in JSON Schema Draft 7+:
+    ///
+    /// - Union types (`"type": ["string", "null"]`) are flattened to the first
+    ///   non-`null` concrete type.
+    /// - Empty schemas (`{}`, valid for "accept anything") default to
+    ///   `{"type": "string"}`.
+    /// - Object schemas missing `properties` get an empty `properties` map so
+    ///   strict decoders can materialize the object.
+    ///
+    /// These transforms are conservative: they make the schema more specific
+    /// without changing the set of JSON values the model can produce.
+    public static func chatCompletionsFunctionParameters(from schema: Any) -> Any {
+        sanitizeChatCompletionsSchema(schema)
+    }
+
+    private static func sanitizeChatCompletionsSchema(_ value: Any) -> Any {
+        guard var object = value as? [String: Any] else {
+            return value
+        }
+
+        // Flatten union type arrays: ["string", "null"] → "string"
+        if let typeArray = object["type"] as? [Any] {
+            let typeStrings = typeArray.compactMap { $0 as? String }
+            let resolved = typeStrings.first(where: { $0 != "null" })
+                ?? typeStrings.first
+            if let resolved {
+                object["type"] = resolved
+            }
+        }
+
+        // Recurse into nested properties
+        if let properties = object["properties"] as? [String: Any] {
+            object["properties"] = properties.mapValues {
+                sanitizeChatCompletionsSchema($0)
+            }
+        }
+
+        // Recurse into items (single-schema array form)
+        if let items = object["items"] {
+            let sanitized = sanitizeChatCompletionsSchema(items)
+            if let sanitizedDict = sanitized as? [String: Any],
+               sanitizedDict.isEmpty {
+                // Empty schema {} is valid JSON Schema (accept anything) but
+                // rejected by strict Codable decoders such as Apple Foundation
+                // Models. Default to string, which the model can always emit.
+                object["items"] = ["type": "string"]
+            } else {
+                object["items"] = sanitized
+            }
+        }
+
+        // Fix object schemas missing properties: strict decoders require it
+        if object["type"] as? String == "object",
+           object["properties"] == nil {
+            object["properties"] = [String: Any]()
+        }
+
+        return object
     }
 }
 

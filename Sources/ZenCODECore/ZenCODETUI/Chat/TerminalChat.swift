@@ -227,10 +227,10 @@ public final class TerminalChat {
             return modelID
         }
         let references = Self.modelReferences(for: modelID)
-        if let model = manifest.models.first(where: { model in
-            references.contains { model.matches($0) }
-        }) {
-            return model.id
+        for reference in references {
+            if let model = manifest.models.first(where: { $0.matches(reference) }) {
+                return model.id
+            }
         }
         return preservesUnknownReference ? modelID : nil
     }

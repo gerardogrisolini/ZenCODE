@@ -335,6 +335,50 @@ extension AgentConfigurationTests {
 
     @Test
     @TerminalChatActor
+    func manualModelOverridePrefersExactProviderBindingOverSharedModelID() {
+        let modelID = "deepseek-v4-flash"
+        let remoteProviderID = UUID()
+        let localProviderID = UUID()
+        let remote = AgentSettingsModelManifest(
+            id: "remoteapi:\(remoteProviderID.uuidString.lowercased()):\(modelID)",
+            kind: .remoteAPI,
+            modelID: modelID,
+            providerID: remoteProviderID,
+            provider: AgentRemoteProvider(
+                id: remoteProviderID,
+                name: "DeepSeek",
+                baseURL: "https://api.deepseek.com",
+                modelID: modelID
+            )
+        )
+        let local = AgentSettingsModelManifest(
+            id: "remoteapi:\(localProviderID.uuidString.lowercased()):\(modelID)",
+            kind: .remoteAPI,
+            modelID: modelID,
+            providerID: localProviderID,
+            provider: AgentRemoteProvider(
+                id: localProviderID,
+                name: "ds4",
+                baseURL: "http://127.0.0.1:8000/v1",
+                modelID: modelID
+            )
+        )
+        let manifest = AgentSettingsManifest(
+            models: [remote, local],
+            selectedModelID: remote.id
+        )
+
+        let resolved = TerminalChat.effectiveModelID(
+            selectedAgent: nil,
+            manualModelIDOverride: local.id,
+            manifest: manifest
+        )
+
+        #expect(resolved == local.id)
+    }
+
+    @Test
+    @TerminalChatActor
     func modelPickerListsAllConfiguredModelsForBoundProfile() throws {
         let allowed = AgentSettingsModelManifest(
             id: "allowed",

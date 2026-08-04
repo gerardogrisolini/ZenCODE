@@ -213,4 +213,76 @@ struct ToolPresentationResolverTests {
         #expect(fields["presentation"] == nil)
         #expect(fields["descriptorTitle"] == nil)
     }
+
+    // MARK: - Strict-provider schema sanitization
+
+    @Test
+    func chatCompletionsPayloadFlattensUnionTypes() throws {
+        let schema = #"{"type":"object","properties":{"description":{"type":["string","null"]}}}"#
+        let catalog = RemoteToolWireCatalog(
+            descriptors: [
+                DirectToolDescriptor(
+                    name: "tasks.update",
+                    description: "Update a task.",
+                    inputSchema: schema
+                )
+            ]
+        )
+        let payload = try #require(catalog.chatCompletionToolPayloads.first)
+        let function = try #require(payload["function"] as? [String: Any])
+        let parameters = try #require(function["parameters"] as? [String: Any])
+        let properties = try #require(parameters["properties"] as? [String: Any])
+        let description = try #require(properties["description"] as? [String: Any])
+
+        // Union type ["string","null"] flattened to "string"
+        #expect(description["type"] as? String == "string")
+    }
+
+    @Test
+    func chatCompletionsPayloadDefaultsEmptyItemsSchema() throws {
+        let schema = #"{"type":"object","properties":{"evidence":{"type":"array","items":{}}}}"#
+        let catalog = RemoteToolWireCatalog(
+            descriptors: [
+                DirectToolDescriptor(
+                    name: "tasks.update",
+                    description: "Update a task.",
+                    inputSchema: schema
+                )
+            ]
+        )
+        let payload = try #require(catalog.chatCompletionToolPayloads.first)
+        let function = try #require(payload["function"] as? [String: Any])
+        let parameters = try #require(function["parameters"] as? [String: Any])
+        let properties = try #require(parameters["properties"] as? [String: Any])
+        let evidence = try #require(properties["evidence"] as? [String: Any])
+        let items = try #require(evidence["items"] as? [String: Any])
+
+        #expect(items["type"] as? String == "string")
+    }
+
+    @Test
+    func chatCompletionsPayloadAddsEmptyPropertiesToObjects() throws {
+        let schema = #"{"type":"object","properties":{"items":{"type":"array","items":{"type":"object"}}}}"#
+        let catalog = RemoteToolWireCatalog(
+            descriptors: [
+                DirectToolDescriptor(
+                    name: "agent.create",
+                    description: "Create agents.",
+                    inputSchema: schema
+                )
+            ]
+        )
+        let payload = try #require(catalog.chatCompletionToolPayloads.first)
+        let function = try #require(payload["function"] as? [String: Any])
+        let parameters = try #require(function["parameters"] as? [String: Any])
+        let properties = try #require(parameters["properties"] as? [String: Any])
+        let itemsField = try #require(properties["items"] as? [String: Any])
+        let itemsSchema = try #require(itemsField["items"] as? [String: Any])
+
+        // type:object without properties gets an empty properties map
+        #expect(itemsSchema["type"] as? String == "object")
+        let nestedProps = itemsSchema["properties"] as? [String: Any]
+        #expect(nestedProps != nil)
+        #expect(nestedProps?.isEmpty == true)
+    }
 }

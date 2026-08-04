@@ -22,6 +22,7 @@ extension RemoteGenerationClient {
 
     public func applyThinkingSelection(
         _ thinkingSelection: AgentThinkingSelection?,
+        endpoint: AgentRemoteChatEndpoint,
         to body: inout [String: Any]
     ) {
         guard let thinkingSelection else {
@@ -29,7 +30,16 @@ extension RemoteGenerationClient {
         }
         switch thinkingPayloadStyle {
         case .openRouterReasoning:
-            body["reasoning"] = thinkingSelection.openRouterReasoningPayload
+            var payload = thinkingSelection.openRouterReasoningPayload
+            /* The Responses API only streams reasoning summaries when the
+             client opts in via `reasoning.summary`. Without it, providers
+             such as ds4-server generate reasoning but suppress it from the
+             stream, so no thinking is visible in chat. "auto" matches the
+             spec's default verbosity. */
+            if endpoint == .responses && thinkingSelection.isEnabled {
+                payload["summary"] = "auto"
+            }
+            body["reasoning"] = payload
         case .chatTemplateKwargs:
             var kwargs: [String: Any] = [
                 "enable_thinking": thinkingSelection.isEnabled,
@@ -138,7 +148,7 @@ extension RemoteGenerationClient {
                 "include_usage": true
             ]
         ]
-        applyThinkingSelection(thinkingSelection, to: &body)
+        applyThinkingSelection(thinkingSelection, endpoint: .chatCompletions, to: &body)
         applyStructuredOutputFormat(to: &body, endpoint: .chatCompletions)
         if provider.chatEndpoint.usesSessionID
             || AgentRemoteProvider.isOpenRouterBaseURL(provider.baseURL) {
@@ -211,7 +221,7 @@ extension RemoteGenerationClient {
         if let instructions = normalizedInput.instructions {
             body["instructions"] = instructions
         }
-        applyThinkingSelection(thinkingSelection, to: &body)
+        applyThinkingSelection(thinkingSelection, endpoint: .responses, to: &body)
         applyStructuredOutputFormat(to: &body, endpoint: .responses)
         if provider.chatEndpoint.usesSessionID
             || AgentRemoteProvider.isOpenRouterBaseURL(provider.baseURL) {
