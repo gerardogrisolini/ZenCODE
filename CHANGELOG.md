@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-08-05
+
 ### Changed
 
 - Expanded tool blocks now syntax-highlight the `parameters` JSON with the same
