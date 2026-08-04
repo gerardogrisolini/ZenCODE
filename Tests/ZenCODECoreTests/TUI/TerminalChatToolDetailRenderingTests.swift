@@ -514,7 +514,7 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func expandedParametersUseMutedNeutralColor() throws {
+    func expandedParametersUseJSONSyntaxColorsOverNeutralBase() throws {
         let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.readFile",
@@ -525,7 +525,7 @@ extension TerminalChatRenderingTests {
         )
         let parameterRow = try #require(
             TerminalChat.detailedToolCallStartedRows(for: toolCall).first { row in
-                if case let .parameter(line) = row {
+                if case let .parameter(line, _) = row {
                     return line.contains("\"path\"")
                 }
                 return false
@@ -536,24 +536,31 @@ extension TerminalChatRenderingTests {
             columnWidth: 24
         )
 
-        // The target is Swift, but parameter metadata must stay neutral rather
-        // than inheriting Swift's green string highlighting or a multicolored
-        // JSON palette.
         let rendered = TerminalChat.renderDetailedToolRow(
             parameterRow,
             codeLanguage: "swift"
         )
+        let palette = TerminalMarkdownPalette.detected
 
-        // The entire line — keys, values and punctuation — uses one readable,
-        // secondary gray and carries no other SGR color codes.
+        // Payload rows open on the neutral parameter color, then use the shared
+        // code-block JSON palette for keys and string values.
         #expect(TerminalChat.toolParameterBaseColor == TerminalStyle.Tool.parameter)
         #expect(TerminalChat.toolParameterBaseColor != TerminalChat.toolValueColor)
         #expect(rendered.hasPrefix(TerminalChat.toolParameterBaseColor))
-        #expect(rendered.contains("\"path\""))
-        #expect(rendered.contains("\"/tmp/project/Sources/App.swift\""))
-        // No per-token syntax colors leak into parameter JSON.
-        #expect(!rendered.contains(TerminalMarkdownPalette.dark.syntaxString))
-        #expect(!rendered.contains(TerminalMarkdownPalette.light.syntaxString))
+        #expect(rendered.contains("\(palette.syntaxProperty)\"path\""))
+        #expect(rendered.contains("\(palette.syntaxString)\"/tmp/project/Sources/App.swift\""))
+
+        // Every token reset returns to the neutral base, so punctuation and
+        // indentation never fall back to the terminal's default foreground.
+        let unanchoredResets = rendered.replacingOccurrences(
+            of: "\(TerminalStyle.reset)\(TerminalChat.toolParameterBaseColor)",
+            with: ""
+        )
+        #expect(!unanchoredResets.contains(TerminalStyle.reset))
+
+        // The target file language must never recolor parameter metadata, and
+        // the orange tool identity colors stay out of the payload.
+        #expect(rendered == TerminalChat.renderDetailedToolRow(parameterRow))
         #expect(!rendered.contains(TerminalChat.toolLabelColor))
         #expect(!rendered.contains(TerminalChat.toolValueColor))
         #expect(TerminalANSIText.stripANSI(rendered) == parameterRow.plainText)
@@ -564,9 +571,9 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func expandedParametersRenderAllJsonTypesInMutedNeutralColor() throws {
-        // Keys, strings, numbers, booleans, null and nested structures must all
-        // share the same neutral gray with no multicolored JSON highlighting.
+    func expandedParametersHighlightEveryJsonType() throws {
+        // Keys, strings, numbers, booleans, null and nested structures each get
+        // their classic JSON color from the shared code palette.
         let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.readFile",
@@ -581,43 +588,83 @@ extension TerminalChatRenderingTests {
         )
         let parameterRows = TerminalChat.detailedToolCallStartedRows(for: toolCall)
             .compactMap { row -> String? in
-                if case let .parameter(line) = row { return line }
+                if case let .parameter(line, _) = row { return line }
                 return nil
             }
         #expect(!parameterRows.isEmpty)
 
+        let palette = TerminalMarkdownPalette.detected
+        var renderedRows: [String] = []
         for parameterRow in parameterRows {
             let row = TerminalChat.DetailedToolRow.parameter(parameterRow)
             let rendered = TerminalChat.renderDetailedToolRow(
                 row,
                 codeLanguage: "swift"
             )
-            // Every parameter line starts with the neutral parameter color and
-            // contains no other SGR color codes.
+            // Payload rows keep the neutral base and never borrow the orange
+            // tool label or title colors. The peach number color is shared with
+            // the compact value color by design, so it is not asserted here.
             #expect(rendered.hasPrefix(TerminalChat.toolParameterBaseColor))
             #expect(!rendered.contains(TerminalChat.toolLabelColor))
-            #expect(!rendered.contains(TerminalChat.toolValueColor))
             #expect(!rendered.contains(TerminalChat.toolTitleColor))
-            #expect(!rendered.contains(TerminalMarkdownPalette.dark.syntaxString))
-            #expect(!rendered.contains(TerminalMarkdownPalette.light.syntaxString))
             #expect(TerminalANSIText.stripANSI(rendered) == row.plainText)
+            renderedRows.append(rendered)
         }
 
         // Confirm every declared JSON type actually reaches the rendered output,
         // so a formatter that silently dropped a type would fail the test.
-        let aggregate = parameterRows.joined(separator: "\n")
-        #expect(aggregate.contains("\"path\""))
-        #expect(aggregate.contains("\"count\""))
-        #expect(aggregate.contains("42"))
-        #expect(aggregate.contains("\"enabled\""))
-        #expect(aggregate.contains("true"))
-        #expect(aggregate.contains("\"ratio\""))
-        #expect(aggregate.contains("3.14"))
-        #expect(aggregate.contains("\"nested\""))
-        #expect(aggregate.contains("\"b\""))
-        #expect(aggregate.contains("false"))
-        #expect(aggregate.contains("\"c\""))
-        #expect(aggregate.contains("null"))
+        let aggregate = renderedRows.joined(separator: "\n")
+        #expect(aggregate.contains("\(palette.syntaxProperty)\"path\""))
+        #expect(aggregate.contains("\(palette.syntaxString)\"/tmp/data.json\""))
+        #expect(aggregate.contains("\(palette.syntaxProperty)\"count\""))
+        #expect(aggregate.contains("\(palette.syntaxNumber)42"))
+        #expect(aggregate.contains("\(palette.syntaxProperty)\"enabled\""))
+        #expect(aggregate.contains("\(palette.syntaxNumber)true"))
+        #expect(aggregate.contains("\(palette.syntaxProperty)\"ratio\""))
+        #expect(aggregate.contains("\(palette.syntaxNumber)3.14"))
+        #expect(aggregate.contains("\(palette.syntaxProperty)\"nested\""))
+        #expect(aggregate.contains("\(palette.syntaxProperty)\"b\""))
+        #expect(aggregate.contains("\(palette.syntaxNumber)false"))
+        #expect(aggregate.contains("\(palette.syntaxProperty)\"c\""))
+        #expect(aggregate.contains("\(palette.syntaxNumber)null"))
+    }
+
+    @Test
+    func expandedParametersKeepMultilineStringBodiesUnhighlighted() throws {
+        let toolCall = presentedToolCall(
+            id: "call_1",
+            name: "memory.write",
+            argumentsObject: [
+                "content": "Summary: first line\nkey: \"quoted\" 42"
+            ],
+            argumentsJSON: "{}"
+        )
+        let rows = TerminalChat.detailedToolCallStartedRows(for: toolCall)
+        let bodyRow = try #require(
+            rows.first { row in
+                if case let .parameter(line, _) = row {
+                    return line.contains("key: \"quoted\" 42")
+                }
+                return false
+            }
+        )
+        let openingRow = try #require(
+            rows.first { row in
+                if case let .parameter(line, _) = row {
+                    return line.contains("\"content\"")
+                }
+                return false
+            }
+        )
+
+        // Raw string content is prose, not data: it stays on the flat parameter
+        // color, while the JSON line that opens the block keeps its key color.
+        let renderedBody = TerminalChat.renderDetailedToolRow(bodyRow)
+        #expect(renderedBody == "\(TerminalChat.toolParameterBaseColor)\(bodyRow.plainText)")
+        #expect(
+            TerminalChat.renderDetailedToolRow(openingRow)
+                .contains("\(TerminalMarkdownPalette.detected.syntaxProperty)\"content\"")
+        )
     }
 
     @Test

@@ -265,7 +265,7 @@ extension TerminalChat {
                     rows.append(.parameter("  \(index + 1). \(lines[0].dropFirst(2))"))
                 } else {
                     rows.append(.parameter("  \(index + 1)."))
-                    rows.append(contentsOf: lines.map(DetailedToolRow.parameter))
+                    rows.append(contentsOf: lines.map { .parameter($0) })
                 }
             }
             return rows
@@ -297,8 +297,31 @@ extension TerminalChat {
         let lines = formatted.preservesIndentation
             ? indentedSnippetPreservingIndentation(formatted.text)
             : indentedSnippet(formatted.text)
-        return [.text("\(label):")] + lines.map {
-            DetailedToolRow.parameter(terminalSafeSnippetLine($0))
+        return [.text("\(label):")]
+            + parameterPayloadRows(lines.map(terminalSafeSnippetLine))
+    }
+
+    /// Builds the payload rows of a parameter block.
+    ///
+    /// Lines inside a `"""` block hold a raw multi-line string, not structured
+    /// data, so they are marked as non-JSON and stay on the flat parameter
+    /// color instead of being tokenized as keys, strings and literals.
+    nonisolated static func parameterPayloadRows(
+        _ lines: [String]
+    ) -> [DetailedToolRow] {
+        var isInsideMultilineString = false
+        return lines.map { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if isInsideMultilineString {
+                if trimmed.hasPrefix("\"\"\"") {
+                    isInsideMultilineString = false
+                }
+                return .parameter(line, highlightsJSON: false)
+            }
+            if trimmed.hasSuffix("\"\"\"") {
+                isInsideMultilineString = true
+            }
+            return .parameter(line, highlightsJSON: true)
         }
     }
 
@@ -329,9 +352,11 @@ extension TerminalChat {
     nonisolated static func parameterRows(
         for toolCall: DirectAgentToolCall
     ) -> [DetailedToolRow] {
-        parameterLines(for: toolCall).enumerated().map { index, line in
-            index == 0 ? .text(line) : .parameter(line)
+        let lines = parameterLines(for: toolCall)
+        guard let header = lines.first else {
+            return []
         }
+        return [.text(header)] + parameterPayloadRows(Array(lines.dropFirst()))
     }
 
     nonisolated static func formattedParameterSnippet(

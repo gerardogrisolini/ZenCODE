@@ -12,6 +12,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Expanded tool blocks now syntax-highlight the `parameters` JSON with the same
+  palette used for fenced code blocks in chat: keys, strings, numbers and
+  literals keep their classic colors while punctuation and indentation stay on
+  the neutral parameter gray. Raw multi-line string bodies rendered inside a
+  `"""` block remain flat, so prose is never tokenized as data.
 - Prompt editing now follows the Emacs/readline conventions so that motion works
   on keyboards without `Home`/`End` keys: `Ctrl+A`/`Ctrl+E` move to line
   start/end, `Ctrl+B`/`Ctrl+F` move by character, `Ctrl+P`/`Ctrl+N` move by

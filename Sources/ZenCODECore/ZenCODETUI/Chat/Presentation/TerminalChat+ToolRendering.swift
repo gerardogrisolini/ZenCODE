@@ -12,7 +12,10 @@ extension TerminalChat {
     /// mistaken for the column boundary.
     enum DetailedToolRow: Sendable, Equatable {
         case text(String)
-        case parameter(String)
+        /// A parameter payload row. `highlightsJSON` is false for rows that only
+        /// look like JSON because they sit inside a `"""` block, where the
+        /// payload is a raw multi-line string rather than structured data.
+        case parameter(String, highlightsJSON: Bool = true)
         case code(DetailedToolCodeLine)
         case diff(DetailedToolDiffCells)
         case unifiedDiff(DetailedToolUnifiedDiffLine)
@@ -21,7 +24,9 @@ extension TerminalChat {
         /// fallbacks, tests and any non-terminal consumer.
         var plainText: String {
             switch self {
-            case let .text(line), let .parameter(line):
+            case let .text(line):
+                return line
+            case let .parameter(line, _):
                 return line
             case let .code(line):
                 return line.plainText
@@ -468,9 +473,9 @@ extension TerminalChat {
             case let .text(line):
                 return wrappedDetailedToolTextLines(line, width: safeLineWidth)
                     .map(DetailedToolRow.text)
-            case let .parameter(line):
+            case let .parameter(line, highlightsJSON):
                 return wrappedDetailedToolTextLines(line, width: safeLineWidth)
-                    .map(DetailedToolRow.parameter)
+                    .map { .parameter($0, highlightsJSON: highlightsJSON) }
             case let .code(line):
                 return wrappedDetailedToolCodeRows(line, width: safeLineWidth)
             case let .diff(cells):
@@ -692,8 +697,8 @@ extension TerminalChat {
         switch row {
         case let .text(line):
             return renderDetailedToolLine(line, codeLanguage: codeLanguage)
-        case let .parameter(line):
-            return renderDetailedToolParameterLine(line)
+        case let .parameter(line, highlightsJSON):
+            return renderDetailedToolParameterLine(line, highlightsJSON: highlightsJSON)
         case let .code(line):
             return renderCodeAreaLine(
                 indentation: line.indentation,
@@ -756,14 +761,29 @@ extension TerminalChat {
         return "\(toolTitleColor)\(line)"
     }
 
-    /// Parameter JSON is presentation metadata rather than source code. It uses
-    /// one neutral gray for punctuation, keys and every value type, keeping the
-    /// payload readable but visually secondary to the orange tool identity.
-    /// Avoiding per-token syntax highlighting also ensures a target file's
-    /// language hint can never recolor the block. There is no code-area
-    /// background, so the parameters blend into the surrounding tool block.
-    nonisolated static func renderDetailedToolParameterLine(_ line: String) -> String {
-        "\(toolParameterBaseColor)\(line)"
+    /// Parameter payloads are structured data, so they are highlighted with the
+    /// shared JSON tokenizer and the same palette used by fenced code blocks in
+    /// chat: keys, strings and literals keep their classic colors. Punctuation,
+    /// indentation and any untokenized text stay on the neutral gray parameter
+    /// base color, so the payload still reads as secondary to the orange tool
+    /// identity. Token resets are re-anchored to that base color so a reset can
+    /// never leak the terminal's default foreground into the block. There is no
+    /// code-area background, so the parameters blend into the tool block.
+    ///
+    /// Rows inside a `"""` block carry raw multi-line string content rather
+    /// than JSON and are rendered flat, so prose is never tokenized as data.
+    nonisolated static func renderDetailedToolParameterLine(
+        _ line: String,
+        highlightsJSON: Bool = true
+    ) -> String {
+        guard highlightsJSON else {
+            return "\(toolParameterBaseColor)\(line)"
+        }
+        let reset = TerminalStyle.reset
+        let highlighted = TerminalCodeBlockRenderer
+            .renderLine(line, language: "json")
+            .replacingOccurrences(of: reset, with: "\(reset)\(toolParameterBaseColor)")
+        return "\(toolParameterBaseColor)\(highlighted)"
     }
 
     /// Renders a code snippet row of the expanded tool block: the line is
@@ -872,7 +892,8 @@ extension TerminalChat {
 
     // Orange-family palette: full identity orange for titles, muted terracotta
     // for labels, and peach-orange for compact and expanded metadata values.
-    // Parameter JSON uses a neutral gray so large payloads remain secondary.
+    // Parameter JSON keeps the neutral gray base for punctuation while keys,
+    // strings and literals use the shared code-block syntax palette.
     nonisolated static let toolTitleColor = TerminalStyle.Tool.title
     nonisolated static let toolLabelColor = TerminalStyle.Tool.label
     nonisolated static let toolValueColor = TerminalStyle.Tool.value
