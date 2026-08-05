@@ -644,7 +644,7 @@ struct TerminalChatRenderingTests {
 
         let idleLine = TerminalStatusBar.inputPanelModeLineText(
             modeText: "Prompt",
-            helpText: "Enter send · Ctrl+T tools · Ctrl+G access · Ctrl+R history · Esc clear",
+            helpText: "Enter send · Ctrl+T tools · Ctrl+G access · Esc clear",
             compactHelpText: "Enter send · Esc clear · Ctrl+G access",
             width: 80
         )

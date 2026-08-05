@@ -63,7 +63,6 @@ extension TerminalInteractiveLineReader {
         case 0x0E: return .down
         case 0x07: return .toggleAccessMode
         case 0x0B: return .clearAfterCursor
-        case 0x12: return .reverseSearch
         case 0x15: return .clearBeforeCursor
         case 0x14: return .toggleToolDetails
         case 0x17: return .deleteWordBefore
@@ -466,8 +465,6 @@ extension TerminalInteractiveLineReader {
             return .up
         case 11:
             return .clearAfterCursor
-        case 18:
-            return .reverseSearch
         case 20:
             return .toggleToolDetails
         case 21:
@@ -524,8 +521,6 @@ extension TerminalInteractiveLineReader {
             return .toggleToolDetails
         case 117 where isControlModified:
             return .clearBeforeCursor
-        case 114 where isControlModified:
-            return .reverseSearch
         case 101 where isControlModified:
             return .end
         case 119 where isControlModified:

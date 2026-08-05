@@ -332,9 +332,6 @@ extension TerminalInteractiveLineReader {
                 state.panelIsProcessing = isProcessing
             }
             state.panelCommandSuggestionIndex = 0
-            // An overlay owns the keyboard; a modal search left running
-            // underneath would swallow the overlay's own keys.
-            state.editor.reverseSearch = nil
         }
         await renderPanel()
     }
@@ -528,10 +525,6 @@ extension TerminalInteractiveLineReader {
         if let modeText = state.panelOverlayOverride?.modeText {
             return modeText
         }
-        if let search = state.editor.reverseSearch {
-            return "History search: \(String(search.query))"
-        }
-
         var modeText = state.panelIsProcessing ? "Next prompt" : "Prompt"
         let lineCount = state.editor.logicalLineCount
         if lineCount > 1 {
@@ -553,9 +546,6 @@ extension TerminalInteractiveLineReader {
             return helpText
         }
 
-        if state.editor.reverseSearch != nil {
-            return "Ctrl+R/↑ older · ↓ newer · Enter accept · Esc cancel"
-        }
         if state.panelIsProcessing {
             if hasActiveCommandSuggestionsLocked(state: state) {
                 return "↑/↓ select · Tab complete · Enter choose · Esc stop"
@@ -565,12 +555,11 @@ extension TerminalInteractiveLineReader {
         if hasActiveCommandSuggestionsLocked(state: state) {
             return "↑/↓ select · Tab complete · Enter choose · Esc dismiss"
         }
-        return "Enter send · Ctrl+T tools · Ctrl+G access · Ctrl+R history · Esc clear"
+        return "Enter send · Ctrl+T tools · Ctrl+G access · Esc clear"
     }
 
     func panelCompactHelpTextLocked(state: State) -> String? {
         guard state.panelOverlayOverride == nil,
-              state.editor.reverseSearch == nil,
               !hasActiveCommandSuggestionsLocked(state: state) else {
             return nil
         }

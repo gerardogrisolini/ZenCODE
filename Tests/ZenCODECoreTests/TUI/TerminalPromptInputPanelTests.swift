@@ -15,13 +15,11 @@ struct TerminalPromptInputPanelTests {
     // MARK: - Key decoding
 
     @Test
-    func controlBytesDecodeHistorySearchAndWordDeletion() {
-        #expect(TerminalInteractiveLineReader.controlKey(for: 0x12) == .reverseSearch)
+    func controlBytesDecodeWordDeletionAndLineEnds() {
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x17) == .deleteWordBefore)
         // Existing bindings must keep their meaning.
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x05) == .end)
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x15) == .clearBeforeCursor)
-        #expect(TerminalInteractiveLineReader.controlKey(for: 0x12) != .cancel)
     }
 
     @Test
@@ -77,7 +75,6 @@ struct TerminalPromptInputPanelTests {
         #expect(reader.keyFromCSI(Array("4u".utf8)) == .endOfInput)
         #expect(reader.keyFromCSI(Array("5u".utf8)) == .end)
         #expect(reader.keyFromCSI(Array("11u".utf8)) == .clearAfterCursor)
-        #expect(reader.keyFromCSI(Array("18u".utf8)) == .reverseSearch)
         #expect(reader.keyFromCSI(Array("21u".utf8)) == .clearBeforeCursor)
         #expect(reader.keyFromCSI(Array("23u".utf8)) == .deleteWordBefore)
 
@@ -106,8 +103,6 @@ struct TerminalPromptInputPanelTests {
         #expect(reader.keyFromCSI(Array("117;5u".utf8)) == .clearBeforeCursor)
         #expect(reader.keyFromCSI(Array("27;5;117~".utf8)) == .clearBeforeCursor)
 
-        #expect(reader.keyFromCSI(Array("114;5u".utf8)) == .reverseSearch)
-        #expect(reader.keyFromCSI(Array("27;5;114~".utf8)) == .reverseSearch)
         #expect(reader.keyFromCSI(Array("119;5u".utf8)) == .deleteWordBefore)
         #expect(reader.keyFromCSI(Array("101;5u".utf8)) == .end)
         #expect(reader.keyFromCSI(Array("98;3u".utf8)) == .wordLeft)
@@ -148,7 +143,6 @@ struct TerminalPromptInputPanelTests {
         #expect(key(for: [0x1B, 0x08]) == .clearDraft)
         // Meta-prefixed CSI-u backspace (Option configured as Esc+).
         #expect(key(for: [0x1B, 0x1B, 0x5B] + Array("127;1u".utf8)) == .clearDraft)
-        #expect(key(for: [0x12]) == .reverseSearch)
         #expect(key(for: [0x17]) == .deleteWordBefore)
         #expect(key(for: [0x7F]) == .backspace)
     }
@@ -188,7 +182,7 @@ struct TerminalPromptInputPanelTests {
         #expect(idleHelp.contains("Enter send"))
         #expect(!idleHelp.contains("Shift/Option+Enter newline"))
         #expect(idleHelp.contains("Ctrl+T tools · Ctrl+G access"))
-        #expect(idleHelp.contains("Ctrl+R history"))
+        #expect(!idleHelp.contains("Ctrl+R history"))
 
         reader.withPanelLock { $0.panelIsProcessing = true }
         let generatingHelp = reader.withPanelLock { reader.panelHelpTextLocked(state: $0) }
@@ -222,22 +216,7 @@ struct TerminalPromptInputPanelTests {
                 == "↑/↓ select · Tab complete · Enter choose · Esc stop"
         )
 
-        reader.withPanelLock { state in
-            state.panelIsProcessing = false
-            state.editor.reverseSearch = .init(restoredBuffer: [])
-        }
-        let searchHelp = reader.withPanelLock { reader.panelHelpTextLocked(state: $0) }
-        #expect(searchHelp.contains("Esc cancel"))
-        #expect(reader.withPanelLock { reader.panelModeTextLocked(state: $0) }.hasPrefix("History search"))
 
-        reader.withPanelLock { state in
-            state.editor.reverseSearch = nil
-            state.panelOverlayOverride = TerminalPanelModeOverride(
-                modeText: "Recording",
-                helpText: "Enter stop"
-            )
-        }
-        #expect(reader.withPanelLock { reader.panelHelpTextLocked(state: $0) } == "Enter stop")
     }
 
     @Test
@@ -291,28 +270,6 @@ struct TerminalPromptInputPanelTests {
     }
 
     @Test
-    func panelHistorySearchAcceptsWithoutEmittingASubmission() async {
-        let reader = TerminalInteractiveLineReader()
-        reader.withPanelLock { state in
-            state.history = ["run the tests", "open the file"]
-            state.panelBuffer = Array("dr")
-            state.panelCursorIndex = 2
-        }
-        let events = Mutex<[TerminalPromptInputEvent]>([])
-        let sink: @Sendable (TerminalPromptInputEvent) -> Void = { event in
-            events.withLock { $0.append(event) }
-        }
-
-        await reader.handlePanelKey(.reverseSearch, onEvent: sink)
-        await reader.handlePanelKey(.character("tests"), onEvent: sink)
-        await reader.handlePanelKey(.enter, onEvent: sink)
-
-        #expect(events.withLock { $0.isEmpty })
-        #expect(reader.withPanelLock { String($0.panelBuffer) } == "run the tests")
-        #expect(reader.withPanelLock { $0.editor.reverseSearch } == nil)
-    }
-
-    @Test
     func historyIsCappedAndDropsTheOldestEntriesFirst() {
         let reader = TerminalInteractiveLineReader()
         let cap = TerminalInteractiveLineReader.maximumHistoryEntryCount
@@ -328,13 +285,12 @@ struct TerminalPromptInputPanelTests {
     }
 
     @Test
-    func panelStartResetsSearchAndDismissalButResumePreservesTheDraft() {
+    func panelStartResetsDismissalButResumePreservesTheDraft() {
         let reader = TerminalInteractiveLineReader()
         reader.withPanelLock { state in
             state.panelBuffer = Array("unfinished")
             state.panelCursorIndex = 3
             state.editor.areSuggestionsDismissed = true
-            state.editor.reverseSearch = .init(restoredBuffer: Array("unfinished"))
         }
         reader.finishPanelStop(clearPanel: false)
 
@@ -346,7 +302,6 @@ struct TerminalPromptInputPanelTests {
             ) == .admitted
         )
         #expect(reader.withPanelLock { String($0.panelBuffer) } == "unfinished")
-        #expect(reader.withPanelLock { $0.editor.reverseSearch } != nil)
 
         reader.finishPanelStop(clearPanel: false)
         #expect(
@@ -357,7 +312,6 @@ struct TerminalPromptInputPanelTests {
             ) == .admitted
         )
         #expect(reader.withPanelLock { $0.panelBuffer.isEmpty })
-        #expect(reader.withPanelLock { $0.editor.reverseSearch } == nil)
         #expect(reader.withPanelLock { !$0.editor.areSuggestionsDismissed })
     }
 }

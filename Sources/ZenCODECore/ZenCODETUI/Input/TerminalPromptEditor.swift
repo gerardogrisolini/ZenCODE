@@ -63,7 +63,7 @@ struct TerminalPromptEditorContext: Sendable {
 ///
 /// Everything that decides *what* the draft looks like after a key lives here:
 /// insertion, deletion, word and line motion, multi-line navigation, history
-/// recall, reverse history search and completion acceptance. The reducer never
+/// recall, and completion acceptance. The reducer never
 /// touches a file descriptor, termios, a mutex or the renderer, so the whole
 /// behaviour is unit-testable without a TTY and the live panel and the fallback
 /// line reader share one implementation instead of drifting apart.
@@ -73,21 +73,6 @@ struct TerminalPromptEditorContext: Sendable {
 /// already use.
 struct TerminalPromptEditor: Equatable, Sendable {
     typealias Key = TerminalInteractiveLineReader.Key
-
-    /// Modal reverse history search (`Ctrl+R`).
-    ///
-    /// The saved fields are what makes `Esc` a true cancel: accepting a match
-    /// keeps it in the draft, cancelling puts the operator back exactly where
-    /// the search started, including the history cursor.
-    struct ReverseSearch: Equatable, Sendable {
-        var query: [Character] = []
-        /// Index into the history array of the current match, if any.
-        var matchIndex: Int?
-        var restoredBuffer: [Character] = []
-        var restoredCursorIndex = 0
-        var restoredHistoryIndex: Int?
-        var restoredDraftBeforeHistory: [Character] = []
-    }
 
     var buffer: [Character] = []
     var cursorIndex = 0
@@ -103,7 +88,6 @@ struct TerminalPromptEditor: Equatable, Sendable {
     /// `Esc` hides the completion menu for the current draft revision without
     /// destroying the draft; any edit brings it back.
     var areSuggestionsDismissed = false
-    var reverseSearch: ReverseSearch?
 
     init() {}
 
@@ -131,12 +115,6 @@ struct TerminalPromptEditor: Equatable, Sendable {
         _ key: Key,
         context: TerminalPromptEditorContext
     ) -> TerminalPromptEditorEffect {
-        // Reverse search is modal: it outranks completions, multi-line motion
-        // and ordinary history navigation until it is accepted or cancelled.
-        if reverseSearch != nil {
-            return reduceReverseSearch(key, context: context)
-        }
-
         switch key {
         case let .character(text):
             return insert(Array(text))
@@ -236,14 +214,6 @@ struct TerminalPromptEditor: Equatable, Sendable {
             }
             buffer.removeSubrange(cursorIndex..<buffer.count)
             didEditBuffer()
-            return .changed
-        case .reverseSearch:
-            // An overlay owns the line; a modal search underneath it would
-            // capture keys the overlay is waiting for.
-            guard !context.isOverlayActive else {
-                return .ignored
-            }
-            beginReverseSearch()
             return .changed
         case .toggleToolDetails:
             return .toggleToolDetails
@@ -430,208 +400,17 @@ struct TerminalPromptEditor: Equatable, Sendable {
         return .changed
     }
 
-    // MARK: - Reverse history search
-
-    private mutating func beginReverseSearch() {
-        reverseSearch = ReverseSearch(
-            query: [],
-            matchIndex: nil,
-            restoredBuffer: buffer,
-            restoredCursorIndex: cursorIndex,
-            restoredHistoryIndex: historyIndex,
-            restoredDraftBeforeHistory: draftBeforeHistory
-        )
-    }
-
-    private mutating func reduceReverseSearch(
-        _ key: Key,
-        context: TerminalPromptEditorContext
-    ) -> TerminalPromptEditorEffect {
-        guard var search = reverseSearch else {
-            return .ignored
-        }
-
-        switch key {
-        case let .character(text), let .paste(text):
-            // A pasted newline would submit through the modal search; keep the
-            // query on one line instead.
-            search.query.append(contentsOf: Array(text).filter { !$0.isNewline })
-            search.matchIndex = Self.searchMatch(
-                in: context.history,
-                query: search.query,
-                from: nil,
-                olderFirst: true
-            )
-            reverseSearch = search
-            projectReverseSearchMatch(search, context: context)
-            return .changed
-        case .backspace, .deleteWordBefore, .clearBeforeCursor, .clearDraft:
-            guard !search.query.isEmpty else {
-                return .ignored
-            }
-            if key == .clearBeforeCursor || key == .clearDraft {
-                search.query.removeAll()
-            } else if key == .deleteWordBefore {
-                var index = search.query.count
-                while index > 0, Self.characterClass(of: search.query[index - 1]) == .whitespace {
-                    index -= 1
-                }
-                if index > 0 {
-                    let characterClass = Self.characterClass(of: search.query[index - 1])
-                    while index > 0, Self.characterClass(of: search.query[index - 1]) == characterClass {
-                        index -= 1
-                    }
-                }
-                search.query.removeSubrange(index..<search.query.count)
-            } else {
-                search.query.removeLast()
-            }
-            search.matchIndex = search.query.isEmpty
-                ? nil
-                : Self.searchMatch(
-                    in: context.history,
-                    query: search.query,
-                    from: nil,
-                    olderFirst: true
-                )
-            reverseSearch = search
-            projectReverseSearchMatch(search, context: context)
-            return .changed
-        case .reverseSearch, .up:
-            guard let next = Self.searchMatch(
-                in: context.history,
-                query: search.query,
-                from: search.matchIndex,
-                olderFirst: true
-            ) else {
-                return .ignored
-            }
-            search.matchIndex = next
-            reverseSearch = search
-            projectReverseSearchMatch(search, context: context)
-            return .changed
-        case .down:
-            guard let next = Self.searchMatch(
-                in: context.history,
-                query: search.query,
-                from: search.matchIndex,
-                olderFirst: false
-            ) else {
-                return .ignored
-            }
-            search.matchIndex = next
-            reverseSearch = search
-            projectReverseSearchMatch(search, context: context)
-            return .changed
-        case .cancel, .endOfInput:
-            buffer = search.restoredBuffer
-            cursorIndex = min(max(0, search.restoredCursorIndex), buffer.count)
-            historyIndex = search.restoredHistoryIndex
-            draftBeforeHistory = search.restoredDraftBeforeHistory
-            reverseSearch = nil
-            preferredVisualColumn = nil
-            return .changed
-        case .enter, .tab:
-            // Accepting puts the match in the draft *without* sending it, so
-            // the operator can still edit before pressing Enter again.
-            acceptReverseSearch(search, context: context)
-            return .changed
-        default:
-            acceptReverseSearch(search, context: context)
-            return reduce(key, context: context)
-        }
-    }
-
-    private mutating func acceptReverseSearch(
-        _ search: ReverseSearch,
-        context: TerminalPromptEditorContext
-    ) {
-        if let matchIndex = search.matchIndex,
-           context.history.indices.contains(matchIndex) {
-            buffer = Array(context.history[matchIndex])
-        } else {
-            buffer = search.restoredBuffer
-        }
-        cursorIndex = buffer.count
-        historyIndex = nil
-        draftBeforeHistory.removeAll()
-        reverseSearch = nil
-        preferredVisualColumn = nil
-        areSuggestionsDismissed = false
-        suggestionIndex = 0
-    }
-
-    /// Projects the selected reverse-history result into the draft while the
-    /// search is modal.  The original draft lives in `ReverseSearch`, so Esc
-    /// can still restore it exactly and Enter can accept without submitting.
-    private mutating func projectReverseSearchMatch(
-        _ search: ReverseSearch,
-        context: TerminalPromptEditorContext
-    ) {
-        if let matchIndex = search.matchIndex,
-           context.history.indices.contains(matchIndex) {
-            buffer = Array(context.history[matchIndex])
-        } else {
-            buffer = search.restoredBuffer
-        }
-        cursorIndex = buffer.count
-        preferredVisualColumn = nil
-    }
-
-    /// Finds the next history entry containing `query`, case-insensitively.
-    /// `olderFirst` walks towards index 0 (older), otherwise towards the end.
-    static func searchMatch(
-        in history: [String],
-        query: [Character],
-        from index: Int?,
-        olderFirst: Bool
-    ) -> Int? {
-        guard !history.isEmpty else {
-            return nil
-        }
-        let needle = String(query).lowercased()
-        guard !needle.isEmpty else {
-            return nil
-        }
-
-        if olderFirst {
-            let start = (index ?? history.count) - 1
-            guard start >= 0 else {
-                return nil
-            }
-            for candidate in stride(from: start, through: 0, by: -1)
-            where history[candidate].lowercased().contains(needle) {
-                return candidate
-            }
-            return nil
-        }
-
-        guard let index else {
-            return nil
-        }
-        let start = index + 1
-        guard start < history.count else {
-            return nil
-        }
-        for candidate in start..<history.count
-        where history[candidate].lowercased().contains(needle) {
-            return candidate
-        }
-        return nil
-    }
-
     // MARK: - Completions
 
     /// Completion matches that are currently on screen.
     ///
-    /// Empty while an overlay owns the line, during a reverse search or after
+    /// Empty while an overlay owns the line or after
     /// `Esc` dismissed the menu for this revision.
     func visibleSuggestions(
         context: TerminalPromptEditorContext
     ) -> [TerminalCommandSuggestion] {
         guard !context.isOverlayActive,
               !areSuggestionsDismissed,
-              reverseSearch == nil,
               context.supportsCompletions else {
             return []
         }

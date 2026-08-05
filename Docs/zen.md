@@ -278,7 +278,6 @@ These bindings follow the Emacs/readline conventions, so they work on every term
 | Delete word before/after | `Ctrl+W` / `Alt+D` |
 | Clear before/after cursor | `Ctrl+U`/`Ctrl+K` |
 | Clear the whole draft | `Alt+Backspace` (macOS `Option+Delete`) |
-| Reverse history search | `Ctrl+R` |
 | Newline without sending | `Shift+Enter` or `Option+Enter` |
 
 On macOS, `Option+←/→` only reaches the prompt when the terminal sends the `Option` key as `Meta`: in Terminal.app enable *Settings → Profiles → Keyboard → Use Option as Meta key*, and in iTerm2 set *Settings → Profiles → Keys → Left Option key → Esc+*. `Ctrl+←/→` is captured by macOS Mission Control unless that system shortcut is disabled. `Ctrl+A`/`Ctrl+E` and `Alt+<`/`Alt+>` need no terminal configuration.

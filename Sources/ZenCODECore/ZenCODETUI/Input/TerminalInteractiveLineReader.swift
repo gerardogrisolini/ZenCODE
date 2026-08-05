@@ -42,8 +42,6 @@ public final class TerminalInteractiveLineReader: Sendable {
         case deleteWordAfter
         /// Whole-draft deletion (`Alt+Backspace`, macOS `Option+Delete`).
         case clearDraft
-        /// Modal reverse history search (`Ctrl+R`).
-        case reverseSearch
         case clearBeforeCursor
         case clearAfterCursor
         case toggleToolDetails
