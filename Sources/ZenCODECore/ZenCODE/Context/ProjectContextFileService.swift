@@ -166,7 +166,7 @@ public struct ProjectContextFileService {
     }
 
     /// Compatibility content for generic context-file callers. ZenCODE never
-    /// uses this API to initialize a project `AGENTS.md`: `/make-agents` asks
+    /// uses this API to initialize a project `AGENTS.md`: `/agents-md` asks
     /// the active model to inspect the workspace and author supported guidance.
     public static func defaultContent(
         kind: ProjectContextFileKind,

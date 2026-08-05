@@ -223,7 +223,7 @@ Commands start with `/`:
 - `/plan clear` — archive the graph and remove the active plan.
 - `/workflow <goal>` — plan and delegate all work to sub-agents. It creates an active workflow graph up front; every graph task is enforced as a sub-agent execution attempt. It refuses to start while an active `/plan` exists; finish that plan or use `/plan clear` first. The current agent stays as coordinator and final reviewer, retaining its normal tool grant for that work. No separate Planner sub-agent or approval step. Use `/tasks` to monitor progress.
 - `/review [focus]` — delegate review to sub-agents using the configured `Reviewer` profile. See [reviewer.md](reviewer.md).
-- `/make-agents` — ask the model to create or update `AGENTS.md` for the current directory. Always run it when first opening a new or updated project so its workspace guidance stays current. Requires the `Files` tool group.
+- `/agents-md` — ask the model to create or update `AGENTS.md` for the current directory. Always run it when first opening a new or updated project so its workspace guidance stays current. Requires the `Files` tool group. ZenCODE reports the turn when it does not actually write the file. The former name `/make-agents` still works.
 - `/feature` — manage Swift feature packages (Builder profile only). See [builder.md](builder.md).
 
 **`/plan` vs `/workflow`:**
@@ -398,11 +398,13 @@ Before writing, search for an active entry about the same durable project fact. 
 
 ZenCODE reads `AGENTS.md` from the working directory when present. Startup never creates or rewrites it.
 
-> **Keep project guidance current:** Always run `/make-agents` when first
+> **Keep project guidance current:** Always run `/agents-md` when first
 > opening a new project or a project that has been updated. The command
 > inspects the current workspace and conservatively creates or refreshes its
 > `AGENTS.md`; review the result and commit it with the project. This explicit
 > step is required because startup intentionally does not modify project files.
+> When the turn ends without creating or changing `AGENTS.md`, ZenCODE says so
+> instead of reporting silent success.
 
 ## ACP Mode
 
@@ -416,7 +418,7 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, a
 
 1. `cd /path/to/project && zen` — start in the target project; first-run setup opens automatically when required.
 2. `/setup` — reconfigure providers, models, agents, or features later without leaving the TUI.
-3. `/make-agents` — always create or refresh project-level guidance when first opening a new or updated project; review the resulting `AGENTS.md`.
+3. `/agents-md` — always create or refresh project-level guidance when first opening a new or updated project; review the resulting `AGENTS.md`.
 4. `/tools` and `/skills` — select tools and skills.
 5. `/plan <goal>` or `/workflow <goal>` — optional planning before editing. `/plan` delegates to a Planner sub-agent with an approval step; `/workflow` plans directly and delegates all implementation to sub-agents.
 6. Implement with the active profile.
@@ -431,7 +433,7 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, a
 - **Model not found**: run `/models` or check `settings.json`.
 - **A profile is never chosen for delegation**: check its role compatibility, its tool grant, and that it has a model binding with a capability — see [bindings.md](bindings.md).
 - **No tools available**: use `/tools`, switch profile, or check ACP client tool exposure.
-- **`/make-agents` needs Files**: enable `Files` with `/tools` or switch profile.
+- **`/agents-md` needs Files**: enable `Files` with `/tools` or switch profile.
 - **`/feature` unavailable**: switch to `/agents Builder`.
 - **Optional feature tools are missing**: install the package with `zen --install-features <id>` (or choose it in setup), then enable/select it with `/tools`.
 - **`/plan`, `/workflow`, or `/review` needs sub-agents**: enable `sub-agents` with `/tools` or switch profile.

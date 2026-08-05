@@ -47,9 +47,9 @@ extension TerminalChat {
                     allowedToolNames: allowedToolNames,
                     includesActivePlanProgress: false
                 )
-            } else if case .makeAgents = attempt.purpose {
+            } else if case .agentsMarkdown = attempt.purpose {
                 var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
-                allowedToolNames.formIntersection(Self.makeAgentsAllowedToolNames)
+                allowedToolNames.formIntersection(Self.agentsMarkdownAllowedToolNames)
                 sessionConfiguration = currentSessionConfiguration(
                     allowedToolNames: allowedToolNames,
                     includesActivePlanProgress: false
@@ -162,7 +162,7 @@ extension TerminalChat {
                                     toolCall: toolCall,
                                     result: result
                                 )
-                            case .makeAgents, .review, .workflow:
+                            case .agentsMarkdown, .review, .workflow:
                                 break
                             }
                         }
@@ -227,6 +227,15 @@ extension TerminalChat {
                 contentsOf: await transcriptTurn.messages(finalResponseText: response.text)
             )
             let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
+            let agentsMarkdownOutcome: AgentsMarkdownWriteOutcome?
+            if case .agentsMarkdown = attempt.purpose {
+                agentsMarkdownOutcome = Self.agentsMarkdownWriteOutcome(
+                    workingDirectory: configuration.workingDirectory,
+                    fileChangeSummary: fileChangeSummary
+                )
+            } else {
+                agentsMarkdownOutcome = nil
+            }
             await stopSubAgentOverviewRefresh()
             await activeTelegramProgressReporter?.flush()
             if case .plan = attempt.purpose {
@@ -241,7 +250,8 @@ extension TerminalChat {
                 response: response,
                 origin: attempt.origin,
                 fileChangeSummary: fileChangeSummary,
-                automaticallyCompletedPlan: await planPointCollector.automaticallyCompletedPlan()
+                automaticallyCompletedPlan: await planPointCollector.automaticallyCompletedPlan(),
+                agentsMarkdownOutcome: agentsMarkdownOutcome
             )
         } catch {
             activeSessionTranscript.append(contentsOf: await transcriptTurn.messages())
@@ -342,6 +352,9 @@ extension TerminalChat {
             }
             if let plan = success.automaticallyCompletedPlan {
                 await writeMarkdownMessage(Self.planStatusTable(for: plan))
+            }
+            if let outcome = success.agentsMarkdownOutcome {
+                await writeAgentsMarkdownOutcomeIfNeeded(outcome)
             }
             await sendTelegramCompletionIfLinked(completionText, origin: success.origin)
         case let .failure(failure):

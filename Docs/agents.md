@@ -35,7 +35,7 @@ closed instead of selecting the first matching tool grant.
 > delegated explicitly through the legacy fallback, but it is excluded from
 > capability-based delegation routing.
 
-> **Workspace guidance:** run [`/make-agents`](zen.md#memory-and-project-context)
+> **Workspace guidance:** run [`/agents-md`](zen.md#memory-and-project-context)
 > when first opening a new or updated project. It inspects the workspace and
 > conservatively creates or refreshes its project-level `AGENTS.md`. Startup
 > never does this automatically; review and commit the result.
