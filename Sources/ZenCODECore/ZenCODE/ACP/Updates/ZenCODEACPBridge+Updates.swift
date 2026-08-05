@@ -55,9 +55,11 @@ extension ZenCODEACPBridge {
             "title": toolTitle(for: toolCall),
             "kind": toolKind(for: toolCall, workingDirectory: workingDirectory),
             "status": "pending",
-            "rawInput": toolCall.argumentsObject,
             "content": [] as [Any],
-            "locations": toolLocations(for: toolCall, workingDirectory: workingDirectory)
+            "locations": toolLocations(for: toolCall, workingDirectory: workingDirectory),
+            "_meta": [
+                "rawInput": toolCall.argumentsObject
+            ]
         ]
     }
 
@@ -72,12 +74,14 @@ extension ZenCODEACPBridge {
             "title": .string(toolTitle(for: toolCall)),
             "kind": .string(toolKind(for: toolCall, workingDirectory: workingDirectory)),
             "status": .string("pending"),
-            "rawInput": toolArgumentsJSONValue(for: toolCall),
             "content": .array([]),
             "locations": .array(
                 toolLocations(for: toolCall, workingDirectory: workingDirectory)
                     .map { JSONValue.acpValue(from: $0) }
-            )
+            ),
+            "_meta": .object([
+                "rawInput": toolArgumentsJSONValue(for: toolCall)
+            ])
         ])
     }
 
@@ -122,54 +126,53 @@ extension ZenCODEACPBridge {
         ])
     }
 
-    public static func subscriptionUsageUpdate(
+    /// Subscription telemetry data for the custom `_zencode/usage/subscription`
+    /// notification. Unlike token context-window updates, subscription usage is
+    /// not a schema-valid ACP `usage_update` (it has no `used`/`size` fields), so
+    /// it is sent as a namespaced custom notification that bypasses the prompt
+    /// update buffer entirely.
+    public static func subscriptionUsageData(
         for status: DirectAgentSubscriptionUsageStatus
     ) -> [String: Any]? {
         guard status.hasValues else {
             return nil
         }
-        var meta: [String: Any] = ["provider": status.provider]
+        var data: [String: Any] = ["provider": status.provider]
         if let dailyUsedPercent = status.dailyUsedPercent {
-            meta["dailyUsedPercent"] = dailyUsedPercent
+            data["dailyUsedPercent"] = dailyUsedPercent
         }
         if let weeklyUsedPercent = status.weeklyUsedPercent {
-            meta["weeklyUsedPercent"] = weeklyUsedPercent
+            data["weeklyUsedPercent"] = weeklyUsedPercent
         }
         if let dailyResetsInSeconds = status.dailyResetsInSeconds {
-            meta["dailyResetsInSeconds"] = dailyResetsInSeconds
+            data["dailyResetsInSeconds"] = dailyResetsInSeconds
         }
         if let weeklyResetsInSeconds = status.weeklyResetsInSeconds {
-            meta["weeklyResetsInSeconds"] = weeklyResetsInSeconds
+            data["weeklyResetsInSeconds"] = weeklyResetsInSeconds
         }
-        return [
-            "sessionUpdate": "subscription_usage_update",
-            "_meta": meta
-        ]
+        return data
     }
 
-    public static func subscriptionUsageJSONUpdate(
+    public static func subscriptionUsageJSONData(
         for status: DirectAgentSubscriptionUsageStatus
     ) -> JSONValue? {
         guard status.hasValues else {
             return nil
         }
-        var meta: [String: JSONValue] = ["provider": .string(status.provider)]
+        var data: [String: JSONValue] = ["provider": .string(status.provider)]
         if let dailyUsedPercent = status.dailyUsedPercent, dailyUsedPercent.isFinite {
-            meta["dailyUsedPercent"] = .number(dailyUsedPercent)
+            data["dailyUsedPercent"] = .number(dailyUsedPercent)
         }
         if let weeklyUsedPercent = status.weeklyUsedPercent, weeklyUsedPercent.isFinite {
-            meta["weeklyUsedPercent"] = .number(weeklyUsedPercent)
+            data["weeklyUsedPercent"] = .number(weeklyUsedPercent)
         }
         if let dailyResetsInSeconds = status.dailyResetsInSeconds {
-            meta["dailyResetsInSeconds"] = .number(Double(dailyResetsInSeconds))
+            data["dailyResetsInSeconds"] = .number(Double(dailyResetsInSeconds))
         }
         if let weeklyResetsInSeconds = status.weeklyResetsInSeconds {
-            meta["weeklyResetsInSeconds"] = .number(Double(weeklyResetsInSeconds))
+            data["weeklyResetsInSeconds"] = .number(Double(weeklyResetsInSeconds))
         }
-        return .object([
-            "sessionUpdate": .string("subscription_usage_update"),
-            "_meta": .object(meta)
-        ])
+        return .object(data)
     }
 
     public static func toolCallProgressUpdate(
@@ -182,8 +185,10 @@ extension ZenCODEACPBridge {
             "title": toolTitle(for: toolCall),
             "kind": toolKind(for: toolCall, workingDirectory: workingDirectory),
             "status": "in_progress",
-            "rawInput": toolCall.argumentsObject,
-            "locations": toolLocations(for: toolCall, workingDirectory: workingDirectory)
+            "locations": toolLocations(for: toolCall, workingDirectory: workingDirectory),
+            "_meta": [
+                "rawInput": toolCall.argumentsObject
+            ]
         ]
     }
 
@@ -197,11 +202,13 @@ extension ZenCODEACPBridge {
             "title": .string(toolTitle(for: toolCall)),
             "kind": .string(toolKind(for: toolCall, workingDirectory: workingDirectory)),
             "status": .string("in_progress"),
-            "rawInput": toolArgumentsJSONValue(for: toolCall),
             "locations": .array(
                 toolLocations(for: toolCall, workingDirectory: workingDirectory)
                     .map { JSONValue.acpValue(from: $0) }
-            )
+            ),
+            "_meta": .object([
+                "rawInput": toolArgumentsJSONValue(for: toolCall)
+            ])
         ])
     }
 
@@ -216,11 +223,6 @@ extension ZenCODEACPBridge {
             "title": toolTitle(for: toolCall),
             "kind": toolKind(for: toolCall, workingDirectory: workingDirectory),
             "status": result.isFailure ? "failed" : "completed",
-            "rawInput": toolCall.argumentsObject,
-            "rawOutput": [
-                "output": result.output,
-                "summary": result.summary
-            ],
             "content": [
                 [
                     "type": "content",
@@ -230,7 +232,14 @@ extension ZenCODEACPBridge {
                     ]
                 ]
             ],
-            "locations": toolLocations(for: toolCall, workingDirectory: workingDirectory)
+            "locations": toolLocations(for: toolCall, workingDirectory: workingDirectory),
+            "_meta": [
+                "rawInput": toolCall.argumentsObject,
+                "rawOutput": [
+                    "output": result.output,
+                    "summary": result.summary
+                ]
+            ]
         ]
     }
 
@@ -245,11 +254,6 @@ extension ZenCODEACPBridge {
             "title": .string(toolTitle(for: toolCall)),
             "kind": .string(toolKind(for: toolCall, workingDirectory: workingDirectory)),
             "status": .string(result.isFailure ? "failed" : "completed"),
-            "rawInput": toolArgumentsJSONValue(for: toolCall),
-            "rawOutput": .object([
-                "output": .string(result.output),
-                "summary": .string(result.summary)
-            ]),
             "content": .array([
                 .object([
                     "type": .string("content"),
@@ -262,7 +266,14 @@ extension ZenCODEACPBridge {
             "locations": .array(
                 toolLocations(for: toolCall, workingDirectory: workingDirectory)
                     .map { JSONValue.acpValue(from: $0) }
-            )
+            ),
+            "_meta": .object([
+                "rawInput": toolArgumentsJSONValue(for: toolCall),
+                "rawOutput": .object([
+                    "output": .string(result.output),
+                    "summary": .string(result.summary)
+                ])
+            ])
         ])
     }
 

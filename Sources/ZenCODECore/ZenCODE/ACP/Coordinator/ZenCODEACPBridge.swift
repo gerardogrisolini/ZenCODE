@@ -338,13 +338,13 @@ public actor ZenCODEACPBridge {
                 try await initialize(id: id, params: params)
             case "authenticate":
                 await writer.sendResultIfRequest(id: id, result: .object([:]))
-            case "model/preload":
+            case "_zencode/model/preload":
                 try await preloadModel(id: id, params: params)
             case "session/new":
                 try await newSession(id: id, params: params)
             case "session/set_mode":
                 try await setMode(id: id, params: params)
-            case "session/set_model":
+            case "_zencode/session/set_model":
                 try await setModel(id: id, params: params)
             case "session/set_config_option":
                 try await setConfigOption(id: id, params: params)

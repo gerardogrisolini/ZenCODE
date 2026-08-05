@@ -90,11 +90,6 @@ public actor ACPPermissionBroker {
             ],
             "toolCall": [
                 "toolCallId": request.toolCallID,
-                "rawInput": [
-                    "command": request.command,
-                    "description": "Run shell command in \(request.workingDirectory)",
-                    "workingDirectory": request.workingDirectory
-                ],
                 "status": "pending",
                 "title": request.title,
                 "kind": ZenCODEACPBridge.acpToolKind(request.kind),
@@ -116,6 +111,13 @@ public actor ACPPermissionBroker {
                 "locations": [
                     [
                         "path": request.workingDirectory
+                    ]
+                ],
+                "_meta": [
+                    "rawInput": [
+                        "command": request.command,
+                        "description": "Run shell command in \(request.workingDirectory)",
+                        "workingDirectory": request.workingDirectory
                     ]
                 ]
             ]

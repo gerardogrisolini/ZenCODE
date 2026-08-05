@@ -30,13 +30,15 @@ extension ZenCODEACPBridge {
                 ]
             ],
             "configOptions": configOptions(for: configuration.effectiveModelID),
-            "models": modelState(for: configuration.effectiveModelID),
             "agentInfo": [
                 "name": "ZenCODE",
                 "title": "ZenCODE",
                 "version": agentVersion
             ],
-            "authMethods": Self.authenticationMethods(from: params)
+            "authMethods": Self.authenticationMethods(from: params),
+            "_meta": [
+                "models": modelState(for: configuration.effectiveModelID)
+            ]
         ]
         await writer.sendResultIfRequest(id: id, result: JSONValue.acpValue(from: result))
     }
@@ -799,7 +801,9 @@ extension ZenCODEACPBridge {
                 for: modelID,
                 thinkingSelection: sessionConfiguration?.thinkingSelection
             ),
-            "models": modelState(for: modelID)
+            "_meta": [
+                "models": modelState(for: modelID)
+            ]
         ]
         if let selectedAgent = session?.selectedAgent {
             result["agentId"] = selectedAgent.id

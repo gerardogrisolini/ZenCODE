@@ -228,8 +228,14 @@ extension ZenCODEACPBridge {
                             await sendPromptUpdate(update)
                         }
                     case let .subscriptionUsage(status):
-                        if let update = Self.subscriptionUsageJSONUpdate(for: status) {
-                            await sendPromptUpdate(update)
+                        if let subscriptionData = Self.subscriptionUsageJSONData(for: status) {
+                            await writer.sendCustomNotification(
+                                method: "_zencode/usage/subscription",
+                                params: .object([
+                                    "sessionId": .string(sessionID),
+                                    "subscription": subscriptionData
+                                ])
+                            )
                         }
                     case let .content(content):
                         await sendPromptUpdate(

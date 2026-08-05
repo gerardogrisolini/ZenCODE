@@ -3,7 +3,7 @@
 //  ZenCODE
 //
 //  Coverage for the ACP shutdown fence: lifecycle requests (`session/new`,
-//  `session/load`, `session/resume`, `model/preload`, `session/cancel`,
+//  `session/load`, `session/resume`, `_zencode/model/preload`, `session/cancel`,
 //  `session/close`) must not create sessions or backends, and must not answer
 //  on the transport, once `shutdown()` has latched.
 //
@@ -141,7 +141,7 @@ struct ACPShutdownFenceTests {
 
     @Test
     func preloadSuspendedInBackendDoesNotAnswerAfterShutdown() async throws {
-        // `model/preload` is the lifecycle handler whose runner call reaches the
+        // `_zencode/model/preload` is the lifecycle handler whose runner call reaches the
         // injected backend, so it can be pinned at a real suspension point.
         // While it is parked inside the backend, `shutdown()` latches; the
         // handler must then abort at its post-await re-check.

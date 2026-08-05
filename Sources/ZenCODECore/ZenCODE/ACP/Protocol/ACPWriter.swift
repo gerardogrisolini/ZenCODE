@@ -163,6 +163,21 @@ public actor ACPWriter {
         ]))
     }
 
+    /// Sends a namespaced custom notification (method prefixed with `_`). Per
+    /// ACP v1 extensibility, custom methods use an underscore prefix and carry
+    /// arbitrary params. Unlike `sendSessionUpdate`, custom notifications bypass
+    /// the prompt update buffer and reach the host immediately.
+    public func sendCustomNotification(method: String, params: JSONValue) {
+        guard !isClosed else {
+            return
+        }
+        send(.object([
+            "jsonrpc": .string("2.0"),
+            "method": .string(method),
+            "params": params
+        ]))
+    }
+
     private func requestKey(for rawID: JSONValue) -> String {
         switch rawID {
         case let .number(value):

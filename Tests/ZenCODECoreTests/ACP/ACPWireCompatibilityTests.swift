@@ -521,4 +521,109 @@ private extension ACPCompatibilityTests {
 
         #expect(currentValue == "high")
     }
+
+    // MARK: - ACP v1 extensibility conformance
+
+    @Test
+    func toolCallUpdatesCarryRawInputInMetaNotAtRoot() {
+        let toolCall = presentedToolCall(
+            id: "call_meta",
+            name: "local.exec",
+            argumentsObject: [
+                "command": "swift test",
+                "workingDirectory": "/tmp/workspace"
+            ],
+            argumentsJSON: #"{"command":"swift test","workingDirectory":"/tmp/workspace"}"#
+        )
+
+        let create = ZenCODEACPBridge.toolCallCreateUpdate(for: toolCall)
+        #expect(create["rawInput"] == nil)
+        #expect((create["_meta"] as? [String: Any])?["rawInput"] != nil)
+
+        let progress = ZenCODEACPBridge.toolCallProgressUpdate(for: toolCall)
+        #expect(progress["rawInput"] == nil)
+        #expect((progress["_meta"] as? [String: Any])?["rawInput"] != nil)
+
+        let completion = ZenCODEACPBridge.toolCallCompletionUpdate(
+            for: toolCall,
+            result: DirectAgentToolResult(output: "done", summary: "done")
+        )
+        #expect(completion["rawInput"] == nil)
+        #expect(completion["rawOutput"] == nil)
+        let completionMeta = completion["_meta"] as? [String: Any]
+        #expect(completionMeta?["rawInput"] != nil)
+        #expect(completionMeta?["rawOutput"] != nil)
+    }
+
+    @Test
+    func toolCallJSONUpdatesCarryRawInputInMetaNotAtRoot() throws {
+        let toolCall = presentedToolCall(
+            id: "call_json_meta",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/file.swift"],
+            argumentsJSON: #"{"path":"/tmp/file.swift"}"#
+        )
+
+        let create = ZenCODEACPBridge.toolCallCreateJSONUpdate(for: toolCall)
+        #expect(create.objectValue?["rawInput"] == nil)
+        #expect(create.objectValue?["_meta"]?.objectValue?["rawInput"] != nil)
+
+        let progress = ZenCODEACPBridge.toolCallProgressJSONUpdate(for: toolCall)
+        #expect(progress.objectValue?["rawInput"] == nil)
+        #expect(progress.objectValue?["_meta"]?.objectValue?["rawInput"] != nil)
+
+        let completion = ZenCODEACPBridge.toolCallCompletionJSONUpdate(
+            for: toolCall,
+            result: DirectAgentToolResult(output: "content", summary: "content")
+        )
+        #expect(completion.objectValue?["rawInput"] == nil)
+        #expect(completion.objectValue?["rawOutput"] == nil)
+        let meta = try #require(completion.objectValue?["_meta"]?.objectValue)
+        #expect(meta["rawInput"] != nil)
+        #expect(meta["rawOutput"] != nil)
+    }
+
+    @Test
+    func subscriptionUsageDataDoesNotWrapInSessionUpdate() {
+        let status = DirectAgentSubscriptionUsageStatus(
+            provider: "claude",
+            dailyUsedPercent: 42.0,
+            weeklyUsedPercent: nil,
+            dailyResetsInSeconds: 3600
+        )
+        let data = ZenCODEACPBridge.subscriptionUsageJSONData(for: status)
+        #expect(data != nil)
+        let object = data?.objectValue
+        #expect(object?["sessionUpdate"] == nil)
+        #expect(object?["provider"]?.acpStringValue == "claude")
+        #expect(object?["dailyUsedPercent"]?.numberValue == 42.0)
+        #expect(object?["dailyResetsInSeconds"]?.numberValue == 3600)
+        #expect(object?["weeklyUsedPercent"] == nil)
+    }
+
+    @Test
+    func subscriptionUsageDataReturnsNilForEmptyStatus() {
+        let status = DirectAgentSubscriptionUsageStatus(
+            provider: "claude",
+            dailyUsedPercent: nil,
+            weeklyUsedPercent: nil
+        )
+        #expect(ZenCODEACPBridge.subscriptionUsageJSONData(for: status) == nil)
+    }
+
+    @Test
+    func tokenUsageUpdateIsStillASessionUpdateWithUsedAndSize() throws {
+        let status = DirectAgentContextWindowStatus(
+            usedTokens: 5000,
+            maxTokens: 20000,
+            modelID: "test-model",
+            isApproximate: false
+        )
+        let update = ZenCODEACPBridge.usageJSONUpdate(for: status)
+        let object = try #require(update?.objectValue)
+        // Token usage remains a schema-valid session/update with usage_update
+        #expect(object["sessionUpdate"]?.acpStringValue == "usage_update")
+        #expect(object["used"]?.numberValue == 5000)
+        #expect(object["size"]?.numberValue == 20000)
+    }
 }
