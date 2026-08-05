@@ -10,6 +10,74 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-08-05
+
+### Changed
+
+- `agent.create` now advertises only the canonical batch payload
+  `{"agents":[...]}`, where every item carries an explicit `profile` and a
+  `binding:<id>` model reference. Delegation no longer falls back to a profile's
+  default binding: the model must pick an authorized one from the delegatable
+  roster. Legacy root fields and aliases stay input-compatible but are no longer
+  model-visible, and conflicting aliases are rejected.
+- Sub-agent routing resolves profiles and bindings against a consistent
+  `settings.json` snapshot, validating model, provider, capability, and
+  authentication before a task is claimed. The resolved provider, model, key, and
+  generation parameters are handed to the child backend instead of being looked
+  up a second time, so the effective provider cannot change between validation
+  and backend creation.
+- The TUI command that authors project guidance is now `/agents-md`. It asks the
+  model to inspect the current working directory and create or update its
+  `AGENTS.md` without assuming a project type. The former `/make-agents` name
+  keeps working as a hidden alias.
+- Custom ACP extensions are namespaced: `model/preload` and `session/set_model`
+  are now `_zencode/model/preload` and `_zencode/session/set_model`.
+- ZenCODE-specific data moved out of standard ACP fields and into the `_meta`
+  extension object. The model catalog returned by `initialize` and `session/new`
+  is now `_meta.models`, and the `rawInput` carried by `tool_call` updates and
+  permission requests is now `_meta.rawInput`.
+- Subscription usage is delivered as an immediate custom
+  `_zencode/usage/subscription` JSON-RPC notification instead of a
+  `subscription_usage_update` session update that did not satisfy the ACP
+  `usage_update` schema. Context-window usage keeps using the valid
+  `usage_update` with `used`/`size`.
+
+### Added
+
+- `/agents-md` verifies its own post-condition against the turn's tracked file
+  changes. When the turn ends without creating `AGENTS.md`, or leaves an existing
+  file untouched, ZenCODE reports it instead of returning silent success.
+
+### Removed
+
+- The modal `Ctrl+R` reverse history search was removed from the prompt editor,
+  together with its panel hints and help text. Ordinary history recall with the
+  arrow keys is unaffected.
+
+### Fixed
+
+- Session shutdown waits for in-flight prompt tasks before flushing, closing a
+  race at session close.
+- Restoring a single task graph preserves the other graphs of a multi-graph
+  session, and installing the task orchestrator is idempotent under its exclusive
+  ownership guard.
+- Optional-feature installations are serialized per feature ID, so concurrent
+  requests for the same feature no longer interleave.
+- Agent settings are loaded without a stale cache and mutated under
+  cross-process exclusive coordination, so delegation cannot run against an
+  outdated `settings.json` snapshot. The persisted JSON format is unchanged.
+
+### Security
+
+- Error messages rendered by the ChatGPT OAuth callback server are HTML-escaped,
+  and the OAuth `state` parameter is now required when a callback URL is pasted
+  manually.
+- Sensitive environment values (token, secret, auth, key, password) are redacted
+  in MCP bridge logs.
+- Timeout input is validated at the optional-feature installation entry point,
+  and a force-unwrapped URL construction in the MCP browser OAuth configuration
+  was replaced with a guarded failure.
+
 ## [1.1.2] - 2026-08-05
 
 ### Changed
@@ -394,7 +462,10 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.2...v1.1.3
+[1.1.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.11...v1.1.0
 [1.0.11]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.0.8...v1.0.10
