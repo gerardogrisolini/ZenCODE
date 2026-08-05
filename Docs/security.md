@@ -22,6 +22,20 @@ On macOS, Linux, and WSL, that boundary applies the following protections to
   changing an unrelated target's permissions;
 - preserves the existing JSON filenames, schema, and setup/provider flows.
 
+`settings.json`, `agents.json`, and the other remote-reset writers additionally
+share the cross-process `.manifests.lock` coordination boundary. Setup
+prevalidates and serializes both payloads, verifies that neither manifest changed
+since the interactive session began, and durably publishes a restrictive
+transaction journal before replacement. Transactional renames and unlinks are
+ordered with `fsync` on the parent directory. The journal is rollback-first:
+until its unlink is durable, interrupted or failed work can only restore the
+original bytes. Reported errors use byte-level CAS so they restore only files
+still owned by that transaction. Delegation reads settings and
+profiles under the same lock, so it observes one recovered generation. The
+filesystem still supplies atomic rename per file rather than a native multi-file
+rename primitive; lock, compare-and-swap, and journal recovery provide the
+multi-file protocol.
+
 Failures to apply required POSIX permissions cause the corresponding sensitive
 manifest operation to fail rather than silently accepting a known weak mode.
 No credential values are logged by this layer.
@@ -29,8 +43,9 @@ No credential values are logged by this layer.
 ## Scope and limits
 
 This is filesystem hardening, not encryption and not an operating-system
-credential vault. The manifest payload remains plaintext for the owning user
-and for any principal that can act as that user (or as an administrator/root).
+credential vault. Manifest payloads—and, while a coordinated update is pending,
+the restrictive recovery journal—remain plaintext for the owning user and for
+any principal that can act as that user (or as an administrator/root).
 Filesystem ACLs, backups, synchronized folders, and an unencrypted host volume
 can impose additional exposure outside these mode bits.
 

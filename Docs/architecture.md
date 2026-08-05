@@ -185,6 +185,21 @@ platform APIs where required, but must not change provider IDs, wire event
 handling, credential persistence, backend selection semantics, or the common
 generation transport.
 
+`SensitiveManifestCoordination` is the cross-process ownership boundary for
+cooperative writes and destructive reset of application-support manifests.
+Setup captures a read-only compare-and-swap baseline, validates the final
+`settings.json`/`agents.json` pair, and commits it under one lock with a
+restrictive recovery journal. Transactional publish/delete steps synchronize the
+parent directory so journal, manifests, and cleanup retain their ordering across
+system crashes. The journal is rollback-first: successful unlink is the commit
+point, while any earlier interruption restores the original generation.
+Delegation loads the pair under that same lock and completes such recovery
+before routing. Individual
+files continue to use `SensitiveFilePermissions` for symlink rejection, `0600`
+temporary inodes, data synchronization, and atomic rename. Test and embedding scopes
+that need a different support root use `AppStorageDirectory`'s lexical
+`TaskLocal` override; the historical process-wide override remains compatible.
+
 ## Target Layout
 
 The root product surface is intentionally simplified: interactive setup now

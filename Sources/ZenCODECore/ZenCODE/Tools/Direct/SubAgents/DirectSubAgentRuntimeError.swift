@@ -18,6 +18,8 @@ public enum DirectSubAgentRuntimeError: LocalizedError {
     case taskIDRequiredForActiveTaskGraph(String)
     case agentProfileNotFound(String)
     case modelNotAllowedForProfile(modelID: String, profile: String)
+    case modelBindingUnavailable(modelID: String, profile: String, reason: String)
+    case ambiguousModelReference(modelID: String, profile: String, candidates: [String])
 
     public var errorDescription: String? {
         switch self {
@@ -41,6 +43,13 @@ public enum DirectSubAgentRuntimeError: LocalizedError {
             return "No configured agent profile matched '\(profile)'."
         case let .modelNotAllowedForProfile(modelID, profile):
             return "Model '\(modelID)' is not an authorized binding for agent profile '\(profile)'."
+        case let .modelBindingUnavailable(modelID, profile, reason):
+            return "Model binding '\(modelID)' of agent profile '\(profile)' is no longer usable: "
+                + "\(reason). Select a binding listed in the delegatable roster or reconfigure the profile."
+        case let .ambiguousModelReference(modelID, profile, candidates):
+            return "Model reference '\(modelID)' is ambiguous for agent profile '\(profile)' because "
+                + "several authorized bindings expose it (\(candidates.joined(separator: ", "))). "
+                + "Pass the binding id or the fully qualified model id."
         }
     }
 }

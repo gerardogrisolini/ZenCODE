@@ -35,6 +35,17 @@ public enum ZenCODEAgentProfileSetupRunner {
     }
 
     public static func configureInteractively() throws {
+        _ = try configureInteractively(
+            currentAgents: nil,
+            persist: true
+        )
+    }
+
+    @discardableResult
+    static func configureInteractively(
+        currentAgents: [AgentProfile]?,
+        persist: Bool
+    ) throws -> [AgentProfile] {
         guard TerminalRawInput.supportsInteractiveInput() else {
             throw ZenCODEAgentProfileSetupError.nonInteractiveTerminal
         }
@@ -54,7 +65,8 @@ public enum ZenCODEAgentProfileSetupRunner {
             """
         )
 
-        let existingAgents = try loadExistingAgentsIfPresent(at: manifestURL)
+        let existingAgents = try currentAgents
+            ?? loadExistingAgentsIfPresent(at: manifestURL)
         var agents = try initialAgents(existingAgents: existingAgents)
 
         if try promptYesNo("Edit the agent list?", defaultValue: false) {
@@ -62,10 +74,15 @@ public enum ZenCODEAgentProfileSetupRunner {
         }
 
         let normalizedAgents = preparedAgentsForSave(agents)
-        try AgentProfileStore.save(normalizedAgents)
+        if persist {
+            try AgentProfileStore.save(normalizedAgents)
+        }
         AgentOutput.standardError.writeString(
-            "\nUpdated: agents.json (\(normalizedAgents.count) agents)\n\n"
+            persist
+                ? "\nUpdated: agents.json (\(normalizedAgents.count) agents)\n\n"
+                : "\nStaged: agents.json (\(normalizedAgents.count) agents)\n\n"
         )
+        return normalizedAgents
     }
 
     private static func ensureGlobalAgentsFile() throws -> (url: URL, created: Bool) {

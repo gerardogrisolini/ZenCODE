@@ -120,4 +120,65 @@ struct SubscriptionAuthFlowTests {
             Issue.record("Unexpected error: \(error)")
         }
     }
+
+    @Test
+    func nonPersistingSubscriptionRefreshLeavesSettingsBytesUntouched() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-staged-auth-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try await AppStorageDirectory.withSupportDirectoryURL(directory) {
+            let oldChatGPT = CodexAgentCredentials(
+            accessToken: "old-chat-access",
+            refreshToken: "old-chat-refresh",
+            expiresAt: Date(timeIntervalSince1970: 1),
+            accountID: "old-account"
+        )
+        let oldAnthropic = AnthropicSubscriptionCredentials(
+            accessToken: "old-claude-access",
+            refreshToken: "old-claude-refresh",
+            expiresAt: Date(timeIntervalSince1970: 1),
+            scope: "old-scope"
+        )
+        try AgentSettingsManifestStore.save(
+            AgentSettingsManifest(
+                models: [],
+                chatGPTSubscriptionCredentials: oldChatGPT,
+                anthropicSubscriptionCredentials: oldAnthropic
+            )
+        )
+        let settingsURL = AgentSettingsManifestStore.settingsURL()
+        let originalData = try Data(contentsOf: settingsURL)
+
+        let refreshedChatGPT = try await ChatGPTSubscriptionAuthService.refresh(
+            credentials: oldChatGPT,
+            persist: false,
+            tokenRefresher: { _ in
+                CodexAgentCredentials(
+                    accessToken: "new-chat-access",
+                    refreshToken: "new-chat-refresh",
+                    expiresAt: Date(timeIntervalSince1970: 4_000),
+                    accountID: "new-account"
+                )
+            }
+        )
+        let refreshedAnthropic = try await AnthropicSubscriptionAuthService.refresh(
+            credentials: oldAnthropic,
+            persist: false,
+            tokenRefresher: { _ in
+                AnthropicSubscriptionCredentials(
+                    accessToken: "new-claude-access",
+                    refreshToken: "new-claude-refresh",
+                    expiresAt: Date(timeIntervalSince1970: 4_000),
+                    scope: "new-scope"
+                )
+            }
+        )
+
+        #expect(refreshedChatGPT.accessToken == "new-chat-access")
+        #expect(refreshedAnthropic.accessToken == "new-claude-access")
+        #expect(try Data(contentsOf: settingsURL) == originalData)
+        }
+    }
 }

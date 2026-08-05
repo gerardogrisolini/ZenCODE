@@ -120,13 +120,21 @@ public final class AnthropicSubscriptionSignInSession: Sendable {
     }
 
     public func waitForCredentials() async throws -> AnthropicSubscriptionCredentials {
+        try await waitForCredentials(persist: true)
+    }
+
+    func waitForCredentials(
+        persist: Bool
+    ) async throws -> AnthropicSubscriptionCredentials {
         let result = try await waitForAuthorizationResult()
         let credentials = try await AnthropicSubscriptionAuthService.exchangeAuthorizationCode(
             code: result.code,
             state: result.state,
             verifier: verifier
         )
-        try AnthropicSubscriptionAuthService.saveCredentials(credentials)
+        if persist {
+            try AnthropicSubscriptionAuthService.saveCredentials(credentials)
+        }
         return credentials
     }
 
@@ -339,13 +347,26 @@ public enum AnthropicSubscriptionAuthService {
     public static func refresh(
         credentials: AnthropicSubscriptionCredentials
     ) async throws -> AnthropicSubscriptionCredentials {
-        try await refreshCoordinator.refresh(credentials: credentials) { credentials in
-            let refreshedCredentials = try await refreshAccessToken(
-                refreshToken: credentials.refreshToken
-            )
-            try saveCredentials(refreshedCredentials)
+        try await refresh(credentials: credentials, persist: true)
+    }
+
+    static func refresh(
+        credentials: AnthropicSubscriptionCredentials,
+        persist: Bool,
+        tokenRefresher: @escaping @Sendable (String) async throws -> AnthropicSubscriptionCredentials = {
+            try await refreshAccessToken(refreshToken: $0)
+        }
+    ) async throws -> AnthropicSubscriptionCredentials {
+        let refreshedCredentials = try await refreshCoordinator.refresh(
+            credentials: credentials
+        ) { credentials in
+            let refreshedCredentials = try await tokenRefresher(credentials.refreshToken)
             return refreshedCredentials
         }
+        if persist {
+            try saveCredentials(refreshedCredentials)
+        }
+        return refreshedCredentials
     }
 
     public static func loadCredentials() throws -> AnthropicSubscriptionCredentials {
@@ -383,11 +404,20 @@ public enum AnthropicSubscriptionAuthService {
     }
 
     public static func loadValidCredentials() async throws -> AnthropicSubscriptionCredentials {
+        try await loadValidCredentials(persistRefresh: true)
+    }
+
+    static func loadValidCredentials(
+        persistRefresh: Bool
+    ) async throws -> AnthropicSubscriptionCredentials {
         let credentials = try loadCredentials()
         guard credentials.isExpiredOrNearlyExpired else {
             return credentials
         }
-        return try await refresh(credentials: credentials)
+        return try await refresh(
+            credentials: credentials,
+            persist: persistRefresh
+        )
     }
 
     public static func saveCredentials(_ credentials: AnthropicSubscriptionCredentials) throws {

@@ -12,6 +12,7 @@ public enum ZenCODESetupRunner {
         guard TerminalRawInput.supportsInteractiveInput() else {
             throw ZenCODESetupError.nonInteractiveTerminal
         }
+        let manifestBaseline = try SetupManifestBaseline.capture()
 
         AgentOutput.standardError.writeString(
             """
@@ -53,10 +54,13 @@ public enum ZenCODESetupRunner {
 
         if session.manifest?.models.isEmpty != false,
            try promptQuickSetupMode() {
-            let quickManifest = try await runQuickSetup(
+            let quickSetup = try await runQuickSetup(
                 currentManifest: session.manifest
             )
-            session.applyQuickSetup(quickManifest)
+            session.applyQuickSetup(
+                quickSetup.manifest,
+                agentProfiles: quickSetup.agentProfiles
+            )
             shouldOpenSetupMenu = false
         }
 
@@ -82,7 +86,8 @@ public enum ZenCODESetupRunner {
 
             let result = try await configureSetupSection(
                 section,
-                currentManifest: session.manifest
+                currentManifest: session.manifest,
+                currentAgentProfiles: session.agentProfiles
             )
             session.apply(result)
         }
@@ -97,7 +102,9 @@ public enum ZenCODESetupRunner {
             )
             let result = try ZenFileService.ensureRequiredFiles(
                 settingsManifest: finalManifest,
-                overwriteSettings: shouldWriteSettings
+                overwriteSettings: shouldWriteSettings,
+                stagedAgentProfiles: session.agentProfiles,
+                expectedBaseline: manifestBaseline
             )
             printResult(result, settingsWasWritten: shouldWriteSettings)
             printCompletion()
@@ -131,7 +138,10 @@ public enum ZenCODESetupRunner {
 
     static func runQuickSetup(
         currentManifest existingManifest: AgentSettingsManifest?
-    ) async throws -> AgentSettingsManifest {
+    ) async throws -> (
+        manifest: AgentSettingsManifest,
+        agentProfiles: [AgentProfile]
+    ) {
         #if canImport(AVFoundation)
         let voiceHint = " and voice"
         #else
@@ -149,8 +159,11 @@ public enum ZenCODESetupRunner {
         var manifest = try await configureProvidersAndModels(existingManifest: existingManifest)
         manifest = try configureDefaultModel(in: manifest)
         manifest = try configureResponseLanguage(existingManifest: manifest)
-        try ZenCODEAgentProfileSetupRunner.configureInteractively()
-        return manifest
+        let agentProfiles = try ZenCODEAgentProfileSetupRunner.configureInteractively(
+            currentAgents: nil,
+            persist: false
+        )
+        return (manifest, agentProfiles)
     }
 
     static func requireExistingManifest(
@@ -172,7 +185,8 @@ public enum ZenCODESetupRunner {
 
     static func configureSetupSection(
         _ section: SetupSection,
-        currentManifest manifest: AgentSettingsManifest?
+        currentManifest manifest: AgentSettingsManifest?,
+        currentAgentProfiles: [AgentProfile]? = nil
     ) async throws -> SetupSectionConfigurationResult {
         switch section {
         case .providersAndModels:
@@ -187,7 +201,8 @@ public enum ZenCODESetupRunner {
             }
             return try await configureSetupSection(
                 nestedSection,
-                currentManifest: manifest
+                currentManifest: manifest,
+                currentAgentProfiles: currentAgentProfiles
             )
         case .defaultModel:
             return SetupSectionConfigurationResult(
@@ -209,16 +224,28 @@ public enum ZenCODESetupRunner {
             try await configureFeatures()
             return SetupSectionConfigurationResult(manifest: manifest)
         case .agents:
-            try ZenCODEAgentProfileSetupRunner.configureInteractively()
-            return SetupSectionConfigurationResult(manifest: manifest)
+            let agentProfiles = try ZenCODEAgentProfileSetupRunner.configureInteractively(
+                currentAgents: currentAgentProfiles,
+                persist: false
+            )
+            return SetupSectionConfigurationResult(
+                manifest: manifest,
+                agentProfiles: agentProfiles
+            )
         case .responseLanguage:
             return SetupSectionConfigurationResult(
                 manifest: try configureResponseLanguage(existingManifest: manifest)
             )
         case .agentModels:
-            try ZenCODEAgentProfileSetupRunner.configureAgentModels()
+            let currentManifest = try requireExistingManifest(manifest)
+            let agentProfiles = try ZenCODEAgentProfileSetupRunner.configureAgentModels(
+                currentManifest: currentManifest,
+                currentAgents: currentAgentProfiles,
+                persist: false
+            )
             return SetupSectionConfigurationResult(
-                manifest: try requireExistingManifest(manifest)
+                manifest: currentManifest,
+                agentProfiles: agentProfiles
             )
         case .resetRemoteConfiguration, .finish, .cancel:
             return SetupSectionConfigurationResult(manifest: manifest)

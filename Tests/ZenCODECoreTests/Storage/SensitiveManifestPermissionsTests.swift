@@ -168,6 +168,164 @@ struct SensitiveManifestPermissionsTests {
         #endif
     }
 
+    @Test
+    func coordinationLockAndJournalArePrivateAndRejectLockSymlinks() throws {
+        #if canImport(Darwin) || canImport(Glibc)
+        let fileManager = FileManager.default
+        let directoryURL = try makeTemporaryDirectory(fileManager: fileManager)
+        defer { try? fileManager.removeItem(at: directoryURL) }
+        let lockURL = directoryURL.appendingPathComponent(".manifests.lock")
+        let journalURL = directoryURL.appendingPathComponent(
+            ".manifests.transaction.json"
+        )
+        let settingsURL = directoryURL.appendingPathComponent("settings.json")
+
+        try SensitiveManifestCoordination.withExclusiveLock(
+            supportDirectoryURL: directoryURL,
+            fileManager: fileManager
+        ) {
+            try SensitiveManifestCoordination.beginTransaction(
+                [
+                    .init(
+                        url: settingsURL,
+                        originalData: nil,
+                        intendedData: Data("settings".utf8)
+                    )
+                ],
+                supportDirectoryURL: directoryURL,
+                fileManager: fileManager
+            )
+            #expect(try posixMode(of: lockURL, fileManager: fileManager) == 0o600)
+            #expect(try posixMode(of: journalURL, fileManager: fileManager) == 0o600)
+            try SensitiveManifestCoordination.clearTransaction(
+                supportDirectoryURL: directoryURL,
+                fileManager: fileManager
+            )
+        }
+
+        try fileManager.removeItem(at: lockURL)
+        let targetURL = directoryURL.appendingPathComponent("lock-target")
+        try Data("target".utf8).write(to: targetURL)
+        try fileManager.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o644)],
+            ofItemAtPath: targetURL.path
+        )
+        try fileManager.createSymbolicLink(at: lockURL, withDestinationURL: targetURL)
+
+        #expect(throws: SensitiveManifestCoordinationError.self) {
+            try SensitiveManifestCoordination.withExclusiveLock(
+                supportDirectoryURL: directoryURL,
+                fileManager: fileManager
+            ) {}
+        }
+        #expect(try posixMode(of: targetURL, fileManager: fileManager) == 0o644)
+        #expect(try Data(contentsOf: targetURL) == Data("target".utf8))
+        #else
+        return
+        #endif
+    }
+
+    @Test
+    func initialRollbackJournalPublishHasNoForwardErrorOutcome() throws {
+        #if canImport(Darwin) || canImport(Glibc)
+        let fileManager = FileManager.default
+        let directoryURL = try makeTemporaryDirectory(fileManager: fileManager)
+        defer { try? fileManager.removeItem(at: directoryURL) }
+        let settingsURL = directoryURL.appendingPathComponent("settings.json")
+        let journalURL = directoryURL.appendingPathComponent(
+            ".manifests.transaction.json"
+        )
+        let changes = [
+            SensitiveManifestCoordination.Change(
+                url: settingsURL,
+                originalData: Data("attempted".utf8),
+                intendedData: nil
+            )
+        ]
+
+        var synchronizations = 0
+        #expect(throws: CancellationError.self) {
+            try SensitiveManifestCoordination.beginTransaction(
+                changes,
+                supportDirectoryURL: directoryURL,
+                fileManager: fileManager,
+                directorySynchronizer: { directory in
+                    synchronizations += 1
+                    if synchronizations <= 2 { throw CancellationError() }
+                    try SensitiveFilePermissions.synchronizeDirectory(at: directory)
+                }
+            )
+        }
+        #expect(fileManager.fileExists(atPath: journalURL.path))
+        try SensitiveManifestCoordination.withExclusiveLock(
+            supportDirectoryURL: directoryURL,
+            fileManager: fileManager
+        ) {}
+        #expect(!fileManager.fileExists(atPath: journalURL.path))
+
+        synchronizations = 0
+        try SensitiveManifestCoordination.beginTransaction(
+            changes,
+            supportDirectoryURL: directoryURL,
+            fileManager: fileManager,
+            directorySynchronizer: { directory in
+                synchronizations += 1
+                if synchronizations == 1 { throw CancellationError() }
+                try SensitiveFilePermissions.synchronizeDirectory(at: directory)
+            }
+        )
+        #expect(fileManager.fileExists(atPath: journalURL.path))
+        var ensureSynchronizations = 0
+        try SensitiveManifestCoordination.ensureTransaction(
+            changes,
+            supportDirectoryURL: directoryURL,
+            fileManager: fileManager,
+            directorySynchronizer: { _ in
+                ensureSynchronizations += 1
+                throw CancellationError()
+            }
+        )
+        #expect(ensureSynchronizations == 0)
+        try SensitiveManifestCoordination.clearTransaction(
+            supportDirectoryURL: directoryURL,
+            fileManager: fileManager
+        )
+        #else
+        return
+        #endif
+    }
+
+    @Test
+    func concurrentPermissionAppendsDoNotLoseIdentities() async throws {
+        #if canImport(Darwin) || canImport(Glibc)
+        let fileManager = FileManager.default
+        let directoryURL = try makeTemporaryDirectory(fileManager: fileManager)
+        defer { try? fileManager.removeItem(at: directoryURL) }
+
+        try await AppStorageDirectory.withSupportDirectoryURL(directoryURL) {
+            try AgentPermissionsManifestStore.save(AgentPermissionsManifest())
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                for index in 0..<20 {
+                    group.addTask {
+                        _ = try AgentPermissionsManifestStore
+                            .appendingLocalExecAllowedCommandIdentities([
+                                "command-\(index)"
+                            ])
+                    }
+                }
+                try await group.waitForAll()
+            }
+
+            let stored = try AgentPermissionsManifestStore.loadRequired()
+            #expect(Set(stored.localExecAllowedCommands) == Set(
+                (0..<20).map { "command-\($0)" }
+            ))
+        }
+        #else
+        return
+        #endif
+    }
+
     #if canImport(Darwin) || canImport(Glibc)
     private func makeTemporaryDirectory(fileManager: FileManager) throws -> URL {
         let directoryURL = fileManager.temporaryDirectory

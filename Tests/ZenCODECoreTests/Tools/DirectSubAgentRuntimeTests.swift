@@ -11,8 +11,41 @@ import Testing
 import ToolCore
 @testable import ZenCODECore
 
+private func builtInDirectSubAgentProfileResolver(
+    _ payload: DirectSubAgentRuntime.RequestedAgentPayload
+) -> AgentProfile? {
+    DirectSubAgentRuntime.agentProfile(
+        matching: payload,
+        in: AgentProfileStore.defaultProfiles()
+    )
+}
+
 @Suite
 struct DirectSubAgentRuntimeTests {
+    private static let catalogProviderID = UUID(
+        uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    )!
+
+    private static func catalogSnapshot(
+        _ modelIDs: [String]
+    ) -> AgentDelegationCatalogSnapshot {
+        .available(
+            models: modelIDs.map { modelID in
+                AgentSettingsModelManifestFactory.remoteAPIModel(
+                    title: nil,
+                    modelID: modelID,
+                    providerID: catalogProviderID,
+                    providerName: "Test Provider",
+                    baseURL: "https://tests.example.com/v1",
+                    chatEndpoint: .chatCompletions,
+                    configuredContextWindowLimit: nil,
+                    generationParameterOverrides: nil,
+                    thinkingSupport: .effort()
+                )
+            }
+        )
+    }
+
     @Test
     func agentWithoutProfileIsRejectedInsteadOfInheritingParentGrant() async throws {
         let backend = CapturingSubAgentRuntimeBackend()
@@ -303,7 +336,8 @@ struct DirectSubAgentRuntimeTests {
     func thoughtDeltasKeepOneStableThinkingPresentation() async throws {
         let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in backend }
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
 
         _ = try await runtime.createAgents(
@@ -347,7 +381,8 @@ struct DirectSubAgentRuntimeTests {
     func contentDeltasPublishOnceAtTheToolBoundaryUsingCompactTarget() async throws {
         let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in backend }
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
 
         _ = try await runtime.createAgents(
@@ -436,7 +471,8 @@ struct DirectSubAgentRuntimeTests {
         let backend = CapturingSubAgentRuntimeBackend(responseText: plannerOutput)
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { backend }
+            subAgentContextualBackendFactory: { _ in backend },
+            subAgentProfileResolver: builtInDirectSubAgentProfileResolver
         )
         let workingDirectory = URL(
             fileURLWithPath: "/tmp/ZenCODE-sub-agent-output-tests",
@@ -497,7 +533,8 @@ struct DirectSubAgentRuntimeTests {
             name: "Planner",
             tools: [],
             modelID: "planner-model",
-            thinkingSelection: .high
+            thinkingSelection: .high,
+            capability: 7
         )
         let backend = CapturingSubAgentRuntimeBackend()
         let recorder = SubAgentFactoryRecorder()
@@ -511,14 +548,16 @@ struct DirectSubAgentRuntimeTests {
                     matching: payload,
                     in: [planner]
                 )
-            }
+            },
+            modelCatalogProvider: { Self.catalogSnapshot(["planner-model"]) }
         )
 
         let output = try await runtime.createAgents(
             arguments: [
                 "name": .string("planning-pass"),
                 "role": .string("Planner"),
-                "profile": .string("Planner")
+                "profile": .string("Planner"),
+                "model": .string("planner-model")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
             parentAllowedToolNames: nil
@@ -526,15 +565,54 @@ struct DirectSubAgentRuntimeTests {
 
         let context = try #require(recorder.contexts.first)
         #expect(context.profile == planner)
-        #expect(context.modelID == "planner-model")
+        #expect(context.modelID?.hasSuffix(":planner-model") == true)
         #expect(context.thinkingSelection == .high)
         #expect(await backend.createdThinkingSelection() == .high)
 
         let snapshot = try #require(await runtime.snapshots().first)
         #expect(snapshot.profileID == planner.id)
         #expect(snapshot.profileName == planner.name)
-        #expect(snapshot.modelID == "planner-model")
-        #expect(output.contains("model=planner-model"))
+        #expect(snapshot.modelID?.hasSuffix(":planner-model") == true)
+        #expect(output.contains("planner-model"))
+    }
+
+    @Test
+    func legacyCustomResolverMayReadSettingsWithoutReentrantFileLock() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-legacy-resolver-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let profile = AgentProfile(id: "custom", name: "Custom")
+        let backend = CapturingSubAgentRuntimeBackend()
+
+        try await AppStorageDirectory.withSupportDirectoryURL(directory) {
+            try AgentSettingsManifestStore.save(
+                AgentSettingsManifest(models: [])
+            )
+            let runtime = DirectSubAgentRuntime(
+                contextualBackendFactory: { _ in backend },
+                profileResolver: { _ in
+                    _ = AgentSettingsManifestStore.load()
+                    return profile
+                }
+            )
+
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "agents": .array([
+                        .object([
+                            "profile": .string("Custom"),
+                            "name": .string("child"),
+                            "role": .string("role"),
+                            "prompt": .string("work"),
+                        ])
+                    ])
+                ],
+                workingDirectory: directory,
+                parentAllowedToolNames: nil
+            )
+            #expect(await backend.createdSessions().count == 1)
+            await runtime.shutdown()
+        }
     }
 
     @Test
@@ -568,6 +646,9 @@ struct DirectSubAgentRuntimeTests {
             },
             profileResolver: { payload in
                 DirectSubAgentRuntime.agentProfile(matching: payload, in: [developer])
+            },
+            modelCatalogProvider: {
+                Self.catalogSnapshot(["balanced-model", "deep-model"])
             }
         )
 
@@ -583,11 +664,11 @@ struct DirectSubAgentRuntimeTests {
 
         let context = try #require(recorder.contexts.first)
         #expect(context.modelBinding?.id == "deep")
-        #expect(context.modelID == "deep-model")
+        #expect(context.modelID?.hasSuffix(":deep-model") == true)
         #expect(context.thinkingSelection == .high)
         #expect(context.capability == 9)
         #expect(await backend.createdThinkingSelection() == .high)
-        #expect(output.contains("model=deep-model"))
+        #expect(output.contains("deep-model"))
     }
 
     @Test
@@ -685,7 +766,8 @@ struct DirectSubAgentRuntimeTests {
             contextualBackendFactory: { _ in backend },
             profileResolver: { payload in
                 DirectSubAgentRuntime.agentProfile(matching: payload, in: [minimal])
-            }
+            },
+            modelCatalogProvider: { Self.catalogSnapshot(["minimal-model"]) }
         )
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(
@@ -698,6 +780,7 @@ struct DirectSubAgentRuntimeTests {
             arguments: [
                 "name": .string("worker"),
                 "profile": .string("Minimal"),
+                "model": .string("minimal-model"),
                 "taskID": .string("hard-task")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
@@ -727,6 +810,9 @@ struct DirectSubAgentRuntimeTests {
             contextualBackendFactory: { _ in backend },
             profileResolver: { payload in
                 DirectSubAgentRuntime.agentProfile(matching: payload, in: [developer])
+            },
+            modelCatalogProvider: {
+                Self.catalogSnapshot(["light-model", "power-model"])
             }
         )
         let orchestrator = SessionTaskOrchestrator()
@@ -747,34 +833,300 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil
         )
 
-        #expect(output.contains("model \"power-model\" at capability 8/10"))
+        #expect(output.contains("power-model"))
+        #expect(output.contains("at capability 8/10"))
         #expect(output.contains("capability gap of 1"))
         #expect(!output.contains("capability gap of 6"))
     }
 
     @Test
-    func agentCreateDescriptorUsesCanonicalEnglishSelectionPolicy() throws {
+    func agentCreateDescriptorUsesOneCanonicalBatchContract() throws {
         let descriptor = try #require(
             DirectToolCatalog.subAgentDescriptors.first { $0.name == "agent.create" }
         )
 
-        #expect(descriptor.description.contains(TaskRecord.agentSelectionPolicy))
-        #expect(descriptor.description.contains(
-            "Prefer delegation for non-trivial, cleanly scoped work"
-        ))
-        #expect(descriptor.description.contains(
-            "use the coordinator directly only when delegation offers no meaningful benefit"
-        ))
-        #expect(descriptor.description.contains("Give each sub-agent an explicit role and scope"))
-        #expect(descriptor.description.contains(
-            "The sub-agent receives the tools configured on that profile"
-        ))
-        #expect(descriptor.description.contains(
-            "the request is rejected when that profile does not resolve"
-        ))
-        #expect(descriptor.description.contains("authorized bindings"))
-        #expect(descriptor.inputSchema.contains("\"modelID\""))
+        #expect(descriptor.description.contains("canonical agents array"))
+        #expect(descriptor.description.contains("each item requires profile and model"))
+        #expect(descriptor.description.contains("exact profile and binding references"))
+        #expect(!descriptor.description.contains(TaskRecord.agentSelectionPolicy))
+        #expect(!descriptor.inputSchema.contains("\"modelID\""))
         #expect(!descriptor.inputSchema.contains("toolNames"))
+        #expect(!descriptor.inputSchema.contains("oneOf"))
+        #expect(!descriptor.inputSchema.contains("not"))
+    }
+
+    @Test
+    func agentCreateDescriptorAdvertisesProviderNeutralBatchSchema() throws {
+        let descriptor = try #require(
+            DirectToolCatalog.subAgentDescriptors.first { $0.name == "agent.create" }
+        )
+        let schema = try #require(descriptor.schemaObject as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+
+        #expect(Set(properties.keys) == ["agents"])
+        #expect(schema["required"] as? [String] == ["agents"])
+        #expect(schema["additionalProperties"] as? Bool == false)
+        #expect(schema["oneOf"] == nil)
+        #expect(schema["not"] == nil)
+
+        let agents = try #require(properties["agents"] as? [String: Any])
+        #expect(agents["type"] as? String == "array")
+        #expect((agents["minItems"] as? NSNumber)?.intValue == 1)
+        #expect((agents["maxItems"] as? NSNumber)?.intValue == 8)
+
+        let item = try #require(agents["items"] as? [String: Any])
+        let itemProperties = try #require(item["properties"] as? [String: Any])
+        #expect(Set(itemProperties.keys) == ["profile", "model", "taskID", "prompt", "name", "role"])
+        #expect(item["required"] as? [String] == ["profile", "model"])
+        #expect(item["additionalProperties"] as? Bool == false)
+
+        for legacyKey in [
+            "agent", "agentName", "agent_name", "agentID", "agent_id",
+            "profileName", "profile_name", "modelID", "model_id", "task_id",
+            "message", "initialPrompt", "initial_prompt", "title", "items",
+        ] {
+            #expect(properties[legacyKey] == nil)
+            #expect(itemProperties[legacyKey] == nil)
+        }
+
+        let wireCatalog = RemoteToolWireCatalog(descriptors: [descriptor])
+        let responsesPayload = try #require(wireCatalog.responsesToolPayloads.first)
+        let responsesParameters = try #require(
+            responsesPayload["parameters"] as? [String: Any]
+        )
+        let chatPayload = try #require(wireCatalog.chatCompletionToolPayloads.first)
+        let function = try #require(chatPayload["function"] as? [String: Any])
+        let chatParameters = try #require(function["parameters"] as? [String: Any])
+        for parameters in [responsesParameters, chatParameters] {
+            #expect(parameters["required"] as? [String] == ["agents"])
+            #expect(parameters["oneOf"] == nil)
+            let wireProperties = try #require(parameters["properties"] as? [String: Any])
+            let wireAgents = try #require(wireProperties["agents"] as? [String: Any])
+            let wireItem = try #require(wireAgents["items"] as? [String: Any])
+            #expect(wireItem["required"] as? [String] == ["profile", "model"])
+        }
+    }
+
+    @Test
+    func agentCreateParserSupportsCanonicalRootAndBatchForms() throws {
+        let root = try DirectSubAgentRuntime.requestedAgentPayloads(
+            from: [
+                "name": .string("root-worker"),
+                "profile": .string("Developer"),
+                "model": .string("balanced"),
+            ]
+        )
+        #expect(root.count == 1)
+        #expect(root[0].name == "root-worker")
+        #expect(root[0].profileReference == "Developer")
+
+        let batch = try DirectSubAgentRuntime.requestedAgentPayloads(
+            from: [
+                "agents": .array([
+                    .object([
+                        "name": .string("first"),
+                        "profile": .string("Developer"),
+                        "model": .string("balanced"),
+                    ]),
+                    .object([
+                        "name": .string("second"),
+                        "profile": .string("Reviewer"),
+                        "model": .string("fast"),
+                    ]),
+                ]),
+            ]
+        )
+        #expect(batch.map(\.name) == ["first", "second"])
+        #expect(batch.map(\.profileReference) == ["Developer", "Reviewer"])
+
+        let legacyObjectBatch = try DirectSubAgentRuntime.requestedAgentPayloads(
+            from: [
+                "items": .object([
+                    "title": .string("legacy-batch-worker"),
+                    "agent": .string("Developer"),
+                    "modelID": .string("balanced"),
+                ]),
+            ]
+        )
+        #expect(legacyObjectBatch.count == 1)
+        #expect(legacyObjectBatch[0].name == "legacy-batch-worker")
+        #expect(legacyObjectBatch[0].profileReference == "Developer")
+        #expect(legacyObjectBatch[0].requestedModelID == "balanced")
+
+        let matchingCanonicalAndLegacyBatches = try DirectSubAgentRuntime.requestedAgentPayloads(
+            from: [
+                "agents": .array([
+                    .object([
+                        "name": .string("equivalent"),
+                        "profile": .string("Developer"),
+                        "model": .string("balanced"),
+                    ]),
+                ]),
+                "items": .array([
+                    .object([
+                        "title": .string("equivalent"),
+                        "agent": .string("developer"),
+                        "modelID": .string("BALANCED"),
+                    ]),
+                ]),
+            ]
+        )
+        #expect(matchingCanonicalAndLegacyBatches.count == 1)
+        #expect(matchingCanonicalAndLegacyBatches[0].name == "equivalent")
+
+        do {
+            _ = try DirectSubAgentRuntime.requestedAgentPayloads(
+                from: [
+                    "profile": .string("Developer"),
+                    "agents": .array([
+                        .object(["profile": .string("Reviewer")]),
+                    ]),
+                ]
+            )
+            Issue.record("Expected mixed root and batch forms to be rejected.")
+        } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
+            #expect(message.contains("root agent fields"))
+        }
+    }
+
+    @Test
+    func agentCreateParserIgnoresBlankAliasesAndAcceptsEquivalentLegacyValues() throws {
+        let payload = try DirectSubAgentRuntime.requestedAgentPayload(
+            from: .object([
+                "name": .string("   "),
+                "title": .string("legacy-worker"),
+                "profile": .string("  "),
+                "agent": .string("Developer"),
+                "agentName": .string("developer"),
+                "model": .string("  "),
+                "modelID": .string("Deep"),
+                "model_id": .string("deep"),
+                "taskID": .string("\n"),
+                "task_id": .string("task-1"),
+                "prompt": .string("\t"),
+                "message": .string("Inspect the parser"),
+            ]),
+            fallbackIndex: 0
+        )
+
+        #expect(payload.name == "legacy-worker")
+        #expect(payload.profileReference == "Developer")
+        #expect(payload.requestedModelID == "Deep")
+        #expect(payload.taskID == "task-1")
+        #expect(payload.prompt == "Inspect the parser")
+    }
+
+    @Test
+    func agentCreateParserRejectsConflictingAliasesAndBatches() throws {
+        do {
+            _ = try DirectSubAgentRuntime.requestedAgentPayload(
+                from: .object([
+                    "profile": .string("Developer"),
+                    "agent": .string("Reviewer"),
+                ]),
+                fallbackIndex: 0
+            )
+            Issue.record("Expected conflicting profile aliases to be rejected.")
+        } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
+            #expect(message.contains("profile aliases"))
+            #expect(message.contains("profile, agent"))
+        }
+
+        do {
+            _ = try DirectSubAgentRuntime.requestedAgentPayloads(
+                from: [
+                    "agents": .array([.object(["profile": .string("Developer")])]),
+                    "items": .array([.object(["profile": .string("Reviewer")])]),
+                ]
+            )
+            Issue.record("Expected conflicting batch aliases to be rejected.")
+        } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
+            #expect(message.contains("batch aliases"))
+            #expect(message.contains("agents, items"))
+        }
+    }
+
+    @Test
+    func agentCreateParserRejectsMalformedAliasesAndBatchRootOverrides() throws {
+        #expect(throws: DirectSubAgentRuntimeError.self) {
+            try DirectSubAgentRuntime.requestedAgentPayloads(
+                from: [
+                    "agents": .string("not-a-batch"),
+                    "items": .array([
+                        .object([
+                            "profile": .string("Developer"),
+                            "model": .string("binding:developer"),
+                        ]),
+                    ]),
+                ]
+            )
+        }
+
+        #expect(throws: DirectSubAgentRuntimeError.self) {
+            try DirectSubAgentRuntime.requestedAgentPayloads(
+                from: [
+                    "agents": .array([.string("not-an-object")]),
+                ]
+            )
+        }
+
+        #expect(throws: DirectSubAgentRuntimeError.self) {
+            try DirectSubAgentRuntime.requestedAgentPayloads(
+                from: [
+                    "agents": .array([
+                        .object([
+                            "profile": .string("Developer"),
+                            "model": .string("binding:developer"),
+                        ]),
+                    ]),
+                    "tools": .array([.string("local.exec")]),
+                ]
+            )
+        }
+
+        #expect(throws: DirectSubAgentRuntimeError.self) {
+            try DirectSubAgentRuntime.requestedAgentPayload(
+                from: .object([
+                    "profile": .string("Developer"),
+                    "model": .object(["unexpected": .bool(true)]),
+                ]),
+                fallbackIndex: 0
+            )
+        }
+    }
+
+    @Test
+    func agentCreateRequiresModelWhenTheProfileHasBindings() async throws {
+        let developer = AgentProfile(
+            id: "developer-profile",
+            name: "Developer",
+            tools: [],
+            modelBindings: [AgentModelBinding(modelID: "balanced-model")]
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { payload in
+                DirectSubAgentRuntime.agentProfile(matching: payload, in: [developer])
+            }
+        )
+
+        do {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "name": .string("worker"),
+                    "profile": .string("Developer"),
+                ],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
+                parentAllowedToolNames: nil
+            )
+            Issue.record("Expected a profile with bindings to require model.")
+        } catch DirectSubAgentRuntimeError.missingArgument(let argument) {
+            #expect(argument == "model")
+        }
+
+        #expect(await backend.createdSessions().isEmpty)
+        await runtime.shutdown()
     }
 
     @Test
@@ -816,7 +1168,7 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func applyingSubAgentBackendContextSwapsModelWhenProfileHasModel() {
+    func applyingSubAgentBackendContextUsesOnlyAnExplicitlyResolvedBinding() {
         let parentConfig = AgentRuntimeConfiguration(
             modelID: "parent-model",
             workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
@@ -832,7 +1184,13 @@ struct DirectSubAgentRuntimeTests {
         let context = DirectSubAgentRuntime.BackendContext(
             requestedName: "Builder",
             requestedRole: "worker",
-            profile: profile
+            profile: profile,
+            modelBinding: AgentModelBinding(
+                id: "builder-model",
+                modelID: "builder-model",
+                capability: 5
+            ),
+            modelID: "binding:builder-model"
         )
         let result = parentConfig.applyingSubAgentBackendContext(context)
         #expect(result.modelID == "builder-model")
@@ -888,7 +1246,8 @@ struct DirectSubAgentRuntimeTests {
     func createAgentsUseUniqueEphemeralSessionsWithoutCacheKeys() async throws {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in backend }
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
 
         _ = try await runtime.createAgents(
@@ -924,7 +1283,8 @@ struct DirectSubAgentRuntimeTests {
     func overviewKeepsSequentiallyCreatedSubAgentsWhileEarlierOnesStillWork() async throws {
         let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
         let executor = DirectToolExecutor(
-            subAgentContextualBackendFactory: { _ in backend }
+            subAgentContextualBackendFactory: { _ in backend },
+            subAgentProfileResolver: builtInDirectSubAgentProfileResolver
         )
         let runtime = await executor.subAgentRuntime
         let workingDirectory = URL(
@@ -957,7 +1317,8 @@ struct DirectSubAgentRuntimeTests {
     func overviewShowsMessagedSubAgentThatResumesWorkAfterALaterBatch() async throws {
         let backend = CapturingSubAgentRuntimeBackend()
         let executor = DirectToolExecutor(
-            subAgentContextualBackendFactory: { _ in backend }
+            subAgentContextualBackendFactory: { _ in backend },
+            subAgentProfileResolver: builtInDirectSubAgentProfileResolver
         )
         let runtime = await executor.subAgentRuntime
         let workingDirectory = URL(
@@ -1001,7 +1362,8 @@ struct DirectSubAgentRuntimeTests {
     func overviewSnapshotsStartAFreshBatchWhenNoSubAgentIsWorking() async throws {
         let backend = CapturingSubAgentRuntimeBackend()
         let executor = DirectToolExecutor(
-            subAgentContextualBackendFactory: { _ in backend }
+            subAgentContextualBackendFactory: { _ in backend },
+            subAgentProfileResolver: builtInDirectSubAgentProfileResolver
         )
         let runtime = await executor.subAgentRuntime
         let workingDirectory = URL(
@@ -1050,7 +1412,7 @@ struct DirectSubAgentRuntimeTests {
             tasks: [TaskDefinition(id: "task-a", title: "Report")]
         )
         let backend = CapturingSubAgentRuntimeBackend(responseText: "report complete")
-        let runtime = DirectSubAgentRuntime(contextualBackendFactory: { _ in backend })
+        let runtime = DirectSubAgentRuntime(contextualBackendFactory: { _ in backend }, profileResolver: builtInDirectSubAgentProfileResolver)
         await runtime.installTaskOrchestrator(orchestrator)
 
         _ = try await runtime.createAgents(
@@ -1096,7 +1458,7 @@ struct DirectSubAgentRuntimeTests {
             ]
         )
         let backend = CapturingSubAgentRuntimeBackend(responseText: "implementation complete")
-        let runtime = DirectSubAgentRuntime(contextualBackendFactory: { _ in backend })
+        let runtime = DirectSubAgentRuntime(contextualBackendFactory: { _ in backend }, profileResolver: builtInDirectSubAgentProfileResolver)
         await runtime.installTaskOrchestrator(orchestrator)
 
         _ = try await runtime.createAgents(
@@ -1193,7 +1555,8 @@ struct DirectSubAgentRuntimeTests {
     func singleTasklessDelegationRemainsAllowedOutsideAWorkflow() async throws {
         let orchestrator = SessionTaskOrchestrator()
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
 
@@ -1236,7 +1599,8 @@ struct DirectSubAgentRuntimeTests {
     func idleTasklessDelegationBlocksAnotherWorkflowAndGraphActivationUntilClosed() async throws {
         let orchestrator = SessionTaskOrchestrator()
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
 
@@ -1288,7 +1652,8 @@ struct DirectSubAgentRuntimeTests {
     func tasklessAgentCannotBeResumedAfterAGraphBecomesActive() async throws {
         let orchestrator = SessionTaskOrchestrator()
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
 
@@ -1335,7 +1700,8 @@ struct DirectSubAgentRuntimeTests {
     func tasklessIdleAgentsCannotBeStartedTogetherThroughAgentMessage() async throws {
         let orchestrator = SessionTaskOrchestrator()
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
 
@@ -1373,7 +1739,8 @@ struct DirectSubAgentRuntimeTests {
     func parallelTasklessDelegationRequiresTaskGraphBeforeCreatingAgents() async throws {
         let orchestrator = SessionTaskOrchestrator()
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
 
@@ -1415,7 +1782,8 @@ struct DirectSubAgentRuntimeTests {
             ]
         )
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
 
@@ -1464,7 +1832,8 @@ struct DirectSubAgentRuntimeTests {
             tasks: [TaskDefinition(id: "plan-draft-1", title: "Draft task")]
         )
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
 
@@ -1484,7 +1853,8 @@ struct DirectSubAgentRuntimeTests {
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in
                 CapturingSubAgentRuntimeBackend(blocksPrompts: true)
-            }
+            },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
 
@@ -1532,7 +1902,8 @@ struct DirectSubAgentRuntimeTests {
             ]
         )
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
 
@@ -1569,7 +1940,8 @@ struct DirectSubAgentRuntimeTests {
     func parallelDelegationRemainsAvailableWhenTaskWorkflowToolsAreUnavailable() async throws {
         let orchestrator = SessionTaskOrchestrator()
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
 
@@ -1592,7 +1964,8 @@ struct DirectSubAgentRuntimeTests {
     func tasksNamespacePrefixEnforcesTheCoordinatedDelegationGuard() async throws {
         let orchestrator = SessionTaskOrchestrator()
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
 
@@ -1628,7 +2001,7 @@ struct DirectSubAgentRuntimeTests {
             tasks: [TaskDefinition(id: "task-a", title: "Implement")]
         )
         let backend = CapturingSubAgentRuntimeBackend(responseText: "implementation complete")
-        let runtime = DirectSubAgentRuntime(contextualBackendFactory: { _ in backend })
+        let runtime = DirectSubAgentRuntime(contextualBackendFactory: { _ in backend }, profileResolver: builtInDirectSubAgentProfileResolver)
         await runtime.installTaskOrchestrator(orchestrator)
 
         _ = try await runtime.createAgents(
@@ -1663,7 +2036,8 @@ struct DirectSubAgentRuntimeTests {
             ]
         )
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
 
@@ -1706,7 +2080,8 @@ struct DirectSubAgentRuntimeTests {
             tasks: [TaskDefinition(id: "task-a", title: "A")]
         )
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
         let arguments: [String: JSONValue] = [
@@ -1745,7 +2120,8 @@ struct DirectSubAgentRuntimeTests {
             ]
         )
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         await runtime.installTaskOrchestrator(orchestrator)
         _ = try await runtime.createAgents(
@@ -1785,7 +2161,8 @@ struct DirectSubAgentRuntimeTests {
     @Test
     func createRejectsOversizedBatches() async throws {
         let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() }
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
         )
         let oversized = (0...DirectSubAgentRuntime.maximumAgentsPerCreate).map { index in
             JSONValue.object(["name": .string("report-\(index)")])
@@ -1814,7 +2191,7 @@ struct DirectSubAgentRuntimeTests {
             )
         }
         let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
-        let runtime = DirectSubAgentRuntime(contextualBackendFactory: { _ in backend })
+        let runtime = DirectSubAgentRuntime(contextualBackendFactory: { _ in backend }, profileResolver: builtInDirectSubAgentProfileResolver)
         await runtime.installTaskOrchestrator(orchestrator)
         for sessionID in ["root-a", "root-b"] {
             _ = try await runtime.createAgents(

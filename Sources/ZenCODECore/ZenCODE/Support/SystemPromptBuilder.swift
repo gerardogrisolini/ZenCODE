@@ -177,58 +177,90 @@ public enum SystemPromptBuilder {
         }
     }
 
-    /// Generates a roster of delegatable agent profiles and their explicitly
-    /// authorized model bindings. This keeps role/tool compatibility separate
-    /// from routing capability while never exposing a model outside its
-    /// configured profile association.
+    /// Source-compatible overload backed by the authoritative live catalog.
     public static func delegatableAgentsSection(
         agents: [AgentProfile],
         allowedToolNames: Set<String>?
     ) -> String? {
+        delegatableAgentsSection(
+            agents: agents,
+            allowedToolNames: allowedToolNames,
+            snapshot: AgentDelegationCatalog.liveSnapshot()
+        )
+    }
+
+    /// Deterministic overload used by tests and callers that already own models.
+    public static func delegatableAgentsSection(
+        agents: [AgentProfile],
+        allowedToolNames: Set<String>?,
+        models: [AgentSettingsModelManifest]
+    ) -> String? {
+        delegatableAgentsSection(
+            agents: agents,
+            allowedToolNames: allowedToolNames,
+            snapshot: .available(models: models)
+        )
+    }
+
+    /// Generates the exact provider-safe roster accepted by `agent.create`.
+    public static func delegatableAgentsSection(
+        agents: [AgentProfile],
+        allowedToolNames: Set<String>?,
+        snapshot: AgentDelegationCatalogSnapshot
+    ) -> String? {
         guard agentDelegationIsAvailable(allowedToolNames) else {
             return nil
         }
-        let roster = agents.compactMap { agent -> (AgentProfile, [AgentModelBinding])? in
-            let bindings = agent.modelBindings
-                .filter { $0.capability != nil }
-                .sorted {
-                    let lhsCapability = $0.capability ?? 0
-                    let rhsCapability = $1.capability ?? 0
-                    if lhsCapability != rhsCapability {
-                        return lhsCapability < rhsCapability
-                    }
-                    return $0.modelID.localizedCaseInsensitiveCompare($1.modelID) == .orderedAscending
-                }
-            return bindings.isEmpty ? nil : (agent, bindings)
-        }
-        .sorted {
-            $0.0.displayName.localizedCaseInsensitiveCompare($1.0.displayName) == .orderedAscending
-        }
+        let roster = AgentDelegationCatalog.roster(agents: agents, snapshot: snapshot)
+            .filter {
+                !$0.delegatableBindings.isEmpty
+            }
+            .sorted {
+                AgentDelegationCatalog.lookupKey($0.profile.displayName)
+                    < AgentDelegationCatalog.lookupKey($1.profile.displayName)
+            }
         guard !roster.isEmpty else {
-            return nil
+            let reason = snapshot.unavailableReason.map { " Catalog unavailable: \($0)." } ?? ""
+            return """
+            Delegatable agent profiles and model bindings:
+            No configured profile currently has a routable model binding.\(reason)
+            Do not call agent.create until providers and agent bindings are reconfigured.
+            """
         }
 
-        let lines = roster.flatMap { agent, bindings -> [String] in
-            let roleSummary = delegationRoleSummary(for: agent)
-            let bindingLines = bindings.compactMap { binding -> String? in
-                guard let capability = binding.capability else { return nil }
-                let bindingReference = binding.id == binding.modelID
-                    ? binding.modelID
-                    : "\(binding.modelID) [binding: \(binding.id)]"
-                let defaultMarker = binding.id == agent.defaultModelBindingID ? ", default" : ""
-                return "  - \(bindingReference) (capability \(capability)/10\(defaultMarker))"
+        let lines = roster.flatMap { resolved -> [String] in
+            let roleSummary = delegationRoleSummary(for: resolved.profile)
+            let tools = resolved.profile.tools.compactMap(\.nilIfBlank)
+            let access = resolved.profile.readOnly ? "read-only" : "read-write"
+            let toolsSummary = tools.isEmpty ? "none configured" : tools.joined(separator: ", ")
+            let bindingLines = resolved.delegatableBindings.map { binding -> String in
+                let capability = binding.capability ?? 1
+                let provider = binding.providerTitle ?? "Unknown provider"
+                let profileDefault = resolved.isDefault(binding) ? " | profile default" : ""
+                return "  - provider: \(provider) | model: \(binding.modelTitle) "
+                    + "| pass model: \(binding.selectionReference) "
+                    + "| capability: \(capability)/10\(profileDefault)"
             }
-            return ["- \(agent.displayName): \(roleSummary)"] + bindingLines
+            return [
+                "- \(resolved.profile.displayName) [\(access); tools: \(toolsSummary)]: \(roleSummary)"
+            ] + bindingLines
+        }
+
+        let selectionPolicy: String
+        if taskWorkflowToolsAreAvailable(allowedToolNames) {
+            selectionPolicy = ""
+        } else {
+            selectionPolicy = "\nSelect a role/tool-compatible profile first, then the lowest-capability listed binding that meets the task."
         }
 
         return """
-        Delegatable agent profiles and authorized model bindings (filter by role and constraints first):
+        Delegatable agent profiles and model bindings:
         \(lines.joined(separator: "\n"))
-        Agent selection policy: \(TaskRecord.agentSelectionPolicy)
-        Pass the selected profile name as `profile` or `agent` and its selected binding id or \
-        model id as `model` or `modelID` in agent.create. Give the sub-agent an explicit role \
-        and scope. The selected profile is required and supplies the sub-agent's tools; \
-        agent.create cannot override them.
+        \(selectionPolicy)
+        In every agent.create `agents` item, pass the exact profile name as `profile` and the exact \
+        `binding:...` value shown after “pass model” as `model`. Both fields are required. Do not \
+        substitute provider names, display names, raw model slugs, or aliases. Give each sub-agent \
+        an explicit role and scope. The selected profile supplies the child tool grant.
         """
     }
 

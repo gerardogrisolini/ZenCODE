@@ -97,14 +97,21 @@ public final class SavedSessionsStore {
         )
 
         let fileURL = sessionsFileURL()
-        return try Self.fileTransactionCoordinator.withLock(for: fileURL) {
-            var index = try readIndexFile(at: fileURL)
-            index.sessions.removeAll { $0.projectPath == normalizedProjectPath }
-            index.sessions.insert(entry, at: 0)
-            index.sessions.sort { $0.savedAt > $1.savedAt }
-            try writeIndexFile(index, to: fileURL)
-            return entry
+        var savedEntry: SavedSessionIndexEntry?
+        try SensitiveManifestCoordination.withExclusiveLock(
+            supportDirectoryURL: fileURL.deletingLastPathComponent(),
+            fileManager: fileManager
+        ) {
+            savedEntry = try Self.fileTransactionCoordinator.withLock(for: fileURL) {
+                var index = try readIndexFile(at: fileURL)
+                index.sessions.removeAll { $0.projectPath == normalizedProjectPath }
+                index.sessions.insert(entry, at: 0)
+                index.sessions.sort { $0.savedAt > $1.savedAt }
+                try writeIndexFile(index, to: fileURL)
+                return entry
+            }
         }
+        return savedEntry ?? entry
     }
 
     // MARK: - Storage

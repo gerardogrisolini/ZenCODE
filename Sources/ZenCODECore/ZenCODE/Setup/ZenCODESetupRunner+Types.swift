@@ -22,6 +22,44 @@ enum SetupSectionCategory {
 
 struct SetupSectionConfigurationResult {
     var manifest: AgentSettingsManifest?
+    var agentProfiles: [AgentProfile]?
+
+    init(
+        manifest: AgentSettingsManifest?,
+        agentProfiles: [AgentProfile]? = nil
+    ) {
+        self.manifest = manifest
+        self.agentProfiles = agentProfiles
+    }
+}
+
+/// Read-only compare-and-swap baseline for the two manifests setup may replace.
+/// Unlike the removed rollback snapshot, it is never written back: a mismatch at
+/// finalization aborts before mutation instead of overwriting a concurrent edit.
+struct SetupManifestBaseline: Sendable {
+    let settingsData: Data?
+    let agentsData: Data?
+
+    static func capture(
+        fileManager: FileManager = .default
+    ) throws -> SetupManifestBaseline {
+        try SensitiveManifestCoordination.withExclusiveLock(
+            fileManager: fileManager
+        ) {
+            func dataIfPresent(at url: URL) throws -> Data? {
+                guard fileManager.fileExists(atPath: url.path) else { return nil }
+                return try Data(contentsOf: url)
+            }
+            return try SetupManifestBaseline(
+                settingsData: dataIfPresent(
+                    at: AgentSettingsManifestStore.settingsURL(fileManager: fileManager)
+                ),
+                agentsData: dataIfPresent(
+                    at: AgentProfileStore.agentsManifestURL(fileManager: fileManager)
+                )
+            )
+        }
+    }
 }
 
 /// The terminal result of a setup run, reported to the caller so it can decide
@@ -42,15 +80,16 @@ public enum SetupOutcome: Sendable, Equatable {
 
 /// Pure, terminal-free state machine for a setup run.
 ///
-/// It owns the manifest as it evolves plus the two bookkeeping flags that decide
-/// whether settings must be written. Keeping these transitions here (instead of
-/// inline mutable locals in `run()`) makes the "when do we persist?" rule
-/// testable without a real terminal and avoids silently dropping a
-/// `didChangeSettings` update when a new section type is added.
+/// It owns the settings manifest and agent profiles as they evolve plus the
+/// bookkeeping flag that decides whether settings must be written. Keeping these
+/// transitions here (instead of inline mutable locals in `run()`) makes the
+/// "when do we persist?" rule testable, and keeps cancel/error paths free of
+/// manifest writes or compensating rollbacks.
 struct SetupSession {
     private(set) var originalManifest: AgentSettingsManifest?
     private(set) var manifest: AgentSettingsManifest?
     private(set) var didChangeSettings = false
+    private(set) var agentProfiles: [AgentProfile]?
 
     /// The terminal outcome of a completed setup run.
     enum Outcome: Equatable {
@@ -69,8 +108,12 @@ struct SetupSession {
 
     /// Records the manifest produced by quick setup, which always counts as a
     /// settings change.
-    mutating func applyQuickSetup(_ manifest: AgentSettingsManifest) {
+    mutating func applyQuickSetup(
+        _ manifest: AgentSettingsManifest,
+        agentProfiles: [AgentProfile]? = nil
+    ) {
         self.manifest = manifest
+        self.agentProfiles = agentProfiles
         didChangeSettings = true
     }
 
@@ -81,6 +124,9 @@ struct SetupSession {
         manifest = result.manifest
         if manifest != previousManifest {
             didChangeSettings = true
+        }
+        if let agentProfiles = result.agentProfiles {
+            self.agentProfiles = agentProfiles
         }
     }
 
@@ -251,6 +297,28 @@ struct SetupProviderInput {
     let chatEndpoint: AgentRemoteChatEndpoint
     let apiKey: String?
     let models: [AgentSettingsModelManifest]
+    let chatGPTSubscriptionCredentials: CodexAgentCredentials?
+    let anthropicSubscriptionCredentials: AnthropicSubscriptionCredentials?
+
+    init(
+        id: UUID,
+        name: String,
+        baseURL: String,
+        chatEndpoint: AgentRemoteChatEndpoint,
+        apiKey: String?,
+        models: [AgentSettingsModelManifest],
+        chatGPTSubscriptionCredentials: CodexAgentCredentials? = nil,
+        anthropicSubscriptionCredentials: AnthropicSubscriptionCredentials? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.baseURL = baseURL
+        self.chatEndpoint = chatEndpoint
+        self.apiKey = apiKey
+        self.models = models
+        self.chatGPTSubscriptionCredentials = chatGPTSubscriptionCredentials
+        self.anthropicSubscriptionCredentials = anthropicSubscriptionCredentials
+    }
 }
 
 enum SetupProviderKind: Hashable {

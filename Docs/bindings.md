@@ -42,8 +42,8 @@ Reading the screenshot row by row:
   `/agents` and can still be delegated through the legacy fallback, but it is
   **not** a candidate for capability-based delegation routing.
 - **Developer** has three bindings across three providers (7/10, 8/10, 6/10).
-  The `★` on `glm-5.2` makes it the default, so a sub-agent created without an
-  explicit model runs on `glm-5.2` even though stronger bindings exist.
+  The `★` on `glm-5.2` makes it the profile default for direct/profile-selected
+  sessions. Delegation still names one binding explicitly.
 - **Minimal**, **Planner**, **Reporter**, and **Reviewer** each expose the
   bindings appropriate to their role — one for the single-model profiles, two
   for those that can trade cost against strength.
@@ -97,37 +97,53 @@ Profiles with at least one binding that has both a model and a capability are
 published in the system prompt as the delegation roster:
 
 ```text
-Delegatable agent profiles and authorized model bindings (filter by role and constraints first):
-- Developer: Developer agent. Implement the user's request with the available tools, ...
-  - glm-5.2 (capability 6/10, default)
-  - gpt-5.6-terra (capability 7/10)
-  - claude-opus-5 (capability 8/10)
+Delegatable agent profiles and model bindings:
+- Developer [read-write; tools: shell, files, text, ...]: Developer agent. Implement the user's request, ...
+  - provider: Z.ai | model: glm-5.2 | pass model: binding:developer-fast | capability: 6/10 | profile default
+  - provider: ChatGPT Subscription | model: GPT-5.6 Terra | pass model: binding:developer-terra | capability: 7/10
+  - provider: Claude Subscription | model: Claude Opus 5 | pass model: binding:developer-opus | capability: 8/10
 ```
 
-A binding without a capability is omitted, and a profile whose bindings are all
-omitted disappears from the roster entirely — which is why `Builder` in the
-screenshot is never routed to automatically. Having a capability is necessary
-but not sufficient: the whole roster is also omitted when `agent.create` is not
-exposed to the session, or when the session pins a single model.
+A binding without a capability is omitted. Bindings are also intersected with
+the authoritative `settings.json` model catalog: removed or unauthenticated providers, missing
+models, duplicate aliases, and bindings that converge ambiguously on one model
+are not advertised. A profile whose bindings are all omitted disappears from
+the usable roster — which is why `Builder` in the screenshot is never routed to
+automatically. When no routable binding exists, the prompt says so explicitly
+and instructs the model not to call `agent.create`. The complete section is
+omitted only when delegation itself is unavailable or the session pins one model.
+
+The `binding:<id>` token is the only reference advertised for `model`. Its
+namespace cannot collide with a model ID or provider slug. Provider and model
+display names are explanatory only and must never be substituted into the tool
+call.
 
 ## Resolution Rules
 
-`agent.create` resolves the profile first, then the binding **inside that
-profile only**:
+The model-visible `agent.create` schema exposes one provider-neutral shape:
+
+```json
+{"agents":[{"profile":"Developer","model":"binding:developer-fast","taskID":"task-a","prompt":"Implement the scoped change"}]}
+```
+
+It resolves the profile first, then the binding **inside that profile and one
+authoritative model-catalog snapshot**:
 
 | Profile configuration and request | Result |
 | --- | --- |
-| Has bindings, no `model` / `modelID` | The profile's default (`★`) binding is used. |
-| Has bindings, matching `model` / `modelID` | The explicitly requested authorized binding is used. |
-| Has bindings, non-matching `model` / `modelID` | Rejected — the model is not authorized for that profile. |
-| No bindings, no explicit model | Legacy fallback: the child inherits the parent session's model, and the profile stays out of the routing roster. |
-| No bindings, explicit `model` / `modelID` | Rejected — no authorized binding exists. |
-| No profile resolved, explicit `model` / `modelID` | Rejected — a model reference always requires a profile. |
+| Has bindings, no `model` | Rejected — delegation never silently uses the profile default. |
+| Has bindings, matching `binding:<id>` | The explicitly requested, currently routable binding is used. |
+| Has bindings, stale, ambiguous, capability-less, or non-matching `model` | Rejected before reservation or task claim. |
+| No bindings, no explicit model | Compatibility-only programmatic fallback: the child inherits the exact parent provider/model and stays out of the routing roster. |
+| No bindings, explicit model | Rejected — no authorized binding exists. |
+| No profile resolved, explicit model | Rejected — a model reference always requires a profile. |
 
-Every rejection happens while the request is prepared, before the task is
-claimed. The fallback exists for backward compatibility only; it is not
-equivalent to a binding, because it carries no capability and no thinking
-selection, and it leaves the profile invisible to capability routing.
+Every rejection happens while the complete batch is prepared, before a taskless
+reservation or task claim. The resolved provider selection is carried to the
+backend; backend creation does not repeat a global lookup, so two providers may
+safely expose the same raw model slug. Historical root fields and aliases remain
+accepted for wire compatibility, but blank aliases cannot mask valid values and
+conflicting or malformed aliases are rejected.
 
 ## Bindings In `/workflow`
 
@@ -163,11 +179,27 @@ Setup asks for, per binding:
   as the default.
 - **Thinking** — reasoning effort, validated against the model's supported
   options.
-- **Default** — one binding per profile is marked `★` and used when a caller does
-  not choose explicitly.
+- **Default** — one binding per profile is marked `★` for direct/profile-selected
+  sessions. `agent.create` still requires an explicit `model` reference.
 
 A binding with no capability at all is only possible in a hand-edited or legacy
-`agents.json`; such a binding is silently skipped by delegation routing.
+`agents.json`; it is excluded by both the delegation roster and runtime.
+
+When setup persists provider/model changes, it reconciles `agents.json` against
+the same provider-safe catalog. Orphaned and ambiguous bindings are removed,
+surviving legacy slug references are upgraded to canonical provider-qualified
+model IDs, and a removed default is recalculated deterministically. The bulk
+binding editor uses the setup session's in-memory manifest, so changes made
+earlier in the same setup run are visible immediately. Provider, credential,
+profile, and binding edits are staged in the setup session and written only at
+finalization; cancelling or exiting before finalization does not rewrite either
+manifest, so it cannot roll back or overwrite another process's update. The
+finalizer prevalidates and pre-encodes both manifests, rejects a concurrent change
+since setup began, serializes ordinary settings/profile writers with one
+cross-process lock, and uses per-file atomic replacement plus compare-and-swap
+rollback. A restrictive, directory-synchronized rollback-first journal restores
+an interrupted two-file finalization before the next coordinated delegation read
+or manifest write; its durable unlink is the commit point.
 
 Then inspect the result:
 

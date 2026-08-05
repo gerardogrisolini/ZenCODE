@@ -604,6 +604,60 @@ public enum AgentProfileStore {
     ]
     public static let featureManagementToolNames = Set(DirectToolCatalog.featureDescriptors.map(\.name))
 
+    private static let identityLocale = Locale(identifier: "en_US_POSIX")
+
+    /// Stable key for persisted profile identity. User locale must never change
+    /// which profile (and therefore which tool grant) a reference selects.
+    public static func profileReferenceKey(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: identityLocale
+            )
+            .lowercased(with: identityLocale)
+    }
+
+    public static func agent(
+        matching reference: String,
+        in agents: [AgentProfile]
+    ) -> AgentProfile? {
+        let key = profileReferenceKey(reference)
+        guard !key.isEmpty else { return nil }
+        let matches = agents.enumerated().filter { _, agent in
+            profileReferenceKey(agent.id) == key
+                || profileReferenceKey(agent.name) == key
+        }
+        guard matches.count == 1 else { return nil }
+        return matches[0].element
+    }
+
+    public static func ambiguousProfileReferences(
+        in agents: [AgentProfile]
+    ) -> [String] {
+        var indicesByReference: [String: Set<Int>] = [:]
+        for (index, agent) in agents.enumerated() {
+            for reference in [agent.id, agent.name] {
+                let key = profileReferenceKey(reference)
+                guard !key.isEmpty else { continue }
+                indicesByReference[key, default: []].insert(index)
+            }
+        }
+        return indicesByReference.compactMap { key, indices in
+            indices.count > 1 ? key : nil
+        }.sorted()
+    }
+
+    public static func unambiguousAgents(
+        in agents: [AgentProfile]
+    ) -> [AgentProfile] {
+        let ambiguous = Set(ambiguousProfileReferences(in: agents))
+        guard !ambiguous.isEmpty else { return agents }
+        return agents.filter { agent in
+            !ambiguous.contains(profileReferenceKey(agent.id))
+                && !ambiguous.contains(profileReferenceKey(agent.name))
+        }
+    }
+
     public static func loadRequired(fileManager: FileManager = .default) throws -> [AgentProfile] {
         let url = agentsManifestURL(fileManager: fileManager)
         guard fileManager.fileExists(atPath: url.path) else {
@@ -639,6 +693,13 @@ public enum AgentProfileStore {
         guard !manifest.agents.isEmpty else {
             throw AgentProfileStoreError.noAgents(url)
         }
+        let ambiguousReferences = ambiguousProfileReferences(in: manifest.agents)
+        guard ambiguousReferences.isEmpty else {
+            throw AgentProfileStoreError.ambiguousProfileReferences(
+                url,
+                ambiguousReferences
+            )
+        }
         return manifest.agents
     }
 
@@ -647,15 +708,36 @@ public enum AgentProfileStore {
         fileManager: FileManager = .default
     ) throws {
         let url = agentsManifestURL(fileManager: fileManager)
+        let data = try encodedData(for: agents, fileManager: fileManager)
+        try SensitiveManifestCoordination.withExclusiveLock(
+            supportDirectoryURL: url.deletingLastPathComponent(),
+            fileManager: fileManager
+        ) {
+            try SensitiveFilePermissions.write(data, to: url, fileManager: fileManager)
+        }
+    }
+
+    static func encodedData(
+        for agents: [AgentProfile],
+        fileManager: FileManager = .default
+    ) throws -> Data {
+        let url = agentsManifestURL(fileManager: fileManager)
+        let normalizedAgents = normalizedAgentsForSave(agents)
+        let ambiguousReferences = ambiguousProfileReferences(in: normalizedAgents)
+        guard ambiguousReferences.isEmpty else {
+            throw AgentProfileStoreError.ambiguousProfileReferences(
+                url,
+                ambiguousReferences
+            )
+        }
         let manifest = AgentProfileManifest(
-            agents: normalizedAgentsForSave(agents).sorted {
-                $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+            agents: normalizedAgents.sorted {
+                profileReferenceKey($0.displayName) < profileReferenceKey($1.displayName)
             }
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(manifest)
-        try SensitiveFilePermissions.write(data, to: url, fileManager: fileManager)
+        return try encoder.encode(manifest)
     }
 
     @discardableResult
@@ -770,7 +852,7 @@ public enum AgentProfileStore {
     }
 
     public static func developerProfile(in agents: [AgentProfile]) throws -> AgentProfile {
-        guard let agent = agents.first(where: { $0.name.selectionKey == developerAgentName.selectionKey }) else {
+        guard let agent = agent(matching: developerAgentName, in: agents) else {
             throw AgentProfileStoreError.developerAgentMissing(agentsManifestURL())
         }
         return agent
@@ -840,7 +922,7 @@ public enum AgentProfileStore {
     private static func toolReferenceKey(_ value: String) -> String {
         let foldedValue = value.folding(
             options: [.caseInsensitive, .diacriticInsensitive],
-            locale: .current
+            locale: identityLocale
         )
         let characters = foldedValue.unicodeScalars.map { scalar -> Character in
             CharacterSet.alphanumerics.contains(scalar) ? Character(String(scalar)) : "-"
@@ -858,6 +940,7 @@ public enum AgentProfileStoreError: LocalizedError {
     case unsupportedVersion(URL, Int, Int)
     case noAgents(URL)
     case developerAgentMissing(URL)
+    case ambiguousProfileReferences(URL, [String])
 
     public var errorDescription: String? {
         switch self {
@@ -873,6 +956,9 @@ public enum AgentProfileStoreError: LocalizedError {
             return "The ZenCODE agents file \(url.path) does not contain any agents."
         case let .developerAgentMissing(url):
             return "The ZenCODE agents file \(url.path) does not contain the Developer agent."
+        case let .ambiguousProfileReferences(url, references):
+            return "The ZenCODE agents file \(url.path) contains ambiguous profile references: "
+                + references.joined(separator: ", ")
         }
     }
 }
@@ -880,7 +966,10 @@ public enum AgentProfileStoreError: LocalizedError {
 extension String {
     fileprivate var selectionKey: String {
         trimmingCharacters(in: .whitespacesAndNewlines)
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            .lowercased()
+            .folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: Locale(identifier: "en_US_POSIX")
+            )
+            .lowercased(with: Locale(identifier: "en_US_POSIX"))
     }
 }

@@ -70,14 +70,33 @@ enum SensitiveFilePermissions {
         let temporaryURL = temporaryURL(for: url, in: directoryURL)
         do {
             try writeSecureTemporaryFile(data, to: temporaryURL, fileManager: fileManager)
+            // rename(2) preserves the already-verified 0600 temporary inode.
+            // Keep it as the final fallible operation so a normal write error
+            // always means the destination was left unchanged.
             try replaceItem(at: url, with: temporaryURL)
-            try hardenFile(at: url, fileManager: fileManager)
         } catch {
             try? fileManager.removeItem(at: temporaryURL)
             throw error
         }
         #else
         try data.write(to: url, options: [.atomic])
+        #endif
+    }
+
+    /// Transactional writers additionally order the published directory entry.
+    /// This barrier may fail after replacement; their journal/CAS protocol is
+    /// responsible for resolving that explicitly.
+    static func writeDurably(
+        _ data: Data,
+        to url: URL,
+        fileManager: FileManager = .default,
+        directorySynchronizer: ((URL) throws -> Void)? = nil
+    ) throws {
+        try write(data, to: url, fileManager: fileManager)
+        #if canImport(Darwin) || canImport(Glibc)
+        try (directorySynchronizer ?? synchronizeDirectory)(
+            url.deletingLastPathComponent()
+        )
         #endif
     }
 
@@ -236,6 +255,40 @@ enum SensitiveFilePermissions {
             )
         }
     }
+
+    /// Makes prior renames/unlinks in a directory durable and ordered. Callers
+    /// use byte-level CAS when this throws after a rename has become visible.
+    static func synchronizeDirectory(at directoryURL: URL) throws {
+        let descriptor = directoryURL.path.withCString { path in
+            #if canImport(Darwin)
+            Darwin.open(path, O_RDONLY)
+            #elseif canImport(Glibc)
+            Glibc.open(path, O_RDONLY | O_DIRECTORY)
+            #endif
+        }
+        guard descriptor >= 0 else {
+            throw SensitiveFilePermissionsError.directorySyncFailed(
+                directoryURL,
+                errorCode: errno
+            )
+        }
+        defer { _ = close(descriptor) }
+
+        var result: Int32
+        repeat {
+            #if canImport(Darwin)
+            result = Darwin.fsync(descriptor)
+            #elseif canImport(Glibc)
+            result = Glibc.fsync(descriptor)
+            #endif
+        } while result != 0 && errno == EINTR
+        guard result == 0 else {
+            throw SensitiveFilePermissionsError.directorySyncFailed(
+                directoryURL,
+                errorCode: errno
+            )
+        }
+    }
     #endif
 }
 
@@ -244,6 +297,7 @@ enum SensitiveFilePermissionsError: LocalizedError {
     case pathInspectionFailed(URL, errorCode: Int32)
     case temporaryFileCreationFailed(URL, errorCode: Int32)
     case atomicReplacementFailed(URL, errorCode: Int32)
+    case directorySyncFailed(URL, errorCode: Int32)
 
     var errorDescription: String? {
         switch self {
@@ -255,6 +309,8 @@ enum SensitiveFilePermissionsError: LocalizedError {
             return "Unable to create a private temporary file for \(url.path) (POSIX error \(errorCode))."
         case let .atomicReplacementFailed(url, errorCode):
             return "Unable to replace private file \(url.path) (POSIX error \(errorCode))."
+        case let .directorySyncFailed(url, errorCode):
+            return "Unable to synchronize private directory \(url.path) (POSIX error \(errorCode))."
         }
     }
 }

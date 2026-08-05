@@ -21,10 +21,33 @@ public enum AgentRemoteBackendFactory {
         chatGPTConnectionScopeID: String? = nil,
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil
     ) throws -> any AgentRuntimeBackend {
-        let selection = AgentSettingsStore.defaultSelection(
+        try makeRemoteBackend(
+            configuration: configuration,
+            mcpRuntime: mcpRuntime,
+            fallbackProvider: fallbackProvider,
+            fallbackAPIKey: fallbackAPIKey,
+            resolvedModelSelection: nil,
+            urlSession: urlSession,
+            chatGPTConnectionScopeID: chatGPTConnectionScopeID,
+            swiftFeatureRuntime: swiftFeatureRuntime
+        )
+    }
+
+    static func makeRemoteBackend(
+        configuration: AgentRuntimeConfiguration,
+        mcpRuntime: DirectMCPToolRuntime,
+        fallbackProvider: AgentRemoteProvider? = nil,
+        fallbackAPIKey: String? = nil,
+        resolvedModelSelection: AgentModelSelection?,
+        urlSession: URLSession? = nil,
+        chatGPTConnectionScopeID: String? = nil,
+        swiftFeatureRuntime: SwiftFeatureRuntime? = nil
+    ) throws -> any AgentRuntimeBackend {
+        let selection = resolvedModelSelection ?? AgentSettingsStore.defaultSelection(
             explicitModelID: configuration.modelID
         )
-        if let modelID = configuration.modelID,
+        if resolvedModelSelection == nil,
+           let modelID = configuration.modelID,
            AgentSettingsStore.isRemoteLLMIDSyntax(modelID),
            selection == nil {
             throw AgentCoreBackendError.missingRemoteProvider
@@ -130,11 +153,35 @@ public enum AgentRemoteBackendFactory {
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil
     ) -> DirectSubAgentContextualBackendFactory {
         { context in
-            try makeRemoteBackend(
-                configuration: configuration.applyingSubAgentBackendContext(context),
+            let appliedConfiguration = configuration.applyingSubAgentBackendContext(context)
+            let inheritedModelID = configuration.modelID?.nilIfBlank
+                ?? fallbackProvider.modelID
+            let inheritedProvider = AgentRemoteProvider(
+                id: fallbackProvider.id,
+                name: fallbackProvider.name,
+                baseURL: fallbackProvider.baseURL,
+                modelID: inheritedModelID,
+                chatEndpoint: fallbackProvider.chatEndpoint
+            )
+            let inheritedSelection = AgentModelSelection(
+                providerKind: .remoteAPI,
+                modelID: inheritedModelID,
+                remoteProvider: inheritedProvider,
+                apiKey: fallbackAPIKey,
+                configuredContextWindowLimit: configuration.configuredContextWindowLimit,
+                generationParameterOverrides: configuration.generationParameterOverrides,
+                thinkingSelection: context.thinkingSelection
+            )
+            let modelSelection = configuration.locksModelToSession
+                ? inheritedSelection
+                : (context.modelSelection ?? inheritedSelection)
+
+            return try makeRemoteBackend(
+                configuration: appliedConfiguration,
                 mcpRuntime: mcpRuntime,
                 fallbackProvider: fallbackProvider,
                 fallbackAPIKey: fallbackAPIKey,
+                resolvedModelSelection: modelSelection,
                 urlSession: urlSession,
                 chatGPTConnectionScopeID: UUID().uuidString,
                 swiftFeatureRuntime: context.swiftFeatureRuntime ?? swiftFeatureRuntime

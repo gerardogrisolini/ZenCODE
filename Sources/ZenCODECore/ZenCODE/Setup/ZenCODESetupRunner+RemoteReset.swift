@@ -17,27 +17,122 @@ extension ZenCODESetupRunner {
     @discardableResult
     static func resetRemoteConfiguration(
         fileManager: FileManager = .default,
-        configurationURLs: [URL]? = nil
+        configurationURLs: [URL]? = nil,
+        removalCheckpoint: ((Int) throws -> Void)? = nil
     ) throws -> RemoteConfigurationResetResult {
         let fileURLs = uniqueRemoteConfigurationURLs(
             configurationURLs ?? remoteConfigurationURLs(fileManager: fileManager)
         )
-
-        var removedURLs: [URL] = []
-        var missingURLs: [URL] = []
-        for url in fileURLs {
-            if fileManager.fileExists(atPath: url.path) {
-                try fileManager.removeItem(at: url)
-                removedURLs.append(url)
-            } else {
-                missingURLs.append(url)
+        let supportDirectoryURL = fileURLs.first?.deletingLastPathComponent()
+        let result = try SensitiveManifestCoordination.withExclusiveLock(
+            supportDirectoryURL: supportDirectoryURL,
+            fileManager: fileManager
+        ) {
+            var originalData: [String: Data] = [:]
+            var missingURLs: [URL] = []
+            for url in fileURLs {
+                if fileManager.fileExists(atPath: url.path) {
+                    originalData[url.path] = try Data(contentsOf: url)
+                } else {
+                    missingURLs.append(url)
+                }
             }
-        }
+            let changes = fileURLs.compactMap { url in
+                originalData[url.path].map {
+                    SensitiveManifestCoordination.Change(
+                        url: url,
+                        originalData: $0,
+                        intendedData: nil
+                    )
+                }
+            }
+            let rollbackChanges = changes.map { change in
+                SensitiveManifestCoordination.Change(
+                    url: change.url,
+                    originalData: nil,
+                    intendedData: change.originalData
+                )
+            }
+            if let supportDirectoryURL {
+                try SensitiveManifestCoordination.beginTransaction(
+                    rollbackChanges,
+                    supportDirectoryURL: supportDirectoryURL,
+                    fileManager: fileManager
+                )
+            }
 
-        let result = RemoteConfigurationResetResult(
-            removedURLs: removedURLs,
-            missingURLs: missingURLs
-        )
+            var removedURLs: [URL] = []
+            do {
+                for url in fileURLs where originalData[url.path] != nil {
+                    try fileManager.removeItem(at: url)
+                    removedURLs.append(url)
+                    try removalCheckpoint?(removedURLs.count)
+                }
+                if let supportDirectoryURL {
+                    #if canImport(Darwin) || canImport(Glibc)
+                    try SensitiveFilePermissions.synchronizeDirectory(
+                        at: supportDirectoryURL
+                    )
+                    #endif
+                    try SensitiveManifestCoordination.clearTransaction(
+                        supportDirectoryURL: supportDirectoryURL,
+                        fileManager: fileManager
+                    )
+                }
+            } catch {
+                let removalError = error
+                var rollbackFailures: [String] = []
+                if let supportDirectoryURL {
+                    do {
+                        try SensitiveManifestCoordination.ensureTransaction(
+                            rollbackChanges,
+                            supportDirectoryURL: supportDirectoryURL,
+                            fileManager: fileManager
+                        )
+                    } catch {
+                        rollbackFailures.append(
+                            "could not persist rollback intent: \(error.localizedDescription)"
+                        )
+                    }
+                }
+                for url in fileURLs.reversed() where originalData[url.path] != nil {
+                    do {
+                        let data = originalData[url.path]
+                        let currentData = fileManager.fileExists(atPath: url.path)
+                            ? try Data(contentsOf: url)
+                            : nil
+                        if currentData == data { continue }
+                        guard currentData == nil, let data else {
+                            throw ZenCODESupportFileServiceError.manifestRollbackConflict(url)
+                        }
+                        try SensitiveFilePermissions.writeDurably(
+                            data,
+                            to: url,
+                            fileManager: fileManager
+                        )
+                    } catch {
+                        rollbackFailures.append(error.localizedDescription)
+                    }
+                }
+                guard rollbackFailures.isEmpty else {
+                    throw ZenCODESupportFileServiceError.manifestCommitRollbackFailed(
+                        commit: removalError.localizedDescription,
+                        rollback: rollbackFailures.joined(separator: "; ")
+                    )
+                }
+                if let supportDirectoryURL {
+                    try SensitiveManifestCoordination.clearTransaction(
+                        supportDirectoryURL: supportDirectoryURL,
+                        fileManager: fileManager
+                    )
+                }
+                throw removalError
+            }
+            return RemoteConfigurationResetResult(
+                removedURLs: removedURLs,
+                missingURLs: missingURLs
+            )
+        }
         printRemoteConfigurationResetResult(result)
         return result
     }

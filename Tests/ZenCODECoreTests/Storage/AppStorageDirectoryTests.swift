@@ -36,4 +36,69 @@ struct AppStorageDirectoryTests {
         ])
         #expect(SwiftFeatureRegistry.appFeatureRootURL() == supportDirectory.appendingPathComponent("features", isDirectory: true))
     }
+
+    @Test
+    func taskScopedSupportDirectoriesAndSettingsReadsRemainIsolated() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-task-scoped-storage-\(UUID().uuidString)", isDirectory: true)
+        let firstDirectory = root.appendingPathComponent("first", isDirectory: true)
+        let secondDirectory = root.appendingPathComponent("second", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        async let firstResult: (String, String?) = AppStorageDirectory.withSupportDirectoryURL(
+            firstDirectory
+        ) {
+            try AgentSettingsManifestStore.save(
+                AgentSettingsManifest(models: [], responseLanguage: "it")
+            )
+            await Task.yield()
+            return (
+                AgentSettingsManifestStore.settingsURL().deletingLastPathComponent().path,
+                try AgentSettingsManifestStore.loadRequired().responseLanguage
+            )
+        }
+        async let secondResult: (String, String?) = AppStorageDirectory.withSupportDirectoryURL(
+            secondDirectory
+        ) {
+            try AgentSettingsManifestStore.save(
+                AgentSettingsManifest(models: [], responseLanguage: "en")
+            )
+            await Task.yield()
+            return (
+                AgentSettingsManifestStore.settingsURL().deletingLastPathComponent().path,
+                try AgentSettingsManifestStore.loadRequired().responseLanguage
+            )
+        }
+
+        let (first, second) = try await (firstResult, secondResult)
+        #expect(first.0 == firstDirectory.standardizedFileURL.path)
+        #expect(first.1 == "it")
+        #expect(second.0 == secondDirectory.standardizedFileURL.path)
+        #expect(second.1 == "en")
+    }
+
+    @Test
+    func settingsReadsObserveAnExternalAtomicReplacement() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-settings-refresh-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try AppStorageDirectory.withSupportDirectoryURL(directory) {
+            try AgentSettingsManifestStore.save(
+                AgentSettingsManifest(models: [], responseLanguage: "it")
+            )
+            #expect(try AgentSettingsManifestStore.loadRequired().responseLanguage == "it")
+
+            let replacement = AgentSettingsManifest(
+                models: [],
+                responseLanguage: "en"
+            )
+            try SensitiveFilePermissions.write(
+                AgentSettingsManifestStore.encodedData(for: replacement),
+                to: AgentSettingsManifestStore.settingsURL()
+            )
+
+            #expect(try AgentSettingsManifestStore.loadRequired().responseLanguage == "en")
+        }
+    }
 }

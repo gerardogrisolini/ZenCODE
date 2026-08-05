@@ -121,7 +121,15 @@ public final class AgentsContextService {
     @discardableResult
     public func ensureGlobalAgentsFileExists() -> URL? {
         let fileURL = globalAgentsFileURL()
+        return try? SensitiveManifestCoordination.withExclusiveLock(
+            supportDirectoryURL: fileURL.deletingLastPathComponent(),
+            fileManager: fileManager
+        ) {
+            ensureGlobalAgentsFileExistsUnlocked(at: fileURL)
+        }
+    }
 
+    private func ensureGlobalAgentsFileExistsUnlocked(at fileURL: URL) -> URL? {
         switch readContextFile(at: fileURL, fileManager: fileManager) {
         case .loaded:
             // A readable existing file is owned by the user, including an

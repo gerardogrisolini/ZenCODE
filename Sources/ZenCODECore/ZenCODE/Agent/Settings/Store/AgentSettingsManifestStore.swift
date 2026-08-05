@@ -10,10 +10,8 @@ import Synchronization
 
 public enum AgentSettingsManifestStore {
     public static let settingsFilename = "settings.json"
-    private static let defaultSettingsCache = DefaultSettingsCache()
-    /// Serializes every settings write and all read-modify-write updates. The
-    /// cache has its own lock, but it cannot protect a file read followed by a
-    /// later atomic replacement from another settings mutation.
+    /// Serializes in-process settings writes and read-modify-write updates;
+    /// `SensitiveManifestCoordination` supplies the cross-process boundary.
     private static let manifestMutationLock = Mutex<Void>(())
 
     public static func load() -> AgentSettingsManifest? {
@@ -25,18 +23,25 @@ public enum AgentSettingsManifestStore {
     }
 
     #if DEBUG
-    static func resetDefaultCacheForTesting() {
-        defaultSettingsCache.reset()
-    }
+    /// Compatibility hook retained for tests that predate uncached settings reads.
+    static func resetDefaultCacheForTesting() {}
     #endif
 
     public static func loadRequired() throws -> AgentSettingsManifest {
-        try defaultSettingsCache.load {
-            try loadRequired(from: settingsURL())
-        }
+        try loadRequired(from: settingsURL())
     }
 
     public static func loadRequired(
+        from url: URL
+    ) throws -> AgentSettingsManifest {
+        return try SensitiveManifestCoordination.withExclusiveLock(
+            supportDirectoryURL: url.deletingLastPathComponent()
+        ) {
+            try loadRequiredUnlocked(from: url)
+        }
+    }
+
+    static func loadRequiredUnlocked(
         from url: URL
     ) throws -> AgentSettingsManifest {
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -73,8 +78,22 @@ public enum AgentSettingsManifestStore {
         _ manifest: AgentSettingsManifest,
         to url: URL = settingsURL()
     ) throws {
-        try manifestMutationLock.withLock { _ in
+        try withManifestMutation(
+            supportDirectoryURL: url.deletingLastPathComponent()
+        ) {
             try saveUnlocked(manifest, to: url)
+        }
+    }
+
+    private static func withManifestMutation(
+        supportDirectoryURL: URL? = nil,
+        _ operation: () throws -> Void
+    ) throws {
+        try manifestMutationLock.withLock { _ in
+            try SensitiveManifestCoordination.withExclusiveLock(
+                supportDirectoryURL: supportDirectoryURL,
+                operation: operation
+            )
         }
     }
 
@@ -82,21 +101,24 @@ public enum AgentSettingsManifestStore {
         _ manifest: AgentSettingsManifest,
         to url: URL
     ) throws {
+        let data = try encodedData(for: manifest)
+        try SensitiveFilePermissions.write(data, to: url)
+    }
+
+    static func encodedData(
+        for manifest: AgentSettingsManifest
+    ) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted]
-        let data = try encoder.encode(manifest)
-        try SensitiveFilePermissions.write(data, to: url)
-        if url.standardizedFileURL.path == settingsURL().standardizedFileURL.path {
-            defaultSettingsCache.store(manifest)
-        }
+        return try encoder.encode(manifest)
     }
 
     public static func saveSelectedModel(
         modelID: String,
         thinkingSelection: AgentThinkingSelection?
     ) throws {
-        try manifestMutationLock.withLock { _ in
-            let current = try loadRequired(from: settingsURL())
+        try withManifestMutation {
+            let current = try loadRequiredUnlocked(from: settingsURL())
             try saveUnlocked(
                 AgentSettingsManifest(
                     version: current.version,
@@ -120,8 +142,8 @@ public enum AgentSettingsManifestStore {
     public static func saveSelectedThinkingSelection(
         _ thinkingSelection: AgentThinkingSelection?
     ) throws {
-        try manifestMutationLock.withLock { _ in
-            let current = try loadRequired(from: settingsURL())
+        try withManifestMutation {
+            let current = try loadRequiredUnlocked(from: settingsURL())
             try saveUnlocked(
                 AgentSettingsManifest(
                     version: current.version,
@@ -145,7 +167,7 @@ public enum AgentSettingsManifestStore {
     public static func saveChatGPTSubscriptionCredentials(
         _ credentials: CodexAgentCredentials?
     ) throws {
-        try manifestMutationLock.withLock { _ in
+        try withManifestMutation {
             let current = try manifestForCredentialUpdate()
             try saveUnlocked(
                 AgentSettingsManifest(
@@ -170,7 +192,7 @@ public enum AgentSettingsManifestStore {
     public static func saveAnthropicSubscriptionCredentials(
         _ credentials: AnthropicSubscriptionCredentials?
     ) throws {
-        try manifestMutationLock.withLock { _ in
+        try withManifestMutation {
             let current = try manifestForCredentialUpdate()
             try saveUnlocked(
                 AgentSettingsManifest(
@@ -193,7 +215,7 @@ public enum AgentSettingsManifestStore {
     }
 
     public static func saveResponseLanguage(_ languageCode: String?) throws {
-        try manifestMutationLock.withLock { _ in
+        try withManifestMutation {
             let current = try manifestForCredentialUpdate()
             try saveUnlocked(
                 AgentSettingsManifest(
@@ -217,7 +239,7 @@ public enum AgentSettingsManifestStore {
 
     private static func manifestForCredentialUpdate() throws -> AgentSettingsManifest {
         do {
-            return try loadRequired(from: settingsURL())
+            return try loadRequiredUnlocked(from: settingsURL())
         } catch AgentSettingsManifestStoreError.missingFile(_) {
             return AgentSettingsManifest(models: [])
         }
@@ -227,58 +249,6 @@ public enum AgentSettingsManifestStore {
         AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
             .appendingPathComponent(settingsFilename)
             .standardizedFileURL
-    }
-
-    private final class DefaultSettingsCache: Sendable {
-        private enum State {
-            case notLoaded
-            case loaded(AgentSettingsManifest)
-            case failed(Error)
-        }
-
-        private let state = Mutex(State.notLoaded)
-
-        func load(
-            _ loader: @Sendable () throws -> AgentSettingsManifest
-        ) throws -> AgentSettingsManifest {
-            try state.withLock { state in
-                switch state {
-                case let .loaded(manifest):
-                    return manifest
-                case let .failed(error):
-                    throw error
-                case .notLoaded:
-                    break
-                }
-
-                do {
-                    let manifest = try loader()
-                    state = .loaded(manifest)
-                    return manifest
-                } catch {
-                    if case AgentSettingsManifestStoreError.missingFile = error {
-                        state = .notLoaded
-                    } else {
-                        state = .failed(error)
-                    }
-                    throw error
-                }
-            }
-        }
-
-        func store(_ manifest: AgentSettingsManifest) {
-            state.withLock { state in
-                state = .loaded(manifest)
-            }
-        }
-
-        #if DEBUG
-        func reset() {
-            state.withLock { state in
-                state = .notLoaded
-            }
-        }
-        #endif
     }
 }
 

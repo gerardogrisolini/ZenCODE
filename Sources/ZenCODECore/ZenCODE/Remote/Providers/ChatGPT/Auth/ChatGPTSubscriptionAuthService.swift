@@ -104,6 +104,12 @@ public final class ChatGPTSubscriptionSignInSession: Sendable {
     }
 
     public func waitForCredentials() async throws -> CodexAgentCredentials {
+        try await waitForCredentials(persist: true)
+    }
+
+    func waitForCredentials(
+        persist: Bool
+    ) async throws -> CodexAgentCredentials {
         defer {
             Task(name: "ChatGPT authorization background task") {
                 await callbackServer.stop()
@@ -115,7 +121,9 @@ public final class ChatGPTSubscriptionSignInSession: Sendable {
             code: code,
             verifier: verifier
         )
-        try CodexAgentModel.saveCredentials(credentials)
+        if persist {
+            try CodexAgentModel.saveCredentials(credentials)
+        }
         return credentials
     }
 
@@ -171,8 +179,20 @@ public enum ChatGPTSubscriptionAuthService {
     public static func signInWithDeviceCode(
         notifyUser: @Sendable (URL, String) async -> Void
     ) async throws -> CodexAgentCredentials {
+        try await signInWithDeviceCode(
+            persist: true,
+            notifyUser: notifyUser
+        )
+    }
+
+    static func signInWithDeviceCode(
+        persist: Bool,
+        notifyUser: @Sendable (URL, String) async -> Void
+    ) async throws -> CodexAgentCredentials {
         let credentials = try await runDeviceCodeFlow(notifyUser: notifyUser)
-        try CodexAgentModel.saveCredentials(credentials)
+        if persist {
+            try CodexAgentModel.saveCredentials(credentials)
+        }
         return credentials
     }
 
@@ -306,13 +326,26 @@ public enum ChatGPTSubscriptionAuthService {
     }
 
     public static func refresh(credentials: CodexAgentCredentials) async throws -> CodexAgentCredentials {
-        try await refreshCoordinator.refresh(credentials: credentials) { credentials in
-            let refreshedCredentials = try await refreshAccessToken(
-                refreshToken: credentials.refreshToken
-            )
-            try CodexAgentModel.saveCredentials(refreshedCredentials)
+        try await refresh(credentials: credentials, persist: true)
+    }
+
+    static func refresh(
+        credentials: CodexAgentCredentials,
+        persist: Bool,
+        tokenRefresher: @escaping @Sendable (String) async throws -> CodexAgentCredentials = {
+            try await refreshAccessToken(refreshToken: $0)
+        }
+    ) async throws -> CodexAgentCredentials {
+        let refreshedCredentials = try await refreshCoordinator.refresh(
+            credentials: credentials
+        ) { credentials in
+            let refreshedCredentials = try await tokenRefresher(credentials.refreshToken)
             return refreshedCredentials
         }
+        if persist {
+            try CodexAgentModel.saveCredentials(refreshedCredentials)
+        }
+        return refreshedCredentials
     }
 
     private static func authorizationFlow() throws -> (

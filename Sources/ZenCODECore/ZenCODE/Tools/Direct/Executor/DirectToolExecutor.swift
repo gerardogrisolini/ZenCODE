@@ -60,6 +60,29 @@ public actor DirectToolExecutor {
         swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
         preferredWorkspaceRootURL: URL? = nil,
         borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
+        subAgentContextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory
+    ) {
+        self.init(
+            outputLimit: outputLimit,
+            authorizationHandler: authorizationHandler,
+            mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime,
+            preferredWorkspaceRootURL: preferredWorkspaceRootURL,
+            borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
+            subAgentContextualBackendFactory: subAgentContextualBackendFactory,
+            subAgentProfileResolver: DirectSubAgentRuntime.liveProfileResolver,
+            subAgentModelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
+            coordinatesLiveManifestReads: true
+        )
+    }
+
+    public init(
+        outputLimit: Int = 48_000,
+        authorizationHandler: AgentToolAuthorizationHandler? = nil,
+        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
+        swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
+        preferredWorkspaceRootURL: URL? = nil,
+        borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
         subAgentBackendFactory: @escaping DirectSubAgentBackendFactory
     ) {
         self.init(
@@ -69,7 +92,10 @@ public actor DirectToolExecutor {
             swiftFeatureRuntime: swiftFeatureRuntime,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
             borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
-            subAgentContextualBackendFactory: { _ in subAgentBackendFactory() }
+            subAgentContextualBackendFactory: { _ in subAgentBackendFactory() },
+            subAgentProfileResolver: DirectSubAgentRuntime.liveProfileResolver,
+            subAgentModelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
+            coordinatesLiveManifestReads: true
         )
     }
 
@@ -81,7 +107,58 @@ public actor DirectToolExecutor {
         preferredWorkspaceRootURL: URL? = nil,
         borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
         subAgentContextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
-        subAgentProfileResolver: @escaping DirectSubAgentProfileResolver = DirectSubAgentRuntime.defaultProfileResolver
+        subAgentProfileResolver: @escaping DirectSubAgentProfileResolver
+    ) {
+        self.init(
+            outputLimit: outputLimit,
+            authorizationHandler: authorizationHandler,
+            mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime,
+            preferredWorkspaceRootURL: preferredWorkspaceRootURL,
+            borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
+            subAgentContextualBackendFactory: subAgentContextualBackendFactory,
+            subAgentProfileResolver: subAgentProfileResolver,
+            subAgentModelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
+            coordinatesLiveManifestReads: false
+        )
+    }
+
+    public init(
+        outputLimit: Int,
+        authorizationHandler: AgentToolAuthorizationHandler?,
+        mcpRuntime: DirectMCPToolRuntime,
+        swiftFeatureRuntime: SwiftFeatureRuntime,
+        preferredWorkspaceRootURL: URL?,
+        borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?,
+        subAgentContextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
+        subAgentProfileResolver: @escaping DirectSubAgentProfileResolver,
+        subAgentModelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider
+    ) {
+        self.init(
+            outputLimit: outputLimit,
+            authorizationHandler: authorizationHandler,
+            mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime,
+            preferredWorkspaceRootURL: preferredWorkspaceRootURL,
+            borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
+            subAgentContextualBackendFactory: subAgentContextualBackendFactory,
+            subAgentProfileResolver: subAgentProfileResolver,
+            subAgentModelCatalogProvider: subAgentModelCatalogProvider,
+            coordinatesLiveManifestReads: false
+        )
+    }
+
+    private init(
+        outputLimit: Int,
+        authorizationHandler: AgentToolAuthorizationHandler?,
+        mcpRuntime: DirectMCPToolRuntime,
+        swiftFeatureRuntime: SwiftFeatureRuntime,
+        preferredWorkspaceRootURL: URL?,
+        borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?,
+        subAgentContextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
+        subAgentProfileResolver: @escaping DirectSubAgentProfileResolver,
+        subAgentModelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider,
+        coordinatesLiveManifestReads: Bool
     ) {
         self.outputLimit = outputLimit
         self.authorizationHandler = authorizationHandler
@@ -101,7 +178,9 @@ public actor DirectToolExecutor {
                     context.injecting(swiftFeatureRuntime: parentSwiftFeatureRuntime)
                 )
             },
-            profileResolver: subAgentProfileResolver
+            profileResolver: subAgentProfileResolver,
+            modelCatalogProvider: subAgentModelCatalogProvider,
+            coordinatesLiveManifestReads: coordinatesLiveManifestReads
         )
     }
 

@@ -19,11 +19,16 @@ start by `AgentProfileStore`.
 | `readOnly` | Enforces only non-mutating catalog-owned core tools (`false` by default) |
 | `skills` | Optional prompt skills from the app catalog |
 | `modelBindings` | Models explicitly authorized for the profile — see [bindings.md](bindings.md) |
-| `defaultModelBindingID` | Binding used when no model is selected explicitly |
+| `defaultModelBindingID` | Profile default for direct/profile-selected sessions; delegation still names a binding explicitly |
 | `symbolName` | SF Symbol shown in the TUI picker (presentational only) |
 
 Select a profile with `/agents <name>` or `--agent <name>` at launch. Switching
 resets the conversation so the new system prompt and tools apply cleanly.
+
+Profile IDs and names share one case- and diacritic-insensitive POSIX identity
+namespace. Duplicate names, duplicate IDs, and an ID that collides with another
+profile's name make `agents.json` invalid; the store and delegation runtime fail
+closed instead of selecting the first matching tool grant.
 
 > **Associate at least one model binding with every profile that should receive
 > delegated work.** A profile without bindings stays selectable and can still be
@@ -70,14 +75,25 @@ coordinator. The coordinator stays in its own profile and directs the work.
 
 Lifecycle:
 
-1. The coordinator calls `agent.create` with a `profile` and, when the profile
-   has more than one binding, a `model` or `modelID`.
-2. The runtime resolves the profile, then resolves the binding only within that
-   profile's authorized bindings.
-3. The sub-agent inherits the workspace and receives the tools configured on
+1. The coordinator calls `agent.create` with the canonical `agents` array. Every
+   model-visible item names an exact `profile` and the exact `binding:<id>` value
+   shown in the delegation roster as `model`.
+2. The runtime resolves the profile and binding against one authoritative
+   snapshot of the configured model catalog. Missing, stale, ambiguous, or
+   capability-less bindings, and providers missing required authentication, are
+   rejected before any reservation or task claim.
+3. The resolved provider, model, API-key lookup, and generation settings travel
+   with the child backend context. Backend creation does not repeat a global
+   model lookup or route by a bare provider model slug.
+4. The sub-agent inherits the workspace and receives the tools configured on
    that profile. `agent.create` cannot replace or narrow them.
-4. While the child is active, the coordinator uses `agent.message`,
+5. While the child is active, the coordinator uses `agent.message`,
    `agent.wait`, `agent.get`, and `agent.close`.
+
+The model-visible tool schema intentionally exposes only the canonical batch
+shape. Historical root fields and aliases (`agent`, `modelID`, `items`, and
+others) remain accepted by the compatibility parser for existing integrations,
+but are not advertised to the model and conflicting aliases are rejected.
 
 For a task-bound implementation agent, completion ends that attempt and normally
 moves the task to `awaiting_validation`. If validation is negative, record the
@@ -89,8 +105,9 @@ attempt.
 
 Write authority comes from the selected profile's configured tools:
 
-- `profile` (or its `agent` alias) is required and must resolve to a configured
-  profile; otherwise `agent.create` fails.
+- `profile` is required in every model-visible batch item and must resolve to a
+  configured profile; otherwise `agent.create` fails. The `agent` name is a
+  compatibility-only input alias.
 - The request cannot assign, add, remove, or override the profile's tools.
 - When `readOnly` is `true`, the runtime removes mutable descriptors from the
   catalog-owned core grant after resolving profile tools, `/tools`, app/ACP
@@ -108,9 +125,13 @@ tools. Configure each profile with exactly the access required for its role.
 
 ### Model Selection
 
-Which model a sub-agent runs on is decided by the profile's authorized bindings
-and the task complexity. A profile with no bindings falls back to the parent
-session's model. The resolution table, the capability scale, and the ordered
+Which model a sub-agent runs on is decided by the profile's currently routable
+authorized bindings and the task complexity. The prompt lists one exact
+`binding:<id>` reference for each eligible binding; `agent.create` requires that
+explicit reference and carries the resulting provider selection through backend
+creation. A profile with no bindings can still inherit the parent model through
+the legacy programmatic input path, but it is not model-visible or eligible for
+capability routing. The resolution table, the capability scale, and the ordered
 selection policy are documented in [bindings.md](bindings.md).
 
 ## Task Graph Integration

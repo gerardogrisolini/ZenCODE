@@ -219,6 +219,42 @@ struct ZenCODESetupSessionTests {
     }
 
     @Test
+    func stagedSubscriptionCredentialsSurviveASecondProviderPass() {
+        let oldCredentials = CodexAgentCredentials(
+            accessToken: "old-access",
+            refreshToken: "old-refresh",
+            expiresAt: Date(timeIntervalSince1970: 1),
+            accountID: "old-account"
+        )
+        let stagedCredentials = CodexAgentCredentials(
+            accessToken: "staged-access",
+            refreshToken: "staged-refresh",
+            expiresAt: Date(timeIntervalSince1970: 2),
+            accountID: "staged-account"
+        )
+        let provider = AgentSettingsProviderManifest(
+            id: AgentRemoteProvider.chatGPTSubscriptionProviderID,
+            name: "ChatGPT Subscription",
+            baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
+            chatEndpoint: .responses
+        )
+        let preservedInput = ZenCODESetupRunner.preserveProviderInput(
+            provider: provider,
+            models: [],
+            apiKey: nil,
+            chatGPTSubscriptionCredentials: stagedCredentials
+        )
+        let resolved = ZenCODESetupRunner.subscriptionCredentials(
+            from: [preservedInput],
+            fallback: (chatGPT: oldCredentials, anthropic: nil)
+        )
+
+        #expect(preservedInput.chatGPTSubscriptionCredentials?.accessToken == "staged-access")
+        #expect(resolved.chatGPT?.accessToken == "staged-access")
+        #expect(resolved.chatGPT?.refreshToken == "staged-refresh")
+    }
+
+    @Test
     func remoteResetRemovesProvidedConfigurationFilesOnce() throws {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory
@@ -243,5 +279,34 @@ struct ZenCODESetupSessionTests {
         #expect(result.missingURLs == [missingURL.standardizedFileURL])
         #expect(!fileManager.fileExists(atPath: settingsURL.path))
         #expect(!fileManager.fileExists(atPath: profilesURL.path))
+    }
+
+    @Test
+    func remoteResetRestoresEarlierRemovalsWhenALaterStepFails() throws {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: directory) }
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let settingsURL = directory.appendingPathComponent("settings.json")
+        let profilesURL = directory.appendingPathComponent("agents.json")
+        let settingsData = Data("settings".utf8)
+        let profilesData = Data("profiles".utf8)
+        try settingsData.write(to: settingsURL)
+        try profilesData.write(to: profilesURL)
+
+        #expect(throws: CancellationError.self) {
+            try ZenCODESetupRunner.resetRemoteConfiguration(
+                fileManager: fileManager,
+                configurationURLs: [settingsURL, profilesURL],
+                removalCheckpoint: { completedRemovals in
+                    if completedRemovals == 1 { throw CancellationError() }
+                }
+            )
+        }
+
+        #expect(try Data(contentsOf: settingsURL) == settingsData)
+        #expect(try Data(contentsOf: profilesURL) == profilesData)
     }
 }

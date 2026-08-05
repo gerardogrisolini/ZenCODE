@@ -24,22 +24,45 @@ extension ZenCODEAgentProfileSetupRunner {
     /// Interactive bulk setup for assigning one or more explicitly authorized
     /// model bindings to each agent. Capability and thinking belong to each
     /// binding, not to the profile as a whole.
+    @available(*, deprecated, message: "Pass the setup session's currentManifest")
     public static func configureAgentModels() throws {
+        try configureAgentModels(
+            currentManifest: AgentSettingsManifestStore.loadRequired()
+        )
+    }
+
+    public static func configureAgentModels(
+        currentManifest: AgentSettingsManifest
+    ) throws {
+        _ = try configureAgentModels(
+            currentManifest: currentManifest,
+            currentAgents: nil,
+            persist: true
+        )
+    }
+
+    @discardableResult
+    static func configureAgentModels(
+        currentManifest: AgentSettingsManifest,
+        currentAgents: [AgentProfile]?,
+        persist: Bool
+    ) throws -> [AgentProfile]? {
         guard TerminalRawInput.supportsInteractiveInput() else {
             throw ZenCODEAgentProfileSetupError.nonInteractiveTerminal
         }
 
-        let models = AgentModelCatalogPresentation.sorted(
-            AgentSettingsStore.availableModels()
-        )
+        // Setup may have just replaced providers or models in its in-memory
+        // session. Do not read settings.json here: it is only written after
+        // setup finishes, so reading it would present the previous catalog.
+        let models = AgentModelCatalogPresentation.sorted(currentManifest.models)
         guard !models.isEmpty else {
             AgentOutput.standardError.writeString(
                 "\nNo configured models found. Configure providers and models first.\n\n"
             )
-            return
+            return nil
         }
 
-        var agents = try AgentProfileStore.loadRequired()
+        var agents = try currentAgents ?? AgentProfileStore.loadRequired()
         AgentOutput.standardError.writeString(
             """
 
@@ -80,14 +103,18 @@ extension ZenCODEAgentProfileSetupRunner {
                 AgentOutput.standardError.writeString(
                     "\nAgent model bindings not saved.\n\n"
                 )
-                return
+                return nil
             case 0?:
                 let normalized = AgentProfileStore.normalizedAgentsForSave(agents)
-                try AgentProfileStore.save(normalized)
+                if persist {
+                    try AgentProfileStore.save(normalized)
+                }
                 AgentOutput.standardError.writeString(
-                    "\nUpdated: agents.json (\(normalized.count) agents)\n\n"
+                    persist
+                        ? "\nUpdated: agents.json (\(normalized.count) agents)\n\n"
+                        : "\nStaged: agents.json (\(normalized.count) agents)\n\n"
                 )
-                return
+                return normalized
             case let choice?:
                 let index = choice - 1
                 guard agents.indices.contains(index) else { continue }

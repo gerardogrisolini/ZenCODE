@@ -280,10 +280,11 @@ extension ZenCODESetupRunner {
             || provider.baseURL == AgentRemoteProvider.anthropicSubscriptionBaseURL
     }
 
-    static func ensureChatGPTSubscriptionCredentials() async throws {
+    static func ensureChatGPTSubscriptionCredentials() async throws -> CodexAgentCredentials {
         do {
-            _ = try await CodexAgentModel.loadValidCredentials()
-            return
+            return try await CodexAgentModel.loadValidCredentials(
+                persistRefresh: false
+            )
         } catch is CancellationError {
             // A cooperative cancellation must not be mistaken for "not signed
             // in"; propagate it so the surrounding setup task unwinds.
@@ -313,9 +314,11 @@ extension ZenCODESetupRunner {
         if !didOpen {
             throw ChatGPTSubscriptionAuthError.browserOpenFailed
         }
-        _ = try await session.waitForCredentials()
+        let credentials = try await session.waitForCredentials(persist: false)
         #else
-        _ = try await ChatGPTSubscriptionAuthService.signInWithDeviceCode {
+        let credentials = try await ChatGPTSubscriptionAuthService.signInWithDeviceCode(
+            persist: false
+        ) {
             url,
             code in
             AgentOutput.standardError.writeString(
@@ -333,12 +336,14 @@ extension ZenCODESetupRunner {
         }
         #endif
         AgentOutput.standardError.writeString("ChatGPT Subscription connected.\n")
+        return credentials
     }
 
-    static func ensureAnthropicSubscriptionCredentials() async throws {
+    static func ensureAnthropicSubscriptionCredentials() async throws -> AnthropicSubscriptionCredentials {
         do {
-            _ = try await AnthropicSubscriptionAuthService.loadValidCredentials()
-            return
+            return try await AnthropicSubscriptionAuthService.loadValidCredentials(
+                persistRefresh: false
+            )
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as AnthropicSubscriptionAuthError {
@@ -381,8 +386,9 @@ extension ZenCODESetupRunner {
         )
         try session.submitAuthorizationInput(authorizationInput)
 
-        _ = try await session.waitForCredentials()
+        let credentials = try await session.waitForCredentials(persist: false)
         AgentOutput.standardError.writeString("Claude Subscription connected.\n")
+        return credentials
     }
 
     static func readModels(

@@ -441,10 +441,13 @@ public enum AgentStandaloneSystemPrompt {
         let delegatableSection: String? = locksModelToSession
             ? nil
             : {
-                  let delegatableAgents = (try? AgentProfileStore.loadRequired(fileManager: fileManager)) ?? []
+                  let liveConfiguration = AgentDelegationCatalog.liveConfiguration(
+                      fileManager: fileManager
+                  )
                   return SystemPromptBuilder.delegatableAgentsSection(
-                      agents: delegatableAgents,
-                      allowedToolNames: allowedToolNames
+                      agents: liveConfiguration.profiles,
+                      allowedToolNames: allowedToolNames,
+                      snapshot: liveConfiguration.catalog
                   )
               }()
         let agentsSection = [selectedAgentSection, agentsNotice, delegatableSection]

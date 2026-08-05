@@ -785,6 +785,24 @@ struct AgentProfileCapabilityTests {
 
 @Suite
 struct DelegatableAgentsSectionTests {
+    private static let providerID = UUID(
+        uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    )!
+
+    private static func model(_ modelID: String) -> AgentSettingsModelManifest {
+        AgentSettingsModelManifestFactory.remoteAPIModel(
+            title: nil,
+            modelID: modelID,
+            providerID: providerID,
+            providerName: "Test Provider",
+            baseURL: "https://tests.example.com/v1",
+            chatEndpoint: .chatCompletions,
+            configuredContextWindowLimit: nil,
+            generationParameterOverrides: nil,
+            thinkingSupport: nil
+        )
+    }
+
     @Test
     func excludesAgentsWithoutModelOrCapability() {
         let agents = [
@@ -794,7 +812,8 @@ struct DelegatableAgentsSectionTests {
         ]
         let section = SystemPromptBuilder.delegatableAgentsSection(
             agents: agents,
-            allowedToolNames: nil
+            allowedToolNames: nil,
+            models: [Self.model("gpt-4"), Self.model("claude")]
         )
         #expect(section != nil)
         #expect(section?.contains("WithModel") == true)
@@ -810,9 +829,10 @@ struct DelegatableAgentsSectionTests {
         ]
         let section = SystemPromptBuilder.delegatableAgentsSection(
             agents: agents,
-            allowedToolNames: nil
+            allowedToolNames: nil,
+            models: [Self.model("gpt")]
         )
-        #expect(section == nil)
+        #expect(section?.contains("No configured profile currently has a routable model binding") == true)
     }
 
     @Test
@@ -822,7 +842,8 @@ struct DelegatableAgentsSectionTests {
         ]
         let section = SystemPromptBuilder.delegatableAgentsSection(
             agents: agents,
-            allowedToolNames: ["tasks.create"]
+            allowedToolNames: ["tasks.create"],
+            models: [Self.model("gpt-4")]
         )
         #expect(section == nil)
     }
@@ -843,12 +864,13 @@ struct DelegatableAgentsSectionTests {
         ]
         let section = SystemPromptBuilder.delegatableAgentsSection(
             agents: agents,
-            allowedToolNames: nil
+            allowedToolNames: nil,
+            models: [Self.model("opus"), Self.model("mini"), Self.model("sonnet")]
         )
         let rendered = try #require(section)
-        let lowIndex = try #require(rendered.range(of: "mini [binding: low] (capability 2/10)"))
-        let midIndex = try #require(rendered.range(of: "sonnet [binding: mid] (capability 5/10, default)"))
-        let highIndex = try #require(rendered.range(of: "opus [binding: high] (capability 9/10)"))
+        let lowIndex = try #require(rendered.range(of: "pass model: binding:low"))
+        let midIndex = try #require(rendered.range(of: "pass model: binding:mid"))
+        let highIndex = try #require(rendered.range(of: "pass model: binding:high"))
         #expect(lowIndex.lowerBound < midIndex.lowerBound)
         #expect(midIndex.lowerBound < highIndex.lowerBound)
     }
@@ -871,21 +893,24 @@ struct DelegatableAgentsSectionTests {
 
         let section = try #require(SystemPromptBuilder.delegatableAgentsSection(
             agents: agents,
-            allowedToolNames: nil
+            allowedToolNames: nil,
+            models: [Self.model("review-model")]
         ))
 
         #expect(section.contains(
-            "Delegatable agent profiles and authorized model bindings"
+            "Delegatable agent profiles and model bindings"
         ))
         #expect(section.contains(
-            "Reviewer: Reviewer agent. Perform read-only code review. Do not edit files."
+            "Reviewer [read-write; tools: none configured]: Reviewer agent. Perform read-only code review. Do not edit files."
         ))
-        #expect(section.contains("review-model (capability 9/10, default)"))
+        #expect(section.contains("model: review-model"))
+        #expect(section.contains("pass model: binding:review-model"))
+        #expect(section.contains("capability: 9/10 | profile default"))
         #expect(!section.contains("Report findings with file and line references."))
-        #expect(section.contains(TaskRecord.agentSelectionPolicy))
-        #expect(section.contains("model id as `model` or `modelID`"))
-        #expect(section.contains("The selected profile is required"))
-        #expect(section.contains("supplies the sub-agent's tools"))
-        #expect(section.contains("agent.create cannot override them"))
+        #expect(!section.contains(TaskRecord.agentSelectionPolicy))
+        #expect(section.contains("exact profile name as `profile`"))
+        #expect(section.contains("exact `binding:...` value"))
+        #expect(section.contains("Both fields are required"))
+        #expect(section.contains("selected profile supplies the child tool grant"))
     }
 }

@@ -12,9 +12,34 @@ public enum AppStorageDirectory {
     public static let supportDirectoryEnvironmentKey = "ZENCODE_SUPPORT_DIRECTORY"
     private static let supportDirectoryName = ".zencode"
     private static let supportDirectoryOverride = SupportDirectoryOverride()
+    @TaskLocal private static var scopedSupportDirectoryURL: URL?
 
     public static func configureSupportDirectoryURL(_ url: URL?) {
         supportDirectoryOverride.set(url?.standardizedFileURL)
+    }
+
+    /// Lexically scopes a support directory to the current structured task.
+    /// This avoids process-global override races in concurrent embedders/tests
+    /// while preserving `configureSupportDirectoryURL` for legacy callers.
+    public static func withSupportDirectoryURL<T>(
+        _ url: URL?,
+        operation: () throws -> T
+    ) rethrows -> T {
+        try $scopedSupportDirectoryURL.withValue(
+            url?.standardizedFileURL,
+            operation: operation
+        )
+    }
+
+    public static func withSupportDirectoryURL<T>(
+        _ url: URL?,
+        operation: () async throws -> T
+    ) async rethrows -> T {
+        try await $scopedSupportDirectoryURL.withValue(
+            url?.standardizedFileURL
+        ) {
+            try await operation()
+        }
     }
 
     public static func appSupportDirectoryURL(
@@ -35,6 +60,9 @@ public enum AppStorageDirectory {
     }
 
     private static func configuredSupportDirectoryURL() -> URL? {
+        if let scopedSupportDirectoryURL {
+            return scopedSupportDirectoryURL
+        }
         if let url = supportDirectoryOverride.url() {
             return url
         }

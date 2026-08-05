@@ -33,20 +33,44 @@ extension DirectSubAgentRuntime {
         // transient overview instead of replacing each other.
         let overviewBatchID = currentOverviewWaveID()
         let previousOverviewBatchID = latestOverviewBatchID
-
-        let prepared = try payloads.enumerated().map { offset, payload in
-            guard let profileReference = payload.profileReference?.nilIfBlank else {
-                throw DirectSubAgentRuntimeError.missingArgument("profile or agent")
+        let preparePayloads = { () throws -> [(
+            offset: Int,
+            payload: RequestedAgentPayload,
+            id: String,
+            profile: AgentProfile
+        )] in
+            // Capture one authoritative snapshot so every agent in this batch
+            // uses the same provider identities through backend creation.
+            let catalogSnapshot = self.coordinatesLiveManifestReads
+                ? AgentDelegationCatalog.liveSnapshotUnlocked(
+                    fileManager: .default
+                )
+                : self.modelCatalogProvider()
+            return try payloads.enumerated().map { offset, payload in
+                guard let profileReference = payload.profileReference?.nilIfBlank else {
+                    throw DirectSubAgentRuntimeError.missingArgument("profile or agent")
+                }
+                guard let profile = self.profileResolver(payload) else {
+                    throw DirectSubAgentRuntimeError.agentProfileNotFound(profileReference)
+                }
+                return (
+                    offset: offset,
+                    payload: try Self.resolvingModelBinding(
+                        for: payload,
+                        profile: profile,
+                        snapshot: catalogSnapshot
+                    ),
+                    id: "agent_\(UUID().uuidString.lowercased())",
+                    profile: profile
+                )
             }
-            guard let profile = profileResolver(payload) else {
-                throw DirectSubAgentRuntimeError.agentProfileNotFound(profileReference)
-            }
-            return (
-                offset: offset,
-                payload: try Self.resolvingModelBinding(for: payload, profile: profile),
-                id: "agent_\(UUID().uuidString.lowercased())",
-                profile: profile
+        }
+        let prepared = if coordinatesLiveManifestReads {
+            try SensitiveManifestCoordination.withExclusiveLock(
+                operation: preparePayloads
             )
+        } else {
+            try preparePayloads()
         }
         let reservationIDs = try await reserveTasklessDelegationReservations(
             count: prepared.filter { $0.payload.taskID == nil }.count,

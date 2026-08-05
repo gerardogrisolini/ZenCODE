@@ -192,6 +192,11 @@ public actor DirectSubAgentRuntime {
         /// intentionally absent until profile resolution has completed.
         public let modelBinding: AgentModelBinding?
 
+        /// Provider selection captured from the same catalog snapshot that
+        /// authorized `modelBinding`. It prevents backend creation from repeating
+        /// a global lookup after the task has been claimed.
+        public let modelSelection: AgentModelSelection?
+
         /// The actual model selected by the authorized binding. Before
         /// selection this mirrors the request so profile resolvers can still
         /// inspect it.
@@ -216,6 +221,28 @@ public actor DirectSubAgentRuntime {
             modelID: String? = nil,
             modelBinding: AgentModelBinding? = nil
         ) {
+            self.init(
+                name: name,
+                role: role,
+                profileReference: profileReference,
+                taskID: taskID,
+                prompt: prompt,
+                modelID: modelID,
+                modelBinding: modelBinding,
+                modelSelection: nil
+            )
+        }
+
+        init(
+            name: String,
+            role: String,
+            profileReference: String?,
+            taskID: String?,
+            prompt: String?,
+            modelID: String?,
+            modelBinding: AgentModelBinding?,
+            modelSelection: AgentModelSelection?
+        ) {
             self.name = name
             self.role = role
             self.profileReference = profileReference?.nilIfBlank
@@ -223,10 +250,18 @@ public actor DirectSubAgentRuntime {
             self.prompt = prompt?.nilIfBlank
             self.requestedModelID = modelID?.nilIfBlank
             self.modelBinding = modelBinding
+            self.modelSelection = modelSelection
         }
 
         public func applying(
             modelBinding: AgentModelBinding?
+        ) -> RequestedAgentPayload {
+            applying(modelBinding: modelBinding, modelSelection: nil)
+        }
+
+        func applying(
+            modelBinding: AgentModelBinding?,
+            modelSelection: AgentModelSelection?
         ) -> RequestedAgentPayload {
             RequestedAgentPayload(
                 name: name,
@@ -235,7 +270,8 @@ public actor DirectSubAgentRuntime {
                 taskID: taskID,
                 prompt: prompt,
                 modelID: requestedModelID,
-                modelBinding: modelBinding
+                modelBinding: modelBinding,
+                modelSelection: modelSelection
             )
         }
     }
@@ -248,6 +284,8 @@ public actor DirectSubAgentRuntime {
         public let requestedModelID: String?
         /// The binding selected and authorized by the resolved profile.
         public let modelBinding: AgentModelBinding?
+        /// Provider selection captured with `modelBinding` before any task claim.
+        public let modelSelection: AgentModelSelection?
         /// Parent session's SwiftFeatureRuntime, propagated so subagents share the
         /// same discovery cache (consent, `--list-tools` results) instead of each
         /// getting a fresh runtime. `nil` for top-level sessions.
@@ -261,19 +299,40 @@ public actor DirectSubAgentRuntime {
             modelID: String? = nil,
             swiftFeatureRuntime: SwiftFeatureRuntime? = nil
         ) {
+            let resolvedBinding: AgentModelBinding?
+            if let modelBinding {
+                resolvedBinding = modelBinding
+            } else if modelID?.nilIfBlank == nil {
+                resolvedBinding = profile?.modelBinding(matching: nil)
+            } else {
+                resolvedBinding = profile?.modelBinding(matching: modelID)
+            }
+            self.init(
+                requestedName: requestedName,
+                requestedRole: requestedRole,
+                profile: profile,
+                modelBinding: resolvedBinding,
+                modelSelection: nil,
+                modelID: modelID,
+                swiftFeatureRuntime: swiftFeatureRuntime
+            )
+        }
+
+        init(
+            requestedName: String,
+            requestedRole: String,
+            profile: AgentProfile?,
+            modelBinding: AgentModelBinding?,
+            modelSelection: AgentModelSelection?,
+            modelID: String?,
+            swiftFeatureRuntime: SwiftFeatureRuntime? = nil
+        ) {
             self.requestedName = requestedName
             self.requestedRole = requestedRole
             self.profile = profile
             self.requestedModelID = modelID?.nilIfBlank
-            if let modelBinding {
-                self.modelBinding = modelBinding
-            } else if modelID?.nilIfBlank == nil {
-                self.modelBinding = profile?.modelBinding(matching: nil)
-            } else {
-                // Do not silently replace an explicit, unmatched model
-                // request with the profile default.
-                self.modelBinding = profile?.modelBinding(matching: modelID)
-            }
+            self.modelBinding = modelBinding
+            self.modelSelection = modelSelection
             self.swiftFeatureRuntime = swiftFeatureRuntime
         }
 
@@ -287,6 +346,7 @@ public actor DirectSubAgentRuntime {
                 requestedRole: requestedRole,
                 profile: profile,
                 modelBinding: modelBinding,
+                modelSelection: modelSelection,
                 modelID: requestedModelID,
                 swiftFeatureRuntime: swiftFeatureRuntime
             )
@@ -307,6 +367,11 @@ public actor DirectSubAgentRuntime {
 
     public let backendFactory: DirectSubAgentContextualBackendFactory
     public let profileResolver: DirectSubAgentProfileResolver
+    /// Supplies the authoritative model catalog snapshot that delegation is
+    /// validated against. Public initializers fail closed by default by loading
+    /// the live settings snapshot.
+    public let modelCatalogProvider: DirectSubAgentModelCatalogProvider
+    let coordinatesLiveManifestReads: Bool
     public var taskOrchestrator: SessionTaskOrchestrator?
     /// The parent session's prompt-skill tool provider, propagated to each
     /// delegated sub-agent so that `skills.list` and `skills.read` remain
@@ -322,20 +387,91 @@ public actor DirectSubAgentRuntime {
     }
     var latestOverviewBatchID: UUID?
 
+    /// Live default with a known read-only resolver; safe to snapshot both
+    /// manifests under one lock. The legacy resolver-taking overload below stays
+    /// uncoordinated so an arbitrary callback may acquire manifest locks itself.
+    public init(
+        backendFactory: @escaping DirectSubAgentBackendFactory
+    ) {
+        self.init(
+            contextualBackendFactory: { _ in backendFactory() },
+            profileResolver: DirectSubAgentRuntime.liveProfileResolver,
+            modelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
+            coordinatesLiveManifestReads: true
+        )
+    }
+
     public init(
         backendFactory: @escaping DirectSubAgentBackendFactory,
-        profileResolver: @escaping DirectSubAgentProfileResolver = DirectSubAgentRuntime.defaultProfileResolver
+        profileResolver: @escaping DirectSubAgentProfileResolver
     ) {
-        self.backendFactory = { _ in backendFactory() }
-        self.profileResolver = profileResolver
+        self.init(
+            contextualBackendFactory: { _ in backendFactory() },
+            profileResolver: profileResolver,
+            modelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
+            coordinatesLiveManifestReads: false
+        )
+    }
+
+    public init(
+        backendFactory: @escaping DirectSubAgentBackendFactory,
+        profileResolver: @escaping DirectSubAgentProfileResolver,
+        modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider
+    ) {
+        self.init(
+            contextualBackendFactory: { _ in backendFactory() },
+            profileResolver: profileResolver,
+            modelCatalogProvider: modelCatalogProvider,
+            coordinatesLiveManifestReads: false
+        )
+    }
+
+    public init(
+        contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory
+    ) {
+        self.init(
+            contextualBackendFactory: contextualBackendFactory,
+            profileResolver: DirectSubAgentRuntime.liveProfileResolver,
+            modelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
+            coordinatesLiveManifestReads: true
+        )
     }
 
     public init(
         contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
-        profileResolver: @escaping DirectSubAgentProfileResolver = DirectSubAgentRuntime.defaultProfileResolver
+        profileResolver: @escaping DirectSubAgentProfileResolver
+    ) {
+        self.init(
+            contextualBackendFactory: contextualBackendFactory,
+            profileResolver: profileResolver,
+            modelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
+            coordinatesLiveManifestReads: false
+        )
+    }
+
+    public init(
+        contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
+        profileResolver: @escaping DirectSubAgentProfileResolver,
+        modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider
+    ) {
+        self.init(
+            contextualBackendFactory: contextualBackendFactory,
+            profileResolver: profileResolver,
+            modelCatalogProvider: modelCatalogProvider,
+            coordinatesLiveManifestReads: false
+        )
+    }
+
+    init(
+        contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
+        profileResolver: @escaping DirectSubAgentProfileResolver,
+        modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider,
+        coordinatesLiveManifestReads: Bool
     ) {
         self.backendFactory = contextualBackendFactory
         self.profileResolver = profileResolver
+        self.modelCatalogProvider = modelCatalogProvider
+        self.coordinatesLiveManifestReads = coordinatesLiveManifestReads
     }
 
     public func installTaskOrchestrator(
@@ -470,27 +606,26 @@ public actor DirectSubAgentRuntime {
 }
 
 extension AgentRuntimeConfiguration {
+    /// Applies the binding and generation settings already resolved from the
+    /// batch's authoritative catalog snapshot. This method never rereads global
+    /// settings, so provider routing cannot change after validation or claim.
     public func applyingSubAgentBackendContext(
         _ context: DirectSubAgentRuntime.BackendContext
     ) -> AgentRuntimeConfiguration {
         if locksModelToSession {
             return self
         }
-
-        guard let requestedModelID = context.modelID else {
+        guard let canonicalModelID = context.modelID else {
             return self
         }
 
-        guard let selection = AgentSettingsStore.defaultSelection(
-            explicitModelID: requestedModelID
-        ) else {
-            return withModelID(requestedModelID)
+        let configuration = withModelID(canonicalModelID)
+        guard let selection = context.modelSelection else {
+            return configuration
         }
-
-        return withModelID(selection.modelID)
-            .withModelSettings(
-                configuredContextWindowLimit: selection.configuredContextWindowLimit,
-                generationParameterOverrides: selection.generationParameterOverrides
-            )
+        return configuration.withModelSettings(
+            configuredContextWindowLimit: selection.configuredContextWindowLimit,
+            generationParameterOverrides: selection.generationParameterOverrides
+        )
     }
 }

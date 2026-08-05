@@ -100,6 +100,16 @@ public enum AgentPermissionsManifestStore {
     public static func loadRequired(
         from url: URL
     ) throws -> AgentPermissionsManifest {
+        try SensitiveManifestCoordination.withExclusiveLock(
+            supportDirectoryURL: url.deletingLastPathComponent()
+        ) {
+            try loadRequiredUnlocked(from: url)
+        }
+    }
+
+    static func loadRequiredUnlocked(
+        from url: URL
+    ) throws -> AgentPermissionsManifest {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw AgentPermissionsManifestStoreError.missingFile(url)
         }
@@ -137,7 +147,39 @@ public enum AgentPermissionsManifestStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted]
         let data = try encoder.encode(manifest)
-        try SensitiveFilePermissions.write(data, to: url)
+        try SensitiveManifestCoordination.withExclusiveLock(
+            supportDirectoryURL: url.deletingLastPathComponent()
+        ) {
+            try SensitiveFilePermissions.write(data, to: url)
+        }
+    }
+
+    static func appendingLocalExecAllowedCommandIdentities(
+        _ identities: [String],
+        to url: URL = permissionsURL()
+    ) throws -> AgentPermissionsManifest {
+        try SensitiveManifestCoordination.withExclusiveLock(
+            supportDirectoryURL: url.deletingLastPathComponent()
+        ) {
+            let current: AgentPermissionsManifest
+            do {
+                current = try loadRequiredUnlocked(from: url)
+            } catch AgentPermissionsManifestStoreError.missingFile(_) {
+                current = AgentPermissionsManifest()
+            }
+            let updated = current.appendingLocalExecAllowedCommandIdentities(
+                identities
+            )
+            if updated != current {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted]
+                try SensitiveFilePermissions.write(
+                    encoder.encode(updated),
+                    to: url
+                )
+            }
+            return updated
+        }
     }
 
     public static func permissionsURL(fileManager: FileManager = .default) -> URL {

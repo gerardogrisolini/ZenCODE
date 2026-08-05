@@ -228,16 +228,9 @@ public actor LocalExecPermissionAuthorizer {
     }
 
     private static func persistAllowedCommandIdentities(_ commandIdentities: [String]) {
-        let permissions = persistedPermissions()
-            ?? AgentPermissionsManifest()
-        let updatedPermissions = permissions.appendingLocalExecAllowedCommandIdentities(
-            commandIdentities
-        )
-        guard updatedPermissions != permissions else {
-            return
-        }
         do {
-            try AgentPermissionsManifestStore.save(updatedPermissions)
+            _ = try AgentPermissionsManifestStore
+                .appendingLocalExecAllowedCommandIdentities(commandIdentities)
         } catch {
             return
         }
@@ -314,7 +307,8 @@ public actor LocalExecPermissionAuthorizer {
             )
         if migrated != permissions {
             do {
-                try AgentPermissionsManifestStore.save(migrated)
+                return try AgentPermissionsManifestStore
+                    .appendingLocalExecAllowedCommandIdentities(legacyIdentities)
             } catch {
                 ZenLogger.warning(
                     .diagnostics,

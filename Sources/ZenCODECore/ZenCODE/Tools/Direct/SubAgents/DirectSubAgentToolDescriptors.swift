@@ -37,10 +37,17 @@ extension DirectSubAgentRuntime {
         .argument(["prompt", "message", "initialPrompt", "initial_prompt"])
     ], separator: " ")
 
+    /// Provider-neutral model-visible contract. A single batch shape avoids
+    /// `oneOf`/`not`, which different remote APIs normalize inconsistently.
+    /// Root calls and aliases remain accepted only by the compatibility parser.
+    private static let agentCreateItemSchema = #"{"type":"object","properties":{"profile":{"type":"string","description":"Exact profile name from the delegatable roster."},"model":{"type":"string","description":"Exact binding:... reference from the selected profile."},"taskID":{"type":"string"},"prompt":{"type":"string"},"name":{"type":"string"},"role":{"type":"string"}},"required":["profile","model"],"additionalProperties":false}"#
+
+    private static let agentCreateSchema = #"{"type":"object","properties":{"agents":{"type":"array","minItems":1,"maxItems":8,"items":\#(agentCreateItemSchema)}},"required":["agents"],"additionalProperties":false}"#
+
     private static let createDescriptor = DirectToolDescriptor(
             name: "agent.create",
-            description: "Creates up to 8 delegated sub-agents; independent sub-agents run in parallel. Prefer delegation for non-trivial, cleanly scoped work when a compatible configured profile has the required tools; use the coordinator directly only when delegation offers no meaningful benefit or no compatible profile can perform the work. For coordinated work, define the session task graph first and pass taskID to atomically claim each runnable task and record a fenced execution attempt. A taskID is required while a task graph is active and for parallel or concurrent delegation when task workflow tools are available. A single self-contained delegation may omit taskID. Agent selection policy: \(TaskRecord.agentSelectionPolicy) Pass profile (or agent) to select one configured agent profile from agents.json; the request is rejected when that profile does not resolve. The sub-agent receives the tools configured on that profile. When a profile has model bindings, pass model/modelID only to select one of its authorized bindings; an unbound model is rejected. Otherwise the sub-agent uses the session's model. Give each sub-agent an explicit role and scope. Task-bound children also receive intrinsic tasks.list, tasks.get, and tasks.update tools for attempt reporting.",
-            inputSchema: #"{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"model":{"type":"string"},"modelID":{"type":"string"},"model_id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"},"agents":{"type":"array","maxItems":8,"items":{"type":"object","properties":{"name":{"type":"string"},"role":{"type":"string"},"profile":{"type":"string"},"agent":{"type":"string"},"model":{"type":"string"},"modelID":{"type":"string"},"model_id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"prompt":{"type":"string"},"message":{"type":"string"}}}},"items":{"type":"array","items":{"type":"object"}}}}"#,
+            description: "Creates 1–8 delegated sub-agents from the exact profile and binding references in the delegatable roster. Use only the canonical agents array; each item requires profile and model. Independent items run in parallel. Pass taskID for coordinated graph work so the task is claimed atomically; task-bound children receive tasks.list, tasks.get, and tasks.update for attempt reporting. The selected profile owns the child tool grant. Legacy root fields and aliases remain input-compatible but are intentionally not model-visible.",
+            inputSchema: agentCreateSchema,
             presentation: ToolPresentationDefinition(
                 title: "Agent",
                 action: "Create",

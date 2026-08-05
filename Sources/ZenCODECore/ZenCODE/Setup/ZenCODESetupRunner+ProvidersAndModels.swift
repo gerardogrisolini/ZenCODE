@@ -49,7 +49,11 @@ extension ZenCODESetupRunner {
                 return (input.id.uuidString.lowercased(), apiKey)
             }
         )
-        let subscriptionCredentials = latestSubscriptionCredentials(fallback: existingManifest)
+        let latestCredentials = latestSubscriptionCredentials(fallback: existingManifest)
+        let subscriptionCredentials = subscriptionCredentials(
+            from: providerInputs,
+            fallback: latestCredentials
+        )
 
         return AgentSettingsManifest(
             version: existingManifest?.version ?? AgentSettingsManifest.currentVersion,
@@ -75,8 +79,26 @@ extension ZenCODESetupRunner {
     ) {
         let latestManifest = AgentSettingsManifestStore.load()
         return (
-            latestManifest?.chatGPTSubscriptionCredentials ?? manifest?.chatGPTSubscriptionCredentials,
-            latestManifest?.anthropicSubscriptionCredentials ?? manifest?.anthropicSubscriptionCredentials
+            manifest?.chatGPTSubscriptionCredentials ?? latestManifest?.chatGPTSubscriptionCredentials,
+            manifest?.anthropicSubscriptionCredentials ?? latestManifest?.anthropicSubscriptionCredentials
+        )
+    }
+
+    static func subscriptionCredentials(
+        from providerInputs: [SetupProviderInput],
+        fallback: (
+            chatGPT: CodexAgentCredentials?,
+            anthropic: AnthropicSubscriptionCredentials?
+        )
+    ) -> (
+        chatGPT: CodexAgentCredentials?,
+        anthropic: AnthropicSubscriptionCredentials?
+    ) {
+        (
+            chatGPT: providerInputs.compactMap(\.chatGPTSubscriptionCredentials).first
+                ?? fallback.chatGPT,
+            anthropic: providerInputs.compactMap(\.anthropicSubscriptionCredentials).first
+                ?? fallback.anthropic
         )
     }
 
@@ -111,7 +133,13 @@ extension ZenCODESetupRunner {
                 models: models(for: provider, in: manifest.models),
                 apiKey: manifest.remoteAPIKeysByProviderID[
                     provider.id.uuidString.lowercased()
-                ]
+                ],
+                chatGPTSubscriptionCredentials: isChatGPTSubscriptionProvider(provider)
+                    ? manifest.chatGPTSubscriptionCredentials
+                    : nil,
+                anthropicSubscriptionCredentials: isAnthropicSubscriptionProvider(provider)
+                    ? manifest.anthropicSubscriptionCredentials
+                    : nil
             )
         }
 
@@ -215,7 +243,9 @@ extension ZenCODESetupRunner {
     static func preserveProviderInput(
         provider: AgentSettingsProviderManifest,
         models: [AgentSettingsModelManifest],
-        apiKey: String?
+        apiKey: String?,
+        chatGPTSubscriptionCredentials: CodexAgentCredentials? = nil,
+        anthropicSubscriptionCredentials: AnthropicSubscriptionCredentials? = nil
     ) -> SetupProviderInput {
         SetupProviderInput(
             id: provider.id,
@@ -223,7 +253,9 @@ extension ZenCODESetupRunner {
             baseURL: provider.baseURL,
             chatEndpoint: provider.chatEndpoint,
             apiKey: apiKey,
-            models: models
+            models: models,
+            chatGPTSubscriptionCredentials: chatGPTSubscriptionCredentials,
+            anthropicSubscriptionCredentials: anthropicSubscriptionCredentials
         )
     }
 
@@ -309,7 +341,7 @@ extension ZenCODESetupRunner {
         existingModels: [AgentSettingsModelManifest] = []
     ) async throws -> SetupProviderInput {
         AgentOutput.standardError.writeString("\nChatGPT Subscription\n")
-        try await ensureChatGPTSubscriptionCredentials()
+        let credentials = try await ensureChatGPTSubscriptionCredentials()
 
         let id = AgentRemoteProvider.chatGPTSubscriptionProviderID
         let name = CodexAgentModel.displayTitle
@@ -337,7 +369,8 @@ extension ZenCODESetupRunner {
             baseURL: baseURL,
             chatEndpoint: chatEndpoint,
             apiKey: nil,
-            models: models
+            models: models,
+            chatGPTSubscriptionCredentials: credentials
         )
     }
 
@@ -345,7 +378,7 @@ extension ZenCODESetupRunner {
         existingModels: [AgentSettingsModelManifest] = []
     ) async throws -> SetupProviderInput {
         AgentOutput.standardError.writeString("\nClaude Subscription\n")
-        try await ensureAnthropicSubscriptionCredentials()
+        let credentials = try await ensureAnthropicSubscriptionCredentials()
 
         let id = AgentRemoteProvider.anthropicSubscriptionProviderID
         let name = AnthropicSubscriptionModel.displayTitle
@@ -373,7 +406,8 @@ extension ZenCODESetupRunner {
             baseURL: baseURL,
             chatEndpoint: chatEndpoint,
             apiKey: nil,
-            models: models
+            models: models,
+            anthropicSubscriptionCredentials: credentials
         )
     }
 

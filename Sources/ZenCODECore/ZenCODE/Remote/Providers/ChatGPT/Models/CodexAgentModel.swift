@@ -250,11 +250,20 @@ public nonisolated enum CodexAgentModel {
     }
 
     public static func loadValidCredentials() async throws -> CodexAgentCredentials {
+        try await loadValidCredentials(persistRefresh: true)
+    }
+
+    static func loadValidCredentials(
+        persistRefresh: Bool
+    ) async throws -> CodexAgentCredentials {
         let credentials = try loadCredentials()
         guard credentials.isExpiredOrNearlyExpired else {
             return credentials
         }
-        return try await ChatGPTSubscriptionAuthService.refresh(credentials: credentials)
+        return try await ChatGPTSubscriptionAuthService.refresh(
+            credentials: credentials,
+            persist: persistRefresh
+        )
     }
 
     public static func saveCredentials(_ credentials: CodexAgentCredentials) throws {
