@@ -674,7 +674,7 @@ extension AgentRuntimeBackend {
         destination _: AgentSharedChat.Destination,
         rootSessionID _: String
     ) async throws -> AgentSharedChat.Delivery {
-        throw AgentSharedChat.Error.noRecipients
+        throw AgentSharedChat.Error.unavailable
     }
 
     public func drainCoordinatorSharedChatMessages(

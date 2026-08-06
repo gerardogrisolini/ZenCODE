@@ -29,6 +29,14 @@ public enum DirectSubAgentBackendFactoryError: LocalizedError {
 public actor DirectSubAgentRuntime {
     public static let maximumAgentsPerCreate = 8
 
+    /// Upper bound for shared-chat-derived prompts queued for one agent. It
+    /// matches twice the bus mailbox capacity, so a fast producer cannot grow
+    /// the pending-prompt queue without limit while the agent processes one
+    /// LLM round-trip at a time. Undelivered messages stay in the bounded
+    /// mailbox and are drained when the queue has capacity again.
+    static let maximumPendingSharedChatPromptsPerAgent =
+        AgentSharedChat.maximumMailboxMessages * 2
+
     public static func unavailableContextualBackendFactory(
         _ context: BackendContext
     ) throws -> any AgentRuntimeBackend {
@@ -85,6 +93,10 @@ public actor DirectSubAgentRuntime {
         public var latestContentPreview: String? = nil
         public var latestEventAt: Date? = nil
         public var runTask: Task<Void, Never>?
+        /// Single-flight guard for the shared-chat mailbox drain. Only one
+        /// drain loop may be active per agent, so a burst of wake-up callbacks
+        /// cannot start overlapping loops that double-queue the same batch.
+        var isDrainingSharedChatMailbox = false
 
         /// True while the agent still owes work: it is queued or running, or it
         /// has prompts waiting for its work loop. The transient overview keeps

@@ -87,6 +87,13 @@ extension DirectSubAgentRuntime {
             }
             agent.updatedAt = .now
             agents[agentID] = agent
+            // Backpressure may have stopped the shared-chat drain while the
+            // pending queue was full. Now that the queue is empty, re-arm the
+            // drain so messages parked in the bounded mailbox are delivered.
+            let runtime = self
+            Task(name: "ZenCODE.shared-chat.agent-drain-rearm") {
+                await runtime.drainSharedChatMailbox(for: agentID)
+            }
             return nil
         }
 

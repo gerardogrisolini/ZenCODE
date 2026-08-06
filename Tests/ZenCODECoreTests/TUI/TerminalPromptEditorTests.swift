@@ -580,6 +580,122 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
+    func sharedChatCardsAndRenderingDedupKeepOperatorIdentityLocalToEachObserver() {
+        let human = AgentSharedChat.Participant(
+            id: "operator:room-1",
+            name: "operator",
+            kind: .operator
+        )
+        let agentNamedOperator = AgentSharedChat.Participant(
+            id: "agent-operator",
+            name: "operator",
+            kind: .agent
+        )
+        let humanRoute = TerminalChat.sharedChatIncomingCardRoute(for: human)
+        let agentRoute = TerminalChat.sharedChatIncomingCardRoute(for: agentNamedOperator)
+
+        #expect(humanRoute == "Operator (human, id: operator:room-1) → Coordinator")
+        #expect(agentRoute == "Agent (id: agent-operator, name: operator) → Coordinator")
+        #expect(humanRoute != agentRoute)
+        #expect(TerminalChat.renderSharedChatCard(
+            route: humanRoute,
+            text: "human message",
+            terminalColumns: 120,
+            usesColor: false
+        ).contains("Operator (human, id: operator:room-1)"))
+        #expect(TerminalChat.renderSharedChatCard(
+            route: agentRoute,
+            text: "agent message",
+            terminalColumns: 120,
+            usesColor: false
+        ).contains("Agent (id: agent-operator, name: operator)"))
+
+        let operatorMessage = AgentSharedChat.Message(
+            roomID: "room-1",
+            sender: human,
+            recipientIDs: [AgentSharedChat.coordinatorID(for: "room-1")],
+            text: "do not hide operator messages"
+        )
+        var firstObserverIDs = TerminalChat.SharedChatRenderedMessageIDs()
+        #expect(TerminalChat.newlyReceivedSharedChatMessages(
+            [operatorMessage],
+            renderedMessageIDs: &firstObserverIDs
+        ) == [operatorMessage])
+        #expect(TerminalChat.newlyReceivedSharedChatMessages(
+            [operatorMessage],
+            renderedMessageIDs: &firstObserverIDs
+        ).isEmpty)
+
+        // A second terminal has a separate rendering history and must see the
+        // same message once; there is no process-wide deduplication.
+        var secondObserverIDs = TerminalChat.SharedChatRenderedMessageIDs()
+        #expect(TerminalChat.newlyReceivedSharedChatMessages(
+            [operatorMessage],
+            renderedMessageIDs: &secondObserverIDs
+        ) == [operatorMessage])
+    }
+
+    /// The rendering history of a long live session stays bounded. Eviction is
+    /// FIFO and its capacity mirrors the transcript bound, so an evicted id can
+    /// no longer be replayed by the Core and cannot produce a duplicate card.
+    @Test
+    func sharedChatRenderingHistoryIsBoundedAndEvictsOldestFirst() {
+        let sender = AgentSharedChat.Participant(
+            id: "agent-1",
+            name: "worker",
+            kind: .agent
+        )
+        func message(_ text: String) -> AgentSharedChat.Message {
+            AgentSharedChat.Message(
+                roomID: "room-1",
+                sender: sender,
+                recipientIDs: ["coordinator:room-1"],
+                text: text
+            )
+        }
+
+        let capacity = TerminalChat.SharedChatRenderedMessageIDs.capacity
+        #expect(capacity == AgentSharedChat.maximumRetainedMessagesPerRoom)
+
+        var history = TerminalChat.SharedChatRenderedMessageIDs()
+        let first = message("first")
+        #expect(TerminalChat.newlyReceivedSharedChatMessages(
+            [first],
+            renderedMessageIDs: &history
+        ) == [first])
+
+        let overflow = (0 ..< capacity).map { message("later \($0)") }
+        #expect(TerminalChat.newlyReceivedSharedChatMessages(
+            overflow,
+            renderedMessageIDs: &history
+        ).count == capacity)
+        #expect(history.count == capacity)
+
+        // The newest ids are still deduplicated, while the oldest ones were
+        // evicted first and would be rendered again if the Core replayed them.
+        #expect(TerminalChat.newlyReceivedSharedChatMessages(
+            [overflow[capacity - 1]],
+            renderedMessageIDs: &history
+        ).isEmpty)
+        #expect(TerminalChat.newlyReceivedSharedChatMessages(
+            [first],
+            renderedMessageIDs: &history
+        ) == [first])
+        #expect(TerminalChat.newlyReceivedSharedChatMessages(
+            [overflow[0]],
+            renderedMessageIDs: &history
+        ) == [overflow[0]])
+        #expect(history.count == capacity)
+
+        history.removeAll()
+        #expect(history.count == 0)
+        #expect(TerminalChat.newlyReceivedSharedChatMessages(
+            [first],
+            renderedMessageIDs: &history
+        ) == [first])
+    }
+
+    @Test
     func sharedChatCardUsesAppearanceAwareBluePaletteAndResetsBoldAtTheBorder() {
         let dark = TerminalChat.renderSharedChatCard(
             route: "route",
@@ -622,10 +738,13 @@ struct TerminalPromptEditorTests {
         let suggestions = TerminalChat.sharedChatMentionSuggestions(for: participants)
         let commands = suggestions.map(\.command)
 
-        #expect(commands.count == 4)
+        #expect(commands.count == 6)
         #expect(Set(commands).count == commands.count)
-        #expect(!commands.contains("@all "))
-        #expect(commands.allSatisfy { command in
+        #expect(commands.contains("@all "))
+        #expect(commands.contains("@coordinator "))
+        let directCommands = commands.filter { $0.hasPrefix("@agent-") }
+        #expect(directCommands.count == 4)
+        #expect(directCommands.allSatisfy { command in
             command.hasPrefix("@agent-")
                 && command.hasSuffix(" ")
                 && command.dropLast().unicodeScalars.allSatisfy { scalar in
@@ -671,7 +790,17 @@ struct TerminalPromptEditorTests {
         }
         #expect(TerminalChat.sharedChatMentionRoute(from: "@all report status")
             == TerminalChat.SharedChatMentionRoute(destination: .all, text: "report status"))
+        #expect(TerminalChat.sharedChatMentionRoute(from: "@COORDINATOR report status")
+            == TerminalChat.SharedChatMentionRoute(destination: .coordinator, text: "report status"))
         #expect(TerminalChat.sharedChatMentionRoute(from: "@Planning Agent ambiguous") == nil)
+        #expect(TerminalChat.parseSharedChatMention(from: "@all")
+            == .missingText(destination: .all))
+        #expect(TerminalChat.parseSharedChatMention(from: "@coordinator   ")
+            == .missingText(destination: .coordinator))
+        let firstHandle = TerminalChat.sharedChatMentionHandle(forParticipantID: participants[0].id)
+        #expect(TerminalChat.parseSharedChatMention(from: "@\(firstHandle)")
+            == .missingText(destination: .direct([participants[0].id])))
+        #expect(TerminalChat.parseSharedChatMention(from: "@not-a-live-mention") == .none)
     }
 
     @Test

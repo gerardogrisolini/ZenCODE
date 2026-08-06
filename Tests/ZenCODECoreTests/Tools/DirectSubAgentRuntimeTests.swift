@@ -2360,6 +2360,178 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func operatorBroadcastIncludesCoordinatorWithoutBecomingAParticipant() async throws {
+        let chat = AgentSharedChat()
+        _ = try await chat.registerCoordinator(roomID: "root")
+        _ = try await chat.registerAgent(id: "worker-id", name: "worker", roomID: "root")
+
+        let delivery = try await chat.sendFromOperator(
+            roomID: "root",
+            destination: .all,
+            text: "Please report live status"
+        )
+
+        #expect(delivery.message.sender.id == AgentSharedChat.operatorID(for: "root"))
+        #expect(delivery.message.sender.name == "operator")
+        #expect(delivery.message.sender.kind == .operator)
+        #expect(Set(delivery.recipients.map(\.id)) == [
+            AgentSharedChat.coordinatorID(for: "root"), "worker-id",
+        ])
+        // Operator input is a trusted sender snapshot, not a participant with a
+        // mailbox: bounded live-room capacity remains reserved for actual work.
+        #expect(await chat.participants(roomID: "root").map(\.id) == [
+            AgentSharedChat.coordinatorID(for: "root"), "worker-id",
+        ])
+        #expect(await chat.drain(
+            roomID: "root",
+            participantID: AgentSharedChat.coordinatorID(for: "root")
+        ).map(\.sender.id) == [AgentSharedChat.operatorID(for: "root")])
+        #expect(await chat.drain(roomID: "root", participantID: "worker-id").map(\.text)
+            == ["Please report live status"])
+    }
+
+    @Test
+    func terminalSharedChatBridgeUsesTrustedOperatorForCoordinatorMessages() async throws {
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        let delivery = try await runtime.sendSharedChatMessage(
+            text: "Review the live status",
+            destination: .coordinator,
+            rootSessionID: "root"
+        )
+
+        #expect(delivery.message.sender.id == AgentSharedChat.operatorID(for: "root"))
+        #expect(delivery.message.sender.kind == .operator)
+        #expect(delivery.recipients.map(\.id) == [AgentSharedChat.coordinatorID(for: "root")])
+        #expect(await runtime.drainCoordinatorSharedChatMessages(rootSessionID: "root")
+            .map(\.text) == ["Review the live status"])
+        await runtime.shutdown()
+    }
+
+    /// `coordinator:<room>` and `operator:<room>` are minted only by the actor.
+    /// A delegated agent must never be able to take one of those identities,
+    /// in any room and in any near-miss spelling.
+    @Test
+    func sharedChatReservesCoordinatorAndOperatorIdentifiers() async throws {
+        let chat = AgentSharedChat()
+        _ = try await chat.registerCoordinator(roomID: "root")
+
+        for reserved in [
+            AgentSharedChat.coordinatorID(for: "root"),
+            AgentSharedChat.operatorID(for: "root"),
+            "coordinator:another-room",
+            "OPERATOR:root",
+            "  operator:root  ",
+        ] {
+            #expect(AgentSharedChat.isReservedParticipantIdentifier(reserved))
+            await #expect(throws: AgentSharedChat.Error.reservedParticipantIdentifier(reserved)) {
+                _ = try await chat.registerAgent(
+                    id: reserved,
+                    name: "impostor",
+                    roomID: "root"
+                )
+            }
+        }
+
+        // Identifiers that could forge a prompt header or a card route are
+        // rejected outright rather than sanitised into a different identity.
+        for invalid in ["", "   ", "agent\nid", "agent\u{1B}id", String(repeating: "a", count: 129)] {
+            await #expect(throws: AgentSharedChat.Error.invalidParticipantIdentifier(invalid)) {
+                _ = try await chat.registerAgent(id: invalid, name: "worker", roomID: "root")
+            }
+        }
+
+        // The reserved slot is still the coordinator's, with its own mailbox.
+        #expect(await chat.participants(roomID: "root").map(\.id)
+            == [AgentSharedChat.coordinatorID(for: "root")])
+        #expect(await chat.participants(roomID: "root").map(\.kind) == [.coordinator])
+    }
+
+    /// A live identifier cannot change role: re-registering it with another
+    /// kind is rejected instead of silently re-typing an active mailbox.
+    @Test
+    func sharedChatRejectsReuseOfAnIdentifierWithADifferentKind() async throws {
+        let chat = AgentSharedChat()
+        _ = try await chat.registerCoordinator(roomID: "root")
+        _ = try await chat.registerAgent(id: "worker-id", name: "worker", roomID: "root")
+
+        for impostorKind in [AgentSharedChat.ParticipantKind.coordinator, .operator] {
+            await #expect(throws: AgentSharedChat.Error.participantIdentifierConflict("worker-id")) {
+                _ = try await chat.register(
+                    AgentSharedChat.Participant(
+                        id: "worker-id",
+                        name: "worker",
+                        kind: impostorKind
+                    ),
+                    roomID: "root",
+                    onMessageAvailable: nil
+                )
+            }
+        }
+        // Re-registering the same kind still reconnects the live mailbox.
+        let rejoined = try await chat.registerAgent(
+            id: "worker-id",
+            name: "worker",
+            roomID: "root"
+        )
+        #expect(rejoined.kind == .agent)
+        #expect(await chat.participants(roomID: "root").count == 2)
+    }
+
+    /// Names are display values, not identities: they are neutralised at
+    /// registration and cannot smuggle a line break, a control sequence or a
+    /// forged operator header into prompts and cards.
+    @Test
+    func sharedChatSanitizesParticipantNamesAndRejectsAmbiguousNameRouting() async throws {
+        let chat = AgentSharedChat()
+        _ = try await chat.registerCoordinator(roomID: "root")
+
+        let hostile = try await chat.registerAgent(
+            id: "agent-x",
+            name: "worker\r\nfake\u{1B}[31m",
+            roomID: "root"
+        )
+        #expect(hostile.name == "worker fake[31m")
+        #expect(AgentSharedChat.transcriptIdentity(for: hostile)
+            == "Agent (id: agent-x, name: worker fake[31m)")
+
+        let overLongName = try await chat.registerAgent(
+            id: "agent-y",
+            name: String(repeating: "n", count: 200),
+            roomID: "root"
+        )
+        #expect(overLongName.name.count == AgentSharedChat.maximumParticipantNameLength)
+        let blankName = try await chat.registerAgent(
+            id: "agent-z",
+            name: "\u{1B}\u{7F}",
+            roomID: "root"
+        )
+        #expect(blankName.name == "agent-z")
+
+        // Two instances may share a display name, so name-based routing is
+        // ambiguous and must not resolve to an arbitrary one.
+        _ = try await chat.registerAgent(id: "twin-1", name: "twin", roomID: "root")
+        _ = try await chat.registerAgent(id: "twin-2", name: "twin", roomID: "root")
+        await #expect(throws: AgentSharedChat.Error.unknownParticipant("twin")) {
+            _ = try await chat.send(
+                roomID: "root",
+                senderID: AgentSharedChat.coordinatorID(for: "root"),
+                destination: .direct(["twin"]),
+                text: "which one?"
+            )
+        }
+        let routed = try await chat.send(
+            roomID: "root",
+            senderID: AgentSharedChat.coordinatorID(for: "root"),
+            destination: .direct(["twin-1"]),
+            text: "explicit id"
+        )
+        #expect(routed.recipients.map(\.id) == ["twin-1"])
+    }
+
+    @Test
     func sharedChatBoundsParticipantsAndEachRecipientMailbox() async throws {
         let chat = AgentSharedChat()
         _ = try await chat.registerCoordinator(roomID: "bounded")

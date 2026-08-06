@@ -318,7 +318,7 @@ public actor AgentCoreBackend {
         rootSessionID: String
     ) async throws -> AgentSharedChat.Delivery {
         guard let activeBackend else {
-            throw AgentSharedChat.Error.noRecipients
+            throw AgentSharedChat.Error.unavailable
         }
         return try await activeBackend.sendSharedChatMessage(
             text: text,

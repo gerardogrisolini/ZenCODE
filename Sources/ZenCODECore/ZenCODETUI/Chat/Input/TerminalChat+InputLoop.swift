@@ -45,7 +45,9 @@ extension TerminalChat {
             _ = await interactiveReader.resumePanelInput(
                 statusBar: statusBar,
                 commandSuggestions: suggestions,
-                onEvent: { event in eventQueue.send(.input(event)) }
+                onEvent: { event in
+                    _ = await eventQueue.sendWithBackpressure(.input(event))
+                }
             )
             await renderCoordinator.endExternalTerminalPrompt()
             return answer
@@ -174,7 +176,7 @@ extension TerminalChat {
 
     func runInteractivePanelLoop() async throws {
         let eventQueue = TerminalChatEventQueue()
-        var queuedPrompts: [TerminalQueuedPrompt] = []
+        var queuedPrompts = TerminalQueuedPromptBuffer()
         var generationTask: Task<Void, Never>?
         let remoteTranscriptions = TerminalVoiceTranscriptionRegistry()
         let telegramForwardingTask = startTelegramForwardingTask(eventQueue: eventQueue)
@@ -182,10 +184,15 @@ extension TerminalChat {
         // to the Core coordinator. This task only forwards its live events into
         // the terminal queue: the TUI renders and answers, but never owns the
         // auto-trigger semantics, so non-TUI consumers behave identically.
-        func startSharedChatObservation(roomID: String) async -> Task<Void, Never> {
-            let events = await sessionRunner.observeSharedChat(rootSessionID: roomID)
-            return Task(name: "ZenCODE.TUI.shared-chat-events") {
-                for await event in events {
+        func startSharedChatObservation(
+            roomID: String
+        ) async -> (
+            observation: AgentSharedChatCoordinator.Observation,
+            task: Task<Void, Never>
+        ) {
+            let observation = await sessionRunner.attachSharedChatObservation(rootSessionID: roomID)
+            let task = Task(name: "ZenCODE.TUI.shared-chat-events") {
+                for await event in observation.events {
                     switch event {
                     case let .messages(messages):
                         eventQueue.send(
@@ -194,21 +201,54 @@ extension TerminalChat {
                     case .participantsChanged:
                         eventQueue.send(.sharedChatParticipantsChanged(roomID: roomID))
                     case let .autoTrigger(trigger):
-                        eventQueue.send(.sharedChatAutoTrigger(trigger))
+                        // A trigger has Core-owned recovery semantics. Do not
+                        // retain it in a local overflow side-channel: if the
+                        // bounded TUI FIFO is full, decline it immediately and
+                        // let the coordinator requeue the batch for a later turn.
+                        if eventQueue.offer(.sharedChatAutoTrigger(trigger)) == .rejectedFull {
+                            await sessionRunner.declineSharedChatAutoTrigger(
+                                id: trigger.id,
+                                rootSessionID: trigger.roomID
+                            )
+                        }
                     }
                 }
             }
+            return (observation, task)
         }
 
         // The room follows the live session id: `/new` and `/resume` swap it and
         // delegated agents then register in the new room, so the observation is
         // rebound instead of silently watching a retired one.
         var sharedChatRoomID = sessionID
-        var sharedChatObservationTask = await startSharedChatObservation(
+        var sharedChatObservation = await startSharedChatObservation(
             roomID: sharedChatRoomID
         )
         var isGenerating = false
         var isQueuedPromptStartScheduled = false
+        // Rendering history belongs to this terminal observer only. A message
+        // replayed to a second observer must remain visible there, while one
+        // observer never renders the same Message.id twice. The history is
+        // bounded like the room transcript it mirrors.
+        var renderedSharedChatMessageIDs = TerminalChat.SharedChatRenderedMessageIDs()
+
+        defer {
+            // Stop producers before terminating the queue so no task keeps
+            // running (or keeps this chat alive) after the loop exits, and any
+            // event racing the teardown is dropped instead of buffered forever.
+            generationTask?.cancel()
+            telegramForwardingTask.cancel()
+            sharedChatObservation.task.cancel()
+            remoteTranscriptions.cancelAll()
+            eventQueue.finish()
+            // This loop owns exactly one subscriber. Session teardown performs
+            // room-wide stop; detaching here must never end another TUI/ACP
+            // observer that is still handling live messages.
+            let observation = sharedChatObservation.observation
+            Task(name: "ZenCODE.TUI.shared-chat-detach") { [sessionRunner] in
+                await sessionRunner.detachSharedChatObservation(observation)
+            }
+        }
 
         func scheduleQueuedPromptIfNeeded() {
             guard !isGenerating,
@@ -217,16 +257,24 @@ extension TerminalChat {
                 return
             }
             isQueuedPromptStartScheduled = true
-            eventQueue.send(.startNextQueuedPrompt)
+            // This is the one lifecycle producer whose caller is the consumer
+            // itself. It cannot await a full queue inline without deadlocking
+            // the event loop, so its single coalesced task applies the same
+            // backpressure after the current event returns to the loop.
+            Task(name: "ZenCODE.TUI.next-queued-prompt") {
+                _ = await eventQueue.sendWithBackpressure(.startNextQueuedPrompt)
+            }
         }
 
         /// Mirrors terminal activity into the Core auto-trigger. A queued prompt
-        /// keeps the room busy, so a shared-chat message waits for a free turn
-        /// instead of racing the operator's own work.
+        /// keeps this observer busy, so a shared-chat message waits for a free
+        /// turn instead of racing the operator's own work. The declaration is
+        /// scoped to this terminal's observation: another live consumer of the
+        /// same room can never clear it.
         func synchronizeSharedChatConsumerBusyState() async {
             await sessionRunner.setSharedChatConsumerBusy(
                 isGenerating || !queuedPrompts.isEmpty,
-                rootSessionID: sharedChatRoomID
+                observation: sharedChatObservation.observation
             )
         }
 
@@ -235,13 +283,14 @@ extension TerminalChat {
         /// new one is observed from its first message.
         func rebindSharedChatObservationIfNeeded() async {
             guard sharedChatRoomID != sessionID else { return }
-            let retiredRoomID = sharedChatRoomID
-            sharedChatObservationTask.cancel()
-            await sessionRunner.stopSharedChatObservation(rootSessionID: retiredRoomID)
+            let retiredObservation = sharedChatObservation
+            retiredObservation.task.cancel()
+            await sessionRunner.detachSharedChatObservation(retiredObservation.observation)
             sharedChatRoomID = sessionID
-            sharedChatObservationTask = await startSharedChatObservation(
+            sharedChatObservation = await startSharedChatObservation(
                 roomID: sharedChatRoomID
             )
+            renderedSharedChatMessageIDs.removeAll()
             await synchronizeSharedChatConsumerBusyState()
         }
 
@@ -256,7 +305,7 @@ extension TerminalChat {
                 statusBar: statusBar,
                 commandSuggestions: await panelSuggestionsForCurrentAgent()
             ) { event in
-                eventQueue.send(.input(event))
+                _ = await eventQueue.sendWithBackpressure(.input(event))
             }
             guard didStart else {
                 return false
@@ -308,7 +357,18 @@ extension TerminalChat {
                         failure
                     )
                 }
-                eventQueue.send(.generationCompleted(result))
+                // A user cancellation still has to reach the event loop as a
+                // cancellation result. Delivery runs in one detached, bounded
+                // lifecycle task: cancelling this generation task must not turn
+                // a full queue into a silently lost completion and leave the
+                // terminal permanently marked as generating. Queue teardown
+                // makes the detached delivery return promptly.
+                let completionDelivery = Task.detached(
+                    name: "ZenCODE.TUI.generation-completion-delivery"
+                ) {
+                    await eventQueue.sendWithBackpressure(.generationCompleted(result))
+                }
+                _ = await completionDelivery.value
             }
         }
 
@@ -330,25 +390,6 @@ extension TerminalChat {
             await statusBar.stop()
             throw TerminalChatError.interactivePromptUnavailable
         }
-        defer {
-            // Stop producers before terminating the queue so no task keeps
-            // running (or keeps this chat alive) after the loop exits, and any
-            // event racing the teardown is dropped instead of buffered forever.
-            generationTask?.cancel()
-            telegramForwardingTask.cancel()
-            sharedChatObservationTask.cancel()
-            remoteTranscriptions.cancelAll()
-            eventQueue.finish()
-            // Hand shared-chat ownership back to the Core: an unanswered batch
-            // stays queued there instead of dying with this loop.
-            let observedRoomID = sharedChatRoomID
-            Task(name: "ZenCODE.TUI.shared-chat-stop") { [sessionRunner] in
-                await sessionRunner.stopSharedChatObservation(
-                    rootSessionID: observedRoomID
-                )
-            }
-        }
-
         func handleSubmittedPanelLine(
             _ line: String,
             origin: TerminalPromptOrigin = .local
@@ -425,10 +466,11 @@ extension TerminalChat {
                    sessionID: sessionID
                ) {
                 if case let .sharedChatAutoTrigger(trigger) = event {
-                    await sessionRunner.resolveSharedChatAutoTrigger(
+                    // The retired room has no observation left here, so this is
+                    // an ownerless requeue: it returns the batch, never a turn.
+                    await sessionRunner.declineSharedChatAutoTrigger(
                         id: trigger.id,
-                        rootSessionID: trigger.roomID,
-                        resolution: .declined
+                        rootSessionID: trigger.roomID
                     )
                 }
                 continue
@@ -437,8 +479,37 @@ extension TerminalChat {
             case let .input(inputEvent):
                 switch inputEvent {
                 case let .submitted(line):
+                    // A valid leading mention is live control input, not a
+                    // regular prompt. Route it before the busy/queued-prompt
+                    // branches so an operator can reach active agents and the
+                    // coordinator while the terminal is generating. The Core
+                    // coordinator still serializes any coordinator turn.
+                    switch Self.parseSharedChatMention(from: line) {
+                    case let .route(route):
+                        if let messageID = await sendSharedChatMention(route) {
+                            // The outbound card was rendered synchronously.
+                            // If the coordinator receives this same message,
+                            // its later event is suppressed only in this TUI.
+                            renderedSharedChatMessageIDs.insert(messageID)
+                        }
+                        continue
+                    case .missingText:
+                        await writeFailureMessage(
+                            "ZenCODE shared chat: add a message after the live mention.\n"
+                        )
+                        continue
+                    case .none:
+                        break
+                    }
                     if !isGenerating, !queuedPrompts.isEmpty {
-                        queuedPrompts.append(TerminalQueuedPrompt(text: line, origin: .local))
+                        guard queuedPrompts.enqueue(
+                            TerminalQueuedPrompt(text: line, origin: .local)
+                        ) else {
+                            await writeFailureMessage(
+                                "ZenCODE: prompt queue is full; wait for a queued prompt to start.\n"
+                            )
+                            continue
+                        }
                         await refreshQueuedPromptCount()
                         scheduleQueuedPromptIfNeeded()
                         continue
@@ -447,7 +518,14 @@ extension TerminalChat {
                     if isGenerating {
                         switch Self.submittedLineRole(for: line) {
                         case .empty, .prompt:
-                            queuedPrompts.append(TerminalQueuedPrompt(text: line, origin: .local))
+                            guard queuedPrompts.enqueue(
+                                TerminalQueuedPrompt(text: line, origin: .local)
+                            ) else {
+                                await writeFailureMessage(
+                                    "ZenCODE: prompt queue is full; wait for the current prompt to finish.\n"
+                                )
+                                continue
+                            }
                             await refreshQueuedPromptCount()
                             continue
                         case .slashCommand:
@@ -497,7 +575,7 @@ extension TerminalChat {
                 guard !isGenerating, !queuedPrompts.isEmpty else {
                     continue
                 }
-                let nextPrompt = queuedPrompts.removeFirst()
+                let nextPrompt = queuedPrompts.dequeue()!
                 await refreshQueuedPromptCount()
                 if nextPrompt.mode == .directPrompt {
                     await startDirectPrompt(nextPrompt.text, origin: nextPrompt.origin)
@@ -514,18 +592,21 @@ extension TerminalChat {
                 // Rendering only: the decision to start a turn belongs to the
                 // Core coordinator and arrives as a separate auto-trigger.
                 // Room binding was verified before entering this switch.
-                await renderSharedChatMessages(messages)
+                let newlyReceivedMessages = Self.newlyReceivedSharedChatMessages(
+                    messages,
+                    renderedMessageIDs: &renderedSharedChatMessageIDs
+                )
+                await renderSharedChatMessages(newlyReceivedMessages)
                 await refreshSharedChatPanelSuggestions()
             case let .sharedChatAutoTrigger(trigger):
                 // The Core authorised exactly one synthetic turn. Do not publish
                 // an idle update before claiming it: another observer may take
                 // the broadcast while this event waits in our FIFO, and its
-                // busy latch must remain intact until it starts its turn.
+                // claim must remain intact until it starts its turn.
                 guard trigger.roomID == sharedChatRoomID, trigger.roomID == sessionID else {
-                    await sessionRunner.resolveSharedChatAutoTrigger(
+                    await sessionRunner.declineSharedChatAutoTrigger(
                         id: trigger.id,
-                        rootSessionID: trigger.roomID,
-                        resolution: .declined
+                        rootSessionID: trigger.roomID
                     )
                     continue
                 }
@@ -534,20 +615,23 @@ extension TerminalChat {
                     // declining, otherwise the requeued batch could be offered
                     // straight back to this occupied terminal.
                     await synchronizeSharedChatConsumerBusyState()
-                    await sessionRunner.resolveSharedChatAutoTrigger(
+                    // Ownerless on purpose: this may be a re-offered duplicate
+                    // of a trigger this terminal already claimed, and returning
+                    // an unclaimed batch must never release a running turn.
+                    await sessionRunner.declineSharedChatAutoTrigger(
                         id: trigger.id,
-                        rootSessionID: trigger.roomID,
-                        resolution: .declined
+                        rootSessionID: trigger.roomID
                     )
                     continue
                 }
                 // Every observer receives this broadcast. Claiming is atomic in
-                // the Core, so a second terminal/headless consumer may have
-                // already taken it while this event waited in our FIFO. Only
-                // the winner is allowed to open the synthetic generation.
+                // the Core and is recorded against this observation, so a second
+                // terminal/headless consumer may have already taken it while the
+                // event waited in our FIFO. Only the winner opens the turn, and
+                // only the winner can later release it.
                 let claim = await sessionRunner.resolveSharedChatAutoTrigger(
                     id: trigger.id,
-                    rootSessionID: trigger.roomID,
+                    observation: sharedChatObservation.observation,
                     resolution: .started
                 )
                 guard claim == .acquired else {
@@ -576,13 +660,21 @@ extension TerminalChat {
                 switch result.outcome {
                 case let .success(prompt):
                     if isGenerating || !queuedPrompts.isEmpty {
-                        queuedPrompts.append(
+                        guard queuedPrompts.enqueue(
                             TerminalQueuedPrompt(
                                 text: prompt,
                                 origin: result.origin,
                                 mode: .directPrompt
                             )
-                        )
+                        ) else {
+                            let message = "ZenCODE: prompt queue is full; voice prompt was not queued."
+                            await writeFailureMessage(message + "\n")
+                            await sendTelegramSystemMessageIfLinked(
+                                message,
+                                origin: result.origin
+                            )
+                            continue
+                        }
                         await refreshQueuedPromptCount()
                         scheduleQueuedPromptIfNeeded()
                     } else {

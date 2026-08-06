@@ -16,7 +16,10 @@ extension DirectSubAgentRuntime {
         parentAllowedToolNames: Set<String>?,
         senderIDOverride: String? = nil
     ) async throws -> String {
-        guard let text = Self.firstString(["message", "prompt", "input"], in: arguments)?.nilIfBlank else {
+        // Do not trim a model-provided String before the shared-chat actor has
+        // applied its scalar/UTF-8 bound. `nilIfBlank` materialises a trimmed
+        // copy and a single combining grapheme can be arbitrarily large.
+        guard let text = Self.firstString(["message", "prompt", "input"], in: arguments) else {
             throw DirectSubAgentRuntimeError.missingArgument("message")
         }
         let roomID = sharedChatRootSessionID ?? rootSessionID.nilIfBlank ?? "default"
@@ -34,15 +37,49 @@ extension DirectSubAgentRuntime {
             senderIDOverride: effectiveSenderID
         )
         // Keep the established reservation and workflow-attempt fence for a
-        // coordinator's legacy direct follow-up. Peer/coordinator/broadcast
-        // routes use the shared bus below; direct coordinator delivery still
-        // enters the same immediately-started work loop as before.
+        // coordinator's legacy direct follow-up, but apply the same message
+        // bounds and transcript identity as the live bus route. The bus records
+        // the delivery in the transient transcript with the coordinator's
+        // qualified identity; the actual work (reservations, queuePrompt) still
+        // goes through messageAgents. The target mailboxes are drained right
+        // after the bus send so the wake-up callback does not duplicate the
+        // prompt that messageAgents queues.
         if effectiveSenderID == nil,
            case .direct = destination {
-            return try await messageAgents(
-                arguments: arguments,
+            let boundedText = AgentSharedChat.boundedMessageText(text)
+            var transcriptDelivery: AgentSharedChat.Delivery?
+            do {
+                transcriptDelivery = try await sharedChat.send(
+                    roomID: roomID,
+                    senderID: senderID,
+                    destination: destination,
+                    text: boundedText
+                )
+                for recipientID in transcriptDelivery!.recipients.map(\.id) {
+                    _ = await sharedChat.drain(
+                        roomID: roomID,
+                        participantID: recipientID,
+                        limit: AgentSharedChat.maximumMailboxMessages
+                    )
+                }
+            } catch {
+                // Best-effort transcript recording: the agent may not yet be
+                // registered in the bus. The message is still queued below.
+            }
+            var boundedArguments = arguments
+            let messageKey = ["message", "prompt", "input"].first { arguments[$0] != nil }
+            boundedArguments[messageKey ?? "message"] = .string(boundedText)
+            let queueResult = try await messageAgents(
+                arguments: boundedArguments,
                 parentAllowedToolNames: parentAllowedToolNames
             )
+            if let delivery = transcriptDelivery {
+                let recipients = AgentSharedChat.deliveryRecipientSummary(
+                    for: delivery.recipients
+                )
+                return "Delivered live message to \(recipients).\n" + queueResult
+            }
+            return queueResult
         }
         let delivery = try await sharedChat.send(
             roomID: roomID,
@@ -50,12 +87,17 @@ extension DirectSubAgentRuntime {
             destination: destination,
             text: text
         )
-        let names = delivery.recipients.map { "@\($0.name)" }.joined(separator: ", ")
-        return "Delivered live message to \(names)."
+        // A display name is not an identity: any agent may be named
+        // "operator" or "coordinator". Model-facing delivery output therefore
+        // always includes the actor-owned kind and stable identifier, with the
+        // display name only as an explicitly non-authoritative field.
+        let recipients = AgentSharedChat.deliveryRecipientSummary(for: delivery.recipients)
+        return "Delivered live message to \(recipients)."
     }
 
-    /// Public bridge used by the terminal input surface. This uses the same
-    /// actor and destination semantics as tool-driven `agent.message` calls.
+    /// Public bridge used exclusively by the terminal input surface. It gives
+    /// human input its own trusted transcript identity instead of conflating it
+    /// with the coordinator LLM or creating a mailbox-owning participant.
     public func sendSharedChatMessage(
         text: String,
         destination: AgentSharedChat.Destination,
@@ -63,9 +105,8 @@ extension DirectSubAgentRuntime {
     ) async throws -> AgentSharedChat.Delivery {
         let roomID = sharedChatRootSessionID ?? rootSessionID.nilIfBlank ?? "default"
         _ = try await sharedChat.registerCoordinator(roomID: roomID)
-        return try await sharedChat.send(
+        return try await sharedChat.sendFromOperator(
             roomID: roomID,
-            senderID: sharedChatSenderID ?? AgentSharedChat.coordinatorID(for: roomID),
             destination: destination,
             text: text
         )
@@ -107,11 +148,33 @@ extension DirectSubAgentRuntime {
     /// Pulls the mailbox and uses the existing serialized work loop. `queuePrompt`
     /// starts an idle agent immediately, while a running agent simply receives a
     /// follow-up in FIFO order; no chat sender waits for model generation.
+    ///
+    /// Single-flight and backpressure are encoded here:
+    /// * exactly one drain loop may be active per agent (``AgentRecord/isDrainingSharedChatMailbox``);
+    /// * the pending-prompt queue is bounded by
+    ///   ``DirectSubAgentRuntime/maximumPendingSharedChatPromptsPerAgent``, so a
+    ///   fast producer cannot grow memory without limit. Undelivered messages
+    ///   stay in the bounded mailbox and are drained when the queue has capacity
+    ///   again (re-armed from ``nextWork(for:)`` when the agent goes idle).
     func drainSharedChatMailbox(for agentID: String) async {
-        guard let agent = agents[agentID], agent.status != .closed else {
+        guard var agent = agents[agentID], agent.status != .closed else {
             return
         }
+        guard !agent.isDrainingSharedChatMailbox else {
+            return
+        }
+        agent.isDrainingSharedChatMailbox = true
+        agents[agentID] = agent
+        defer {
+            if var current = agents[agentID] {
+                current.isDrainingSharedChatMailbox = false
+                agents[agentID] = current
+            }
+        }
         while true {
+            // Re-check liveness on every iteration: the agent may have been
+            // closed between two drain calls.
+            guard agents[agentID]?.status != .closed else { return }
             let messages = await sharedChat.drain(
                 roomID: agent.rootSessionID,
                 participantID: agentID,
@@ -119,6 +182,14 @@ extension DirectSubAgentRuntime {
             )
             let deliverable = messages.filter { $0.sender.id != agentID }
             guard !deliverable.isEmpty else { return }
+            // Backpressure: stop draining when the pending queue is full. The
+            // mailbox retains the remaining messages; the drain is re-armed
+            // from `nextWork` when the agent finishes a prompt and the queue
+            // has capacity again.
+            guard (agents[agentID]?.pendingPrompts.count ?? 0)
+                    < Self.maximumPendingSharedChatPromptsPerAgent else {
+                return
+            }
             do {
                 try queuePrompt(Self.sharedChatPrompt(deliverable), for: agentID)
             } catch {
@@ -207,15 +278,16 @@ extension DirectSubAgentRuntime {
         }
     }
 
+    /// Prompt injected into a delegated agent for its inbound live messages.
+    /// It uses the Core serializer, so a hostile sender name or message body
+    /// cannot forge a second sender header or a fake operator instruction.
     static func sharedChatPrompt(_ messages: [AgentSharedChat.Message]) -> String {
-        let body = messages.map {
-            "[@\($0.sender.name)] \($0.text)"
-        }.joined(separator: "\n")
-        return """
-        [Live shared-chat messages from your team]
-        \(body)
+        """
+        [Live shared-chat messages]
+        \(AgentSharedChat.promptTranscript(for: messages))
 
-        Respond directly to these messages and continue your assigned work when appropriate.
+        \(AgentSharedChat.promptTrustBoundaryNote)
+        Respond directly to these messages and continue the current work when appropriate.
         """
     }
 }

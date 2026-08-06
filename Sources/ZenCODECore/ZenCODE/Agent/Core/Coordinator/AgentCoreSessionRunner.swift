@@ -255,9 +255,14 @@ public actor AgentCoreSessionRunner {
         )
         // Every turn — operator, replayed, or synthetic — marks the room busy
         // for the Core auto-trigger, so a shared-chat message can never open a
-        // second concurrent prompt behind a consumer's back.
+        // second concurrent prompt behind a consumer's back. The prompt is
+        // handed over as well: it is what binds a synthetic turn to the claim
+        // it consumes, so no unrelated turn can release that claim when it ends.
         let chatCoordinator = sharedChatCoordinator()
-        await chatCoordinator.noteTurnStarted(roomID: configuration.sessionID)
+        let chatTurn = await chatCoordinator.noteTurnStarted(
+            roomID: configuration.sessionID,
+            prompt: prompt
+        )
 
         do {
             let response = try await AgentToolAuthorizationContext.$turnID.withValue(promptID) {
@@ -284,7 +289,7 @@ public actor AgentCoreSessionRunner {
                 backendGeneration: generation,
                 onEvent: onEvent
             )
-            await chatCoordinator.noteTurnEnded(roomID: configuration.sessionID)
+            await chatCoordinator.noteTurnEnded(chatTurn)
             return response
         } catch is CancellationError {
             await finalizeTurn(
@@ -298,7 +303,7 @@ public actor AgentCoreSessionRunner {
             )
             // A cancelled synthetic turn must still release the room, otherwise
             // later shared-chat messages would never start a turn again.
-            await chatCoordinator.noteTurnEnded(roomID: configuration.sessionID)
+            await chatCoordinator.noteTurnEnded(chatTurn)
             throw CancellationError()
         } catch {
             await finalizeTurn(
@@ -310,7 +315,7 @@ public actor AgentCoreSessionRunner {
                 backendGeneration: generation,
                 onEvent: onEvent
             )
-            await chatCoordinator.noteTurnEnded(roomID: configuration.sessionID)
+            await chatCoordinator.noteTurnEnded(chatTurn)
             throw error
         }
     }
@@ -379,7 +384,7 @@ public actor AgentCoreSessionRunner {
         destination: AgentSharedChat.Destination,
         rootSessionID: String
     ) async throws -> AgentSharedChat.Delivery {
-        guard let backend else { throw AgentSharedChat.Error.noRecipients }
+        guard let backend else { throw AgentSharedChat.Error.unavailable }
         return try await backend.sendSharedChatMessage(
             text: text,
             destination: destination,
@@ -419,47 +424,73 @@ public actor AgentCoreSessionRunner {
     /// Every consumer — terminal UI, ACP, or a headless driver — receives the
     /// same semantics: `messages` for rendering, `participantsChanged` for
     /// roster refreshes, and `autoTrigger` for the one synthetic turn the Core
-    /// authorises at a time. Resolve each trigger with
-    /// ``resolveSharedChatAutoTrigger(id:rootSessionID:resolution:)`` and start
-    /// a synthetic prompt only when it returns `acquired`; report consumer-side
-    /// activity with
-    /// ``setSharedChatConsumerBusy(_:rootSessionID:)``.
-    public func observeSharedChat(
+    /// authorises at a time. The returned observation is the consumer's
+    /// identity: resolve each trigger with
+    /// ``resolveSharedChatAutoTrigger(id:observation:resolution:)`` and start a
+    /// synthetic prompt only when it returns `acquired`; report consumer-side
+    /// activity with ``setSharedChatConsumerBusy(_:observation:)``. Detaching
+    /// releases exactly this consumer's busy state and claimed turn.
+    public func attachSharedChatObservation(
         rootSessionID: String
-    ) async -> AsyncStream<AgentSharedChatCoordinatorEvent> {
-        await sharedChatCoordinator().observe(roomID: rootSessionID)
+    ) async -> AgentSharedChatCoordinator.Observation {
+        await sharedChatCoordinator().observeSubscription(roomID: rootSessionID)
     }
 
-    /// Ends coordination for one room, terminating its event streams. Messages
-    /// that never reached a synthetic turn stay queued for the next consumer.
+    /// Detaches one observer without ending coordination for the room's other
+    /// consumers. Full room stop remains a session-teardown operation.
+    public func detachSharedChatObservation(
+        _ observation: AgentSharedChatCoordinator.Observation
+    ) async {
+        await sharedChatCoordinatorStorage?.detach(observation)
+    }
+
+    /// Ends coordination for one room during session teardown, terminating all
+    /// its event streams. Messages that never reached a synthetic turn stay
+    /// queued for a future session consumer.
     public func stopSharedChatObservation(rootSessionID: String) async {
         await sharedChatCoordinatorStorage?.stop(roomID: rootSessionID)
     }
 
-    /// Declares consumer-side activity (running or queued prompts) so the Core
-    /// never authorises a synthetic turn concurrently with consumer work.
+    /// Declares consumer-side activity (running or queued prompts) for one
+    /// observer, so the Core never authorises a synthetic turn concurrently
+    /// with that consumer's work. Another observer reporting itself idle can
+    /// never clear this declaration.
     public func setSharedChatConsumerBusy(
         _ isBusy: Bool,
-        rootSessionID: String
+        observation: AgentSharedChatCoordinator.Observation
     ) async {
-        await sharedChatCoordinator().setConsumerBusy(isBusy, roomID: rootSessionID)
+        await sharedChatCoordinator().setConsumerBusy(isBusy, observation: observation)
     }
 
-    /// Atomically tries to take a published auto-trigger. The same trigger can
-    /// reach multiple observers of a room; only one `started` resolution
-    /// returns ``AgentSharedChatAutoTriggerClaimResult/acquired``. Consumers
-    /// must treat `notAcquired` as stale and must not start a generation.
+    /// Atomically tries to take a published auto-trigger for one observer. The
+    /// same trigger can reach multiple observers of a room; only one `started`
+    /// resolution returns ``AgentSharedChatAutoTriggerClaimResult/acquired``,
+    /// and only its owner can later release it. Consumers must treat
+    /// `notAcquired` as stale and must not start a generation.
     @discardableResult
     public func resolveSharedChatAutoTrigger(
         id: UUID,
-        rootSessionID: String,
+        observation: AgentSharedChatCoordinator.Observation,
         resolution: AgentSharedChatAutoTriggerResolution
     ) async -> AgentSharedChatAutoTriggerClaimResult {
         await sharedChatCoordinatorStorage?.resolveAutoTrigger(
             id: id,
-            roomID: rootSessionID,
+            observation: observation,
             resolution: resolution
         ) ?? .notAcquired
+    }
+
+    /// Returns an unclaimed trigger of a retired room to the queue. A consumer
+    /// that already rebound to another session has no observation left there,
+    /// but must still release the batch it will never answer.
+    public func declineSharedChatAutoTrigger(
+        id: UUID,
+        rootSessionID: String
+    ) async {
+        await sharedChatCoordinatorStorage?.declineAutoTrigger(
+            id: id,
+            roomID: rootSessionID
+        )
     }
 
     /// Returns the descriptors currently active for one session. This lookup is
@@ -685,9 +716,14 @@ public actor AgentCoreSessionRunner {
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
         // The transient bus lives inside the backend tree: release an
         // unresolved synthetic batch so it is re-offered instead of lost, while
-        // keeping live observers attached across the rebuild.
-        await sharedChatCoordinatorStorage?.reset(roomID: sessionID)
+        // keeping live observers attached across the rebuild. The room stays
+        // fenced until the clear below has run, so no poll woken in between can
+        // drain the retiring bus into the rebuilt session.
+        let chatReset = await sharedChatCoordinatorStorage?.beginReset(roomID: sessionID)
         await backend?.clearSession(id: sessionID)
+        if let chatReset {
+            await sharedChatCoordinatorStorage?.endReset(chatReset)
+        }
     }
 
     /// Discards a logical session, including its persisted task graph.
@@ -728,8 +764,13 @@ public actor AgentCoreSessionRunner {
         lastKnownSessionSnapshots.removeAll()
         for sessionID in sessionIDs {
             _ = await interruptSubAgents(rootSessionID: sessionID)
-            await sharedChatCoordinatorStorage?.reset(roomID: sessionID)
+            // Same ordering as `rebuildSession`: the room is fenced across the
+            // backend clear, never merely before it.
+            let chatReset = await sharedChatCoordinatorStorage?.beginReset(roomID: sessionID)
             await backend?.clearSession(id: sessionID)
+            if let chatReset {
+                await sharedChatCoordinatorStorage?.endReset(chatReset)
+            }
             try await taskOrchestrator.discardSession(id: sessionID)
         }
     }

@@ -19,7 +19,7 @@ extension TerminalInteractiveLineReader {
     public func startPanelInput(
         statusBar: TerminalStatusBar,
         commandSuggestions: [TerminalCommandSuggestion] = [],
-        onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
+        onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
     ) async -> Bool {
         await startPanelInput(
             statusBar: statusBar,
@@ -32,7 +32,7 @@ extension TerminalInteractiveLineReader {
     func resumePanelInput(
         statusBar: TerminalStatusBar,
         commandSuggestions: [TerminalCommandSuggestion] = [],
-        onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
+        onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
     ) async -> Bool {
         await startPanelInput(
             statusBar: statusBar,
@@ -46,7 +46,7 @@ extension TerminalInteractiveLineReader {
         statusBar: TerminalStatusBar,
         commandSuggestions: [TerminalCommandSuggestion],
         preservingState: Bool,
-        onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
+        onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
     ) async -> Bool {
         // A start may only proceed from a settled panel. If a stop is still
         // unwinding, its `restoreRawMode()` has not run yet, so acquiring raw
@@ -362,7 +362,7 @@ extension TerminalInteractiveLineReader {
     /// remainder of a long read window.
     func runPanelInputLoop(
         statusBar _: TerminalStatusBar,
-        onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
+        onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
     ) async {
         let token = TerminalBlockingReadToken()
         withPanelLock { state in
@@ -394,7 +394,7 @@ extension TerminalInteractiveLineReader {
             case .timedOut:
                 continue
             case .endOfInput:
-                onEvent(.endOfInput)
+                await onEvent(.endOfInput)
                 return
             }
             await handlePanelKey(key, onEvent: onEvent)
@@ -438,7 +438,7 @@ extension TerminalInteractiveLineReader {
     /// the lock has been released.
     func handlePanelKey(
         _ key: Key,
-        onEvent: @escaping @Sendable (TerminalPromptInputEvent) -> Void
+        onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
     ) async {
         let effect = withPanelLock { state -> TerminalPromptEditorEffect in
             let effect = state.editor.apply(key, context: editorContextLocked(state: state))
@@ -454,18 +454,18 @@ extension TerminalInteractiveLineReader {
         case .changed:
             await renderPanel()
         case let .submitted(line):
-            onEvent(.submitted(line))
+            await onEvent(.submitted(line))
             await renderPanel()
         case .cancelRequested:
-            onEvent(.cancelRequested)
+            await onEvent(.cancelRequested)
             await renderPanel()
         case .endOfInput:
-            onEvent(.endOfInput)
+            await onEvent(.endOfInput)
         case .toggleToolDetails:
-            onEvent(.toggleToolDetailsRequested)
+            await onEvent(.toggleToolDetailsRequested)
             await renderPanel()
         case .toggleAccessMode:
-            onEvent(.toggleAccessModeRequested)
+            await onEvent(.toggleAccessModeRequested)
             await renderPanel()
         }
     }
