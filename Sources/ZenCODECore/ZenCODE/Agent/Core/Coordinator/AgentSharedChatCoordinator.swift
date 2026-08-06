@@ -111,13 +111,19 @@ public actor AgentSharedChatCoordinator {
     public struct Source: Sendable {
         public let drainCoordinatorMessages: @Sendable (String) async -> [AgentSharedChat.Message]
         public let participants: @Sendable (String) async -> [AgentSharedChat.Participant]
+        /// Read-only transcript access: returns every retained message in a
+        /// room without draining any mailbox. Used to display agent-to-agent
+        /// traffic that never enters the coordinator mailbox.
+        public let allRoomMessages: @Sendable (String) async -> [AgentSharedChat.Message]
 
         public init(
             drainCoordinatorMessages: @escaping @Sendable (String) async -> [AgentSharedChat.Message],
-            participants: @escaping @Sendable (String) async -> [AgentSharedChat.Participant]
+            participants: @escaping @Sendable (String) async -> [AgentSharedChat.Participant],
+            allRoomMessages: @escaping @Sendable (String) async -> [AgentSharedChat.Message]
         ) {
             self.drainCoordinatorMessages = drainCoordinatorMessages
             self.participants = participants
+            self.allRoomMessages = allRoomMessages
         }
     }
 
@@ -246,6 +252,11 @@ public actor AgentSharedChatCoordinator {
         var needsTriggerReoffer = false
         var triggerReofferCount = 0
         var droppedEventCount = 0
+        /// IDs of messages already emitted as `.messages` events to observers.
+        /// Prevents re-emitting the same transcript message on every poll while
+        /// the read-only `allRoomMessages` source keeps returning the full
+        /// bounded transcript. Bounded by the same limit as the transcript.
+        var emittedMessageIDs: Set<UUID> = []
 
         var turnsInFlight: Int { activeTurns.count }
 
@@ -791,6 +802,23 @@ public actor AgentSharedChatCoordinator {
             // an instance that never owned them.
             guard rooms[roomID]?.generation == generation else { return }
             ingest(participants: participants, messages: messages, roomID: roomID)
+            // Emit agent-to-agent messages that never enter the coordinator
+            // mailbox. The transcript source is read-only, so filter by
+            // `emittedMessageIDs` to avoid re-emitting on every poll.
+            let allMessages = await source.allRoomMessages(roomID)
+            guard rooms[roomID]?.generation == generation else { return }
+            if var room = rooms[roomID], !allMessages.isEmpty {
+                let newDisplayMessages = allMessages.filter {
+                    !room.emittedMessageIDs.contains($0.id)
+                }
+                if !newDisplayMessages.isEmpty {
+                    emit(.messages(newDisplayMessages), roomID: roomID)
+                }
+                // Rebuild from the live transcript so stale IDs from evicted
+                // messages are pruned automatically.
+                room.emittedMessageIDs = Set(allMessages.map(\.id))
+                rooms[roomID] = room
+            }
             if !messages.isEmpty {
                 // A mailbox drain is bounded per call; keep pulling until the
                 // mailbox is empty so a burst is never left behind.
@@ -866,6 +894,7 @@ public actor AgentSharedChatCoordinator {
             if room.pending.count > Self.maximumPendingMessages {
                 room.pending.removeFirst(room.pending.count - Self.maximumPendingMessages)
             }
+            room.emittedMessageIDs.formUnion(messages.map(\.id))
         }
         rooms[roomID] = room
 

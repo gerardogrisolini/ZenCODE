@@ -2348,7 +2348,11 @@ struct DirectSubAgentRuntimeTests {
             text: "Please compare findings"
         )
 
+        // The broadcast reaches the coordinator, every other active agent,
+        // and the terminal operator (the implicit owner). The operator has no
+        // mailbox, so only the coordinator and the other agent are drainable.
         #expect(Set(delivery.recipients.map(\.id)) == [
+            AgentSharedChat.operatorID(for: "root"),
             AgentSharedChat.coordinatorID(for: "root"), "beta-id"
         ])
         #expect(await chat.drain(
@@ -2377,11 +2381,19 @@ struct DirectSubAgentRuntimeTests {
         #expect(Set(delivery.recipients.map(\.id)) == [
             AgentSharedChat.coordinatorID(for: "root"), "worker-id",
         ])
-        // Operator input is a trusted sender snapshot, not a participant with a
-        // mailbox: bounded live-room capacity remains reserved for actual work.
+        // The operator is the implicit owner of the room: it appears in the
+        // roster, yet it is not a registered participant — it holds no mailbox
+        // and consumes no bounded slot, so capacity stays reserved for work.
         #expect(await chat.participants(roomID: "root").map(\.id) == [
+            AgentSharedChat.operatorID(for: "root"),
             AgentSharedChat.coordinatorID(for: "root"), "worker-id",
         ])
+        // The implicit owner has no mailbox: it consumes messages through the
+        // observation stream, so draining it yields nothing.
+        #expect(await chat.drain(
+            roomID: "root",
+            participantID: AgentSharedChat.operatorID(for: "root")
+        ).isEmpty)
         #expect(await chat.drain(
             roomID: "root",
             participantID: AgentSharedChat.coordinatorID(for: "root")
@@ -2444,9 +2456,11 @@ struct DirectSubAgentRuntimeTests {
         }
 
         // The reserved slot is still the coordinator's, with its own mailbox.
+        // The operator surfaces as the implicit owner of the room, but it is
+        // never a registered participant and holds no slot or mailbox.
         #expect(await chat.participants(roomID: "root").map(\.id)
-            == [AgentSharedChat.coordinatorID(for: "root")])
-        #expect(await chat.participants(roomID: "root").map(\.kind) == [.coordinator])
+            == [AgentSharedChat.operatorID(for: "root"), AgentSharedChat.coordinatorID(for: "root")])
+        #expect(await chat.participants(roomID: "root").map(\.kind) == [.operator, .coordinator])
     }
 
     /// A live identifier cannot change role: re-registering it with another
@@ -2477,7 +2491,7 @@ struct DirectSubAgentRuntimeTests {
             roomID: "root"
         )
         #expect(rejoined.kind == .agent)
-        #expect(await chat.participants(roomID: "root").count == 2)
+        #expect(await chat.participants(roomID: "root").count == 3)
     }
 
     /// Names are display values, not identities: they are neutralised at
@@ -2615,7 +2629,7 @@ struct DirectSubAgentRuntimeTests {
         #expect(transcript.first?.sender.id == firstID)
         #expect(
             await chat.participants(roomID: rootSessionID, includingInactive: true).map(\.id)
-                == [AgentSharedChat.coordinatorID(for: rootSessionID)]
+                == [AgentSharedChat.operatorID(for: rootSessionID), AgentSharedChat.coordinatorID(for: rootSessionID)]
         )
 
         _ = try await runtime.createAgents(
@@ -2627,12 +2641,12 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: rootSessionID
         )
-        #expect(await chat.participants(roomID: rootSessionID).count == 2)
+        #expect(await chat.participants(roomID: rootSessionID).count == 3)
 
         await runtime.shutdown()
         #expect(
             await chat.participants(roomID: rootSessionID, includingInactive: true).map(\.id)
-                == [AgentSharedChat.coordinatorID(for: rootSessionID)]
+                == [AgentSharedChat.operatorID(for: rootSessionID), AgentSharedChat.coordinatorID(for: rootSessionID)]
         )
         #expect(await chat.messages(roomID: rootSessionID).map(\.text) == ["keep this historical sender"])
     }
@@ -2669,7 +2683,7 @@ struct DirectSubAgentRuntimeTests {
             )
         }
         let residentIDs = Set(await runtime.snapshots().map(\.id))
-        #expect(await chat.participants(roomID: rootSessionID).count == AgentSharedChat.maximumParticipantsPerRoom)
+        #expect(await chat.participants(roomID: rootSessionID).count == AgentSharedChat.maximumParticipantsPerRoom + 1)
 
         // A taskless attempt reserves a lease before inserting its AgentRecord.
         // The registration error must clean all of it, even though this record
@@ -2689,7 +2703,7 @@ struct DirectSubAgentRuntimeTests {
         }
 
         #expect(Set(await runtime.snapshots().map(\.id)) == residentIDs)
-        #expect(await chat.participants(roomID: rootSessionID).count == AgentSharedChat.maximumParticipantsPerRoom)
+        #expect(await chat.participants(roomID: rootSessionID).count == AgentSharedChat.maximumParticipantsPerRoom + 1)
         #expect((await chat.participants(roomID: rootSessionID, includingInactive: true)).contains { $0.name == "overflow" } == false)
         #expect(await rejectedBackend.createdSessions().count == 1)
         #expect(await rejectedBackend.shutdownCount() == 1)

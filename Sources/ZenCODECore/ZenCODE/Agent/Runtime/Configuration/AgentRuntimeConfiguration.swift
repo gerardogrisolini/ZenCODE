@@ -622,6 +622,14 @@ public protocol AgentRuntimeBackend: Actor {
     func drainCoordinatorSharedChatMessages(
         rootSessionID: String
     ) async -> [AgentSharedChat.Message]
+    /// Read-only access to every retained message in a room transcript. Unlike
+    /// ``drainCoordinatorSharedChatMessages(rootSessionID:)``, this never
+    /// removes messages from a mailbox: it returns the full bounded transcript
+    /// so a rendering surface can display agent-to-agent messages that never
+    /// enter the coordinator mailbox.
+    func sharedChatTranscriptMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message]
 
     func sendPrompt(
         sessionID: String,
@@ -678,6 +686,12 @@ extension AgentRuntimeBackend {
     }
 
     public func drainCoordinatorSharedChatMessages(
+        rootSessionID _: String
+    ) async -> [AgentSharedChat.Message] {
+        []
+    }
+
+    public func sharedChatTranscriptMessages(
         rootSessionID _: String
     ) async -> [AgentSharedChat.Message] {
         []

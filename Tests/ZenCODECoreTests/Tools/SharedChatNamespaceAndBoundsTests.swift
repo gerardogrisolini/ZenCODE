@@ -91,7 +91,8 @@ struct SharedChatNamespaceAndBoundsTests {
         let coordinator = AgentSharedChatCoordinator(
             source: AgentSharedChatCoordinator.Source(
                 drainCoordinatorMessages: { _ in [] },
-                participants: { _ in [] }
+                participants: { _ in [] },
+                allRoomMessages: { _ in [] }
             ),
             pollInterval: .seconds(60)
         )

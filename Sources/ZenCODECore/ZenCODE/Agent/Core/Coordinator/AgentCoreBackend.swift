@@ -336,6 +336,15 @@ public actor AgentCoreBackend {
         )
     }
 
+    public func sharedChatTranscriptMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        guard let activeBackend else { return [] }
+        return await activeBackend.sharedChatTranscriptMessages(
+            rootSessionID: rootSessionID
+        )
+    }
+
     public func snapshotSession(id sessionID: String) async -> AgentRuntimeSessionSnapshot? {
         if let snapshot = await activeBackend?.snapshotSession(id: sessionID) {
             // Keep the seed in sync with provider-owned turns so replacing

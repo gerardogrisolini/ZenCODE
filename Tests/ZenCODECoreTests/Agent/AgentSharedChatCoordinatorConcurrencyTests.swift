@@ -774,7 +774,8 @@ struct AgentSharedChatCoordinatorConcurrencyTests {
         AgentSharedChatCoordinator(
             source: AgentSharedChatCoordinator.Source(
                 drainCoordinatorMessages: { _ in await source.drain() },
-                participants: { _ in await source.participants() }
+                participants: { _ in await source.participants() },
+                allRoomMessages: { _ in [] }
             ),
             // Long enough that the ticker never interferes: every test drives
             // `poll` explicitly.

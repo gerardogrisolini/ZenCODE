@@ -133,6 +133,12 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
         await toolExecutor.drainCoordinatorSharedChatMessages(rootSessionID: rootSessionID)
     }
 
+    public func sharedChatTranscriptMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        await toolExecutor.sharedChatTranscriptMessages(rootSessionID: rootSessionID)
+    }
+
     struct SessionLease: Sendable {
         let id: String
         let generation: UInt64

@@ -399,6 +399,13 @@ public actor AgentCoreSessionRunner {
         return await backend.drainCoordinatorSharedChatMessages(rootSessionID: rootSessionID)
     }
 
+    public func sharedChatTranscriptMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        guard let backend else { return [] }
+        return await backend.sharedChatTranscriptMessages(rootSessionID: rootSessionID)
+    }
+
     /// The Core auto-trigger. It owns mailbox monitoring, batching and the
     /// idle/busy decision; rendering surfaces are consumers, never owners.
     func sharedChatCoordinator() -> AgentSharedChatCoordinator {
@@ -412,6 +419,9 @@ public actor AgentCoreSessionRunner {
                 },
                 participants: { [weak self] roomID in
                     await self?.sharedChatParticipants(rootSessionID: roomID) ?? []
+                },
+                allRoomMessages: { [weak self] roomID in
+                    await self?.sharedChatTranscriptMessages(rootSessionID: roomID) ?? []
                 }
             )
         )

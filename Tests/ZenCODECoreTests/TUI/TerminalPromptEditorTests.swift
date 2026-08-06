@@ -541,9 +541,9 @@ struct TerminalPromptEditorTests {
 
         #expect(lines.first?.hasPrefix("╭─ Message · ") == true)
         #expect(lines.dropLast().allSatisfy {
-            TerminalANSIText.visibleWidth($0) == 36
+            TerminalANSIText.visibleWidth($0) == 40
         })
-        #expect(lines.dropLast().last == "╰──────────────────────────────────╯")
+        #expect(lines.dropLast().last == "╰──────────────────────────────────────╯")
         #expect(lines.contains { $0.hasPrefix("│   A long") })
         #expect(card.contains("␛"))
         #expect(card.contains("␡"))
@@ -591,24 +591,37 @@ struct TerminalPromptEditorTests {
             name: "operator",
             kind: .agent
         )
-        let humanRoute = TerminalChat.sharedChatIncomingCardRoute(for: human)
-        let agentRoute = TerminalChat.sharedChatIncomingCardRoute(for: agentNamedOperator)
+        let coordinatorRecipient = AgentSharedChat.coordinatorID(for: "room-1")
+        let humanMessage = AgentSharedChat.Message(
+            roomID: "room-1",
+            sender: human,
+            recipientIDs: [coordinatorRecipient],
+            text: "human message"
+        )
+        let agentMessage = AgentSharedChat.Message(
+            roomID: "room-1",
+            sender: agentNamedOperator,
+            recipientIDs: [coordinatorRecipient],
+            text: "agent message"
+        )
+        let humanRoute = TerminalChat.sharedChatIncomingCardRoute(for: humanMessage)
+        let agentRoute = TerminalChat.sharedChatIncomingCardRoute(for: agentMessage)
 
-        #expect(humanRoute == "Operator (human, id: operator:room-1) → Coordinator")
-        #expect(agentRoute == "Agent (id: agent-operator, name: operator) → Coordinator")
-        #expect(humanRoute != agentRoute)
+        // Routes use short display names only.
+        #expect(humanRoute == "operator → Coordinator")
+        #expect(agentRoute == "operator → Coordinator")
         #expect(TerminalChat.renderSharedChatCard(
             route: humanRoute,
             text: "human message",
             terminalColumns: 120,
             usesColor: false
-        ).contains("Operator (human, id: operator:room-1)"))
+        ).contains("operator → Coordinator"))
         #expect(TerminalChat.renderSharedChatCard(
             route: agentRoute,
             text: "agent message",
             terminalColumns: 120,
             usesColor: false
-        ).contains("Agent (id: agent-operator, name: operator)"))
+        ).contains("operator → Coordinator"))
 
         let operatorMessage = AgentSharedChat.Message(
             roomID: "room-1",

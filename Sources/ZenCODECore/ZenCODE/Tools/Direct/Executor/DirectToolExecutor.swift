@@ -291,6 +291,12 @@ public actor DirectToolExecutor {
         await subAgentRuntime.drainCoordinatorSharedChatMessages(rootSessionID: rootSessionID)
     }
 
+    public func sharedChatTranscriptMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        await subAgentRuntime.sharedChatTranscriptMessages(rootSessionID: rootSessionID)
+    }
+
     public func descriptors(
         allowedToolNames: Set<String>? = nil,
         preferredWorkspaceRootURL: URL? = nil,

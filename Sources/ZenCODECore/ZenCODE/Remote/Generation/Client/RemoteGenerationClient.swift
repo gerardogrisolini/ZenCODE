@@ -121,6 +121,12 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         await toolExecutor.drainCoordinatorSharedChatMessages(rootSessionID: rootSessionID)
     }
 
+    public func sharedChatTranscriptMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        await toolExecutor.sharedChatTranscriptMessages(rootSessionID: rootSessionID)
+    }
+
     public func createSession(
         id: String,
         cwd: String,

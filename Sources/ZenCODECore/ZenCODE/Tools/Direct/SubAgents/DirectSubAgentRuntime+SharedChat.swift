@@ -131,6 +131,18 @@ extension DirectSubAgentRuntime {
         )
     }
 
+    /// Read-only access to the full bounded room transcript. Unlike
+    /// ``drainCoordinatorSharedChatMessages(rootSessionID:)`` this never removes
+    /// messages from any mailbox: it returns every retained message so the
+    /// coordinator can display agent-to-agent traffic that never enters its own
+    /// mailbox.
+    public func sharedChatTranscriptMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        let roomID = sharedChatRootSessionID ?? rootSessionID.nilIfBlank ?? "default"
+        return await sharedChat.messages(roomID: roomID)
+    }
+
     func registerSharedChatAgent(_ agent: AgentRecord) async throws {
         let runtime = self
         _ = try await sharedChat.registerAgent(

@@ -181,12 +181,19 @@ extension TerminalChat {
                 destination: route.destination,
                 rootSessionID: sessionID
             )
-            let targets = delivery.recipients
-                .map(AgentSharedChat.transcriptIdentity(for:))
-                .joined(separator: ", ")
+            // Match the incoming-card route style (short display names) so the
+            // operator's own sent card reads identically to the cards rendered
+            // for messages received from agents, instead of leaking the long
+            // prompt-only transcript identities into the terminal card title.
+            let participantMap = Dictionary(
+                uniqueKeysWithValues: delivery.recipients.map { ($0.id, $0) }
+            )
             await writePreformattedMessage(
                 Self.renderSharedChatCard(
-                    route: "\(AgentSharedChat.transcriptIdentity(for: delivery.message.sender)) → \(targets)",
+                    route: Self.sharedChatIncomingCardRoute(
+                        for: delivery.message,
+                        participantMap: participantMap
+                    ),
                     text: delivery.message.text
                 )
             )
@@ -244,17 +251,39 @@ extension TerminalChat {
         messages.filter { renderedMessageIDs.insert($0.id) }
     }
 
+    /// Builds the route label for a chat card from the message's sender and
+    /// resolved recipients. Uses short display names only.
     nonisolated static func sharedChatIncomingCardRoute(
-        for sender: AgentSharedChat.Participant
+        for message: AgentSharedChat.Message,
+        participantMap: [String: AgentSharedChat.Participant] = [:]
     ) -> String {
-        "\(AgentSharedChat.transcriptIdentity(for: sender)) → Coordinator"
+        let senderName = AgentSharedChat.displayName(for: message.sender)
+        let coordinatorID = AgentSharedChat.coordinatorID(for: message.roomID)
+        if message.recipientIDs.contains(coordinatorID) {
+            return "\(senderName) → Coordinator"
+        }
+        if message.recipientIDs.count > 1 {
+            return "\(senderName) → All"
+        }
+        if let recipientID = message.recipientIDs.first,
+           let recipient = participantMap[recipientID] {
+            return "\(senderName) → \(AgentSharedChat.displayName(for: recipient))"
+        }
+        return "\(senderName) → Agent"
     }
 
     func renderSharedChatMessages(_ messages: [AgentSharedChat.Message]) async {
+        let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sessionID)
+        let participantMap = Dictionary(
+            uniqueKeysWithValues: participants.map { ($0.id, $0) }
+        )
         for message in messages {
             await writePreformattedMessage(
                 Self.renderSharedChatCard(
-                    route: Self.sharedChatIncomingCardRoute(for: message.sender),
+                    route: Self.sharedChatIncomingCardRoute(
+                        for: message,
+                        participantMap: participantMap
+                    ),
                     text: message.text
                 )
             )
@@ -287,11 +316,11 @@ extension TerminalChat {
             )
         }
 
-        // Keep the historical four-column right margin when available, while
-        // never imposing a minimum larger than the terminal itself.
-        let outerWidth = min(88, max(12, availableWidth - 4))
+        // Box width equals the full terminal width, matching the prompt bar.
+        let outerWidth = max(12, availableWidth)
         let contentWidth = outerWidth - 4
-        let title = fitDisplayWidth("Message · \(safeRoute)", width: outerWidth - 5)
+        let titlePrefix = "Message · \(safeRoute)"
+        let title = fitDisplayWidth(titlePrefix, width: outerWidth - 5)
         // ╭─ + space + title + space + rule + ╮ must equal `outerWidth`.
         let topRuleWidth = max(0, outerWidth - displayWidth(title) - 5)
         let topRule = String(repeating: "─", count: topRuleWidth)

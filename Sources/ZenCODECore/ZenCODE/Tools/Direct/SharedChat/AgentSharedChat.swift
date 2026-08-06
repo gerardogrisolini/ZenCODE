@@ -116,9 +116,9 @@ public actor AgentSharedChat {
         case coordinator
         /// Every other active delegated agent, never the sender.
         case peers
-        /// The coordinator and every active delegated agent except the sender.
-        /// A trusted operator is not a participant, so its broadcast reaches
-        /// every active recipient including the coordinator.
+        /// The coordinator, every active delegated agent, and the terminal
+        /// operator (the implicit room owner), except the sender. The operator
+        /// consumes messages through the TUI observation stream, not a mailbox.
         case all
     }
 
@@ -256,13 +256,17 @@ public actor AgentSharedChat {
         roomID rawRoomID: String,
         includingInactive: Bool = false
     ) -> [Participant] {
-        guard let room = rooms[normalizedRoomID(rawRoomID)] else {
+        let roomID = normalizedRoomID(rawRoomID)
+        guard let room = rooms[roomID] else {
             return []
         }
-        return room.participants.values
+        var members = room.participants.values
             .map(\.participant)
             .filter { includingInactive || $0.isActive }
-            .sorted(by: Self.participantSortOrder)
+        // The terminal operator is the implicit owner of every room: it always
+        // appears in the roster even though it is never a registered participant.
+        members.append(Self.implicitOperator(roomID: roomID))
+        return members.sorted(by: Self.participantSortOrder)
     }
 
     public func messages(roomID rawRoomID: String) -> [Message] {
@@ -311,10 +315,12 @@ public actor AgentSharedChat {
         )
     }
 
-    /// Delivers a message entered by the trusted terminal operator. The
-    /// operator deliberately is not registered as a participant: it has no
-    /// mailbox, cannot be addressed by agents, and does not consume one of the
-    /// bounded room slots reserved for the coordinator and live agent instances.
+    /// Delivers a message entered by the trusted terminal operator. The operator
+    /// is the implicit owner of every room: it can be addressed and receives
+    /// broadcasts, but is never registered as a participant, so it holds no
+    /// mailbox, cannot be forged as a sender through `send`, and does not
+    /// consume one of the bounded room slots reserved for the coordinator and
+    /// live agent instances.
     @discardableResult
     func sendFromOperator(
         roomID rawRoomID: String,
@@ -341,11 +347,28 @@ public actor AgentSharedChat {
         "\(reservedCoordinatorPrefix)\(boundedRoomIdentifier(roomID))"
     }
 
-    /// Stable transcript identity for the terminal operator. This is never
-    /// registered in a room and therefore cannot be impersonated through an
-    /// `agent.message` destination or become an accidental recipient.
+    /// Stable transcript identity for the terminal operator. It is never
+    /// registered in a room, so it cannot be impersonated through `send`; it is
+    /// instead surfaced as an implicit owner member for routing and display.
     static func operatorID(for roomID: String) -> String {
         "\(reservedOperatorPrefix)\(boundedRoomIdentifier(roomID))"
+    }
+
+    /// The terminal operator as an implicit, always-present room member.
+    ///
+    /// The operator is the session owner: broadcasts reach it even when it is
+    /// the only other party, and it can be addressed directly. It is
+    /// deliberately never registered in `room.participants`, so it holds no
+    /// mailbox, does not consume one of the bounded room slots, and cannot be
+    /// forged as a sender through `send` (only ``sendFromOperator(roomID:destination:text:)``
+    /// may originate operator traffic). The human operator consumes messages
+    /// through the TUI observation stream rather than a mailbox drain.
+    static func implicitOperator(roomID: String) -> Participant {
+        Participant(
+            id: operatorID(for: roomID),
+            name: "operator",
+            kind: .operator
+        )
     }
 
     /// Namespaces owned by this actor. Only ``registerCoordinator(roomID:name:onMessageAvailable:)``
@@ -920,11 +943,13 @@ public actor AgentSharedChat {
             throw Error.unavailable
         }
 
-        let recipientIDs = try resolvedRecipientIDs(
+        let resolved = try resolvedRecipients(
             destination: destination,
             senderID: sender.id,
+            roomID: roomID,
             room: room
         )
+        let recipientIDs = resolved.map(\.id)
         let message = Message(
             roomID: roomID,
             sender: sender,
@@ -955,8 +980,7 @@ public actor AgentSharedChat {
         for callback in callbacks {
             callback()
         }
-        let recipients = recipientIDs.compactMap { room.participants[$0]?.participant }
-        return Delivery(message: message, recipients: recipients)
+        return Delivery(message: message, recipients: resolved)
     }
 
     /// Registers a fully formed participant.
@@ -998,14 +1022,20 @@ public actor AgentSharedChat {
         return participant
     }
 
-    private func resolvedRecipientIDs(
+    private func resolvedRecipients(
         destination: Destination,
         senderID: String,
+        roomID: String,
         room: Room
-    ) throws -> [String] {
-        let active = room.participants.values
+    ) throws -> [Participant] {
+        var active = room.participants.values
             .map(\.participant)
             .filter(\.isActive)
+        // The terminal operator is an implicit, always-present member:
+        // broadcasts reach it even when it is the only other party, and it can
+        // be addressed directly. It holds no mailbox and is never registered,
+        // so it remains unforgeable as a sender and consumes no room slot.
+        active.append(Self.implicitOperator(roomID: roomID))
         let recipients: [Participant]
         switch destination {
         case let .direct(identifiers):
@@ -1035,7 +1065,7 @@ public actor AgentSharedChat {
             }
             throw Error.noRecipients
         }
-        return recipients.map(\.id).sorted()
+        return recipients.sorted { $0.id < $1.id }
     }
 
     private func resolveParticipant(
@@ -1070,8 +1100,15 @@ public actor AgentSharedChat {
     }
 
     private static func participantSortOrder(_ lhs: Participant, _ rhs: Participant) -> Bool {
+        func rank(_ kind: ParticipantKind) -> Int {
+            switch kind {
+            case .operator: 0
+            case .coordinator: 1
+            case .agent: 2
+            }
+        }
         if lhs.kind != rhs.kind {
-            return lhs.kind == .coordinator
+            return rank(lhs.kind) < rank(rhs.kind)
         }
         let order = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
         return order == .orderedAscending || (order == .orderedSame && lhs.id < rhs.id)
