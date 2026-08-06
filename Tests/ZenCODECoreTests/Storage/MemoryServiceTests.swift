@@ -331,25 +331,26 @@ struct MemoryServiceTests {
     @Test
     func developerPromptFollowsActiveMemoryToolState() {
         let developer = AgentProfileStore.defaultProfiles()[0]
-        let withoutMemory = AgentCoreAppSessionFactory.resolvedSystemPrompt(
+        let withoutMemory = AgentCoreAppSessionFactory.resolvedPromptSections(
             providedSystemPrompt: nil,
             cwd: "/tmp/project",
             selectedAgent: developer,
             allowedToolNames: []
         )
-        let withMemory = AgentCoreAppSessionFactory.resolvedSystemPrompt(
+        let withMemory = AgentCoreAppSessionFactory.resolvedPromptSections(
             providedSystemPrompt: nil,
             cwd: "/tmp/project",
             selectedAgent: developer,
             allowedToolNames: ["memory.read", "memory.write"]
         )
 
-        #expect(!withoutMemory.contains("Memory tools:"))
-        #expect(!withoutMemory.contains("`memory.write`"))
-        #expect(!withoutMemory.contains("memory, feature, and delegated sub-agent tools"))
-        #expect(withMemory.contains("Memory tools:"))
-        #expect(withMemory.contains("`memory.write`"))
-        #expect(withMemory.contains("memory, feature, and delegated sub-agent tools"))
+        #expect(withoutMemory.systemPrompt == withMemory.systemPrompt)
+        #expect(!withoutMemory.systemPrompt.contains("Memory tools:"))
+        #expect(!withMemory.systemPrompt.contains("Memory tools:"))
+        #expect(!withoutMemory.dynamicContext.contains("Memory tools:"))
+        #expect(!withoutMemory.dynamicContext.contains("`memory.write`"))
+        #expect(withMemory.dynamicContext.contains("Memory tools:"))
+        #expect(withMemory.dynamicContext.contains("`memory.write`"))
     }
 
     @Test

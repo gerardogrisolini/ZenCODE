@@ -73,6 +73,65 @@ struct TerminalChatEventQueueTests {
     }
 
     @Test
+    func sharedChatEventsQueuedBeforeSessionSwapRemainBoundToTheirOriginalRoom() async {
+        let retiredRoomID = "terminal-before-resume"
+        let resumedRoomID = "terminal-after-resume"
+        let staleTrigger = AgentSharedChatAutoTrigger(
+            roomID: retiredRoomID,
+            messages: [],
+            prompt: "stale shared-chat prompt"
+        )
+        let queue = TerminalChatEventQueue()
+        // These events model a producer that yielded just before `/new` or
+        // `/resume` re-bound the observer. FIFO ordering preserves them, so the
+        // consumer must use their room rather than the latest session id.
+        queue.send(.sharedChatMessages(roomID: retiredRoomID, messages: []))
+        queue.send(.sharedChatParticipantsChanged(roomID: retiredRoomID))
+        queue.send(.sharedChatAutoTrigger(staleTrigger))
+        queue.send(.sharedChatMessages(roomID: resumedRoomID, messages: []))
+
+        var iterator = queue.events.makeAsyncIterator()
+        var queuedEvents: [TerminalChatRuntimeEvent] = []
+        for _ in 0..<4 {
+            if let event = await iterator.next() {
+                queuedEvents.append(event)
+            }
+        }
+
+        guard queuedEvents.count == 4 else {
+            Issue.record("Expected all room-bound shared-chat events from the FIFO")
+            return
+        }
+        #expect(queuedEvents.map(\.sharedChatRoomID) == [
+            retiredRoomID,
+            retiredRoomID,
+            retiredRoomID,
+            resumedRoomID
+        ])
+        #expect(queuedEvents.filter {
+            $0.sharedChatRoomID == resumedRoomID
+        }.count == 1)
+        // This is the same predicate used by the terminal loop after a
+        // `/resume`: the old observer/event is stale even before the rebind
+        // task is processed, while the event from the resumed room is valid.
+        #expect(!queuedEvents[0].belongsToActiveSharedChatRoom(
+            observedRoomID: retiredRoomID,
+            sessionID: resumedRoomID
+        ))
+        #expect(queuedEvents[3].belongsToActiveSharedChatRoom(
+            observedRoomID: resumedRoomID,
+            sessionID: resumedRoomID
+        ))
+
+        guard case let .sharedChatAutoTrigger(queuedTrigger) = queuedEvents[2] else {
+            Issue.record("Expected the stale trigger to remain identifiable in the queue")
+            return
+        }
+        #expect(queuedTrigger.roomID == retiredRoomID)
+        #expect(queuedEvents[2].sharedChatRoomID != resumedRoomID)
+    }
+
+    @Test
     func finishTerminatesTheStreamAndDropsLaterEvents() async {
         let queue = TerminalChatEventQueue()
         queue.send(.input(.submitted("before teardown")))

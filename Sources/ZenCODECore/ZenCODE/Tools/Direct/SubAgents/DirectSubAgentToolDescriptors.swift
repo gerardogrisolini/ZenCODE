@@ -81,8 +81,8 @@ extension DirectSubAgentRuntime {
 
     private static let messageDescriptor = DirectToolDescriptor(
             name: "agent.message",
-            description: "Queues a follow-up prompt for one or more delegated sub-agents. Reference an agent by id, name, task_id, or ids. Do not use it to reopen a completed /workflow task: record negative validation as failure, call tasks.retry, then use a new agent.create(taskID:).",
-            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"task_id":{"type":"string"},"ids":{"type":"array","items":{"type":"string"}},"message":{"type":"string"},"prompt":{"type":"string"},"input":{"type":"string"}},"required":["message"]}"#,
+            description: "Sends a live shared-chat message. Use id/name/ids for direct delivery, or set `to` to coordinator, peers, or all. `all` broadcasts to the coordinator and every active agent. `target` remains a compatibility alias. Direct messages wake idle recipients immediately. Do not use it to reopen a completed /workflow task: record negative validation as failure, call tasks.retry, then use a new agent.create(taskID:).",
+            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"task_id":{"type":"string"},"ids":{"type":"array","items":{"type":"string"}},"to":{"type":"string","enum":["direct","coordinator","peers","all"]},"target":{"type":"string","enum":["direct","coordinator","peers","all"],"description":"Compatibility alias for to."},"message":{"type":"string"},"prompt":{"type":"string"},"input":{"type":"string"}},"required":["message"]}"#,
             presentation: ToolPresentationDefinition(
                 title: "Agent",
                 action: "Message",

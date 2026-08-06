@@ -111,6 +111,7 @@ extension DirectSubAgentRuntime {
                     receipt.agentID.map { ($0, receipt) }
                 }
             )
+            _ = try await sharedChat.registerCoordinator(roomID: rootSessionID)
             for item in prepared {
                 let payload = item.payload
                 let id = item.id
@@ -119,7 +120,20 @@ extension DirectSubAgentRuntime {
                     for: payload,
                     profile: item.profile
                 )
+                .injecting(
+                    sharedChat: sharedChat,
+                    sharedChatSenderID: id,
+                    sharedChatRoomID: rootSessionID
+                )
                 let backend = try backendFactory(backendContext)
+                let runtime = self
+                await backend.updateBorrowedSubAgentToolExecutor { toolCall in
+                    try await runtime.executeBorrowedSubAgentTool(
+                        senderID: id,
+                        rootSessionID: rootSessionID,
+                        toolCall: toolCall
+                    )
+                }
                 createdBackends.append((id, backend))
                 if let taskOrchestrator {
                     await backend.installTaskOrchestrator(taskOrchestrator)
@@ -172,6 +186,12 @@ extension DirectSubAgentRuntime {
                 childAllowedToolNames = item.profile.resolvedAllowedToolNames(
                     childAllowedToolNames
                 )
+                // Live collaboration is intrinsic for every delegated agent.
+                // list/get are read-only views of the parent's agent graph;
+                // message mutates only the transient in-memory mailbox.
+                childAllowedToolNames.formUnion([
+                    "agent.list", "agent.get", "agent.message"
+                ])
                 await backend.createSession(
                     id: sessionID,
                     cwd: workingDirectory.path,
@@ -222,7 +242,12 @@ extension DirectSubAgentRuntime {
                     modelID: backendContext.modelID,
                     runTask: nil
                 )
+                // From this point every following operation can throw. Record
+                // the id first so the batch rollback also removes this record,
+                // its backend/session scope and its reservation if shared-chat
+                // registration rejects it at the participant limit.
                 createdIDs.append(id)
+                try await registerSharedChatAgent(agents[id]!)
 
                 if let prompt = payload.prompt {
                     try queuePrompt(prompt, for: id)
@@ -230,6 +255,12 @@ extension DirectSubAgentRuntime {
             }
         } catch {
             for id in createdIDs {
+                if let agent = agents[id] {
+                    await sharedChat.unregisterParticipant(
+                        id: id,
+                        roomID: agent.rootSessionID
+                    )
+                }
                 agents.removeValue(forKey: id)
             }
             for (id, backend) in createdBackends {
@@ -239,6 +270,7 @@ extension DirectSubAgentRuntime {
                         executionSessionID: sessionID
                     )
                 }
+                await backend.updateBorrowedSubAgentToolExecutor(nil)
                 await backend.shutdown()
             }
             if let taskOrchestrator {
@@ -603,6 +635,8 @@ extension DirectSubAgentRuntime {
                 )
             }
             runTask?.cancel()
+            await sharedChat.unregisterParticipant(id: agent.id, roomID: agent.rootSessionID)
+            await agent.backend.updateBorrowedSubAgentToolExecutor(nil)
             await agent.backend.shutdown()
             await releaseTasklessDelegationReservation(releasedReservation)
         }
@@ -628,22 +662,36 @@ extension DirectSubAgentRuntime {
         let releasedReservation = takeTasklessDelegationReservation(from: &agent)
         agents[id] = agent
 
+        var taskCancellationError: (any Error)?
         if let taskID = agent.taskID,
            let attemptID = agent.taskAttemptID,
            let taskOrchestrator {
-            _ = try await taskOrchestrator.cancelAttempt(
-                sessionID: agent.rootSessionID,
-                taskID: taskID,
-                attemptID: attemptID,
-                reason: "Delegated sub-agent closed."
-            )
+            do {
+                _ = try await taskOrchestrator.cancelAttempt(
+                    sessionID: agent.rootSessionID,
+                    taskID: taskID,
+                    attemptID: attemptID,
+                    reason: "Delegated sub-agent closed."
+                )
+            } catch {
+                taskCancellationError = error
+                agent.latestError = "Closed delegated sub-agent, but unable to cancel task attempt: \(error.localizedDescription)"
+                agent.updatedAt = .now
+                agents[id] = agent
+            }
             await taskOrchestrator.unregisterExecutionScope(
                 executionSessionID: agent.sessionID
             )
         }
         task?.cancel()
+        await sharedChat.unregisterParticipant(id: agent.id, roomID: agent.rootSessionID)
+        await agent.backend.updateBorrowedSubAgentToolExecutor(nil)
         await agent.backend.shutdown()
         await releaseTasklessDelegationReservation(releasedReservation)
+
+        if let taskCancellationError {
+            throw taskCancellationError
+        }
 
         return "Closed delegated sub-agent.\n"
             + Self.renderSnapshots([snapshot(from: agent)], includeLatestOutput: true)

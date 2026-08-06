@@ -41,7 +41,10 @@ public enum AgentRemoteBackendFactory {
         resolvedModelSelection: AgentModelSelection?,
         urlSession: URLSession? = nil,
         chatGPTConnectionScopeID: String? = nil,
-        swiftFeatureRuntime: SwiftFeatureRuntime? = nil
+        swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
+        sharedChat: AgentSharedChat? = nil,
+        sharedChatSenderID: String? = nil,
+        sharedChatRootSessionID: String? = nil
     ) throws -> any AgentRuntimeBackend {
         let selection = resolvedModelSelection ?? AgentSettingsStore.defaultSelection(
             explicitModelID: configuration.modelID
@@ -94,6 +97,9 @@ public enum AgentRemoteBackendFactory {
                 mcpRuntime: mcpRuntime,
                 connectionScopeID: chatGPTConnectionScopeID,
                 swiftFeatureRuntime: swiftFeatureRuntime,
+                sharedChat: sharedChat,
+                sharedChatSenderID: sharedChatSenderID,
+                sharedChatRootSessionID: sharedChatRootSessionID,
                 subAgentContextualBackendFactory: remoteSubAgentContextualBackendFactory(
                     configuration: resolvedConfiguration,
                     mcpRuntime: mcpRuntime,
@@ -116,6 +122,9 @@ public enum AgentRemoteBackendFactory {
                 urlSession: urlSession,
                 mcpRuntime: mcpRuntime,
                 swiftFeatureRuntime: swiftFeatureRuntime,
+                sharedChat: sharedChat,
+                sharedChatSenderID: sharedChatSenderID,
+                sharedChatRootSessionID: sharedChatRootSessionID,
                 subAgentContextualBackendFactory: remoteSubAgentContextualBackendFactory(
                     configuration: resolvedConfiguration,
                     mcpRuntime: mcpRuntime,
@@ -133,6 +142,9 @@ public enum AgentRemoteBackendFactory {
             urlSession: urlSession,
             mcpRuntime: mcpRuntime,
             swiftFeatureRuntime: swiftFeatureRuntime,
+            sharedChat: sharedChat,
+            sharedChatSenderID: sharedChatSenderID,
+            sharedChatRootSessionID: sharedChatRootSessionID,
             subAgentContextualBackendFactory: remoteSubAgentContextualBackendFactory(
                 configuration: resolvedConfiguration,
                 mcpRuntime: mcpRuntime,
@@ -184,7 +196,10 @@ public enum AgentRemoteBackendFactory {
                 resolvedModelSelection: modelSelection,
                 urlSession: urlSession,
                 chatGPTConnectionScopeID: UUID().uuidString,
-                swiftFeatureRuntime: context.swiftFeatureRuntime ?? swiftFeatureRuntime
+                swiftFeatureRuntime: context.swiftFeatureRuntime ?? swiftFeatureRuntime,
+                sharedChat: context.sharedChat,
+                sharedChatSenderID: context.sharedChatSenderID,
+                sharedChatRootSessionID: context.sharedChatRoomID
             )
         }
     }

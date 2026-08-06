@@ -41,7 +41,7 @@ extension TerminalChat {
             // Add another before restoring the panel so its first rendered row
             // cannot overlap or clip the authorization card's bottom border.
             AgentOutput.standardError.writeString("\n")
-            let suggestions = self?.commandSuggestionsForCurrentAgent() ?? []
+            let suggestions = await self?.panelSuggestionsForCurrentAgent() ?? []
             _ = await interactiveReader.resumePanelInput(
                 statusBar: statusBar,
                 commandSuggestions: suggestions,
@@ -178,6 +178,35 @@ extension TerminalChat {
         var generationTask: Task<Void, Never>?
         let remoteTranscriptions = TerminalVoiceTranscriptionRegistry()
         let telegramForwardingTask = startTelegramForwardingTask(eventQueue: eventQueue)
+        // Mailbox monitoring, drain batching and the idle/busy decision belong
+        // to the Core coordinator. This task only forwards its live events into
+        // the terminal queue: the TUI renders and answers, but never owns the
+        // auto-trigger semantics, so non-TUI consumers behave identically.
+        func startSharedChatObservation(roomID: String) async -> Task<Void, Never> {
+            let events = await sessionRunner.observeSharedChat(rootSessionID: roomID)
+            return Task(name: "ZenCODE.TUI.shared-chat-events") {
+                for await event in events {
+                    switch event {
+                    case let .messages(messages):
+                        eventQueue.send(
+                            .sharedChatMessages(roomID: roomID, messages: messages)
+                        )
+                    case .participantsChanged:
+                        eventQueue.send(.sharedChatParticipantsChanged(roomID: roomID))
+                    case let .autoTrigger(trigger):
+                        eventQueue.send(.sharedChatAutoTrigger(trigger))
+                    }
+                }
+            }
+        }
+
+        // The room follows the live session id: `/new` and `/resume` swap it and
+        // delegated agents then register in the new room, so the observation is
+        // rebound instead of silently watching a retired one.
+        var sharedChatRoomID = sessionID
+        var sharedChatObservationTask = await startSharedChatObservation(
+            roomID: sharedChatRoomID
+        )
         var isGenerating = false
         var isQueuedPromptStartScheduled = false
 
@@ -191,11 +220,41 @@ extension TerminalChat {
             eventQueue.send(.startNextQueuedPrompt)
         }
 
+        /// Mirrors terminal activity into the Core auto-trigger. A queued prompt
+        /// keeps the room busy, so a shared-chat message waits for a free turn
+        /// instead of racing the operator's own work.
+        func synchronizeSharedChatConsumerBusyState() async {
+            await sessionRunner.setSharedChatConsumerBusy(
+                isGenerating || !queuedPrompts.isEmpty,
+                rootSessionID: sharedChatRoomID
+            )
+        }
+
+        /// Follows a session swap (`/new`, `/resume`) without losing live
+        /// coordination: the retired room is released back to the Core and the
+        /// new one is observed from its first message.
+        func rebindSharedChatObservationIfNeeded() async {
+            guard sharedChatRoomID != sessionID else { return }
+            let retiredRoomID = sharedChatRoomID
+            sharedChatObservationTask.cancel()
+            await sessionRunner.stopSharedChatObservation(rootSessionID: retiredRoomID)
+            sharedChatRoomID = sessionID
+            sharedChatObservationTask = await startSharedChatObservation(
+                roomID: sharedChatRoomID
+            )
+            await synchronizeSharedChatConsumerBusyState()
+        }
+
+        func refreshQueuedPromptCount() async {
+            await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+            await synchronizeSharedChatConsumerBusyState()
+        }
+
         @discardableResult
         func startPanelInput() async -> Bool {
             let didStart = await interactiveReader.startPanelInput(
                 statusBar: statusBar,
-                commandSuggestions: commandSuggestionsForCurrentAgent()
+                commandSuggestions: await panelSuggestionsForCurrentAgent()
             ) { event in
                 eventQueue.send(.input(event))
             }
@@ -216,6 +275,10 @@ extension TerminalChat {
             isGenerating = true
             didReceiveMetricsForCurrentPrompt = false
             didRefreshGitStatusDuringCurrentPrompt = false
+            // Declare the busy state before the first suspension so the Core
+            // cannot authorise a synthetic turn in the window between this
+            // decision and the prompt reaching `sendPrompt`.
+            await synchronizeSharedChatConsumerBusyState()
             // `promptAttempt` has already consumed local staged attachments.
             // Update the panel before the response starts, not only once it
             // completes, so its badge never advertises stale attachments.
@@ -273,8 +336,17 @@ extension TerminalChat {
             // event racing the teardown is dropped instead of buffered forever.
             generationTask?.cancel()
             telegramForwardingTask.cancel()
+            sharedChatObservationTask.cancel()
             remoteTranscriptions.cancelAll()
             eventQueue.finish()
+            // Hand shared-chat ownership back to the Core: an unanswered batch
+            // stays queued there instead of dying with this loop.
+            let observedRoomID = sharedChatRoomID
+            Task(name: "ZenCODE.TUI.shared-chat-stop") { [sessionRunner] in
+                await sessionRunner.stopSharedChatObservation(
+                    rootSessionID: observedRoomID
+                )
+            }
         }
 
         func handleSubmittedPanelLine(
@@ -340,13 +412,34 @@ extension TerminalChat {
         }
 
         eventLoop: for await event in eventQueue.events {
+            // A slash command may have swapped the session between two events.
+            await rebindSharedChatObservationIfNeeded()
+            // Cancelling an AsyncStream observation cannot remove work it
+            // already put in this FIFO. Treat every room-bound event from the
+            // retired room as stale. A stale trigger is explicitly declined in
+            // *its own* room, which requeues its batch without interacting with
+            // the replacement session; stale render/roster events are ignored.
+            if event.sharedChatRoomID != nil,
+               !event.belongsToActiveSharedChatRoom(
+                   observedRoomID: sharedChatRoomID,
+                   sessionID: sessionID
+               ) {
+                if case let .sharedChatAutoTrigger(trigger) = event {
+                    await sessionRunner.resolveSharedChatAutoTrigger(
+                        id: trigger.id,
+                        rootSessionID: trigger.roomID,
+                        resolution: .declined
+                    )
+                }
+                continue
+            }
             switch event {
             case let .input(inputEvent):
                 switch inputEvent {
                 case let .submitted(line):
                     if !isGenerating, !queuedPrompts.isEmpty {
                         queuedPrompts.append(TerminalQueuedPrompt(text: line, origin: .local))
-                        await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                        await refreshQueuedPromptCount()
                         scheduleQueuedPromptIfNeeded()
                         continue
                     }
@@ -355,7 +448,7 @@ extension TerminalChat {
                         switch Self.submittedLineRole(for: line) {
                         case .empty, .prompt:
                             queuedPrompts.append(TerminalQueuedPrompt(text: line, origin: .local))
-                            await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                            await refreshQueuedPromptCount()
                             continue
                         case .slashCommand:
                             if Self.isAvailableDuringGeneration(for: line) {
@@ -392,7 +485,12 @@ extension TerminalChat {
                 // not keep advertising attachments that already left.
                 await synchronizePanelPendingAttachmentCount()
                 await finishPromptResult(result)
+                await refreshSharedChatPanelSuggestions()
                 await refreshStatusBarGitStatusSummaryAfterPromptIfNeeded()
+                // Release the room only once the queue state is final, so the
+                // Core re-offers a pending batch exactly when the terminal is
+                // genuinely idle.
+                await synchronizeSharedChatConsumerBusyState()
                 scheduleQueuedPromptIfNeeded()
             case .startNextQueuedPrompt:
                 isQueuedPromptStartScheduled = false
@@ -400,7 +498,7 @@ extension TerminalChat {
                     continue
                 }
                 let nextPrompt = queuedPrompts.removeFirst()
-                await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                await refreshQueuedPromptCount()
                 if nextPrompt.mode == .directPrompt {
                     await startDirectPrompt(nextPrompt.text, origin: nextPrompt.origin)
                     continue
@@ -412,6 +510,59 @@ extension TerminalChat {
                     break eventLoop
                 }
                 scheduleQueuedPromptIfNeeded()
+            case let .sharedChatMessages(_, messages):
+                // Rendering only: the decision to start a turn belongs to the
+                // Core coordinator and arrives as a separate auto-trigger.
+                // Room binding was verified before entering this switch.
+                await renderSharedChatMessages(messages)
+                await refreshSharedChatPanelSuggestions()
+            case let .sharedChatAutoTrigger(trigger):
+                // The Core authorised exactly one synthetic turn. Do not publish
+                // an idle update before claiming it: another observer may take
+                // the broadcast while this event waits in our FIFO, and its
+                // busy latch must remain intact until it starts its turn.
+                guard trigger.roomID == sharedChatRoomID, trigger.roomID == sessionID else {
+                    await sessionRunner.resolveSharedChatAutoTrigger(
+                        id: trigger.id,
+                        rootSessionID: trigger.roomID,
+                        resolution: .declined
+                    )
+                    continue
+                }
+                guard !isGenerating, queuedPrompts.isEmpty else {
+                    // A real local busy state still has to be visible before
+                    // declining, otherwise the requeued batch could be offered
+                    // straight back to this occupied terminal.
+                    await synchronizeSharedChatConsumerBusyState()
+                    await sessionRunner.resolveSharedChatAutoTrigger(
+                        id: trigger.id,
+                        rootSessionID: trigger.roomID,
+                        resolution: .declined
+                    )
+                    continue
+                }
+                // Every observer receives this broadcast. Claiming is atomic in
+                // the Core, so a second terminal/headless consumer may have
+                // already taken it while this event waited in our FIFO. Only
+                // the winner is allowed to open the synthetic generation.
+                let claim = await sessionRunner.resolveSharedChatAutoTrigger(
+                    id: trigger.id,
+                    rootSessionID: trigger.roomID,
+                    resolution: .started
+                )
+                guard claim == .acquired else {
+                    continue
+                }
+                await startGeneration(
+                    attempt: promptAttempt(
+                        prompt: trigger.prompt,
+                        origin: .local,
+                        isUserVisible: false
+                    )
+                )
+            case .sharedChatParticipantsChanged:
+                // Room binding was verified before entering this switch.
+                await refreshSharedChatPanelSuggestions()
             case let .telegramMessage(message):
                 await handleTelegramMessage(
                     message,
@@ -419,7 +570,7 @@ extension TerminalChat {
                     eventQueue: eventQueue,
                     transcriptions: remoteTranscriptions
                 )
-                await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                await refreshQueuedPromptCount()
                 scheduleQueuedPromptIfNeeded()
             case let .voicePromptCompleted(result):
                 switch result.outcome {
@@ -432,7 +583,7 @@ extension TerminalChat {
                                 mode: .directPrompt
                             )
                         )
-                        await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+                        await refreshQueuedPromptCount()
                         scheduleQueuedPromptIfNeeded()
                     } else {
                         await startDirectPrompt(prompt, origin: result.origin)

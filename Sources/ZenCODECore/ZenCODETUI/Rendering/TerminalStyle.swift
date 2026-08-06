@@ -68,6 +68,37 @@ enum TerminalStyle {
         static let codeBackground = Surface.darkBackground
     }
 
+    enum SharedChat {
+        struct Palette: Equatable, Sendable {
+            let border: String
+            let title: String
+            let body: String
+        }
+
+        /// Light blue distinguishes transient agent-to-agent traffic from the
+        /// orange application chrome and ordinary system messages. `22` in the
+        /// border sequence explicitly disables the title's bold attribute.
+        static let darkPalette = Palette(
+            border: TerminalStyle.sequence(22, 38, 5, 75),
+            title: TerminalStyle.sequence(1, 38, 5, 81),
+            body: Text.secondary
+        )
+        static let lightPalette = Palette(
+            border: TerminalStyle.sequence(22, 38, 5, 25),
+            title: TerminalStyle.sequence(1, 38, 5, 25),
+            body: TerminalStyle.sequence(38, 5, 235)
+        )
+
+        static func palette(for appearance: TerminalMarkdownPalette.Appearance) -> Palette {
+            switch appearance {
+            case .dark:
+                return darkPalette
+            case .light:
+                return lightPalette
+            }
+        }
+    }
+
     enum Chrome {
         static let border = Accent.primary
         static let suggestion = Text.muted

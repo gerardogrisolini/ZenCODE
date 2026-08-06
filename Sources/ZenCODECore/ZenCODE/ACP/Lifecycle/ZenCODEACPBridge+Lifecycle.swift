@@ -133,7 +133,7 @@ extension ZenCODEACPBridge {
             "session/new allowedTools=\(Self.verboseToolNameSummary(allowedToolNames))"
         )
         try ensureLifecycleOperationLive(operation)
-        let systemPrompt = resolvedSystemPrompt(
+        let promptSections = resolvedPromptSections(
             providedSystemPrompt: nil,
             cwd: cwd,
             allowedToolNames: allowedToolNames,
@@ -158,7 +158,8 @@ extension ZenCODEACPBridge {
             sessionID: sessionID,
             modelID: modelID,
             workingDirectory: cwd,
-            systemPrompt: systemPrompt,
+            systemPrompt: promptSections.systemPrompt,
+            dynamicContext: promptSections.dynamicContext,
             cacheKey: cacheKey,
             history: runtimeHistory(from: params["history"]),
             allowedToolNames: allowedToolNames,
@@ -612,6 +613,7 @@ extension ZenCODEACPBridge {
                     modelID: configuration.modelID,
                     workingDirectoryPath: configuration.workingDirectoryPath,
                     systemPrompt: configuration.systemPrompt,
+                    dynamicContext: configuration.dynamicContext,
                     cacheKey: configuration.cacheKey,
                     history: configuration.history,
                     allowedToolNames: configuration.allowedToolNames,
@@ -732,7 +734,7 @@ extension ZenCODEACPBridge {
                 effectiveAllowedToolNames
             )
         }
-        let systemPrompt = resolvedSystemPrompt(
+        let promptSections = resolvedPromptSections(
             providedSystemPrompt: nil,
             cwd: workingDirectory.path,
             allowedToolNames: allowedToolNames,
@@ -762,7 +764,8 @@ extension ZenCODEACPBridge {
             sessionID: sessionID,
             modelID: modelID,
             workingDirectory: workingDirectory,
-            systemPrompt: systemPrompt,
+            systemPrompt: promptSections.systemPrompt,
+            dynamicContext: promptSections.dynamicContext,
             cacheKey: cacheKey,
             history: runtimeHistory(from: params["history"]),
             allowedToolNames: allowedToolNames,

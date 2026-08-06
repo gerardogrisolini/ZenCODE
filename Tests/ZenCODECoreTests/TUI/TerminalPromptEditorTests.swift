@@ -326,6 +326,63 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
+    func sharedChatMentionCompletionIsLimitedToTheLeadingToken() {
+        let participantID = "agent-1"
+        let mention = "@\(TerminalChat.sharedChatMentionHandle(forParticipantID: participantID))"
+        let suggestion = TerminalCommandSuggestion(
+            command: "\(mention) ",
+            summary: "message active agent"
+        )
+
+        #expect(
+            TerminalPromptCompletion.matches(
+                buffer: Array(mention),
+                cursorIndex: mention.count,
+                commands: [suggestion]
+            ) == [suggestion]
+        )
+
+        // The router parses only an initial mention. A completion after prose
+        // must therefore be absent instead of inserting an unrouteable handle.
+        let proseBeforeMention = "Please ask \(mention)"
+        #expect(
+            TerminalPromptCompletion.completion(
+                buffer: Array(proseBeforeMention),
+                cursorIndex: proseBeforeMention.count
+            ) == nil
+        )
+        #expect(
+            TerminalPromptCompletion.matches(
+                buffer: Array(proseBeforeMention),
+                cursorIndex: proseBeforeMention.count,
+                commands: [suggestion]
+            ).isEmpty
+        )
+        #expect(
+            TerminalChat.sharedChatMentionRoute(
+                from: "Please ask \(mention) to review this"
+            ) == nil
+        )
+
+        // Moving the cursor to a later mention in a leading-mention draft is
+        // equally non-routable, even though the draft started with `@`.
+        let laterMention = "\(mention) review this with \(mention)"
+        #expect(
+            TerminalPromptCompletion.completion(
+                buffer: Array(laterMention),
+                cursorIndex: laterMention.count
+            ) == nil
+        )
+        #expect(
+            TerminalPromptCompletion.matches(
+                buffer: Array(laterMention),
+                cursorIndex: laterMention.count,
+                commands: [suggestion]
+            ).isEmpty
+        )
+    }
+
+    @Test
     func escapeDismissesTheMenuWithoutDestroyingTheDraftAndAnEditBringsItBack() {
         var editor = makeEditor("/fea")
         let context = TerminalPromptEditorContext(suggestions: commandCatalog)
@@ -469,5 +526,175 @@ struct TerminalPromptEditorTests {
 
         editor = makeEditor("")
         #expect(editor.apply(.endOfInput, context: context) == .endOfInput)
+    }
+
+    @Test
+    func sharedChatMessagesRenderInsideAWidthBoundedCard() {
+        let card = TerminalChat.renderSharedChatCard(
+            route: "@planner → coordinator",
+            text: "  A long live message that must wrap cleanly. 中😀e\u{0301}\n\tSecond line.\u{1B}\u{7F}\u{85}\r",
+            terminalColumns: 40,
+            usesColor: false
+        )
+        let lines = card.split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+
+        #expect(lines.first?.hasPrefix("╭─ Shared chat · ") == true)
+        #expect(lines.dropLast().allSatisfy {
+            TerminalANSIText.visibleWidth($0) == 36
+        })
+        #expect(lines.dropLast().last == "╰──────────────────────────────────╯")
+        #expect(lines.contains { $0.hasPrefix("│   A long") })
+        #expect(card.contains("␛"))
+        #expect(card.contains("␡"))
+        #expect(card.contains("␍"))
+        #expect(card.contains("<C1-85>"))
+        #expect(!card.unicodeScalars.contains { scalar in
+            scalar.value == 0x1B
+                || scalar.value == 0x7F
+                || scalar.value == 0x0D
+                || (scalar.value < 0x20 && scalar.value != 0x0A)
+                || (0x80...0x9F).contains(scalar.value)
+        })
+    }
+
+    @Test
+    func sharedChatCardFallsBackToPlainWidthBoundedRowsOnNarrowTerminals() {
+        for columns in [1, 4, 11] {
+            let card = TerminalChat.renderSharedChatCard(
+                route: "中😀",
+                text: "  indented\n中😀e\u{0301}",
+                terminalColumns: columns,
+                usesColor: true
+            )
+            let rows = card.split(separator: "\n", omittingEmptySubsequences: false)
+                .dropLast()
+                .map(String.init)
+
+            #expect(!card.contains("╭"))
+            #expect(!card.contains("\u{1B}"))
+            #expect(rows.allSatisfy {
+                TerminalANSIText.visibleWidth($0) <= max(1, columns)
+            })
+        }
+    }
+
+    @Test
+    func sharedChatCardUsesAppearanceAwareBluePaletteAndResetsBoldAtTheBorder() {
+        let dark = TerminalChat.renderSharedChatCard(
+            route: "route",
+            text: "body",
+            terminalColumns: 40,
+            usesColor: true,
+            appearance: .dark
+        )
+        let light = TerminalChat.renderSharedChatCard(
+            route: "route",
+            text: "body",
+            terminalColumns: 40,
+            usesColor: true,
+            appearance: .light
+        )
+
+        #expect(dark.contains(TerminalStyle.SharedChat.darkPalette.border))
+        #expect(dark.contains(TerminalStyle.SharedChat.darkPalette.title))
+        #expect(light.contains(TerminalStyle.SharedChat.lightPalette.border))
+        #expect(light.contains(TerminalStyle.SharedChat.lightPalette.title))
+        #expect(dark.contains("\u{1B}[1;38;5;81mShared chat"))
+        // The second border sequence occurs immediately after the bold title
+        // and starts with SGR 22, preventing bold from leaking to the rule.
+        #expect(dark.contains("\u{1B}[22;38;5;75m ─"))
+        #expect(dark.split(separator: "\n").allSatisfy {
+            $0.hasSuffix(TerminalStyle.reset)
+        })
+    }
+
+    @Test
+    func activeAgentMentionHandlesAreUniqueSafeAndRouteExactlyByID() {
+        let participants = [
+            AgentSharedChat.Participant(id: "planner-1", name: "Planning Agent", kind: .agent),
+            AgentSharedChat.Participant(id: "planner-2", name: "Planning Agent", kind: .agent),
+            AgentSharedChat.Participant(id: "all", name: "all", kind: .agent),
+            AgentSharedChat.Participant(id: "\u{1B}[31m odd", name: "review\r\u{7F}\u{85}", kind: .agent),
+            AgentSharedChat.Participant(id: "inactive", name: "inactive", kind: .agent, isActive: false),
+            AgentSharedChat.Participant(id: "coordinator", name: "coordinator", kind: .coordinator)
+        ]
+        let suggestions = TerminalChat.sharedChatMentionSuggestions(for: participants)
+        let commands = suggestions.map(\.command)
+
+        #expect(commands.count == 4)
+        #expect(Set(commands).count == commands.count)
+        #expect(!commands.contains("@all "))
+        #expect(commands.allSatisfy { command in
+            command.hasPrefix("@agent-")
+                && command.hasSuffix(" ")
+                && command.dropLast().unicodeScalars.allSatisfy { scalar in
+                    (scalar.value >= 0x41 && scalar.value <= 0x5A)
+                        || (scalar.value >= 0x61 && scalar.value <= 0x7A)
+                        || (scalar.value >= 0x30 && scalar.value <= 0x39)
+                        || scalar == "@"
+                        || scalar == "-"
+                        || scalar == "_"
+                }
+        })
+        #expect(suggestions.allSatisfy { suggestion in
+            !suggestion.summary.unicodeScalars.contains { scalar in
+                scalar.value == 0x1B
+                    || scalar.value == 0x7F
+                    || scalar.value == 0x0D
+                    || scalar.value < 0x20
+                    || (0x80...0x9F).contains(scalar.value)
+            }
+        })
+
+        for participant in participants where participant.kind == .agent && participant.isActive {
+            let handle = TerminalChat.sharedChatMentionHandle(forParticipantID: participant.id)
+            // A trailing C1 NEL is Unicode whitespace, so it is trimmed off the
+            // raw line before sanitisation; CR and ESC inside the text are still
+            // replaced by inert control pictures.
+            #expect(
+                TerminalChat.sharedChatMentionRoute(
+                    from: "@\(handle) inspect\r\u{1B}\u{85}"
+                ) == TerminalChat.SharedChatMentionRoute(
+                    destination: .direct([participant.id]),
+                    text: "inspect␍␛"
+                )
+            )
+            #expect(
+                TerminalChat.sharedChatMentionRoute(
+                    from: "@\(handle) inspect\u{85}tail"
+                ) == TerminalChat.SharedChatMentionRoute(
+                    destination: .direct([participant.id]),
+                    text: "inspect<C1-85>tail"
+                )
+            )
+        }
+        #expect(TerminalChat.sharedChatMentionRoute(from: "@all report status")
+            == TerminalChat.SharedChatMentionRoute(destination: .all, text: "report status"))
+        #expect(TerminalChat.sharedChatMentionRoute(from: "@Planning Agent ambiguous") == nil)
+    }
+
+    @Test
+    func activeAgentMentionsAutocompleteAndRouteFromTheLeadingToken() {
+        let plannerHandle = TerminalChat.sharedChatMentionHandle(forParticipantID: "planner-id")
+        let reviewerHandle = TerminalChat.sharedChatMentionHandle(forParticipantID: "reviewer-id")
+        let suggestions = [
+            TerminalCommandSuggestion(command: "/tasks", summary: "tasks"),
+            TerminalCommandSuggestion(command: "@\(plannerHandle) ", summary: "message active agent"),
+            TerminalCommandSuggestion(command: "@\(reviewerHandle) ", summary: "message active agent")
+        ]
+        var editor = makeEditor("@agent-cGxh")
+        let context = TerminalPromptEditorContext(suggestions: suggestions)
+
+        #expect(editor.visibleSuggestions(context: context).map(\.command) == ["@\(plannerHandle) "])
+        #expect(editor.apply(.tab, context: context) == .changed)
+        #expect(String(editor.buffer) == "@\(plannerHandle) ")
+        #expect(
+            TerminalChat.sharedChatMentionRoute(from: "@\(plannerHandle) inspect the diff")
+                == TerminalChat.SharedChatMentionRoute(
+                    destination: .direct(["planner-id"]),
+                    text: "inspect the diff"
+                )
+        )
     }
 }

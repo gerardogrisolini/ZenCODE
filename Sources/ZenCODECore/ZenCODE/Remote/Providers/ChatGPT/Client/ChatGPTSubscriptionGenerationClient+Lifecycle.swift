@@ -233,6 +233,7 @@ extension ChatGPTSubscriptionGenerationClient {
             modelID: configuration.modelID,
             workingDirectoryPath: session.cwd,
             systemPrompt: splitMessages.systemPrompt ?? session.systemPrompt,
+            dynamicContext: splitMessages.dynamicContext,
             cacheKey: session.cacheKey,
             history: splitMessages.history,
             allowedToolNames: session.allowedToolNames,

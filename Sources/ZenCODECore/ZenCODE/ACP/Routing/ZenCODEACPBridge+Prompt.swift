@@ -667,7 +667,7 @@ extension ZenCODEACPBridge {
             )
         }
         let modelID = agent.modelID ?? baseConfiguration.modelID
-        let systemPrompt = AgentCoreAppSessionFactory.resolvedSystemPrompt(
+        let promptSections = AgentCoreAppSessionFactory.resolvedPromptSections(
             providedSystemPrompt: nil,
             cwd: baseConfiguration.workingDirectory.path,
             selectedAgent: agent,
@@ -678,7 +678,8 @@ extension ZenCODEACPBridge {
             sessionID: baseConfiguration.sessionID,
             modelID: modelID,
             workingDirectory: baseConfiguration.workingDirectory,
-            systemPrompt: systemPrompt,
+            systemPrompt: promptSections.systemPrompt,
+            dynamicContext: promptSections.dynamicContext,
             cacheKey: baseConfiguration.cacheKey,
             sessionRevision: baseConfiguration.sessionRevision + 1,
             history: baseConfiguration.history,

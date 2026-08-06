@@ -290,6 +290,13 @@ public actor DirectSubAgentRuntime {
         /// same discovery cache (consent, `--list-tools` results) instead of each
         /// getting a fresh runtime. `nil` for top-level sessions.
         public let swiftFeatureRuntime: SwiftFeatureRuntime?
+        /// Transient live-chat bus inherited from the parent executor. It is not
+        /// part of a session snapshot or task graph persistence.
+        public let sharedChat: AgentSharedChat?
+        /// Stable participant identity of this child in `sharedChat`.
+        public let sharedChatSenderID: String?
+        /// Root room that contains the coordinator and sibling agents.
+        public let sharedChatRoomID: String?
 
         public init(
             requestedName: String,
@@ -297,7 +304,10 @@ public actor DirectSubAgentRuntime {
             profile: AgentProfile?,
             modelBinding: AgentModelBinding? = nil,
             modelID: String? = nil,
-            swiftFeatureRuntime: SwiftFeatureRuntime? = nil
+            swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
+            sharedChat: AgentSharedChat? = nil,
+            sharedChatSenderID: String? = nil,
+            sharedChatRoomID: String? = nil
         ) {
             let resolvedBinding: AgentModelBinding?
             if let modelBinding {
@@ -314,7 +324,10 @@ public actor DirectSubAgentRuntime {
                 modelBinding: resolvedBinding,
                 modelSelection: nil,
                 modelID: modelID,
-                swiftFeatureRuntime: swiftFeatureRuntime
+                swiftFeatureRuntime: swiftFeatureRuntime,
+                sharedChat: sharedChat,
+                sharedChatSenderID: sharedChatSenderID,
+                sharedChatRoomID: sharedChatRoomID
             )
         }
 
@@ -325,7 +338,10 @@ public actor DirectSubAgentRuntime {
             modelBinding: AgentModelBinding?,
             modelSelection: AgentModelSelection?,
             modelID: String?,
-            swiftFeatureRuntime: SwiftFeatureRuntime? = nil
+            swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
+            sharedChat: AgentSharedChat? = nil,
+            sharedChatSenderID: String? = nil,
+            sharedChatRoomID: String? = nil
         ) {
             self.requestedName = requestedName
             self.requestedRole = requestedRole
@@ -334,12 +350,18 @@ public actor DirectSubAgentRuntime {
             self.modelBinding = modelBinding
             self.modelSelection = modelSelection
             self.swiftFeatureRuntime = swiftFeatureRuntime
+            self.sharedChat = sharedChat
+            self.sharedChatSenderID = sharedChatSenderID?.nilIfBlank
+            self.sharedChatRoomID = sharedChatRoomID?.nilIfBlank
         }
 
         /// Returns a copy of this context with the given SwiftFeatureRuntime,
         /// used by DirectToolExecutor to inject its own runtime for subagents.
         public func injecting(
-            swiftFeatureRuntime: SwiftFeatureRuntime?
+            swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
+            sharedChat: AgentSharedChat? = nil,
+            sharedChatSenderID: String? = nil,
+            sharedChatRoomID: String? = nil
         ) -> BackendContext {
             BackendContext(
                 requestedName: requestedName,
@@ -348,7 +370,10 @@ public actor DirectSubAgentRuntime {
                 modelBinding: modelBinding,
                 modelSelection: modelSelection,
                 modelID: requestedModelID,
-                swiftFeatureRuntime: swiftFeatureRuntime
+                swiftFeatureRuntime: swiftFeatureRuntime ?? self.swiftFeatureRuntime,
+                sharedChat: sharedChat ?? self.sharedChat,
+                sharedChatSenderID: sharedChatSenderID ?? self.sharedChatSenderID,
+                sharedChatRoomID: sharedChatRoomID ?? self.sharedChatRoomID
             )
         }
 
@@ -377,6 +402,13 @@ public actor DirectSubAgentRuntime {
     /// delegated sub-agent so that `skills.list` and `skills.read` remain
     /// intrinsic and always-on at every delegation depth.
     public var promptSkillToolProvider: AgentToolProvider?
+    /// Shared only with the backend descendants of this runtime; unlike tasks it
+    /// is never checkpointed or restored.
+    public let sharedChat: AgentSharedChat
+    /// Present in a child executor so `agent.message` has the real author.
+    public let sharedChatSenderID: String?
+    /// A child uses its parent root room, not its private backend session id.
+    public let sharedChatRootSessionID: String?
     private var agentStorage: [String: AgentRecord] = [:]
     /// Lifecycle-transition failures that happen during global shutdown, when
     /// no individual agent record remains available to carry the error.
@@ -466,12 +498,18 @@ public actor DirectSubAgentRuntime {
         contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
         profileResolver: @escaping DirectSubAgentProfileResolver,
         modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider,
-        coordinatesLiveManifestReads: Bool
+        coordinatesLiveManifestReads: Bool,
+        sharedChat: AgentSharedChat = AgentSharedChat(),
+        sharedChatSenderID: String? = nil,
+        sharedChatRootSessionID: String? = nil
     ) {
         self.backendFactory = contextualBackendFactory
         self.profileResolver = profileResolver
         self.modelCatalogProvider = modelCatalogProvider
         self.coordinatesLiveManifestReads = coordinatesLiveManifestReads
+        self.sharedChat = sharedChat
+        self.sharedChatSenderID = sharedChatSenderID?.nilIfBlank
+        self.sharedChatRootSessionID = sharedChatRootSessionID?.nilIfBlank
     }
 
     public func installTaskOrchestrator(
@@ -542,8 +580,13 @@ public actor DirectSubAgentRuntime {
         }
         for record in records {
             record.runTask?.cancel()
+            await sharedChat.unregisterParticipant(
+                id: record.id,
+                roomID: record.rootSessionID
+            )
         }
         for record in records {
+            await record.backend.updateBorrowedSubAgentToolExecutor(nil)
             await record.backend.shutdown()
         }
         for record in records {
@@ -578,21 +621,25 @@ public actor DirectSubAgentRuntime {
     ) async throws -> String {
         let request = Self.normalizedToolRequest(for: toolCall)
 
+        let resolvedRootSessionID = sharedChatRootSessionID
+            ?? rootSessionID?.nilIfBlank
+            ?? "default"
         switch request.name {
         case "agent.create":
             return try await createAgents(
                 arguments: request.arguments,
                 workingDirectory: workingDirectory,
                 parentAllowedToolNames: allowedToolNames,
-                rootSessionID: rootSessionID?.nilIfBlank ?? "default"
+                rootSessionID: resolvedRootSessionID
             )
         case "agent.list":
             return listAgents(arguments: request.arguments)
         case "agent.get":
             return getAgents(arguments: request.arguments)
         case "agent.message":
-            return try await messageAgents(
+            return try await messageSharedChat(
                 arguments: request.arguments,
+                rootSessionID: resolvedRootSessionID,
                 parentAllowedToolNames: allowedToolNames
             )
         case "agent.wait":

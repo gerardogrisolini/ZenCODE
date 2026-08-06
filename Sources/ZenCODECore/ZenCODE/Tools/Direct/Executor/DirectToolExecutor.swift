@@ -44,6 +44,10 @@ public actor DirectToolExecutor {
     public let subAgentRuntime: DirectSubAgentRuntime
     public let mcpRuntime: DirectMCPToolRuntime
     public let swiftFeatureRuntime: SwiftFeatureRuntime
+    /// The transient coordinator/agent bus; never part of session snapshots.
+    public let sharedChat: AgentSharedChat
+    public let sharedChatSenderID: String?
+    public let sharedChatRootSessionID: String?
     public let todoRuntime = DirectTodoRuntime()
     public let taskToolAdapter = DirectTaskToolAdapter()
     public let execJobRuntime = DirectExecJobRuntime()
@@ -60,6 +64,9 @@ public actor DirectToolExecutor {
         swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
         preferredWorkspaceRootURL: URL? = nil,
         borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
+        sharedChat: AgentSharedChat? = nil,
+        sharedChatSenderID: String? = nil,
+        sharedChatRootSessionID: String? = nil,
         subAgentContextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory
     ) {
         self.init(
@@ -72,7 +79,10 @@ public actor DirectToolExecutor {
             subAgentContextualBackendFactory: subAgentContextualBackendFactory,
             subAgentProfileResolver: DirectSubAgentRuntime.liveProfileResolver,
             subAgentModelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
-            coordinatesLiveManifestReads: true
+            coordinatesLiveManifestReads: true,
+            sharedChat: sharedChat,
+            sharedChatSenderID: sharedChatSenderID,
+            sharedChatRootSessionID: sharedChatRootSessionID
         )
     }
 
@@ -158,12 +168,18 @@ public actor DirectToolExecutor {
         subAgentContextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
         subAgentProfileResolver: @escaping DirectSubAgentProfileResolver,
         subAgentModelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider,
-        coordinatesLiveManifestReads: Bool
+        coordinatesLiveManifestReads: Bool,
+        sharedChat: AgentSharedChat? = nil,
+        sharedChatSenderID: String? = nil,
+        sharedChatRootSessionID: String? = nil
     ) {
         self.outputLimit = outputLimit
         self.authorizationHandler = authorizationHandler
         self.mcpRuntime = mcpRuntime
         self.swiftFeatureRuntime = swiftFeatureRuntime
+        self.sharedChat = sharedChat ?? AgentSharedChat()
+        self.sharedChatSenderID = sharedChatSenderID?.nilIfBlank
+        self.sharedChatRootSessionID = sharedChatRootSessionID?.nilIfBlank
         self.preferredWorkspaceRootURL = preferredWorkspaceRootURL?
             .standardizedFileURL
             .resolvingSymlinksInPath()
@@ -180,7 +196,10 @@ public actor DirectToolExecutor {
             },
             profileResolver: subAgentProfileResolver,
             modelCatalogProvider: subAgentModelCatalogProvider,
-            coordinatesLiveManifestReads: coordinatesLiveManifestReads
+            coordinatesLiveManifestReads: coordinatesLiveManifestReads,
+            sharedChat: self.sharedChat,
+            sharedChatSenderID: self.sharedChatSenderID,
+            sharedChatRootSessionID: self.sharedChatRootSessionID
         )
     }
 
@@ -246,6 +265,30 @@ public actor DirectToolExecutor {
 
     public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
         await subAgentRuntime.overviewSnapshots()
+    }
+
+    public func sharedChatParticipants(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Participant] {
+        await subAgentRuntime.sharedChatParticipants(rootSessionID: rootSessionID)
+    }
+
+    public func sendSharedChatMessage(
+        text: String,
+        destination: AgentSharedChat.Destination,
+        rootSessionID: String
+    ) async throws -> AgentSharedChat.Delivery {
+        try await subAgentRuntime.sendSharedChatMessage(
+            text: text,
+            destination: destination,
+            rootSessionID: rootSessionID
+        )
+    }
+
+    public func drainCoordinatorSharedChatMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        await subAgentRuntime.drainCoordinatorSharedChatMessages(rootSessionID: rootSessionID)
     }
 
     public func descriptors(
@@ -566,5 +609,12 @@ public actor DirectToolExecutor {
     public static func isSubAgentCoordinationToolName(_ toolName: String) -> Bool {
         DirectSubAgentRuntime.isSubAgentToolName(toolName)
             || DirectTodoTaskRuntime.isTodoOrTaskToolName(toolName)
+    }
+
+    /// A child executor borrows only its parent's agent-runtime surface. Todo
+    /// storage and task orchestration stay local to the child executor, which
+    /// has the shared `SessionTaskOrchestrator` installed separately.
+    static func isBorrowedSubAgentToolName(_ toolName: String) -> Bool {
+        DirectSubAgentRuntime.isSubAgentToolName(toolName)
     }
 }

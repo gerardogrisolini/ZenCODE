@@ -62,6 +62,7 @@ public final class TerminalChat {
     public var activeSessionHistory: [AgentRuntimeMessage] = []
     public var activeSessionTranscript: [AgentRuntimeMessage] = []
     public var activeSessionSystemPromptOverride: String?
+    public var activeSessionDynamicContextOverride: String?
     public var activeResponseLanguageName: String?
     public var didLockResponseLanguage = false
     public var activeSavedSessionName: String?

@@ -13,11 +13,12 @@ extension RemoteGenerationClient {
         cwd: String,
         allowedToolNames: Set<String>?
     ) -> String {
-        AgentStandaloneSystemPrompt.prompt(
+        AgentStandaloneSystemPrompt.promptSections(
             cwd: cwd,
             memoryToolEnabled: memoryToolEnabled(allowedToolNames),
             allowedToolNames: allowedToolNames
         )
+        .systemPrompt
     }
 
     public static func initialMessages(
@@ -26,34 +27,33 @@ extension RemoteGenerationClient {
         history: [AgentRuntimeMessage],
         allowedToolNames: Set<String>?
     ) -> [[String: Any]] {
-        var seededMessages = history.compactMap(remoteMessage(from:))
-        if let firstRole = seededMessages.first?["role"] as? String,
+        let seededHistory = history.compactMap(remoteMessage(from:))
+        if let firstRole = seededHistory.first?["role"] as? String,
            firstRole.trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() == "system" {
-            seededMessages[0] = appendingTaskWorkflowPolicy(
-                to: seededMessages[0],
-                allowedToolNames: allowedToolNames
-            )
-            return seededMessages
+            // A persisted pre-split session is a legacy instruction prefix.
+            // Preserve it verbatim rather than modifying its cache identity.
+            return seededHistory
         }
 
-        let prompt = SystemPromptBuilder.appendingTaskOrchestrationSection(
-            to: systemPrompt?.nilIfBlank
-                ?? Self.systemPrompt(
-                    cwd: cwd,
-                    allowedToolNames: allowedToolNames
-                ),
-            allowedToolNames: allowedToolNames
-        ) ?? Self.systemPrompt(
+        let fallbackSections = AgentStandaloneSystemPrompt.promptSections(
             cwd: cwd,
+            memoryToolEnabled: memoryToolEnabled(allowedToolNames),
             allowedToolNames: allowedToolNames
         )
+        let resolvedSystemPrompt = systemPrompt?.nilIfBlank
+            ?? fallbackSections.systemPrompt
+        let fallbackContext = systemPrompt?.nilIfBlank == nil
+            ? fallbackSections.dynamicContext
+            : nil
+        let contextMessage = AgentRuntimeDynamicContext.message(for: fallbackContext)
+            .flatMap(remoteMessage(from:))
         return [
             [
                 "role": "system",
-                "content": prompt
+                "content": resolvedSystemPrompt
             ]
-        ] + seededMessages
+        ] + (contextMessage.map { [$0] } ?? []) + seededHistory
     }
 
     private static func appendingTaskWorkflowPolicy(

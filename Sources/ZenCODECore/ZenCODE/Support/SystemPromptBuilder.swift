@@ -45,13 +45,30 @@ public struct SystemPromptRequest: Sendable {
     }
 }
 
+/// The cacheable system instruction prefix and the mutable context that must
+/// instead travel as the first user message of a session.
+public struct SystemPromptSections: Sendable, Equatable {
+    public let systemPrompt: String
+    public let dynamicContext: String
+
+    public init(systemPrompt: String, dynamicContext: String) {
+        self.systemPrompt = systemPrompt
+        self.dynamicContext = dynamicContext
+    }
+
+    public var combinedPrompt: String {
+        [systemPrompt, dynamicContext]
+            .compactMap(\.nilIfBlank)
+            .joined(separator: "\n\n")
+    }
+}
+
 public enum SystemPromptBuilder {
     public static func defaultAgentInstructions(memoryToolEnabled: Bool = true) -> String {
         joined([
-            standaloneBaseSection(memoryToolEnabled: memoryToolEnabled),
+            standaloneStaticPrompt(),
             taskOrchestrationSection(allowedToolNames: nil),
-            standaloneLanguageSection,
-            turnClosingSection(instruction: standaloneTurnClosingInstruction)
+            standaloneLanguageSection
         ])
     }
 
@@ -79,18 +96,59 @@ public enum SystemPromptBuilder {
         selectedSkillSection: String? = nil,
         responseLanguageSection: String? = nil
     ) -> String {
-        prompt(
-            SystemPromptRequest(
-                baseSection: standaloneBaseSection(memoryToolEnabled: memoryToolEnabled),
-                workingDirectoryPath: cwd,
-                preferredLanguageSection: responseLanguageSection ?? standaloneLanguageSection,
-                workflowSection: taskOrchestrationSection(allowedToolNames: allowedToolNames),
-                agentsSection: agentsSection,
-                memorySection: memorySection,
-                turnClosingInstruction: standaloneTurnClosingInstruction,
-                selectedSkillSection: selectedSkillSection
-            )
+        let sections = standalonePromptSections(
+            cwd: cwd,
+            agentsSection: agentsSection,
+            memorySection: memorySection,
+            memoryToolEnabled: memoryToolEnabled,
+            allowedToolNames: allowedToolNames,
+            selectedSkillSection: selectedSkillSection,
+            responseLanguageSection: responseLanguageSection
         )
+        // Source-compatible combined form for callers that still ask for one
+        // prompt string. Keep it byte-for-byte aligned with the sections used
+        // by runtime sessions.
+        return sections.combinedPrompt
+    }
+
+    /// Splits the standard standalone prompt into its stable system prefix and
+    /// session-specific context. `memoryToolEnabled` is retained for source
+    /// compatibility; memory availability belongs to dynamic context only.
+    public static func standalonePromptSections(
+        cwd: String,
+        agentsSection: String?,
+        memorySection: String?,
+        memoryToolEnabled _: Bool,
+        allowedToolNames: Set<String>? = nil,
+        selectedSkillSection: String? = nil,
+        responseLanguageSection: String? = nil
+    ) -> SystemPromptSections {
+        SystemPromptSections(
+            systemPrompt: joined([
+                standaloneBaseSection(),
+                staticSkillSection,
+                workingDirectorySection(path: cwd),
+                responseLanguageSection ?? standaloneLanguageSection,
+                turnClosingSection(instruction: standaloneTurnClosingInstruction)
+            ]),
+            dynamicContext: joined([
+                taskOrchestrationSection(allowedToolNames: allowedToolNames),
+                agentsSection,
+                memorySection,
+                selectedSkillSection == staticSkillSection ? nil : selectedSkillSection
+            ])
+        )
+    }
+
+    /// Stable across the workspace, tool selection, agent/profile, language,
+    /// plan, and memory state. This is the complete context-independent
+    /// standalone prompt retained for compatibility callers.
+    public static func standaloneStaticPrompt() -> String {
+        joined([
+            standaloneBaseSection(),
+            staticSkillSection,
+            turnClosingSection(instruction: standaloneTurnClosingInstruction)
+        ])
     }
 
     /// Returns guidance for deliberately using the session task graph only when the
@@ -401,7 +459,7 @@ public enum SystemPromptBuilder {
             }
     }
 
-    private static func standaloneBaseSection(memoryToolEnabled: Bool) -> String {
+    private static func standaloneBaseSection() -> String {
         let confirmationFiles = ""
 //        """
 //        6. Before starting file modifications, briefly explain the intended changes, including a concise list of the files or areas you expect to edit and what you expect to change in each one, then ask the user to confirm. Do not modify files until the user confirms.
@@ -409,9 +467,6 @@ public enum SystemPromptBuilder {
 //        8. Ask for confirmation when the next step starts file modifications, is destructive, irreversible, or genuinely ambiguous.
 //        """
 
-        let toolFamilyText = memoryToolEnabled
-            ? "Git, Shell, Web, memory, feature, and delegated sub-agent tools"
-            : "Git, Shell, Web, feature, and delegated sub-agent tools"
         return """
         You are ZenCODE running as an autonomous CLI/ACP coding agent on the user's machine.
 
@@ -424,7 +479,7 @@ public enum SystemPromptBuilder {
         \(confirmationFiles)
 
         Coding workflow:
-        Prefer concrete tool evidence over assumptions. Search before broad reads, read before edits, and keep edits narrowly scoped to the user's request. When inspecting unfamiliar or large files, prefer compact orientation tools such as `local.inspectFile` and `search.locate`, then read only the specific ranges needed with `local.readFile` offset/limit. Preserve unrelated user changes and do not revert work you did not make. Use \(toolFamilyText) when they are available and relevant. Prefer dedicated non-shell tools for file, text, search, Git, web, memory, feature, and sub-agent operations when those tools are exposed; use shell execution only for work not covered by a dedicated tool. Validate important changes with the available build, test, lint, or diagnostic tools when the risk justifies it.
+        Prefer concrete tool evidence over assumptions. Search before broad reads, read before edits, and keep edits narrowly scoped to the user's request. When inspecting unfamiliar or large files, prefer compact orientation tools such as `local.inspectFile` and `search.locate`, then read only the specific ranges needed with `local.readFile` offset/limit. Preserve unrelated user changes and do not revert work you did not make. Prefer dedicated tools when they are exposed; use shell execution only for work not covered by a dedicated tool. Validate important changes with the available build, test, lint, or diagnostic tools when the risk justifies it.
         """
     }
 

@@ -46,21 +46,31 @@ extension TerminalChat {
         let effectiveAllowedToolNames = allowedToolNamesIncludingSelectedPromptSkills(
             allowedToolNames
         )
-        let promptSource = activeSessionSystemPromptOverride?.nilIfBlank.map {
-            SystemPromptBuilder.replacingSelectedSkillSection(in: $0)
-        } ?? currentSystemPrompt(allowedToolNames: effectiveAllowedToolNames)
-        let baseSystemPrompt = SystemPromptBuilder.appendingTaskOrchestrationSection(
-            to: promptSource,
-            allowedToolNames: effectiveAllowedToolNames
-        )
-        let systemPrompt = includesActivePlanProgress
-            ? systemPromptWithActivePlanProgress(baseSystemPrompt)
-            : baseSystemPrompt
+        let promptSections: SystemPromptSections
+        if let restoredSystemPrompt = activeSessionSystemPromptOverride?.nilIfBlank {
+            // Older saved sessions contain one combined prompt. Keep that
+            // legacy representation intact, while new snapshots carry the
+            // dynamic part explicitly and can retain a stable system prefix.
+            promptSections = SystemPromptSections(
+                systemPrompt: SystemPromptBuilder.replacingSelectedSkillSection(
+                    in: restoredSystemPrompt
+                ),
+                dynamicContext: activeSessionDynamicContextOverride ?? ""
+            )
+        } else {
+            promptSections = currentPromptSections(
+                allowedToolNames: effectiveAllowedToolNames
+            )
+        }
+        let dynamicContext = includesActivePlanProgress
+            ? systemPromptWithActivePlanProgress(promptSections.dynamicContext)
+            : promptSections.dynamicContext
         return AgentCoreSessionConfigurationBuilder(
             sessionID: sessionID,
             modelID: currentEffectiveModelID(),
             workingDirectory: configuration.workingDirectory,
-            systemPrompt: systemPrompt,
+            systemPrompt: promptSections.systemPrompt,
+            dynamicContext: dynamicContext,
             cacheKey: activeSessionCacheKey ?? sessionID,
             sessionRevision: 0,
             history: activeSessionHistory,
@@ -86,7 +96,13 @@ extension TerminalChat {
     }
 
     public func currentSystemPrompt(allowedToolNames: Set<String>) -> String {
-        AgentSessionComposition.standardSystemPrompt(
+        currentPromptSections(allowedToolNames: allowedToolNames).combinedPrompt
+    }
+
+    public func currentPromptSections(
+        allowedToolNames: Set<String>
+    ) -> SystemPromptSections {
+        AgentSessionComposition.standardPromptSections(
             cwd: configuration.workingDirectory.path,
             allowedToolNames: allowedToolNames,
             selectedAgent: selectedAgent,

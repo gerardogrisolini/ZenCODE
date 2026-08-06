@@ -50,7 +50,7 @@ public struct TerminalSavedSessionContextWindow: Codable, Equatable, Sendable {
 }
 
 public struct TerminalSavedSession: Codable, Equatable, Sendable {
-    public static let currentVersion = 4
+    public static let currentVersion = 5
 
     public let version: Int
     public let name: String
@@ -67,6 +67,9 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
     public let thinkingSelection: String?
     public let contextWindow: TerminalSavedSessionContextWindow?
     public let systemPrompt: String?
+    /// Mutable context stored separately from the stable system prompt (v5+).
+    /// Optional decoding keeps v1–v4 snapshots restorable as legacy prompts.
+    public let dynamicContext: String?
     public let history: [AgentRuntimeMessage]
     public let transcriptHistory: [AgentRuntimeMessage]?
     public let activePlan: TerminalSessionPlan?
@@ -90,6 +93,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         thinkingSelection: String?,
         contextWindow: TerminalSavedSessionContextWindow? = nil,
         systemPrompt: String?,
+        dynamicContext: String? = nil,
         history: [AgentRuntimeMessage],
         transcriptHistory: [AgentRuntimeMessage]? = nil,
         activePlan: TerminalSessionPlan? = nil,
@@ -113,6 +117,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         self.thinkingSelection = thinkingSelection?.nilIfBlank
         self.contextWindow = contextWindow
         self.systemPrompt = systemPrompt?.nilIfBlank
+        self.dynamicContext = dynamicContext?.nilIfBlank
         self.history = history
         self.transcriptHistory = transcriptHistory
         self.activePlan = activePlan

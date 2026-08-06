@@ -165,6 +165,7 @@ extension AnthropicSubscriptionGenerationClient {
             modelID: configuration.modelID ?? provider.modelID,
             workingDirectoryPath: session.cwd.path,
             systemPrompt: splitMessages.systemPrompt ?? session.systemPrompt,
+            dynamicContext: splitMessages.dynamicContext,
             cacheKey: session.cacheKey,
             history: splitMessages.history,
             allowedToolNames: session.allowedToolNames,

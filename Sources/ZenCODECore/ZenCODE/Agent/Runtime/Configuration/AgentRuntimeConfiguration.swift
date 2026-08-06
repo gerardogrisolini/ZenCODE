@@ -199,11 +199,59 @@ public struct AgentRuntimeMessage: Codable, Equatable, Sendable {
     }
 }
 
+/// Encodes session-specific instructions as one recognisable leading user
+/// message. The wire representation remains a normal user message for every
+/// provider; the marker lets snapshots, restores, and compaction keep this
+/// mutable context out of the durable conversation transcript.
+public enum AgentRuntimeDynamicContext {
+    public static let marker = "ZenCODE session context:\n"
+
+    public static func message(for context: String?) -> AgentRuntimeMessage? {
+        guard let context = context?.nilIfBlank else {
+            return nil
+        }
+        return AgentRuntimeMessage(role: .user, content: marker + context)
+    }
+
+    public static func context(from message: AgentRuntimeMessage?) -> String? {
+        guard let message,
+              message.role == .user,
+              message.attachments.isEmpty,
+              message.toolCalls.isEmpty,
+              message.toolCallID == nil,
+              message.toolName == nil,
+              message.content.hasPrefix(marker) else {
+            return nil
+        }
+        return String(message.content.dropFirst(marker.count)).nilIfBlank
+    }
+
+    public static func separating(
+        from history: [AgentRuntimeMessage]
+    ) -> (context: String?, history: [AgentRuntimeMessage]) {
+        guard let context = context(from: history.first) else {
+            return (nil, history)
+        }
+        return (context, Array(history.dropFirst()))
+    }
+
+    public static func inserting(
+        _ context: String?,
+        into history: [AgentRuntimeMessage]
+    ) -> [AgentRuntimeMessage] {
+        guard let message = message(for: context) else {
+            return history
+        }
+        return [message] + separating(from: history).history
+    }
+}
+
 public struct AgentRuntimeSessionSnapshot: Sendable {
     public let sessionID: String
     public let modelID: String?
     public let workingDirectoryPath: String
     public let systemPrompt: String?
+    public let dynamicContext: String?
     public let cacheKey: String?
     public let history: [AgentRuntimeMessage]
     public let allowedToolNames: Set<String>?
@@ -215,6 +263,7 @@ public struct AgentRuntimeSessionSnapshot: Sendable {
         modelID: String? = nil,
         workingDirectoryPath: String,
         systemPrompt: String?,
+        dynamicContext: String? = nil,
         cacheKey: String?,
         history: [AgentRuntimeMessage],
         allowedToolNames: Set<String>?,
@@ -225,6 +274,7 @@ public struct AgentRuntimeSessionSnapshot: Sendable {
         self.modelID = modelID?.nilIfBlank
         self.workingDirectoryPath = workingDirectoryPath
         self.systemPrompt = systemPrompt?.nilIfBlank
+        self.dynamicContext = dynamicContext?.nilIfBlank
         self.cacheKey = cacheKey?.nilIfBlank
         self.history = history
         self.allowedToolNames = allowedToolNames
@@ -242,6 +292,7 @@ extension AgentRuntimeSessionSnapshot {
             modelID: modelID,
             workingDirectoryPath: workingDirectoryPath,
             systemPrompt: systemPrompt,
+            dynamicContext: dynamicContext,
             cacheKey: cacheKey,
             history: history,
             allowedToolNames: allowedToolNames,
@@ -251,12 +302,16 @@ extension AgentRuntimeSessionSnapshot {
     }
 
     /// Builds the message list used as compaction input: the optional system
-    /// prompt followed by the recorded history. Shared by every local
-    /// compaction flow so the system-prompt handling stays consistent.
+    /// prompt, protected dynamic context, then recorded history. Shared by
+    /// every local compaction flow so the context-message invariant stays
+    /// consistent.
     public var compactionInputMessages: [AgentRuntimeMessage] {
         var messages: [AgentRuntimeMessage] = []
         if let systemPrompt = systemPrompt?.nilIfBlank {
             messages.append(AgentRuntimeMessage(role: .system, content: systemPrompt))
+        }
+        if let dynamicContextMessage = AgentRuntimeDynamicContext.message(for: dynamicContext) {
+            messages.append(dynamicContextMessage)
         }
         messages.append(contentsOf: history)
         return messages
@@ -274,13 +329,15 @@ extension AgentRuntimeSessionSnapshot {
         } else {
             systemPrompt = self.systemPrompt
         }
+        let separatedContext = AgentRuntimeDynamicContext.separating(from: history)
         return AgentRuntimeSessionSnapshot(
             sessionID: sessionID,
             modelID: modelID,
             workingDirectoryPath: workingDirectoryPath,
             systemPrompt: systemPrompt,
+            dynamicContext: separatedContext.context ?? dynamicContext,
             cacheKey: cacheKey,
-            history: history,
+            history: separatedContext.history,
             allowedToolNames: allowedToolNames,
             thinkingSelection: thinkingSelection,
             preserveThinking: preserveThinking
@@ -432,6 +489,31 @@ public enum AgentStandaloneSystemPrompt {
         selectedSkillSection: String? = nil,
         responseLanguageSection: String? = nil
     ) -> String {
+        promptSections(
+            cwd: cwd,
+            memoryToolEnabled: memoryToolEnabled,
+            allowedToolNames: allowedToolNames,
+            locksModelToSession: locksModelToSession,
+            fileManager: fileManager,
+            globalAgentsDirectoryURL: globalAgentsDirectoryURL,
+            selectedAgentSection: selectedAgentSection,
+            selectedSkillSection: selectedSkillSection,
+            responseLanguageSection: responseLanguageSection
+        )
+        .combinedPrompt
+    }
+
+    public static func promptSections(
+        cwd: String,
+        memoryToolEnabled: Bool = false,
+        allowedToolNames: Set<String>? = nil,
+        locksModelToSession: Bool = false,
+        fileManager: FileManager = .default,
+        globalAgentsDirectoryURL: URL? = nil,
+        selectedAgentSection: String? = nil,
+        selectedSkillSection: String? = nil,
+        responseLanguageSection: String? = nil
+    ) -> SystemPromptSections {
         let workingDirectory = URL(fileURLWithPath: cwd)
         let agentsNotice = AgentsContextService(
             fileManager: fileManager,
@@ -454,7 +536,7 @@ public enum AgentStandaloneSystemPrompt {
             .compactMap { $0?.nilIfBlank }
             .joined(separator: "\n\n")
             .nilIfBlank
-        return SystemPromptBuilder.standalonePrompt(
+        return SystemPromptBuilder.standalonePromptSections(
             cwd: cwd,
             agentsSection: agentsSection,
             memorySection: memoryToolEnabled ? MemoryService.toolUsagePromptSection() : nil,
@@ -531,6 +613,16 @@ public protocol AgentRuntimeBackend: Actor {
 
     func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot]
 
+    func sharedChatParticipants(rootSessionID: String) async -> [AgentSharedChat.Participant]
+    func sendSharedChatMessage(
+        text: String,
+        destination: AgentSharedChat.Destination,
+        rootSessionID: String
+    ) async throws -> AgentSharedChat.Delivery
+    func drainCoordinatorSharedChatMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message]
+
     func sendPrompt(
         sessionID: String,
         prompt: String,
@@ -570,6 +662,24 @@ extension AgentRuntimeBackend {
     ) async {}
 
     public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
+        []
+    }
+
+    public func sharedChatParticipants(rootSessionID _: String) async -> [AgentSharedChat.Participant] {
+        []
+    }
+
+    public func sendSharedChatMessage(
+        text _: String,
+        destination _: AgentSharedChat.Destination,
+        rootSessionID _: String
+    ) async throws -> AgentSharedChat.Delivery {
+        throw AgentSharedChat.Error.noRecipients
+    }
+
+    public func drainCoordinatorSharedChatMessages(
+        rootSessionID _: String
+    ) async -> [AgentSharedChat.Message] {
         []
     }
 

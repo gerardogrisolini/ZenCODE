@@ -73,8 +73,27 @@ public enum AgentSessionComposition {
         locksModelToSession: Bool = false,
         responseLanguageSection: String? = nil
     ) -> String {
+        standardPromptSections(
+            cwd: cwd,
+            allowedToolNames: allowedToolNames,
+            selectedAgent: selectedAgent,
+            locksModelToSession: locksModelToSession,
+            responseLanguageSection: responseLanguageSection
+        )
+        .combinedPrompt
+    }
+
+    /// Produces the stable standalone instruction prefix independently from
+    /// context that can change while the session is alive.
+    public static func standardPromptSections(
+        cwd: String,
+        allowedToolNames: Set<String>?,
+        selectedAgent: AgentProfile?,
+        locksModelToSession: Bool = false,
+        responseLanguageSection: String? = nil
+    ) -> SystemPromptSections {
         let memoryToolEnabled = memoryToolEnabled(allowedToolNames)
-        return AgentStandaloneSystemPrompt.prompt(
+        return AgentStandaloneSystemPrompt.promptSections(
             cwd: cwd,
             memoryToolEnabled: memoryToolEnabled,
             allowedToolNames: allowedToolNames,
@@ -89,34 +108,59 @@ public enum AgentSessionComposition {
 
     /// Wraps an app-provided prompt with the standard context sections.
     ///
-    /// The caller-provided text stays authoritative: the agent and skill
-    /// sections are prepended, and the workflow/language sections are appended
-    /// once. The skill section is skipped when the provided prompt already
-    /// carries it, so restoring a session does not duplicate guidance.
+    /// The caller-provided text stays authoritative: agent/workflow sections
+    /// are appended as mutable user context, while working-directory, skill,
+    /// and language instructions remain in the stable system prefix.
     public static func appProvidedSystemPrompt(
         _ providedSystemPrompt: String,
+        cwd: String? = nil,
         allowedToolNames: Set<String>?,
         selectedAgent: AgentProfile?,
         responseLanguageSection: String? = SystemPromptBuilder.responseLanguageSection()
     ) -> String {
+        appProvidedPromptSections(
+            providedSystemPrompt,
+            cwd: cwd,
+            allowedToolNames: allowedToolNames,
+            selectedAgent: selectedAgent,
+            responseLanguageSection: responseLanguageSection
+        )
+        .combinedPrompt
+    }
+
+    /// Keeps application-provided system instructions authoritative while
+    /// moving tool-, agent-, and workflow-specific state into the session's
+    /// initial user context. Working-directory and language state remain part
+    /// of the stable provider system prefix.
+    public static func appProvidedPromptSections(
+        _ providedSystemPrompt: String,
+        cwd: String? = nil,
+        allowedToolNames: Set<String>?,
+        selectedAgent: AgentProfile?,
+        responseLanguageSection: String? = SystemPromptBuilder.responseLanguageSection()
+    ) -> SystemPromptSections {
         let memoryToolEnabled = memoryToolEnabled(allowedToolNames)
         let alreadyHasSkillSection = providedSystemPrompt.contains(
             SystemPromptBuilder.staticSkillSectionMarker
         )
-        let contextSections = [
-            selectedAgent?.promptSection(memoryToolEnabled: memoryToolEnabled),
-            alreadyHasSkillSection ? nil : SystemPromptBuilder.staticSkillSection
-        ]
-        .compactMap { $0?.nilIfBlank }
-        let sections = contextSections + [
+        let systemSections = [
             providedSystemPrompt,
-            SystemPromptBuilder.taskOrchestrationSection(
-                allowedToolNames: allowedToolNames
-            ),
+            alreadyHasSkillSection ? nil : SystemPromptBuilder.staticSkillSection,
+            cwd.map(SystemPromptBuilder.workingDirectorySection(path:)),
             responseLanguageSection
         ]
         .compactMap { $0?.nilIfBlank }
-        return sections.joined(separator: "\n\n")
+        let dynamicSections = [
+            selectedAgent?.promptSection(memoryToolEnabled: memoryToolEnabled),
+            SystemPromptBuilder.taskOrchestrationSection(
+                allowedToolNames: allowedToolNames
+            )
+        ]
+        .compactMap { $0?.nilIfBlank }
+        return SystemPromptSections(
+            systemPrompt: systemSections.joined(separator: "\n\n"),
+            dynamicContext: dynamicSections.joined(separator: "\n\n")
+        )
     }
 }
 
@@ -131,6 +175,7 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
     public var modelID: String?
     public var workingDirectory: URL
     public var systemPrompt: String?
+    public var dynamicContext: String?
     public var cacheKey: String?
     public var sessionRevision: Int
     public var history: [AgentRuntimeMessage]
@@ -147,6 +192,7 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
         modelID: String?,
         workingDirectory: URL,
         systemPrompt: String?,
+        dynamicContext: String? = nil,
         cacheKey: String?,
         sessionRevision: Int = 0,
         history: [AgentRuntimeMessage] = [],
@@ -162,6 +208,7 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
         self.modelID = modelID
         self.workingDirectory = workingDirectory
         self.systemPrompt = systemPrompt
+        self.dynamicContext = dynamicContext
         self.cacheKey = cacheKey
         self.sessionRevision = sessionRevision
         self.history = history
@@ -182,6 +229,7 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
             modelID: modelID,
             workingDirectory: workingDirectory,
             systemPrompt: systemPrompt,
+            dynamicContext: dynamicContext,
             cacheKey: cacheKey,
             sessionRevision: sessionRevision,
             history: history,

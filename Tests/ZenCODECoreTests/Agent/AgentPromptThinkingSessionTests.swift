@@ -82,7 +82,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    func standalonePromptKeepsResponseLanguageInstructionAfterContextSections() throws {
+    func standalonePromptKeepsResponseLanguageInstructionInSystemPrefix() throws {
         let prompt = SystemPromptBuilder.standalonePrompt(
             cwd: "/tmp/project",
             agentsSection: "Agent instructions:\nAnswer briefly.",
@@ -99,8 +99,8 @@ extension AgentConfigurationTests {
         let languageRange = try #require(prompt.range(of: "Response language:"))
         let closingRange = try #require(prompt.range(of: "Turn-closing rule:"))
 
-        #expect(skillRange.upperBound < languageRange.lowerBound)
         #expect(languageRange.upperBound < closingRange.lowerBound)
+        #expect(closingRange.upperBound < skillRange.lowerBound)
     }
 
     @Test

@@ -63,6 +63,11 @@ extension TerminalChat {
             return await submittedTelegramLineAction(prompt)
         }
 
+        if let sharedChatRoute = Self.sharedChatMentionRoute(from: prompt) {
+            await sendSharedChatMention(sharedChatRoute)
+            return .continueChat
+        }
+
         if case .slashCommand = Self.submittedLineRole(for: prompt) {
             if let unavailableMessage = unavailableLocalSlashCommandMessage(for: prompt) {
                 await writeFailureMessage(unavailableMessage)

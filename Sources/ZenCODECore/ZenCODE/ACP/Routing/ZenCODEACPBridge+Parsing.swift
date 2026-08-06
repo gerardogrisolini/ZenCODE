@@ -522,7 +522,22 @@ extension ZenCODEACPBridge {
         allowedToolNames: Set<String>?,
         selectedAgent: AgentProfile? = nil
     ) -> String {
-        AgentCoreAppSessionFactory.resolvedSystemPrompt(
+        resolvedPromptSections(
+            providedSystemPrompt: providedSystemPrompt,
+            cwd: cwd,
+            allowedToolNames: allowedToolNames,
+            selectedAgent: selectedAgent
+        )
+        .combinedPrompt
+    }
+
+    public func resolvedPromptSections(
+        providedSystemPrompt: String?,
+        cwd: String,
+        allowedToolNames: Set<String>?,
+        selectedAgent: AgentProfile? = nil
+    ) -> SystemPromptSections {
+        AgentCoreAppSessionFactory.resolvedPromptSections(
             providedSystemPrompt: providedSystemPrompt,
             cwd: cwd,
             selectedAgent: selectedAgent ?? configuration.selectedAgent,

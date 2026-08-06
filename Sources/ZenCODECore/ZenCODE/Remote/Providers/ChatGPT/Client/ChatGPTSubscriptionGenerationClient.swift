@@ -91,7 +91,7 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
 
             sessionKey = key.isEmpty ? "default" : key
             modelID = model.isEmpty ? CodexAgentModel.defaultLLMID : model
-            workingDirectory = configuration.workingDirectory
+            workingDirectory = ""
             systemPrompt = configuration.systemPrompt
             toolSelection = Self.toolSelectionSignature(
                 configuration.allowedToolNames
@@ -153,7 +153,7 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         /// canonically equivalent Swift strings to identical bytes.
         private var promptCacheIdentityData: Data {
             let representation = PersistenceRepresentation(identity: self)
-            var data = Data("ZenCODE.prompt-cache-identity.v2".utf8)
+            var data = Data("ZenCODE.prompt-cache-identity.v3".utf8)
             Self.append(representation.sessionKey, to: &data)
             Self.append(representation.modelID, to: &data)
             Self.append(representation.workingDirectory, to: &data)
@@ -191,10 +191,11 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
                 return nil
             }
 
-            let names = allowedToolNames
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .sorted()
+            let names = Set(allowedToolNames.map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            })
+            .filter { !$0.isEmpty }
+            .sorted()
             guard !names.isEmpty else {
                 return "tools:none"
             }
@@ -242,6 +243,9 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         webSocketPool: ChatGPTSubscriptionWebSocketPool? = nil,
         connectionScopeID: String? = nil,
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
+        sharedChat: AgentSharedChat? = nil,
+        sharedChatSenderID: String? = nil,
+        sharedChatRootSessionID: String? = nil,
         subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
     ) {
         self.configuration = configuration
@@ -255,6 +259,9 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
             mcpRuntime: mcpRuntime,
             swiftFeatureRuntime: swiftFeatureRuntime ?? SwiftFeatureRuntime(),
             preferredWorkspaceRootURL: configuration.workingDirectory,
+            sharedChat: sharedChat,
+            sharedChatSenderID: sharedChatSenderID,
+            sharedChatRootSessionID: sharedChatRootSessionID,
             subAgentContextualBackendFactory: subAgentContextualBackendFactory
                 ?? DirectSubAgentRuntime.unavailableContextualBackendFactory
         )
@@ -271,6 +278,28 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
 
     public func interruptSubAgents(rootSessionID: String) async -> Int {
         await toolExecutor.interruptSubAgents(rootSessionID: rootSessionID)
+    }
+
+    public func sharedChatParticipants(rootSessionID: String) async -> [AgentSharedChat.Participant] {
+        await toolExecutor.sharedChatParticipants(rootSessionID: rootSessionID)
+    }
+
+    public func sendSharedChatMessage(
+        text: String,
+        destination: AgentSharedChat.Destination,
+        rootSessionID: String
+    ) async throws -> AgentSharedChat.Delivery {
+        try await toolExecutor.sendSharedChatMessage(
+            text: text,
+            destination: destination,
+            rootSessionID: rootSessionID
+        )
+    }
+
+    public func drainCoordinatorSharedChatMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        await toolExecutor.drainCoordinatorSharedChatMessages(rootSessionID: rootSessionID)
     }
 
     struct SessionLease: Sendable {
