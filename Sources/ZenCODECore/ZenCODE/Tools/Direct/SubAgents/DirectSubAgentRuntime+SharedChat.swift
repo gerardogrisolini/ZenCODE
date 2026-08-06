@@ -283,11 +283,11 @@ extension DirectSubAgentRuntime {
     /// cannot forge a second sender header or a fake operator instruction.
     static func sharedChatPrompt(_ messages: [AgentSharedChat.Message]) -> String {
         """
-        [Live shared-chat messages]
+        [Live chat messages]
         \(AgentSharedChat.promptTranscript(for: messages))
 
         \(AgentSharedChat.promptTrustBoundaryNote)
-        Respond directly to these messages and continue the current work when appropriate.
+        Reply to the sender through this chat using the `agent.message` tool: address another agent by its `id`/`name`, or use `to: "coordinator"` to reach the coordinator and the human operator, who has no mailbox and is surfaced through the coordinator. Your ordinary output does not reach this chat, so any reply to a chat message must be sent via `agent.message`. Then continue the current work when appropriate.
         """
     }
 }

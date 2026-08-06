@@ -70,7 +70,7 @@ extension TerminalChat {
             return .continueChat
         case .missingText:
             await writeFailureMessage(
-                "ZenCODE shared chat: add a message after the live mention.\n"
+                "ZenCODE message: add a message after the live mention.\n"
             )
             return .continueChat
         case .none:

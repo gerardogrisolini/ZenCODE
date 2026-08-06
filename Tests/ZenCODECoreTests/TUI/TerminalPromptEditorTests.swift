@@ -539,7 +539,7 @@ struct TerminalPromptEditorTests {
         let lines = card.split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
 
-        #expect(lines.first?.hasPrefix("╭─ Shared chat · ") == true)
+        #expect(lines.first?.hasPrefix("╭─ Message · ") == true)
         #expect(lines.dropLast().allSatisfy {
             TerminalANSIText.visibleWidth($0) == 36
         })
@@ -716,7 +716,7 @@ struct TerminalPromptEditorTests {
         #expect(dark.contains(TerminalStyle.SharedChat.darkPalette.title))
         #expect(light.contains(TerminalStyle.SharedChat.lightPalette.border))
         #expect(light.contains(TerminalStyle.SharedChat.lightPalette.title))
-        #expect(dark.contains("\u{1B}[1;38;5;81mShared chat"))
+        #expect(dark.contains("\u{1B}[1;38;5;81mMessage"))
         // The second border sequence occurs immediately after the bold title
         // and starts with SGR 22, preventing bold from leaking to the rule.
         #expect(dark.contains("\u{1B}[22;38;5;75m ─"))

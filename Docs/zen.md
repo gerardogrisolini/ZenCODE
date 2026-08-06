@@ -237,6 +237,16 @@ Commands start with `/`:
 | **Role of current agent** | Implementer (can delegate when useful) | Coordinator and final reviewer only |
 | **Monitor progress** | `/plan status` or `/tasks` | `/tasks` |
 
+### Live Agent Chat
+
+While sub-agents are active, the coordinator and the agent instances share a
+live, transient chat room. From the terminal, address it with a leading mention:
+`@coordinator` to message the live coordinator, `@all` to reach the coordinator
+and every active agent, or the `@agent-…` handle an instance advertises to
+message it directly. The LLM side uses the `agent.message` tool with the same
+destinations (`direct`, `coordinator`, `peers`, `all`). The chat is in-memory and
+never persisted; a session reset drops it. See [agents.md](agents.md#shared-chat).
+
 ### Saving and Loading Plans
 
 `/plan save` stores a reusable copy for the current working directory. It uses

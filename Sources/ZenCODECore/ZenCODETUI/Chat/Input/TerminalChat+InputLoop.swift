@@ -495,7 +495,7 @@ extension TerminalChat {
                         continue
                     case .missingText:
                         await writeFailureMessage(
-                            "ZenCODE shared chat: add a message after the live mention.\n"
+                            "ZenCODE message: add a message after the live mention.\n"
                         )
                         continue
                     case .none:

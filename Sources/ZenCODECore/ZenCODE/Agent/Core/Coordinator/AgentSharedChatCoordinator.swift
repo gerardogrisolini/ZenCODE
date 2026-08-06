@@ -1015,11 +1015,11 @@ public actor AgentSharedChatCoordinator {
         for messages: [AgentSharedChat.Message]
     ) -> String {
         """
-        [Live shared-chat messages]
+        [Live chat messages]
         \(AgentSharedChat.promptTranscript(for: messages))
 
         \(AgentSharedChat.promptTrustBoundaryNote)
-        Reply to these messages and coordinate the active work. Do not claim that this transient message bus is persisted.
+        Reply to the sender through this chat using the `agent.message` tool: address a delegated agent by its `id`/`name`, or use `to: "all"` so the operator and every active agent see the reply. Your ordinary output does not reach this chat, so any reply to a chat message must be sent via `agent.message`. Coordinate the active work and do not claim that this transient message bus is persisted.
         """
     }
 }

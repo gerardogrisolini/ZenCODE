@@ -170,7 +170,7 @@ extension TerminalChat {
 
     func sendSharedChatMention(_ route: SharedChatMentionRoute) async -> UUID? {
         guard await isCurrentSharedChatDirectDestination(route.destination) else {
-            await writeFailureMessage("ZenCODE shared chat: selected agent is no longer active.\n")
+            await writeFailureMessage("ZenCODE message: selected agent is no longer active.\n")
             await refreshSharedChatPanelSuggestions()
             return nil
         }
@@ -194,7 +194,7 @@ extension TerminalChat {
             return delivery.message.id
         } catch {
             let safeError = Self.sharedChatInlineTerminalSafeText(error.localizedDescription)
-            await writeFailureMessage("ZenCODE shared chat: \(safeError)\n")
+            await writeFailureMessage("ZenCODE message: \(safeError)\n")
             return nil
         }
     }
@@ -291,7 +291,7 @@ extension TerminalChat {
         // never imposing a minimum larger than the terminal itself.
         let outerWidth = min(88, max(12, availableWidth - 4))
         let contentWidth = outerWidth - 4
-        let title = fitDisplayWidth("Shared chat · \(safeRoute)", width: outerWidth - 5)
+        let title = fitDisplayWidth("Message · \(safeRoute)", width: outerWidth - 5)
         // ╭─ + space + title + space + rule + ╮ must equal `outerWidth`.
         let topRuleWidth = max(0, outerWidth - displayWidth(title) - 5)
         let topRule = String(repeating: "─", count: topRuleWidth)
@@ -499,7 +499,7 @@ extension TerminalChat {
         text: String,
         width: Int
     ) -> String {
-        let heading = fitDisplayWidth("Shared chat · \(route)", width: width)
+        let heading = fitDisplayWidth("Message · \(route)", width: width)
         let rows = sharedChatWrappedRows(text, width: width)
         return ([heading] + rows).joined(separator: "\n") + "\n"
     }

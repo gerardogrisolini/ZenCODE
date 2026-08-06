@@ -147,11 +147,11 @@ public actor AgentSharedChat {
         public var errorDescription: String? {
             switch self {
             case .unavailable:
-                return "Live shared chat is unavailable because the coordinator runtime is not ready."
+                return "Live messages is unavailable because the coordinator runtime is not ready."
             case .roomParticipantLimitExceeded:
-                return "The live shared chat has reached its participant limit."
+                return "The live messages has reached its participant limit."
             case let .unknownParticipant(identifier):
-                return "No active shared-chat participant matches '\(Self.safeIdentifierDescription(identifier))'."
+                return "No active messages participant matches '\(Self.safeIdentifierDescription(identifier))'."
             case .coordinatorUnavailable:
                 return "The live coordinator is not available in this shared-chat room."
             case .noOtherActiveAgents:
@@ -976,7 +976,7 @@ public actor AgentSharedChat {
                 throw Error.participantIdentifierConflict(participant.id)
             }
             existing.participant.isActive = true
-            // A backend can be rebuilt while its transient shared chat survives.
+            // A backend can be rebuilt while its transient messages survives.
             // Replacing the callback reconnects its mailbox to the new owner.
             room.participants[participant.id] = ParticipantState(
                 participant: existing.participant,
