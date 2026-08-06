@@ -45,7 +45,7 @@ extension DirectSubAgentRuntime {
         // after the bus send so the wake-up callback does not duplicate the
         // prompt that messageAgents queues.
         if effectiveSenderID == nil,
-           case .direct = destination {
+           case .direct(let identifiers) = destination {
             let boundedText = AgentSharedChat.boundedMessageText(text)
             var transcriptDelivery: AgentSharedChat.Delivery?
             do {
@@ -65,6 +65,25 @@ extension DirectSubAgentRuntime {
             } catch {
                 // Best-effort transcript recording: the agent may not yet be
                 // registered in the bus. The message is still queued below.
+            }
+            // The terminal operator consumes live messages through the TUI
+            // observation stream, not a mailbox or prompt queue. When the
+            // coordinator addresses the operator directly (by id), the bus
+            // transcript above is the only delivery channel needed: routing it
+            // through the sub-agent work loop would fail because the operator is
+            // not a delegated agent. Skip that loop when no identifier resolves
+            // to a real agent, and surface the bus delivery instead.
+            let hasAgentTarget = identifiers.contains { agentID(matching: $0) != nil }
+            if !hasAgentTarget {
+                if let delivery = transcriptDelivery {
+                    let recipients = AgentSharedChat.deliveryRecipientSummary(
+                        for: delivery.recipients
+                    )
+                    return "Delivered live message to \(recipients)."
+                }
+                throw DirectSubAgentRuntimeError.agentNotFound(
+                    identifiers.joined(separator: ", ")
+                )
             }
             var boundedArguments = arguments
             let messageKey = ["message", "prompt", "input"].first { arguments[$0] != nil }

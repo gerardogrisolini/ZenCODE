@@ -266,6 +266,10 @@ extension TerminalChat {
             return "\(senderName) → All"
         }
         if let recipientID = message.recipientIDs.first,
+           AgentSharedChat.isOperatorIdentifier(recipientID) {
+            return "\(senderName) → Operator"
+        }
+        if let recipientID = message.recipientIDs.first,
            let recipient = participantMap[recipientID] {
             return "\(senderName) → \(AgentSharedChat.displayName(for: recipient))"
         }

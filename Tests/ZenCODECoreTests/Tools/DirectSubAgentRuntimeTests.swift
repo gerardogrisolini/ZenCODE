@@ -2422,6 +2422,38 @@ struct DirectSubAgentRuntimeTests {
         await runtime.shutdown()
     }
 
+    /// The coordinator addressing the terminal operator directly (by id) must
+    /// deliver through the shared-chat transcript without attempting to route
+    /// the operator through the sub-agent work loop, which would fail because
+    /// the operator is not a delegated agent.
+    @Test
+    func coordinatorDirectMessageToOperatorIsDeliveredViaTranscript() async throws {
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        let operatorID = AgentSharedChat.operatorID(for: "root")
+
+        let result = try await runtime.messageSharedChat(
+            arguments: [
+                "id": .string(operatorID),
+                "message": .string("Ciao, tutto ok?")
+            ],
+            rootSessionID: "root",
+            parentAllowedToolNames: nil
+        )
+
+        // The operator has no mailbox or prompt queue: delivery is reported
+        // purely from the bus transcript identity, not the sub-agent roster.
+        #expect(result.contains("Delivered live message to Operator"))
+        let messages = await runtime.sharedChatTranscriptMessages(rootSessionID: "root")
+        #expect(messages.count == 1)
+        #expect(messages.first?.text == "Ciao, tutto ok?")
+        #expect(messages.first?.recipientIDs == [operatorID])
+        #expect(messages.first?.sender.kind == .coordinator)
+        await runtime.shutdown()
+    }
+
     /// `coordinator:<room>` and `operator:<room>` are minted only by the actor.
     /// A delegated agent must never be able to take one of those identities,
     /// in any room and in any near-miss spelling.

@@ -377,6 +377,16 @@ public actor AgentSharedChat {
     static let reservedCoordinatorPrefix = "coordinator:"
     static let reservedOperatorPrefix = "operator:"
 
+    /// True when the identifier is the implicit terminal operator for any room.
+    /// The operator is never registered, so this recognises the actor-owned
+    /// namespace rather than a participant lookup.
+    public static func isOperatorIdentifier(_ rawIdentifier: String) -> Bool {
+        let identifier = rawIdentifier
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return identifier.hasPrefix(reservedOperatorPrefix)
+    }
+
     /// True when the identifier belongs to the reserved coordinator/operator
     /// namespace, in any room. The check is case-insensitive and ignores
     /// surrounding whitespace so a near-miss spelling cannot slip through.
