@@ -10,6 +10,29 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Live messages (`AgentSharedChat`): while sub-agents are active, the human
+  operator, the coordinator LLM, and the agent instances share a bounded,
+  in-memory chat room. From the terminal, `@coordinator` messages the live
+  coordinator, `@all` broadcasts to the coordinator and every active agent, and
+  the `@agent-…` handle addresses one instance directly. The `agent.message` tool
+  exposes the same destinations (`direct`, `coordinator`, `peers`, `all`); direct
+  messages wake idle recipients immediately. Every reply travels back through the
+  same chat via `agent.message`: both the coordinator and delegated agents are
+  instructed that ordinary model output is not part of the chat, so any reply to
+  a chat message must be sent through `agent.message` regardless of the sender.
+  The chat is transient and never written to a session snapshot or task
+  checkpoint.
+
+### Changed
+
+- Runtime prompt composition now separates the cacheable static system prefix
+  from the dynamic user context: working directory and response language stay in
+  the static prefix, while workflow/task graph, agent roster, and memory travel
+  in the dynamic initial message preserved across snapshot restore and
+  conversation compaction.
+
 ## [1.1.3] - 2026-08-05
 
 ### Changed

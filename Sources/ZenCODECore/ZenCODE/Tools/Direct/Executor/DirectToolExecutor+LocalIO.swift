@@ -50,7 +50,8 @@ extension DirectToolExecutor {
                 title: Self.localExecAuthorizationTitle(for: candidates),
                 kind: "execute",
                 command: command,
-                workingDirectory: cwd.path
+                workingDirectory: cwd.path,
+                delegatedIdentity: delegatedAuthorizationIdentity
             )
         )
         guard approved else {

@@ -29,6 +29,7 @@ extension TerminalChat {
         ]
         lines.append(contentsOf: visibleCommandDescriptorsForCurrentAgent().map(\.help))
         lines.append(contentsOf: [
+            "Live chat: @coordinator <message>, @all <message>, or an @agent-… ID handle.",
             "Ctrl+T toggles compact/full tool output.",
             "Ctrl+G toggles default/full access for local.exec approvals in the interactive panel.",
             "Editing: Ctrl+A/Ctrl+E line start/end, Alt+</Alt+> draft start/end, "
@@ -61,6 +62,19 @@ extension TerminalChat {
 
         if origin != .local {
             return await submittedTelegramLineAction(prompt)
+        }
+
+        switch Self.parseSharedChatMention(from: prompt) {
+        case let .route(sharedChatRoute):
+            _ = await sendSharedChatMention(sharedChatRoute)
+            return .continueChat
+        case .missingText:
+            await writeFailureMessage(
+                "ZenCODE message: add a message after the live mention.\n"
+            )
+            return .continueChat
+        case .none:
+            break
         }
 
         if case .slashCommand = Self.submittedLineRole(for: prompt) {

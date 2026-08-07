@@ -56,8 +56,12 @@ extension ACPCompatibilityTests {
             "prompt": "@AgentB inspect this session"
         ])
 
+        let routedConfiguration = try #require(
+            await bridge.sessionConfigurationsForTesting().first
+        )
         #expect(await bridge.selectedAgentIDForTesting(sessionID: sessionID) == agentB.id)
-        #expect(await backend.createdSystemPrompt()?.contains("Instructions for Agent B.") == true)
+        #expect(routedConfiguration.systemPrompt?.contains("Instructions for Agent B.") == false)
+        #expect(routedConfiguration.dynamicContext?.contains("Instructions for Agent B.") == true)
         #expect(await bridge.lifecycleAgentIDForTesting(sessionID: sessionID) == agentB.id)
 
         let restoredBridge = try makeBridge(
@@ -81,8 +85,17 @@ extension ACPCompatibilityTests {
             ],
             replayHistory: false
         )
+        let restoredConfiguration = try #require(
+            await restoredBridge.sessionConfigurationsForTesting().first
+        )
         #expect(
             await restoredBridge.selectedAgentIDForTesting(sessionID: "restored-agent-b")
+                == agentB.id
+        )
+        #expect(restoredConfiguration.systemPrompt?.contains("Instructions for Agent B.") == false)
+        #expect(restoredConfiguration.dynamicContext?.contains("Instructions for Agent B.") == true)
+        #expect(
+            await restoredBridge.lifecycleAgentIDForTesting(sessionID: "restored-agent-b")
                 == agentB.id
         )
     }

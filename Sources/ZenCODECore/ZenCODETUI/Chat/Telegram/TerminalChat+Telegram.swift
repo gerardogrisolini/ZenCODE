@@ -67,8 +67,8 @@ extension TerminalChat {
                 if Task.isCancelled || self == nil {
                     return
                 }
-                guard eventQueue.send(.telegramMessage(message)) else {
-                    // The runtime loop has finished; stop forwarding.
+                guard await eventQueue.sendWithBackpressure(.telegramMessage(message)) else {
+                    // The runtime loop ended or this forwarder was cancelled.
                     return
                 }
             }
@@ -77,7 +77,7 @@ extension TerminalChat {
 
     func handleTelegramMessage(
         _ message: TerminalTelegramIncomingMessage,
-        queuedPrompts: inout [TerminalQueuedPrompt],
+        queuedPrompts: inout TerminalQueuedPromptBuffer,
         eventQueue: TerminalChatEventQueue,
         transcriptions: TerminalVoiceTranscriptionRegistry
     ) async {
@@ -126,9 +126,15 @@ extension TerminalChat {
             return
         }
 
-        queuedPrompts.append(
+        guard queuedPrompts.enqueue(
             TerminalQueuedPrompt(text: text, origin: .telegram(chatID: message.chatID))
-        )
+        ) else {
+            await sendTelegramSystemMessage(
+                "ZenCODE is busy and the prompt queue is full. Your prompt was not queued; try again after a running prompt completes.",
+                to: message.chatID
+            )
+            return
+        }
     }
 
     func handleTelegramVoiceMessage(
@@ -164,27 +170,31 @@ extension TerminalChat {
                 try Task.checkCancellation()
                 let transcript = try await AgentVoiceTranscriptionService()
                     .transcribe(audio)
-                eventQueue.send(
+                guard await eventQueue.sendWithBackpressure(
                     .voicePromptCompleted(
                         TerminalVoicePromptResult(
                             origin: .telegram(chatID: chatID),
                             outcome: .success(transcript)
                         )
                     )
-                )
+                ) else {
+                    return
+                }
             } catch is CancellationError {
                 // Teardown or an explicit cancel: the runtime loop is gone, so
                 // no completion event is reported.
                 return
             } catch {
-                eventQueue.send(
+                guard await eventQueue.sendWithBackpressure(
                     .voicePromptCompleted(
                         TerminalVoicePromptResult(
                             origin: .telegram(chatID: chatID),
                             outcome: .failure(error.localizedDescription)
                         )
                     )
-                )
+                ) else {
+                    return
+                }
             }
         }
         transcriptions.register(task, for: slot)

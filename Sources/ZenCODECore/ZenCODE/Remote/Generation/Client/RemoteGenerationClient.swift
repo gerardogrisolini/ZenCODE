@@ -58,6 +58,9 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         streamEndpointBaseURLOverride: URL? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
+        sharedChat: AgentSharedChat? = nil,
+        sharedChatSenderID: String? = nil,
+        sharedChatRootSessionID: String? = nil,
         subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
     ) {
         self.configuration = configuration
@@ -74,6 +77,9 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             mcpRuntime: mcpRuntime,
             swiftFeatureRuntime: swiftFeatureRuntime ?? SwiftFeatureRuntime(),
             preferredWorkspaceRootURL: configuration.workingDirectory,
+            sharedChat: sharedChat,
+            sharedChatSenderID: sharedChatSenderID,
+            sharedChatRootSessionID: sharedChatRootSessionID,
             subAgentContextualBackendFactory: subAgentContextualBackendFactory
                 ?? DirectSubAgentRuntime.unavailableContextualBackendFactory
         )
@@ -91,6 +97,34 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
 
     public func interruptSubAgents(rootSessionID: String) async -> Int {
         await toolExecutor.interruptSubAgents(rootSessionID: rootSessionID)
+    }
+
+    public func sharedChatParticipants(rootSessionID: String) async -> [AgentSharedChat.Participant] {
+        await toolExecutor.sharedChatParticipants(rootSessionID: rootSessionID)
+    }
+
+    public func sendSharedChatMessage(
+        text: String,
+        destination: AgentSharedChat.Destination,
+        rootSessionID: String
+    ) async throws -> AgentSharedChat.Delivery {
+        try await toolExecutor.sendSharedChatMessage(
+            text: text,
+            destination: destination,
+            rootSessionID: rootSessionID
+        )
+    }
+
+    public func drainCoordinatorSharedChatMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        await toolExecutor.drainCoordinatorSharedChatMessages(rootSessionID: rootSessionID)
+    }
+
+    public func sharedChatTranscriptMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        await toolExecutor.sharedChatTranscriptMessages(rootSessionID: rootSessionID)
     }
 
     public func createSession(
@@ -242,6 +276,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             modelID: configuration.modelID ?? provider.modelID,
             workingDirectoryPath: session.cwd.path,
             systemPrompt: splitMessages.systemPrompt ?? session.systemPrompt,
+            dynamicContext: splitMessages.dynamicContext,
             cacheKey: session.cacheKey,
             history: splitMessages.history,
             allowedToolNames: session.allowedToolNames,
@@ -537,7 +572,11 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
 
     public static func snapshotMessages(
         from messages: [[String: Any]]
-    ) -> (systemPrompt: String?, history: [AgentRuntimeMessage]) {
+    ) -> (
+        systemPrompt: String?,
+        dynamicContext: String?,
+        history: [AgentRuntimeMessage]
+    ) {
         var remainingMessages = messages[...]
         let systemPrompt: String?
         if let firstRole = remainingMessages.first?["role"] as? String,
@@ -549,10 +588,10 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             systemPrompt = nil
         }
 
-        return (
-            systemPrompt,
-            agentRuntimeMessages(from: Array(remainingMessages))
+        let separatedContext = AgentRuntimeDynamicContext.separating(
+            from: agentRuntimeMessages(from: Array(remainingMessages))
         )
+        return (systemPrompt, separatedContext.context, separatedContext.history)
     }
 
     public static func runtimeToolCalls(
@@ -609,8 +648,25 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             ])
         }
 
+        let protectedContext: [String: Any]? = conversationMessages.first.flatMap { message -> [String: Any]? in
+            guard let role = stringValue(message["role"])?.lowercased(),
+                  role == AgentRuntimeMessage.Role.user.rawValue,
+                  let content = contentString(from: message["content"]),
+                  AgentRuntimeDynamicContext.context(
+                      from: AgentRuntimeMessage(role: .user, content: content)
+                  ) != nil else {
+                return nil
+            }
+            return message
+        }
+        if let protectedContext {
+            compactedMessages.append(protectedContext)
+        }
+        let messagesEligibleForRecent = protectedContext == nil
+            ? conversationMessages
+            : conversationMessages.dropFirst()
         compactedMessages.append(
-            contentsOf: conversationMessages.suffix(compactionResult.keptRecentMessageCount)
+            contentsOf: messagesEligibleForRecent.suffix(compactionResult.keptRecentMessageCount)
         )
         return compactedMessages
     }

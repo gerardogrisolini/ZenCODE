@@ -654,9 +654,318 @@ struct AgentCoreSessionRunnerTests {
         #expect(await runner.localExecAccessMode() == .fullAccess)
     }
 
+    @Test
+    func delegatedRequestReachesOperatorEvenWithoutLiveTurn() async throws {
+        // The case the fix targets: a delegated sub-agent outlives the turn that
+        // spawned it, so its consent request must still reach the operator even
+        // when no turn is in flight, and the operator's decision must be honoured
+        // both on approval and on denial.
+        let approvingOperator = AuthorizationRecorder(decision: true)
+        let denyingOperator = AuthorizationRecorder(decision: false)
+        let backendBox = AuthorizationBackendBox()
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { configuration, _ in
+                backendBox.makeBackend(handler: configuration.toolAuthorizationHandler)
+            }
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["local.exec"]
+        )
+
+        try await runner.createSession(configuration: configuration)
+        // Warm-up turn with no requests: it only creates the backend and
+        // registers an approving operator handler for the session.
+        backendBox.setAuthorizationRequests([])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "warm up",
+            attachments: [],
+            authorizeTool: { request in await approvingOperator.authorize(request) },
+            onEvent: { _ in }
+        )
+
+        // `authorizationHandler()` is the runner's stable authorizeTool closure,
+        // independent of any single turn. Capturing it and driving it directly
+        // is exactly what a delegated sub-agent's executor does — and, crucially,
+        // it runs *after* sendPrompt returned, so the per-turn handler entry has
+        // already been removed by the `defer`. This is the most faithful way to
+        // model "no turn in flight" with this backend: by the time `await
+        // sendPrompt` resolves the turn has fully completed, so no sleep is
+        // needed and the assertion is deterministic.
+        let authorize = try #require(backendBox.authorizationHandler())
+
+        // The request's own session is a bogus sub-agent session and carries no
+        // turn id, so the turn-scoped path could never match it. Routing must
+        // succeed purely on the runtime-minted delegation identity.
+        let approved = await authorize(
+            Self.authorizationRequest(
+                sessionID: "sub-agent-private-session",
+                toolName: "local.exec",
+                delegatedIdentity: .init(agentID: "delegated-approver", rootSessionID: sessionID)
+            )
+        )
+        #expect(approved == true)
+        #expect(await approvingOperator.toolNames() == ["local.exec"])
+
+        // A second turn swaps in a denying operator; the captured closure is the
+        // same object, proving the request is answered by the session-scoped
+        // handler that survives across turns — not by a per-turn entry.
+        backendBox.setAuthorizationRequests([])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "deny handler",
+            attachments: [],
+            authorizeTool: { request in await denyingOperator.authorize(request) },
+            onEvent: { _ in }
+        )
+        let denied = await authorize(
+            Self.authorizationRequest(
+                sessionID: "sub-agent-private-session",
+                toolName: "local.delete",
+                delegatedIdentity: .init(agentID: "delegated-denyer", rootSessionID: sessionID)
+            )
+        )
+        #expect(denied == false)
+        #expect(await denyingOperator.toolNames() == ["local.delete"])
+    }
+
+    @Test
+    func delegatedRequestWithUnknownRootSessionIsDeniedAndUnseen() async throws {
+        // An unknown root session names no operator this runner owns, so the
+        // request must fail closed — even when a default authorizer would have
+        // approved it. Neither the per-session handler nor the default is ever
+        // consulted.
+        let defaultAuthorizer = AuthorizationRecorder(decision: true)
+        let backendBox = AuthorizationBackendBox()
+        let runner = AgentCoreSessionRunner(
+            defaultToolAuthorizationHandler: { request in
+                await defaultAuthorizer.authorize(request)
+            },
+            backendFactory: { configuration, _ in
+                backendBox.makeBackend(handler: configuration.toolAuthorizationHandler)
+            }
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["local.exec"]
+        )
+
+        try await runner.createSession(configuration: configuration)
+        backendBox.setAuthorizationRequests([])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "warm up",
+            attachments: [],
+            onEvent: { _ in }
+        )
+        let authorize = try #require(backendBox.authorizationHandler())
+
+        let result = await authorize(
+            Self.authorizationRequest(
+                sessionID: "sub-agent-private-session",
+                toolName: "local.exec",
+                delegatedIdentity: .init(agentID: "stranger", rootSessionID: "session-unknown-to-runner")
+            )
+        )
+        #expect(result == false)
+        #expect(await defaultAuthorizer.toolNames() == [])
+    }
+
+    @Test
+    func nonDelegatedRequestRoutingIsUnchanged() async throws {
+        // Regression guard for the original turn-scoped path: a plain request
+        // (no delegation identity) is approved when its session matches the live
+        // turn, and denied — without consulting the handler — when the session
+        // is foreign to that turn.
+        let authorizer = AuthorizationRecorder(decision: true)
+        let backendBox = AuthorizationBackendBox()
+        let runner = AgentCoreSessionRunner(
+            defaultToolAuthorizationHandler: { request in
+                await authorizer.authorize(request)
+            },
+            backendFactory: { configuration, _ in
+                backendBox.makeBackend(handler: configuration.toolAuthorizationHandler)
+            }
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["local.exec"]
+        )
+
+        try await runner.createSession(configuration: configuration)
+
+        // Matching session + live turn: reaches the handler, approved.
+        backendBox.setAuthorizationRequests([
+            Self.authorizationRequest(sessionID: sessionID, toolName: "local.exec")
+        ])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "match",
+            attachments: [],
+            onEvent: { _ in }
+        )
+        #expect(backendBox.lastAuthorizationResults() == [true])
+        #expect(await authorizer.toolNames() == ["local.exec"])
+
+        // Foreign session while the turn is live: denied, handler untouched.
+        backendBox.setAuthorizationRequests([
+            Self.authorizationRequest(sessionID: "session-not-this-turn", toolName: "local.delete")
+        ])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "mismatch",
+            attachments: [],
+            onEvent: { _ in }
+        )
+        #expect(backendBox.lastAuthorizationResults() == [false])
+        #expect(await authorizer.toolNames() == ["local.exec"])
+    }
+
+    @Test
+    func fullAccessShortCircuitsDelegatedRequestsForGatedTools() async throws {
+        // The full-access bypass must cover delegated requests on gated tools
+        // too, so a sub-agent never blocks on a dialog the operator has already
+        // globally waived.
+        let operatorHandler = AuthorizationRecorder(decision: false)
+        let backendBox = AuthorizationBackendBox()
+        let runner = AgentCoreSessionRunner(
+            defaultToolAuthorizationHandler: { request in
+                await operatorHandler.authorize(request)
+            },
+            backendFactory: { configuration, _ in
+                backendBox.makeBackend(handler: configuration.toolAuthorizationHandler)
+            }
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["local.exec"]
+        )
+
+        try await runner.createSession(configuration: configuration)
+        backendBox.setAuthorizationRequests([])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "warm up",
+            attachments: [],
+            onEvent: { _ in }
+        )
+        let authorize = try #require(backendBox.authorizationHandler())
+
+        #expect(await runner.toggleLocalExecAccessMode() == .fullAccess)
+
+        let result = await authorize(
+            Self.authorizationRequest(
+                sessionID: "sub-agent-private-session",
+                toolName: "local.exec",
+                delegatedIdentity: .init(agentID: "delegated-runner", rootSessionID: sessionID)
+            )
+        )
+        // Auto-approved by full access; the operator would have denied, proving
+        // the short-circuit fired before the delegated branch could ask.
+        #expect(result == true)
+        #expect(await operatorHandler.toolNames() == [])
+    }
+
+    @Test
+    func delegatedRequestTitleNamesAgentWhilePlainTitleIsPreserved() async throws {
+        // Presentation only: a delegated request is shown with the agent's
+        // identity in the title, while a plain (non-delegated) request keeps its
+        // title verbatim. Only `title` changes — never the routing fields.
+        let operatorHandler = AuthorizationRecorder(decision: true)
+        let backendBox = AuthorizationBackendBox()
+        let runner = AgentCoreSessionRunner(
+            defaultToolAuthorizationHandler: { request in
+                await operatorHandler.authorize(request)
+            },
+            backendFactory: { configuration, _ in
+                backendBox.makeBackend(handler: configuration.toolAuthorizationHandler)
+            }
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["local.exec"]
+        )
+
+        try await runner.createSession(configuration: configuration)
+        backendBox.setAuthorizationRequests([])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "warm up",
+            attachments: [],
+            onEvent: { _ in }
+        )
+        let authorize = try #require(backendBox.authorizationHandler())
+
+        // The fake backend exposes no sub-agent snapshots, so name resolution
+        // falls back to the agent id — which is exactly the "identifies the
+        // agent" contract under test.
+        _ = await authorize(
+            Self.authorizationRequest(
+                sessionID: "sub-agent-private-session",
+                toolName: "local.exec",
+                delegatedIdentity: .init(agentID: "researcher-7", rootSessionID: sessionID)
+            )
+        )
+        let delegatedRequests = await operatorHandler.recordedRequests()
+        #expect(delegatedRequests.count == 1)
+        #expect(delegatedRequests[0].title.contains("researcher-7"))
+        #expect(delegatedRequests[0].title.hasPrefix("[agent "))
+        // The original title survives after the prefix.
+        #expect(delegatedRequests[0].title.hasSuffix("local.exec"))
+        #expect(delegatedRequests[0].toolName == "local.exec")
+
+        // Plain (non-delegated) regression: the title is handed through verbatim.
+        let plainAuthorizer = AuthorizationRecorder(decision: true)
+        backendBox.setAuthorizationRequests([
+            Self.authorizationRequest(sessionID: sessionID, toolName: "local.exec")
+        ])
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "plain",
+            attachments: [],
+            authorizeTool: { request in await plainAuthorizer.authorize(request) },
+            onEvent: { _ in }
+        )
+        let plainRequests = await plainAuthorizer.recordedRequests()
+        #expect(plainRequests.count == 1)
+        #expect(plainRequests[0].title == "local.exec")
+    }
+
     private static func authorizationRequest(
         sessionID: String,
-        toolName: String
+        toolName: String,
+        delegatedIdentity: AgentToolAuthorizationRequest.DelegatedIdentity? = nil
     ) -> AgentToolAuthorizationRequest {
         AgentToolAuthorizationRequest(
             sessionID: sessionID,
@@ -665,7 +974,8 @@ struct AgentCoreSessionRunnerTests {
             title: toolName,
             kind: "execute",
             command: "echo test",
-            workingDirectory: "/tmp"
+            workingDirectory: "/tmp",
+            delegatedIdentity: delegatedIdentity
         )
     }
 }
@@ -685,6 +995,12 @@ private actor AuthorizationRecorder {
 
     func toolNames() -> [String] {
         requests.map(\.toolName)
+    }
+
+    /// Full recorded requests, used to assert presentation-only fields such as
+    /// the operator-facing title.
+    func recordedRequests() -> [AgentToolAuthorizationRequest] {
+        requests
     }
 }
 
@@ -815,6 +1131,8 @@ private actor AuthorizationInvokingBackend: AgentRuntimeBackend {
             // Production tool executors create authorization requests while the
             // prompt's TaskLocal turn is active. Rebuild the recorded template
             // here so the fixture exercises the same turn-bound routing.
+            // Carry the delegation identity through so a delegated template
+            // exercises the delegated routing branch just like production.
             let request = AgentToolAuthorizationRequest(
                 sessionID: template.sessionID,
                 toolCallID: template.toolCallID,
@@ -822,7 +1140,8 @@ private actor AuthorizationInvokingBackend: AgentRuntimeBackend {
                 title: template.title,
                 kind: template.kind,
                 command: template.command,
-                workingDirectory: template.workingDirectory
+                workingDirectory: template.workingDirectory,
+                delegatedIdentity: template.delegatedIdentity
             )
             results.append(await handler?(request) ?? true)
         }

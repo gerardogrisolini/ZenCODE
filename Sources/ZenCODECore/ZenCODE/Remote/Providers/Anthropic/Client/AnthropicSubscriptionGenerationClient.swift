@@ -72,6 +72,9 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
         messagesEndpointURLOverride: URL? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
+        sharedChat: AgentSharedChat? = nil,
+        sharedChatSenderID: String? = nil,
+        sharedChatRootSessionID: String? = nil,
         subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
     ) {
         self.configuration = configuration
@@ -87,6 +90,9 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
             mcpRuntime: mcpRuntime,
             swiftFeatureRuntime: swiftFeatureRuntime ?? SwiftFeatureRuntime(),
             preferredWorkspaceRootURL: configuration.workingDirectory,
+            sharedChat: sharedChat,
+            sharedChatSenderID: sharedChatSenderID,
+            sharedChatRootSessionID: sharedChatRootSessionID,
             subAgentContextualBackendFactory: subAgentContextualBackendFactory
                 ?? DirectSubAgentRuntime.unavailableContextualBackendFactory
         )
@@ -103,6 +109,34 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
 
     public func interruptSubAgents(rootSessionID: String) async -> Int {
         await toolExecutor.interruptSubAgents(rootSessionID: rootSessionID)
+    }
+
+    public func sharedChatParticipants(rootSessionID: String) async -> [AgentSharedChat.Participant] {
+        await toolExecutor.sharedChatParticipants(rootSessionID: rootSessionID)
+    }
+
+    public func sendSharedChatMessage(
+        text: String,
+        destination: AgentSharedChat.Destination,
+        rootSessionID: String
+    ) async throws -> AgentSharedChat.Delivery {
+        try await toolExecutor.sendSharedChatMessage(
+            text: text,
+            destination: destination,
+            rootSessionID: rootSessionID
+        )
+    }
+
+    public func drainCoordinatorSharedChatMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        await toolExecutor.drainCoordinatorSharedChatMessages(rootSessionID: rootSessionID)
+    }
+
+    public func sharedChatTranscriptMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        await toolExecutor.sharedChatTranscriptMessages(rootSessionID: rootSessionID)
     }
 
     struct SessionLease: Sendable {

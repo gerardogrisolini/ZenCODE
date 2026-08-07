@@ -56,6 +56,20 @@ struct DirectToolCatalogSchemaTests {
     }
 
     @Test
+    func agentMessageSchemaExposesCanonicalLiveChatDestination() throws {
+        let descriptor = try #require(
+            DirectToolCatalog.subAgentDescriptors.first { $0.name == "agent.message" }
+        )
+        let schema = try #require(descriptor.schemaObject as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        let to = try #require(properties["to"] as? [String: Any])
+
+        #expect(to["type"] as? String == "string")
+        #expect(to["enum"] as? [String] == ["direct", "coordinator", "peers", "all"])
+        #expect(properties["target"] != nil)
+    }
+
+    @Test
     func tasksCreateBatchSchemaExposesExecutionExecutor() throws {
         let descriptor = try #require(
             DirectToolCatalog.todoTaskDescriptors.first { $0.name == "tasks.create" }

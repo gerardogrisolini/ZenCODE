@@ -134,7 +134,7 @@ extension DirectToolExecutor {
         }
         if canonicalCoreCoordinationToolName != nil,
            let borrowedSubAgentToolExecutor,
-           Self.isSubAgentCoordinationToolName(toolCall.name) {
+           Self.isBorrowedSubAgentToolName(toolCall.name) {
             return DirectToolExecutionOutput(
                 output: try await borrowedSubAgentToolExecutor(
                     AgentBorrowedToolCall(

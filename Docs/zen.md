@@ -237,6 +237,16 @@ Commands start with `/`:
 | **Role of current agent** | Implementer (can delegate when useful) | Coordinator and final reviewer only |
 | **Monitor progress** | `/plan status` or `/tasks` | `/tasks` |
 
+### Live Agent Chat
+
+While sub-agents are active, the coordinator and the agent instances share a
+live, transient chat room. From the terminal, address it with a leading mention:
+`@coordinator` to message the live coordinator, `@all` to reach the coordinator
+and every active agent, or the `@agent-…` handle an instance advertises to
+message it directly. The LLM side uses the `agent.message` tool with the same
+destinations (`direct`, `coordinator`, `peers`, `all`). The chat is in-memory and
+never persisted; a session reset drops it. See [agents.md](agents.md#shared-chat).
+
 ### Saving and Loading Plans
 
 `/plan save` stores a reusable copy for the current working directory. It uses
@@ -291,6 +301,8 @@ The terminal consent prompt makes the scope of **Always** explicit: for
 destructive direct tools it grants only the current process/session and is not
 persisted. Use **Run once** when the broader executable-level approval is not
 intended.
+
+Delegated sub-agents ask for the same approvals as the coordinator. Their requests are routed on a runtime-minted delegation identity (the agent instance plus the operator session that owns its delegation tree) instead of the turn that spawned them, because delegated work keeps running after that turn returns. The prompt names the requesting agent, and a request whose root session is unknown to the runner is refused without asking. Full access bypasses these requests exactly as it does the coordinator's.
 
 ## Tool Selection
 

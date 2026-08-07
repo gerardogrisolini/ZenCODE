@@ -171,4 +171,42 @@ enum TerminalChatRuntimeEvent: Sendable {
     case startNextQueuedPrompt
     case telegramMessage(TerminalTelegramIncomingMessage)
     case voicePromptCompleted(TerminalVoicePromptResult)
+    /// The originating room remains attached while the event waits in the
+    /// terminal queue. A session command can rebind the live observation before
+    /// an already-enqueued event is consumed.
+    case sharedChatMessages(roomID: String, messages: [AgentSharedChat.Message])
+    case sharedChatParticipantsChanged(roomID: String)
+    /// The Core coordinator authorised exactly one synthetic coordinator turn.
+    case sharedChatAutoTrigger(AgentSharedChatAutoTrigger)
+
+    /// `nil` for ordinary terminal work. Shared-chat events must be compared
+    /// against the currently observed room before rendering or starting work:
+    /// cancellation of an old observation cannot retract events it already
+    /// placed in the FIFO queue.
+    var sharedChatRoomID: String? {
+        switch self {
+        case let .sharedChatMessages(roomID, _),
+             let .sharedChatParticipantsChanged(roomID):
+            roomID
+        case let .sharedChatAutoTrigger(trigger):
+            trigger.roomID
+        case .input,
+             .generationCompleted,
+             .startNextQueuedPrompt,
+             .telegramMessage,
+             .voicePromptCompleted:
+            nil
+        }
+    }
+
+    /// An event is consumable only while both the observation and the terminal
+    /// session still name its room. This deliberately makes a queued event from
+    /// an observer that has not yet been rebound stale after `/new` or
+    /// `/resume`.
+    func belongsToActiveSharedChatRoom(
+        observedRoomID: String,
+        sessionID: String
+    ) -> Bool {
+        sharedChatRoomID == observedRoomID && observedRoomID == sessionID
+    }
 }

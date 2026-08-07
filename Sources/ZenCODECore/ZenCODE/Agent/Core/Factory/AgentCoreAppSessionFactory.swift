@@ -79,7 +79,7 @@ public enum AgentCoreAppSessionFactory {
                 matching: request.modelID
             )
         }
-        let systemPrompt = resolvedSystemPrompt(
+        let promptSections = resolvedPromptSections(
             providedSystemPrompt: request.systemPrompt,
             cwd: request.workingDirectory.path,
             selectedAgent: agentConfiguration.selectedAgent,
@@ -97,7 +97,7 @@ public enum AgentCoreAppSessionFactory {
             sessionID: request.sessionID,
             modelID: effectiveModelID,
             workingDirectory: request.workingDirectory,
-            systemPrompt: systemPrompt,
+            systemPrompt: promptSections.systemPrompt,
             allowedToolNames: allowedToolNames,
             preserveThinking: request.preserveThinking
         )
@@ -106,7 +106,8 @@ public enum AgentCoreAppSessionFactory {
             sessionID: request.sessionID,
             modelID: effectiveModelID,
             workingDirectory: request.workingDirectory,
-            systemPrompt: systemPrompt,
+            systemPrompt: promptSections.systemPrompt,
+            dynamicContext: promptSections.dynamicContext,
             cacheKey: cacheKey,
             history: request.history,
             allowedToolNames: allowedToolNames,
@@ -127,15 +128,34 @@ public enum AgentCoreAppSessionFactory {
         allowedToolNames: Set<String>?,
         selectedSkillIDs: Set<String> = []
     ) -> String {
+        resolvedPromptSections(
+            providedSystemPrompt: providedSystemPrompt,
+            cwd: cwd,
+            selectedAgent: selectedAgent,
+            allowedToolNames: allowedToolNames,
+            selectedSkillIDs: selectedSkillIDs
+        )
+        .combinedPrompt
+    }
+
+    public static func resolvedPromptSections(
+        providedSystemPrompt: String?,
+        cwd: String,
+        selectedAgent: AgentProfile?,
+        allowedToolNames: Set<String>?,
+        selectedSkillIDs: Set<String> = []
+    ) -> SystemPromptSections {
+        _ = selectedSkillIDs
         if let providedSystemPrompt = providedSystemPrompt?.nilIfBlank {
-            return AgentSessionComposition.appProvidedSystemPrompt(
+            return AgentSessionComposition.appProvidedPromptSections(
                 providedSystemPrompt,
+                cwd: cwd,
                 allowedToolNames: allowedToolNames,
                 selectedAgent: selectedAgent
             )
         }
 
-        return AgentSessionComposition.standardSystemPrompt(
+        return AgentSessionComposition.standardPromptSections(
             cwd: cwd,
             allowedToolNames: allowedToolNames,
             selectedAgent: selectedAgent
@@ -247,7 +267,6 @@ public enum AgentCoreAppSessionFactory {
         let baseHash = cacheKeyBaseHash(from: seed)
         let identityPayload = [
             "model=\(modelID?.nilIfBlank ?? "")",
-            "cwd=\(workingDirectory.standardizedFileURL.path)",
             "system=\(systemPrompt)",
             "tools=\((allowedToolNames ?? []).sorted().joined(separator: ","))",
             "preserveThinking=\(preserveThinking)"
@@ -255,7 +274,7 @@ public enum AgentCoreAppSessionFactory {
         return "\(appCacheKeyPrefix)\(baseHash):\(stableHash(identityPayload))"
     }
 
-    private static let appCacheKeyPrefix = "app-session-cache-v1:"
+    private static let appCacheKeyPrefix = "app-session-cache-v2:"
 
     private static func cacheKeyBaseHash(from rawValue: String) -> String {
         let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)

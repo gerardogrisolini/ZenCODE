@@ -26,7 +26,8 @@ extension DirectToolExecutor {
     static func destructiveAuthorizationRequest(
         sessionID: String?,
         toolCall: DirectAgentToolCall,
-        workingDirectory: URL
+        workingDirectory: URL,
+        delegatedIdentity: AgentToolAuthorizationRequest.DelegatedIdentity? = nil
     ) -> AgentToolAuthorizationRequest? {
         let arguments = toolCall.argumentsObject
         switch toolCall.name {
@@ -44,7 +45,8 @@ extension DirectToolExecutor {
                 title: "Delete \(path)",
                 kind: "destructive",
                 command: command,
-                workingDirectory: workingDirectory.path
+                workingDirectory: workingDirectory.path,
+                delegatedIdentity: delegatedIdentity
             )
         case "git.push":
             guard arguments.bool("dryRun", "dry_run") != true else {
@@ -67,7 +69,8 @@ extension DirectToolExecutor {
                 title: "Push to remote",
                 kind: "destructive",
                 command: parts.joined(separator: " "),
-                workingDirectory: workingDirectory.path
+                workingDirectory: workingDirectory.path,
+                delegatedIdentity: delegatedIdentity
             )
         case "git.restore":
             // Unstaging is safe; only discarding worktree changes is gated.
@@ -86,7 +89,8 @@ extension DirectToolExecutor {
                 title: "Discard worktree changes",
                 kind: "destructive",
                 command: "git restore --worktree \(target)",
-                workingDirectory: workingDirectory.path
+                workingDirectory: workingDirectory.path,
+                delegatedIdentity: delegatedIdentity
             )
         default:
             return nil
@@ -105,7 +109,8 @@ extension DirectToolExecutor {
               let request = Self.destructiveAuthorizationRequest(
                   sessionID: sessionID,
                   toolCall: toolCall,
-                  workingDirectory: workingDirectory
+                  workingDirectory: workingDirectory,
+                  delegatedIdentity: delegatedAuthorizationIdentity
               ) else {
             return nil
         }

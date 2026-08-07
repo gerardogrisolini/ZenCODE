@@ -98,7 +98,10 @@ struct DirectSubAgentRuntimeTests {
         )
 
         let session = try #require(await backend.createdSessions().first)
-        #expect(session.allowedToolNames == ["local.readFile", "local.writeFile", "skills.list", "skills.read"])
+        #expect(session.allowedToolNames == [
+            "local.readFile", "local.writeFile", "skills.list", "skills.read",
+            "agent.list", "agent.get", "agent.message"
+        ])
         await runtime.shutdown()
     }
 
@@ -154,7 +157,9 @@ struct DirectSubAgentRuntimeTests {
         )
 
         let session = try #require(await backend.createdSessions().first)
-        #expect(session.allowedToolNames == ["skills.list", "skills.read"])
+        #expect(session.allowedToolNames == [
+            "skills.list", "skills.read", "agent.list", "agent.get", "agent.message"
+        ])
         await runtime.shutdown()
     }
 
@@ -194,7 +199,7 @@ struct DirectSubAgentRuntimeTests {
         let session = try #require(await backend.createdSessions().first)
         #expect(session.allowedToolNames == [
             "local.readFile", "tasks.list", "tasks.get", "tasks.update",
-            "skills.list", "skills.read"
+            "skills.list", "skills.read", "agent.list", "agent.get", "agent.message"
         ])
         await runtime.shutdown()
     }
@@ -237,12 +242,17 @@ struct DirectSubAgentRuntimeTests {
         let session = try #require(await backend.createdSessions().first)
         let allowedToolNames = try #require(session.allowedToolNames)
         let mutatingCoreNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+            .subtracting(["agent.message"])
 
         #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))
         #expect(allowedToolNames.contains("local.readFile"))
         #expect(allowedToolNames.contains("tasks.list"))
         #expect(allowedToolNames.contains("tasks.get"))
         #expect(allowedToolNames.contains("tasks.update"))
+        #expect(allowedToolNames.contains("agent.list"))
+        #expect(allowedToolNames.contains("agent.get"))
+        #expect(allowedToolNames.contains("agent.message"))
+        #expect(!allowedToolNames.contains("agent.create"))
         #expect(allowedToolNames.contains(rawCompatibilityAlias))
         #expect(
             !DirectToolExecutor.isCoreCoordinationToolAllowed(
@@ -2159,6 +2169,100 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func closeCleansUpWhenTaskAttemptCancellationThrows() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "root-graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "close-task", title: "Close")]
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("closer"),
+                "profile": .string("Developer"),
+                "taskID": .string("close-task"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        let agent = try #require(await runtime.snapshots().first)
+        let agentSessionID = "\(agent.id)_session"
+
+        // Redirect the root execution session to an incompatible task graph.
+        // This makes close's cancelAttempt throw taskNotFound while leaving the
+        // child scope in place, so the remainder of the close cleanup is observable.
+        _ = try await orchestrator.createGraph(
+            sessionID: "parent",
+            id: "parent-graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "parent-task", title: "Parent")]
+        )
+        let parentReceipt = try #require(try await orchestrator.claimTasks(
+            sessionID: "parent",
+            claims: [TaskClaim(taskID: "parent-task", agentID: "parent-agent")]
+        ).first)
+        try await orchestrator.registerExecutionScope(
+            executionSessionID: "root",
+            scope: TaskExecutionScope(
+                rootSessionID: "parent",
+                graphID: parentReceipt.graphID,
+                taskID: parentReceipt.taskID,
+                attemptID: parentReceipt.attemptID
+            )
+        )
+
+        do {
+            _ = try await runtime.closeAgent(arguments: ["id": .string(agent.id)])
+            Issue.record("Closing must propagate a task-attempt cancellation failure.")
+        } catch let error as SessionTaskOrchestratorError {
+            #expect(error == .taskNotFound("close-task"))
+        }
+
+        let closedAgent = try #require(await runtime.snapshots().first)
+        #expect(closedAgent.status == .closed)
+        #expect(closedAgent.pending == false)
+        #expect(closedAgent.latestError?.contains("unable to cancel task attempt") == true)
+        #expect(await orchestrator.executionScope(for: agentSessionID) == nil)
+
+        let participants = await runtime.sharedChat.participants(
+            roomID: "root",
+            includingInactive: true
+        )
+        #expect(participants.first(where: { $0.name == "closer" }) == nil)
+        #expect(await backend.shutdownCount() == 1)
+        await #expect(throws: DirectSubAgentBackendFactoryError.self) {
+            _ = try await backend.executeBorrowedSubAgentTool(
+                AgentBorrowedToolCall(
+                    id: "after-close",
+                    name: "agent.list",
+                    argumentsJSON: "{}"
+                )
+            )
+        }
+
+        // This scope exists only to force the cancellation error above. Removing
+        // it lets the original task state be checked from its root session.
+        await orchestrator.unregisterExecutionScope(executionSessionID: "root")
+        let unmodifiedTask = try await orchestrator.task(
+            sessionID: "root",
+            taskID: "close-task"
+        ).task
+        #expect(unmodifiedTask.status == .inProgress)
+        #expect(unmodifiedTask.activeAttemptID == agent.taskAttemptID)
+        await runtime.shutdown()
+    }
+
+    @Test
     func createRejectsOversizedBatches() async throws {
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
@@ -2229,6 +2333,1356 @@ struct DirectSubAgentRuntimeTests {
         #expect(interrupted.attempts.last?.status == .interrupted)
         await runtime.shutdown()
     }
+
+    @Test
+    func sharedChatBroadcastDeliversToCoordinatorAndEveryOtherActiveAgent() async throws {
+        let chat = AgentSharedChat()
+        _ = try await chat.registerCoordinator(roomID: "root")
+        _ = try await chat.registerAgent(id: "alpha-id", name: "alpha", roomID: "root")
+        _ = try await chat.registerAgent(id: "beta-id", name: "beta", roomID: "root")
+
+        let delivery = try await chat.send(
+            roomID: "root",
+            senderID: "alpha-id",
+            destination: .all,
+            text: "Please compare findings"
+        )
+
+        // The broadcast reaches the coordinator, every other active agent,
+        // and the terminal operator (the implicit owner). The operator has no
+        // mailbox, so only the coordinator and the other agent are drainable.
+        #expect(Set(delivery.recipients.map(\.id)) == [
+            AgentSharedChat.operatorID(for: "root"),
+            AgentSharedChat.coordinatorID(for: "root"), "beta-id"
+        ])
+        #expect(await chat.drain(
+            roomID: "root",
+            participantID: AgentSharedChat.coordinatorID(for: "root")
+        ).map(\.text) == ["Please compare findings"])
+        #expect(await chat.drain(roomID: "root", participantID: "beta-id").map(\.sender.name) == ["alpha"])
+        #expect(await chat.drain(roomID: "root", participantID: "alpha-id").isEmpty)
+    }
+
+    @Test
+    func operatorBroadcastIncludesCoordinatorWithoutBecomingAParticipant() async throws {
+        let chat = AgentSharedChat()
+        _ = try await chat.registerCoordinator(roomID: "root")
+        _ = try await chat.registerAgent(id: "worker-id", name: "worker", roomID: "root")
+
+        let delivery = try await chat.sendFromOperator(
+            roomID: "root",
+            destination: .all,
+            text: "Please report live status"
+        )
+
+        #expect(delivery.message.sender.id == AgentSharedChat.operatorID(for: "root"))
+        #expect(delivery.message.sender.name == "operator")
+        #expect(delivery.message.sender.kind == .operator)
+        #expect(Set(delivery.recipients.map(\.id)) == [
+            AgentSharedChat.coordinatorID(for: "root"), "worker-id",
+        ])
+        // The operator is the implicit owner of the room: it appears in the
+        // roster, yet it is not a registered participant — it holds no mailbox
+        // and consumes no bounded slot, so capacity stays reserved for work.
+        #expect(await chat.participants(roomID: "root").map(\.id) == [
+            AgentSharedChat.operatorID(for: "root"),
+            AgentSharedChat.coordinatorID(for: "root"), "worker-id",
+        ])
+        // The implicit owner has no mailbox: it consumes messages through the
+        // observation stream, so draining it yields nothing.
+        #expect(await chat.drain(
+            roomID: "root",
+            participantID: AgentSharedChat.operatorID(for: "root")
+        ).isEmpty)
+        #expect(await chat.drain(
+            roomID: "root",
+            participantID: AgentSharedChat.coordinatorID(for: "root")
+        ).map(\.sender.id) == [AgentSharedChat.operatorID(for: "root")])
+        #expect(await chat.drain(roomID: "root", participantID: "worker-id").map(\.text)
+            == ["Please report live status"])
+    }
+
+    @Test
+    func terminalSharedChatBridgeUsesTrustedOperatorForCoordinatorMessages() async throws {
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        let delivery = try await runtime.sendSharedChatMessage(
+            text: "Review the live status",
+            destination: .coordinator,
+            rootSessionID: "root"
+        )
+
+        #expect(delivery.message.sender.id == AgentSharedChat.operatorID(for: "root"))
+        #expect(delivery.message.sender.kind == .operator)
+        #expect(delivery.recipients.map(\.id) == [AgentSharedChat.coordinatorID(for: "root")])
+        #expect(await runtime.drainCoordinatorSharedChatMessages(rootSessionID: "root")
+            .map(\.text) == ["Review the live status"])
+        await runtime.shutdown()
+    }
+
+    /// The coordinator addressing the terminal operator directly (by id) must
+    /// deliver through the shared-chat transcript without attempting to route
+    /// the operator through the sub-agent work loop, which would fail because
+    /// the operator is not a delegated agent.
+    @Test
+    func coordinatorDirectMessageToOperatorIsDeliveredViaTranscript() async throws {
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        let operatorID = AgentSharedChat.operatorID(for: "root")
+
+        let result = try await runtime.messageSharedChat(
+            arguments: [
+                "id": .string(operatorID),
+                "message": .string("Ciao, tutto ok?")
+            ],
+            rootSessionID: "root",
+            parentAllowedToolNames: nil
+        )
+
+        // The operator has no mailbox or prompt queue: delivery is reported
+        // purely from the bus transcript identity, not the sub-agent roster.
+        #expect(result.contains("Delivered live message to Operator"))
+        let messages = await runtime.sharedChatTranscriptMessages(rootSessionID: "root")
+        #expect(messages.count == 1)
+        #expect(messages.first?.text == "Ciao, tutto ok?")
+        #expect(messages.first?.recipientIDs == [operatorID])
+        #expect(messages.first?.sender.kind == .coordinator)
+        await runtime.shutdown()
+    }
+
+    /// `coordinator:<room>` and `operator:<room>` are minted only by the actor.
+    /// A delegated agent must never be able to take one of those identities,
+    /// in any room and in any near-miss spelling.
+    @Test
+    func sharedChatReservesCoordinatorAndOperatorIdentifiers() async throws {
+        let chat = AgentSharedChat()
+        _ = try await chat.registerCoordinator(roomID: "root")
+
+        for reserved in [
+            AgentSharedChat.coordinatorID(for: "root"),
+            AgentSharedChat.operatorID(for: "root"),
+            "coordinator:another-room",
+            "OPERATOR:root",
+            "  operator:root  ",
+        ] {
+            #expect(AgentSharedChat.isReservedParticipantIdentifier(reserved))
+            await #expect(throws: AgentSharedChat.Error.reservedParticipantIdentifier(reserved)) {
+                _ = try await chat.registerAgent(
+                    id: reserved,
+                    name: "impostor",
+                    roomID: "root"
+                )
+            }
+        }
+
+        // Identifiers that could forge a prompt header or a card route are
+        // rejected outright rather than sanitised into a different identity.
+        for invalid in ["", "   ", "agent\nid", "agent\u{1B}id", String(repeating: "a", count: 129)] {
+            await #expect(throws: AgentSharedChat.Error.invalidParticipantIdentifier(invalid)) {
+                _ = try await chat.registerAgent(id: invalid, name: "worker", roomID: "root")
+            }
+        }
+
+        // The reserved slot is still the coordinator's, with its own mailbox.
+        // The operator surfaces as the implicit owner of the room, but it is
+        // never a registered participant and holds no slot or mailbox.
+        #expect(await chat.participants(roomID: "root").map(\.id)
+            == [AgentSharedChat.operatorID(for: "root"), AgentSharedChat.coordinatorID(for: "root")])
+        #expect(await chat.participants(roomID: "root").map(\.kind) == [.operator, .coordinator])
+    }
+
+    /// A live identifier cannot change role: re-registering it with another
+    /// kind is rejected instead of silently re-typing an active mailbox.
+    @Test
+    func sharedChatRejectsReuseOfAnIdentifierWithADifferentKind() async throws {
+        let chat = AgentSharedChat()
+        _ = try await chat.registerCoordinator(roomID: "root")
+        _ = try await chat.registerAgent(id: "worker-id", name: "worker", roomID: "root")
+
+        for impostorKind in [AgentSharedChat.ParticipantKind.coordinator, .operator] {
+            await #expect(throws: AgentSharedChat.Error.participantIdentifierConflict("worker-id")) {
+                _ = try await chat.register(
+                    AgentSharedChat.Participant(
+                        id: "worker-id",
+                        name: "worker",
+                        kind: impostorKind
+                    ),
+                    roomID: "root",
+                    onMessageAvailable: nil
+                )
+            }
+        }
+        // Re-registering the same kind still reconnects the live mailbox.
+        let rejoined = try await chat.registerAgent(
+            id: "worker-id",
+            name: "worker",
+            roomID: "root"
+        )
+        #expect(rejoined.kind == .agent)
+        #expect(await chat.participants(roomID: "root").count == 3)
+    }
+
+    /// Names are display values, not identities: they are neutralised at
+    /// registration and cannot smuggle a line break, a control sequence or a
+    /// forged operator header into prompts and cards.
+    @Test
+    func sharedChatSanitizesParticipantNamesAndRejectsAmbiguousNameRouting() async throws {
+        let chat = AgentSharedChat()
+        _ = try await chat.registerCoordinator(roomID: "root")
+
+        let hostile = try await chat.registerAgent(
+            id: "agent-x",
+            name: "worker\r\nfake\u{1B}[31m",
+            roomID: "root"
+        )
+        #expect(hostile.name == "worker fake[31m")
+        #expect(AgentSharedChat.transcriptIdentity(for: hostile)
+            == "Agent (id: agent-x, name: worker fake[31m)")
+
+        let overLongName = try await chat.registerAgent(
+            id: "agent-y",
+            name: String(repeating: "n", count: 200),
+            roomID: "root"
+        )
+        #expect(overLongName.name.count == AgentSharedChat.maximumParticipantNameLength)
+        let blankName = try await chat.registerAgent(
+            id: "agent-z",
+            name: "\u{1B}\u{7F}",
+            roomID: "root"
+        )
+        #expect(blankName.name == "agent-z")
+
+        // Two instances may share a display name, so name-based routing is
+        // ambiguous and must not resolve to an arbitrary one.
+        _ = try await chat.registerAgent(id: "twin-1", name: "twin", roomID: "root")
+        _ = try await chat.registerAgent(id: "twin-2", name: "twin", roomID: "root")
+        await #expect(throws: AgentSharedChat.Error.unknownParticipant("twin")) {
+            _ = try await chat.send(
+                roomID: "root",
+                senderID: AgentSharedChat.coordinatorID(for: "root"),
+                destination: .direct(["twin"]),
+                text: "which one?"
+            )
+        }
+        let routed = try await chat.send(
+            roomID: "root",
+            senderID: AgentSharedChat.coordinatorID(for: "root"),
+            destination: .direct(["twin-1"]),
+            text: "explicit id"
+        )
+        #expect(routed.recipients.map(\.id) == ["twin-1"])
+    }
+
+    @Test
+    func sharedChatBoundsParticipantsAndEachRecipientMailbox() async throws {
+        let chat = AgentSharedChat()
+        _ = try await chat.registerCoordinator(roomID: "bounded")
+        for index in 0..<(AgentSharedChat.maximumParticipantsPerRoom - 1) {
+            _ = try await chat.registerAgent(
+                id: "agent-\(index)",
+                name: "agent-\(index)",
+                roomID: "bounded"
+            )
+        }
+        await #expect(throws: AgentSharedChat.Error.self) {
+            _ = try await chat.registerAgent(
+                id: "overflow",
+                name: "overflow",
+                roomID: "bounded"
+            )
+        }
+
+        for index in 0...AgentSharedChat.maximumMailboxMessages {
+            _ = try await chat.send(
+                roomID: "bounded",
+                senderID: AgentSharedChat.coordinatorID(for: "bounded"),
+                destination: .direct(["agent-0"]),
+                text: "message \(index)"
+            )
+        }
+        let mailbox = await chat.drain(roomID: "bounded", participantID: "agent-0")
+        #expect(mailbox.count == AgentSharedChat.maximumMailboxMessages)
+        #expect(mailbox.first?.text == "message 1")
+        #expect(mailbox.last?.text == "message \(AgentSharedChat.maximumMailboxMessages)")
+    }
+
+    @Test
+    func sharedChatCloseAndShutdownReleaseSlotsWhileKeepingTranscriptSnapshots() async throws {
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        let chat = await runtime.sharedChat
+        let rootSessionID = "reusable-room"
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("first"),
+                "profile": .string("Developer"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: rootSessionID
+        )
+        let firstID = try #require(await runtime.snapshots().first(where: { $0.status != .closed })?.id)
+        _ = try await chat.send(
+            roomID: rootSessionID,
+            senderID: firstID,
+            destination: .coordinator,
+            text: "keep this historical sender"
+        )
+        #expect(await runtime.closeAgent(id: firstID))
+
+        // One coordinator slot is permanent for the room, so 63 close cycles
+        // must not accumulate stale participant entries and exhaust the limit.
+        for index in 0..<(AgentSharedChat.maximumParticipantsPerRoom - 2) {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "name": .string("cycle-\(index)"),
+                    "profile": .string("Developer"),
+                ],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+                parentAllowedToolNames: nil,
+                rootSessionID: rootSessionID
+            )
+            let agentID = try #require(
+                await runtime.snapshots().first(where: { $0.status != .closed })?.id
+            )
+            #expect(await runtime.closeAgent(id: agentID))
+        }
+
+        let transcript = await chat.messages(roomID: rootSessionID)
+        #expect(transcript.map(\.text) == ["keep this historical sender"])
+        #expect(transcript.first?.sender.id == firstID)
+        #expect(
+            await chat.participants(roomID: rootSessionID, includingInactive: true).map(\.id)
+                == [AgentSharedChat.operatorID(for: rootSessionID), AgentSharedChat.coordinatorID(for: rootSessionID)]
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("after-63-closes"),
+                "profile": .string("Developer"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: rootSessionID
+        )
+        #expect(await chat.participants(roomID: rootSessionID).count == 3)
+
+        await runtime.shutdown()
+        #expect(
+            await chat.participants(roomID: rootSessionID, includingInactive: true).map(\.id)
+                == [AgentSharedChat.operatorID(for: rootSessionID), AgentSharedChat.coordinatorID(for: rootSessionID)]
+        )
+        #expect(await chat.messages(roomID: rootSessionID).map(\.text) == ["keep this historical sender"])
+    }
+
+    @Test
+    func sharedChatLimitFailureAfterRecordInsertionRollsBackWithoutZombie() async throws {
+        let regularBackend = CapturingSubAgentRuntimeBackend()
+        let rejectedBackend = CapturingSubAgentRuntimeBackend()
+        let invocationCount = Mutex(0)
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in
+                let invocation = invocationCount.withLock { count in
+                    defer { count += 1 }
+                    return count
+                }
+                return invocation == AgentSharedChat.maximumParticipantsPerRoom - 1
+                    ? rejectedBackend
+                    : regularBackend
+            },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        let rootSessionID = "full-room"
+        let chat = await runtime.sharedChat
+
+        for index in 0..<(AgentSharedChat.maximumParticipantsPerRoom - 1) {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "name": .string("resident-\(index)"),
+                    "profile": .string("Developer"),
+                ],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+                parentAllowedToolNames: nil,
+                rootSessionID: rootSessionID
+            )
+        }
+        let residentIDs = Set(await runtime.snapshots().map(\.id))
+        #expect(await chat.participants(roomID: rootSessionID).count == AgentSharedChat.maximumParticipantsPerRoom + 1)
+
+        // A taskless attempt reserves a lease before inserting its AgentRecord.
+        // The registration error must clean all of it, even though this record
+        // was added after the room reached its exact limit.
+        let orchestrator = SessionTaskOrchestrator()
+        await runtime.installTaskOrchestrator(orchestrator)
+        await #expect(throws: AgentSharedChat.Error.self) {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "name": .string("overflow"),
+                    "profile": .string("Developer"),
+                ],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+                parentAllowedToolNames: nil,
+                rootSessionID: rootSessionID
+            )
+        }
+
+        #expect(Set(await runtime.snapshots().map(\.id)) == residentIDs)
+        #expect(await chat.participants(roomID: rootSessionID).count == AgentSharedChat.maximumParticipantsPerRoom + 1)
+        #expect((await chat.participants(roomID: rootSessionID, includingInactive: true)).contains { $0.name == "overflow" } == false)
+        #expect(await rejectedBackend.createdSessions().count == 1)
+        #expect(await rejectedBackend.shutdownCount() == 1)
+
+        // Creating an active graph is permitted only after the failed attempt's
+        // taskless reservation has been released.
+        _ = try await orchestrator.createGraph(
+            sessionID: rootSessionID,
+            id: "post-rollback-graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "follow-up", title: "Follow up")]
+        )
+        await runtime.shutdown()
+    }
+
+    @Test
+    func sharedChatIdentityIsIncludedInEveryChildBackendContext() async throws {
+        let recorder = SubAgentFactoryRecorder()
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { context in
+                recorder.append(context)
+                return backend
+            },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+
+        let agentID = try #require(await runtime.snapshots().first?.id)
+        let context = try #require(recorder.contexts.first)
+        #expect(context.sharedChat != nil)
+        #expect(context.sharedChatSenderID == agentID)
+        #expect(context.sharedChatRoomID == "root")
+        await runtime.shutdown()
+    }
+
+    @Test
+    func childBorrowedAgentToolsUseParentGraphAndCapturedChatIdentity() async throws {
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+
+        let listOutput = try await backend.executeBorrowedSubAgentTool(
+            AgentBorrowedToolCall(
+                id: "list-call",
+                name: "agent.list",
+                argumentsJSON: "{}"
+            )
+        )
+        #expect(listOutput.contains("worker"))
+
+        _ = try await backend.executeBorrowedSubAgentTool(
+            AgentBorrowedToolCall(
+                id: "message-call",
+                name: "agent.message",
+                argumentsJSON: #"{"to":"coordinator","message":"Live finding"}"#
+            )
+        )
+        let messages = await runtime.drainCoordinatorSharedChatMessages(rootSessionID: "root")
+        #expect(messages.map(\.sender.name) == ["worker"])
+        #expect(messages.map(\.text) == ["Live finding"])
+        await runtime.shutdown()
+    }
+
+    @Test
+    func sharedChatMessageWakesAnIdleAgentWithoutBlockingTheSender() async throws {
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+
+        let delivery = try await runtime.sendSharedChatMessage(
+            text: "Inspect the changed API now",
+            destination: .direct([agentID]),
+            rootSessionID: "root"
+        )
+        #expect(delivery.recipients.map(\.name) == ["worker"])
+
+        // The actor callback only schedules the drain; it must not make the
+        // sender await model work. Once scheduled, the existing work loop starts
+        // the idle agent immediately.
+        try await Task.sleep(for: .milliseconds(30))
+        _ = await runtime.waitForAgents(arguments: ["id": .string(agentID), "timeoutSeconds": .number(2)])
+        #expect(await backend.sentPromptCount() == 1)
+        await runtime.shutdown()
+    }
+
+    @Test
+    func childDirectToolExecutorBorrowsOnlyAgentToolsAndKeepsTaskAndTodoRuntimesLocal() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let unavailableFactory: DirectSubAgentContextualBackendFactory = { _ in
+            throw DirectSubAgentBackendFactoryError.unavailable
+        }
+        let rootExecutor = DirectToolExecutor(
+            subAgentContextualBackendFactory: unavailableFactory
+        )
+        await rootExecutor.installTaskOrchestrator(orchestrator)
+        _ = try await rootExecutor.executeThrowing(
+            sessionID: "root",
+            toolCall: directToolCall(
+                name: "tasks.create",
+                arguments: [
+                    "graphID": "graph",
+                    "tasks": [["id": "report", "title": "Report findings"]],
+                ]
+            ),
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            allowedToolNames: ["tasks.create"]
+        )
+
+        let backend = CapturingSubAgentRuntimeBackend()
+        let parentRuntime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await parentRuntime.installTaskOrchestrator(orchestrator)
+        _ = try await parentRuntime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("report"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: ["tasks.create"],
+            rootSessionID: "root"
+        )
+        let child = try #require(await parentRuntime.snapshots().first)
+        let childSessionID = "\(child.id)_session"
+        let childExecutor = DirectToolExecutor(
+            borrowedSubAgentToolExecutor: { toolCall in
+                try await parentRuntime.executeBorrowedSubAgentTool(
+                    senderID: child.id,
+                    rootSessionID: "root",
+                    toolCall: toolCall
+                )
+            },
+            subAgentContextualBackendFactory: unavailableFactory
+        )
+        await childExecutor.installTaskOrchestrator(orchestrator)
+        let allowedToolNames: Set<String> = [
+            "agent.list", "agent.get", "agent.message",
+            "tasks.list", "tasks.get", "tasks.update",
+            "todo.read", "todo.write",
+        ]
+        let workingDirectory = URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests")
+
+        let taskList = try await childExecutor.executeThrowing(
+            sessionID: childSessionID,
+            toolCall: directToolCall(name: "tasks.list", arguments: [:]),
+            workingDirectory: workingDirectory,
+            allowedToolNames: allowedToolNames
+        )
+        let taskDetails = try await childExecutor.executeThrowing(
+            sessionID: childSessionID,
+            toolCall: directToolCall(name: "tasks.get", arguments: ["id": "report"]),
+            workingDirectory: workingDirectory,
+            allowedToolNames: allowedToolNames
+        )
+        let taskUpdate = try await childExecutor.executeThrowing(
+            sessionID: childSessionID,
+            toolCall: directToolCall(
+                name: "tasks.update",
+                arguments: ["id": "report", "progress": "reported from child"]
+            ),
+            workingDirectory: workingDirectory,
+            allowedToolNames: allowedToolNames
+        )
+        let todoWrite = try await childExecutor.executeThrowing(
+            sessionID: childSessionID,
+            toolCall: directToolCall(
+                name: "todo.write",
+                arguments: [
+                    "todos": [["id": "handoff", "content": "Review the report"]],
+                ]
+            ),
+            workingDirectory: workingDirectory,
+            allowedToolNames: allowedToolNames
+        )
+        let todoRead = try await childExecutor.executeThrowing(
+            sessionID: childSessionID,
+            toolCall: directToolCall(name: "todo.read", arguments: [:]),
+            workingDirectory: workingDirectory,
+            allowedToolNames: allowedToolNames
+        )
+
+        let agentList = try await childExecutor.executeThrowing(
+            sessionID: childSessionID,
+            toolCall: directToolCall(name: "agent.list", arguments: [:]),
+            workingDirectory: workingDirectory,
+            allowedToolNames: allowedToolNames
+        )
+        let agentDetails = try await childExecutor.executeThrowing(
+            sessionID: childSessionID,
+            toolCall: directToolCall(name: "agent.get", arguments: ["id": child.id]),
+            workingDirectory: workingDirectory,
+            allowedToolNames: allowedToolNames
+        )
+        _ = try await childExecutor.executeThrowing(
+            sessionID: childSessionID,
+            toolCall: directToolCall(
+                name: "agent.message",
+                arguments: ["to": "coordinator", "message": "Report is ready"]
+            ),
+            workingDirectory: workingDirectory,
+            allowedToolNames: allowedToolNames
+        )
+
+        #expect(taskList.contains("report"))
+        #expect(taskDetails.contains("Report findings"))
+        #expect(taskUpdate.contains("reported from child"))
+        #expect(todoWrite.contains("Review the report"))
+        #expect(todoRead.contains("Review the report"))
+        #expect(agentList.contains("worker"))
+        #expect(agentDetails.contains("worker"))
+        let coordinatorMessages = await parentRuntime.drainCoordinatorSharedChatMessages(
+            rootSessionID: "root"
+        )
+        #expect(coordinatorMessages.map(\.sender.id) == [child.id])
+        #expect(coordinatorMessages.map(\.text) == ["Report is ready"])
+
+        await childExecutor.shutdown()
+        await rootExecutor.shutdown()
+        await parentRuntime.shutdown()
+    }
+
+    @Test
+    func failedAgentBatchRemovesEveryPreviouslyRegisteredChatParticipant() async throws {
+        let backendFactory = FailAfterFirstSubAgentBackendFactory(
+            backend: CapturingSubAgentRuntimeBackend()
+        )
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in try backendFactory.makeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+
+        await #expect(throws: DirectSubAgentBackendFactoryError.self) {
+            _ = try await runtime.createAgents(
+                arguments: [
+                    "agents": .array([
+                        .object(["name": .string("first"), "profile": .string("Developer")]),
+                        .object(["name": .string("second"), "profile": .string("Developer")]),
+                    ]),
+                ],
+                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+                parentAllowedToolNames: nil,
+                rootSessionID: "root"
+            )
+        }
+
+        #expect(await runtime.snapshots().isEmpty)
+        let participants = await runtime.sharedChat.participants(
+            roomID: "root",
+            includingInactive: true
+        )
+        #expect(participants.first(where: { $0.name == "first" }) == nil)
+        #expect(participants.first(where: { $0.name == "second" }) == nil)
+        await runtime.shutdown()
+    }
+
+    @Test
+    func coordinatorSharedChatDrainInjectsAtMostFiveMessagesPerPrompt() async throws {
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: DirectSubAgentRuntime.unavailableContextualBackendFactory,
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        // `sharedChat` is actor-isolated state of the runtime, so the handle
+        // must be read with an actor hop before the room is prepared.
+        let chat = await runtime.sharedChat
+        _ = try await chat.registerCoordinator(roomID: "root")
+        _ = try await chat.registerAgent(id: "worker", name: "worker", roomID: "root")
+        for index in 1...6 {
+            _ = try await chat.send(
+                roomID: "root",
+                senderID: "worker",
+                destination: .coordinator,
+                text: "message \(index)"
+            )
+        }
+
+        let firstBatch = await runtime.drainCoordinatorSharedChatMessages(rootSessionID: "root")
+        let remaining = await chat.drain(
+            roomID: "root",
+            participantID: AgentSharedChat.coordinatorID(for: "root")
+        )
+        #expect(firstBatch.map(\.text) == [
+            "message 1", "message 2", "message 3", "message 4", "message 5",
+        ])
+        #expect(remaining.map(\.text) == ["message 6"])
+        await runtime.shutdown()
+    }
+
+    // MARK: - Standby lifecycle
+
+    @Test
+    func taskBoundAgentEntersStandbyAfterCompletingItsAttempt() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+
+        let agent = try #require(await runtime.snapshots().first)
+        let task = try await orchestrator.task(sessionID: "root", taskID: "task-a").task
+
+        // The attempt completed; the task is awaiting validation.
+        #expect(task.status == .awaitingValidation)
+        #expect(task.activeAttemptID == nil)
+        // The agent entered standby, not closed or idle.
+        #expect(agent.status == .standby)
+        // Standby agents are NOT pending: agent.wait must not block on them.
+        #expect(agent.pending == false)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func standbyAgentAcceptsMessagesWhileItsGraphIsActive() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        let agent = try #require(await runtime.snapshots().first)
+        #expect(agent.status == .standby)
+        #expect(await backend.sentPromptCount() == 1)
+
+        // Sending a message should succeed and trigger a second turn.
+        _ = try await runtime.messageAgents(
+            arguments: [
+                "id": .string(agent.id),
+                "message": .string("Can you summarize?"),
+            ]
+        )
+        _ = await runtime.waitForAgents(arguments: [
+            "id": .string(agent.id),
+            "timeoutSeconds": .number(5),
+        ])
+
+        #expect(await backend.sentPromptCount() == 2)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func completedTaskAgentEntersStandbyInManualGraph() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "manual-graph",
+            source: .manual,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                ),
+                TaskDefinition(
+                    id: "task-b",
+                    title: "Later work"
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+
+        let agent = try #require(await runtime.snapshots().first)
+        let task = try await orchestrator.task(sessionID: "root", taskID: "task-a").task
+
+        // The attempt completed; the task is .completed (manual graph, no validation).
+        #expect(task.status == .completed)
+        #expect(task.activeAttemptID == nil)
+        // The graph is still active because task-b is pending.
+        let graph = try #require(await orchestrator.graphSnapshot(sessionID: "root", graphID: "manual-graph"))
+        #expect(graph.state == .active)
+        // The agent entered standby despite its task being .completed, because
+        // the graph is still active and the task is not failed/cancelled.
+        #expect(agent.status == .standby)
+        #expect(agent.pending == false)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func completedTaskAgentAcceptsMessagesWhileGraphIsActive() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "manual-graph",
+            source: .manual,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                ),
+                TaskDefinition(
+                    id: "task-b",
+                    title: "Later work"
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        let agent = try #require(await runtime.snapshots().first)
+        #expect(agent.status == .standby)
+        #expect(await backend.sentPromptCount() == 1)
+
+        // Sending a message should succeed and trigger a second turn even
+        // though the agent's task is already .completed.
+        _ = try await runtime.messageAgents(
+            arguments: [
+                "id": .string(agent.id),
+                "message": .string("Can you summarize?"),
+            ]
+        )
+        _ = await runtime.waitForAgents(arguments: [
+            "id": .string(agent.id),
+            "timeoutSeconds": .number(5),
+        ])
+
+        #expect(await backend.sentPromptCount() == 2)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func standbyTurnDoesNotMutateTheTaskGraph() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "response")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        let agent = try #require(await runtime.snapshots().first)
+
+        let taskBeforeStandbyTurn = try await orchestrator.task(
+            sessionID: "root",
+            taskID: "task-a"
+        ).task
+        let attemptsBefore = taskBeforeStandbyTurn.attempts.count
+
+        // Trigger a standby turn.
+        _ = try await runtime.messageAgents(
+            arguments: [
+                "id": .string(agent.id),
+                "message": .string("Follow-up question"),
+            ]
+        )
+        _ = await runtime.waitForAgents(arguments: [
+            "id": .string(agent.id),
+            "timeoutSeconds": .number(5),
+        ])
+
+        let taskAfterStandbyTurn = try await orchestrator.task(
+            sessionID: "root",
+            taskID: "task-a"
+        ).task
+        #expect(taskAfterStandbyTurn.attempts.count == attemptsBefore)
+        #expect(taskAfterStandbyTurn.status == .awaitingValidation)
+        #expect(taskAfterStandbyTurn.activeAttemptID == nil)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func standbyAgentIsReleasedWhenGraphCompletes() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        let agent = try #require(await runtime.snapshots().first)
+        #expect(agent.status == .standby)
+
+        // Validate positively → task completes → graph completes → standby released.
+        _ = try await orchestrator.validateTaskResult(
+            sessionID: "root",
+            taskID: "task-a",
+            succeeded: true
+        )
+        let graph = try #require(try await orchestrator.graphSnapshot(
+            sessionID: "root",
+            graphID: "workflow"
+        ))
+        #expect(graph.state == .completed)
+
+        // The graph completion observer releases standby agents asynchronously.
+        // Poll until the agent is closed (bounded wait) instead of a fixed
+        // sleep, which was flaky under CPU contention and `--no-parallel`.
+        let releasedAgent = await pollUntilStatus(.closed, agentID: agent.id, in: runtime)
+        #expect(releasedAgent?.status == .closed)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func standbyAgentIsSupersededByRetry() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker-1"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        let firstAgent = try #require(await runtime.snapshots().first)
+        #expect(firstAgent.status == .standby)
+
+        // Fail validation, then retry.
+        _ = try await orchestrator.validateTaskResult(
+            sessionID: "root",
+            taskID: "task-a",
+            succeeded: false,
+            failureReason: "validation failed"
+        )
+        _ = try await orchestrator.retryTask(
+            sessionID: "root",
+            taskID: "task-a"
+        )
+
+        // Create a new agent for the retried task.
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker-2"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+
+        let agents = await runtime.snapshots()
+        let firstAgentAfter = agents.first { $0.id == firstAgent.id }
+        // The first agent was superseded by the retried attempt: a `.standby`
+        // resident is closed immediately when a newer attempt claims its task
+        // (the release path). Assert the exact terminal status, not just that it
+        // left `.standby`.
+        #expect(firstAgentAfter?.status == .closed)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func expireStandbyAgentsClosesAgentPastIdleTimeout() async throws {
+        let (_, runtime, backend, agent) = try await standbyScenario()
+        #expect(agent.status == .standby)
+
+        // The reaper enforces `standbyIdleTimeout` (15 minutes in production).
+        // Drive one expiration sweep with a clock past the timeout: the resident
+        // is older than the limit, so it is closed and its backend is shut down
+        // (no leak).
+        let pastTimeout = Date().addingTimeInterval(
+            DirectSubAgentRuntime.standbyIdleTimeout + 60
+        )
+        await runtime.expireStandbyAgents(now: pastTimeout)
+
+        let snapshot = try #require(await runtime.snapshots().first { $0.id == agent.id })
+        #expect(snapshot.status == .closed)
+        #expect(snapshot.latestError == DirectSubAgentRuntime.standbyIdleTimeoutReason)
+        #expect(await backend.shutdownCount() == 1)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func standbyBudgetExhaustionClosesAgentWithoutLeakingBackend() async throws {
+        let (_, runtime, backend, agent) = try await standbyScenario()
+        #expect(agent.status == .standby)
+        let budget = DirectSubAgentRuntime.maximumStandbyTurnsPerAgent
+
+        // The turn budget is enforced at turn completion: each standby turn
+        // bumps the counter, and the turn that reaches the limit releases the
+        // agent (the same close path the reaper's `expireStandbyAgents` budget
+        // branch uses — that branch is an unreachable backstop because the limit
+        // is always enforced here first). The first `budget - 1` turns leave it
+        // standing by.
+        for _ in 0..<(budget - 1) {
+            await runtime.recordStandbyTurnCompletion(agentID: agent.id)
+        }
+        let stillStandby = try #require(await runtime.snapshots().first { $0.id == agent.id })
+        #expect(stillStandby.status == .standby)
+
+        await runtime.recordStandbyTurnCompletion(agentID: agent.id)
+        let closed = try #require(await runtime.snapshots().first { $0.id == agent.id })
+        #expect(closed.status == .closed)
+        #expect(closed.latestError == DirectSubAgentRuntime.standbyBudgetExhaustedReason)
+        // Backend shut down exactly once: no leaked backend process.
+        #expect(await backend.shutdownCount() == 1)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func budgetExhaustedAgentIsClosedNotIdleAndRejectsStaleMessages() async throws {
+        let (_, runtime, _, agent) = try await standbyScenario()
+        #expect(agent.status == .standby)
+
+        await exhaustStandbyBudget(agentID: agent.id, in: runtime)
+        let closed = try #require(await runtime.snapshots().first { $0.id == agent.id })
+        // Closed (and shut down) rather than left lingering in `.idle` after the
+        // budget-exhausting turn is denied/finished.
+        #expect(closed.status == .closed)
+        #expect(closed.status != .idle)
+
+        // A stale message to the now-closed agent is rejected instead of
+        // reviving it (the authorization path keeps it finished).
+        await #expect(throws: DirectSubAgentRuntimeError.self) {
+            _ = try await runtime.messageAgents(
+                arguments: [
+                    "id": .string(agent.id),
+                    "message": .string("Another follow-up"),
+                ]
+            )
+        }
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func releaseDuringInFlightStandbyTurnClosesAgentAtTurnEnd() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let backend = BlockingSubAgentRuntimeBackend(responseText: "follow-up done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        let agent = try #require(await runtime.snapshots().first)
+        #expect(agent.status == .standby)
+
+        // Drive the release deterministically: stop the async graph observer so
+        // only the explicit call below releases the resident.
+        await runtime.removeGraphObserver(rootSessionID: "root")
+
+        // Queue a follow-up whose backend turn blocks, so the resident is
+        // `.running` while the graph becomes terminal.
+        await backend.blockNextPrompt()
+        _ = try await runtime.messageAgents(
+            arguments: [
+                "id": .string(agent.id),
+                "message": .string("Summarize the work"),
+            ]
+        )
+        try await awaitBlocked(backend)
+
+        // The graph completes while the standby turn is in flight.
+        _ = try await orchestrator.validateTaskResult(
+            sessionID: "root",
+            taskID: "task-a",
+            succeeded: true
+        )
+        let graph = try #require(try await orchestrator.graphSnapshot(
+            sessionID: "root",
+            graphID: "workflow"
+        ))
+        #expect(graph.state == .completed)
+
+        // Releasing terminated graphs flags the in-flight resident for release
+        // (it is NOT closed mid-response). A resident remains, so this returns
+        // false.
+        let noMoreResidents = await runtime.releaseTerminatedStandbyGraphs(rootSessionID: "root")
+        #expect(noMoreResidents == false)
+        let inFlight = try #require(await runtime.snapshots().first { $0.id == agent.id })
+        #expect(inFlight.status == .running)
+
+        // When the in-flight turn lands, the flagged release is completed and the
+        // agent is closed — it never returns to `.standby`.
+        await backend.release()
+        let released = try #require(await pollUntilStatus(.closed, agentID: agent.id, in: runtime))
+        #expect(released.status == .closed)
+        #expect(await backend.shutdownCount() == 1)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func interruptAgentsClosesStandbyResidentsAndStopsObserver() async throws {
+        let (_, runtime, backend, agent) = try await standbyScenario()
+        #expect(agent.status == .standby)
+        // Entering standby started both the graph-completion observer and the
+        // periodic reaper for this root session.
+        #expect(await runtime.graphObserverTasks["root"] != nil)
+        #expect(await runtime.standbyReaperTask != nil)
+
+        // Interrupting the root session tears down its standby lifecycle: the
+        // observer/reaper are stopped and the standby resident is released.
+        let interrupted = await runtime.interruptAgents(rootSessionID: "root")
+        #expect(interrupted == 1)
+
+        let snapshot = try #require(await runtime.snapshots().first { $0.id == agent.id })
+        #expect(snapshot.status == .closed)
+        #expect(await backend.shutdownCount() == 1)
+        #expect(await runtime.graphObserverTasks["root"] == nil)
+        #expect(await runtime.standbyReaperTask == nil)
+
+        await runtime.shutdown()
+    }
+
+    // Note on the git-status refresh behaviour (review #13, last bullet): that
+    // predicate lives in the TerminalChat/TUI layer and is not reachable from a
+    // `DirectSubAgentRuntime` unit test without driving a real TerminalChat. It
+    // is intentionally not covered here to avoid a brittle, host-dependent TUI
+    // test; the standby lifecycle the refresh depends on is covered above.
+}
+
+private func directToolCall(
+    name: String,
+    arguments: [String: Any]
+) -> DirectAgentToolCall {
+    let data = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys])
+    return DirectAgentToolCall(
+        id: UUID().uuidString,
+        name: name,
+        argumentsObject: arguments,
+        argumentsJSON: data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    )
 }
 
 private final class SubAgentFactoryRecorder: Sendable {
@@ -2240,6 +3694,26 @@ private final class SubAgentFactoryRecorder: Sendable {
 
     func append(_ context: DirectSubAgentRuntime.BackendContext) {
         recordedContexts.withLock { $0.append(context) }
+    }
+}
+
+private final class FailAfterFirstSubAgentBackendFactory: @unchecked Sendable {
+    private let backend: any AgentRuntimeBackend
+    private let invocationCount = Mutex(0)
+
+    init(backend: any AgentRuntimeBackend) {
+        self.backend = backend
+    }
+
+    func makeBackend() throws -> any AgentRuntimeBackend {
+        let invocation = invocationCount.withLock { count in
+            defer { count += 1 }
+            return count
+        }
+        guard invocation == 0 else {
+            throw DirectSubAgentBackendFactoryError.unavailable
+        }
+        return backend
     }
 }
 
@@ -2256,7 +3730,9 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     private let responseText: String
     private let blocksPrompts: Bool
     private var sentPrompts: [String] = []
+    private var shutdownCalls = 0
     private var installedTaskOrchestrator = false
+    private var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
     private(set) var toolProviderUpdates: [(providers: [AgentToolProvider], sessionID: String?)] = []
 
     init(responseText: String = "done", blocksPrompts: Bool = false) {
@@ -2268,6 +3744,19 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
         _ orchestrator: SessionTaskOrchestrator
     ) async {
         installedTaskOrchestrator = true
+    }
+
+    func updateBorrowedSubAgentToolExecutor(
+        _ executor: AgentBorrowedToolExecutor?
+    ) async {
+        borrowedSubAgentToolExecutor = executor
+    }
+
+    func executeBorrowedSubAgentTool(_ toolCall: AgentBorrowedToolCall) async throws -> String {
+        guard let borrowedSubAgentToolExecutor else {
+            throw DirectSubAgentBackendFactoryError.unavailable
+        }
+        return try await borrowedSubAgentToolExecutor(toolCall)
     }
 
     func updateToolProviders(
@@ -2330,7 +3819,9 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
 
     func closeSession(id _: String) {}
 
-    func shutdown() {}
+    func shutdown() {
+        shutdownCalls += 1
+    }
 
     func preloadModel(
         onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
@@ -2377,5 +3868,223 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
 
     func sentPromptCount() -> Int {
         sentPrompts.count
+    }
+
+    func shutdownCount() -> Int {
+        shutdownCalls
+    }
+}
+
+private enum StandbyFixtureError: Error { case agentNotReady }
+
+/// Builds an active single-task graph and one task-bound agent that has finished
+/// its attempt and entered `.standby`. Shared setup for the standby lifecycle
+/// tests above.
+private func standbyScenario(
+    responseText: String = "done",
+    rootSessionID: String = "root",
+    graphID: String = "workflow",
+    taskID: String = "task-a"
+) async throws -> (
+    SessionTaskOrchestrator,
+    DirectSubAgentRuntime,
+    CapturingSubAgentRuntimeBackend,
+    DirectSubAgentRuntime.AgentSnapshot
+) {
+    let orchestrator = SessionTaskOrchestrator()
+    _ = try await orchestrator.createGraph(
+        sessionID: rootSessionID,
+        id: graphID,
+        source: .workflow,
+        state: .active,
+        tasks: [
+            TaskDefinition(
+                id: taskID,
+                title: "Implement",
+                execution: TaskExecutionSpec(executor: .subAgent)
+            )
+        ]
+    )
+    let backend = CapturingSubAgentRuntimeBackend(responseText: responseText)
+    let runtime = DirectSubAgentRuntime(
+        contextualBackendFactory: { _ in backend },
+        profileResolver: builtInDirectSubAgentProfileResolver
+    )
+    await runtime.installTaskOrchestrator(orchestrator)
+    _ = try await runtime.createAgents(
+        arguments: [
+            "name": .string("worker"),
+            "profile": .string("Developer"),
+            "taskID": .string(taskID),
+            "prompt": .string("Do the work"),
+        ],
+        workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+        parentAllowedToolNames: nil,
+        rootSessionID: rootSessionID
+    )
+    _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+    guard let agent = await runtime.snapshots().first,
+          agent.status == .standby else {
+        throw StandbyFixtureError.agentNotReady
+    }
+    return (orchestrator, runtime, backend, agent)
+}
+
+/// Drives an agent's standby turn counter to the limit, which closes it on the
+/// turn that exhausts the budget. Used by the budget/denial tests.
+private func exhaustStandbyBudget(
+    agentID: String,
+    in runtime: DirectSubAgentRuntime
+) async {
+    for _ in 0..<DirectSubAgentRuntime.maximumStandbyTurnsPerAgent {
+        await runtime.recordStandbyTurnCompletion(agentID: agentID)
+    }
+}
+
+/// Polls a runtime until the agent with `agentID` reaches `status`, or `timeout`
+/// seconds elapse. Returns the matching snapshot, or the last observed snapshot
+/// on timeout so callers can assert exactly. Replaces fixed `Task.sleep` waits
+/// that were flaky under CPU contention and `--no-parallel`.
+private func pollUntilStatus(
+    _ status: DirectSubAgentRuntime.Status,
+    agentID: String,
+    in runtime: DirectSubAgentRuntime,
+    timeout: TimeInterval = 5
+) async -> DirectSubAgentRuntime.AgentSnapshot? {
+    let deadline = Date().addingTimeInterval(timeout)
+    var last: DirectSubAgentRuntime.AgentSnapshot?
+    while Date() < deadline {
+        let snapshot = await runtime.snapshots().first { $0.id == agentID }
+        last = snapshot
+        if snapshot?.status == status { return snapshot }
+        try? await Task.sleep(for: .milliseconds(50))
+    }
+    return last
+}
+
+/// Waits until the blocking backend has suspended inside `sendPrompt`, proving
+/// the agent's standby follow-up turn is genuinely in flight.
+private func awaitBlocked(
+    _ backend: BlockingSubAgentRuntimeBackend,
+    timeout: TimeInterval = 5
+) async throws {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if await backend.isBlocked() { return }
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    throw StandbyFixtureError.agentNotReady
+}
+
+/// A controllable `AgentRuntimeBackend` whose `sendPrompt` suspends until
+/// `release()` is called, so a standby follow-up turn can be held in flight
+/// while a test mutates the task graph. The first turn (the task attempt)
+/// completes normally because the gate is armed only after standby is reached.
+private actor BlockingSubAgentRuntimeBackend: AgentRuntimeBackend {
+    private let responseText: String
+    private var shutdownCalls = 0
+    private var sentPrompts = 0
+    private var shouldBlock = false
+    private var released = false
+    private var blocked = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    init(responseText: String = "done") {
+        self.responseText = responseText
+    }
+
+    func blockNextPrompt() {
+        shouldBlock = true
+    }
+
+    func release() {
+        released = true
+        continuation?.resume()
+        continuation = nil
+    }
+
+    func isBlocked() -> Bool {
+        blocked
+    }
+
+    func shutdownCount() -> Int {
+        shutdownCalls
+    }
+
+    func sentPromptCount() -> Int {
+        sentPrompts
+    }
+
+    func sendPrompt(
+        sessionID _: String,
+        prompt _: String,
+        attachments _: [AgentRuntimeAttachment],
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> DirectAgentResponse {
+        sentPrompts += 1
+        if shouldBlock {
+            shouldBlock = false
+            // `released` guards against a `release()` that arrived before this
+            // turn suspended: if so, skip the gate entirely (no deadlock).
+            if !released {
+                blocked = true
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    self.continuation = continuation
+                }
+                blocked = false
+            }
+            released = false
+        }
+        return DirectAgentResponse(
+            text: responseText,
+            stopReason: "stop",
+            modelID: "test-model"
+        )
+    }
+
+    func createSession(
+        id _: String,
+        cwd _: String,
+        systemPrompt _: String?,
+        history _: [AgentRuntimeMessage],
+        cacheKey _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func createSessionIfNeeded(
+        id _: String,
+        cwd _: String,
+        systemPrompt _: String?,
+        history _: [AgentRuntimeMessage],
+        cacheKey _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func updateSessionOptions(
+        id _: String,
+        systemPrompt _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func closeSession(id _: String) async {}
+
+    func shutdown() async {
+        shutdownCalls += 1
+    }
+
+    func preloadModel(
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> String {
+        "test-model"
+    }
+
+    func activeToolDescriptors() async -> [DirectToolDescriptor] {
+        []
     }
 }

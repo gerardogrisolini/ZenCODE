@@ -13,6 +13,9 @@ public struct AgentCoreSessionConfiguration: Sendable {
     public let modelID: String?
     public let workingDirectory: URL
     public let systemPrompt: String?
+    /// Session-specific context is delivered as the first user message rather
+    /// than changing the cacheable system instruction prefix.
+    public let dynamicContext: String?
     public let cacheKey: String?
     public let sessionRevision: Int
     public let history: [AgentRuntimeMessage]
@@ -31,6 +34,7 @@ public struct AgentCoreSessionConfiguration: Sendable {
         modelID: String?,
         workingDirectory: URL,
         systemPrompt: String?,
+        dynamicContext: String? = nil,
         cacheKey: String?,
         sessionRevision: Int = 0,
         history: [AgentRuntimeMessage],
@@ -49,6 +53,7 @@ public struct AgentCoreSessionConfiguration: Sendable {
         self.modelID = modelID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.workingDirectory = workingDirectory
         self.systemPrompt = systemPrompt?.nilIfBlank
+        self.dynamicContext = dynamicContext?.nilIfBlank
         self.cacheKey = cacheKey?.nilIfBlank
         self.sessionRevision = sessionRevision
         self.history = history
@@ -74,6 +79,7 @@ public struct AgentCoreSessionConfiguration: Sendable {
         modelID: String?,
         workingDirectory: String,
         systemPrompt: String?,
+        dynamicContext: String? = nil,
         cacheKey: String?,
         sessionRevision: Int = 0,
         history: [AgentRuntimeMessage],
@@ -92,6 +98,7 @@ public struct AgentCoreSessionConfiguration: Sendable {
             modelID: modelID,
             workingDirectory: URL(fileURLWithPath: workingDirectory),
             systemPrompt: systemPrompt,
+            dynamicContext: dynamicContext,
             cacheKey: cacheKey,
             sessionRevision: sessionRevision,
             history: history,
@@ -137,6 +144,7 @@ public struct AgentCoreSessionConfiguration: Sendable {
         matchesRuntime(other)
             && sessionID == other.sessionID
             && systemPrompt == other.systemPrompt
+            && dynamicContext == other.dynamicContext
             && cacheKey == other.cacheKey
             && sessionRevision == other.sessionRevision
             && allowedToolNames == other.allowedToolNames
@@ -169,6 +177,7 @@ public struct AgentCoreSessionConfiguration: Sendable {
             modelID: modelID,
             workingDirectory: workingDirectory,
             systemPrompt: systemPrompt,
+            dynamicContext: dynamicContext,
             cacheKey: cacheKey,
             sessionRevision: sessionRevision + 1,
             history: history,

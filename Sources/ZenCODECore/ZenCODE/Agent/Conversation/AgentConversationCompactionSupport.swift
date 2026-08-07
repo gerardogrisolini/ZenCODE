@@ -646,6 +646,9 @@ public enum AgentConversationCompactionSupport {
                     AgentRuntimeMessage(role: .system, content: systemPrompt)
                 )
             }
+            if let dynamicContextMessage = split.dynamicContextMessage {
+                candidateMessages.append(dynamicContextMessage)
+            }
             candidateMessages.append(contentsOf: recentMessages)
 
             let candidate = Candidate(
@@ -727,17 +730,27 @@ public enum AgentConversationCompactionSupport {
     ) -> (
         baseSystemPrompt: String?,
         priorSummary: String?,
+        dynamicContextMessage: AgentRuntimeMessage?,
         conversationMessages: [AgentRuntimeMessage]
     ) {
-        guard let first = messages.first, first.role == .system else {
-            return (nil, nil, messages)
+        var remaining = messages[...]
+        let baseSystemPrompt: String?
+        let inheritedSummary: String?
+        if let first = remaining.first, first.role == .system {
+            baseSystemPrompt = systemPromptWithoutCompactionSummary(first.content).nilIfBlank
+            inheritedSummary = priorSummary(from: first.content)
+            remaining = remaining.dropFirst()
+        } else {
+            baseSystemPrompt = nil
+            inheritedSummary = nil
         }
-
-        return (
-            systemPromptWithoutCompactionSummary(first.content).nilIfBlank,
-            priorSummary(from: first.content),
-            Array(messages.dropFirst())
-        )
+        let dynamicContextMessage = remaining.first.flatMap { message in
+            AgentRuntimeDynamicContext.context(from: message) == nil ? nil : message
+        }
+        if dynamicContextMessage != nil {
+            remaining = remaining.dropFirst()
+        }
+        return (baseSystemPrompt, inheritedSummary, dynamicContextMessage, Array(remaining))
     }
 
     private static func compactedSystemPrompt(
@@ -1120,10 +1133,7 @@ public enum AgentConversationCompactionSupport {
     private static func conversationMessageCount(
         in messages: [AgentRuntimeMessage]
     ) -> Int {
-        if messages.first?.role == .system {
-            return max(messages.count - 1, 0)
-        }
-        return messages.count
+        splitSystemPrompt(from: messages).conversationMessages.count
     }
 
     private static func firstSystemPrompt(

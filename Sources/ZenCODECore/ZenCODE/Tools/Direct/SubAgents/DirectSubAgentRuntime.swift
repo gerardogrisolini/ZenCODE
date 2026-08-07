@@ -29,6 +29,32 @@ public enum DirectSubAgentBackendFactoryError: LocalizedError {
 public actor DirectSubAgentRuntime {
     public static let maximumAgentsPerCreate = 8
 
+    /// Upper bound for shared-chat-derived prompts queued for one agent. It
+    /// matches twice the bus mailbox capacity, so a fast producer cannot grow
+    /// the pending-prompt queue without limit while the agent processes one
+    /// LLM round-trip at a time. Undelivered messages stay in the bounded
+    /// mailbox and are drained when the queue has capacity again.
+    static let maximumPendingSharedChatPromptsPerAgent =
+        AgentSharedChat.maximumMailboxMessages * 2
+
+    /// Maximum idle time (seconds) a task-bound agent may remain in standby
+    /// after completing its attempt, waiting for coordinator or peer messages.
+    /// Re-armed on every standby turn; enforced by the periodic reaper.
+    static let standbyIdleTimeout: TimeInterval = 900
+    /// Upper bound on the number of standby turns a single agent may perform
+    /// before the reaper closes it. Prevents unbounded ping-pong between peers.
+    static let maximumStandbyTurnsPerAgent = 24
+    /// Maximum number of agents that may be simultaneously in standby for one
+    /// root session. Oldest standby agents are released first (LRU).
+    static let maximumStandbyAgentsPerRootSession = 8
+    /// Period of the standby reaper cycle that enforces the idle timeout and
+    /// the turn budget.
+    static let standbyReaperInterval: TimeInterval = 60
+    /// Upper bound on the remembered identifiers of peers/all broadcasts. Only
+    /// the recent window matters: a mailbox message is classified once, when it
+    /// is drained, and the room transcript is itself bounded.
+    static let maximumTrackedBroadcastMessages = 512
+
     public static func unavailableContextualBackendFactory(
         _ context: BackendContext
     ) throws -> any AgentRuntimeBackend {
@@ -39,6 +65,7 @@ public actor DirectSubAgentRuntime {
         case queued
         case running
         case idle
+        case standby
         case failed
         case closed
 
@@ -85,10 +112,34 @@ public actor DirectSubAgentRuntime {
         public var latestContentPreview: String? = nil
         public var latestEventAt: Date? = nil
         public var runTask: Task<Void, Never>?
+        /// Single-flight guard for the shared-chat mailbox drain. Only one
+        /// drain loop may be active per agent, so a burst of wake-up callbacks
+        /// cannot start overlapping loops that double-queue the same batch.
+        var isDrainingSharedChatMailbox = false
+
+        // MARK: - Standby lifecycle
+        /// The graph ID that authorizes this agent's standby. When nil the
+        /// agent is not in standby.
+        var standbyGraphID: String?
+        /// Timestamp of the most recent standby activity (turn or entry).
+        var standbySince: Date?
+        /// Number of standby turns completed so far.
+        var standbyTurns: Int = 0
+        /// Set when a newer attempt claims the same task, signalling that
+        /// this standby agent must be superseded.
+        var supersededByAttemptID: String?
+        /// Flagged by `releaseStandbyAgents` (and by the supersede path) while a
+        /// standby turn is still running, so `recordStandbyTurnCompletion` and
+        /// `concludeTaskBoundTurn` complete the release after the in-flight
+        /// response finishes instead of returning the agent to `.standby`.
+        var pendingRelease = false
+        /// The reason reported when the flagged release is completed.
+        var pendingReleaseReason: String?
 
         /// True while the agent still owes work: it is queued or running, or it
         /// has prompts waiting for its work loop. The transient overview keeps
-        /// every such agent visible.
+        /// every such agent visible. Standby agents are intentionally NOT
+        /// included: `agent.wait` must return when only standby agents remain.
         var hasWorkInFlight: Bool {
             status.isPending || !pendingPrompts.isEmpty
         }
@@ -290,6 +341,13 @@ public actor DirectSubAgentRuntime {
         /// same discovery cache (consent, `--list-tools` results) instead of each
         /// getting a fresh runtime. `nil` for top-level sessions.
         public let swiftFeatureRuntime: SwiftFeatureRuntime?
+        /// Transient live-chat bus inherited from the parent executor. It is not
+        /// part of a session snapshot or task graph persistence.
+        public let sharedChat: AgentSharedChat?
+        /// Stable participant identity of this child in `sharedChat`.
+        public let sharedChatSenderID: String?
+        /// Root room that contains the coordinator and sibling agents.
+        public let sharedChatRoomID: String?
 
         public init(
             requestedName: String,
@@ -297,7 +355,10 @@ public actor DirectSubAgentRuntime {
             profile: AgentProfile?,
             modelBinding: AgentModelBinding? = nil,
             modelID: String? = nil,
-            swiftFeatureRuntime: SwiftFeatureRuntime? = nil
+            swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
+            sharedChat: AgentSharedChat? = nil,
+            sharedChatSenderID: String? = nil,
+            sharedChatRoomID: String? = nil
         ) {
             let resolvedBinding: AgentModelBinding?
             if let modelBinding {
@@ -314,7 +375,10 @@ public actor DirectSubAgentRuntime {
                 modelBinding: resolvedBinding,
                 modelSelection: nil,
                 modelID: modelID,
-                swiftFeatureRuntime: swiftFeatureRuntime
+                swiftFeatureRuntime: swiftFeatureRuntime,
+                sharedChat: sharedChat,
+                sharedChatSenderID: sharedChatSenderID,
+                sharedChatRoomID: sharedChatRoomID
             )
         }
 
@@ -325,7 +389,10 @@ public actor DirectSubAgentRuntime {
             modelBinding: AgentModelBinding?,
             modelSelection: AgentModelSelection?,
             modelID: String?,
-            swiftFeatureRuntime: SwiftFeatureRuntime? = nil
+            swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
+            sharedChat: AgentSharedChat? = nil,
+            sharedChatSenderID: String? = nil,
+            sharedChatRoomID: String? = nil
         ) {
             self.requestedName = requestedName
             self.requestedRole = requestedRole
@@ -334,12 +401,18 @@ public actor DirectSubAgentRuntime {
             self.modelBinding = modelBinding
             self.modelSelection = modelSelection
             self.swiftFeatureRuntime = swiftFeatureRuntime
+            self.sharedChat = sharedChat
+            self.sharedChatSenderID = sharedChatSenderID?.nilIfBlank
+            self.sharedChatRoomID = sharedChatRoomID?.nilIfBlank
         }
 
         /// Returns a copy of this context with the given SwiftFeatureRuntime,
         /// used by DirectToolExecutor to inject its own runtime for subagents.
         public func injecting(
-            swiftFeatureRuntime: SwiftFeatureRuntime?
+            swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
+            sharedChat: AgentSharedChat? = nil,
+            sharedChatSenderID: String? = nil,
+            sharedChatRoomID: String? = nil
         ) -> BackendContext {
             BackendContext(
                 requestedName: requestedName,
@@ -348,7 +421,10 @@ public actor DirectSubAgentRuntime {
                 modelBinding: modelBinding,
                 modelSelection: modelSelection,
                 modelID: requestedModelID,
-                swiftFeatureRuntime: swiftFeatureRuntime
+                swiftFeatureRuntime: swiftFeatureRuntime ?? self.swiftFeatureRuntime,
+                sharedChat: sharedChat ?? self.sharedChat,
+                sharedChatSenderID: sharedChatSenderID ?? self.sharedChatSenderID,
+                sharedChatRoomID: sharedChatRoomID ?? self.sharedChatRoomID
             )
         }
 
@@ -377,6 +453,13 @@ public actor DirectSubAgentRuntime {
     /// delegated sub-agent so that `skills.list` and `skills.read` remain
     /// intrinsic and always-on at every delegation depth.
     public var promptSkillToolProvider: AgentToolProvider?
+    /// Shared only with the backend descendants of this runtime; unlike tasks it
+    /// is never checkpointed or restored.
+    public let sharedChat: AgentSharedChat
+    /// Present in a child executor so `agent.message` has the real author.
+    public let sharedChatSenderID: String?
+    /// A child uses its parent root room, not its private backend session id.
+    public let sharedChatRootSessionID: String?
     private var agentStorage: [String: AgentRecord] = [:]
     /// Lifecycle-transition failures that happen during global shutdown, when
     /// no individual agent record remains available to carry the error.
@@ -386,6 +469,24 @@ public actor DirectSubAgentRuntime {
         set { agentStorage = newValue }
     }
     var latestOverviewBatchID: UUID?
+    /// One graph-completion observer per root session. Started when the first
+    /// task-bound agent enters standby; cancelled in `shutdown`/
+    /// `interruptAgents` or when the graph reaches a terminal state.
+    var graphObserverTasks: [String: Task<Void, Never>] = [:]
+    /// Periodic reaper that enforces standby timeout and turn budget.
+    var standbyReaperTask: Task<Void, Never>?
+    /// Identifiers of live-chat messages delivered as a `peers`/`all`
+    /// broadcast. Standby agents stay registered in the room so direct messages
+    /// still reach them, but a broadcast must not spend a standby turn (and an
+    /// LLM round-trip) on an agent that was not addressed.
+    var broadcastMessageIDs: Set<UUID> = []
+    /// Insertion order of ``broadcastMessageIDs``, used to evict the oldest
+    /// entries once the tracked window is full.
+    var broadcastMessageIDOrder: [UUID] = []
+    /// Number of `peers`/`all` sends whose delivery has not been classified
+    /// yet. While it is non-zero a standby agent leaves its mailbox untouched,
+    /// because the bus wakes recipients from inside `send`.
+    var pendingBroadcastSends = 0
 
     /// Live default with a known read-only resolver; safe to snapshot both
     /// manifests under one lock. The legacy resolver-taking overload below stays
@@ -466,12 +567,18 @@ public actor DirectSubAgentRuntime {
         contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
         profileResolver: @escaping DirectSubAgentProfileResolver,
         modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider,
-        coordinatesLiveManifestReads: Bool
+        coordinatesLiveManifestReads: Bool,
+        sharedChat: AgentSharedChat = AgentSharedChat(),
+        sharedChatSenderID: String? = nil,
+        sharedChatRootSessionID: String? = nil
     ) {
         self.backendFactory = contextualBackendFactory
         self.profileResolver = profileResolver
         self.modelCatalogProvider = modelCatalogProvider
         self.coordinatesLiveManifestReads = coordinatesLiveManifestReads
+        self.sharedChat = sharedChat
+        self.sharedChatSenderID = sharedChatSenderID?.nilIfBlank
+        self.sharedChatRootSessionID = sharedChatRootSessionID?.nilIfBlank
     }
 
     public func installTaskOrchestrator(
@@ -515,6 +622,15 @@ public actor DirectSubAgentRuntime {
     }
 
     public func shutdown() async {
+        standbyReaperTask?.cancel()
+        standbyReaperTask = nil
+        for (_, observer) in graphObserverTasks {
+            observer.cancel()
+        }
+        graphObserverTasks.removeAll()
+        broadcastMessageIDs.removeAll()
+        broadcastMessageIDOrder.removeAll()
+
         let records = Array(agents.values)
         agents.removeAll()
 
@@ -542,8 +658,13 @@ public actor DirectSubAgentRuntime {
         }
         for record in records {
             record.runTask?.cancel()
+            await sharedChat.unregisterParticipant(
+                id: record.id,
+                roomID: record.rootSessionID
+            )
         }
         for record in records {
+            await record.backend.updateBorrowedSubAgentToolExecutor(nil)
             await record.backend.shutdown()
         }
         for record in records {
@@ -578,21 +699,25 @@ public actor DirectSubAgentRuntime {
     ) async throws -> String {
         let request = Self.normalizedToolRequest(for: toolCall)
 
+        let resolvedRootSessionID = sharedChatRootSessionID
+            ?? rootSessionID?.nilIfBlank
+            ?? "default"
         switch request.name {
         case "agent.create":
             return try await createAgents(
                 arguments: request.arguments,
                 workingDirectory: workingDirectory,
                 parentAllowedToolNames: allowedToolNames,
-                rootSessionID: rootSessionID?.nilIfBlank ?? "default"
+                rootSessionID: resolvedRootSessionID
             )
         case "agent.list":
             return listAgents(arguments: request.arguments)
         case "agent.get":
             return getAgents(arguments: request.arguments)
         case "agent.message":
-            return try await messageAgents(
+            return try await messageSharedChat(
                 arguments: request.arguments,
+                rootSessionID: resolvedRootSessionID,
                 parentAllowedToolNames: allowedToolNames
             )
         case "agent.wait":

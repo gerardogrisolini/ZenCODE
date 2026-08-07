@@ -46,10 +46,22 @@ public actor AgentCoreSessionRunner {
     /// prompt, allowlist, cache key, or remote session identity.
     private var promptSkillProvidersBySessionID: [String: PromptSkillSessionProvider] = [:]
     private var promptTaskRegistry = AgentCorePromptTaskRegistry()
+    /// Core-side owner of coordinator-mailbox monitoring, batching and the
+    /// single-flight auto-trigger decision. Built lazily so its message source
+    /// can capture this runner weakly and never form a reference cycle.
+    private var sharedChatCoordinatorStorage: AgentSharedChatCoordinator?
     private var promptAuthorizationHandlers: [UUID: AgentToolAuthorizationHandler] = [:]
     /// Maps each prompt ID to the session it belongs to so `authorizeTool`
     /// can route authorization requests to the correct handler.
     private var promptAuthorizationSessionIDs: [UUID: String] = [:]
+    /// Session-scoped copy of the same handler, kept alive across turns.
+    ///
+    /// Delegated sub-agents keep executing tools after the turn that spawned
+    /// them has returned, so their consent cannot hang off a turn-scoped entry.
+    /// Keying by session (not by turn) also preserves per-origin routing: a
+    /// session driven from Telegram keeps asking its own operator there. Only
+    /// reset/shutdown clears this map; the per-prompt `defer` must not.
+    private var sessionAuthorizationHandlers: [String: AgentToolAuthorizationHandler] = [:]
     private var localExecAccessModeState: AgentLocalExecAccessMode = .standard
     private let defaultToolAuthorizationHandler: AgentToolAuthorizationHandler?
     let mcpRuntime: DirectMCPToolRuntime
@@ -98,6 +110,7 @@ public actor AgentCoreSessionRunner {
             id: configuration.sessionID,
             cwd: configuration.workingDirectoryPath,
             systemPrompt: configuration.systemPrompt,
+            dynamicContext: configuration.dynamicContext,
             history: configuration.history,
             cacheKey: configuration.cacheKey,
             allowedToolNames: configuration.allowedToolNames,
@@ -121,6 +134,7 @@ public actor AgentCoreSessionRunner {
         await backend.updateSessionOptions(
             id: configuration.sessionID,
             systemPrompt: configuration.systemPrompt,
+            dynamicContext: configuration.dynamicContext,
             allowedToolNames: configuration.allowedToolNames,
             thinkingSelection: configuration.thinkingSelection,
             preserveThinking: configuration.preserveThinking
@@ -211,6 +225,9 @@ public actor AgentCoreSessionRunner {
         if let authorizationHandler = authorizeTool ?? defaultToolAuthorizationHandler {
             promptAuthorizationHandlers[promptID] = authorizationHandler
             promptAuthorizationSessionIDs[promptID] = configuration.sessionID
+            // Survives the turn on purpose: delegated work started here can ask
+            // for consent long after this prompt completed.
+            sessionAuthorizationHandlers[configuration.sessionID] = authorizationHandler
         }
         defer {
             promptAuthorizationHandlers.removeValue(forKey: promptID)
@@ -247,6 +264,16 @@ public actor AgentCoreSessionRunner {
             prompt: prompt,
             attachments: attachments
         )
+        // Every turn — operator, replayed, or synthetic — marks the room busy
+        // for the Core auto-trigger, so a shared-chat message can never open a
+        // second concurrent prompt behind a consumer's back. The prompt is
+        // handed over as well: it is what binds a synthetic turn to the claim
+        // it consumes, so no unrelated turn can release that claim when it ends.
+        let chatCoordinator = sharedChatCoordinator()
+        let chatTurn = await chatCoordinator.noteTurnStarted(
+            roomID: configuration.sessionID,
+            prompt: prompt
+        )
 
         do {
             let response = try await AgentToolAuthorizationContext.$turnID.withValue(promptID) {
@@ -273,6 +300,7 @@ public actor AgentCoreSessionRunner {
                 backendGeneration: generation,
                 onEvent: onEvent
             )
+            await chatCoordinator.noteTurnEnded(chatTurn)
             return response
         } catch is CancellationError {
             await finalizeTurn(
@@ -284,6 +312,9 @@ public actor AgentCoreSessionRunner {
                 backendGeneration: generation,
                 onEvent: onEvent
             )
+            // A cancelled synthetic turn must still release the room, otherwise
+            // later shared-chat messages would never start a turn again.
+            await chatCoordinator.noteTurnEnded(chatTurn)
             throw CancellationError()
         } catch {
             await finalizeTurn(
@@ -295,6 +326,7 @@ public actor AgentCoreSessionRunner {
                 backendGeneration: generation,
                 onEvent: onEvent
             )
+            await chatCoordinator.noteTurnEnded(chatTurn)
             throw error
         }
     }
@@ -351,6 +383,137 @@ public actor AgentCoreSessionRunner {
         return await backend.subAgentSnapshots()
     }
 
+    public func sharedChatParticipants(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Participant] {
+        guard let backend else { return [] }
+        return await backend.sharedChatParticipants(rootSessionID: rootSessionID)
+    }
+
+    public func sendSharedChatMessage(
+        text: String,
+        destination: AgentSharedChat.Destination,
+        rootSessionID: String
+    ) async throws -> AgentSharedChat.Delivery {
+        guard let backend else { throw AgentSharedChat.Error.unavailable }
+        return try await backend.sendSharedChatMessage(
+            text: text,
+            destination: destination,
+            rootSessionID: rootSessionID
+        )
+    }
+
+    public func drainCoordinatorSharedChatMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        guard let backend else { return [] }
+        return await backend.drainCoordinatorSharedChatMessages(rootSessionID: rootSessionID)
+    }
+
+    public func sharedChatTranscriptMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        guard let backend else { return [] }
+        return await backend.sharedChatTranscriptMessages(rootSessionID: rootSessionID)
+    }
+
+    /// The Core auto-trigger. It owns mailbox monitoring, batching and the
+    /// idle/busy decision; rendering surfaces are consumers, never owners.
+    func sharedChatCoordinator() -> AgentSharedChatCoordinator {
+        if let sharedChatCoordinatorStorage {
+            return sharedChatCoordinatorStorage
+        }
+        let coordinator = AgentSharedChatCoordinator(
+            source: AgentSharedChatCoordinator.Source(
+                drainCoordinatorMessages: { [weak self] roomID in
+                    await self?.drainCoordinatorSharedChatMessages(rootSessionID: roomID) ?? []
+                },
+                participants: { [weak self] roomID in
+                    await self?.sharedChatParticipants(rootSessionID: roomID) ?? []
+                },
+                allRoomMessages: { [weak self] roomID in
+                    await self?.sharedChatTranscriptMessages(rootSessionID: roomID) ?? []
+                }
+            )
+        )
+        sharedChatCoordinatorStorage = coordinator
+        return coordinator
+    }
+
+    /// Subscribes to live shared-chat coordination.
+    ///
+    /// Every consumer — terminal UI, ACP, or a headless driver — receives the
+    /// same semantics: `messages` for rendering, `participantsChanged` for
+    /// roster refreshes, and `autoTrigger` for the one synthetic turn the Core
+    /// authorises at a time. The returned observation is the consumer's
+    /// identity: resolve each trigger with
+    /// ``resolveSharedChatAutoTrigger(id:observation:resolution:)`` and start a
+    /// synthetic prompt only when it returns `acquired`; report consumer-side
+    /// activity with ``setSharedChatConsumerBusy(_:observation:)``. Detaching
+    /// releases exactly this consumer's busy state and claimed turn.
+    public func attachSharedChatObservation(
+        rootSessionID: String
+    ) async -> AgentSharedChatCoordinator.Observation {
+        await sharedChatCoordinator().observeSubscription(roomID: rootSessionID)
+    }
+
+    /// Detaches one observer without ending coordination for the room's other
+    /// consumers. Full room stop remains a session-teardown operation.
+    public func detachSharedChatObservation(
+        _ observation: AgentSharedChatCoordinator.Observation
+    ) async {
+        await sharedChatCoordinatorStorage?.detach(observation)
+    }
+
+    /// Ends coordination for one room during session teardown, terminating all
+    /// its event streams. Messages that never reached a synthetic turn stay
+    /// queued for a future session consumer.
+    public func stopSharedChatObservation(rootSessionID: String) async {
+        await sharedChatCoordinatorStorage?.stop(roomID: rootSessionID)
+    }
+
+    /// Declares consumer-side activity (running or queued prompts) for one
+    /// observer, so the Core never authorises a synthetic turn concurrently
+    /// with that consumer's work. Another observer reporting itself idle can
+    /// never clear this declaration.
+    public func setSharedChatConsumerBusy(
+        _ isBusy: Bool,
+        observation: AgentSharedChatCoordinator.Observation
+    ) async {
+        await sharedChatCoordinator().setConsumerBusy(isBusy, observation: observation)
+    }
+
+    /// Atomically tries to take a published auto-trigger for one observer. The
+    /// same trigger can reach multiple observers of a room; only one `started`
+    /// resolution returns ``AgentSharedChatAutoTriggerClaimResult/acquired``,
+    /// and only its owner can later release it. Consumers must treat
+    /// `notAcquired` as stale and must not start a generation.
+    @discardableResult
+    public func resolveSharedChatAutoTrigger(
+        id: UUID,
+        observation: AgentSharedChatCoordinator.Observation,
+        resolution: AgentSharedChatAutoTriggerResolution
+    ) async -> AgentSharedChatAutoTriggerClaimResult {
+        await sharedChatCoordinatorStorage?.resolveAutoTrigger(
+            id: id,
+            observation: observation,
+            resolution: resolution
+        ) ?? .notAcquired
+    }
+
+    /// Returns an unclaimed trigger of a retired room to the queue. A consumer
+    /// that already rebound to another session has no observation left there,
+    /// but must still release the batch it will never answer.
+    public func declineSharedChatAutoTrigger(
+        id: UUID,
+        rootSessionID: String
+    ) async {
+        await sharedChatCoordinatorStorage?.declineAutoTrigger(
+            id: id,
+            roomID: rootSessionID
+        )
+    }
+
     /// Returns the descriptors currently active for one session. This lookup is
     /// intended for best-effort replay presentation; live calls already carry
     /// the descriptor snapshot selected for their model round.
@@ -382,6 +545,7 @@ public actor AgentCoreSessionRunner {
             modelID: configuration.modelID,
             workingDirectoryPath: configuration.workingDirectoryPath,
             systemPrompt: configuration.systemPrompt,
+            dynamicContext: configuration.dynamicContext,
             cacheKey: configuration.cacheKey,
             history: configuration.history,
             allowedToolNames: configuration.allowedToolNames,
@@ -421,6 +585,7 @@ public actor AgentCoreSessionRunner {
                 id: replacement.sessionID,
                 cwd: replacement.workingDirectoryPath,
                 systemPrompt: replacement.systemPrompt,
+                dynamicContext: replacement.dynamicContext,
                 history: replacement.history,
                 cacheKey: replacement.cacheKey,
                 allowedToolNames: replacement.allowedToolNames,
@@ -570,7 +735,16 @@ public actor AgentCoreSessionRunner {
         invalidateSessionGeneration(for: sessionID)
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
+        // The transient bus lives inside the backend tree: release an
+        // unresolved synthetic batch so it is re-offered instead of lost, while
+        // keeping live observers attached across the rebuild. The room stays
+        // fenced until the clear below has run, so no poll woken in between can
+        // drain the retiring bus into the rebuilt session.
+        let chatReset = await sharedChatCoordinatorStorage?.beginReset(roomID: sessionID)
         await backend?.clearSession(id: sessionID)
+        if let chatReset {
+            await sharedChatCoordinatorStorage?.endReset(chatReset)
+        }
     }
 
     /// Discards a logical session, including its persisted task graph.
@@ -599,6 +773,7 @@ public actor AgentCoreSessionRunner {
         await cancelAllPromptTasksAndWait()
         promptAuthorizationHandlers.removeAll()
         promptAuthorizationSessionIDs.removeAll()
+        sessionAuthorizationHandlers.removeAll()
         sessionGenerations.removeAll()
 
         let taskSessionIDs = await taskOrchestrator.registeredSessionIDs()
@@ -611,7 +786,13 @@ public actor AgentCoreSessionRunner {
         lastKnownSessionSnapshots.removeAll()
         for sessionID in sessionIDs {
             _ = await interruptSubAgents(rootSessionID: sessionID)
+            // Same ordering as `rebuildSession`: the room is fenced across the
+            // backend clear, never merely before it.
+            let chatReset = await sharedChatCoordinatorStorage?.beginReset(roomID: sessionID)
             await backend?.clearSession(id: sessionID)
+            if let chatReset {
+                await sharedChatCoordinatorStorage?.endReset(chatReset)
+            }
             try await taskOrchestrator.discardSession(id: sessionID)
         }
     }
@@ -644,6 +825,9 @@ public actor AgentCoreSessionRunner {
         await waitForPromptTasks(for: sessionID)
         try await taskOrchestrator.flush(sessionID: sessionID)
         promptSkillProvidersBySessionID.removeValue(forKey: sessionID)
+        // Terminate coordination for this room so a suspended observer resumes
+        // instead of waiting forever on a closed session.
+        await sharedChatCoordinatorStorage?.stop(roomID: sessionID)
         await backend?.closeSession(id: sessionID)
         // Re-drop after the suspensions above: a prompt finalization that raced
         // this close may have re-inserted state before its generation check.
@@ -685,6 +869,7 @@ public actor AgentCoreSessionRunner {
         await cancelAllPromptTasksAndWait()
         promptAuthorizationHandlers.removeAll()
         promptAuthorizationSessionIDs.removeAll()
+        sessionAuthorizationHandlers.removeAll()
         // Fence in-flight backend creation and session work before suspending.
         backendGeneration &+= 1
         backendPreparation?.cancel()
@@ -697,6 +882,9 @@ public actor AgentCoreSessionRunner {
         sessions.removeAll()
         lastKnownSessionSnapshots.removeAll()
         promptSkillProvidersBySessionID.removeAll()
+        // The runtime tree that produced the transient transcript is gone, so
+        // finish every observer and drop the parked batches with it.
+        await sharedChatCoordinatorStorage?.stopAll()
         activeRuntimeConfiguration = nil
         let backendToShutdown = backend
         backend = nil
@@ -960,6 +1148,7 @@ public actor AgentCoreSessionRunner {
             id: configuration.sessionID,
             cwd: configuration.workingDirectoryPath,
             systemPrompt: configuration.systemPrompt,
+            dynamicContext: configuration.dynamicContext,
             history: configuration.history,
             cacheKey: configuration.cacheKey,
             allowedToolNames: configuration.allowedToolNames,
@@ -1041,6 +1230,28 @@ public actor AgentCoreSessionRunner {
             return true
         }
 
+        // Delegated sub-agents are not bound to the turn that spawned them:
+        // they call tools from their own private session and keep working after
+        // that turn returned, so the turn/session match below can never hold
+        // for them. Route on the runtime-minted delegation identity instead,
+        // and only when its root session is one this runner actually owns — an
+        // unknown root session names no operator, so there is nobody to ask.
+        // The handler is still never picked arbitrarily from the Dictionary: it
+        // is the one registered for that exact root session, or the runner's
+        // default. With neither, the request fails closed like any other.
+        if let delegation = request.delegatedIdentity {
+            guard isKnownSession(delegation.rootSessionID),
+                  let handler = sessionAuthorizationHandlers[delegation.rootSessionID]
+                      ?? defaultToolAuthorizationHandler else {
+                return false
+            }
+            let presentedRequest = await delegatedRequestForPresentation(
+                request,
+                delegation: delegation
+            )
+            return await handler(presentedRequest)
+        }
+
         // A request must name the exact live turn and session. Never select an
         // arbitrary handler from a Dictionary: concurrent prompts in the same
         // session can have different authorization policies.
@@ -1051,5 +1262,36 @@ public actor AgentCoreSessionRunner {
             return false
         }
         return await handler(request)
+    }
+
+    /// A session this runner owns, either because it is still configured or
+    /// because a turn of it registered an operator handler. Anything else is
+    /// not ours to authorize.
+    private func isKnownSession(_ sessionID: String) -> Bool {
+        sessions[sessionID] != nil || sessionAuthorizationHandlers[sessionID] != nil
+    }
+
+    /// Names the delegated agent in the title so the operator can see *who* is
+    /// asking before approving.
+    ///
+    /// Strictly best-effort: resolution never gates the decision, and a missing
+    /// backend, an unknown id, or a blank name falls back to the agent id. Only
+    /// `title` changes — `LocalExecPermissionAuthorizer` keys its consent cache
+    /// on tool name and command — so remembered approvals stay keyed exactly as
+    /// before. The single `await` here reads the backend's sub-agent registry,
+    /// which never calls back into this runner, so it cannot stall a
+    /// coordinator turn waiting on this actor.
+    private func delegatedRequestForPresentation(
+        _ request: AgentToolAuthorizationRequest,
+        delegation: AgentToolAuthorizationRequest.DelegatedIdentity
+    ) async -> AgentToolAuthorizationRequest {
+        var label = delegation.agentID
+        if let backend {
+            let snapshots = await backend.subAgentSnapshots()
+            if let name = snapshots.first(where: { $0.id == delegation.agentID })?.name.nilIfBlank {
+                label = name
+            }
+        }
+        return request.withTitle("[agent \(label)] \(request.title)")
     }
 }

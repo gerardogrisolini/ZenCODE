@@ -101,6 +101,60 @@ failure with `tasks.update`, call `tasks.retry`, then claim the reset task with 
 **new** `agent.create(taskID:)`. `agent.message` cannot revive a completed
 attempt.
 
+### Messages
+
+While sub-agents run, the coordinator and active agent instances share a live,
+transient chat room (`AgentSharedChat`). It carries the `agent.message` tool and
+the operator mentions typed in the terminal. It is bounded and in-memory: nothing
+in it is written to a session snapshot or task checkpoint, and only
+`SessionTaskOrchestrator` owns persisted state. A logical session reset drops it.
+
+Three participant kinds share the room:
+
+- **operator** — the human at the terminal. A trusted sender that never occupies
+  a room slot or mailbox, so it can always reach the coordinator and active
+  agents.
+- **coordinator** — the current LLM agent directing the work.
+- **agent** — a delegated sub-agent instance.
+
+`agent.message` delivers through one destination:
+
+| `to` | Recipients |
+| --- | --- |
+| `direct` (default) | The exact `id`/`name`/`ids` named. A direct message wakes an idle recipient immediately. |
+| `coordinator` | The coordinator only. |
+| `peers` | Every other active delegated agent, never the sender. |
+| `all` | The coordinator and every active delegated agent except the sender. An operator broadcast reaches every active recipient including the coordinator. |
+
+From the terminal the operator addresses the room with a leading mention:
+`@coordinator`, `@all`, or the `@agent-…` handle an active instance advertises.
+That handle is ID-backed, so it survives duplicate or renamed agents. A
+recognised mention without a message body is rejected as invalid input rather
+than queued behind a running generation.
+
+Replies travel back through the same chat. Any message injected into a
+coordinator or agent turn instructs the recipient to answer through
+`agent.message`: ordinary model output is never part of the chat, so both the
+coordinator and a delegated agent must send their reply via `agent.message`,
+regardless of who the sender is. The operator sees every chat message rendered
+in the terminal; a delegated agent sees only what its mailbox delivers.
+
+Delivery is priority-based rather than turn-based. A recipient that is idle
+receives the message as a new turn, as before. A recipient with a turn already in
+flight is not interrupted and does not wait for that turn to end: the message
+stays in its mailbox and is appended to the result of the recipient's next tool
+call, which asks it to reply immediately and then resume the work it was doing.
+Only the model-facing tool result carries the injected block; the rendered tool
+output is unchanged, because the terminal already shows the message itself. A
+turn that ends before making another tool call falls back to the previous
+behaviour, so a message is never lost — it becomes a queued prompt for an agent
+and the coordinator's usual synthetic turn.
+
+The coordinator authorises at most one synthetic turn from the chat at a time,
+never starting a second generation behind a running one. `agent.message` is a
+mutating core tool, so a read-only profile can receive chat messages but cannot
+send them.
+
 ### Tool Authority
 
 Write authority comes from the selected profile's configured tools:

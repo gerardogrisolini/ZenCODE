@@ -55,7 +55,7 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func remoteInitialMessagesAugmentRestoredSystemHistoryWithTaskWorkflowPolicy() {
+    func remoteInitialMessagesPreserveRestoredLegacySystemHistoryWithoutMutatingStaticPrefix() {
         let taskTools: Set<String> = [
             "tasks.create",
             "tasks.list",
@@ -74,8 +74,8 @@ extension RemoteSessionSnapshotTests {
 
         #expect(messages.count == 2)
         let systemContent = messages.first?["content"] as? String
-        #expect(systemContent?.contains("ACP client instructions.") == true)
-        #expect(systemContent?.contains("Task workflow policy:") == true)
+        #expect(systemContent == "ACP client instructions.")
+        #expect(systemContent?.contains("Task workflow policy:") == false)
 
         let restoredMessages = RemoteGenerationClient.initialMessages(
             cwd: "/tmp/project",
@@ -84,8 +84,8 @@ extension RemoteSessionSnapshotTests {
             allowedToolNames: taskTools
         )
         let restoredSystemContent = restoredMessages.first?["content"] as? String
-        #expect(restoredSystemContent?.contains("Saved remote system prompt.") == true)
-        #expect(restoredSystemContent?.contains("Task workflow policy:") == true)
+        #expect(restoredSystemContent == "Saved remote system prompt.")
+        #expect(restoredSystemContent?.contains("Task workflow policy:") == false)
     }
 
     @Test

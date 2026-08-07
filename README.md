@@ -18,6 +18,7 @@ Windows (via WSL), all the way down to a Raspberry Pi.
 - **Runs everywhere** — macOS, Linux, and Windows (via WSL); model inference stays on the remote provider, so even a single-board computer can host the agent.
 - **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, as a native coding agent.
 - **Agentic workflows** — dependency-aware task graph with `/plan`, `/workflow`, and `/review`; `/plan save` and `/plan load` hand plans between sessions of the same project, plus [capability-based delegation](Docs/bindings.md) to specialized sub-agents.
+- **Live agent chat** — while sub-agents run, the operator, coordinator, and agent instances share a transient chat room: message the coordinator or broadcast to all agents from the terminal with `@coordinator` / `@all`, or reach a specific agent by its handle. See [agents.md](Docs/agents.md).
 - **Task recovery at startup** — incomplete task graphs are detected per project and presented in a scrollable picker, so you can resume the exact graph you selected or remove obsolete work before starting a new session.
 - **Full control over tools** — granular `/tools` selection (filesystem, shell, Git, search, memory, sub-agents, Xcode, Figma, features), with change tracking and `/undo` as a safety net.
 - **Extensible** — the Builder generates reusable Dynamic Swift Features as durable tools; skills are selectable per session and installable from GitHub or a local folder.

@@ -78,6 +78,7 @@ public extension AgentCoreSessionRunner {
             thinkingSelection: thinkingSelection ?? snapshot.thinkingSelection?.rawValue,
             contextWindow: contextWindow,
             systemPrompt: snapshot.systemPrompt,
+            dynamicContext: snapshot.dynamicContext,
             history: snapshot.history,
             transcriptHistory: transcriptHistory,
             activePlan: activePlan,

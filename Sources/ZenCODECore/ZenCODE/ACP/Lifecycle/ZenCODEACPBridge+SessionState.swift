@@ -196,6 +196,7 @@ extension ZenCODEACPBridge {
                 modelID: snapshot.modelID ?? configuration.effectiveModelID,
                 workingDirectory: snapshot.workingDirectoryPath,
                 systemPrompt: snapshot.systemPrompt,
+                dynamicContext: snapshot.dynamicContext,
                 cacheKey: snapshot.cacheKey,
                 history: snapshot.history,
                 allowedToolNames: snapshot.allowedToolNames,

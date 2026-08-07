@@ -63,6 +63,7 @@ extension TerminalChat {
             activeSessionHistory = []
             activeSessionTranscript = []
             activeSessionSystemPromptOverride = nil
+            activeSessionDynamicContextOverride = nil
             resetResponseLanguageLock()
             activeSavedSessionName = nil
             activeCheckpointTree = nil
@@ -220,6 +221,7 @@ extension TerminalChat {
                 TerminalSavedSessionContextWindow($0)
             },
             systemPrompt: snapshot.systemPrompt,
+            dynamicContext: snapshot.dynamicContext,
             history: snapshot.history,
             transcriptHistory: activeSessionTranscript,
             activePlan: activePlan,
@@ -260,6 +262,7 @@ extension TerminalChat {
             activeSessionCacheKey = snapshot.cacheKey
             activeSessionHistory = snapshot.history
             activeSessionSystemPromptOverride = snapshot.systemPrompt
+            activeSessionDynamicContextOverride = snapshot.dynamicContext
 
             _ = await statusBar.update(
                 contextWindow: DirectAgentContextWindowStatus(
@@ -329,6 +332,7 @@ extension TerminalChat {
         activeSessionHistory = restoredMessages
         activeSessionTranscript = restoredTranscript
         activeSessionSystemPromptOverride = savedSession.systemPrompt
+        activeSessionDynamicContextOverride = savedSession.dynamicContext
         activePlan = savedSession.activePlan
         activeCheckpointTree = workingTree
         resetResponseLanguageLock()

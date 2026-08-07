@@ -17,6 +17,8 @@ struct TerminalPromptCompletion: Equatable, Sendable {
         case command
         /// The first argument of a known command, i.e. its subcommand slot.
         case argument(command: String)
+        /// The leading `@name` token of a single-line prompt.
+        case mention
     }
 
     let kind: Kind
@@ -33,23 +35,25 @@ struct TerminalPromptCompletion: Equatable, Sendable {
 
     /// Classifies the token under the cursor.
     ///
-    /// Only single-line drafts that start with `/` are completed: a multi-line
-    /// draft is prose, and a slash that is not at the very start is ordinary
-    /// text such as a path.
+    /// Only single-line drafts participate in completion. Slash commands and
+    /// shared-chat `@name` mentions are restricted to the leading token, which
+    /// mirrors the shared-chat router grammar exactly.
     static func completion(
         buffer: [Character],
         cursorIndex: Int
     ) -> TerminalPromptCompletion? {
-        guard buffer.first == "/",
-              !buffer.contains("\n"),
-              // Command dispatch splits only on a literal space.  Do not
-              // complete a draft containing a tab or another whitespace
-              // separator that the dispatcher would reject.
+        guard !buffer.contains("\n"),
               !buffer.contains(where: { $0.isWhitespace && $0 != " " }) else {
             return nil
         }
 
         let cursor = min(max(0, cursorIndex), buffer.count)
+        if let mention = mentionCompletion(buffer: buffer, cursorIndex: cursor) {
+            return mention
+        }
+        guard buffer.first == "/" else {
+            return nil
+        }
         let commandEnd = buffer.firstIndex { $0 == " " } ?? buffer.count
         if cursor <= commandEnd {
             return TerminalPromptCompletion(
@@ -98,7 +102,9 @@ struct TerminalPromptCompletion: Equatable, Sendable {
             guard !completion.prefix.isEmpty else {
                 return []
             }
-            candidates = commands
+            candidates = commands.filter { $0.command.hasPrefix("/") }
+        case .mention:
+            candidates = commands.filter { $0.command.hasPrefix("@") }
         case let .argument(command):
             // Offer arguments only for commands the current agent can actually
             // run, so a hidden command never leaks through its subcommands.
@@ -127,6 +133,34 @@ struct TerminalPromptCompletion: Equatable, Sendable {
         return exactMatches + matches.filter { candidate in
             candidate.command != prefix
         }
+    }
+
+    private static func mentionCompletion(
+        buffer: [Character],
+        cursorIndex: Int
+    ) -> TerminalPromptCompletion? {
+        var start = cursorIndex
+        while start > 0, buffer[start - 1] != " " {
+            start -= 1
+        }
+        // Shared-chat routing recognises a leading mention only. Leading spaces
+        // are harmless because the router trims them, but do not offer a
+        // completion after prose (or when the cursor moved into a later token),
+        // because accepting it would produce a prompt the router treats as
+        // ordinary coordinator text.
+        let firstTokenStart = buffer.firstIndex { $0 != " " } ?? buffer.count
+        guard start == firstTokenStart, start < buffer.count, buffer[start] == "@" else {
+            return nil
+        }
+        var end = cursorIndex
+        while end < buffer.count, buffer[end] != " " {
+            end += 1
+        }
+        return TerminalPromptCompletion(
+            kind: .mention,
+            replacementRange: start..<end,
+            prefix: String(buffer[start..<cursorIndex])
+        )
     }
 
     private static func isSeparator(_ character: Character) -> Bool {

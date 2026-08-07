@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -14,6 +15,7 @@ public actor AgentCoreBackend {
     private struct SessionSeed {
         let cwd: String
         var systemPrompt: String?
+        var dynamicContext: String?
         var history: [AgentRuntimeMessage]
         let cacheKey: String?
         var allowedToolNames: Set<String>?
@@ -74,6 +76,7 @@ public actor AgentCoreBackend {
         id: String,
         cwd: String,
         systemPrompt: String? = nil,
+        dynamicContext: String? = nil,
         history: [AgentRuntimeMessage] = [],
         cacheKey: String? = nil,
         allowedToolNames: Set<String>? = nil,
@@ -81,10 +84,12 @@ public actor AgentCoreBackend {
         preserveThinking: Bool = false
     ) async {
         let allowedToolNames = normalizedAllowedToolNames(allowedToolNames)
+        let separatedContext = AgentRuntimeDynamicContext.separating(from: history)
         let seed = SessionSeed(
             cwd: cwd,
             systemPrompt: systemPrompt,
-            history: history,
+            dynamicContext: dynamicContext ?? separatedContext.context,
+            history: separatedContext.history,
             cacheKey: cacheKey,
             allowedToolNames: allowedToolNames,
             thinkingSelection: thinkingSelection,
@@ -96,7 +101,7 @@ public actor AgentCoreBackend {
                 id: id,
                 cwd: cwd,
                 systemPrompt: systemPrompt,
-                history: history,
+                history: runtimeHistory(for: seed),
                 cacheKey: cacheKey,
                 allowedToolNames: allowedToolNames,
                 thinkingSelection: thinkingSelection,
@@ -129,7 +134,10 @@ public actor AgentCoreBackend {
                 id: result.snapshot.sessionID,
                 cwd: result.snapshot.workingDirectoryPath,
                 systemPrompt: result.snapshot.systemPrompt,
-                history: result.snapshot.history,
+                history: AgentRuntimeDynamicContext.inserting(
+                    result.snapshot.dynamicContext,
+                    into: result.snapshot.history
+                ),
                 cacheKey: result.snapshot.cacheKey,
                 allowedToolNames: result.snapshot.allowedToolNames,
                 thinkingSelection: result.snapshot.thinkingSelection,
@@ -161,6 +169,7 @@ public actor AgentCoreBackend {
     public func updateSessionOptions(
         id: String,
         systemPrompt: String?,
+        dynamicContext: String?,
         allowedToolNames: Set<String>?,
         thinkingSelection: AgentThinkingSelection?,
         preserveThinking: Bool
@@ -170,19 +179,34 @@ public actor AgentCoreBackend {
         }
         let allowedToolNames = normalizedAllowedToolNames(allowedToolNames)
         seed.systemPrompt = systemPrompt
+        let dynamicContextChanged = seed.dynamicContext != dynamicContext?.nilIfBlank
+        seed.dynamicContext = dynamicContext?.nilIfBlank
         seed.allowedToolNames = allowedToolNames
         seed.thinkingSelection = thinkingSelection
         seed.preserveThinking = preserveThinking
         sessions[id] = seed
 
         if let backend = activeBackend {
-            await backend.updateSessionOptions(
-                id: id,
-                systemPrompt: systemPrompt,
-                allowedToolNames: allowedToolNames,
-                thinkingSelection: thinkingSelection,
-                preserveThinking: preserveThinking
-            )
+            if dynamicContextChanged {
+                await backend.createSession(
+                    id: id,
+                    cwd: seed.cwd,
+                    systemPrompt: seed.systemPrompt,
+                    history: runtimeHistory(for: seed),
+                    cacheKey: seed.cacheKey,
+                    allowedToolNames: seed.allowedToolNames,
+                    thinkingSelection: seed.thinkingSelection,
+                    preserveThinking: seed.preserveThinking
+                )
+            } else {
+                await backend.updateSessionOptions(
+                    id: id,
+                    systemPrompt: systemPrompt,
+                    allowedToolNames: allowedToolNames,
+                    thinkingSelection: thinkingSelection,
+                    preserveThinking: preserveThinking
+                )
+            }
         }
     }
 
@@ -281,8 +305,51 @@ public actor AgentCoreBackend {
         return []
     }
 
+    public func sharedChatParticipants(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Participant] {
+        guard let activeBackend else { return [] }
+        return await activeBackend.sharedChatParticipants(rootSessionID: rootSessionID)
+    }
+
+    public func sendSharedChatMessage(
+        text: String,
+        destination: AgentSharedChat.Destination,
+        rootSessionID: String
+    ) async throws -> AgentSharedChat.Delivery {
+        guard let activeBackend else {
+            throw AgentSharedChat.Error.unavailable
+        }
+        return try await activeBackend.sendSharedChatMessage(
+            text: text,
+            destination: destination,
+            rootSessionID: rootSessionID
+        )
+    }
+
+    public func drainCoordinatorSharedChatMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        guard let activeBackend else { return [] }
+        return await activeBackend.drainCoordinatorSharedChatMessages(
+            rootSessionID: rootSessionID
+        )
+    }
+
+    public func sharedChatTranscriptMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        guard let activeBackend else { return [] }
+        return await activeBackend.sharedChatTranscriptMessages(
+            rootSessionID: rootSessionID
+        )
+    }
+
     public func snapshotSession(id sessionID: String) async -> AgentRuntimeSessionSnapshot? {
         if let snapshot = await activeBackend?.snapshotSession(id: sessionID) {
+            // Keep the seed in sync with provider-owned turns so replacing
+            // dynamic context never recreates a session from stale history.
+            updateSessionSeed(from: snapshot)
             return snapshot
         }
         guard let seed = sessions[sessionID] else {
@@ -302,6 +369,7 @@ public actor AgentCoreBackend {
             sessions[sessionID] = SessionSeed(
                 cwd: configuration.workingDirectory.path,
                 systemPrompt: nil,
+                dynamicContext: nil,
                 history: [],
                 cacheKey: nil,
                 allowedToolNames: normalizedAllowedToolNames(nil),
@@ -412,7 +480,7 @@ public actor AgentCoreBackend {
                 id: sessionID,
                 cwd: seed.cwd,
                 systemPrompt: seed.systemPrompt,
-                history: seed.history,
+                history: runtimeHistory(for: seed),
                 cacheKey: seed.cacheKey,
                 allowedToolNames: seed.allowedToolNames,
                 thinkingSelection: seed.thinkingSelection,
@@ -469,7 +537,7 @@ public actor AgentCoreBackend {
             id: sessionID,
             cwd: seed.cwd,
             systemPrompt: seed.systemPrompt,
-            history: seed.history,
+            history: runtimeHistory(for: seed),
             cacheKey: seed.cacheKey,
             allowedToolNames: seed.allowedToolNames,
             thinkingSelection: seed.thinkingSelection,
@@ -495,6 +563,7 @@ public actor AgentCoreBackend {
             modelID: configuration.modelID,
             workingDirectoryPath: seed.cwd,
             systemPrompt: seed.systemPrompt,
+            dynamicContext: seed.dynamicContext,
             cacheKey: seed.cacheKey,
             history: seed.history,
             allowedToolNames: seed.allowedToolNames,
@@ -530,12 +599,17 @@ public actor AgentCoreBackend {
         sessions[snapshot.sessionID] = SessionSeed(
             cwd: snapshot.workingDirectoryPath,
             systemPrompt: snapshot.systemPrompt,
+            dynamicContext: snapshot.dynamicContext,
             history: snapshot.history,
             cacheKey: snapshot.cacheKey,
             allowedToolNames: normalizedAllowedToolNames(snapshot.allowedToolNames),
             thinkingSelection: snapshot.thinkingSelection,
             preserveThinking: snapshot.preserveThinking
         )
+    }
+
+    private func runtimeHistory(for seed: SessionSeed) -> [AgentRuntimeMessage] {
+        AgentRuntimeDynamicContext.inserting(seed.dynamicContext, into: seed.history)
     }
 }
 
