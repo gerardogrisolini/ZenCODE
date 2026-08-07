@@ -70,7 +70,16 @@ extension DirectSubAgentRuntime {
         // Every exit path releases the ownership token, including the standby,
         // discard, failure and cancellation paths, so the next `queuePrompt`
         // starts exactly one new loop.
-        defer { releaseWorkLoopOwnership(agentID: agentID) }
+        //
+        // The same exit paths re-arm the shared-chat drain: no turn of this
+        // agent is in flight any more, so messages that the drain deliberately
+        // left in the mailbox for inline delivery must now become a queued
+        // prompt. `nextWork(for:)` covers the empty-queue exit; this covers
+        // every other exit (denied authorization, failure, cancellation).
+        defer {
+            releaseWorkLoopOwnership(agentID: agentID)
+            rearmSharedChatDrain(for: agentID)
+        }
         while true {
             guard let work = nextWork(for: agentID) else {
                 return
@@ -120,12 +129,11 @@ extension DirectSubAgentRuntime {
             agent.updatedAt = .now
             agents[agentID] = agent
             // Backpressure may have stopped the shared-chat drain while the
-            // pending queue was full. Now that the queue is empty, re-arm the
-            // drain so messages parked in the bounded mailbox are delivered.
-            let runtime = self
-            Task(name: "ZenCODE.shared-chat.agent-drain-rearm") {
-                await runtime.drainSharedChatMailbox(for: agentID)
-            }
+            // pending queue was full, and the hold-back stops it entirely while
+            // a turn is running. Now that the queue is empty and no turn is in
+            // flight, re-arm the drain so messages parked in the bounded
+            // mailbox are delivered.
+            rearmSharedChatDrain(for: agentID)
             return nil
         }
 
@@ -275,6 +283,12 @@ extension DirectSubAgentRuntime {
         agentID: String,
         authorization: TurnAuthorization
     ) async {
+        // The turn is over, so the inline-delivery window closed: anything the
+        // drain left in the mailbox has to be re-offered now. Deferred so every
+        // exit — standby, task completion, orchestrator failure — re-arms once,
+        // and harmless when the loop immediately starts the next queued prompt:
+        // the drain simply observes `.running` again and holds back.
+        defer { rearmSharedChatDrain(for: agentID) }
         guard var agent = agents[agentID],
               agent.status != .closed else {
             return

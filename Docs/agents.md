@@ -139,6 +139,17 @@ coordinator and a delegated agent must send their reply via `agent.message`,
 regardless of who the sender is. The operator sees every chat message rendered
 in the terminal; a delegated agent sees only what its mailbox delivers.
 
+Delivery is priority-based rather than turn-based. A recipient that is idle
+receives the message as a new turn, as before. A recipient with a turn already in
+flight is not interrupted and does not wait for that turn to end: the message
+stays in its mailbox and is appended to the result of the recipient's next tool
+call, which asks it to reply immediately and then resume the work it was doing.
+Only the model-facing tool result carries the injected block; the rendered tool
+output is unchanged, because the terminal already shows the message itself. A
+turn that ends before making another tool call falls back to the previous
+behaviour, so a message is never lost — it becomes a queued prompt for an agent
+and the coordinator's usual synthetic turn.
+
 The coordinator authorises at most one synthetic turn from the chat at a time,
 never starting a second generation behind a running one. `agent.message` is a
 mutating core tool, so a read-only profile can receive chat messages but cannot

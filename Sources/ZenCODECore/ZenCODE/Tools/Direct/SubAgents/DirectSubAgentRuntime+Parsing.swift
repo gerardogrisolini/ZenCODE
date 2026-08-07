@@ -317,14 +317,25 @@ extension DirectSubAgentRuntime {
         JSONValue(jsonObject: value)
     }
 
+    /// Every argument key that can carry an agent identifier. Callers that need
+    /// to *retarget* a request (rather than read it) must clear all of them, so
+    /// the list lives next to the parser that consumes it and cannot drift.
+    public static let agentIdentifierArgumentKeys: [String] = singularAgentIdentifierKeys
+        + pluralAgentIdentifierKeys
+
+    static let singularAgentIdentifierKeys = [
+        "id", "agentID", "agent_id", "taskID", "task_id", "name", "agent"
+    ]
+    static let pluralAgentIdentifierKeys = ["ids", "agentIDs", "agent_ids", "names"]
+
     public static func requestedAgentIdentifiers(
         from arguments: [String: JSONValue]
     ) -> [String] {
         var identifiers: [String] = []
-        if let id = firstString(["id", "agentID", "agent_id", "taskID", "task_id", "name", "agent"], in: arguments)?.nilIfBlank {
+        if let id = firstString(singularAgentIdentifierKeys, in: arguments)?.nilIfBlank {
             identifiers.append(id)
         }
-        identifiers.append(contentsOf: firstStringList(["ids", "agentIDs", "agent_ids", "names"], in: arguments) ?? [])
+        identifiers.append(contentsOf: firstStringList(pluralAgentIdentifierKeys, in: arguments) ?? [])
 
         var seen = Set<String>()
         return identifiers.compactMap { identifier in

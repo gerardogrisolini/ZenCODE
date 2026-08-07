@@ -173,13 +173,15 @@ struct AgentSharedChatCoordinatorTests {
     // MARK: - Busy
 
     @Test
-    func busyRoomQueuesMessagesInsteadOfStartingAConcurrentTurn() async throws {
+    func busyRoomHoldsBackMailboxDrainUntilTurnEnds() async throws {
         let room = "room-\(UUID().uuidString)"
         let chat = try await makeChat(roomID: room, agents: ["planner"])
         let coordinator = makeCoordinator(chat: chat, pollInterval: .seconds(60))
         let subscription = await coordinator.observeSubscription(roomID: room)
         let observation = await Observation.make(stream: subscription.events)
-        // A turn is already running for this room.
+        // A turn is already running for this room. Inline delivery owns the
+        // shared-chat mailbox for its whole duration, so the coordinator poll
+        // must not steal messages from it.
         let operatorTurn = await coordinator.noteTurnStarted(
             roomID: room,
             prompt: "an operator prompt of its own"
@@ -193,13 +195,21 @@ struct AgentSharedChatCoordinatorTests {
         )
         await coordinator.poll(roomID: room)
 
-        var events = await observation.wait(untilAtLeast: 2)
-        #expect(events.compactMap(\.autoTrigger).isEmpty)
-        #expect(await coordinator.pendingMessageCount(roomID: room) == 1)
+        // While the turn is in flight the destructive drain is skipped: nothing
+        // is pending in the coordinator queue and no auto-trigger is emitted.
+        // The message is still in the bus mailbox — the test source is the chat
+        // itself, so a poll that never called `drainCoordinatorMessages` left it
+        // untouched. The post-turn trigger below transitively proves this: the
+        // poll can only have obtained the message by draining the mailbox after
+        // the turn ended.
+        #expect(await observation.snapshot().compactMap(\.autoTrigger).isEmpty)
+        #expect(await coordinator.pendingMessageCount(roomID: room) == 0)
 
-        // Ending the turn releases exactly one synthetic turn for the queue.
+        // Ending the turn re-arms the poll. The mailbox is drained now and
+        // exactly one synthetic turn is offered for the message that survived
+        // the hold-back.
         await coordinator.noteTurnEnded(operatorTurn)
-        events = await observation.wait(untilAtLeast: 1) { $0.contains { $0.autoTrigger != nil } }
+        let events = await observation.wait(untilAtLeast: 1) { $0.contains { $0.autoTrigger != nil } }
         let triggers = events.compactMap(\.autoTrigger)
         #expect(triggers.count == 1)
         #expect(triggers.first?.messages.map(\.text) == ["while busy"])

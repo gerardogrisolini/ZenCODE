@@ -368,7 +368,7 @@ extension DirectSubAgentRuntime {
             // subscription emits no further event, so without this immediate
             // re-check the standby agents would never be released.
             if await self.releaseTerminatedStandbyGraphs(rootSessionID: rootSessionID) {
-                await self.removeGraphObserver(rootSessionID: rootSessionID)
+                self.removeGraphObserver(rootSessionID: rootSessionID)
                 return
             }
             for await event in stream {
@@ -379,7 +379,7 @@ extension DirectSubAgentRuntime {
                 // Stop observing once every standby graph of this root session
                 // is terminal (or no resident is left to release).
                 if await self.releaseTerminatedStandbyGraphs(rootSessionID: rootSessionID) {
-                    await self.removeGraphObserver(rootSessionID: rootSessionID)
+                    self.removeGraphObserver(rootSessionID: rootSessionID)
                     break
                 }
             }

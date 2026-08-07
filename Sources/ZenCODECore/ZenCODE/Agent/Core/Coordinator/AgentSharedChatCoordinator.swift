@@ -85,6 +85,10 @@ public enum AgentSharedChatCoordinatorEvent: Sendable, Equatable {
 ///   *before* the next one, so one hot room cannot starve the others, a drain
 ///   that outlives its room can never resurrect it, and a stale poll can never
 ///   consume the mailbox of the instance that replaced it;
+/// * the mailbox is not drained while a turn is in flight: inline message
+///   delivery owns the mailbox for the whole duration of the turn, so the
+///   monitor leaves it untouched and drains the leftover the instant the room
+///   goes idle (see ``poll(roomID:)``);
 /// * a backend rebuild fences the room for its whole duration
 ///   (``beginReset(roomID:)``/``endReset(_:)``), so nothing is drained from a
 ///   bus that is about to be cleared and no offer opens a turn against a
@@ -794,14 +798,29 @@ public actor AgentSharedChatCoordinator {
                 requestPoll(roomID: roomID)
                 return
             }
-            let messages = await source.drainCoordinatorMessages(roomID)
-            // The room dictionary entry survives `stop`, so messages drained
-            // across a teardown are parked instead of dropped. A *removed* or
-            // *reset* room is different: the runtime tree that produced these
-            // messages is gone, so they die with it rather than resurfacing in
-            // an instance that never owned them.
-            guard rooms[roomID]?.generation == generation else { return }
-            ingest(participants: participants, messages: messages, roomID: roomID)
+            // Hold-back: while a turn is in flight the coordinator must not
+            // steal messages from the shared-chat mailbox. Inline delivery —
+            // surfaced through the result of the consumer's next tool call —
+            // owns the mailbox for the duration of the turn, so a destructive
+            // drain here would race it and swallow the very batch it is about
+            // to present. The drain is simply deferred: `noteTurnEnded` re-arms
+            // the poll, so whatever stayed in the mailbox is drained the instant
+            // the room goes idle and becomes the next auto-trigger exactly as it
+            // does today. The check reads only actor-isolated state, so no
+            // suspension opens between it and the decision to skip.
+            let drained: [AgentSharedChat.Message]
+            if rooms[roomID]?.activeTurns.isEmpty ?? true {
+                // The room dictionary entry survives `stop`, so messages drained
+                // across a teardown are parked instead of dropped. A *removed* or
+                // *reset* room is different: the runtime tree that produced these
+                // messages is gone, so they die with it rather than resurfacing
+                // in an instance that never owned them.
+                drained = await source.drainCoordinatorMessages(roomID)
+                guard rooms[roomID]?.generation == generation else { return }
+            } else {
+                drained = []
+            }
+            ingest(participants: participants, messages: drained, roomID: roomID)
             // Emit agent-to-agent messages that never enter the coordinator
             // mailbox. The transcript source is read-only, so filter by
             // `emittedMessageIDs` to avoid re-emitting on every poll.
@@ -819,9 +838,11 @@ public actor AgentSharedChatCoordinator {
                 room.emittedMessageIDs = Set(allMessages.map(\.id))
                 rooms[roomID] = room
             }
-            if !messages.isEmpty {
+            if !drained.isEmpty {
                 // A mailbox drain is bounded per call; keep pulling until the
-                // mailbox is empty so a burst is never left behind.
+                // mailbox is empty so a burst is never left behind. This never
+                // fires for a skipped drain, so the hold-back cannot spin the
+                // bounded loop against an unchanging mailbox.
                 rooms[roomID]?.pollRequested = true
             }
         } while rooms[roomID]?.pollRequested == true && rounds < Self.maximumDrainRoundsPerPoll

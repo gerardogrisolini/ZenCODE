@@ -41,9 +41,17 @@ extension DirectSubAgentRuntime {
         // bounds and transcript identity as the live bus route. The bus records
         // the delivery in the transient transcript with the coordinator's
         // qualified identity; the actual work (reservations, queuePrompt) still
-        // goes through messageAgents. The target mailboxes are drained right
-        // after the bus send so the wake-up callback does not duplicate the
-        // prompt that messageAgents queues.
+        // goes through messageAgents.
+        //
+        // Recipients are split in two, because a message that only becomes
+        // visible at the end of the turn is exactly the latency this route has
+        // to avoid:
+        // * a recipient with a turn in flight keeps its mailbox untouched. Its
+        //   own executor delivers the message inline at the next tool boundary,
+        //   so it is neither drained nor queued here.
+        // * every other recipient keeps the previous behaviour: its mailbox is
+        //   drained right after the bus send so the wake-up callback does not
+        //   duplicate the prompt that messageAgents queues.
         if effectiveSenderID == nil,
            case .direct(let identifiers) = destination {
             let boundedText = AgentSharedChat.boundedMessageText(text)
@@ -55,16 +63,32 @@ extension DirectSubAgentRuntime {
                     destination: destination,
                     text: boundedText
                 )
-                for recipientID in transcriptDelivery!.recipients.map(\.id) {
-                    _ = await sharedChat.drain(
-                        roomID: roomID,
-                        participantID: recipientID,
-                        limit: AgentSharedChat.maximumMailboxMessages
-                    )
-                }
             } catch {
                 // Best-effort transcript recording: the agent may not yet be
                 // registered in the bus. The message is still queued below.
+            }
+            // Inline delivery requires both halves: the bus actually accepted
+            // the message for that recipient (so it is sitting in its mailbox)
+            // and the agent has a turn in flight (so a tool boundary is still
+            // coming). Anything else falls back to the queued route, which
+            // cannot lose a message.
+            let deliveredRecipientIDs = Set(transcriptDelivery?.recipients.map(\.id) ?? [])
+            var seenAgentIDs = Set<String>()
+            let requestedAgentIDs = identifiers
+                .compactMap(agentID(matching:))
+                .filter { seenAgentIDs.insert($0).inserted }
+            let inlineAgentIDs = requestedAgentIDs.filter { agentID in
+                deliveredRecipientIDs.contains(agentID)
+                    && agents[agentID]?.status == .running
+            }
+            let inlineAgentIDSet = Set(inlineAgentIDs)
+            for recipientID in deliveredRecipientIDs
+            where !inlineAgentIDSet.contains(recipientID) {
+                _ = await sharedChat.drain(
+                    roomID: roomID,
+                    participantID: recipientID,
+                    limit: AgentSharedChat.maximumMailboxMessages
+                )
             }
             // The terminal operator consumes live messages through the TUI
             // observation stream, not a mailbox or prompt queue. When the
@@ -73,8 +97,7 @@ extension DirectSubAgentRuntime {
             // through the sub-agent work loop would fail because the operator is
             // not a delegated agent. Skip that loop when no identifier resolves
             // to a real agent, and surface the bus delivery instead.
-            let hasAgentTarget = identifiers.contains { agentID(matching: $0) != nil }
-            if !hasAgentTarget {
+            guard !requestedAgentIDs.isEmpty else {
                 if let delivery = transcriptDelivery {
                     let recipients = AgentSharedChat.deliveryRecipientSummary(
                         for: delivery.recipients
@@ -85,20 +108,61 @@ extension DirectSubAgentRuntime {
                     identifiers.joined(separator: ", ")
                 )
             }
-            var boundedArguments = arguments
-            let messageKey = ["message", "prompt", "input"].first { arguments[$0] != nil }
-            boundedArguments[messageKey ?? "message"] = .string(boundedText)
-            let queueResult = try await messageAgents(
-                arguments: boundedArguments,
-                parentAllowedToolNames: parentAllowedToolNames
-            )
+            // Authorization is unchanged for the inline recipients: a stale or
+            // standby-ineligible attempt must still be refused with the same
+            // error it gets on the queued route. Only the delivery mechanism
+            // differs, never the permission check.
+            if !inlineAgentIDs.isEmpty {
+                try await validateOpenMessageTargets(inlineAgentIDs)
+            }
+            let queuedAgentIDs = requestedAgentIDs.filter { !inlineAgentIDSet.contains($0) }
+            var queueResult: String?
+            if !queuedAgentIDs.isEmpty {
+                var boundedArguments = arguments
+                let messageKey = ["message", "prompt", "input"].first { arguments[$0] != nil }
+                boundedArguments[messageKey ?? "message"] = .string(boundedText)
+                // Restrict messageAgents to the queued subset only. A running
+                // recipient must not reach queuePrompt — that is what would
+                // defer its reply to the end of the turn — and it already owns
+                // its taskless delegation reservation, so no new reservation
+                // may be taken for it either.
+                for key in Self.agentIdentifierArgumentKeys {
+                    boundedArguments.removeValue(forKey: key)
+                }
+                boundedArguments["ids"] = .array(queuedAgentIDs.map(JSONValue.string))
+                queueResult = try await messageAgents(
+                    arguments: boundedArguments,
+                    parentAllowedToolNames: parentAllowedToolNames
+                )
+            }
+            var lines: [String] = []
             if let delivery = transcriptDelivery {
                 let recipients = AgentSharedChat.deliveryRecipientSummary(
                     for: delivery.recipients
                 )
-                return "Delivered live message to \(recipients).\n" + queueResult
+                lines.append("Delivered live message to \(recipients).")
             }
-            return queueResult
+            if !inlineAgentIDs.isEmpty {
+                let inlineSummary = AgentSharedChat.deliveryRecipientSummary(
+                    for: transcriptDelivery?.recipients.filter {
+                        inlineAgentIDSet.contains($0.id)
+                    } ?? []
+                )
+                lines.append(
+                    "Busy right now, delivered live: \(inlineSummary). "
+                        + "Each reads it at its next tool boundary, without "
+                        + "interrupting the turn in flight; no prompt was queued."
+                )
+            }
+            if let queueResult {
+                lines.append(queueResult)
+            }
+            guard !lines.isEmpty else {
+                throw DirectSubAgentRuntimeError.agentNotFound(
+                    identifiers.joined(separator: ", ")
+                )
+            }
+            return lines.joined(separator: "\n")
         }
         let delivery = try await withBroadcastClassification(destination: destination) {
             try await sharedChat.send(
@@ -215,6 +279,26 @@ extension DirectSubAgentRuntime {
         }
     }
 
+    /// Restarts the mailbox drain of one agent after a turn ends.
+    ///
+    /// This is the fallback half of the inline-delivery contract: while a turn
+    /// is running ``drainSharedChatMailbox(for:)`` deliberately leaves the
+    /// mailbox alone so the executor can deliver inline, which means a turn
+    /// that ends without any further tool call would otherwise leave messages
+    /// parked. Re-arming here converts those leftovers into a queued prompt,
+    /// exactly as before this optimisation.
+    ///
+    /// It is safe to call this more than once per turn: the drain is
+    /// single-flight per agent (``AgentRecord/isDrainingSharedChatMailbox``),
+    /// returns immediately on an empty mailbox, and never re-arms itself, so no
+    /// pair of re-arms can build a drain loop.
+    func rearmSharedChatDrain(for agentID: String) {
+        let runtime = self
+        Task(name: "ZenCODE.shared-chat.agent-drain-rearm") {
+            await runtime.drainSharedChatMailbox(for: agentID)
+        }
+    }
+
     public func sharedChatParticipants(
         rootSessionID: String
     ) async -> [AgentSharedChat.Participant] {
@@ -275,6 +359,22 @@ extension DirectSubAgentRuntime {
         guard var agent = agents[agentID], agent.status != .closed else {
             return
         }
+        // A turn in flight gets its messages inline, at the first tool boundary
+        // reached by `DirectToolExecutor` (which drains this very mailbox with
+        // the agent's own participant id). Consuming the mailbox here instead
+        // would turn a live message into a follow-up prompt that only runs
+        // *after* the current turn — exactly the latency this hold-back exists
+        // to remove.
+        //
+        // The status read and this early return happen in the same actor step,
+        // with no `await` in between, so the decision cannot be taken against a
+        // stale status. No message is lost either: whatever stays in the
+        // mailbox is delivered inline at the next tool boundary, or by the
+        // end-of-turn re-arm (`nextWork(for:)` when the queue drains, and the
+        // work-loop exit path when prompts remain queued).
+        guard agent.status != .running else {
+            return
+        }
         guard !agent.isDrainingSharedChatMailbox else {
             return
         }
@@ -297,6 +397,12 @@ extension DirectSubAgentRuntime {
             // Re-check liveness on every iteration: the agent may have been
             // closed between two drain calls.
             guard let current = agents[agentID], current.status != .closed else { return }
+            // The prompt queued by the previous iteration may already have
+            // started a turn. Leave the rest of the mailbox untouched so the
+            // running turn receives it inline at its next tool boundary; the
+            // end-of-turn re-arm covers the case where it makes no further
+            // tool call.
+            guard current.status != .running else { return }
             // Re-check the broadcast window too: a broadcast may have started
             // while this loop was awaiting the previous batch.
             guard !(isStandbyResident(current) && pendingBroadcastSends > 0) else {
@@ -423,6 +529,25 @@ extension DirectSubAgentRuntime {
 
         \(AgentSharedChat.promptTrustBoundaryNote)
         Reply to the sender through this chat using the `agent.message` tool: address another agent by its `id`/`name`, or use `to: "coordinator"` to reach the coordinator and the human operator, who has no mailbox and is surfaced through the coordinator. Your ordinary output does not reach this chat, so any reply to a chat message must be sent via `agent.message`. Then continue the current work when appropriate.
+        """
+    }
+
+    /// Block appended to a tool result when live messages arrive *during* a
+    /// turn. It is the same serialization contract as ``sharedChatPrompt(_:)``
+    /// — the Core serializer quotes every message body, so a hostile sender
+    /// name or text cannot forge a second sender header or an operator
+    /// instruction — but the framing differs: the work is still in flight, so
+    /// the model is told to answer now and then resume, instead of treating the
+    /// messages as a new task.
+    static func inlineSharedChatDeliveryBlock(
+        _ messages: [AgentSharedChat.Message]
+    ) -> String {
+        """
+        [Live chat messages received while you were working]
+        \(AgentSharedChat.promptTranscript(for: messages))
+
+        \(AgentSharedChat.promptTrustBoundaryNote)
+        These messages arrived during your current turn. Reply NOW with the `agent.message` tool before continuing: address the sender by its `id`/`name`, or use `to: "coordinator"` to reach the coordinator and the human operator, who has no mailbox and is surfaced through the coordinator. Your ordinary output does not reach this chat, so a reply that is not sent via `agent.message` is never delivered. After replying, resume the work you were doing.
         """
     }
 }
