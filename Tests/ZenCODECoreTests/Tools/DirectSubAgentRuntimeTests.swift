@@ -3167,6 +3167,124 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func completedTaskAgentEntersStandbyInManualGraph() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "manual-graph",
+            source: .manual,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                ),
+                TaskDefinition(
+                    id: "task-b",
+                    title: "Later work"
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+
+        let agent = try #require(await runtime.snapshots().first)
+        let task = try await orchestrator.task(sessionID: "root", taskID: "task-a").task
+
+        // The attempt completed; the task is .completed (manual graph, no validation).
+        #expect(task.status == .completed)
+        #expect(task.activeAttemptID == nil)
+        // The graph is still active because task-b is pending.
+        let graph = try #require(await orchestrator.graphSnapshot(sessionID: "root", graphID: "manual-graph"))
+        #expect(graph.state == .active)
+        // The agent entered standby despite its task being .completed, because
+        // the graph is still active and the task is not failed/cancelled.
+        #expect(agent.status == .standby)
+        #expect(agent.pending == false)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func completedTaskAgentAcceptsMessagesWhileGraphIsActive() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "manual-graph",
+            source: .manual,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                ),
+                TaskDefinition(
+                    id: "task-b",
+                    title: "Later work"
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        let agent = try #require(await runtime.snapshots().first)
+        #expect(agent.status == .standby)
+        #expect(await backend.sentPromptCount() == 1)
+
+        // Sending a message should succeed and trigger a second turn even
+        // though the agent's task is already .completed.
+        _ = try await runtime.messageAgents(
+            arguments: [
+                "id": .string(agent.id),
+                "message": .string("Can you summarize?"),
+            ]
+        )
+        _ = await runtime.waitForAgents(arguments: [
+            "id": .string(agent.id),
+            "timeoutSeconds": .number(5),
+        ])
+
+        #expect(await backend.sentPromptCount() == 2)
+
+        await runtime.shutdown()
+    }
+
+    @Test
     func standbyTurnDoesNotMutateTheTaskGraph() async throws {
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(

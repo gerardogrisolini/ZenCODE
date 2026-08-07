@@ -63,12 +63,15 @@ extension DirectSubAgentRuntime {
         guard !snapshot.state.isTerminal else {
             return false
         }
-        // Reject standby for tasks that have entered a terminal status
-        // (failed/cancelled) so the validation fence tested by
+        // Reject standby for tasks that have failed or been cancelled so the
+        // validation fence tested by
         // `workflowAttemptIsFencedAfterValidationFailureUntilRetryCreatesANewAgent`
-        // is preserved.
+        // is preserved.  A `.completed` task is intentionally allowed: the
+        // agent should remain reachable in standby until the task graph itself
+        // reaches a terminal state (at which point `releaseStandbyAgents`
+        // closes it).
         if let task = snapshot.tasks.first(where: { $0.id == taskID }) {
-            if task.status.isTerminal {
+            if task.status == .failed || task.status == .cancelled {
                 return false
             }
             // If the task has a new active attempt owned by a different agent,
