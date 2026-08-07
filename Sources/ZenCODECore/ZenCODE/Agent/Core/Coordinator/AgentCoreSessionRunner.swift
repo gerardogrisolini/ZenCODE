@@ -54,6 +54,14 @@ public actor AgentCoreSessionRunner {
     /// Maps each prompt ID to the session it belongs to so `authorizeTool`
     /// can route authorization requests to the correct handler.
     private var promptAuthorizationSessionIDs: [UUID: String] = [:]
+    /// Session-scoped copy of the same handler, kept alive across turns.
+    ///
+    /// Delegated sub-agents keep executing tools after the turn that spawned
+    /// them has returned, so their consent cannot hang off a turn-scoped entry.
+    /// Keying by session (not by turn) also preserves per-origin routing: a
+    /// session driven from Telegram keeps asking its own operator there. Only
+    /// reset/shutdown clears this map; the per-prompt `defer` must not.
+    private var sessionAuthorizationHandlers: [String: AgentToolAuthorizationHandler] = [:]
     private var localExecAccessModeState: AgentLocalExecAccessMode = .standard
     private let defaultToolAuthorizationHandler: AgentToolAuthorizationHandler?
     let mcpRuntime: DirectMCPToolRuntime
@@ -217,6 +225,9 @@ public actor AgentCoreSessionRunner {
         if let authorizationHandler = authorizeTool ?? defaultToolAuthorizationHandler {
             promptAuthorizationHandlers[promptID] = authorizationHandler
             promptAuthorizationSessionIDs[promptID] = configuration.sessionID
+            // Survives the turn on purpose: delegated work started here can ask
+            // for consent long after this prompt completed.
+            sessionAuthorizationHandlers[configuration.sessionID] = authorizationHandler
         }
         defer {
             promptAuthorizationHandlers.removeValue(forKey: promptID)
@@ -762,6 +773,7 @@ public actor AgentCoreSessionRunner {
         await cancelAllPromptTasksAndWait()
         promptAuthorizationHandlers.removeAll()
         promptAuthorizationSessionIDs.removeAll()
+        sessionAuthorizationHandlers.removeAll()
         sessionGenerations.removeAll()
 
         let taskSessionIDs = await taskOrchestrator.registeredSessionIDs()
@@ -857,6 +869,7 @@ public actor AgentCoreSessionRunner {
         await cancelAllPromptTasksAndWait()
         promptAuthorizationHandlers.removeAll()
         promptAuthorizationSessionIDs.removeAll()
+        sessionAuthorizationHandlers.removeAll()
         // Fence in-flight backend creation and session work before suspending.
         backendGeneration &+= 1
         backendPreparation?.cancel()
@@ -1217,6 +1230,28 @@ public actor AgentCoreSessionRunner {
             return true
         }
 
+        // Delegated sub-agents are not bound to the turn that spawned them:
+        // they call tools from their own private session and keep working after
+        // that turn returned, so the turn/session match below can never hold
+        // for them. Route on the runtime-minted delegation identity instead,
+        // and only when its root session is one this runner actually owns — an
+        // unknown root session names no operator, so there is nobody to ask.
+        // The handler is still never picked arbitrarily from the Dictionary: it
+        // is the one registered for that exact root session, or the runner's
+        // default. With neither, the request fails closed like any other.
+        if let delegation = request.delegatedIdentity {
+            guard isKnownSession(delegation.rootSessionID),
+                  let handler = sessionAuthorizationHandlers[delegation.rootSessionID]
+                      ?? defaultToolAuthorizationHandler else {
+                return false
+            }
+            let presentedRequest = await delegatedRequestForPresentation(
+                request,
+                delegation: delegation
+            )
+            return await handler(presentedRequest)
+        }
+
         // A request must name the exact live turn and session. Never select an
         // arbitrary handler from a Dictionary: concurrent prompts in the same
         // session can have different authorization policies.
@@ -1227,5 +1262,36 @@ public actor AgentCoreSessionRunner {
             return false
         }
         return await handler(request)
+    }
+
+    /// A session this runner owns, either because it is still configured or
+    /// because a turn of it registered an operator handler. Anything else is
+    /// not ours to authorize.
+    private func isKnownSession(_ sessionID: String) -> Bool {
+        sessions[sessionID] != nil || sessionAuthorizationHandlers[sessionID] != nil
+    }
+
+    /// Names the delegated agent in the title so the operator can see *who* is
+    /// asking before approving.
+    ///
+    /// Strictly best-effort: resolution never gates the decision, and a missing
+    /// backend, an unknown id, or a blank name falls back to the agent id. Only
+    /// `title` changes — `LocalExecPermissionAuthorizer` keys its consent cache
+    /// on tool name and command — so remembered approvals stay keyed exactly as
+    /// before. The single `await` here reads the backend's sub-agent registry,
+    /// which never calls back into this runner, so it cannot stall a
+    /// coordinator turn waiting on this actor.
+    private func delegatedRequestForPresentation(
+        _ request: AgentToolAuthorizationRequest,
+        delegation: AgentToolAuthorizationRequest.DelegatedIdentity
+    ) async -> AgentToolAuthorizationRequest {
+        var label = delegation.agentID
+        if let backend {
+            let snapshots = await backend.subAgentSnapshots()
+            if let name = snapshots.first(where: { $0.id == delegation.agentID })?.name.nilIfBlank {
+                label = name
+            }
+        }
+        return request.withTitle("[agent \(label)] \(request.title)")
     }
 }

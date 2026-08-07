@@ -38,6 +38,28 @@ public enum AgentToolAuthorizationContext {
 }
 
 public struct AgentToolAuthorizationRequest: Sendable {
+    /// Identifies a delegated sub-agent as the origin of an authorization
+    /// request, together with the operator session that owns its delegation
+    /// tree.
+    ///
+    /// A sub-agent runs in its own private session and outlives the turn that
+    /// spawned it, so its requests can never match a live turn/session pair.
+    /// The runner routes them on this identity instead, which is why the
+    /// identity is minted by the runtime from the child tool executor's own
+    /// state and is never read from model output or tool arguments: a forgeable
+    /// identity would let a call borrow another session's operator consent.
+    public struct DelegatedIdentity: Sendable, Equatable {
+        /// The delegated agent that issued the tool call.
+        public let agentID: String
+        /// The operator-facing session that started the delegation tree.
+        public let rootSessionID: String
+
+        public init(agentID: String, rootSessionID: String) {
+            self.agentID = agentID
+            self.rootSessionID = rootSessionID
+        }
+    }
+
     /// The unique prompt/turn that owns this authorization request.
     ///
     /// This is optional only for source compatibility with callers that build a
@@ -51,6 +73,10 @@ public struct AgentToolAuthorizationRequest: Sendable {
     public let kind: String
     public let command: String
     public let workingDirectory: String
+    /// Non-nil only for requests raised by a delegated sub-agent. The
+    /// coordinator's own executor never sets it, so the turn-scoped path stays
+    /// exactly as strict as before.
+    public let delegatedIdentity: DelegatedIdentity?
 
     public init(
         turnID: UUID? = AgentToolAuthorizationContext.turnID,
@@ -60,7 +86,8 @@ public struct AgentToolAuthorizationRequest: Sendable {
         title: String,
         kind: String,
         command: String,
-        workingDirectory: String
+        workingDirectory: String,
+        delegatedIdentity: DelegatedIdentity? = nil
     ) {
         self.turnID = turnID
         self.sessionID = sessionID
@@ -70,6 +97,26 @@ public struct AgentToolAuthorizationRequest: Sendable {
         self.kind = kind
         self.command = command
         self.workingDirectory = workingDirectory
+        self.delegatedIdentity = delegatedIdentity
+    }
+
+    /// Returns a copy that differs only in the operator-facing title.
+    ///
+    /// Presentation is deliberately the only thing this changes: every field
+    /// the runner routes on, and every field consent caching keys on (tool name
+    /// and command), is carried over untouched.
+    public func withTitle(_ title: String) -> AgentToolAuthorizationRequest {
+        AgentToolAuthorizationRequest(
+            turnID: turnID,
+            sessionID: sessionID,
+            toolCallID: toolCallID,
+            toolName: toolName,
+            title: title,
+            kind: kind,
+            command: command,
+            workingDirectory: workingDirectory,
+            delegatedIdentity: delegatedIdentity
+        )
     }
 }
 

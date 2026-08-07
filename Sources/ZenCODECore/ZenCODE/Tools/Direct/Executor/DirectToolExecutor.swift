@@ -48,6 +48,24 @@ public actor DirectToolExecutor {
     public let sharedChat: AgentSharedChat
     public let sharedChatSenderID: String?
     public let sharedChatRootSessionID: String?
+    /// Delegation identity stamped onto every authorization request this
+    /// executor raises, or nil for the coordinator's own executor.
+    ///
+    /// Both halves must be present: the agent id says *who* is asking and the
+    /// root session says *which* operator has to be asked. Only a child
+    /// executor carries both, so the coordinator keeps producing plain
+    /// turn-scoped requests. The value is derived from executor state the
+    /// runtime set when the sub-agent was created — never from model output —
+    /// because the runner grants delegated requests on the strength of it.
+    var delegatedAuthorizationIdentity: AgentToolAuthorizationRequest.DelegatedIdentity? {
+        guard let sharedChatSenderID, let sharedChatRootSessionID else {
+            return nil
+        }
+        return AgentToolAuthorizationRequest.DelegatedIdentity(
+            agentID: sharedChatSenderID,
+            rootSessionID: sharedChatRootSessionID
+        )
+    }
     public let todoRuntime = DirectTodoRuntime()
     public let taskToolAdapter = DirectTaskToolAdapter()
     public let execJobRuntime = DirectExecJobRuntime()

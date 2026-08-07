@@ -302,6 +302,8 @@ destructive direct tools it grants only the current process/session and is not
 persisted. Use **Run once** when the broader executable-level approval is not
 intended.
 
+Delegated sub-agents ask for the same approvals as the coordinator. Their requests are routed on a runtime-minted delegation identity (the agent instance plus the operator session that owns its delegation tree) instead of the turn that spawned them, because delegated work keeps running after that turn returns. The prompt names the requesting agent, and a request whose root session is unknown to the runner is refused without asking. Full access bypasses these requests exactly as it does the coordinator's.
+
 ## Tool Selection
 
 Tool groups include filesystem, shell, text, search, Git, memory, sub-agents, generated Swift features, and installed optional feature packages such as XcodeTools on macOS or FigmaTools. Use `/tools` to select per session. ACP clients pass enabled tools directly.
