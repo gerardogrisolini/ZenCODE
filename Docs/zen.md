@@ -55,7 +55,7 @@ Creates files under `~/.zencode/`:
 - `permissions.json` — persistent runtime approvals.
 - `agents.json` — agent profiles, authorized model bindings, tools, and instructions.
 - `AGENTS.md` — global operating guidance.
-- `MEMORY.md` — lightweight global resume index.
+- `memory/` — per-workspace project memory graphs: one `memory.graph.json` per workspace, under a SHA-256 digest of the workspace path.
 - `sessions/` — saved session snapshots grouped by project.
 - `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans.
 - `features/` — generated Builder packages and installed optional feature packages.
@@ -395,18 +395,19 @@ Durable context is separated by responsibility:
 
 - Project `AGENTS.md` — workspace-specific constraints and workflows. Check into version control.
 - Global `~/.zencode/AGENTS.md` — cross-workspace operating rules.
-- Project `MEMORY.md` — codebase journal with `Timestamp`, `Summary`, `State`, and `Next`; `Updated` records changes to an existing entry.
-- Global `~/.zencode/MEMORY.md` — lightweight resume index only.
+- Project memory — a per-workspace graph of durable project facts stored outside the working tree at `~/.zencode/memory/<workspace-digest>/memory.graph.json` (honouring `ZENCODE_SUPPORT_DIRECTORY`). A legacy project `MEMORY.md` is imported into the graph once and then left untouched; it is no longer written. Memory is project-scoped only; there is no global memory store.
 
-The Memory tool group supports maintaining the journal without accumulating avoidable duplicates:
+The Memory tool group maintains project memory without accumulating avoidable duplicates:
 
 - `memory.read` reads recent entries; use `detail: "index"` for a compact summary/ID view and the default `detail: "full"` for complete content.
-- `memory.search` ranks exact phrases and structured `Summary`/`State` matches ahead of incidental body mentions.
-- `memory.write` appends a new entry.
-- `memory.update` brings an existing entry current without changing its ID or archive state; it preserves the original `Timestamp` and adds `Updated` when omitted.
-- `memory.archive` removes stale entries from normal resume context without deleting their history.
+- `memory.search` runs BM25 keyword retrieval over the graph and follows links to related entries; with an embedding provider configured it fuses semantic hits in via reciprocal-rank fusion.
+- `memory.write` adds a new entry; writing content that already matches an active entry returns that entry instead of duplicating it.
+- `memory.update` rewrites an entry in place: the id, creation date, and archive state are preserved, the original `Timestamp` is kept and `Updated` added when omitted.
+- `memory.archive` deactivates a stale entry by id so it stops influencing retrieval without being deleted.
 
-Before writing, search for an active entry about the same durable project fact. Update it when appropriate instead of appending a duplicate, and do not write when nothing materially changed. The journal remains ordinary Markdown: existing entries and the `## Active` / `## Archived` format require no migration. Legacy entries without an `[id: …]` marker receive a deterministic ID when read; their next successful mutation persists that ID. Mutations are serialized within one ZenCODE process; separate processes editing the same `MEMORY.md` are not coordinated.
+Before writing, search for an active entry about the same durable project fact. Update it when appropriate instead of appending a duplicate, and do not write when nothing materially changed. Embeddings are opt-in and off by default: without a provider, entries carry no vector and retrieval is pure BM25 keyword matching. Set `ZENCODE_MEMORY_EMBEDDING_ENDPOINT`, `ZENCODE_MEMORY_EMBEDDING_MODEL`, and optionally `ZENCODE_MEMORY_EMBEDDING_API_KEY` to use an OpenAI-compatible embeddings endpoint. Entries record the model that embedded them, so changing the provider degrades retrieval to keyword matching instead of returning mismatched results. Mutations are serialized per workspace within one ZenCODE process.
+
+The vendored engine also ships optional intelligence layers — a query analyzer (default `DirectMemoryQueryAnalyzer`, which uses the prompt as the query), a selector, an extractor (default `NoopMemoryExtractor`, which extracts nothing) and a context formatter — plus `context(for:)` (a ready-to-inject memory block) and `learn(from:)` (automatic extraction), with LLM-backed implementations over an OpenAI-compatible chat model. None of these are wired into ZenCODE: memory is never injected into a prompt and never written automatically. It is only ever read or written through the five `memory.*` tools above.
 
 ZenCODE reads `AGENTS.md` from the working directory when present. Startup never creates or rewrites it.
 
@@ -437,7 +438,7 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, a
 7. `/changes diff` and Git — inspect changes.
 8. `/review` — read-only review before commit.
 9. `/sessions name` — save meaningful checkpoints.
-10. Update project `MEMORY.md` at handoff points.
+10. Update project memory at handoff points (via `memory.write` / `memory.update`).
 
 ## Troubleshooting
 

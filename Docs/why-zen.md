@@ -39,7 +39,7 @@ Why this project exists and where it differs from other coding agents.
 - Capability-based delegation: each profile's model bindings carry a capability score (1–10) and every task a complexity (1–10), so the coordinator steers each unit of work to the lowest-capability sub-agent that still meets it — matching effort to task instead of picking by seniority. See [bindings.md](bindings.md).
 - Dynamic Swift Features: the Builder generates reusable Swift packages as durable tools.
 - Change tracking and `/undo` as a safety net.
-- Saved sessions with checkpoint trees: per-project snapshots with branching, checkpoints, and in-place restore from any point; project `MEMORY.md` journal, `AGENTS.md` for durable guidance.
+- Saved sessions with checkpoint trees: per-project snapshots with branching, checkpoints, and in-place restore from any point; per-project graph-backed memory with BM25 keyword retrieval and optional semantic search via an opt-in embeddings endpoint — reached only through explicit `memory.*` tools, never injected or written automatically — plus `AGENTS.md` for durable guidance.
 - Modular skills selectable per session, installable from GitHub or a local folder.
 
 ## Extras

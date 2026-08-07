@@ -6,10 +6,22 @@
 //
 
 import Foundation
-import Synchronization
+import ZenMemory
 
-public final class MemoryService {
+/// Async facade over the per-workspace ZenMemory graph.
+///
+/// The durable store is the graph, not `MEMORY.md`. An existing `MEMORY.md` is
+/// imported once on first open and then left untouched on disk as a legacy
+/// human-readable artifact.
+///
+/// `@unchecked Sendable`: the only stored property is a `FileManager`, which is
+/// not formally `Sendable` but is documented as safe to call from multiple
+/// threads. This type uses it exclusively for path resolution and existence
+/// checks, and never assigns a delegate. All mutable state lives behind
+/// `MemoryGraphStore`.
+public final class MemoryService: @unchecked Sendable {
     public static let filename = "MEMORY.md"
+    public static let graphFilename = MemoryGraphLocation.graphFilename
     public static let entriesDidChangeNotification = Notification.Name("MemoryEntriesDidChange")
     public static let defaultProjectMemoryContent: String = """
     # MEMORY.md
@@ -40,15 +52,9 @@ public final class MemoryService {
     ## Archived
     """
 
-    let fileManager: FileManager
-    /// A process-wide coordinator is required because callers commonly create a
-    /// fresh `MemoryService` per tool execution. An instance lock would still
-    /// permit two instances to lose one another's read-modify-write update.
-    static let documentWriteCoordinator = FileTransactionCoordinator.shared
+    private let fileManager: FileManager
 
-    public init(
-        fileManager: FileManager = .default
-    ) {
+    public init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
     }
 
@@ -59,364 +65,167 @@ public final class MemoryService {
     public static func toolUsagePromptSection() -> String {
         return """
         Memory tools:
-        Treat the project MEMORY.md as first-class durable context, but remember that its contents are not preloaded into this prompt.
-        Use project memory as the codebase journal: call `memory.read` with `detail: "index"` for a compact overview or `memory.search` for a focused lookup, then verify the selected entries against Git, files, builds, tests, or current user messages before acting.
+        Treat durable project memory as first-class context, but remember that its contents are not preloaded into this prompt.
+        Project memory is a graph: `memory.search` performs hybrid semantic and keyword retrieval and follows links between related entries, so prefer a focused `memory.search` over reading everything. Use `memory.read` with `detail: "index"` for a compact overview.
+        Always verify the entries you retrieve against Git, files, builds, tests, or current user messages before acting.
         Before writing, search for an active entry about the same durable project fact. Use `memory.update` when that entry should be brought current instead of appending a duplicate; if nothing materially changed, do not write.
+        `memory.update` rewrites the entry in place: the entry keeps its id, its creation date and its archive state, so an id stays valid after an update. It preserves the original `Timestamp` and adds an `Updated` timestamp when you omit them.
         Do not write user preferences or operating rules to memory; keep entries scoped to durable project facts.
         Saved-session pointers are maintained programmatically in the sessions index when a session is saved; do not duplicate them with memory tools.
         At the end of a substantial project turn, before the final answer, decide whether project memory should be created, updated, archived, or left unchanged.
-        A project journal entry should be concise and structured with `Summary`, `State`, and `Next`; `memory.write` adds `Timestamp` automatically when missing, while `memory.update` preserves it and adds `Updated` when omitted.
+        A project journal entry should be concise and structured with `Summary`, `State`, and `Next`; `memory.write` adds `Timestamp` automatically when missing.
+        Add `tags` when writing so related entries link together and later retrieval can follow those links.
         Do not write every command or tool call, raw outputs, detailed logs, large diffs, temporary task state, guesses, or facts already obvious from current files.
-        Use `memory.archive` when a note is stale, incorrect, or no longer useful.
+        Use `memory.archive` when a note is stale, incorrect, or no longer useful; archived entries stop influencing retrieval but are not deleted.
         Prefer fresh evidence from files, tools, builds, tests, or current user messages when it conflicts with memory.
         """
     }
 
-    public func readEntries(
-        scope: MemoryScope?,
-        workingDirectory: URL?,
-        includeArchived: Bool = false,
-        limit: Int
-    ) -> [MemoryEntry] {
-        readEntries(
-            scope: scope,
-            workspaceRootURL: workingDirectory?.standardizedFileURL,
-            includeArchived: includeArchived,
-            limit: limit
-        )
+    public static func timestampString(_ date: Date, timeZone: TimeZone) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return "\(formatter.string(from: date)) \(timeZone.identifier)"
     }
 
+    /// Absolute path of the graph backing a workspace.
+    public func graphURL(workspaceRootURL: URL) -> URL {
+        MemoryGraphLocation.graphURL(for: workspaceRootURL, fileManager: fileManager)
+    }
+
+    // MARK: - Reads
+
     public func readEntries(
-        scope: MemoryScope?,
         workspaceRootURL: URL?,
         includeArchived: Bool = false,
         limit: Int
-    ) -> [MemoryEntry] {
-        memoryDocuments(workspaceRootURL: workspaceRootURL)
-            .filter { document in
-                scope == nil || document.scope == scope
-            }
-            .flatMap(readEntries(from:))
-            .filter { includeArchived || !$0.isArchived }
-            .prefix(max(limit, 0))
-            .map { $0 }
+    ) async throws -> [MemoryEntry] {
+        try await store(for: workspaceRootURL)
+            .entries(includeArchived: includeArchived, limit: limit)
     }
 
     public func searchEntries(
         query: String,
-        scope: MemoryScope?,
-        workingDirectory: URL?,
+        workspaceRootURL: URL?,
         includeArchived: Bool = false,
         limit: Int
-    ) -> [MemoryEntry] {
-        searchEntries(
-            query: query,
-            scope: scope,
-            workspaceRootURL: workingDirectory?.standardizedFileURL,
+    ) async throws -> [MemoryEntry] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedQuery.isEmpty else {
+            throw MemoryServiceError.missingField("query")
+        }
+        return try await store(for: workspaceRootURL).search(
+            query: normalizedQuery,
             includeArchived: includeArchived,
             limit: limit
         )
     }
 
-    public func searchEntries(
-        query: String,
-        scope: MemoryScope?,
-        workspaceRootURL: URL?,
-        includeArchived: Bool = false,
-        limit: Int
-    ) -> [MemoryEntry] {
-        rankedEntries(
-            query: query,
-            entries: readEntries(
-                scope: scope,
-                workspaceRootURL: workspaceRootURL,
-                includeArchived: includeArchived,
-                limit: .max
-            ),
-            limit: limit
-        )
-    }
-
-    func readEntriesChecked(
-        scope: MemoryScope,
-        workingDirectory: URL?,
-        includeArchived: Bool = false,
-        limit: Int
-    ) throws -> [MemoryEntry] {
-        try readEntriesChecked(
-            scope: scope,
-            workspaceRootURL: workingDirectory?.standardizedFileURL,
-            includeArchived: includeArchived,
-            limit: limit
-        )
-    }
-
-    func readEntriesChecked(
-        scope: MemoryScope,
-        workspaceRootURL: URL?,
-        includeArchived: Bool = false,
-        limit: Int
-    ) throws -> [MemoryEntry] {
-        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-        let entries = try Self.documentWriteCoordinator.withLock(for: document.fileURL) {
-            try readEntriesForMutation(from: document)
-        }
-        return entries
-            .filter { includeArchived || !$0.isArchived }
-            .prefix(max(limit, 0))
-            .map { $0 }
-    }
-
-    func searchEntriesChecked(
-        query: String,
-        scope: MemoryScope,
-        workingDirectory: URL?,
-        includeArchived: Bool = false,
-        limit: Int
-    ) throws -> [MemoryEntry] {
-        try rankedEntries(
-            query: query,
-            entries: readEntriesChecked(
-                scope: scope,
-                workspaceRootURL: workingDirectory?.standardizedFileURL,
-                includeArchived: includeArchived,
-                limit: .max
-            ),
-            limit: limit
-        )
-    }
-
-    private func rankedEntries(
-        query: String,
-        entries: [MemoryEntry],
-        limit: Int
-    ) -> [MemoryEntry] {
-        let normalizedQuery = query
-            .lowercased()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        var seenTerms = Set<String>()
-        let terms = normalizedQuery
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty && seenTerms.insert($0).inserted }
-        guard !terms.isEmpty else {
-            return entries.prefix(max(limit, 0)).map { $0 }
-        }
-
-        return entries
-            .enumerated()
-            .map { offset, entry in
-                (
-                    entry: entry,
-                    offset: offset,
-                    score: searchScore(
-                        entry: entry,
-                        query: normalizedQuery,
-                        terms: terms
-                    )
-                )
-            }
-            .filter { $0.score > 0 }
-            .sorted { lhs, rhs in
-                if lhs.score != rhs.score {
-                    return lhs.score > rhs.score
-                }
-                return lhs.offset < rhs.offset
-            }
-            .prefix(max(limit, 0))
-            .map(\.entry)
-    }
-
-    @discardableResult
-    public func writeEntry(
-        content: String,
-        scope: MemoryScope,
-        workingDirectory: URL?
-    ) throws -> MemoryEntry {
-        try writeEntry(
-            content: content,
-            scope: scope,
-            workspaceRootURL: workingDirectory?.standardizedFileURL
-        )
-    }
-
-    @discardableResult
-    public func writeEntry(
-        content: String,
-        scope: MemoryScope,
+    public func entry(
+        id: String,
         workspaceRootURL: URL?
-    ) throws -> MemoryEntry {
-        let normalizedContent = MemoryEntry.normalizedContent(content)
-        guard !normalizedContent.isEmpty else {
-            throw MemoryServiceError.missingField("content")
-        }
-
-        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-        return try Self.documentWriteCoordinator.withLock(for: document.fileURL) {
-            var entries = try readEntriesForMutation(from: document)
-            if let existingEntry = entries.first(where: {
-                !$0.isArchived && $0.content.localizedCaseInsensitiveCompare(normalizedContent) == .orderedSame
-            }) {
-                return existingEntry
-            }
-
-            let entry = MemoryEntry(
-                content: normalizedContent,
-                scope: scope
-            )
-            entries.insert(entry, at: 0)
-            try writeEntries(entries, to: document)
-            Self.notifyMemoryEntriesChanged()
-            return entry
-        }
+    ) async throws -> MemoryEntry? {
+        try await store(for: workspaceRootURL)
+            .entry(id: MemoryIdentifier.validated(id))
     }
 
+    // MARK: - Mutations
+
+    @discardableResult
+    public func writeEntry(
+        content: String,
+        workspaceRootURL: URL?,
+        category: MemoryCategory = .fact,
+        tags: [String] = []
+    ) async throws -> MemoryEntry {
+        let result = try await store(for: workspaceRootURL).write(
+            content: content,
+            category: category,
+            tags: tags
+        )
+        if result.created {
+            Self.notifyMemoryEntriesChanged()
+        }
+        return result.entry
+    }
+
+    /// Replaces the content of an entry in place, preserving its id.
     @discardableResult
     public func updateEntry(
-        id: UUID,
+        id: String,
         content: String,
-        scope: MemoryScope,
         workspaceRootURL: URL?,
+        tags: [String]? = nil,
         updatedAt: Date = Date(),
         timeZone: TimeZone = .current
-    ) throws -> MemoryEntry {
-        let normalizedContent = MemoryEntry.normalizedContent(content)
-        guard !normalizedContent.isEmpty else {
-            throw MemoryServiceError.missingField("content")
-        }
-
-        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-        return try Self.documentWriteCoordinator.withLock(for: document.fileURL) {
-            var entries = try readEntriesForMutation(from: document)
-            guard let index = entries.firstIndex(where: { $0.id == id }) else {
-                throw MemoryServiceError.entryNotFound(id.uuidString)
-            }
-
-            entries[index].content = Self.contentWithUpdateMetadata(
-                normalizedContent,
-                existingEntry: entries[index],
-                updatedAt: updatedAt,
-                timeZone: timeZone
-            )
-            try writeEntries(entries, to: document)
-            Self.notifyMemoryEntriesChanged()
-            return entries[index]
-        }
-    }
-
-    @discardableResult
-    public func replaceEntry(
-        id: UUID,
-        content: String,
-        scope: MemoryScope,
-        workspaceRootURL: URL?
-    ) throws -> MemoryEntry {
-        let normalizedContent = MemoryEntry.normalizedContent(content)
-        guard !normalizedContent.isEmpty else {
-            throw MemoryServiceError.missingField("content")
-        }
-
-        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-        return try Self.documentWriteCoordinator.withLock(for: document.fileURL) {
-            var entries = try readEntriesForMutation(from: document)
-            guard let index = entries.firstIndex(where: { $0.id == id }) else {
-                throw MemoryServiceError.entryNotFound(id.uuidString)
-            }
-
-            entries[index].content = normalizedContent
-            try writeEntries(entries, to: document)
-            Self.notifyMemoryEntriesChanged()
-            return entries[index]
-        }
-    }
-
-    @discardableResult
-    public func archiveEntry(
-        id rawIdentifier: String,
-        scope: MemoryScope?,
-        workingDirectory: URL?
-    ) throws -> MemoryEntry {
-        try archiveEntry(
-            id: rawIdentifier,
-            scope: scope,
-            workspaceRootURL: workingDirectory?.standardizedFileURL
+    ) async throws -> MemoryEntry {
+        let entry = try await store(for: workspaceRootURL).update(
+            id: id,
+            content: content,
+            tags: tags,
+            updatedAt: updatedAt,
+            timeZone: timeZone
         )
+        Self.notifyMemoryEntriesChanged()
+        return entry
     }
 
     @discardableResult
     public func archiveEntry(
-        id rawIdentifier: String,
-        scope: MemoryScope?,
+        id: String,
         workspaceRootURL: URL?
-    ) throws -> MemoryEntry {
-        guard let id = UUID(uuidString: rawIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-            throw MemoryServiceError.invalidIdentifier(rawIdentifier)
-        }
-
-        let documents = memoryDocuments(workspaceRootURL: workspaceRootURL)
-            .filter { scope == nil || $0.scope == scope }
-        for document in documents {
-            let archivedEntry: MemoryEntry? = try Self.documentWriteCoordinator.withLock(for: document.fileURL) {
-                var entries = try readEntriesForMutation(from: document)
-                guard let index = entries.firstIndex(where: { $0.id == id }) else {
-                    return nil
-                }
-
-                entries[index].isArchived = true
-                try writeEntries(entries, to: document)
-                Self.notifyMemoryEntriesChanged()
-                return entries[index]
-            }
-            if let archivedEntry {
-                return archivedEntry
-            }
-        }
-        throw MemoryServiceError.entryNotFound(rawIdentifier)
+    ) async throws -> MemoryEntry {
+        try await setArchived(true, id: id, workspaceRootURL: workspaceRootURL)
     }
 
     @discardableResult
     public func setArchived(
         _ isArchived: Bool,
-        id: UUID,
-        scope: MemoryScope,
+        id: String,
         workspaceRootURL: URL?
-    ) throws -> MemoryEntry {
-        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-        return try Self.documentWriteCoordinator.withLock(for: document.fileURL) {
-            var entries = try readEntriesForMutation(from: document)
-            guard let index = entries.firstIndex(where: { $0.id == id }) else {
-                throw MemoryServiceError.entryNotFound(id.uuidString)
-            }
-            entries[index].isArchived = isArchived
-            try writeEntries(entries, to: document)
-            Self.notifyMemoryEntriesChanged()
-            return entries[index]
-        }
+    ) async throws -> MemoryEntry {
+        let entry = try await store(for: workspaceRootURL)
+            .setArchived(isArchived, id: id)
+        Self.notifyMemoryEntriesChanged()
+        return entry
     }
 
     public func deleteEntry(
-        id: UUID,
-        scope: MemoryScope,
+        id: String,
         workspaceRootURL: URL?
-    ) throws {
-        let document = try memoryDocument(scope: scope, workspaceRootURL: workspaceRootURL)
-        try Self.documentWriteCoordinator.withLock(for: document.fileURL) {
-            var entries = try readEntriesForMutation(from: document)
-            guard let index = entries.firstIndex(where: { $0.id == id }) else {
-                throw MemoryServiceError.entryNotFound(id.uuidString)
-            }
-            entries.remove(at: index)
-            try writeEntries(entries, to: document)
-            Self.notifyMemoryEntriesChanged()
-        }
+    ) async throws {
+        try await store(for: workspaceRootURL).delete(id: id)
+        Self.notifyMemoryEntriesChanged()
     }
 
-    private static func contentWithUpdateMetadata(
+    // MARK: - Store resolution
+
+    private func store(for workspaceRootURL: URL?) async throws -> MemoryGraphStore {
+        guard let workspaceRootURL else {
+            throw MemoryServiceError.scopeUnavailable("project")
+        }
+        let standardizedRoot = workspaceRootURL.standardizedFileURL
+        return try await MemoryGraphStoreRegistry.shared.store(
+            forWorkspaceRoot: standardizedRoot,
+            graphURL: MemoryGraphLocation.graphURL(
+                for: standardizedRoot,
+                fileManager: fileManager
+            )
+        )
+    }
+
+    // MARK: - Journal metadata
+
+    /// Preserves the original `Timestamp` and stamps `Updated` when the caller
+    /// did not supply them.
+    static func contentWithUpdateMetadata(
         _ content: String,
         existingEntry: MemoryEntry,
         updatedAt: Date,
         timeZone: TimeZone
     ) -> String {
-        var lines = MemoryEntry.normalizedContent(content)
+        var lines = MemoryContent.normalized(content)
             .components(separatedBy: .newlines)
         let metadata = MemoryEntryMetadata(content: content)
         if metadata.timestamp == nil {
@@ -436,5 +245,30 @@ public final class MemoryService {
         }
         return lines.joined(separator: "\n")
     }
+}
 
+public enum MemoryServiceError: LocalizedError {
+    case missingField(String)
+    case scopeUnavailable(String)
+    case invalidIdentifier(String)
+    case entryNotFound(String)
+    case documentUnreadable(String)
+    case invalidDocument(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .missingField(field):
+            return "Missing memory field: \(field)."
+        case let .scopeUnavailable(scope):
+            return "The \(scope) memory scope is not available in the current context."
+        case let .invalidIdentifier(identifier):
+            return "Invalid memory identifier: \(identifier)."
+        case let .entryNotFound(identifier):
+            return "No memory entry was found for \(identifier)."
+        case let .documentUnreadable(path):
+            return "MEMORY.md could not be read safely at \(path); it was left unchanged."
+        case let .invalidDocument(path):
+            return "MEMORY.md has an unrecognized format at \(path); it was left unchanged and not migrated."
+        }
+    }
 }

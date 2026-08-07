@@ -70,11 +70,17 @@ let targets: [Target] = [
             "ToolCore",
             "FeatureMCPBridgeKit",
             "LocalToolsSupport",
+            "ZenMemory",
             "ZenPackageMetadata"
         ],
         swiftSettings: memberImportVisibilitySettings + [
             .define("SWIFTPM_NON_SANDBOX_TUI")
         ]
+    ),
+    .target(
+        name: "ZenMemory",
+        dependencies: [],
+        swiftSettings: memberImportVisibilitySettings
     ),
     .target(
         name: "FeatureKit",
@@ -121,6 +127,11 @@ let targets: [Target] = [
             .product(name: "NIOPosix", package: "swift-nio"),
             .product(name: "NIOWebSocket", package: "swift-nio")
         ],
+        swiftSettings: memberImportVisibilitySettings
+    ),
+    .testTarget(
+        name: "ZenMemoryTests",
+        dependencies: ["ZenMemory"],
         swiftSettings: memberImportVisibilitySettings
     ),
     .testTarget(
