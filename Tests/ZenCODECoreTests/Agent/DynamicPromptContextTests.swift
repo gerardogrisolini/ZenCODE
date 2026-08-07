@@ -230,35 +230,45 @@ struct DynamicPromptContextTests {
 
     @Test
     func appSessionCacheKeyIncludesAllowedToolsButNotHistory() throws {
-        func configuration(
-            allowedTools: Set<String>,
-            history: [AgentRuntimeMessage]
-        ) throws -> AgentCoreSessionConfiguration {
-            try AgentCoreAppSessionFactory.makeConfiguration(
-                request: AgentCoreAppSessionRequest(
-                    sessionID: "prompt-cache-session",
-                    workingDirectory: URL(fileURLWithPath: "/tmp/prompt-cache"),
-                    cacheKey: "shared-cache-seed",
-                    history: history,
-                    allowedToolNames: allowedTools
+        let supportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-prompt-cache-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+
+        try AppStorageDirectory.withSupportDirectoryURL(supportDirectory) {
+            try AgentSettingsManifestStore.save(AgentSettingsManifest(models: []))
+            try AgentProfileStore.save(AgentProfileStore.defaultProfiles())
+
+            func configuration(
+                allowedTools: Set<String>,
+                history: [AgentRuntimeMessage]
+            ) throws -> AgentCoreSessionConfiguration {
+                try AgentCoreAppSessionFactory.makeConfiguration(
+                    request: AgentCoreAppSessionRequest(
+                        sessionID: "prompt-cache-session",
+                        workingDirectory: URL(fileURLWithPath: "/tmp/prompt-cache"),
+                        cacheKey: "shared-cache-seed",
+                        history: history,
+                        allowedToolNames: allowedTools
+                    )
                 )
+            }
+
+            let first = try configuration(
+                allowedTools: ["local.readFile"],
+                history: [AgentRuntimeMessage(role: .user, content: "First context.")]
             )
+            let sameToolsDifferentHistory = try configuration(
+                allowedTools: ["local.readFile"],
+                history: [AgentRuntimeMessage(role: .user, content: "Second context.")]
+            )
+            let differentTools = try configuration(
+                allowedTools: ["git.status"],
+                history: [AgentRuntimeMessage(role: .user, content: "First context.")]
+            )
+
+            #expect(first.cacheKey == sameToolsDifferentHistory.cacheKey)
+            #expect(first.cacheKey != differentTools.cacheKey)
         }
-
-        let first = try configuration(
-            allowedTools: ["local.readFile"],
-            history: [AgentRuntimeMessage(role: .user, content: "First context.")]
-        )
-        let sameToolsDifferentHistory = try configuration(
-            allowedTools: ["local.readFile"],
-            history: [AgentRuntimeMessage(role: .user, content: "Second context.")]
-        )
-        let differentTools = try configuration(
-            allowedTools: ["git.status"],
-            history: [AgentRuntimeMessage(role: .user, content: "First context.")]
-        )
-
-        #expect(first.cacheKey == sameToolsDifferentHistory.cacheKey)
-        #expect(first.cacheKey != differentTools.cacheKey)
     }
 }
