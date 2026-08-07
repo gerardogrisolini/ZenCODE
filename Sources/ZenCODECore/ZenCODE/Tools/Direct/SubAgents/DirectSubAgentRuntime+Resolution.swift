@@ -33,9 +33,17 @@ extension DirectSubAgentRuntime {
         let nonClosedAgents = agents.values
             .filter { $0.status != .closed }
             .sorted(by: Self.agentSortOrder)
+        // An unaddressed message keeps the established coordinator ergonomics:
+        // it targets the live idle agents. Standby agents are only the fallback
+        // tier, so a coordinator that still has working agents does not fan an
+        // unaddressed follow-up out over every standby budget in the session.
         let idleAgents = nonClosedAgents.filter { $0.status == .idle }
         if !idleAgents.isEmpty {
             return idleAgents.map(\.id)
+        }
+        let standbyAgents = nonClosedAgents.filter { $0.status == .standby }
+        if !standbyAgents.isEmpty {
+            return standbyAgents.map(\.id)
         }
         if nonClosedAgents.count == 1,
            let id = nonClosedAgents.first?.id {
@@ -113,7 +121,7 @@ extension DirectSubAgentRuntime {
             return []
         }
         return agents.values
-            .filter { $0.overviewBatchID == latestOverviewBatchID || $0.hasWorkInFlight }
+            .filter { $0.overviewBatchID == latestOverviewBatchID || $0.hasWorkInFlight || $0.status == .standby }
             .sorted(by: Self.agentSortOrder)
             .map(snapshot(from:))
     }

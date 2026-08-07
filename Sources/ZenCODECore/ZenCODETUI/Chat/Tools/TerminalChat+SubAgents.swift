@@ -419,6 +419,7 @@ extension TerminalChat {
         let completedCount = snapshots.filter { snapshot in
             snapshot.status == .idle && snapshot.latestOutput?.nilIfBlank != nil
         }.count
+        let standbyCount = snapshots.filter { $0.status == .standby }.count
         let failedCount = snapshots.filter { $0.status == .failed }.count
         let closedCount = snapshots.filter { $0.status == .closed }.count
 
@@ -428,6 +429,9 @@ extension TerminalChat {
         }
         if completedCount > 0 {
             segments.append(colorText("✓ \(completedCount) completed", code: TerminalStyle.Status.success))
+        }
+        if standbyCount > 0 {
+            segments.append(colorText("◇ \(standbyCount) standby", code: TerminalStyle.Status.inactive))
         }
         if failedCount > 0 {
             segments.append(colorText("✗ \(failedCount) failed", code: TerminalStyle.Status.failure))
@@ -725,6 +729,8 @@ extension TerminalChat {
             return snapshot.latestOutput?.nilIfBlank == nil
                 ? TerminalStyle.Status.inactive
                 : TerminalStyle.Status.success
+        case .standby:
+            return TerminalStyle.Status.inactive
         case .failed:
             return TerminalStyle.Status.failure
         case .closed:

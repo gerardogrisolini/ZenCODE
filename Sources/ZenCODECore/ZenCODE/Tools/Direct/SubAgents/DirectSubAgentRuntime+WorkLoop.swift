@@ -9,6 +9,17 @@ import Foundation
 import ToolCore
 
 extension DirectSubAgentRuntime {
+    /// The authorization level for an upcoming agent turn.
+    enum TurnAuthorization: Sendable {
+        /// The agent has an active task attempt: normal tracked turn.
+        case attempt
+        /// The agent's attempt is completed but it is standby-eligible:
+        /// conversational turn that does NOT mutate the task graph.
+        case standby
+        /// The agent is neither active nor standby-eligible: stale message.
+        case denied
+    }
+
     public func queuePrompt(_ prompt: String, for agentID: String) throws {
         guard var agent = agents[agentID] else {
             throw DirectSubAgentRuntimeError.agentNotFound(agentID)
@@ -39,15 +50,36 @@ extension DirectSubAgentRuntime {
         agents[agentID] = agent
     }
 
+    /// Releases the work-loop ownership token when the loop exits.
+    ///
+    /// `runTask` is the single-loop guard read by ``startAgentIfNeeded(agentID:)``.
+    /// Only the loop itself may clear it: if any other call site cleared it while
+    /// the loop was still in flight, a concurrent ``queuePrompt(_:for:)`` would
+    /// pass the guard and start a second parallel loop over the same pending
+    /// queue.
+    func releaseWorkLoopOwnership(agentID: String) {
+        guard var agent = agents[agentID],
+              agent.runTask != nil else {
+            return
+        }
+        agent.runTask = nil
+        agents[agentID] = agent
+    }
+
     public func runAgentLoop(agentID: String) async {
+        // Every exit path releases the ownership token, including the standby,
+        // discard, failure and cancellation paths, so the next `queuePrompt`
+        // starts exactly one new loop.
+        defer { releaseWorkLoopOwnership(agentID: agentID) }
         while true {
             guard let work = nextWork(for: agentID) else {
                 return
             }
 
-            guard await recordTaskAttemptStarted(agentID: agentID) else {
+            let authorization = await authorizeTurn(agentID: agentID)
+            guard authorization != .denied else {
                 // A stale queued message must not revive a finished, failed,
-                // or retried task attempt.
+                // or retried task attempt, nor an expired standby agent.
                 discardInactiveTaskAttemptWork(for: agentID)
                 return
             }
@@ -60,7 +92,7 @@ extension DirectSubAgentRuntime {
                         await self.recordEvent(event, agentID: agentID)
                     }
                 )
-                await recordCompletion(response, agentID: agentID)
+                await recordCompletion(response, agentID: agentID, authorization: authorization)
             } catch is CancellationError {
                 await recordCancellation(agentID: agentID)
                 return
@@ -82,7 +114,7 @@ extension DirectSubAgentRuntime {
         }
         guard !agent.pendingPrompts.isEmpty else {
             agent.runTask = nil
-            if agent.status != .failed {
+            if agent.status != .failed && agent.status != .standby {
                 agent.status = .idle
             }
             agent.updatedAt = .now
@@ -210,9 +242,38 @@ extension DirectSubAgentRuntime {
         }
     }
 
+    /// Determines whether an upcoming turn should proceed as a tracked task
+    /// attempt, a conversational standby turn, or be denied entirely.
+    func authorizeTurn(agentID: String) async -> TurnAuthorization {
+        guard let agent = agents[agentID] else {
+            return .denied
+        }
+        // Taskless agents always proceed as normal turns.
+        guard agent.taskID != nil else {
+            return .attempt
+        }
+        // If the task attempt is still active, mark it running and proceed.
+        if await hasActiveTaskAttempt(agent) {
+            return await recordTaskAttemptStarted(agentID: agentID) ? .attempt : .denied
+        }
+        // Attempt is completed: check if the agent is standby-eligible.
+        return await isStandbyEligible(agent) ? .standby : .denied
+    }
+
+    /// Records a completed turn for callers outside the work loop, which always
+    /// report a normal tracked attempt turn. The authorization-aware overload
+    /// stays internal so ``TurnAuthorization`` is not part of the public surface.
     public func recordCompletion(
         _ response: DirectAgentResponse,
         agentID: String
+    ) async {
+        await recordCompletion(response, agentID: agentID, authorization: .attempt)
+    }
+
+    func recordCompletion(
+        _ response: DirectAgentResponse,
+        agentID: String,
+        authorization: TurnAuthorization
     ) async {
         guard var agent = agents[agentID],
               agent.status != .closed else {
@@ -240,31 +301,56 @@ extension DirectSubAgentRuntime {
         // Preserve it for agent.get/wait, but let the TUI present only the final
         // completed content block when the backend emitted one.
         agent.latestContentPreview = finalContent
-        agent.status = agent.pendingPrompts.isEmpty ? .idle : .queued
         agent.updatedAt = .now
-        let releasedReservation = agent.pendingPrompts.isEmpty
-            ? takeTasklessDelegationReservation(from: &agent)
+        agents[agentID] = agent
+
+        switch authorization {
+        case .standby:
+            // Standby turn: do NOT interact with the task orchestrator. The
+            // attempt is already completed; this is a conversational follow-up.
+            await recordStandbyTurnCompletion(agentID: agentID)
+            return
+
+        case .attempt:
+            // Normal tracked turn: set status and interact with the orchestrator.
+            break
+
+        case .denied:
+            // Unreachable: `runAgentLoop` discards the turn and returns before
+            // any prompt is sent when the authorization is `.denied`, so no
+            // response can ever be recorded for it. Handled as a normal turn
+            // only to keep the switch exhaustive without a fatal error.
+            break
+        }
+
+        // Re-read the agent under a distinct binding: the record was written
+        // above and the `.standby` branch may have changed it.
+        guard var updatedAgent = agents[agentID] else { return }
+        updatedAgent.status = updatedAgent.pendingPrompts.isEmpty ? .idle : .queued
+        let releasedReservation = updatedAgent.pendingPrompts.isEmpty
+            ? takeTasklessDelegationReservation(from: &updatedAgent)
             : nil
         if releasedReservation != nil {
             // Keep the agent pending until the cross-actor lease release has
             // completed, so graph activation cannot race an apparently idle
             // taskless agent.
-            agent.status = .running
+            updatedAgent.status = .running
         }
-        agents[agentID] = agent
-        if let taskID = agent.taskID,
-           let attemptID = agent.taskAttemptID,
+        agents[agentID] = updatedAgent
+
+        if let taskID = updatedAgent.taskID,
+           let attemptID = updatedAgent.taskAttemptID,
            let taskOrchestrator {
             do {
                 let didComplete = try await taskOrchestrator.completeAttempt(
-                    sessionID: agent.rootSessionID,
+                    sessionID: updatedAgent.rootSessionID,
                     taskID: taskID,
                     attemptID: attemptID,
-                    output: agent.latestOutput,
+                    output: updatedAgent.latestOutput,
                     requiresValidation: false
                 )
                 if didComplete {
-                    finishTaskBoundAttemptWork(for: agentID, error: nil)
+                    await concludeTaskBoundTurn(agentID: agentID)
                 } else if let currentAgent = agents[agentID],
                           !(await hasActiveTaskAttempt(currentAgent)) {
                     discardInactiveTaskAttemptWork(for: agentID)

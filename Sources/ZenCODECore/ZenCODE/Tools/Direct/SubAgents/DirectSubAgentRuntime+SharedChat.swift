@@ -100,12 +100,14 @@ extension DirectSubAgentRuntime {
             }
             return queueResult
         }
-        let delivery = try await sharedChat.send(
-            roomID: roomID,
-            senderID: senderID,
-            destination: destination,
-            text: text
-        )
+        let delivery = try await withBroadcastClassification(destination: destination) {
+            try await sharedChat.send(
+                roomID: roomID,
+                senderID: senderID,
+                destination: destination,
+                text: text
+            )
+        }
         // A display name is not an identity: any agent may be named
         // "operator" or "coordinator". Model-facing delivery output therefore
         // always includes the actor-owned kind and stable identifier, with the
@@ -124,11 +126,93 @@ extension DirectSubAgentRuntime {
     ) async throws -> AgentSharedChat.Delivery {
         let roomID = sharedChatRootSessionID ?? rootSessionID.nilIfBlank ?? "default"
         _ = try await sharedChat.registerCoordinator(roomID: roomID)
-        return try await sharedChat.sendFromOperator(
-            roomID: roomID,
-            destination: destination,
-            text: text
-        )
+        return try await withBroadcastClassification(destination: destination) {
+            try await sharedChat.sendFromOperator(
+                roomID: roomID,
+                destination: destination,
+                text: text
+            )
+        }
+    }
+
+    // MARK: - Broadcast classification
+
+    /// Standby agents keep receiving direct messages — the coordinator
+    /// follow-up depends on it — but a `peers`/`all` broadcast must not enqueue
+    /// an LLM turn on every standby agent in the room and burn its standby
+    /// budget. Broadcasts are therefore identified as they are sent and dropped
+    /// for standby residents when their mailbox is drained.
+    ///
+    /// The bus invokes the recipients' wake-up callbacks inside `send`, so a
+    /// standby drain can reach the mailbox before the delivery is classified.
+    /// `pendingBroadcastSends` closes that window: while it is non-zero a
+    /// standby resident leaves its mailbox untouched, and this method re-arms
+    /// the drain once the broadcast has been recorded.
+    func withBroadcastClassification(
+        destination: AgentSharedChat.Destination,
+        send: () async throws -> AgentSharedChat.Delivery
+    ) async rethrows -> AgentSharedChat.Delivery {
+        guard Self.isBroadcastDestination(destination) else {
+            return try await send()
+        }
+        pendingBroadcastSends += 1
+        do {
+            let delivery = try await send()
+            noteBroadcastMessage(delivery.message.id)
+            pendingBroadcastSends -= 1
+            rearmStandbyDrains(for: delivery.recipients.map(\.id))
+            return delivery
+        } catch {
+            pendingBroadcastSends -= 1
+            rearmStandbyDrains(for: nil)
+            throw error
+        }
+    }
+
+    static func isBroadcastDestination(
+        _ destination: AgentSharedChat.Destination
+    ) -> Bool {
+        switch destination {
+        case .peers, .all:
+            return true
+        case .direct, .coordinator:
+            return false
+        }
+    }
+
+    /// Remembers a delivered broadcast, evicting the oldest tracked entries
+    /// once the bounded window is full.
+    func noteBroadcastMessage(_ id: UUID) {
+        guard broadcastMessageIDs.insert(id).inserted else { return }
+        broadcastMessageIDOrder.append(id)
+        while broadcastMessageIDOrder.count > Self.maximumTrackedBroadcastMessages {
+            broadcastMessageIDs.remove(broadcastMessageIDOrder.removeFirst())
+        }
+    }
+
+    /// True when the message was delivered as a `peers`/`all` broadcast.
+    func isBroadcastMessage(_ message: AgentSharedChat.Message) -> Bool {
+        broadcastMessageIDs.contains(message.id)
+    }
+
+    /// Restarts the mailbox drain of the standby residents that skipped it
+    /// while a broadcast was being classified, so a direct message parked
+    /// behind the broadcast is still delivered.
+    func rearmStandbyDrains(for recipientIDs: [String]?) {
+        guard pendingBroadcastSends == 0 else { return }
+        let targetIDs = agents.values
+            .filter { record in
+                isStandbyResident(record)
+                    && (recipientIDs.map { $0.contains(record.id) } ?? true)
+            }
+            .map(\.id)
+        guard !targetIDs.isEmpty else { return }
+        let runtime = self
+        Task(name: "ZenCODE.shared-chat.standby-drain-rearm") {
+            for agentID in targetIDs {
+                await runtime.drainSharedChatMailbox(for: agentID)
+            }
+        }
     }
 
     public func sharedChatParticipants(
@@ -194,6 +278,13 @@ extension DirectSubAgentRuntime {
         guard !agent.isDrainingSharedChatMailbox else {
             return
         }
+        // A standby resident must not consume its mailbox while a broadcast is
+        // still being classified: the message would be indistinguishable from a
+        // direct message and would spend a standby turn. The sender re-arms
+        // this drain as soon as the broadcast is recorded.
+        guard !(isStandbyResident(agent) && pendingBroadcastSends > 0) else {
+            return
+        }
         agent.isDrainingSharedChatMailbox = true
         agents[agentID] = agent
         defer {
@@ -205,14 +296,27 @@ extension DirectSubAgentRuntime {
         while true {
             // Re-check liveness on every iteration: the agent may have been
             // closed between two drain calls.
-            guard agents[agentID]?.status != .closed else { return }
+            guard let current = agents[agentID], current.status != .closed else { return }
+            // Re-check the broadcast window too: a broadcast may have started
+            // while this loop was awaiting the previous batch.
+            guard !(isStandbyResident(current) && pendingBroadcastSends > 0) else {
+                return
+            }
             let messages = await sharedChat.drain(
                 roomID: agent.rootSessionID,
                 participantID: agentID,
                 limit: AgentSharedChat.maximumMessagesPerInjectedPrompt
             )
-            let deliverable = messages.filter { $0.sender.id != agentID }
+            var deliverable = messages.filter { $0.sender.id != agentID }
             guard !deliverable.isEmpty else { return }
+            if isStandbyResident(current) {
+                // A standby agent stays in the room and keeps its transcript,
+                // but only an addressed message is worth an LLM turn: dropping
+                // broadcasts here is what keeps `peers`/`all` from spending the
+                // standby budget of every idle participant.
+                deliverable = deliverable.filter { !isBroadcastMessage($0) }
+                guard !deliverable.isEmpty else { continue }
+            }
             // Backpressure: stop draining when the pending queue is full. The
             // mailbox retains the remaining messages; the drain is re-armed
             // from `nextWork` when the agent finishes a prompt and the queue

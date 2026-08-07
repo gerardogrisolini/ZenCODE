@@ -81,7 +81,7 @@ extension DirectSubAgentRuntime {
 
     private static let messageDescriptor = DirectToolDescriptor(
             name: "agent.message",
-            description: "Sends a live shared-chat message. Use id/name/ids for direct delivery, or set `to` to coordinator, peers, or all. `all` broadcasts to the coordinator and every active agent. `target` remains a compatibility alias. Direct messages wake idle recipients immediately. Do not use it to reopen a completed /workflow task: record negative validation as failure, call tasks.retry, then use a new agent.create(taskID:).",
+            description: "Sends a live shared-chat message. Use id/name/ids for direct delivery, or set `to` to coordinator, peers, or all. `all` broadcasts to the coordinator and every active agent. `target` remains a compatibility alias. Direct messages wake idle or standby recipients immediately. After completing your task attempt you remain in standby while the task graph is active: you can receive and reply to messages from the coordinator and peers. For code corrections after negative validation, use tasks.retry then a new agent.create(taskID:) instead of messaging.",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"task_id":{"type":"string"},"ids":{"type":"array","items":{"type":"string"}},"to":{"type":"string","enum":["direct","coordinator","peers","all"]},"target":{"type":"string","enum":["direct","coordinator","peers","all"],"description":"Compatibility alias for to."},"message":{"type":"string"},"prompt":{"type":"string"},"input":{"type":"string"}},"required":["message"]}"#,
             presentation: ToolPresentationDefinition(
                 title: "Agent",

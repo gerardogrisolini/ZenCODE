@@ -32,6 +32,8 @@ extension TerminalChat {
             switch snapshot.status {
             case .idle:
                 isTerminal = snapshot.latestOutput?.nilIfBlank != nil
+            case .standby:
+                isTerminal = snapshot.latestOutput?.nilIfBlank != nil
             case .failed, .closed:
                 isTerminal = true
             case .queued, .running:

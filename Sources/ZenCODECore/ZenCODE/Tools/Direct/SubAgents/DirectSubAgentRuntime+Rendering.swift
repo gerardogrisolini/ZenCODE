@@ -31,6 +31,7 @@ extension DirectSubAgentRuntime {
             }
             lines.append("You may use tasks.get/tasks.list to read only this task and its dependencies, and tasks.update only to append progress output to this active attempt.")
             lines.append("You must not change dependencies, reassign work, create nested sub-agents, mutate another task, or validate your own implementation. Final task state is recorded automatically from your outcome.")
+            lines.append("After your turn completes you remain in standby while the task graph is active: you can receive and reply to messages from the coordinator and peers, but you cannot mutate the task graph or resume implementation. For new implementation work the coordinator will open a new attempt.")
         } else if let taskWorkflowSection = SystemPromptBuilder.taskOrchestrationSection(
             allowedToolNames: allowedToolNames
         ) {

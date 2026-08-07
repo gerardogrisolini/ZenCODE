@@ -106,6 +106,33 @@ extension DirectSubAgentRuntime {
                     claims: claims
                 )
             }
+            // Supersede the standby residents whose task was just claimed by a
+            // new attempt: a new attempt always wins over an old standby. Only
+            // an agent that is actually waiting (`.standby`) is closed right
+            // here; a resident whose follow-up is queued or in flight is flagged
+            // and released at turn end by `recordStandbyTurnCompletion` /
+            // `concludeTaskBoundTurn`, and an `.idle` resident (its follow-up
+            // was already denied) stops accepting messages and is reaped. This
+            // keeps the post-retry fence observable as a permission error
+            // instead of racing the agent to `.closed`.
+            for receipt in claimReceipts {
+                let supersededResidents = agents.values.filter {
+                    isStandbyResident($0)
+                        && $0.taskID == receipt.taskID
+                        && $0.rootSessionID == rootSessionID
+                }
+                for record in supersededResidents {
+                    agents[record.id]?.supersededByAttemptID = receipt.attemptID
+                    agents[record.id]?.pendingRelease = true
+                    agents[record.id]?.pendingReleaseReason = Self.standbySupersededReason
+                    agents[record.id]?.updatedAt = .now
+                    guard record.status == .standby else { continue }
+                    await closeStandbyAgent(
+                        id: record.id,
+                        reason: Self.standbySupersededReason
+                    )
+                }
+            }
             let receiptsByAgentID = Dictionary(
                 uniqueKeysWithValues: claimReceipts.compactMap { receipt in
                     receipt.agentID.map { ($0, receipt) }
@@ -448,11 +475,13 @@ extension DirectSubAgentRuntime {
             guard agent.status != .closed else {
                 throw DirectSubAgentRuntimeError.agentClosed(agent.name)
             }
-            guard await hasActiveTaskAttempt(agent) else {
+            guard await canReceiveMessages(agent) else {
                 throw SessionTaskOrchestratorError.permissionDenied(
-                    "A task-bound delegated sub-agent may only receive messages while its "
-                        + "assigned attempt is active. Use tasks.retry and agent.create(taskID:) "
-                        + "to begin a new attempt."
+                    "This delegated sub-agent's task attempt is no longer active "
+                        + "and it is not eligible for standby (the graph may be "
+                        + "terminal, the task may have been retried, or the standby "
+                        + "budget may be exhausted). Use tasks.retry and "
+                        + "agent.create(taskID:) to begin a new attempt."
                 )
             }
         }
@@ -490,15 +519,21 @@ extension DirectSubAgentRuntime {
 
     func finishTaskBoundAttemptWork(
         for agentID: String,
-        error: String?
+        error: String?,
+        discardingPendingPrompts: Bool = true
     ) {
         guard var agent = agents[agentID],
               agent.taskID != nil,
               agent.status != .closed else {
             return
         }
-        agent.pendingPrompts.removeAll()
-        agent.runTask = nil
+        if discardingPendingPrompts {
+            agent.pendingPrompts.removeAll()
+        }
+        // `runTask` is deliberately left untouched: the work loop owns it and
+        // clears it when it exits. Clearing it here while the loop is still in
+        // flight would let a concurrent `queuePrompt` pass the
+        // `startAgentIfNeeded` guard and start a second parallel loop.
         agent.status = .idle
         agent.currentActivity = nil
         agent.pendingContentBuffer = nil
@@ -586,7 +621,7 @@ extension DirectSubAgentRuntime {
             .filter({ agent in
                 agent.rootSessionID == rootSessionID
                     && agent.taskID == taskID
-                    && agent.status.isPending
+                    && (agent.status.isPending || agent.status == .standby)
             })
             .max(by: { $0.createdAt < $1.createdAt }) else {
             return false
@@ -596,14 +631,21 @@ extension DirectSubAgentRuntime {
 
     @discardableResult
     public func interruptAgents(rootSessionID: String) async -> Int {
+        // The standby lifecycle is scoped to this root session: stop watching
+        // its graph before the agents are torn down so no observer or reaper
+        // outlives the session it was started for.
+        removeGraphObserver(rootSessionID: rootSessionID)
         let targetIDs = agents.values
             .filter { $0.rootSessionID == rootSessionID && $0.status != .closed }
             .map(\.id)
         for id in targetIDs {
             guard var agent = agents[id] else { continue }
+            let isStandby = isStandbyResident(agent)
             let runTask = agent.runTask
             agent.runTask = nil
             agent.pendingPrompts.removeAll()
+            agent.pendingRelease = false
+            agent.pendingReleaseReason = nil
             agent.status = .closed
             agent.latestError = "Delegated execution interrupted with its root session."
             agent.currentActivity = nil
@@ -618,17 +660,21 @@ extension DirectSubAgentRuntime {
             if let taskID = agent.taskID,
                let attemptID = agent.taskAttemptID,
                let taskOrchestrator {
-                do {
-                    _ = try await taskOrchestrator.interruptAttempt(
-                        sessionID: rootSessionID,
-                        taskID: taskID,
-                        attemptID: attemptID,
-                        reason: "Root session closed during delegated execution."
-                    )
-                } catch {
-                    agent.latestError = "Delegated execution interrupted with its root session.\nUnable to interrupt task attempt: \(error.localizedDescription)"
-                    agent.updatedAt = .now
-                    agents[id] = agent
+                // A standby resident has no active attempt left to interrupt:
+                // its attempt completed before it entered standby.
+                if !isStandby {
+                    do {
+                        _ = try await taskOrchestrator.interruptAttempt(
+                            sessionID: rootSessionID,
+                            taskID: taskID,
+                            attemptID: attemptID,
+                            reason: "Root session closed during delegated execution."
+                        )
+                    } catch {
+                        agent.latestError = "Delegated execution interrupted with its root session.\nUnable to interrupt task attempt: \(error.localizedDescription)"
+                        agent.updatedAt = .now
+                        agents[id] = agent
+                    }
                 }
                 await taskOrchestrator.unregisterExecutionScope(
                     executionSessionID: agent.sessionID
@@ -640,6 +686,7 @@ extension DirectSubAgentRuntime {
             await agent.backend.shutdown()
             await releaseTasklessDelegationReservation(releasedReservation)
         }
+        stopStandbyReaperIfIdle()
         return targetIDs.count
     }
 
@@ -652,6 +699,8 @@ extension DirectSubAgentRuntime {
         let task = agent.runTask
         agent.runTask = nil
         agent.pendingPrompts.removeAll()
+        agent.pendingRelease = false
+        agent.pendingReleaseReason = nil
         agent.status = .closed
         agent.latestError = nil
         agent.currentActivity = nil

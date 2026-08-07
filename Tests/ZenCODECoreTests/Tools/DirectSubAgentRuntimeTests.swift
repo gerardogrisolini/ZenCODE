@@ -3057,6 +3057,501 @@ struct DirectSubAgentRuntimeTests {
         #expect(remaining.map(\.text) == ["message 6"])
         await runtime.shutdown()
     }
+
+    // MARK: - Standby lifecycle
+
+    @Test
+    func taskBoundAgentEntersStandbyAfterCompletingItsAttempt() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+
+        let agent = try #require(await runtime.snapshots().first)
+        let task = try await orchestrator.task(sessionID: "root", taskID: "task-a").task
+
+        // The attempt completed; the task is awaiting validation.
+        #expect(task.status == .awaitingValidation)
+        #expect(task.activeAttemptID == nil)
+        // The agent entered standby, not closed or idle.
+        #expect(agent.status == .standby)
+        // Standby agents are NOT pending: agent.wait must not block on them.
+        #expect(agent.pending == false)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func standbyAgentAcceptsMessagesWhileItsGraphIsActive() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        let agent = try #require(await runtime.snapshots().first)
+        #expect(agent.status == .standby)
+        #expect(await backend.sentPromptCount() == 1)
+
+        // Sending a message should succeed and trigger a second turn.
+        _ = try await runtime.messageAgents(
+            arguments: [
+                "id": .string(agent.id),
+                "message": .string("Can you summarize?"),
+            ]
+        )
+        _ = await runtime.waitForAgents(arguments: [
+            "id": .string(agent.id),
+            "timeoutSeconds": .number(5),
+        ])
+
+        #expect(await backend.sentPromptCount() == 2)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func standbyTurnDoesNotMutateTheTaskGraph() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "response")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        let agent = try #require(await runtime.snapshots().first)
+
+        let taskBeforeStandbyTurn = try await orchestrator.task(
+            sessionID: "root",
+            taskID: "task-a"
+        ).task
+        let attemptsBefore = taskBeforeStandbyTurn.attempts.count
+
+        // Trigger a standby turn.
+        _ = try await runtime.messageAgents(
+            arguments: [
+                "id": .string(agent.id),
+                "message": .string("Follow-up question"),
+            ]
+        )
+        _ = await runtime.waitForAgents(arguments: [
+            "id": .string(agent.id),
+            "timeoutSeconds": .number(5),
+        ])
+
+        let taskAfterStandbyTurn = try await orchestrator.task(
+            sessionID: "root",
+            taskID: "task-a"
+        ).task
+        #expect(taskAfterStandbyTurn.attempts.count == attemptsBefore)
+        #expect(taskAfterStandbyTurn.status == .awaitingValidation)
+        #expect(taskAfterStandbyTurn.activeAttemptID == nil)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func standbyAgentIsReleasedWhenGraphCompletes() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        let agent = try #require(await runtime.snapshots().first)
+        #expect(agent.status == .standby)
+
+        // Validate positively → task completes → graph completes → standby released.
+        _ = try await orchestrator.validateTaskResult(
+            sessionID: "root",
+            taskID: "task-a",
+            succeeded: true
+        )
+        let graph = try #require(try await orchestrator.graphSnapshot(
+            sessionID: "root",
+            graphID: "workflow"
+        ))
+        #expect(graph.state == .completed)
+
+        // The graph completion observer releases standby agents asynchronously.
+        // Poll until the agent is closed (bounded wait) instead of a fixed
+        // sleep, which was flaky under CPU contention and `--no-parallel`.
+        let releasedAgent = await pollUntilStatus(.closed, agentID: agent.id, in: runtime)
+        #expect(releasedAgent?.status == .closed)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func standbyAgentIsSupersededByRetry() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker-1"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        let firstAgent = try #require(await runtime.snapshots().first)
+        #expect(firstAgent.status == .standby)
+
+        // Fail validation, then retry.
+        _ = try await orchestrator.validateTaskResult(
+            sessionID: "root",
+            taskID: "task-a",
+            succeeded: false,
+            failureReason: "validation failed"
+        )
+        _ = try await orchestrator.retryTask(
+            sessionID: "root",
+            taskID: "task-a"
+        )
+
+        // Create a new agent for the retried task.
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker-2"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+
+        let agents = await runtime.snapshots()
+        let firstAgentAfter = agents.first { $0.id == firstAgent.id }
+        // The first agent was superseded by the retried attempt: a `.standby`
+        // resident is closed immediately when a newer attempt claims its task
+        // (the release path). Assert the exact terminal status, not just that it
+        // left `.standby`.
+        #expect(firstAgentAfter?.status == .closed)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func expireStandbyAgentsClosesAgentPastIdleTimeout() async throws {
+        let (_, runtime, backend, agent) = try await standbyScenario()
+        #expect(agent.status == .standby)
+
+        // The reaper enforces `standbyIdleTimeout` (15 minutes in production).
+        // Drive one expiration sweep with a clock past the timeout: the resident
+        // is older than the limit, so it is closed and its backend is shut down
+        // (no leak).
+        let pastTimeout = Date().addingTimeInterval(
+            DirectSubAgentRuntime.standbyIdleTimeout + 60
+        )
+        await runtime.expireStandbyAgents(now: pastTimeout)
+
+        let snapshot = try #require(await runtime.snapshots().first { $0.id == agent.id })
+        #expect(snapshot.status == .closed)
+        #expect(snapshot.latestError == DirectSubAgentRuntime.standbyIdleTimeoutReason)
+        #expect(await backend.shutdownCount() == 1)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func standbyBudgetExhaustionClosesAgentWithoutLeakingBackend() async throws {
+        let (_, runtime, backend, agent) = try await standbyScenario()
+        #expect(agent.status == .standby)
+        let budget = DirectSubAgentRuntime.maximumStandbyTurnsPerAgent
+
+        // The turn budget is enforced at turn completion: each standby turn
+        // bumps the counter, and the turn that reaches the limit releases the
+        // agent (the same close path the reaper's `expireStandbyAgents` budget
+        // branch uses — that branch is an unreachable backstop because the limit
+        // is always enforced here first). The first `budget - 1` turns leave it
+        // standing by.
+        for _ in 0..<(budget - 1) {
+            await runtime.recordStandbyTurnCompletion(agentID: agent.id)
+        }
+        let stillStandby = try #require(await runtime.snapshots().first { $0.id == agent.id })
+        #expect(stillStandby.status == .standby)
+
+        await runtime.recordStandbyTurnCompletion(agentID: agent.id)
+        let closed = try #require(await runtime.snapshots().first { $0.id == agent.id })
+        #expect(closed.status == .closed)
+        #expect(closed.latestError == DirectSubAgentRuntime.standbyBudgetExhaustedReason)
+        // Backend shut down exactly once: no leaked backend process.
+        #expect(await backend.shutdownCount() == 1)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func budgetExhaustedAgentIsClosedNotIdleAndRejectsStaleMessages() async throws {
+        let (_, runtime, _, agent) = try await standbyScenario()
+        #expect(agent.status == .standby)
+
+        await exhaustStandbyBudget(agentID: agent.id, in: runtime)
+        let closed = try #require(await runtime.snapshots().first { $0.id == agent.id })
+        // Closed (and shut down) rather than left lingering in `.idle` after the
+        // budget-exhausting turn is denied/finished.
+        #expect(closed.status == .closed)
+        #expect(closed.status != .idle)
+
+        // A stale message to the now-closed agent is rejected instead of
+        // reviving it (the authorization path keeps it finished).
+        await #expect(throws: DirectSubAgentRuntimeError.self) {
+            _ = try await runtime.messageAgents(
+                arguments: [
+                    "id": .string(agent.id),
+                    "message": .string("Another follow-up"),
+                ]
+            )
+        }
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func releaseDuringInFlightStandbyTurnClosesAgentAtTurnEnd() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
+        )
+        let backend = BlockingSubAgentRuntimeBackend(responseText: "follow-up done")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        let agent = try #require(await runtime.snapshots().first)
+        #expect(agent.status == .standby)
+
+        // Drive the release deterministically: stop the async graph observer so
+        // only the explicit call below releases the resident.
+        await runtime.removeGraphObserver(rootSessionID: "root")
+
+        // Queue a follow-up whose backend turn blocks, so the resident is
+        // `.running` while the graph becomes terminal.
+        await backend.blockNextPrompt()
+        _ = try await runtime.messageAgents(
+            arguments: [
+                "id": .string(agent.id),
+                "message": .string("Summarize the work"),
+            ]
+        )
+        try await awaitBlocked(backend)
+
+        // The graph completes while the standby turn is in flight.
+        _ = try await orchestrator.validateTaskResult(
+            sessionID: "root",
+            taskID: "task-a",
+            succeeded: true
+        )
+        let graph = try #require(try await orchestrator.graphSnapshot(
+            sessionID: "root",
+            graphID: "workflow"
+        ))
+        #expect(graph.state == .completed)
+
+        // Releasing terminated graphs flags the in-flight resident for release
+        // (it is NOT closed mid-response). A resident remains, so this returns
+        // false.
+        let noMoreResidents = await runtime.releaseTerminatedStandbyGraphs(rootSessionID: "root")
+        #expect(noMoreResidents == false)
+        let inFlight = try #require(await runtime.snapshots().first { $0.id == agent.id })
+        #expect(inFlight.status == .running)
+
+        // When the in-flight turn lands, the flagged release is completed and the
+        // agent is closed — it never returns to `.standby`.
+        await backend.release()
+        let released = try #require(await pollUntilStatus(.closed, agentID: agent.id, in: runtime))
+        #expect(released.status == .closed)
+        #expect(await backend.shutdownCount() == 1)
+
+        await runtime.shutdown()
+    }
+
+    @Test
+    func interruptAgentsClosesStandbyResidentsAndStopsObserver() async throws {
+        let (_, runtime, backend, agent) = try await standbyScenario()
+        #expect(agent.status == .standby)
+        // Entering standby started both the graph-completion observer and the
+        // periodic reaper for this root session.
+        #expect(await runtime.graphObserverTasks["root"] != nil)
+        #expect(await runtime.standbyReaperTask != nil)
+
+        // Interrupting the root session tears down its standby lifecycle: the
+        // observer/reaper are stopped and the standby resident is released.
+        let interrupted = await runtime.interruptAgents(rootSessionID: "root")
+        #expect(interrupted == 1)
+
+        let snapshot = try #require(await runtime.snapshots().first { $0.id == agent.id })
+        #expect(snapshot.status == .closed)
+        #expect(await backend.shutdownCount() == 1)
+        #expect(await runtime.graphObserverTasks["root"] == nil)
+        #expect(await runtime.standbyReaperTask == nil)
+
+        await runtime.shutdown()
+    }
+
+    // Note on the git-status refresh behaviour (review #13, last bullet): that
+    // predicate lives in the TerminalChat/TUI layer and is not reachable from a
+    // `DirectSubAgentRuntime` unit test without driving a real TerminalChat. It
+    // is intentionally not covered here to avoid a brittle, host-dependent TUI
+    // test; the standby lifecycle the refresh depends on is covered above.
 }
 
 private func directToolCall(
@@ -3259,5 +3754,219 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
 
     func shutdownCount() -> Int {
         shutdownCalls
+    }
+}
+
+private enum StandbyFixtureError: Error { case agentNotReady }
+
+/// Builds an active single-task graph and one task-bound agent that has finished
+/// its attempt and entered `.standby`. Shared setup for the standby lifecycle
+/// tests above.
+private func standbyScenario(
+    responseText: String = "done",
+    rootSessionID: String = "root",
+    graphID: String = "workflow",
+    taskID: String = "task-a"
+) async throws -> (
+    SessionTaskOrchestrator,
+    DirectSubAgentRuntime,
+    CapturingSubAgentRuntimeBackend,
+    DirectSubAgentRuntime.AgentSnapshot
+) {
+    let orchestrator = SessionTaskOrchestrator()
+    _ = try await orchestrator.createGraph(
+        sessionID: rootSessionID,
+        id: graphID,
+        source: .workflow,
+        state: .active,
+        tasks: [
+            TaskDefinition(
+                id: taskID,
+                title: "Implement",
+                execution: TaskExecutionSpec(executor: .subAgent)
+            )
+        ]
+    )
+    let backend = CapturingSubAgentRuntimeBackend(responseText: responseText)
+    let runtime = DirectSubAgentRuntime(
+        contextualBackendFactory: { _ in backend },
+        profileResolver: builtInDirectSubAgentProfileResolver
+    )
+    await runtime.installTaskOrchestrator(orchestrator)
+    _ = try await runtime.createAgents(
+        arguments: [
+            "name": .string("worker"),
+            "profile": .string("Developer"),
+            "taskID": .string(taskID),
+            "prompt": .string("Do the work"),
+        ],
+        workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+        parentAllowedToolNames: nil,
+        rootSessionID: rootSessionID
+    )
+    _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+    guard let agent = await runtime.snapshots().first,
+          agent.status == .standby else {
+        throw StandbyFixtureError.agentNotReady
+    }
+    return (orchestrator, runtime, backend, agent)
+}
+
+/// Drives an agent's standby turn counter to the limit, which closes it on the
+/// turn that exhausts the budget. Used by the budget/denial tests.
+private func exhaustStandbyBudget(
+    agentID: String,
+    in runtime: DirectSubAgentRuntime
+) async {
+    for _ in 0..<DirectSubAgentRuntime.maximumStandbyTurnsPerAgent {
+        await runtime.recordStandbyTurnCompletion(agentID: agentID)
+    }
+}
+
+/// Polls a runtime until the agent with `agentID` reaches `status`, or `timeout`
+/// seconds elapse. Returns the matching snapshot, or the last observed snapshot
+/// on timeout so callers can assert exactly. Replaces fixed `Task.sleep` waits
+/// that were flaky under CPU contention and `--no-parallel`.
+private func pollUntilStatus(
+    _ status: DirectSubAgentRuntime.Status,
+    agentID: String,
+    in runtime: DirectSubAgentRuntime,
+    timeout: TimeInterval = 5
+) async -> DirectSubAgentRuntime.AgentSnapshot? {
+    let deadline = Date().addingTimeInterval(timeout)
+    var last: DirectSubAgentRuntime.AgentSnapshot?
+    while Date() < deadline {
+        let snapshot = await runtime.snapshots().first { $0.id == agentID }
+        last = snapshot
+        if snapshot?.status == status { return snapshot }
+        try? await Task.sleep(for: .milliseconds(50))
+    }
+    return last
+}
+
+/// Waits until the blocking backend has suspended inside `sendPrompt`, proving
+/// the agent's standby follow-up turn is genuinely in flight.
+private func awaitBlocked(
+    _ backend: BlockingSubAgentRuntimeBackend,
+    timeout: TimeInterval = 5
+) async throws {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if await backend.isBlocked() { return }
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    throw StandbyFixtureError.agentNotReady
+}
+
+/// A controllable `AgentRuntimeBackend` whose `sendPrompt` suspends until
+/// `release()` is called, so a standby follow-up turn can be held in flight
+/// while a test mutates the task graph. The first turn (the task attempt)
+/// completes normally because the gate is armed only after standby is reached.
+private actor BlockingSubAgentRuntimeBackend: AgentRuntimeBackend {
+    private let responseText: String
+    private var shutdownCalls = 0
+    private var sentPrompts = 0
+    private var shouldBlock = false
+    private var released = false
+    private var blocked = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    init(responseText: String = "done") {
+        self.responseText = responseText
+    }
+
+    func blockNextPrompt() {
+        shouldBlock = true
+    }
+
+    func release() {
+        released = true
+        continuation?.resume()
+        continuation = nil
+    }
+
+    func isBlocked() -> Bool {
+        blocked
+    }
+
+    func shutdownCount() -> Int {
+        shutdownCalls
+    }
+
+    func sentPromptCount() -> Int {
+        sentPrompts
+    }
+
+    func sendPrompt(
+        sessionID _: String,
+        prompt _: String,
+        attachments _: [AgentRuntimeAttachment],
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> DirectAgentResponse {
+        sentPrompts += 1
+        if shouldBlock {
+            shouldBlock = false
+            // `released` guards against a `release()` that arrived before this
+            // turn suspended: if so, skip the gate entirely (no deadlock).
+            if !released {
+                blocked = true
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    self.continuation = continuation
+                }
+                blocked = false
+            }
+            released = false
+        }
+        return DirectAgentResponse(
+            text: responseText,
+            stopReason: "stop",
+            modelID: "test-model"
+        )
+    }
+
+    func createSession(
+        id _: String,
+        cwd _: String,
+        systemPrompt _: String?,
+        history _: [AgentRuntimeMessage],
+        cacheKey _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func createSessionIfNeeded(
+        id _: String,
+        cwd _: String,
+        systemPrompt _: String?,
+        history _: [AgentRuntimeMessage],
+        cacheKey _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func updateSessionOptions(
+        id _: String,
+        systemPrompt _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func closeSession(id _: String) async {}
+
+    func shutdown() async {
+        shutdownCalls += 1
+    }
+
+    func preloadModel(
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> String {
+        "test-model"
+    }
+
+    func activeToolDescriptors() async -> [DirectToolDescriptor] {
+        []
     }
 }
