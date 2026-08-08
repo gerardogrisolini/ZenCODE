@@ -106,6 +106,8 @@ extension ZenCODESetupRunner {
             return setupStatusMarker(manifest?.voice?.isConfigured == true, optional: true)
         case .features:
             return setupStatusMarker(featuresAreEnabled(), optional: true)
+        case .memoryEmbedding:
+            return setupStatusMarker(manifest?.memoryEmbedding != nil, optional: true)
         case .defaultModel, .defaultThinking, .resetRemoteConfiguration, .finish, .cancel, .responseLanguage:
             return nil
         }
@@ -146,6 +148,10 @@ extension ZenCODESetupRunner {
             SetupSectionOption(
                 section: .responseLanguage,
                 detail: responseLanguageSetupDetail(manifest)
+            ),
+            SetupSectionOption(
+                section: .memoryEmbedding,
+                detail: memoryEmbeddingSetupDetail(manifest)
             ),
             SetupSectionOption(
                 section: .resetRemoteConfiguration,

@@ -45,6 +45,37 @@ struct SensitiveManifestPermissionsTests {
     }
 
     @Test
+    func endpointOnlyEmbeddingManifestRemainsPrivateAndContainsNoSideSettings() throws {
+        #if canImport(Darwin) || canImport(Glibc)
+        let fileManager = FileManager.default
+        let directoryURL = try makeTemporaryDirectory(fileManager: fileManager)
+        defer {
+            try? fileManager.removeItem(at: directoryURL)
+        }
+
+        let settingsURL = directoryURL.appendingPathComponent("settings.json")
+        let manifest = AgentSettingsManifest(
+            models: [],
+            memoryEmbedding: AgentMemoryEmbeddingSettingsManifest(
+                endpoint: "https://embeddings.example.test/v1/embeddings"
+            )
+        )
+        try AgentSettingsManifestStore.save(manifest, to: settingsURL)
+
+        let stored = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as? [String: Any]
+        )
+        let embedding = try #require(stored["memoryEmbedding"] as? [String: Any])
+        #expect(Set(embedding.keys) == Set(["endpoint"]))
+        #expect(try posixMode(of: directoryURL, fileManager: fileManager) == 0o700)
+        #expect(try posixMode(of: settingsURL, fileManager: fileManager) == 0o600)
+        #expect(try AgentSettingsManifestStore.loadRequired(from: settingsURL).memoryEmbedding == manifest.memoryEmbedding)
+        #else
+        return
+        #endif
+    }
+
+    @Test
     func loadingLegacySensitiveManifestsMigratesPermissionsWithoutChangingData() throws {
         #if canImport(Darwin) || canImport(Glibc)
         let fileManager = FileManager.default

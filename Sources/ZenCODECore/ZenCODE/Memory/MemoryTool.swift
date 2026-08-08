@@ -54,7 +54,7 @@ public enum MemoryTool {
     private static let searchDescriptor = ToolDescriptor(
             name: "memory.search",
             title: "Memory Search",
-            description: "Searches durable project memory with hybrid semantic and keyword retrieval, then follows graph links to related entries.",
+            description: "Searches durable project memory with BM25 keyword retrieval, optional semantic embeddings when configured, and graph links to related entries.",
             inputSchema: """
             {
               "type": "object",

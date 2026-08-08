@@ -664,10 +664,9 @@ public actor DirectSubAgentRuntime {
             )
         }
         for record in records {
-            // Every record is a child session with its own recall state and,
-            // possibly, a running extraction. The runtime can be torn down
-            // without the enclosing runner shutting down, so this is not
-            // covered by `cancelPendingExtractions`.
+            // Every record is a child session with its own recall state. The
+            // runtime can be torn down without the enclosing runner, so each
+            // child must release its state explicitly.
             await MemoryTurnCoordinator.shared.discard(sessionID: record.sessionID)
             await record.backend.updateBorrowedSubAgentToolExecutor(nil)
             await record.backend.shutdown()

@@ -378,25 +378,6 @@ public actor AgentCoreSessionRunner {
         guard self.backendGeneration == backendGeneration else {
             return
         }
-        // Extraction runs only for a turn that actually completed, and only
-        // when it is double-gated (explicit opt-in plus a configured side
-        // model). The await is one actor hop that registers the work: the
-        // side-model call itself runs in a task the coordinator owns, so the
-        // turn-ended event below is not delayed by it and close/reset can still
-        // cancel it. Only the last operator message and the assistant reply
-        // that followed it are handed over, never the whole history and never
-        // tool output.
-        if outcome.status == .completed,
-           MemoryAutomationSettings.isAutoExtractionEnabled,
-           let conversation = MemoryTurnCoordinator.extractionConversation(
-               from: await recorder.snapshot().history
-           ) {
-            await MemoryTurnCoordinator.shared.scheduleExtraction(
-                sessionID: configuration.sessionID,
-                workspaceRootURL: configuration.workingDirectory,
-                conversation: conversation
-            )
-        }
         await onEvent(.sessionSnapshot(recovery.snapshot))
         await onEvent(.turnEnded(outcome))
     }
@@ -771,8 +752,7 @@ public actor AgentCoreSessionRunner {
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
         // The rebuilt session keeps its identity but starts a new conversation,
-        // so it must not inherit paused recall or an extraction scheduled for
-        // the history that is being dropped.
+        // so it must not inherit paused recall from the history being dropped.
         await MemoryTurnCoordinator.shared.discard(sessionID: sessionID)
         // The transient bus lives inside the backend tree: release an
         // unresolved synthetic batch so it is re-offered instead of lost, while
@@ -863,17 +843,9 @@ public actor AgentCoreSessionRunner {
         // graph after `flush` has already written the checkpoint, losing the
         // update or producing an inconsistent snapshot.
         await waitForPromptTasks(for: sessionID)
-        // A recreated session reuses the id, so its recall state has to go with
-        // the incarnation that owned it; anything still extracting for this
-        // conversation is cancelled rather than left running past the close.
-        //
-        // This runs *before* the throwing checkpoint flush on purpose: a turn
-        // that was extracting when the session closed must be stopped even if
-        // `flush` throws, otherwise the now-orphaned extraction could commit
-        // late. `discard` is best-effort (it cancels but does not wait), and the
-        // cancellation it signals is observed by the `Task.checkCancellation()`
-        // gates in ``MemoryGraphStore/learn(from:)`` and
-        // ``ZenMemory/transaction(_:)``.
+        // A recreated session reuses the id, so its recall health belongs to
+        // the incarnation that owned the conversation. Drop it before the
+        // throwing checkpoint flush so a failed close cannot strand a pause.
         await MemoryTurnCoordinator.shared.discard(sessionID: sessionID)
         try await taskOrchestrator.flush(sessionID: sessionID)
         promptSkillProvidersBySessionID.removeValue(forKey: sessionID)
@@ -927,18 +899,6 @@ public actor AgentCoreSessionRunner {
         backendPreparation?.cancel()
         backendPreparation = nil
         sessionGenerations.removeAll()
-        // Memory extraction outlives individual turns by design, so it is the
-        // one piece of per-turn work that a backend teardown must stop
-        // explicitly. Cancelled and drained behind a bound, so a side model
-        // parked in a socket read cannot hold shutdown open.
-        //
-        // Run before the throwing checkpoint flush: if `flush` throws, the
-        // extractions must still be stopped — a cancelled turn's late answer
-        // must not commit after the runtime that scheduled it is gone. The
-        // cancellation signalled here is observed by the `Task.checkCancellation()`
-        // gates in ``MemoryGraphStore/learn(from:)`` and
-        // ``ZenMemory/transaction(_:)``.
-        await MemoryTurnCoordinator.shared.cancelPendingExtractions()
         try await taskOrchestrator.flush()
         // Terminate every task-graph event observer so suspended `events(...)`
         // consumers resume instead of waiting forever after shutdown.

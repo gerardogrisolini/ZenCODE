@@ -83,28 +83,12 @@ actor MemoryGraphStore {
             embedder: embedder,
             persistence: persistence,
             selector: ScoreThresholdMemorySelector(),
-            extractor: extractor(workspaceRootURL: workspaceRootURL)
+            // Product recall is intentionally dependency-free. `learn(from:)`
+            // remains an internal engine seam, but opening a product store never
+            // installs a network-backed extractor or makes a generation request.
+            extractor: NoopMemoryExtractor()
         )
         return MemoryGraphStore(graphURL: graphURL, engine: engine, embedder: embedder)
-    }
-
-    /// Resolves the engine's extractor.
-    ///
-    /// An LLM extractor is installed ONLY when a side model is configured.
-    /// Without one the engine keeps `NoopMemoryExtractor`, so `learn(from:)` is
-    /// a genuine no-op rather than a silent network call: the second half of
-    /// the extraction gate is enforced here, in the engine itself, and not only
-    /// at the call site. The extractor is inert until `learn(from:)` runs, so
-    /// installing it costs nothing on the recall path.
-    private static func extractor(
-        workspaceRootURL: URL
-    ) -> any MemoryExtractor {
-        guard let sideModel = MemoryAutomationSettings.sideModel(
-            workspaceRootURL: workspaceRootURL
-        ) else {
-            return NoopMemoryExtractor()
-        }
-        return LLMMemoryExtractor(model: sideModel)
     }
 
     /// Builds the initial graph from the legacy journal, losslessly.
@@ -250,9 +234,11 @@ actor MemoryGraphStore {
         try await engine.context(for: prompt, scope: scope)
     }
 
-    /// Runs the configured extractor over a completed exchange and stores what
-    /// it returns. With `NoopMemoryExtractor` — the state whenever no side
-    /// model is configured — this is a no-op that makes no network call.
+    /// Runs the engine's configured extractor over `context` and stores what it
+    /// returns. Stores opened by the product always use `NoopMemoryExtractor`,
+    /// so this is a no-op there and makes no network call. The internal helper
+    /// remains available for API and engine-level transaction tests that inject
+    /// a deterministic extractor directly.
     ///
     /// Deliberately NOT `ZenMemory.learn(from:)`, on two counts:
     ///
@@ -261,11 +247,10 @@ actor MemoryGraphStore {
     ///   through `MemoryIdentifier.validated`, which accepts canonical UUIDs
     ///   only. An engine-minted id would therefore surface an entry that
     ///   `memory.update` and `memory.archive` cannot touch — the model could
-    ///   read a stale extracted fact and would have no way to correct it.
+    ///   read a stale derived fact and would have no way to correct it.
     /// - **Duplication.** `write` refuses to append a second active entry with
-    ///   the same content; extraction, which re-reads similar exchanges turn
-    ///   after turn, is precisely the path that produces those repeats. It uses
-    ///   the same normalization and the same duplicate rule here.
+    ///   the same content; this helper uses the same normalization and duplicate
+    ///   rule for any injected engine drafts.
     ///
     /// The whole batch is applied in one engine transaction, so the duplicate
     /// check also covers repeats *within* a batch, and a failing save stores
@@ -283,7 +268,7 @@ actor MemoryGraphStore {
                 category: draft.category,
                 content: normalizedContent,
                 tags: draft.tags,
-                source: draft.source ?? MemorySource.extraction,
+                source: draft.source ?? MemorySource.learn,
                 trust: draft.trust,
                 scope: draft.scope,
                 embedding: try await embedder?.embed(normalizedContent),
@@ -298,14 +283,9 @@ actor MemoryGraphStore {
         }
 
         let batch = prepared
-        // The extraction's awaitable work — the side model and the embeddings —
-        // is done by this point, so a turn that was cancelled while it ran (a
-        // session close, a backend reset) must not let those drafts reach disk.
-        // Checked here, immediately before the atomic commit, and again inside
-        // ``ZenMemory/transaction(_:)`` once the write lock is held: the two
-        // together close the whole window between "the model answered" and "the
-        // entries are persisted", so a cancelled extraction queues and resumes
-        // without ever committing.
+        // Awaitable draft preparation is complete by this point. Re-checking
+        // cancellation immediately before the atomic transaction preserves the
+        // all-or-nothing contract for direct internal callers as well.
         try Task.checkCancellation()
         return try await engine.transaction { graph in
             var stored: [GraphEntry] = []
@@ -323,7 +303,7 @@ actor MemoryGraphStore {
     /// Flushes the in-memory graph to disk.
     ///
     /// `remember`/`insert` already persist, so this exists for callers that
-    /// need an explicit checkpoint after a batch of background writes.
+    /// need an explicit checkpoint after a direct batch of writes.
     func saveGraph() async throws {
         try await engine.save()
     }
@@ -613,9 +593,9 @@ enum MemoryIdentifier {
 
 enum MemorySource {
     static let tool = "memory.write"
-    /// Fallback attribution for entries produced by the automatic extractor
-    /// when the draft itself carries no source.
-    static let extraction = "memory.learn"
+    /// Fallback attribution for entries produced through the internal learn
+    /// helper when an injected draft carries no source.
+    static let learn = "memory.learn"
 }
 
 // MARK: - Store registry
@@ -665,37 +645,40 @@ actor MemoryGraphStoreRegistry {
 
 enum MemoryEmbedding {
     static let environmentEndpointKey = "ZENCODE_MEMORY_EMBEDDING_ENDPOINT"
-    static let environmentModelKey = "ZENCODE_MEMORY_EMBEDDING_MODEL"
-    static let environmentAPIKeyKey = "ZENCODE_MEMORY_EMBEDDING_API_KEY"
 
     /// Task-local override for provider resolution.
     ///
     /// Embeddings are opt-in and, when configured, reach out to a real network
     /// endpoint. Tests must never make that call involuntarily just because the
-    /// developer's shell exports `ZENCODE_MEMORY_EMBEDDING_*`. A `setenv`-based
+    /// developer's shell exports `ZENCODE_MEMORY_EMBEDDING_ENDPOINT`. A `setenv`-based
     /// override would be process-global and racy across concurrently running
     /// tests, so the injection seam is a task-local instead — the same shape as
-    /// ``AppStorageDirectory/withSupportDirectoryURL(_:operation:)`` and
-    /// ``MemoryAutomationSettings/scopedSideModel``. It is inherited by the
-    /// unstructured `Task` that `MemoryGraphStoreRegistry` uses to open the
-    /// engine, and it never leaks into a concurrently running suite.
+    /// ``AppStorageDirectory/withSupportDirectoryURL(_:operation:)``. It is
+    /// inherited by the unstructured `Task` that `MemoryGraphStoreRegistry`
+    /// uses to open the engine, and it never leaks into a concurrently running
+    /// suite.
     ///
     /// The double optional distinguishes three states:
-    /// - `nil` (outer) — the default, unbound state: resolve from the real
-    ///   process environment. This is production behavior.
-    /// - `.some(nil)` — force "no provider", ignoring the environment. Use this
-    ///   in tests to guarantee no network call is made even when the real
-    ///   environment carries a provider.
-    /// - `.some(provider)` — force a specific provider, ignoring the
-    ///   environment. Use this to test provider wiring deterministically.
+    /// - `nil` (outer) — the default, unbound state: resolve from persisted
+    ///   settings (manifest endpoint or explicit disabled), then from the legacy
+    ///   endpoint environment variable when the manifest field is absent. This
+    ///   is production behavior.
+    /// - `.some(nil)` — force "no provider", ignoring persisted settings and the
+    ///   environment. Use this in tests to guarantee no network call is made even
+    ///   when the real process carries a configured endpoint.
+    /// - `.some(provider)` — force a specific provider, ignoring persisted
+    ///   settings and the environment. Use this to test provider wiring
+    ///   deterministically.
     @TaskLocal static var override: (any EmbeddingProvider)?? = nil
 
     /// Runs `operation` with a forced provider resolution.
     ///
     /// Pass `nil` to force "no provider" — no environment lookup, no network.
-    /// Pass a provider to force it regardless of the environment. Outside this
-    /// scope the unbound resolver is used: in production it consults the real
-    /// environment; under a test harness it returns nil unconditionally.
+    /// Pass a provider to force it regardless of persisted settings or the
+    /// environment. Outside this scope the unbound resolver is used: in
+    /// production it consults the persisted endpoint and then the legacy
+    /// environment endpoint; under a test harness it returns nil
+    /// unconditionally.
     static func withProvider<T: Sendable>(
         _ provider: (any EmbeddingProvider)?,
         operation: @Sendable () async throws -> T
@@ -711,52 +694,84 @@ enum MemoryEmbedding {
     /// encoder, not a semantic model, so fusing it with BM25 added noise rather
     /// than signal; it remains available but is no longer wired in by default.
     ///
-    /// An OpenAI-compatible provider can be opted into through the environment
-    /// without changing the graph format: entries record the `embeddingModel`
-    /// they were embedded with, and the engine only compares vectors from a
-    /// matching model, so a provider change degrades to lexical BM25 retrieval
-    /// instead of returning wrong matches.
+    /// An OpenAI-compatible provider can be opted into through the persisted
+    /// endpoint or the legacy environment endpoint without changing the graph
+    /// format: entries record a stable identity derived from that endpoint, and
+    /// the engine only compares vectors from a matching identity, so an endpoint
+    /// change degrades to lexical BM25 retrieval instead of returning wrong
+    /// matches.
     ///
     /// A task-local override (``withProvider(_:operation:)``) takes precedence
-    /// over the environment when bound, so tests can inject or disable a
-    /// provider without touching the process-global environment.
+    /// over persisted settings and the environment when bound, so tests can
+    /// inject or disable a provider without touching process-global state.
     ///
     /// Under a test harness the real process environment is never consulted:
-    /// it may carry a network-capable embedding provider the developer never
-    /// intended a test to reach, and `providerFromEnvironment` reads
-    /// `ProcessInfo` directly (which cannot be isolated per-task). Tests that
-    /// need a provider must bind one explicitly via
-    /// ``withProvider(_:operation:)``.
+    /// it may carry a network-capable embedding configuration the developer
+    /// never intended a test to reach, and both process settings and
+    /// `ProcessInfo` are global. Tests that need a provider must bind one
+    /// explicitly via ``withProvider(_:operation:)`` or use the explicit
+    /// `provider(manifest:environment:)` resolver seam.
     static func provider() -> (any EmbeddingProvider)? {
         switch override {
         case .none:
             guard !AppStorageDirectory.isRunningUnderTestHarness else {
                 return nil
             }
-            return providerFromEnvironment()
+            return provider(
+                manifest: AgentSettingsManifestStore.load(),
+                environment: ProcessInfo.processInfo.environment
+            )
         case .some(let forced):
             return forced
         }
     }
 
-    private static func providerFromEnvironment() -> (any EmbeddingProvider)? {
-        let environment = ProcessInfo.processInfo.environment
+    /// Resolves an embedding provider without I/O. This explicit seam keeps the
+    /// precedence testable while `provider()` remains safe under a test harness.
+    ///
+    /// Resolution order: task-local override > manifest (endpoint or disabled) >
+    /// legacy environment fallback (only when the manifest field is absent) > BM25.
+    static func provider(
+        manifest: AgentSettingsManifest?,
+        environment: [String: String]
+    ) -> (any EmbeddingProvider)? {
+        switch override {
+        case .some(let forced):
+            return forced
+        case .none:
+            return providerFromSettings(manifest, environment)
+        }
+    }
+
+    private static func providerFromSettings(
+        _ manifest: AgentSettingsManifest?,
+        _ environment: [String: String]
+    ) -> (any EmbeddingProvider)? {
+        // A present memoryEmbedding field takes precedence over the environment.
+        if let settings = manifest?.memoryEmbedding {
+            if settings.isExplicitlyDisabled {
+                // Explicit BM25: no provider and no environment fallback.
+                return nil
+            }
+            if let endpoint = settings.endpointURL {
+                return OpenAICompatibleEmbeddingProvider(endpoint: endpoint)
+            }
+            // endpoint present but invalid: degrade to absent and try the env.
+        }
+        // Field absent (or invalid endpoint): legacy environment fallback.
+        return providerFromEnvironment(environment)
+    }
+
+    private static func providerFromEnvironment(
+        _ environment: [String: String]
+    ) -> (any EmbeddingProvider)? {
         guard let rawEndpoint = environment[environmentEndpointKey]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
               !rawEndpoint.isEmpty,
-              let endpoint = URL(string: rawEndpoint),
-              let model = environment[environmentModelKey]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !model.isEmpty else {
+              let endpoint = AgentMemoryEmbeddingSettingsManifest.url(for: rawEndpoint) else {
             return nil
         }
-        let apiKey = environment[environmentAPIKeyKey]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return OpenAICompatibleEmbeddingProvider(
-            endpoint: endpoint,
-            model: model,
-            apiKey: (apiKey?.isEmpty == false) ? apiKey : nil
-        )
+        return OpenAICompatibleEmbeddingProvider(endpoint: endpoint)
     }
 }
 

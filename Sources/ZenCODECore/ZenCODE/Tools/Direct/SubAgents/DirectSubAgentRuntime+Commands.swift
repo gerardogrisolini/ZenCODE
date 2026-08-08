@@ -683,9 +683,8 @@ extension DirectSubAgentRuntime {
             runTask?.cancel()
             await sharedChat.unregisterParticipant(id: agent.id, roomID: agent.rootSessionID)
             // Same reason as `closeAgent`, once per child session: a delegated
-            // turn resolves recall under the sub-agent's own session id and may
-            // have left an extraction running, and an interrupted root session
-            // must not leave either behind.
+            // turn resolves recall under the sub-agent's own session id, and an
+            // interrupted root session must not leave that health state behind.
             await MemoryTurnCoordinator.shared.discard(sessionID: agent.sessionID)
             await agent.backend.updateBorrowedSubAgentToolExecutor(nil)
             await agent.backend.shutdown()

@@ -96,12 +96,10 @@ extension DirectSubAgentRuntime {
                 // Delegated turns get automatic recall as well. The workspace
                 // is read from the agent's own session snapshot, so a sub-agent
                 // working in a different directory recalls from that
-                // workspace's graph rather than the coordinator's. Extraction
-                // stays OFF here on purpose: sub-agent turns are internal steps
-                // of one operator turn, and letting each of them write durable
-                // memory would multiply near-duplicate entries per turn. The
-                // operator turn that owns them extracts once, in
-                // `AgentCoreSessionRunner.finalizeTurn`.
+                // workspace's graph rather than the coordinator's. The main
+                // model reads and writes durable memory explicitly through the
+                // five `memory.*` tools — there is no automatic extraction and
+                // no second LLM call after any turn.
                 let memoryBlock: String?
                 if let workspaceRootURL = await work.backend
                     .snapshotSession(id: work.sessionID)

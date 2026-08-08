@@ -8,7 +8,7 @@
 //     byte-identical before and after a search, metadata (retrievalCount,
 //     confidence, links) is unchanged, and a search never fails because a
 //     save errored.
-//  2. Memory tests must not depend on the real `ZENCODE_MEMORY_EMBEDDING_*`
+//  2. Memory tests must not depend on the real `ZENCODE_MEMORY_EMBEDDING_ENDPOINT`
 //     environment variables. A task-local seam (`MemoryEmbedding.withProvider`)
 //     lets tests force "no provider" (no network) or inject a specific provider
 //     without mutating the process-global environment.
@@ -304,7 +304,7 @@ struct MemoryReadOnlySearchStoreTests {
 
 // MARK: - Embedding environment isolation
 
-@Suite
+@Suite(.serialized)
 struct MemoryEmbeddingIsolationTests {
 
     @Test
@@ -408,10 +408,8 @@ struct MemoryEmbeddingIsolationTests {
         // Simulate the developer's shell exporting real embedding env vars.
         // Under the test harness, provider() must still return nil: no
         // environment lookup, no network call.
-        try await withScopedEmbeddingEnv(
-            endpoint: "https://embeddings.example.com/v1/embeddings",
-            model: "text-embedding-3-small",
-            apiKey: "sk-test-fake-key"
+        await withScopedEmbeddingEndpoint(
+            "https://embeddings.example.com/v1/embeddings"
         ) {
             let resolved = MemoryEmbedding.provider()
             #expect(resolved == nil)
@@ -423,10 +421,8 @@ struct MemoryEmbeddingIsolationTests {
         // Even with real env vars set AND the test-harness guard, an explicit
         // task-local override must win — tests can still inject providers.
         let injected = DeterministicHashEmbeddingProvider(modelID: "override-wins")
-        try await withScopedEmbeddingEnv(
-            endpoint: "https://embeddings.example.com/v1/embeddings",
-            model: "text-embedding-3-small",
-            apiKey: "sk-test-fake-key"
+        await withScopedEmbeddingEndpoint(
+            "https://embeddings.example.com/v1/embeddings"
         ) {
             let resolved = await MemoryEmbedding.withProvider(injected) {
                 MemoryEmbedding.provider()
@@ -446,34 +442,24 @@ struct MemoryEmbeddingIsolationTests {
     }
 }
 
-/// Sets the `ZENCODE_MEMORY_EMBEDDING_*` env vars for the duration of
+/// Sets the legacy `ZENCODE_MEMORY_EMBEDDING_ENDPOINT` env var for the duration of
 /// `operation`, restoring the original values on exit.
 ///
 /// This is safe because under the test harness `provider()` never reads the
 /// environment (it returns nil before reaching `providerFromEnvironment`), so
 /// the setenv cannot leak into a concurrently running test's resolution.
-private func withScopedEmbeddingEnv(
-    endpoint: String,
-    model: String,
-    apiKey: String,
+private func withScopedEmbeddingEndpoint(
+    _ endpoint: String,
     _ operation: () async throws -> Void
 ) async rethrows {
-    let keys = [
-        MemoryEmbedding.environmentEndpointKey,
-        MemoryEmbedding.environmentModelKey,
-        MemoryEmbedding.environmentAPIKeyKey
-    ]
-    let originals = keys.map { ($0, ProcessInfo.processInfo.environment[$0]) }
-    setenv(MemoryEmbedding.environmentEndpointKey, endpoint, 1)
-    setenv(MemoryEmbedding.environmentModelKey, model, 1)
-    setenv(MemoryEmbedding.environmentAPIKeyKey, apiKey, 1)
+    let key = MemoryEmbedding.environmentEndpointKey
+    let original = ProcessInfo.processInfo.environment[key]
+    setenv(key, endpoint, 1)
     defer {
-        for (key, original) in originals {
-            if let original {
-                setenv(key, original, 1)
-            } else {
-                unsetenv(key)
-            }
+        if let original {
+            setenv(key, original, 1)
+        } else {
+            unsetenv(key)
         }
     }
     try await operation()

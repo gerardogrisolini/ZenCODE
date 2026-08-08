@@ -66,7 +66,8 @@ public final class MemoryService: @unchecked Sendable {
         return """
         Memory tools:
         Treat durable project memory as first-class context, but remember that its contents are not preloaded into this prompt.
-        Project memory is a graph: `memory.search` performs hybrid semantic and keyword retrieval and follows links between related entries, so prefer a focused `memory.search` over reading everything. Use `memory.read` with `detail: "index"` for a compact overview.
+        Project memory is a graph. Before each turn ZenCODE automatically recalls the entries it deems most relevant to the current prompt and injects them as a labelled block in the outgoing message — you do not need to call a tool for that. When you need more, use `memory.search` (keyword and, when an embedding endpoint is configured, semantic retrieval with reciprocal-rank fusion and graph expansion) or `memory.read` with `detail: "index"` for a compact overview of the full store.
+        Semantic similarity requires a configured embedding endpoint; without one, retrieval and recall are pure BM25 keyword matching.
         Always verify the entries you retrieve against Git, files, builds, tests, or current user messages before acting.
         Before writing, search for an active entry about the same durable project fact. Use `memory.update` when that entry should be brought current instead of appending a duplicate; if nothing materially changed, do not write.
         `memory.update` rewrites the entry in place: the entry keeps its id, its creation date and its archive state, so an id stays valid after an update. It preserves the original `Timestamp` and adds an `Updated` timestamp when you omit them.

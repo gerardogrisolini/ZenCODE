@@ -159,6 +159,7 @@ enum SetupSection: Equatable, Hashable {
     case agents
     case agentModels
     case responseLanguage
+    case memoryEmbedding
     case resetRemoteConfiguration
     case finish
     case cancel
@@ -185,6 +186,8 @@ enum SetupSection: Equatable, Hashable {
             return "Agent model bindings"
         case .responseLanguage:
             return "Response language"
+        case .memoryEmbedding:
+            return "Memory embeddings"
         case .resetRemoteConfiguration:
             return "Reset remote configuration"
         case .finish:
@@ -200,7 +203,7 @@ enum SetupSection: Equatable, Hashable {
             return .required
         case .defaultModelSettings, .agents, .agentModels, .responseLanguage:
             return .recommended
-        case .telegram, .voice, .features, .resetRemoteConfiguration:
+        case .telegram, .voice, .features, .memoryEmbedding, .resetRemoteConfiguration:
             return .optional
         case .defaultModel, .defaultThinking:
             return .recommended
@@ -211,7 +214,7 @@ enum SetupSection: Equatable, Hashable {
 
     var requiresConfiguredModels: Bool {
         switch self {
-        case .providersAndModels, .agents, .features, .responseLanguage, .resetRemoteConfiguration, .finish, .cancel:
+        case .providersAndModels, .agents, .features, .responseLanguage, .memoryEmbedding, .resetRemoteConfiguration, .finish, .cancel:
             return false
         case .defaultModelSettings, .defaultModel, .defaultThinking, .telegram, .voice, .agentModels:
             return true
@@ -252,6 +255,8 @@ enum SetupSection: Equatable, Hashable {
             ]
         case .responseLanguage:
             return ["language", "response language", "locale", "response_language"]
+        case .memoryEmbedding:
+            return ["memory embeddings", "memory embedding", "embeddings", "embedding", "bm25"]
         case .resetRemoteConfiguration:
             return ["reset", "reset remote configuration", "reset configuration"]
         case .finish:
@@ -335,6 +340,7 @@ enum ZenCODESetupError: LocalizedError {
     case invalidChoice(String)
     case noModelsConfigured
     case noRemoteModelsReturned
+    case invalidMemoryEmbeddingEndpoint
 
     var errorDescription: String? {
         switch self {
@@ -350,6 +356,8 @@ enum ZenCODESetupError: LocalizedError {
             return "At least one remote provider model is required."
         case .noRemoteModelsReturned:
             return "The server did not return any models from /models."
+        case .invalidMemoryEmbeddingEndpoint:
+            return "Memory embedding endpoint must be a non-empty absolute http:// or https:// URL without embedded credentials."
         }
     }
 }

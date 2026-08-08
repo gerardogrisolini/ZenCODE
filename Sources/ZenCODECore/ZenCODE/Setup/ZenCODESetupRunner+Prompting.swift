@@ -134,6 +134,7 @@ extension ZenCODESetupRunner {
         #endif
         let agentsDetail = agentsSetupDetail()
         let responseLanguageDetail = responseLanguageSetupDetail(manifest)
+        let memoryEmbeddingDetail = memoryEmbeddingSetupDetail(manifest)
 
         AgentOutput.standardError.writeString(
             """
@@ -145,6 +146,7 @@ extension ZenCODESetupRunner {
               Default thinking: \(thinkingTitle)
               Agents: \(agentsDetail)
               Response language: \(responseLanguageDetail)
+              Memory embeddings: \(memoryEmbeddingDetail)
               Telegram remote control: \(telegramStatus)\(voiceSummary)
 
             Files:

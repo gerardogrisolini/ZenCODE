@@ -218,10 +218,10 @@ removed as an explicit migration.
 | `Sources/Features/BrowserTools/Sources/browser-tools-feature` | Thin `browser-tools-feature` executable target that delegates to `BrowserToolsFeatureRunner`. |
 | `Sources/Features/DesktopTools` | Standalone macOS-only `desktop-tools-feature` package exposing the single typed tool `desktop.run`: permission/system inspection, app and window enumeration, PNG screenshots attached to the model's multimodal context, pointer/keyboard/clipboard input, and app/window management through AppKit, Accessibility, and Quartz. It must never execute caller-supplied shell or AppleScript code, must not be enabled in a default agent profile, and requires Screen Recording plus Accessibility consent (`action=permissions` first). `isInstalledOnLinux` is `false` because the platform integration does not exist there. |
 | `Sources/LocalToolsSupport` | Reusable local file, search, text, and patch tooling. |
-| `Sources/ZenMemory` | Dependency-free memory engine (Foundation only), MIT-licensed: an independent Swift implementation of the memory architecture of `1jehuang/jcode`, attributed in `THIRD_PARTY_NOTICES.md`. It owns the memory graph, typed edges, lexical retrieval through a pluggable `MemoryIndex` protocol (default `BM25MemoryIndex`), optional semantic retrieval through a pluggable `EmbeddingProvider` (reciprocal-rank fusion only when one is present), a breadth-first cascade with depth decay, the confidence lifecycle, persistence, and embedding providers. Retrieval is also pluggable end to end through a `MemoryQueryAnalyzer` (default `DirectMemoryQueryAnalyzer`, which uses the prompt verbatim as the query), a `MemorySelector` (default `TopScoreMemorySelector`), a `MemoryExtractor` (default `NoopMemoryExtractor`, which extracts nothing) and a `MemoryContextFormatter` (default `BulletMemoryContextFormatter`); every default is dependency-free and makes no network call. The engine additionally exposes `context(for:)` (a ready-to-inject memory block) and `learn(from:)` (automatic extraction), and ships LLM-backed analyzer/selector/extractor implementations over the `MemoryLanguageModel` / `OpenAICompatibleChatModel` contracts. ZenCODECore wires both entry points through its `MemoryTurnCoordinator`: automatic recall calls the store's `context(for:scope:)` inline and is on by default over the dependency-free BM25 path (no second LLM call — the formatted block rides the turn's own outgoing request), while automatic extraction runs the store's `learn(from:)` in a tracked, bounded background task and is off by default, double-gated on an explicit opt-in plus a configured side model. The `MemoryVerifier` protocol is deprecated in favour of `MemorySelector`. It depends on nothing else in the package and never depends back on `ZenCODECore`. It is an internal target, not a public library product. |
+| `Sources/ZenMemory` | Dependency-free memory engine (Foundation only), MIT-licensed: an independent Swift implementation of the memory architecture of `1jehuang/jcode`, attributed in `THIRD_PARTY_NOTICES.md`. It owns the memory graph, typed edges, lexical retrieval through a pluggable `MemoryIndex` protocol (default `BM25MemoryIndex`), optional semantic retrieval through a pluggable `EmbeddingProvider` (reciprocal-rank fusion only when one is present), a breadth-first cascade with depth decay, the confidence lifecycle, persistence, and embedding providers. Retrieval is also pluggable end to end through a `MemoryQueryAnalyzer` (default `DirectMemoryQueryAnalyzer`, which uses the prompt verbatim as the query), a `MemorySelector` (default `TopScoreMemorySelector`), a `MemoryExtractor` (default `NoopMemoryExtractor`, which extracts nothing) and a `MemoryContextFormatter` (default `BulletMemoryContextFormatter`); every default is dependency-free and makes no network call. The engine additionally exposes `context(for:)` (a ready-to-inject memory block) and `learn(from:)` (automatic extraction), and ships LLM-backed analyzer/selector/extractor implementations over the `MemoryLanguageModel` / `OpenAICompatibleChatModel` contracts; all of these stay unwired engine internals — opening a product store never installs a network-backed extractor or makes a generation request. ZenCODECore wires only automatic recall through its `MemoryTurnCoordinator`: it calls the store's `context(for:scope:)` inline before every turn and is on by default over the dependency-free BM25 path (no second LLM call — the formatted block rides the turn's own outgoing request). Durable entries are read and written explicitly by the main model through the five `memory.*` tools (`memory.read` / `memory.search` / `memory.write` / `memory.update` / `memory.archive`), guided by `MemoryService.toolUsagePromptSection()`. The `MemoryVerifier` protocol is deprecated in favour of `MemorySelector`. It depends on nothing else in the package and never depends back on `ZenCODECore`. It is an internal target, not a public library product. |
 | `Sources/ZenPackageMetadata` | Internal bundled-feature distribution metadata used for catalog parity; it is not a public product. |
 | `Sources/Features/<Feature>` | A self-contained optional SwiftPM package with its own `Package.swift`, `Sources/<product-name>/`, and package-local `Tests/`. It is outside the root graph; keep the entry point thin and place implementation in feature-owned support or library targets. The marker `// zencode:package-path` must immediately precede the root `.package(path: "../../..")` dependency so installation can rewrite only that path. |
-| `Sources/ZenCODECore/ZenCODE` | Runtime domains: `Agent`, `Remote`, `Tools`, `Features`, `Context`, `Memory`, `FileChanges`, `Runtime`, `Setup`, `Telegram`, and `Support`; `ZenCODETUI` and ACP remain source areas within this target. The `Memory` domain is a thin async facade over the vendored `ZenMemory` engine: `MemoryGraphLocation`, `MemoryGraphStore`, `LegacyMemoryJournal`, `MemoryService`, `MemoryLegacyCompatibility` (the deprecated 1.1.x synchronous surface), and the automatic-turn pipeline (`MemoryTurnCoordinator`, `MemoryTurnContext`, `MemoryAutomationSettings`, `MemoryGenerationLanguageModel`). `MemoryService+Documents.swift` is removed. ZenCODECore exposes its own public DTOs (`MemoryEntry`, `MemoryScope`, `MemoryCategory` under `ZenCODE/Models`) that preserve the 1.1.x contract (`id: UUID`, `Hashable`, journal-shaped scope); the vendored `ZenMemory` engine is an internal target whose graph types stay hidden behind the facade. |
+| `Sources/ZenCODECore/ZenCODE` | Runtime domains: `Agent`, `Remote`, `Tools`, `Features`, `Context`, `Memory`, `FileChanges`, `Runtime`, `Setup`, `Telegram`, and `Support`; `ZenCODETUI` and ACP remain source areas within this target. The `Memory` domain is a thin async facade over the vendored `ZenMemory` engine: `MemoryGraphLocation`, `MemoryGraphStore`, `LegacyMemoryJournal`, `MemoryService`, `MemoryLegacyCompatibility` (the deprecated 1.1.x synchronous surface), and the automatic-recall pipeline (`MemoryTurnCoordinator`, `MemoryTurnContext`, `MemoryAutomationSettings`). `MemoryService+Documents.swift` is removed. ZenCODECore exposes its own public DTOs (`MemoryEntry`, `MemoryScope`, `MemoryCategory` under `ZenCODE/Models`) that preserve the 1.1.x contract (`id: UUID`, `Hashable`, journal-shaped scope); the vendored `ZenMemory` engine is an internal target whose graph types stay hidden behind the facade. |
 | `Sources/ZenCODECore/ZenCODE/Tools/Direct/SubAgents` | Delegated-agent lifecycle and dispatch. `agent.create` requires a configured profile and derives the child tool grant exclusively from that profile; model-authored creation arguments and task metadata cannot add, remove, or replace profile tools. Only runtime-intrinsic skill discovery and task-attempt reporting tools are added, then the profile's `readOnly` core-tool policy is reapplied so those additions cannot restore mutation access. |
 | `Sources/ZenCODECore/ZenCODE/Setup` | Interactive first-run and in-process configuration for providers, models, agents, feature packages, Telegram, voice, and response language. Setup remains invoked by the executable composition root even though its implementation and contracts belong to Core. |
 | `Sources/ZenCODECore/ZenCODE/Runtime/Sessions` | Neutral session state and persistence, including the authoritative task DAG, attempt fencing, execution scopes, atomic task-graph checkpoints, startup enumeration/recovery, and the session checkpoint tree (`SessionCheckpointTree`). Workflow-sourced graphs require sub-agent execution attempts, while coordinator tool grants remain independent of that lifecycle constraint. Startup recovery is graph-specific: the orchestrator restores the owning session, interrupts persisted active attempts, activates exactly the operator-selected graph, archives superseded active graphs, and persists `currentGraphID` before backend creation. A negative validation persists `failed`; `tasks.retry` returns the task to `pending`, and retrying a failed attempt always claims a fresh workflow attempt through a new `agent.create(taskID:)` rather than resuming the prior agent. Separately, once a task-bound attempt completes, the agent may optionally remain in a runtime-only, non-persisted `.standby` state for conversational follow-up turns over direct messages that do not mutate the task graph; standby is bounded by a turn budget and an idle timeout, and is released when the graph becomes terminal, when a newer attempt supersedes it, or when the budget/timeout is exhausted. Standby turns are never task attempts, never reopen the completed attempt, and never change `task.activeAttemptID`. `AgentCoreSessionRunner` owns one orchestrator and injects it into every backend; direct task tools are stateless adapters and TUI/ACP code only projects or requests orchestrator-owned snapshot restoration. |
@@ -301,8 +301,8 @@ identity survives migration: `[id: …]` markers keep their UUID, and legacy
 entries without one receive the same deterministic UUIDv8 the previous
 implementation derived, so ids remain stable across the format change.
 
-Every mutation — `write`, `update`, `archive`, `delete`, and the extraction
-batch — runs through the engine's transaction primitive
+Every mutation — `write`, `update`, `archive`, `delete` — runs through the
+engine's transaction primitive
 (`ZenMemory.transaction(_:)`), which commits after save: the body mutates a
 private draft of the graph, the draft is persisted first, and it becomes the
 live graph only when the save succeeded. A throwing body or a failed save
@@ -319,7 +319,7 @@ older files decode through optional fields with contract defaults (`scope` →
 the legacy v1 format (`MemoryGraph.legacyGraphVersion`): it is decoded with the
 same contract defaults and normalized to the current version in memory. Loading
 never rewrites the file — the on-disk graph stays byte-identical until an
-explicit save (a mutation or extraction) writes the current version.
+explicit save (a mutation) writes the current version.
 
 ZenCODECore exposes its own public DTOs (`MemoryEntry`, `MemoryScope`,
 `MemoryCategory`) declared under `ZenCODE/Models`; the vendored `ZenMemory`
@@ -367,11 +367,24 @@ embedder is configured, merging the semantic and lexical rankings before the
 cascade.
 
 Embeddings are opt-in and off by default. With no provider configured, entries
-carry no vector and retrieval is pure BM25 plus graph expansion. The environment
-variables `ZENCODE_MEMORY_EMBEDDING_ENDPOINT`, `ZENCODE_MEMORY_EMBEDDING_MODEL`,
-and `ZENCODE_MEMORY_EMBEDDING_API_KEY` opt into an OpenAI-compatible
-`/v1/embeddings` endpoint. The engine still ships
-`DeterministicHashEmbeddingProvider` (a 128-dimension signed feature-hashing
+carry no vector and retrieval is pure BM25 plus graph expansion. The only
+embedding configuration is an endpoint: the persisted settings manifest
+(`AgentMemoryEmbeddingSettingsManifest`, manifest version 11, `settings.json`
+`memoryEmbedding`) stores a single normalized absolute HTTP(S) URL — no model
+identifier, no API key — configured interactively from setup ("Memory
+embeddings": BM25 only / add / change / remove endpoint, detail line "BM25
+only" or the stored endpoint). Setup validates the URL format entirely locally:
+it never probes the endpoint, never enumerates models, and never asks for
+credentials. For compatibility, the legacy environment variable
+`ZENCODE_MEMORY_EMBEDDING_ENDPOINT` is still honoured as a fallback when the
+manifest field is absent (i.e. a legacy v10 install that never went through
+setup); an explicitly disabled manifest suppresses it. `MemoryEmbedding.provider(...)`
+resolves task-local override first, then manifest endpoint or disabled, then
+environment only when the manifest field is absent, then BM25. The endpoint
+identifies the embedding model itself: `OpenAICompatibleEmbeddingProvider` derives a stable
+endpoint-hash `modelID` when none is supplied and deliberately omits `model`
+from the request body, so an endpoint-only server chooses. The engine still
+ships `DeterministicHashEmbeddingProvider` (a 128-dimension signed feature-hashing
 bag-of-words encoder, not a semantic model), but it is no longer wired in by
 default. Entries record their `embeddingModel`, so a provider change degrades to
 lexical retrieval instead of returning wrong matches. Provider resolution sits
@@ -379,14 +392,16 @@ behind a task-local seam (`MemoryEmbedding.withProvider(_:operation:)`). Under
 a test harness the real process environment is never consulted: resolution
 returns no provider — and makes no network call — unless a test explicitly
 binds one through the seam, so memory tests stay hermetic even when the
-developer's shell exports `ZENCODE_MEMORY_EMBEDDING_*`.
+developer's shell exports `ZENCODE_MEMORY_EMBEDDING_ENDPOINT`.
 
 Automatic recall is on by default and adds no second LLM call. Before every
 turn — operator and delegated sub-agent alike — `MemoryTurnCoordinator`
 resolves the workspace graph and runs the store's `context(for:scope:)`
 inline: offline BM25 seeds, graph expansion, and selection through
-`ScoreThresholdMemorySelector`. Retrieval itself is local, so it costs no
-extra provider round trip; what reaches the wire is the formatted block, which
+`ScoreThresholdMemorySelector`. Without an endpoint, retrieval is local BM25
+and costs no extra round trip; with an endpoint, a bounded HTTP call to the
+embedding service adds semantic similarity and fusion. Neither adds a second
+LLM call — what reaches the wire is the formatted block, which
 does add input tokens to the outgoing request and is therefore bounded by a
 character budget (`ZENCODE_MEMORY_RECALL_MAX_CHARACTERS`, default 4 000
 characters, clamped to [200, 32 000]; ZenCODE counts roughly four characters
@@ -436,48 +451,16 @@ truncated to the recall character budget on line boundaries, appending a
 truncation notice when the selection did not fit. The fixed header, the tags
 and the notice are constant overhead on top of the budgeted payload.
 
-Automatic extraction is off by default and double-gated: it requires both an
-explicit opt-in (`ZENCODE_MEMORY_AUTO_EXTRACT`) and a configured side model
-(`ZENCODE_MEMORY_SIDE_MODEL`), because it spends real tokens on a second model
-call after every completed turn and writes a durable distilled copy of the
-exchange to disk. It runs in a tracked background task only after a turn that
-actually completed, in `AgentCoreSessionRunner.finalizeTurn`, and sends only
-the last operator message and the final assistant reply — never the whole
-history and never tool output: messages that carry a tool call, a tool-call
-id, or a tool name are excluded structurally, so raw tool results cannot reach
-the extractor. Both halves of the exchange are bounded by
-`ZENCODE_MEMORY_EXTRACT_MAX_CHARACTERS` (default 6 000 characters, clamped to
-[200, 64 000]), split evenly, so a pasted file cannot decide the size of the
-side-model request. Extraction is owned and bounded: at most one extraction
-per session and four process-wide, and the cap counts cancelled-but-unfinished
-work too — cancel marks a tracked extraction and closes the gate that guards
-persistence, but the row is retired only when the task actually finishes
-(`finishExtraction`), so a side model that ignores cancellation keeps its slot
-instead of letting new work pile up. Close/reset/rebuild, sub-agent interrupt,
-and standby release (eviction, the periodic reaper, and graph completion)
-cancel a session's extractions through
-`MemoryTurnCoordinator.discard(sessionID:)`, while runner shutdown can cancel
-or drain all of them through `cancelPendingExtractions()` /
-`waitForPendingExtractions()`. Before `store.learn` the task re-checks
-`Task.checkCancellation()` and the coordinator's own `isExtractionLive(ordinal:)`
-gate, and the engine's transaction re-checks cancellation once more after the
-write lock is held, immediately before the atomic save; a session torn down
-(close/reset, sub-agent interrupt, standby release) while the side model is
-running therefore never flushes — the drafts are dropped before the graph is
-persisted, and the explicit flush (`saveGraph()`) runs only after the batch has
-survived both gates. The side-model task also unbinds the recall task-local so
-recalled memory is never injected into the extractor's prompt. It is deliberately excluded from delegated
-sub-agent turns — those are internal steps of one operator turn, and letting
-each write durable memory would multiply near-duplicate entries; the operator
-turn that owns them extracts once. The side model is either an
-OpenAI-compatible `/v1/chat/completions` route
-(`ZENCODE_MEMORY_SIDE_MODEL_ENDPOINT`, with optional
-`ZENCODE_MEMORY_SIDE_MODEL_API_KEY`) or, with a model name alone,
-`MemoryGenerationLanguageModel`, which routes through ZenCODE's own generation
-stack so subscription providers work too; the side call is a pure text
-completion — no tools, one round, no task orchestrator. These gates live in
-the environment beside the `MemoryEmbedding` keys and are deliberately not
-settings-manifest fields.
+The main model owns durable memory explicitly through the five `memory.*` tools
+— `memory.read`, `memory.search`, `memory.write`, `memory.update`,
+`memory.archive` — guided by `MemoryService.toolUsagePromptSection()` (search
+before writing, update instead of duplicating, archive stale entries, prefer
+fresh evidence over memory). `MemoryTurnCoordinator` drives recall only, and
+`MemoryTurnCoordinator.discard(sessionID:)` drops only per-session recall health
+state on close/reset/rebuild. The engine's `learn(from:)`, its default
+`NoopMemoryExtractor` (which extracts nothing), and its LLM-backed extractor
+stay unwired internals of `ZenMemory`, so no product code path ever performs an
+extraction request.
 
 ZenCODECore installs its own `ScoreThresholdMemorySelector` (a `MemorySelector`)
 in place of the engine's default `TopScoreMemorySelector`. The default returns

@@ -5,8 +5,9 @@
 //  Covers the graph store's transactional contract, which the higher-level
 //  suites cannot reach because they exercise one operation at a time:
 //
-//  - extraction (`learn`) mints identifiers the maintenance tools accept and
-//    applies the same duplicate rule as `write`;
+//  - the internal `learn` transaction mints identifiers the maintenance tools
+//    accept and applies the same duplicate rule as `write` when an engine test
+//    double supplies drafts;
 //  - concurrent read-modify-write sequences (deduplicating write, in-place
 //    update, archive) neither duplicate nor lose one another, despite actor
 //    reentrancy on every `await` against the engine;
@@ -14,9 +15,9 @@
 //    of diverging from disk.
 //
 //  The store is built directly on an injected engine (an in-process persistence
-//  double plus a stub extractor) so the tests are deterministic and contact no
-//  network: the store's own `open` would resolve an LLM extractor from the
-//  environment.
+//  double plus a deterministic extractor) so the tests are deterministic and
+//  contact no network. Product stores opened through `open` use the dependency-
+//  free `NoopMemoryExtractor`.
 //
 
 import Foundation
@@ -54,7 +55,7 @@ private actor ControlledStorePersistence: MemoryPersistence {
     }
 }
 
-private struct StubDraftExtractor: MemoryExtractor {
+private struct DeterministicDraftExtractor: MemoryExtractor {
     let drafts: [MemoryDraft]
     func extract(from context: String) async throws -> [MemoryDraft] { drafts }
 }
@@ -67,7 +68,7 @@ private func makeStore(
         graphURL: URL(fileURLWithPath: "/dev/null/graph.json"),
         engine: ZenMemory(
             persistence: persistence,
-            extractor: StubDraftExtractor(drafts: drafts)
+            extractor: DeterministicDraftExtractor(drafts: drafts)
         ),
         embedder: nil
     )
@@ -76,7 +77,26 @@ private func makeStore(
 @Suite
 struct MemoryStoreTransactionTests {
 
-    // MARK: - Extraction identity and deduplication
+    // MARK: - Internal learn transaction
+
+    @Test
+    func openedProductStoreUsesNoopExtractor() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try await workspace.withIsolatedSupport {
+            let store = try await MemoryGraphStore.open(
+                graphURL: MemoryGraphLocation.graphURL(for: workspace.workspaceURL),
+                workspaceRootURL: workspace.workspaceURL
+            )
+
+            // The product's default has no extractor-backed work at all. The
+            // internal helper remains a no-op unless a test injects drafts.
+            let learned = try await store.learn(from: "a completed conversation")
+            #expect(learned.isEmpty)
+            #expect(await store.entries(includeArchived: true, limit: 10).isEmpty)
+        }
+    }
 
     @Test
     func learnMintsIdentifiersTheMaintenanceToolsAccept() async throws {
@@ -94,7 +114,7 @@ struct MemoryStoreTransactionTests {
 
         // The engine's own `learn` mints `mem_<millis>_<uuid>` ids, which
         // `MemoryIdentifier.validated` rejects — an entry the model could read
-        // but never correct. Every extracted id must be a canonical UUID.
+        // but never correct. Every internally learned id must be a canonical UUID.
         for entry in stored {
             #expect(UUID(uuidString: entry.id) != nil)
             #expect(entry.id == entry.id.uppercased())
@@ -129,7 +149,7 @@ struct MemoryStoreTransactionTests {
         State: verified on main.
         """
         let persistence = ControlledStorePersistence()
-        // The extractor returns the same fact with different casing and
+        // The deterministic draft source returns the same fact with different casing and
         // padding: `write`'s normalization treats it as the same content, and
         // `learn` must agree.
         let store = makeStore(
@@ -169,8 +189,7 @@ struct MemoryStoreTransactionTests {
         #expect(stored.count == 2)
         #expect(await store.entries(includeArchived: true, limit: 10).count == 2)
 
-        // Re-running extraction over a similar exchange is the normal case, and
-        // it must not append a second copy of anything.
+        // Re-running the same internal draft batch must not append duplicates.
         let again = try await store.learn(from: "conversation")
         #expect(again.isEmpty)
         #expect(await store.entries(includeArchived: true, limit: 10).count == 2)
@@ -291,8 +310,8 @@ struct MemoryStoreTransactionTests {
         let store = makeStore(
             persistence: persistence,
             drafts: [
-                MemoryDraft(content: "Summary: first extracted fact."),
-                MemoryDraft(content: "Summary: second extracted fact.")
+                MemoryDraft(content: "Summary: first learned fact."),
+                MemoryDraft(content: "Summary: second learned fact.")
             ]
         )
 
@@ -373,24 +392,24 @@ struct MemoryStoreTransactionTests {
         #expect(entries.first?.active == true)
     }
 
-    // MARK: - Cancellation: an extraction past the model but queued for the lock
+    // MARK: - Cancellation: a direct learn transaction queued for the lock
 
     @Test
-    func extractionPastTheModelButQueuedForTheLockCommitsNothing() async throws {
+    func cancelledLearnQueuedForTheLockCommitsNothing() async throws {
         let persistence = GatedStorePersistence()
         let store = MemoryGraphStore(
             graphURL: URL(fileURLWithPath: "/dev/null/graph.json"),
             engine: ZenMemory(
                 persistence: persistence,
-                extractor: StubDraftExtractor(drafts: [
-                    MemoryDraft(content: "Summary: a late extracted fact.")
+                extractor: DeterministicDraftExtractor(drafts: [
+                    MemoryDraft(content: "Summary: a late learned fact.")
                 ])
             ),
             embedder: nil
         )
 
         // Hold the write lock: this write parks inside persistence, so the
-        // extraction's own commit must queue behind it.
+        // direct learn transaction's own commit must queue behind it.
         let holder = Task<Void, Never> {
             _ = try? await store.write(
                 content: "Summary: the holder fact.",
@@ -400,29 +419,28 @@ struct MemoryStoreTransactionTests {
         }
         await pollStoreCondition { await persistence.saveEnteredCount >= 1 }
 
-        // The stub extractor returns its drafts instantly, so the side-model
-        // phase is already "past" by the time this runs. What remains is the
-        // atomic commit, which is queued behind the held lock.
-        let extraction = Task<[GraphEntry], Never> {
+        // The deterministic source returns its drafts instantly. What remains
+        // is the atomic commit, which is queued behind the held lock.
+        let pendingLearn = Task<[GraphEntry], Never> {
             (try? await store.learn(from: "conversation")) ?? []
         }
-        // Give the extraction time to pass its pre-commit check and park in the
+        // Give the transaction time to pass its pre-commit check and park in the
         // lock wait rather than winning a start-up race.
         try? await Task.sleep(for: .milliseconds(50))
 
-        // Cancel the extraction while it is waiting to commit. Whether the
+        // Cancel the transaction while it is waiting to commit. Whether the
         // cancellation is observed at the pre-commit check in `learn` or at the
         // post-lock check in the engine's transaction, the drafts must not land.
-        extraction.cancel()
+        pendingLearn.cancel()
 
         // Releasing the gate lets the holder finish, which frees the lock and
-        // resumes the cancelled extraction just long enough for it to bail out.
+        // resumes the cancelled transaction just long enough for it to bail out.
         await persistence.release()
-        let stored = await extraction.value
+        let stored = await pendingLearn.value
         #expect(stored.isEmpty)
         _ = await holder.value
 
-        // The cancelled extraction committed nothing; only the holder's write is
+        // The cancelled transaction committed nothing; only the holder's write is
         // present, and there was exactly one save.
         let entries = await store.entries(includeArchived: true, limit: 10)
         #expect(entries.count == 1)

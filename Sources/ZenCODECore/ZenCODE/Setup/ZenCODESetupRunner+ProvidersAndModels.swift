@@ -67,7 +67,8 @@ extension ZenCODESetupRunner {
             localExecAllowedCommands: existingManifest?.localExecAllowedCommands ?? [],
             chatGPTSubscriptionCredentials: subscriptionCredentials.chatGPT,
             anthropicSubscriptionCredentials: subscriptionCredentials.anthropic,
-            responseLanguage: existingManifest?.responseLanguage
+            responseLanguage: existingManifest?.responseLanguage,
+            memoryEmbedding: existingManifest?.memoryEmbedding
         )
     }
 
