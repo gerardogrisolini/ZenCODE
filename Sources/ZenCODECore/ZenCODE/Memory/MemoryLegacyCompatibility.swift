@@ -170,7 +170,7 @@ enum MemoryLegacyBridge {
     ) throws -> Value {
         let box = ResultBox<Value>()
         let semaphore = DispatchSemaphore(value: 0)
-        let task = Task {
+        _ = Task {
             do {
                 box.set(.success(try await work()))
             } catch {
