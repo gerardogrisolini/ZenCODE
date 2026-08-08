@@ -450,83 +450,29 @@ public actor DirectToolExecutor {
                 workingDirectory: workingDirectory,
                 allowedToolNames: allowedToolNames
             )
-            return await deliveringInlineSharedChatMessages(
-                result(
-                    output: execution.output,
-                    toolName: toolCall.name,
-                    status: .completed,
-                    attachments: execution.attachments
-                ),
-                sessionID: sessionID
+            return result(
+                output: execution.output,
+                toolName: toolCall.name,
+                status: .completed,
+                attachments: execution.attachments
             )
         } catch {
             if let executorError = error as? DirectToolExecutorError,
                case let .authorizationDenied(denialOutput) = executorError {
-                return await deliveringInlineSharedChatMessages(
-                    result(
-                        output: denialOutput,
-                        toolName: toolCall.name,
-                        status: .permissionDenied,
-                        attachments: []
-                    ),
-                    sessionID: sessionID
+                return result(
+                    output: denialOutput,
+                    toolName: toolCall.name,
+                    status: .permissionDenied,
+                    attachments: []
                 )
             }
             let output = "Tool error: \(error.localizedDescription)"
-            return await deliveringInlineSharedChatMessages(
-                DirectAgentToolResult(
-                    output: output,
-                    summary: output,
-                    status: Self.toolResultStatus(for: error)
-                ),
-                sessionID: sessionID
+            return DirectAgentToolResult(
+                output: output,
+                summary: output,
+                status: Self.toolResultStatus(for: error)
             )
         }
-    }
-
-    /// Delivers the live shared-chat messages that arrived while the model was
-    /// working, at the first tool boundary of the turn instead of after it.
-    ///
-    /// Invariants encoded here:
-    /// * only `modelOutput` grows. `output`, `summary`, `status` and
-    ///   `attachments` stay identical because the TUI already renders live
-    ///   messages from the room transcript; duplicating them in the tool panel
-    ///   would show every message twice.
-    /// * an empty mailbox returns the result untouched, so a tool result is
-    ///   never rewritten for nothing.
-    /// * the drain is bounded by ``AgentSharedChat/maximumMessagesPerInjectedPrompt``
-    ///   and never waits for a producer, so a tool call cannot be stalled by the
-    ///   chat. Anything left over stays in the bounded mailbox and reaches the
-    ///   agent through the next tool boundary or the end-of-turn drain.
-    /// * a participant's own messages are dropped: the bus can echo a broadcast
-    ///   back to its sender, and re-reading it would loop the agent onto itself.
-    private func deliveringInlineSharedChatMessages(
-        _ result: DirectAgentToolResult,
-        sessionID: String?
-    ) async -> DirectAgentToolResult {
-        // A child executor carries the delegated agent's identity; the
-        // coordinator's executor has none and reads the room's coordinator
-        // mailbox instead.
-        let roomID = sharedChatRootSessionID ?? sessionID?.nilIfBlank ?? "default"
-        let participantID = sharedChatSenderID ?? AgentSharedChat.coordinatorID(for: roomID)
-        let messages = await sharedChat.drain(
-            roomID: roomID,
-            participantID: participantID,
-            limit: AgentSharedChat.maximumMessagesPerInjectedPrompt
-        )
-        let deliverable = messages.filter { $0.sender.id != participantID }
-        guard !deliverable.isEmpty else {
-            return result
-        }
-        return DirectAgentToolResult(
-            output: result.output,
-            summary: result.summary,
-            modelOutput: result.modelOutput
-                + "\n\n"
-                + DirectSubAgentRuntime.inlineSharedChatDeliveryBlock(deliverable),
-            status: result.status,
-            attachments: result.attachments
-        )
     }
 
     private func result(

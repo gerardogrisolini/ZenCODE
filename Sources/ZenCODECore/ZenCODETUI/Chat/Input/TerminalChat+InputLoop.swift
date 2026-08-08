@@ -195,7 +195,13 @@ extension TerminalChat {
                 for await event in observation.events {
                     switch event {
                     case let .messages(messages):
-                        eventQueue.send(
+                        // Shared-chat messages are never evicted from the
+                        // bounded runtime queue: the box must reach this
+                        // observer within the transcript bound, so the forwarder
+                        // applies backpressure instead of dropping. The TUI
+                        // deduplicates by message id, so a replayed transcript
+                        // cannot double-render.
+                        _ = await eventQueue.sendWithBackpressure(
                             .sharedChatMessages(roomID: roomID, messages: messages)
                         )
                     case .participantsChanged:
@@ -231,6 +237,12 @@ extension TerminalChat {
         // observer never renders the same Message.id twice. The history is
         // bounded like the room transcript it mirrors.
         var renderedSharedChatMessageIDs = TerminalChat.SharedChatRenderedMessageIDs()
+        // Readable mention handles for the current roster (handle → participant
+        // id). Refreshed whenever the participant list changes so the parser
+        // always routes by the latest stable id behind a readable `@handle`.
+        var readableSharedChatMentionHandles = await sessionRunner.sharedChatMentionHandles(
+            rootSessionID: sharedChatRoomID
+        )
 
         defer {
             // Stop producers before terminating the queue so no task keeps
@@ -291,6 +303,9 @@ extension TerminalChat {
                 roomID: sharedChatRoomID
             )
             renderedSharedChatMessageIDs.removeAll()
+            readableSharedChatMentionHandles = await sessionRunner.sharedChatMentionHandles(
+                rootSessionID: sharedChatRoomID
+            )
             await synchronizeSharedChatConsumerBusyState()
         }
 
@@ -484,7 +499,10 @@ extension TerminalChat {
                     // branches so an operator can reach active agents and the
                     // coordinator while the terminal is generating. The Core
                     // coordinator still serializes any coordinator turn.
-                    switch Self.parseSharedChatMention(from: line) {
+                    switch Self.parseSharedChatMention(
+                        from: line,
+                        readableHandles: readableSharedChatMentionHandles
+                    ) {
                     case let .route(route):
                         if let messageID = await sendSharedChatMention(route) {
                             // The outbound card was rendered synchronously.
@@ -646,6 +664,9 @@ extension TerminalChat {
                 )
             case .sharedChatParticipantsChanged:
                 // Room binding was verified before entering this switch.
+                readableSharedChatMentionHandles = await sessionRunner.sharedChatMentionHandles(
+                    rootSessionID: sharedChatRoomID
+                )
                 await refreshSharedChatPanelSuggestions()
             case let .telegramMessage(message):
                 await handleTelegramMessage(

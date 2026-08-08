@@ -939,6 +939,36 @@ public actor AgentSharedChat {
             : name
     }
 
+    /// Builds a deterministic, terminal-safe slug suitable for a readable
+    /// `@mention` handle. Whitespace and underscores collapse to a single dash,
+    /// only lowercase ASCII letters, digits and dashes survive, and consecutive
+    /// or leading/trailing dashes are removed. Control, bidi and format
+    /// characters are dropped entirely so a hostile display name can never
+    /// produce an unparseable or visually-reordering handle.
+    static func sanitizedHandleSlug(_ raw: String) -> String {
+        var slug = ""
+        var previousWasDash = true
+        for scalar in raw.lowercased().unicodeScalars {
+            let value = scalar.value
+            if (0x61...0x7A).contains(value) || (0x30...0x39).contains(value) {
+                slug.unicodeScalars.append(scalar)
+                previousWasDash = false
+            } else if value == 0x20 || value == 0x09 || value == 0x2D || value == 0x5F {
+                // Space, tab, dash or underscore: collapse to one dash.
+                if !previousWasDash && !slug.isEmpty {
+                    slug.append("-")
+                    previousWasDash = true
+                }
+            }
+            // Every other scalar (punctuation, control, bidi, format) is dropped.
+        }
+        // Trim a trailing dash added by the collapse logic.
+        if slug.hasSuffix("-") {
+            slug.removeLast()
+        }
+        return slug
+    }
+
     private func deliver(
         roomID: String,
         sender: Participant,

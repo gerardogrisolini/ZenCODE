@@ -258,22 +258,24 @@ private final class Storage: Sendable {
         state.withLock { $0.buffer.count }
     }
 
-    /// Only visual shared-chat events may be removed. Auto-triggers are never
-    /// evicted: when there is no room their producer receives `rejectedFull` and
-    /// explicitly returns the batch to Core, rather than relying on an unbounded
-    /// recovery side-channel.
+    /// Only participant-roster changes may be removed under overflow.
+    /// Shared-chat messages are never evicted: the blue box must reach every
+    /// active observer within the transcript bound, so their producer applies
+    /// backpressure (``TerminalChatEventQueue/sendWithBackpressure(_:)``)
+    /// instead of relying on eviction. Auto-triggers are also never evicted.
     private static func oldestEvictableRenderIndex(
         in buffer: [TerminalChatRuntimeEvent]
     ) -> Int? {
         buffer.firstIndex { event in
             switch event {
-            case .sharedChatMessages, .sharedChatParticipantsChanged:
+            case .sharedChatParticipantsChanged:
                 true
             case .input,
                  .generationCompleted,
                  .startNextQueuedPrompt,
                  .telegramMessage,
                  .voicePromptCompleted,
+                 .sharedChatMessages,
                  .sharedChatAutoTrigger:
                 false
             }

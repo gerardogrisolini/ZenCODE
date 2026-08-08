@@ -242,10 +242,15 @@ Commands start with `/`:
 While sub-agents are active, the coordinator and the agent instances share a
 live, transient chat room. From the terminal, address it with a leading mention:
 `@coordinator` to message the live coordinator, `@all` to reach the coordinator
-and every active agent, or the `@agent-…` handle an instance advertises to
-message it directly. The LLM side uses the `agent.message` tool with the same
-destinations (`direct`, `coordinator`, `peers`, `all`). The chat is in-memory and
-never persisted; a session reset drops it. See [agents.md](agents.md#shared-chat).
+and every active agent, or a readable `@agent-name` handle (derived from each
+instance's display name) to message it directly. Autocomplete lists every active
+agent by its readable handle; routing always resolves back to the stable agent
+id behind the alias. The LLM side uses the `agent.message` tool with the same
+destinations (`direct`, `coordinator`, `peers`, `all`). Every message is shown
+as a blue card in every active terminal, and each recipient — idle, running or
+standby — replies to it as the next serial turn of its own work loop, without
+depending on a tool call. The chat is in-memory and never persisted; a session
+reset drops it. See [agents.md](agents.md#shared-chat).
 
 ### Saving and Loading Plans
 

@@ -10,6 +10,32 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Shared chat delivery is now serialised in each recipient's work loop instead
+  of tied to a tool call. The inline-delivery mechanism that appended live
+  messages to the result of the next tool boundary has been removed: every
+  message — to an idle, running or standby agent — is drained from the bounded
+  mailbox and queued as a prompt, so the reply is the next turn of that agent,
+  independent of any future tool call. This fixes the case where a standby agent
+  never replied because it had no tool to execute. A message is never lost or
+  delivered twice, and the coordinator room drains its mailbox even while busy
+  (pending batch shown to observers, synthetic turn held back until the room goes
+  idle and re-armed at turn end).
+
+- The blue shared-chat message card now reliably reaches every active observer
+  within the transcript bound. The coordinator replays the bounded room
+  transcript to each newly attached observer, shared-chat messages are never
+  dropped from the terminal event queue (backpressure instead of eviction), and
+  the TUI deduplicates by message id.
+
+- `@` autocomplete now lists active agents by readable handles derived from
+  their display names (`@dev`, `@code-reviewer`) via an actor-isolated mention
+  catalogue, instead of opaque `@agent-Base64` blobs. Routing always resolves
+  back to the stable participant id; aliases are never recycled within a session,
+  duplicate names get numeric suffixes, and the legacy `@agent-Base64` spelling
+  remains accepted for backward compatibility.
+
 ## [1.1.4] - 2026-08-07
 
 ### Added

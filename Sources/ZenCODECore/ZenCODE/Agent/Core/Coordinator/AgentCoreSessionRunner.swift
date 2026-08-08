@@ -50,6 +50,10 @@ public actor AgentCoreSessionRunner {
     /// single-flight auto-trigger decision. Built lazily so its message source
     /// can capture this runner weakly and never form a reference cycle.
     private var sharedChatCoordinatorStorage: AgentSharedChatCoordinator?
+    /// Actor-isolated catalogue of readable `@mention` handles. Built lazily and
+    /// reset alongside the shared-chat coordinator so aliases are never recycled
+    /// within a session but start clean on a new one.
+    private var sharedChatMentionCatalogStorage: SharedChatMentionCatalog?
     private var promptAuthorizationHandlers: [UUID: AgentToolAuthorizationHandler] = [:]
     /// Maps each prompt ID to the session it belongs to so `authorizeTool`
     /// can route authorization requests to the correct handler.
@@ -456,6 +460,35 @@ public actor AgentCoreSessionRunner {
         return coordinator
     }
 
+    /// The actor-isolated mention catalogue for this session. Handles are
+    /// readable aliases derived from participant names; routing is always by
+    /// stable participant id.
+    func sharedChatMentionCatalog() -> SharedChatMentionCatalog {
+        if let sharedChatMentionCatalogStorage {
+            return sharedChatMentionCatalogStorage
+        }
+        let catalog = SharedChatMentionCatalog()
+        sharedChatMentionCatalogStorage = catalog
+        return catalog
+    }
+
+    /// Returns a handle → participant-id map for the current room roster. Used
+    /// by the autocomplete list (display) and the mention parser (routing).
+    public func sharedChatMentionHandles(
+        rootSessionID: String
+    ) async -> [String: String] {
+        let participants = await sharedChatParticipants(rootSessionID: rootSessionID)
+        return await sharedChatMentionCatalog().handleMap(for: participants)
+    }
+
+    /// Resolves a readable mention handle to its stable participant id, or nil
+    /// when no live mapping exists.
+    public func resolveSharedChatMentionHandle(
+        _ handle: String
+    ) async -> String? {
+        await sharedChatMentionCatalog().participantID(forHandle: handle)
+    }
+
     /// Subscribes to live shared-chat coordination.
     ///
     /// Every consumer — terminal UI, ACP, or a headless driver — receives the
@@ -764,6 +797,9 @@ public actor AgentCoreSessionRunner {
         if let chatReset {
             await sharedChatCoordinatorStorage?.endReset(chatReset)
         }
+        // A rebuilt session is a fresh conversation: readable mention aliases
+        // start clean so they are never inherited from the dropped roster.
+        await sharedChatMentionCatalogStorage?.reset()
     }
 
     /// Discards a logical session, including its persisted task graph.
@@ -909,6 +945,7 @@ public actor AgentCoreSessionRunner {
         // The runtime tree that produced the transient transcript is gone, so
         // finish every observer and drop the parked batches with it.
         await sharedChatCoordinatorStorage?.stopAll()
+        await sharedChatMentionCatalogStorage?.reset()
         activeRuntimeConfiguration = nil
         let backendToShutdown = backend
         backend = nil

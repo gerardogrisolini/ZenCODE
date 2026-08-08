@@ -739,38 +739,45 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
-    func activeAgentMentionHandlesAreUniqueSafeAndRouteExactlyByID() {
+    func activeAgentMentionHandlesAreUniqueSafeReadableAndRouteByID() async {
+        let catalog = SharedChatMentionCatalog()
         let participants = [
             AgentSharedChat.Participant(id: "planner-1", name: "Planning Agent", kind: .agent),
             AgentSharedChat.Participant(id: "planner-2", name: "Planning Agent", kind: .agent),
-            AgentSharedChat.Participant(id: "all", name: "all", kind: .agent),
+            AgentSharedChat.Participant(id: "reviewer", name: "Code Reviewer", kind: .agent),
             AgentSharedChat.Participant(id: "\u{1B}[31m odd", name: "review\r\u{7F}\u{85}", kind: .agent),
             AgentSharedChat.Participant(id: "inactive", name: "inactive", kind: .agent, isActive: false),
             AgentSharedChat.Participant(id: "coordinator", name: "coordinator", kind: .coordinator)
         ]
-        let suggestions = TerminalChat.sharedChatMentionSuggestions(for: participants)
+        let handleMap = await catalog.handleMap(for: participants)
+        let suggestions = TerminalChat.sharedChatMentionSuggestions(
+            for: participants,
+            handleMap: handleMap
+        )
         let commands = suggestions.map(\.command)
 
+        // Reserved (@all, @coordinator) + 4 active agents.
         #expect(commands.count == 6)
         #expect(Set(commands).count == commands.count)
         #expect(commands.contains("@all "))
         #expect(commands.contains("@coordinator "))
-        let directCommands = commands.filter { $0.hasPrefix("@agent-") }
-        #expect(directCommands.count == 4)
-        #expect(directCommands.allSatisfy { command in
-            command.hasPrefix("@agent-")
-                && command.hasSuffix(" ")
-                && command.dropLast().unicodeScalars.allSatisfy { scalar in
-                    (scalar.value >= 0x41 && scalar.value <= 0x5A)
-                        || (scalar.value >= 0x61 && scalar.value <= 0x7A)
-                        || (scalar.value >= 0x30 && scalar.value <= 0x39)
-                        || scalar == "@"
-                        || scalar == "-"
-                        || scalar == "_"
-                }
-        })
+        // Readable handles are derived from the display name, not opaque Base64.
+        #expect(commands.contains("@planning-agent "))
+        #expect(commands.contains("@planning-agent-2 "))
+        #expect(commands.contains("@code-reviewer "))
+        // Sanitised: control/escape characters dropped, leaving a clean slug.
+        let oddHandle = handleMap.first(where: { $0.value == "\u{1B}[31m odd" })?.key
+        #expect(oddHandle == "review")
+        #expect(commands.contains("@review "))
+        // Every suggestion is terminal-safe: no ESC, DEL, CR or control bytes.
         #expect(suggestions.allSatisfy { suggestion in
-            !suggestion.summary.unicodeScalars.contains { scalar in
+            !suggestion.command.unicodeScalars.contains { scalar in
+                scalar.value == 0x1B
+                    || scalar.value == 0x7F
+                    || scalar.value < 0x20
+                    || (0x80...0x9F).contains(scalar.value)
+            }
+            && !suggestion.summary.unicodeScalars.contains { scalar in
                 scalar.value == 0x1B
                     || scalar.value == 0x7F
                     || scalar.value == 0x0D
@@ -779,64 +786,222 @@ struct TerminalPromptEditorTests {
             }
         })
 
+        // Routing is always by stable id behind the readable handle.
         for participant in participants where participant.kind == .agent && participant.isActive {
-            let handle = TerminalChat.sharedChatMentionHandle(forParticipantID: participant.id)
-            // A trailing C1 NEL is Unicode whitespace, so it is trimmed off the
-            // raw line before sanitisation; CR and ESC inside the text are still
-            // replaced by inert control pictures.
+            let handle = handleMap.first(where: { $0.value == participant.id })?.key
+            let resolved = handle.flatMap { handleMap[$0] }
+            #expect(resolved == participant.id)
             #expect(
                 TerminalChat.sharedChatMentionRoute(
-                    from: "@\(handle) inspect\r\u{1B}\u{85}"
+                    from: "@\(handle ?? "x") inspect the work",
+                    readableHandles: handleMap
                 ) == TerminalChat.SharedChatMentionRoute(
                     destination: .direct([participant.id]),
-                    text: "inspect␍␛"
-                )
-            )
-            #expect(
-                TerminalChat.sharedChatMentionRoute(
-                    from: "@\(handle) inspect\u{85}tail"
-                ) == TerminalChat.SharedChatMentionRoute(
-                    destination: .direct([participant.id]),
-                    text: "inspect<C1-85>tail"
+                    text: "inspect the work"
                 )
             )
         }
-        #expect(TerminalChat.sharedChatMentionRoute(from: "@all report status")
-            == TerminalChat.SharedChatMentionRoute(destination: .all, text: "report status"))
-        #expect(TerminalChat.sharedChatMentionRoute(from: "@COORDINATOR report status")
-            == TerminalChat.SharedChatMentionRoute(destination: .coordinator, text: "report status"))
-        #expect(TerminalChat.sharedChatMentionRoute(from: "@Planning Agent ambiguous") == nil)
-        #expect(TerminalChat.parseSharedChatMention(from: "@all")
+        #expect(TerminalChat.sharedChatMentionRoute(
+            from: "@all report status",
+            readableHandles: handleMap
+        ) == TerminalChat.SharedChatMentionRoute(destination: .all, text: "report status"))
+        #expect(TerminalChat.sharedChatMentionRoute(
+            from: "@COORDINATOR report status",
+            readableHandles: handleMap
+        ) == TerminalChat.SharedChatMentionRoute(destination: .coordinator, text: "report status"))
+        // A raw display name is not a handle: only catalogue handles route.
+        #expect(TerminalChat.sharedChatMentionRoute(
+            from: "@Planning Agent ambiguous",
+            readableHandles: handleMap
+        ) == nil)
+        #expect(TerminalChat.parseSharedChatMention(from: "@all", readableHandles: handleMap)
             == .missingText(destination: .all))
-        #expect(TerminalChat.parseSharedChatMention(from: "@coordinator   ")
-            == .missingText(destination: .coordinator))
-        let firstHandle = TerminalChat.sharedChatMentionHandle(forParticipantID: participants[0].id)
-        #expect(TerminalChat.parseSharedChatMention(from: "@\(firstHandle)")
-            == .missingText(destination: .direct([participants[0].id])))
-        #expect(TerminalChat.parseSharedChatMention(from: "@not-a-live-mention") == .none)
+        #expect(TerminalChat.parseSharedChatMention(
+            from: "@coordinator   ",
+            readableHandles: handleMap
+        ) == .missingText(destination: .coordinator))
+        let firstHandle = handleMap.first(where: { $0.value == participants[0].id })?.key
+        #expect(TerminalChat.parseSharedChatMention(
+            from: "@\(firstHandle ?? "x")",
+            readableHandles: handleMap
+        ) == .missingText(destination: .direct([participants[0].id])))
+        #expect(TerminalChat.parseSharedChatMention(
+            from: "@not-a-live-mention",
+            readableHandles: handleMap
+        ) == .none)
+
+        // Hidden backward compatibility: the legacy @agent-Base64 spelling
+        // still resolves to the same stable id, even though it is never offered
+        // by the autocomplete list.
+        let compatHandle = TerminalChat.sharedChatMentionHandle(forParticipantID: participants[0].id)
+        #expect(
+            TerminalChat.sharedChatMentionRoute(
+                from: "@\(compatHandle) legacy routing",
+                readableHandles: [:]
+            ) == TerminalChat.SharedChatMentionRoute(
+                destination: .direct([participants[0].id]),
+                text: "legacy routing"
+            )
+        )
+
+        // Aliases are never recycled: a second participant with the same name
+        // gets a fresh suffix even after the first left the roster.
+        let staleMap = await catalog.handleMap(for: [participants[0]])
+        #expect(staleMap["planning-agent"] == participants[0].id)
+        let reissueMap = await catalog.handleMap(
+            for: [AgentSharedChat.Participant(id: "planner-3", name: "Planning Agent", kind: .agent)]
+        )
+        #expect(reissueMap["planning-agent-3"] != nil)
+        // A session reset clears the alias space.
+        await catalog.reset()
+        let freshMap = await catalog.handleMap(
+            for: [AgentSharedChat.Participant(id: "planner-3", name: "Planning Agent", kind: .agent)]
+        )
+        #expect(freshMap["planning-agent"] == "planner-3")
+    }
+
+    @Test
+    func mentionMenuKeepsReservedFirstAndSortsAgentsByDisplayNameThenJoinedAt() async {
+        let catalog = SharedChatMentionCatalog()
+        let base = Date(timeIntervalSince1970: 1_000)
+        let participants = [
+            AgentSharedChat.Participant(id: "z-1", name: "Zulu Agent", kind: .agent, joinedAt: base),
+            AgentSharedChat.Participant(id: "a-1", name: "Alpha Agent", kind: .agent, joinedAt: base),
+            AgentSharedChat.Participant(id: "a-2", name: "Alpha Agent", kind: .agent, joinedAt: base.addingTimeInterval(1)),
+            AgentSharedChat.Participant(id: "m-1", name: "beta agent", kind: .agent, joinedAt: base),
+        ]
+        let handleMap = await catalog.handleMap(for: participants)
+        let suggestions = TerminalChat.sharedChatMentionSuggestions(
+            for: participants,
+            handleMap: handleMap
+        )
+        let commands = suggestions.map(\.command)
+
+        // @coordinator and @all always stay in the first two positions.
+        #expect(Array(commands.prefix(2)) == ["@coordinator ", "@all "])
+        // Then only active agents, ordered by readable display name
+        // (case-insensitive) with joinedAt as the tie-breaker — never by
+        // handle or Base64.
+        #expect(
+            Array(commands.dropFirst(2))
+                == ["@alpha-agent ", "@alpha-agent-2 ", "@beta-agent ", "@zulu-agent "]
+        )
+    }
+
+    @Test
+    func agentsNamedAllOrCoordinatorGetSuffixedHandlesThatRouteToTheirId() async {
+        let catalog = SharedChatMentionCatalog()
+        let participants = [
+            AgentSharedChat.Participant(id: "all-id", name: "all", kind: .agent),
+            AgentSharedChat.Participant(id: "coord-id", name: "Coordinator", kind: .agent),
+        ]
+        let handleMap = await catalog.handleMap(for: participants)
+        let suggestions = TerminalChat.sharedChatMentionSuggestions(
+            for: participants,
+            handleMap: handleMap
+        )
+        let commands = suggestions.map(\.command)
+
+        // The colliding agents are still suggested, under their suffixed
+        // handles; the bare broadcast spellings appear exactly once as the
+        // reserved mentions and are never duplicated as direct-agent handles.
+        #expect(commands.contains("@all-2 "))
+        #expect(commands.contains("@coordinator-2 "))
+        #expect(commands.filter { $0 == "@all " }.count == 1)
+        #expect(commands.filter { $0 == "@coordinator " }.count == 1)
+
+        // The parser routes the suffixed handles to the right agent ids…
+        #expect(
+            TerminalChat.sharedChatMentionRoute(
+                from: "@all-2 inspect the diff",
+                readableHandles: handleMap
+            ) == TerminalChat.SharedChatMentionRoute(
+                destination: .direct(["all-id"]),
+                text: "inspect the diff"
+            )
+        )
+        #expect(
+            TerminalChat.sharedChatMentionRoute(
+                from: "@coordinator-2 inspect the diff",
+                readableHandles: handleMap
+            ) == TerminalChat.SharedChatMentionRoute(
+                destination: .direct(["coord-id"]),
+                text: "inspect the diff"
+            )
+        )
+        // …while the unsuffixed spellings keep their broadcast meaning.
+        #expect(
+            TerminalChat.sharedChatMentionRoute(
+                from: "@all inspect the diff",
+                readableHandles: handleMap
+            ) == TerminalChat.SharedChatMentionRoute(destination: .all, text: "inspect the diff")
+        )
+        #expect(
+            TerminalChat.sharedChatMentionRoute(
+                from: "@coordinator inspect the diff",
+                readableHandles: handleMap
+            ) == TerminalChat.SharedChatMentionRoute(
+                destination: .coordinator,
+                text: "inspect the diff"
+            )
+        )
+    }
+
+    @Test
+    func unicodeBidiAndPunctuationOnlyNamesNeverLeakIdsIntoTheMenu() async {
+        let catalog = SharedChatMentionCatalog()
+        let participants = [
+            AgentSharedChat.Participant(id: "uuid-AAAA-1", name: "日本語", kind: .agent),
+            AgentSharedChat.Participant(id: "uuid-BBBB-2", name: "\u{202E}\u{202C}\u{061C}", kind: .agent),
+            AgentSharedChat.Participant(id: "uuid-CCCC-3", name: "!!!???", kind: .agent),
+        ]
+        let handleMap = await catalog.handleMap(for: participants)
+        let suggestions = TerminalChat.sharedChatMentionSuggestions(
+            for: participants,
+            handleMap: handleMap
+        )
+        let commands = suggestions.map(\.command)
+
+        // The fallback is the readable, stable "agent" handle family — never
+        // the internal id or a UUID.
+        #expect(commands.contains("@agent "))
+        #expect(commands.contains("@agent-2 "))
+        #expect(commands.contains("@agent-3 "))
+        #expect(commands.allSatisfy { !$0.contains("uuid") && !$0.contains("AAAA") })
+
+        // Routing resolves the fallback handle to the right agent by id.
+        #expect(
+            TerminalChat.sharedChatMentionRoute(
+                from: "@agent-3 report status",
+                readableHandles: handleMap
+            ) == TerminalChat.SharedChatMentionRoute(
+                destination: .direct(["uuid-CCCC-3"]),
+                text: "report status"
+            )
+        )
     }
 
     @Test
     func activeAgentMentionsAutocompleteAndRouteFromTheLeadingToken() {
-        let plannerHandle = TerminalChat.sharedChatMentionHandle(forParticipantID: "planner-id")
-        let reviewerHandle = TerminalChat.sharedChatMentionHandle(forParticipantID: "reviewer-id")
         let suggestions = [
             TerminalCommandSuggestion(command: "/tasks", summary: "tasks"),
-            TerminalCommandSuggestion(command: "@\(plannerHandle) ", summary: "message active agent"),
-            TerminalCommandSuggestion(command: "@\(reviewerHandle) ", summary: "message active agent")
+            TerminalCommandSuggestion(command: "@planner ", summary: "message active agent"),
+            TerminalCommandSuggestion(command: "@reviewer ", summary: "message active agent")
         ]
-        var editor = makeEditor("@agent-cGxh")
+        var editor = makeEditor("@pl")
         let context = TerminalPromptEditorContext(suggestions: suggestions)
 
-        #expect(editor.visibleSuggestions(context: context).map(\.command) == ["@\(plannerHandle) "])
+        #expect(editor.visibleSuggestions(context: context).map(\.command) == ["@planner "])
         #expect(editor.apply(.tab, context: context) == .changed)
-        #expect(String(editor.buffer) == "@\(plannerHandle) ")
+        #expect(String(editor.buffer) == "@planner ")
         #expect(
-            TerminalChat.sharedChatMentionRoute(from: "@\(plannerHandle) inspect the diff")
-                == TerminalChat.SharedChatMentionRoute(
-                    destination: .direct(["planner-id"]),
-                    text: "inspect the diff"
-                )
+            TerminalChat.sharedChatMentionRoute(
+                from: "@planner inspect the diff",
+                readableHandles: ["planner": "planner-id"]
+            ) == TerminalChat.SharedChatMentionRoute(
+                destination: .direct(["planner-id"]),
+                text: "inspect the diff"
+            )
         )
     }
 }

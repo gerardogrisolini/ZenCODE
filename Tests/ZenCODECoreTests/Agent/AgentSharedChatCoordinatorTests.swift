@@ -172,16 +172,21 @@ struct AgentSharedChatCoordinatorTests {
 
     // MARK: - Busy
 
+    /// While a turn is in flight the coordinator mailbox is still drained: the
+    /// inbound message is parked in `pending` and shown to the observer, but the
+    /// single-flight `evaluate` stays blocked by the busy state, so no
+    /// auto-trigger is minted. Ending the turn re-arms the room and the queued
+    /// message becomes exactly one synthetic turn.
     @Test
-    func busyRoomHoldsBackMailboxDrainUntilTurnEnds() async throws {
+    func busyRoomDrainsMailboxToPendingButHoldsBackTriggerUntilTurnEnds() async throws {
         let room = "room-\(UUID().uuidString)"
         let chat = try await makeChat(roomID: room, agents: ["planner"])
         let coordinator = makeCoordinator(chat: chat, pollInterval: .seconds(60))
         let subscription = await coordinator.observeSubscription(roomID: room)
         let observation = await Observation.make(stream: subscription.events)
-        // A turn is already running for this room. Inline delivery owns the
-        // shared-chat mailbox for its whole duration, so the coordinator poll
-        // must not steal messages from it.
+        // A turn is already running for this room. The coordinator mailbox is
+        // its own participant inbox, so draining it cannot race the in-flight
+        // turn; the message is simply queued for the next idle evaluation.
         let operatorTurn = await coordinator.noteTurnStarted(
             roomID: room,
             prompt: "an operator prompt of its own"
@@ -195,19 +200,18 @@ struct AgentSharedChatCoordinatorTests {
         )
         await coordinator.poll(roomID: room)
 
-        // While the turn is in flight the destructive drain is skipped: nothing
-        // is pending in the coordinator queue and no auto-trigger is emitted.
-        // The message is still in the bus mailbox — the test source is the chat
-        // itself, so a poll that never called `drainCoordinatorMessages` left it
-        // untouched. The post-turn trigger below transitively proves this: the
-        // poll can only have obtained the message by draining the mailbox after
-        // the turn ended.
+        // The message is drained into `pending` and rendered to the observer,
+        // but the busy state keeps `evaluate` from starting a turn: there is no
+        // auto-trigger while the operator turn is in flight.
+        #expect(await waitUntil { await coordinator.pendingMessageCount(roomID: room) == 1 })
         #expect(await observation.snapshot().compactMap(\.autoTrigger).isEmpty)
-        #expect(await coordinator.pendingMessageCount(roomID: room) == 0)
+        let displayed = await observation.wait(untilAtLeast: 1) {
+            $0.contains { $0.renderedMessages?.map(\.text) == ["while busy"] }
+        }
+        #expect(displayed.contains { $0.renderedMessages?.map(\.text) == ["while busy"] })
 
-        // Ending the turn re-arms the poll. The mailbox is drained now and
-        // exactly one synthetic turn is offered for the message that survived
-        // the hold-back.
+        // Ending the turn re-arms the room. The queued message becomes exactly
+        // one synthetic turn; `pending` is drained back to zero.
         await coordinator.noteTurnEnded(operatorTurn)
         let events = await observation.wait(untilAtLeast: 1) { $0.contains { $0.autoTrigger != nil } }
         let triggers = events.compactMap(\.autoTrigger)
@@ -676,60 +680,551 @@ struct AgentSharedChatCoordinatorTests {
         await coordinator.stopAll()
     }
 
-    // MARK: - Bounded delivery
+    // MARK: - Per-observer transcript delivery
 
-    /// A stalled observer evicts its own oldest events instead of growing
-    /// without limit, and coordination survives the eviction: the outstanding
-    /// trigger is still claimable by a freshly attached consumer.
+    /// Reproduces the ordering that used to lose a rendered agent-to-agent
+    /// message: an existing observer's poll is held at the transcript read,
+    /// then a second observer attaches and its replay completes first. A
+    /// room-global emitted-ID set let that replay suppress the existing
+    /// observer's poll emission. The ledger must instead give both streams the
+    /// retained ID once, with no renderer-side deduplication involved.
     @Test
-    func stalledObserverBufferIsBoundedAndKeepsTheTriggerClaimable() async throws {
+    func replayCompletingBeforeAnInFlightPollDeliversToBothObserversExactlyOnce() async throws {
+        let room = "room-\(UUID().uuidString)"
+        let source = TranscriptRaceSource()
+        let coordinator = makeCoordinator(source: source)
+        let existingSubscription = await coordinator.observeSubscription(roomID: room)
+        let existing = await Observation.make(stream: existingSubscription.events)
+
+        // The first attachment launches exactly a replay and an initial monitor
+        // poll. Let their empty transcript reads complete before arming the
+        // controlled interleaving below.
+        let initialReadsCompleted = await waitUntil {
+            await source.transcriptReadCount >= 2
+        }
+        #expect(initialReadsCompleted)
+        guard initialReadsCompleted else {
+            await existing.cancel()
+            await coordinator.stopAll()
+            return
+        }
+
+        let message = AgentSharedChat.Message(
+            roomID: room,
+            sender: AgentSharedChat.Participant(id: "alpha", name: "alpha", kind: .agent),
+            recipientIDs: ["beta"],
+            text: "agent to agent during replay race"
+        )
+        await source.appendTranscript(message)
+        let readsBeforeRace = await source.transcriptReadCount
+        await source.armNextTranscriptReadGate()
+        let poll = Task { await coordinator.poll(roomID: room) }
+
+        let pollReachedTranscript = await waitUntil {
+            await source.isTranscriptReadSuspended
+        }
+        #expect(pollReachedTranscript)
+        guard pollReachedTranscript else {
+            await source.releaseTranscriptReadGate()
+            await poll.value
+            await existing.cancel()
+            await coordinator.stopAll()
+            return
+        }
+
+        let joiningSubscription = await coordinator.observeSubscription(roomID: room)
+        let joining = await Observation.make(stream: joiningSubscription.events)
+        // The joining observer's replay is the second read and is deliberately
+        // allowed to complete while the poll is still held.
+        let replayStarted = await waitUntil {
+            await source.transcriptReadCount >= readsBeforeRace + 2
+        }
+        #expect(replayStarted)
+        guard replayStarted else {
+            await source.releaseTranscriptReadGate()
+            await poll.value
+            await existing.cancel()
+            await joining.cancel()
+            await coordinator.stopAll()
+            return
+        }
+        let joiningBeforePoll = await joining.wait(untilAtLeast: 1) { events in
+            Self.countOccurrences(of: message.id, in: events) == 1
+        }
+        #expect(Self.countOccurrences(of: message.id, in: joiningBeforePoll) == 1)
+
+        await source.releaseTranscriptReadGate()
+        await poll.value
+
+        let existingEvents = await existing.wait(untilAtLeast: 1) { events in
+            Self.countOccurrences(of: message.id, in: events) == 1
+        }
+        let joiningEvents = await joining.wait(untilAtLeast: 1) { events in
+            Self.countOccurrences(of: message.id, in: events) == 1
+        }
+        #expect(Self.countOccurrences(of: message.id, in: existingEvents) == 1)
+        #expect(Self.countOccurrences(of: message.id, in: joiningEvents) == 1)
+
+        // A later full-transcript poll is still idempotent for both raw streams.
+        await coordinator.poll(roomID: room)
+        #expect(Self.countOccurrences(of: message.id, in: await existing.snapshot()) == 1)
+        #expect(Self.countOccurrences(of: message.id, in: await joining.snapshot()) == 1)
+
+        await existing.cancel()
+        await joining.cancel()
+        await coordinator.stopAll()
+    }
+
+    /// Covers the inverse ordering. The joining replay is held at its source
+    /// read while the monitor poll is allowed to emit to both observers first;
+    /// releasing that replay afterwards used to append a duplicate raw
+    /// `.messages` event to the joining stream.
+    @Test
+    func pollCompletingBeforeAnInFlightReplayDoesNotDuplicateTheJoiningObserver() async throws {
+        let room = "room-\(UUID().uuidString)"
+        let source = TranscriptRaceSource()
+        let coordinator = makeCoordinator(source: source)
+        let existingSubscription = await coordinator.observeSubscription(roomID: room)
+        let existing = await Observation.make(stream: existingSubscription.events)
+
+        let initialReadsCompleted = await waitUntil {
+            await source.transcriptReadCount >= 2
+        }
+        #expect(initialReadsCompleted)
+        guard initialReadsCompleted else {
+            await existing.cancel()
+            await coordinator.stopAll()
+            return
+        }
+
+        let message = AgentSharedChat.Message(
+            roomID: room,
+            sender: AgentSharedChat.Participant(id: "alpha", name: "alpha", kind: .agent),
+            recipientIDs: ["beta"],
+            text: "poll before replay race"
+        )
+        await source.appendTranscript(message)
+        await source.armNextParticipantsReadGate()
+        await source.armNextTranscriptReadGate()
+
+        let joiningSubscription = await coordinator.observeSubscription(roomID: room)
+        let joining = await Observation.make(stream: joiningSubscription.events)
+        let bothGatesReached = await waitUntil {
+            let participantsSuspended = await source.isParticipantsReadSuspended
+            let transcriptSuspended = await source.isTranscriptReadSuspended
+            return participantsSuspended && transcriptSuspended
+        }
+        #expect(bothGatesReached)
+        guard bothGatesReached else {
+            await source.releaseParticipantsReadGate()
+            await source.releaseTranscriptReadGate()
+            await existing.cancel()
+            await joining.cancel()
+            await coordinator.stopAll()
+            return
+        }
+
+        // The monitor poll was blocked before its transcript read, whereas the
+        // joining replay owns the transcript gate. Releasing only participants
+        // makes the poll read and emit the retained ID first.
+        await source.releaseParticipantsReadGate()
+        let existingEvents = await existing.wait(untilAtLeast: 1) { events in
+            Self.countOccurrences(of: message.id, in: events) == 1
+        }
+        let joiningEvents = await joining.wait(untilAtLeast: 1) { events in
+            Self.countOccurrences(of: message.id, in: events) == 1
+        }
+        #expect(Self.countOccurrences(of: message.id, in: existingEvents) == 1)
+        #expect(Self.countOccurrences(of: message.id, in: joiningEvents) == 1)
+
+        await source.releaseTranscriptReadGate()
+        let replayReleased = await waitUntil {
+            !(await source.isTranscriptReadSuspended)
+        }
+        #expect(replayReleased)
+        // A complete poll after the replay is released serializes any resumed
+        // actor work without a timing sleep; both paths are idempotent through
+        // the same observer ledger.
+        await coordinator.poll(roomID: room)
+        await coordinator.poll(roomID: room)
+        #expect(Self.countOccurrences(of: message.id, in: await existing.snapshot()) == 1)
+        #expect(Self.countOccurrences(of: message.id, in: await joining.snapshot()) == 1)
+
+        await existing.cancel()
+        await joining.cancel()
+        await coordinator.stopAll()
+    }
+
+    /// Two active streams receive every retained agent-to-agent message exactly
+    /// once even though each subscription races its attach-time replay against
+    /// the monitor's full-transcript poll. This checks raw coordinator events,
+    /// not the TUI card deduplicator.
+    @Test
+    func twoObserversReceiveEveryRetainedTranscriptMessageExactlyOnce() async throws {
+        let room = "room-\(UUID().uuidString)"
+        let source = TranscriptRaceSource()
+        let messages = (0 ..< 4).map { index in
+            AgentSharedChat.Message(
+                roomID: room,
+                sender: AgentSharedChat.Participant(
+                    id: "agent-\(index)",
+                    name: "agent-\(index)",
+                    kind: .agent
+                ),
+                recipientIDs: ["peer-\(index)"],
+                text: "retained \(index)"
+            )
+        }
+        await source.replaceTranscript(with: messages)
+        let coordinator = makeCoordinator(source: source)
+        let firstSubscription = await coordinator.observeSubscription(roomID: room)
+        let first = await Observation.make(stream: firstSubscription.events)
+        let secondSubscription = await coordinator.observeSubscription(roomID: room)
+        let second = await Observation.make(stream: secondSubscription.events)
+        let messageIDs = Set(messages.map(\.id))
+
+        let firstReceivedAll = await first.wait(untilAtLeast: 1) { events in
+            Set(events.compactMap(\.renderedMessages).flatMap { $0 }.map(\.id)) == messageIDs
+        }
+        let secondReceivedAll = await second.wait(untilAtLeast: 1) { events in
+            Set(events.compactMap(\.renderedMessages).flatMap { $0 }.map(\.id)) == messageIDs
+        }
+        #expect(Set(firstReceivedAll.compactMap(\.renderedMessages).flatMap { $0 }.map(\.id)) == messageIDs)
+        #expect(Set(secondReceivedAll.compactMap(\.renderedMessages).flatMap { $0 }.map(\.id)) == messageIDs)
+
+        // Repeated complete transcript reads cannot append a second raw event
+        // for any of the IDs already accepted by either stream.
+        await coordinator.poll(roomID: room)
+        await coordinator.poll(roomID: room)
+        let firstEvents = await first.snapshot()
+        let secondEvents = await second.snapshot()
+        for message in messages {
+            #expect(Self.countOccurrences(of: message.id, in: firstEvents) == 1)
+            #expect(Self.countOccurrences(of: message.id, in: secondEvents) == 1)
+        }
+
+        await first.cancel()
+        await second.cancel()
+        await coordinator.stopAll()
+    }
+
+    /// Backpressure recovery belongs only to the stream whose `AsyncStream`
+    /// evicted a `.messages` event. The healthy observer consumes continuously;
+    /// once the stalled stream resumes, it receives the missing retained ID,
+    /// while the healthy stream receives no replay of its already-enqueued IDs.
+    @Test
+    func droppedMessageRecoveryIsScopedToTheObserverWhoseBufferEvictedIt() async throws {
+        let room = "room-\(UUID().uuidString)"
+        let source = OverflowReplaySource()
+        let coordinator = AgentSharedChatCoordinator(
+            source: AgentSharedChatCoordinator.Source(
+                drainCoordinatorMessages: { _ in await source.drain() },
+                participants: { _ in await source.participants() },
+                allRoomMessages: { _ in await source.allMessages() }
+            ),
+            pollInterval: .seconds(600)
+        )
+        let stalledSubscription = await coordinator.observeSubscription(roomID: room)
+        let healthySubscription = await coordinator.observeSubscription(roomID: room)
+        // Prevent auto-trigger events from adding unrelated buffer pressure.
+        await coordinator.setConsumerBusy(true, observation: stalledSubscription)
+        await coordinator.setConsumerBusy(true, observation: healthySubscription)
+        let healthy = await Observation.make(stream: healthySubscription.events)
+        // Both attach-time reads see the empty transcript before traffic starts;
+        // the overflow below is therefore caused by the stalled stream's own
+        // per-message events, not by a late setup replay batching the burst.
+        let initialReplaysCompleted = await waitUntil {
+            await source.allMessagesReadCount >= 3
+        }
+        #expect(initialReplaysCompleted)
+        guard initialReplaysCompleted else {
+            await healthy.cancel()
+            await coordinator.stopAll()
+            return
+        }
+
+        let total = AgentSharedChatCoordinator.maximumBufferedEventsPerSubscriber + 1
+        var produced: [AgentSharedChat.Message] = []
+        for index in 0 ..< total {
+            let message = AgentSharedChat.Message(
+                roomID: room,
+                sender: AgentSharedChat.Participant(id: "agent-1", name: "planner", kind: .agent),
+                recipientIDs: [AgentSharedChat.coordinatorID(for: room)],
+                text: "scoped recovery \(index)"
+            )
+            produced.append(message)
+            await source.enqueue([message])
+            // One batch at a time gives the healthy collector a deterministic
+            // chance to drain while the other subscription remains stalled.
+            await coordinator.poll(roomID: room)
+            await Task.yield()
+        }
+
+        #expect(await coordinator.droppedEventCount(roomID: room) > 0)
+        let transcriptIDs = Set((await source.allMessages()).map(\.id))
+        #expect(transcriptIDs == Set(produced.map(\.id)))
+        let healthyReceivedAll = await healthy.wait(untilAtLeast: 1) { events in
+            Set(events.compactMap(\.renderedMessages).flatMap { $0 }.map(\.id)) == transcriptIDs
+        }
+        #expect(Set(healthyReceivedAll.compactMap(\.renderedMessages).flatMap { $0 }.map(\.id)) == transcriptIDs)
+
+        // Start the previously stalled reader, then let the next transcript
+        // pass recover only IDs made due by that stream's evictions.
+        let stalled = await Observation.make(stream: stalledSubscription.events)
+        var recovered = false
+        for _ in 0 ..< 16 {
+            await coordinator.poll(roomID: room)
+            let stalledIDs = Set(
+                await stalled.snapshot()
+                    .compactMap(\.renderedMessages)
+                    .flatMap { $0 }
+                    .map(\.id)
+            )
+            if stalledIDs == transcriptIDs {
+                recovered = true
+                break
+            }
+            await Task.yield()
+        }
+        #expect(recovered)
+
+        let healthyEvents = await healthy.snapshot()
+        let stalledEvents = await stalled.snapshot()
+        for message in produced {
+            #expect(Self.countOccurrences(of: message.id, in: healthyEvents) == 1)
+            #expect(Self.countOccurrences(of: message.id, in: stalledEvents) == 1)
+        }
+
+        await healthy.cancel()
+        await stalled.cancel()
+        await coordinator.stopAll()
+    }
+
+    // MARK: - Bounded replay
+
+    /// A consumer that attaches after agent-to-agent traffic already flowed
+    /// through the room still sees every retained message: the bounded
+    /// transcript is replayed to each new observer, so the blue box reaches
+    /// every active terminal within the transcript bound. The Core ledger keeps
+    /// raw `.messages` delivery per observer exactly once even if its replay and
+    /// a poll interleave.
+    @Test
+    func lateObserverReceivesBoundedTranscriptReplay() async throws {
         let room = "room-\(UUID().uuidString)"
         let chat = try await makeChat(roomID: room, agents: ["planner"])
         let coordinator = makeCoordinator(chat: chat, pollInterval: .seconds(60))
-        // Deliberately never consumed: this models a stalled rendering surface.
-        let stalledSubscription = await coordinator.observeSubscription(roomID: room)
-        let limit = AgentSharedChatCoordinator.maximumBufferedEventsPerSubscriber
+        let firstSubscription = await coordinator.observeSubscription(roomID: room)
+        let first = await Observation.make(stream: firstSubscription.events)
 
-        // Publish until the bounded buffer has to evict. The loop is bounded so
-        // a regression fails fast instead of running forever.
-        var sent = 0
-        while await coordinator.droppedEventCount(roomID: room) == 0, sent < 8 * limit {
+        // Publish a burst of agent-to-coordinator messages and drain them into
+        // the coordinator queue so they leave the mailbox but stay in the
+        // bounded transcript.
+        let count = AgentSharedChat.maximumMessagesPerInjectedPrompt + 2
+        for index in 0 ..< count {
             try await chat.send(
                 roomID: room,
                 senderID: "planner",
                 destination: .coordinator,
-                text: "overflow \(sent)"
+                text: "replay \(index)"
             )
-            await coordinator.poll(roomID: room)
-            sent += 1
         }
-        #expect(await coordinator.droppedEventCount(roomID: room) > 0)
+        await coordinator.poll(roomID: room)
+        // The first observer received the live emissions.
+        _ = await first.wait(untilAtLeast: 1) { $0.contains { $0.renderedMessages != nil } }
 
-        // Recovery: a new observer is handed the outstanding trigger, so an
-        // overflowed stream never strands the batch.
-        let recoverySubscription = await coordinator.observeSubscription(roomID: room)
-        let recovery = await Observation.make(stream: recoverySubscription.events)
-        let events = await recovery.wait(untilAtLeast: 1) { $0.contains { $0.autoTrigger != nil } }
-        let trigger = try #require(events.compactMap(\.autoTrigger).first)
-        #expect(await coordinator.resolveAutoTrigger(
-            id: trigger.id,
-            observation: recoverySubscription,
-            resolution: .started
-        ) == .acquired)
+        // A late observer attaches after the burst was already emitted. It must
+        // receive a replay of the bounded transcript, not an empty stream.
+        let lateSubscription = await coordinator.observeSubscription(roomID: room)
+        let late = await Observation.make(stream: lateSubscription.events)
+        let replayed = await late.wait(untilAtLeast: 1) { $0.contains { $0.renderedMessages != nil } }
+        let replayedTexts = replayed.compactMap(\.renderedMessages).flatMap { $0 }.map(\.text)
+        // The transcript is bounded: every retained message is replayed.
+        let transcript = await chat.messages(roomID: room).map(\.text)
+        #expect(Set(replayedTexts) == Set(transcript))
+        #expect(transcript.contains("replay 0"))
+        #expect(transcript.contains("replay \(count - 1)"))
 
         await coordinator.stop(roomID: room)
-        await recovery.cancel()
+        await first.cancel()
+        await late.cancel()
+        await coordinator.stopAll()
+    }
 
-        // The stalled stream finishes with a bounded backlog whose newest
-        // events survived: eviction removes the oldest first.
-        var buffered: [AgentSharedChatCoordinatorEvent] = []
-        for await event in stalledSubscription.events {
-            buffered.append(event)
+    /// An observer that is *already attached* and falls into backpressure
+    /// (its bounded stream drops `.messages` events while the TUI forwarder is
+    /// stalled) must still recover every message still in the bounded
+    /// transcript. Recovery is driven from the transcript on every poll, not
+    /// only at subscribe time; the Core ledger returns only the IDs evicted from
+    /// that observer's stream, so recovery does not duplicate raw events.
+    @Test
+    func activeObserverInOverflowRecoversAllRetainedMessagesFromTranscript() async throws {
+        let room = "room-\(UUID().uuidString)"
+        let source = OverflowReplaySource()
+        // Single-message batches: each drain yields exactly one `.messages`
+        // event, so a count just above the per-subscriber buffer bound forces a
+        // real drop while every message still fits inside the 512-message
+        // transcript window.
+        let total = AgentSharedChatCoordinator.maximumBufferedEventsPerSubscriber + 60
+        for index in 0 ..< total {
+            await source.enqueue([
+                AgentSharedChat.Message(
+                    roomID: room,
+                    sender: AgentSharedChat.Participant(
+                        id: "agent-1",
+                        name: "planner",
+                        kind: .agent
+                    ),
+                    recipientIDs: [AgentSharedChat.coordinatorID(for: room)],
+                    text: "overflow \(index)"
+                )
+            ])
         }
-        #expect(buffered.count <= limit)
-        let renderedTexts = buffered.compactMap(\.renderedMessages).flatMap { $0 }.map(\.text)
-        #expect(renderedTexts.last == "overflow \(sent - 1)")
-        #expect(!renderedTexts.contains("overflow 0"))
+        let coordinator = AgentSharedChatCoordinator(
+            source: AgentSharedChatCoordinator.Source(
+                drainCoordinatorMessages: { _ in await source.drain() },
+                participants: { _ in await source.participants() },
+                allRoomMessages: { _ in await source.allMessages() }
+            ),
+            // Long enough that the ticker never interferes: every poll here is
+            // driven explicitly.
+            pollInterval: .seconds(600)
+        )
+        // Existing observer: attached up front, but its stream is not consumed
+        // yet so it falls into backpressure as events accumulate.
+        let stalledSubscription = await coordinator.observeSubscription(roomID: room)
+
+        // Drain everything while the observer is stalled: its bounded stream
+        // overflows and drops the oldest `.messages` events.
+        var polls = 0
+        while polls < 8 * total {
+            let remaining = await source.remainingBatchCount
+            let dropped = await coordinator.droppedEventCount(roomID: room)
+            if remaining == 0, dropped > 0 { break }
+            await coordinator.poll(roomID: room)
+            polls += 1
+        }
+        #expect(await coordinator.droppedEventCount(roomID: room) > 0)
+        #expect(await source.remainingBatchCount == 0)
+
+        let transcriptIDs = Set((await source.allMessages()).map(\.id))
+
+        // The observer starts consuming. Once its buffered events drain, the
+        // next poll offers the missing retained IDs to it, recovering every
+        // message that was dropped while it was stalled.
+        let observer = await Observation.make(stream: stalledSubscription.events)
+        var recovered = false
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < deadline {
+            await coordinator.poll(roomID: room)
+            let seen = Set(
+                await observer.snapshot()
+                    .compactMap(\.renderedMessages)
+                    .flatMap { $0 }
+                    .map(\.id)
+            )
+            if seen == transcriptIDs {
+                recovered = true
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(recovered, "the stalled observer must recover every retained message")
+
+        await observer.cancel()
+        await coordinator.stopAll()
+    }
+
+    /// Regression: a dropped `.messages` event is not always the event being
+    /// emitted. Pushing into a full buffer evicts the *oldest* buffered event,
+    /// so when a stalled observer's buffer is full of `.messages` events and the
+    /// room going idle mints an auto-trigger, the auto-trigger emission evicts a
+    /// `.messages` event even though the emitted event is `.autoTrigger`. The
+    /// fix inspects the evicted value of `YieldResult.dropped`, making its IDs
+    /// due only for that observer on the next bounded transcript delivery;
+    /// before it, the evicted messages were lost forever.
+    @Test
+    func autoTriggerEvictingBufferedMessagesStillRecoversTheFullRetainedTranscript() async throws {
+        let room = "room-\(UUID().uuidString)"
+        let source = OverflowReplaySource()
+        // Single-message batches: each drain yields exactly one `.messages`
+        // event, so `maximumBufferedEventsPerSubscriber` batches fill the
+        // stalled observer's buffer *exactly* — nothing is dropped yet, which
+        // keeps the auto-trigger push below the *only* drop of the test.
+        let bufferCapacity = AgentSharedChatCoordinator.maximumBufferedEventsPerSubscriber
+        for index in 0 ..< bufferCapacity {
+            await source.enqueue([
+                AgentSharedChat.Message(
+                    roomID: room,
+                    sender: AgentSharedChat.Participant(
+                        id: "agent-1",
+                        name: "planner",
+                        kind: .agent
+                    ),
+                    recipientIDs: [AgentSharedChat.coordinatorID(for: room)],
+                    text: "evicted by trigger \(index)"
+                )
+            ])
+        }
+        let coordinator = AgentSharedChatCoordinator(
+            source: AgentSharedChatCoordinator.Source(
+                drainCoordinatorMessages: { _ in await source.drain() },
+                participants: { _ in await source.participants() },
+                allRoomMessages: { _ in await source.allMessages() }
+            ),
+            // Long enough that the ticker never interferes: every poll here is
+            // driven explicitly.
+            pollInterval: .seconds(600)
+        )
+        // Stalled observer attached up front but not consumed; the consumer
+        // busy declaration keeps `evaluate` from minting an auto-trigger while
+        // the buffer fills with `.messages` events only.
+        let stalledSubscription = await coordinator.observeSubscription(roomID: room)
+        await coordinator.setConsumerBusy(true, observation: stalledSubscription)
+
+        var polls = 0
+        while await source.remainingBatchCount > 0 {
+            await coordinator.poll(roomID: room)
+            polls += 1
+            #expect(polls < 8 * bufferCapacity, "fill loop must terminate")
+        }
+        // The buffer is exactly full and the fill dropped nothing: on the old
+        // code the subscriber would only be made due again by a `.messages`
+        // emission, and no drop happened yet, so the eviction below went
+        // unrecovered.
+        #expect(await source.remainingBatchCount == 0)
+        #expect(await coordinator.droppedEventCount(roomID: room) == 0)
+
+        // Going idle mints the auto-trigger. The buffer is full, so the push
+        // evicts the oldest buffered `.messages` event — even though the event
+        // being emitted is `.autoTrigger`.
+        await coordinator.setConsumerBusy(false, observation: stalledSubscription)
+        #expect(await coordinator.droppedEventCount(roomID: room) >= 1)
+
+        let transcriptIDs = Set((await source.allMessages()).map(\.id))
+
+        // The consumer starts consuming. Once the buffered events drain, the
+        // next poll offers the missing retained IDs to this observer, including
+        // the one evicted by the trigger.
+        let observer = await Observation.make(stream: stalledSubscription.events)
+        var recovered = false
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < deadline {
+            await coordinator.poll(roomID: room)
+            let seen = Set(
+                await observer.snapshot()
+                    .compactMap(\.renderedMessages)
+                    .flatMap { $0 }
+                    .map(\.id)
+            )
+            if seen == transcriptIDs {
+                recovered = true
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(recovered, "an auto-trigger eviction must not lose retained messages")
+
+        await observer.cancel()
         await coordinator.stopAll()
     }
 
@@ -1129,6 +1624,30 @@ struct AgentSharedChatCoordinatorTests {
             pollInterval: pollInterval
         )
     }
+
+    private func makeCoordinator(source: TranscriptRaceSource) -> AgentSharedChatCoordinator {
+        AgentSharedChatCoordinator(
+            source: AgentSharedChatCoordinator.Source(
+                drainCoordinatorMessages: { _ in await source.drain() },
+                participants: { _ in await source.participants() },
+                allRoomMessages: { _ in await source.allMessages() }
+            ),
+            // Tests explicitly control every relevant poll. The ticker remains
+            // present for production parity but cannot create a timing window.
+            pollInterval: .seconds(600)
+        )
+    }
+
+    private static func countOccurrences(
+        of messageID: UUID,
+        in events: [AgentSharedChatCoordinatorEvent]
+    ) -> Int {
+        events.compactMap { event in
+            guard case let .messages(messages) = event else { return 0 }
+            return messages.filter { $0.id == messageID }.count
+        }
+        .reduce(0, +)
+    }
 }
 
 private extension AgentSharedChatCoordinatorEvent {
@@ -1379,5 +1898,109 @@ private actor SharedChatRuntimeBackend: AgentRuntimeBackend {
 
     func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? {
         sessions[id]
+    }
+}
+
+
+/// Scripted drain source for the per-observer replay test. Each drain pops one
+/// single-message batch and appends it to a bounded transcript, mirroring the
+/// real bus: the coordinator's read-only transcript view returns everything the
+/// mailbox has ever handed over, capped at the room bound.
+private actor OverflowReplaySource {
+    private var mailbox: [[AgentSharedChat.Message]] = []
+    private var transcript: [AgentSharedChat.Message] = []
+    private(set) var allMessagesReadCount = 0
+
+    var remainingBatchCount: Int { mailbox.count }
+
+    func enqueue(_ messages: [AgentSharedChat.Message]) {
+        mailbox.append(messages)
+    }
+
+    func drain() async -> [AgentSharedChat.Message] {
+        guard !mailbox.isEmpty else { return [] }
+        let batch = mailbox.removeFirst()
+        transcript.append(contentsOf: batch)
+        let bound = AgentSharedChat.maximumRetainedMessagesPerRoom
+        if transcript.count > bound {
+            transcript.removeFirst(transcript.count - bound)
+        }
+        return batch
+    }
+
+    func participants() async -> [AgentSharedChat.Participant] { [] }
+
+    func allMessages() async -> [AgentSharedChat.Message] {
+        allMessagesReadCount += 1
+        return transcript
+    }
+}
+
+/// Scripted full-transcript source used to force attach/replay and poll into a
+/// chosen order. Its gates suspend at the same source calls where production
+/// code can interleave, rather than relying on a sleep or a TUI warm-up.
+private actor TranscriptRaceSource {
+    private var transcript: [AgentSharedChat.Message] = []
+    private(set) var transcriptReadCount = 0
+    private var gateNextTranscriptRead = false
+    private var transcriptReadRelease: CheckedContinuation<Void, Never>?
+    private(set) var isTranscriptReadSuspended = false
+    private var gateNextParticipantsRead = false
+    private var participantsReadRelease: CheckedContinuation<Void, Never>?
+    private(set) var isParticipantsReadSuspended = false
+
+    func appendTranscript(_ message: AgentSharedChat.Message) {
+        transcript.append(message)
+    }
+
+    func replaceTranscript(with messages: [AgentSharedChat.Message]) {
+        transcript = messages
+    }
+
+    func armNextTranscriptReadGate() {
+        gateNextTranscriptRead = true
+    }
+
+    func releaseTranscriptReadGate() {
+        // Also disarm a not-yet-entered gate, so a failed bounded wait cannot
+        // leave a later source call suspended forever during test cleanup.
+        gateNextTranscriptRead = false
+        transcriptReadRelease?.resume()
+        transcriptReadRelease = nil
+    }
+
+    func armNextParticipantsReadGate() {
+        gateNextParticipantsRead = true
+    }
+
+    func releaseParticipantsReadGate() {
+        gateNextParticipantsRead = false
+        participantsReadRelease?.resume()
+        participantsReadRelease = nil
+    }
+
+    func drain() async -> [AgentSharedChat.Message] { [] }
+
+    func participants() async -> [AgentSharedChat.Participant] {
+        guard gateNextParticipantsRead else { return [] }
+        gateNextParticipantsRead = false
+        isParticipantsReadSuspended = true
+        await withCheckedContinuation { continuation in
+            participantsReadRelease = continuation
+        }
+        isParticipantsReadSuspended = false
+        return []
+    }
+
+    func allMessages() async -> [AgentSharedChat.Message] {
+        transcriptReadCount += 1
+        guard gateNextTranscriptRead else { return transcript }
+        gateNextTranscriptRead = false
+        isTranscriptReadSuspended = true
+        await withCheckedContinuation { continuation in
+            transcriptReadRelease = continuation
+        }
+        isTranscriptReadSuspended = false
+        return transcript
     }
 }
