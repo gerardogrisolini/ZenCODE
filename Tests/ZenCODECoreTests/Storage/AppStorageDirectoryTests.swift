@@ -38,6 +38,51 @@ struct AppStorageDirectoryTests {
     }
 
     @Test
+    func unscopedSupportDirectoryReadsNeverReachTheRealZenCodeDirectory() {
+        // Central backstop for the per-test task-local override: a suite that
+        // forgets to scope itself, or a code path that escapes the scope by
+        // hopping onto a detached task, must still not write into the
+        // developer's `~/.zencode`.
+        AppStorageDirectory.configureSupportDirectoryURL(nil)
+        AgentSettingsManifestStore.resetDefaultCacheForTesting()
+        defer {
+            AppStorageDirectory.configureSupportDirectoryURL(nil)
+            AgentSettingsManifestStore.resetDefaultCacheForTesting()
+        }
+
+        #expect(AppStorageDirectory.isRunningUnderTestHarness)
+        let sandbox = AppStorageDirectory.testHarnessSandboxURL()
+        #expect(sandbox != nil)
+        // Stable for the whole process, so every unscoped read agrees.
+        #expect(sandbox == AppStorageDirectory.testHarnessSandboxURL())
+        #expect(AppStorageDirectory.appSupportDirectoryURL() == sandbox)
+        #expect(AppStorageDirectory.appSupportDirectoryURL() != AppStorageDirectory.defaultSupportDirectoryURL())
+        // The definition of the default location is unchanged: only what
+        // callers resolve to is redirected.
+        #expect(
+            AppStorageDirectory.defaultSupportDirectoryURL()
+                == UserHomeDirectory.current()
+                .appendingPathComponent(".zencode", isDirectory: true)
+                .standardizedFileURL
+        )
+    }
+
+    @Test
+    func explicitOverridesStillWinOverTheTestHarnessSandbox() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-explicit-support-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        AppStorageDirectory.withSupportDirectoryURL(directory) {
+            #expect(AppStorageDirectory.appSupportDirectoryURL() == directory.standardizedFileURL)
+        }
+
+        AppStorageDirectory.configureSupportDirectoryURL(directory)
+        defer { AppStorageDirectory.configureSupportDirectoryURL(nil) }
+        #expect(AppStorageDirectory.appSupportDirectoryURL() == directory.standardizedFileURL)
+    }
+
+    @Test
     func taskScopedSupportDirectoriesAndSettingsReadsRemainIsolated() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("zencode-task-scoped-storage-\(UUID().uuidString)", isDirectory: true)

@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import ZenMemory
 import ToolCore
 
 public struct MemoryToolContext: Sendable {
@@ -170,7 +169,16 @@ public enum MemoryTool {
         toolDescriptors.contains { $0.name == toolName }
     }
 
-    public static func execute(
+    /// Modern, async memory-tool entry point.
+    ///
+    /// Renamed from `execute` so it does not collide with the 1.1.x
+    /// synchronous `execute` wrapper (see ``MemoryLegacyCompatibility``).
+    /// Swift always prefers the `async` overload inside an `async` context,
+    /// so a same-named pair would force every legacy `try MemoryTool.execute(…)`
+    /// call site to add `await` — breaking source compatibility.  Splitting the
+    /// name keeps `execute` unambiguously synchronous and `executeAsync`
+    /// unambiguously the tool-layer entry point.
+    public static func executeAsync(
         _ request: ToolRequest,
         context: MemoryToolContext,
         memoryService: MemoryService = MemoryService()
@@ -285,21 +293,29 @@ public enum MemoryTool {
             content,
             context: context
         )
-        let entry = try await memoryService.writeEntry(
+        let outcome = try await memoryService.writeEntryOutcome(
             content: contentToWrite,
             workspaceRootURL: context.workingDirectory,
             category: parsedCategory(from: arguments),
             tags: parsedTags(from: arguments) ?? []
         )
 
+        // The store deduplicates against active entries, so "I saved it" is not
+        // always true. Reporting a write that did not happen teaches the model
+        // that duplicates are accepted; the honest result makes it reuse the id.
+        let headline = outcome.created
+            ? "Saved memory entry to project memory."
+            : "Duplicate of an existing memory entry; nothing was written."
+
         return ToolExecutionOutput(
             text: """
-            Saved memory entry to project memory.
-            \(renderEntry(entry))
+            \(headline)
+            \(renderEntry(outcome.entry))
             """,
             rawResult: .object([
-                "written": .bool(true),
-                "entry": memoryJSONValue(entry)
+                "written": .bool(outcome.created),
+                "deduplicated": .bool(outcome.deduplicated),
+                "entry": memoryJSONValue(outcome.entry)
             ])
         )
     }
@@ -504,7 +520,7 @@ public enum MemoryTool {
         detail: RenderDetail
     ) -> JSONValue {
         var result: [String: JSONValue] = [
-            "id": .string(entry.id),
+            "id": .string(entry.id.uuidString),
             "scope": .string(entry.scope.rawValue),
             "category": .string(entry.category.rawValue),
             "tags": .array(entry.tags.map { .string($0) }),

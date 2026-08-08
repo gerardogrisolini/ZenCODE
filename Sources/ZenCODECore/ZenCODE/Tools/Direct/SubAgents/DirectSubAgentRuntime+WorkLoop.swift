@@ -93,14 +93,40 @@ extension DirectSubAgentRuntime {
                 return
             }
             do {
-                let response = try await work.backend.sendPrompt(
-                    sessionID: work.sessionID,
-                    prompt: work.prompt,
-                    attachments: [],
-                    onEvent: { event in
-                        await self.recordEvent(event, agentID: agentID)
+                // Delegated turns get automatic recall as well. The workspace
+                // is read from the agent's own session snapshot, so a sub-agent
+                // working in a different directory recalls from that
+                // workspace's graph rather than the coordinator's. Extraction
+                // stays OFF here on purpose: sub-agent turns are internal steps
+                // of one operator turn, and letting each of them write durable
+                // memory would multiply near-duplicate entries per turn. The
+                // operator turn that owns them extracts once, in
+                // `AgentCoreSessionRunner.finalizeTurn`.
+                let memoryBlock: String?
+                if let workspaceRootURL = await work.backend
+                    .snapshotSession(id: work.sessionID)
+                    .map({ URL(fileURLWithPath: $0.workingDirectoryPath) }) {
+                    memoryBlock = await MemoryTurnCoordinator.shared.memoryBlock(
+                        sessionID: work.sessionID,
+                        workspaceRootURL: workspaceRootURL,
+                        prompt: work.prompt
+                    )
+                } else {
+                    // No snapshot means no resolvable workspace graph, so the
+                    // turn simply runs without a block.
+                    memoryBlock = nil
+                }
+                let response = try await MemoryTurnContext.$currentTurnMemoryBlock
+                    .withValue(memoryBlock) {
+                        try await work.backend.sendPrompt(
+                            sessionID: work.sessionID,
+                            prompt: work.prompt,
+                            attachments: [],
+                            onEvent: { event in
+                                await self.recordEvent(event, agentID: agentID)
+                            }
+                        )
                     }
-                )
                 await recordCompletion(response, agentID: agentID, authorization: authorization)
             } catch is CancellationError {
                 await recordCancellation(agentID: agentID)

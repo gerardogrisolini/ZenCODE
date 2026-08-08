@@ -115,6 +115,7 @@ let targets: [Target] = [
         name: "ZenCODECoreTests",
         dependencies: [
             "ZenCODECore",
+            "ZenMemory",
             "FeatureMCPBridgeKit",
             "FeatureKit",
             "LocalToolsSupport",

@@ -361,13 +361,21 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                 throw RemoteGenerationClientError.missingSession
             }
             let expectsPromptCache = Self.messagesExpectPromptCache(session.messages)
+            // Every tool round rebuilds the outgoing payload from the fresh
+            // value of `session.messages`, so the turn's memory block is
+            // carried on each round's request — exactly once per round, because
+            // the block is never written back into `session.messages`. That
+            // keeps it out of history, snapshots and the cache key; the
+            // prompt-cache expectation above is deliberately computed from the
+            // unmodified array.
+            let outgoingMessages = Self.applyingCurrentTurnMemory(to: session.messages)
             let streamResult: RemoteStreamResult
             while true {
                 do {
                     switch provider.chatEndpoint {
                     case .chatCompletions:
                         streamResult = try await streamChatCompletions(
-                            messages: session.messages,
+                            messages: outgoingMessages,
                             sessionID: session.id,
                             allowedToolNames: session.allowedToolNames,
                             preferredWorkspaceRootURL: session.cwd,
@@ -376,7 +384,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                         )
                     case .responses:
                         streamResult = try await streamResponses(
-                            messages: session.messages,
+                            messages: outgoingMessages,
                             sessionID: session.id,
                             allowedToolNames: session.allowedToolNames,
                             preferredWorkspaceRootURL: session.cwd,

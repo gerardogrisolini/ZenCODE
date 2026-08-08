@@ -350,6 +350,11 @@ extension DirectSubAgentRuntime {
             )
         }
         await sharedChat.unregisterParticipant(id: agent.id, roomID: agent.rootSessionID)
+        // The standby resident ran delegated turns under its own session id, so
+        // it owns recall state and possibly an extraction. This is the single
+        // funnel for every standby release — capacity eviction, the periodic
+        // reaper, and graph completion — so discarding here covers all three.
+        await MemoryTurnCoordinator.shared.discard(sessionID: agent.sessionID)
         await agent.backend.updateBorrowedSubAgentToolExecutor(nil)
         await agent.backend.shutdown()
     }

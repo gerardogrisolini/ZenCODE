@@ -75,6 +75,10 @@ public actor ZenMemory {
     private var configuration: ZenMemoryConfiguration
     private var pending: [MemoryCandidate] = []
     private var backgroundTasks: [UUID: Task<Void, Never>] = [:]
+    /// Write-lock state backing ``transaction(_:)``. See that method for why
+    /// actor isolation alone is not enough.
+    private var isWriting = false
+    private var writeWaiters: [CheckedContinuation<Void, Never>] = []
 
     public init(
         graph: MemoryGraph = MemoryGraph(),
@@ -128,6 +132,73 @@ public actor ZenMemory {
         self.configuration = configuration
     }
 
+    // MARK: - Transactions
+
+    /// Runs one serialized read-modify-write against the graph and commits it
+    /// only once persistence has accepted it.
+    ///
+    /// This is the atomic primitive every mutation goes through, and it exists
+    /// because actor isolation alone provides neither of the two properties a
+    /// host needs:
+    ///
+    /// 1. **Serialization.** Every persisting mutation contains an `await`, and
+    ///    actors are reentrant across suspension points. A caller that reads the
+    ///    graph, decides something from it and writes the result back — a
+    ///    deduplicating write, an in-place content update, an archive — can
+    ///    therefore interleave with another such sequence and silently drop it.
+    ///    A transaction body is synchronous and runs under an internal mutex, so
+    ///    it reads and mutates a graph no one else can touch in between.
+    /// 2. **Atomicity with respect to persistence.** The body mutates a private
+    ///    draft; the draft is saved first and becomes the live graph only when
+    ///    the save succeeded. A failed save therefore leaves the in-memory graph
+    ///    exactly as it was instead of silently diverging from disk, and a body
+    ///    that throws changes nothing at all.
+    ///
+    /// Persistence is skipped when the body left the graph unchanged, so a
+    /// look-only or no-op transaction never touches the disk.
+    @discardableResult
+    public func transaction<T: Sendable>(
+        _ body: @Sendable (inout MemoryGraph) throws -> T
+    ) async throws -> T {
+        try await withWriteLock {
+            // A task may have been cancelled while it was parked waiting for the
+            // write lock: the continuation above is the non-throwing flavour and
+            // does not observe cancellation, so without this re-check such a task
+            // would resume, acquire the lock and commit anyway. The check sits
+            // *after* the lock is held and *before* the body/save, and the
+            // `defer` in `withWriteLock` still releases the lock when this throws,
+            // so a cancelled waiter neither commits nor strands the lock.
+            try Task.checkCancellation()
+            var draft = graph
+            let result = try body(&draft)
+            guard draft != graph else { return result }
+            try await persist(draft)
+            graph = draft
+            return result
+        }
+    }
+
+    /// Serializes `body` against every other transaction on this engine.
+    ///
+    /// A plain `while` loop over a continuation queue rather than a semaphore:
+    /// the state is already actor-isolated, so the loop re-checks the flag after
+    /// each resumption and a barging waiter simply queues again.
+    private func withWriteLock<T>(_ body: () async throws -> T) async throws -> T {
+        while isWriting {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                writeWaiters.append(continuation)
+            }
+        }
+        isWriting = true
+        defer {
+            isWriting = false
+            if !writeWaiters.isEmpty {
+                writeWaiters.removeFirst().resume()
+            }
+        }
+        return try await body()
+    }
+
     @discardableResult
     public func remember(
         _ content: String,
@@ -162,31 +233,45 @@ public actor ZenMemory {
             confidence: confidence
         )
         entry.refreshSearchText()
-        graph.addMemory(entry)
-        try await persistIfNeeded()
-        return entry
+        let stored = entry
+        // The embedding is computed above, outside the lock: only the graph
+        // mutation itself has to be serialized.
+        try await transaction { $0.addMemory(stored) }
+        return stored
     }
 
     /// Runs the configured extractor and stores the durable memories it returns.
     /// With the default `NoopMemoryExtractor`, this method is a no-op.
+    ///
+    /// The whole batch is stored in one transaction, so a failing save leaves
+    /// none of it behind rather than half of it.
     @discardableResult
     public func learn(from context: String) async throws -> [MemoryEntry] {
         let drafts = try await extractor.extract(from: context)
-        var stored: [MemoryEntry] = []
-        stored.reserveCapacity(drafts.count)
+        var prepared: [MemoryEntry] = []
+        prepared.reserveCapacity(drafts.count)
         for draft in drafts where !draft.content.isEmpty {
-            let entry = try await remember(
-                draft.content,
+            var entry = MemoryEntry(
+                id: nil,
                 category: draft.category,
+                content: draft.content,
                 tags: draft.tags,
                 source: draft.source,
                 trust: draft.trust,
                 scope: draft.scope,
+                embedding: try await embedder?.embed(draft.content),
+                embeddingModel: embedder?.modelID,
                 confidence: draft.confidence
             )
-            stored.append(entry)
+            entry.refreshSearchText()
+            prepared.append(entry)
         }
-        return stored
+        guard !prepared.isEmpty else { return [] }
+        let batch = prepared
+        try await transaction { graph in
+            for entry in batch { graph.addMemory(entry) }
+        }
+        return batch
     }
 
     public func extract(from context: String) async throws -> [MemoryDraft] {
@@ -194,41 +279,41 @@ public actor ZenMemory {
     }
 
     public func insert(_ entry: MemoryEntry, persist: Bool = true) async throws {
-        graph.addMemory(entry)
-        if persist { try await persistIfNeeded() }
+        if persist {
+            try await transaction { $0.addMemory(entry) }
+        } else {
+            // Still serialized: an unpersisted insert that landed while another
+            // transaction was saving would be overwritten by that commit.
+            _ = try await withWriteLock { graph.addMemory(entry) }
+        }
     }
 
     public func forget(id: String) async throws -> MemoryEntry? {
-        let removed = graph.removeMemory(id: id)
-        if removed != nil { try await persistIfNeeded() }
-        return removed
+        try await transaction { $0.removeMemory(id: id) }
     }
 
     public func tag(memoryID: String, with tag: String) async throws {
-        graph.addTag(tag, to: memoryID)
-        try await persistIfNeeded()
+        try await transaction { $0.addTag(tag, to: memoryID) }
     }
 
     public func link(from: String, to: String, weight: Float = 0.8) async throws {
-        graph.linkMemories(from: from, to: to, weight: weight)
-        try await persistIfNeeded()
+        try await transaction { $0.linkMemories(from: from, to: to, weight: weight) }
     }
 
     public func supersede(newerID: String, olderID: String) async throws {
-        graph.supersede(newerID: newerID, olderID: olderID)
-        try await persistIfNeeded()
+        try await transaction { $0.supersede(newerID: newerID, olderID: olderID) }
     }
 
     public func contradict(_ firstID: String, _ secondID: String) async throws {
-        graph.markContradiction(firstID, secondID)
-        try await persistIfNeeded()
+        try await transaction { $0.markContradiction(firstID, secondID) }
     }
 
     public func reinforce(id: String, sessionID: String, messageIndex: Int) async throws {
-        guard var memory = graph.memories[id] else { return }
-        memory.reinforce(sessionID: sessionID, messageIndex: messageIndex)
-        graph.memories[id] = memory
-        try await persistIfNeeded()
+        try await transaction { graph in
+            guard var memory = graph.memories[id] else { return }
+            memory.reinforce(sessionID: sessionID, messageIndex: messageIndex)
+            graph.memories[id] = memory
+        }
     }
 
     /// Runs only the query-planning stage. Useful for debugging or for host agents that want
@@ -239,19 +324,99 @@ public actor ZenMemory {
 
     /// Retrieves candidate memories, expands their graph neighborhood, then lets the configured
     /// selector decide which memories are safe and useful to inject into the main agent context.
+    ///
+    /// This is the *automatic* recall path: after selection it applies
+    /// transactional retrieval maintenance (retrieval count, confidence
+    /// boost/decay, co-relevance links) and commits it through persistence. For
+    /// an explicitly read-only lookup that must never mutate the graph or fail
+    /// on a save error, use ``searchReadOnlyDetailed(_:scope:)`` instead.
     public func recallDetailed(
         _ prompt: String,
         scope: MemoryScope = .all
     ) async throws -> MemoryRecallResult {
+        let (plan, candidates, selected) = try await retrieveAndSelect(prompt, scope: scope)
+        // Retrieval maintenance is a read-modify-write like any other: it runs
+        // in a transaction so it neither clobbers a concurrent write nor leaves
+        // boosted confidences behind when the save fails.
+        //
+        // **Re-validation.** `retrieveAndSelect` built its candidates and
+        // awaited the selector; a concurrent `forget` or archive can land in
+        // that suspension window. The maintenance transaction takes a fresh
+        // draft, so we re-check existence, active and scope *inside* it and
+        // feed only the survivors to maintenance and to the returned result.
+        let settings = configuration
+        let revalidated = try await transaction { graph -> RevalidatedRecall in
+            let valid = Self.revalidate(
+                candidates: candidates,
+                selected: selected,
+                against: graph,
+                scope: scope
+            )
+            Self.maintainAfterRetrieval(
+                &graph,
+                all: valid.candidates,
+                selected: valid.selected,
+                configuration: settings
+            )
+            return valid
+        }
+        return MemoryRecallResult(
+            plan: plan,
+            candidates: revalidated.candidates,
+            selected: revalidated.selected
+        )
+    }
+
+    /// Read-only retrieval that performs the exact same analyze → retrieve →
+    /// select pipeline as ``recallDetailed(_:)`` but skips retrieval maintenance
+    /// and never touches persistence.
+    ///
+    /// Use this for explicitly read-only lookups such as `memory.search`, where
+    /// mutating `retrievalCount`/`confidence`/links — or failing because a save
+    /// errored — would be a surprising side effect of a query. The automatic
+    /// recall path (``recallDetailed(_:)`` / ``context(for:)``) keeps its
+    /// transactional maintenance unchanged.
+    public func searchReadOnlyDetailed(
+        _ prompt: String,
+        scope: MemoryScope = .all
+    ) async throws -> MemoryRecallResult {
+        let (plan, candidates, selected) = try await retrieveAndSelect(prompt, scope: scope)
+        return MemoryRecallResult(plan: plan, candidates: candidates, selected: selected)
+    }
+
+    /// Read-only retrieval returning only the selected candidates.
+    ///
+    /// Convenience for ``searchReadOnlyDetailed(_:scope:)`` when callers need
+    /// only the memories the selector accepted, with no maintenance side
+    /// effects and no persistence dependency.
+    public func searchReadOnly(
+        _ query: String,
+        scope: MemoryScope = .all
+    ) async throws -> [MemoryCandidate] {
+        try await searchReadOnlyDetailed(query, scope: scope).selected
+    }
+
+    /// The shared analyze → retrieve → select core used by both the
+    /// maintenance-bearing ``recallDetailed(_:)`` and the maintenance-free
+    /// ``searchReadOnlyDetailed(_:scope:)``.
+    ///
+    /// Performs no mutation and no persistence: it reads the graph, runs the
+    /// index/embedder/cascade pipeline, and returns what the selector accepts.
+    /// The only difference between the two public callers is whether the
+    /// resulting maintenance transaction runs afterwards.
+    private func retrieveAndSelect(
+        _ prompt: String,
+        scope: MemoryScope
+    ) async throws -> (plan: MemoryQueryPlan, candidates: [MemoryCandidate], selected: [MemoryCandidate]) {
         let plan = try await analyzeWithPolicy(prompt)
         guard plan.shouldRecall, configuration.maxResults > 0 else {
-            return MemoryRecallResult(plan: plan, candidates: [], selected: [])
+            return (plan, [], [])
         }
 
         let activeMemories = Array(graph.memories.values)
         let queries = retrievalQueries(from: plan, originalPrompt: prompt)
         guard !queries.isEmpty else {
-            return MemoryRecallResult(plan: plan, candidates: [], selected: [])
+            return (plan, [], [])
         }
 
         var rankings: [[ScoredMemoryID]] = []
@@ -304,14 +469,23 @@ public actor ZenMemory {
         }
 
         guard !seeds.isEmpty else {
-            return MemoryRecallResult(plan: plan, candidates: [], selected: [])
+            return (plan, [], [])
         }
 
-        let cascaded = graph.cascadeRetrieve(
+        // The cascade reads the graph, but `MemoryGraph` exposes it as
+        // `mutating` because it counts retrievals. Run it on a local copy so
+        // this shared core never mutates the live graph: the counter is folded
+        // into the maintenance transaction in `recallDetailed` instead of being
+        // written to the live graph outside the write lock, where a concurrent
+        // commit would silently drop it. `searchReadOnly` simply discards the
+        // copy.
+        var traversal = graph
+        let cascaded = traversal.cascadeRetrieve(
             seeds: seeds,
             maxDepth: configuration.maxDepth,
             maxResults: configuration.maxCandidateResults,
-            edgeDecay: configuration.edgeDecay
+            edgeDecay: configuration.edgeDecay,
+            scope: scope
         )
 
         let candidates = cascaded.compactMap { item -> MemoryCandidate? in
@@ -323,9 +497,7 @@ public actor ZenMemory {
         }
 
         let selected = try await selectWithPolicy(context: prompt, candidates: candidates)
-        maintainAfterRetrieval(all: candidates, selected: selected)
-        try await persistIfNeeded()
-        return MemoryRecallResult(plan: plan, candidates: candidates, selected: selected)
+        return (plan, candidates, selected)
     }
 
     public func recall(_ query: String, scope: MemoryScope = .all) async throws -> [MemoryCandidate] {
@@ -367,7 +539,7 @@ public actor ZenMemory {
     }
 
     public func save() async throws {
-        try await persistIfNeeded()
+        try await withWriteLock { try await persist(graph) }
     }
 
     private func retrievalQueries(from plan: MemoryQueryPlan, originalPrompt: String) -> [String] {
@@ -433,7 +605,50 @@ public actor ZenMemory {
         backgroundTasks[token] = nil
     }
 
-    private func maintainAfterRetrieval(all: [MemoryCandidate], selected: [MemoryCandidate]) {
+    /// Re-validated candidate lists returned from inside the maintenance
+    /// transaction so the caller can build the final ``MemoryRecallResult``
+    /// from the same filtered set maintenance operated on.
+    private struct RevalidatedRecall: Sendable {
+        let candidates: [MemoryCandidate]
+        let selected: [MemoryCandidate]
+    }
+
+    /// Filters retrieved candidates against the *current* draft graph state.
+    ///
+    /// Called synchronously inside the maintenance transaction, after the
+    /// selector `await` has resumed. A concurrent `forget` (entry removed) or
+    /// archive (entry deactivated or scope-changed) that landed during that
+    /// window makes a previously valid candidate stale. This drops any
+    /// candidate whose ID is gone, inactive, or outside the requested scope.
+    private static func revalidate(
+        candidates: [MemoryCandidate],
+        selected: [MemoryCandidate],
+        against graph: MemoryGraph,
+        scope: MemoryScope
+    ) -> RevalidatedRecall {
+        func isValid(_ id: String) -> Bool {
+            guard let memory = graph.memories[id],
+                  memory.active,
+                  MemorySearch.scopeAllows(memory.scope, requested: scope) else {
+                return false
+            }
+            return true
+        }
+        return RevalidatedRecall(
+            candidates: candidates.filter { isValid($0.memory.id) },
+            selected: selected.filter { isValid($0.memory.id) }
+        )
+    }
+
+    private static func maintainAfterRetrieval(
+        _ graph: inout MemoryGraph,
+        all: [MemoryCandidate],
+        selected: [MemoryCandidate],
+        configuration: ZenMemoryConfiguration
+    ) {
+        // Kept here rather than in `cascadeRetrieve`, which now runs on a copy:
+        // this is the single place where a retrieval reaches the live graph.
+        graph.metadata.retrievalCount &+= 1
         let selectedIDs = Set(selected.map(\.memory.id))
         for candidate in all {
             guard var memory = graph.memories[candidate.memory.id] else { continue }
@@ -456,7 +671,7 @@ public actor ZenMemory {
         }
     }
 
-    private func persistIfNeeded() async throws {
+    private func persist(_ graph: MemoryGraph) async throws {
         if let persistence { try await persistence.save(graph) }
     }
 }

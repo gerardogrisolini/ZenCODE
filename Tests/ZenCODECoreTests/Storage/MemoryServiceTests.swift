@@ -5,7 +5,8 @@
 //  Created by Gerardo Grisolini on 27/05/26.
 //
 //  Graph-backed memory facade tests. The durable store is the ZenMemory
-//  graph; MEMORY.md is no longer written, only migrated once on first open.
+//  graph; MEMORY.md is no longer written, only migrated in memory on first
+//  open and persisted by the first mutation.
 //
 
 import Foundation
@@ -75,8 +76,8 @@ struct MemoryServiceTests {
             )
             #expect(entries.count == 1)
             #expect(entries.first?.id == first.id)
-            // ZenCODE-authored ids are canonical uppercase UUID text.
-            #expect(UUID(uuidString: entries.first?.id ?? "") != nil)
+            // ZenCODE-authored ids are canonical uppercase UUID values.
+            #expect(entries.first?.id != nil)
         }
     }
 
@@ -128,7 +129,7 @@ struct MemoryServiceTests {
 
         try await workspace.withIsolatedSupport {
             let service = MemoryService()
-            _ = try await MemoryTool.execute(
+            _ = try await MemoryTool.executeAsync(
                 ToolRequest(
                     name: "memory.write",
                     arguments: [
@@ -170,7 +171,7 @@ struct MemoryServiceTests {
                 workspaceRootURL: workspace.workspaceURL
             )
 
-            let output = try await MemoryTool.execute(
+            let output = try await MemoryTool.executeAsync(
                 ToolRequest(
                     name: "memory.search",
                     arguments: ["query": .string("architecture")]
@@ -238,13 +239,13 @@ struct MemoryServiceTests {
 
             #expect(entry.category == .preference)
             #expect(entry.tags == ["swift", "concurrency"])
-            #expect(entry.trust == .medium)
+            #expect(entry.trust == "medium")
             #expect(entry.source == "memory.write")
             #expect(entry.scope == .project)
 
             let read = try #require(
                 try await service.entry(
-                    id: entry.id,
+                    id: entry.id.uuidString,
                     workspaceRootURL: workspace.workspaceURL
                 )
             )

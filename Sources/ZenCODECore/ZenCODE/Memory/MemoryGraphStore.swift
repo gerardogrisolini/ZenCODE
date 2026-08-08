@@ -19,21 +19,36 @@ import ZenMemory
 actor MemoryGraphStore {
     let graphURL: URL
     private let engine: ZenMemory
+    /// Kept from `open` rather than re-resolved per call: `update` and `write`
+    /// must embed with the same provider the engine was opened with, otherwise
+    /// entries would carry vectors the engine refuses to compare.
+    private let embedder: (any EmbeddingProvider)?
 
-    private init(graphURL: URL, engine: ZenMemory) {
+    init(graphURL: URL, engine: ZenMemory, embedder: (any EmbeddingProvider)?) {
         self.graphURL = graphURL
         self.engine = engine
+        self.embedder = embedder
     }
 
     // MARK: - Opening and migration
 
     /// Opens the graph for a workspace, migrating a legacy MEMORY.md exactly once.
     ///
-    /// Idempotence gate: the presence of the graph file. Migration runs only
-    /// when no graph file exists yet; the migration always saves, so the gate
-    /// closes permanently after the first open. Entry identity is derived
-    /// deterministically from the journal, so even a forced re-run would
-    /// converge on the same nodes instead of duplicating them.
+    /// The graph is loaded (or migrated from `MEMORY.md`) entirely in memory;
+    /// **nothing is persisted during open.** Persistence is deferred to the
+    /// first transactional mutation or maintenance pass. This keeps a cold read
+    /// — `memory.search` / `memory.read` on a workspace whose graph file does
+    /// not yet exist — from creating `memory.graph.json` and from failing when
+    /// the support directory is not writable. The first real write
+    /// (`memory.write`, `memory.update`, …) or the first automatic recall
+    /// maintenance will persist the full graph (migration + new entries) in one
+    /// atomic save.
+    ///
+    /// Idempotence: when no graph file exists the migration runs on every cold
+    /// open, but entry identity is derived deterministically from the journal,
+    /// so repeated migrations converge on the same nodes instead of duplicating
+    /// them. Once a mutation has persisted the file, subsequent opens load it
+    /// directly and skip migration.
     static func open(
         graphURL: URL,
         workspaceRootURL: URL
@@ -47,21 +62,49 @@ actor MemoryGraphStore {
         let embedder = MemoryEmbedding.provider()
         let persistence = JSONMemoryPersistence(url: graphURL)
 
-        if !fileManager.fileExists(atPath: graphURL.path) {
-            let migrated = try await migratedGraph(
+        // Load or migrate the graph in memory only; do NOT persist. The first
+        // mutation/maintenance will persist the full graph atomically.
+        let initialGraph: MemoryGraph
+        if fileManager.fileExists(atPath: graphURL.path) {
+            initialGraph = try await persistence.load()
+        } else {
+            initialGraph = try await migratedGraph(
                 workspaceRootURL: workspaceRootURL,
                 embedder: embedder,
                 fileManager: fileManager
             )
-            try await persistence.save(migrated)
         }
 
-        let engine = try await ZenMemory.open(
-            persistence: persistence,
+        // Construct the engine directly with the in-memory graph and the same
+        // persistence instance. The engine's `transaction(_:)` will call
+        // `persist` on the first mutation, atomically writing the full graph.
+        let engine = ZenMemory(
+            graph: initialGraph,
             embedder: embedder,
-            selector: ScoreThresholdMemorySelector()
+            persistence: persistence,
+            selector: ScoreThresholdMemorySelector(),
+            extractor: extractor(workspaceRootURL: workspaceRootURL)
         )
-        return MemoryGraphStore(graphURL: graphURL, engine: engine)
+        return MemoryGraphStore(graphURL: graphURL, engine: engine, embedder: embedder)
+    }
+
+    /// Resolves the engine's extractor.
+    ///
+    /// An LLM extractor is installed ONLY when a side model is configured.
+    /// Without one the engine keeps `NoopMemoryExtractor`, so `learn(from:)` is
+    /// a genuine no-op rather than a silent network call: the second half of
+    /// the extraction gate is enforced here, in the engine itself, and not only
+    /// at the call site. The extractor is inert until `learn(from:)` runs, so
+    /// installing it costs nothing on the recall path.
+    private static func extractor(
+        workspaceRootURL: URL
+    ) -> any MemoryExtractor {
+        guard let sideModel = MemoryAutomationSettings.sideModel(
+            workspaceRootURL: workspaceRootURL
+        ) else {
+            return NoopMemoryExtractor()
+        }
+        return LLMMemoryExtractor(model: sideModel)
     }
 
     /// Builds the initial graph from the legacy journal, losslessly.
@@ -100,7 +143,7 @@ actor MemoryGraphStore {
                 }
                 previousCreatedAt = createdAt
 
-                var entry = MemoryEntry(
+                var entry = GraphEntry(
                     id: MemoryIdentifier.canonical(legacy.id),
                     category: .fact,
                     content: legacy.content,
@@ -124,7 +167,7 @@ actor MemoryGraphStore {
 
     // MARK: - Reads
 
-    func entries(includeArchived: Bool, limit: Int) async -> [MemoryEntry] {
+    func entries(includeArchived: Bool, limit: Int) async -> [GraphEntry] {
         let graph = await engine.snapshot()
         return Self.ordered(graph.memories.values)
             .filter { includeArchived || $0.active }
@@ -136,11 +179,15 @@ actor MemoryGraphStore {
         query: String,
         includeArchived: Bool,
         limit: Int
-    ) async throws -> [MemoryEntry] {
+    ) async throws -> [GraphEntry] {
         let cappedLimit = max(limit, 0)
-        // Active entries go through the engine's hybrid retrieval
-        // (semantic + BM25 fused, then graph cascade).
-        let recalled = try await engine.recall(query, scope: .all)
+        // Read-only path: `memory.search` is a pure lookup. It must not mutate
+        // retrievalCount/confidence/links or fail because a persistence save
+        // errored. The engine's read-only retrieval shares the same analyze →
+        // retrieve → select pipeline as automatic recall but skips the
+        // transactional maintenance that `recall` applies. Automatic recall
+        // (`context(for:)`) keeps its maintenance path unchanged.
+        let recalled = try await engine.searchReadOnly(query, scope: .all)
         var active = recalled.map(\.memory).filter(\.active)
 
         guard includeArchived else {
@@ -151,7 +198,7 @@ actor MemoryGraphStore {
         // `lexicalBM25` by design, so archived entries are matched separately.
         let graph = await engine.snapshot()
         let archived = Self.ordered(graph.memories.values.filter { !$0.active })
-            .compactMap { entry -> (entry: MemoryEntry, score: Int)? in
+            .compactMap { entry -> (entry: GraphEntry, score: Int)? in
                 let score = Self.lexicalScore(entry, query: query)
                 return score > 0 ? (entry, score) : nil
             }
@@ -175,41 +222,165 @@ actor MemoryGraphStore {
             .map { $0 }
     }
 
-    func entry(id: String) async -> MemoryEntry? {
+    func entry(id: String) async -> GraphEntry? {
         await engine.snapshot().memories[id]
+    }
+
+    // MARK: - Automatic turn pipeline
+
+    /// Runs the engine's full analyze → retrieve → select → format pipeline and
+    /// returns the ready-to-inject memory block, or an empty string when
+    /// nothing was selected.
+    ///
+    /// Deliberately NOT `ZenMemory.submitContext(_:)` / `takePending()`.
+    /// That pair looks like the natural fit for "prepare memories for the next
+    /// turn", but it is unsafe here: `ZenMemory.pending` is a single unkeyed
+    /// array on the engine actor, and `takePending()` drains it wholesale.
+    /// Meanwhile `MemoryGraphStoreRegistry` caches exactly one store — and so
+    /// one engine — per workspace graph URL, which every concurrent session,
+    /// sub-agent and tool call in that workspace shares. Two overlapping turns
+    /// would therefore write into the same `pending` slot and the first drain
+    /// would hand one session the memories retrieved for another session's
+    /// prompt. Going through this synchronous, per-call path keeps every
+    /// retrieval bound to the prompt that asked for it.
+    func context(
+        for prompt: String,
+        scope: GraphScope = .all
+    ) async throws -> String {
+        try await engine.context(for: prompt, scope: scope)
+    }
+
+    /// Runs the configured extractor over a completed exchange and stores what
+    /// it returns. With `NoopMemoryExtractor` — the state whenever no side
+    /// model is configured — this is a no-op that makes no network call.
+    ///
+    /// Deliberately NOT `ZenMemory.learn(from:)`, on two counts:
+    ///
+    /// - **Identity.** The engine mints library-shaped ids
+    ///   (`mem_<millis>_<uuid>`), but every ZenCODE maintenance path goes
+    ///   through `MemoryIdentifier.validated`, which accepts canonical UUIDs
+    ///   only. An engine-minted id would therefore surface an entry that
+    ///   `memory.update` and `memory.archive` cannot touch — the model could
+    ///   read a stale extracted fact and would have no way to correct it.
+    /// - **Duplication.** `write` refuses to append a second active entry with
+    ///   the same content; extraction, which re-reads similar exchanges turn
+    ///   after turn, is precisely the path that produces those repeats. It uses
+    ///   the same normalization and the same duplicate rule here.
+    ///
+    /// The whole batch is applied in one engine transaction, so the duplicate
+    /// check also covers repeats *within* a batch, and a failing save stores
+    /// none of it rather than part of it.
+    @discardableResult
+    func learn(from context: String) async throws -> [GraphEntry] {
+        let drafts = try await engine.extract(from: context)
+        var prepared: [GraphEntry] = []
+        prepared.reserveCapacity(drafts.count)
+        for draft in drafts {
+            let normalizedContent = MemoryContent.normalized(draft.content)
+            guard !normalizedContent.isEmpty else { continue }
+            var entry = GraphEntry(
+                id: MemoryIdentifier.makeNew(),
+                category: draft.category,
+                content: normalizedContent,
+                tags: draft.tags,
+                source: draft.source ?? MemorySource.extraction,
+                trust: draft.trust,
+                scope: draft.scope,
+                embedding: try await embedder?.embed(normalizedContent),
+                embeddingModel: embedder?.modelID,
+                confidence: draft.confidence
+            )
+            entry.refreshSearchText()
+            prepared.append(entry)
+        }
+        guard !prepared.isEmpty else {
+            return []
+        }
+
+        let batch = prepared
+        // The extraction's awaitable work — the side model and the embeddings —
+        // is done by this point, so a turn that was cancelled while it ran (a
+        // session close, a backend reset) must not let those drafts reach disk.
+        // Checked here, immediately before the atomic commit, and again inside
+        // ``ZenMemory/transaction(_:)`` once the write lock is held: the two
+        // together close the whole window between "the model answered" and "the
+        // entries are persisted", so a cancelled extraction queues and resumes
+        // without ever committing.
+        try Task.checkCancellation()
+        return try await engine.transaction { graph in
+            var stored: [GraphEntry] = []
+            for entry in batch {
+                guard Self.activeDuplicate(of: entry.content, in: graph) == nil else {
+                    continue
+                }
+                graph.addMemory(entry)
+                stored.append(entry)
+            }
+            return stored
+        }
+    }
+
+    /// Flushes the in-memory graph to disk.
+    ///
+    /// `remember`/`insert` already persist, so this exists for callers that
+    /// need an explicit checkpoint after a batch of background writes.
+    func saveGraph() async throws {
+        try await engine.save()
     }
 
     // MARK: - Mutations
 
     /// Appends a new entry, or returns the existing active entry with the same
     /// content instead of creating a duplicate.
+    ///
+    /// The duplicate check and the insertion happen inside a single engine
+    /// transaction. Splitting them — snapshot, decide, then write — is safe only
+    /// under a lock this actor cannot provide: `MemoryGraphStore` is an actor,
+    /// but each `await` on the engine is a suspension point at which another
+    /// call re-enters, so two concurrent writes of the same content would both
+    /// observe "absent" and both insert.
     func write(
         content: String,
-        category: MemoryCategory,
+        category: GraphCategory,
         tags: [String]
-    ) async throws -> (entry: MemoryEntry, created: Bool) {
+    ) async throws -> (entry: GraphEntry, created: Bool) {
         let normalizedContent = MemoryContent.normalized(content)
         guard !normalizedContent.isEmpty else {
             throw MemoryServiceError.missingField("content")
         }
 
-        let graph = await engine.snapshot()
-        if let existing = Self.ordered(graph.memories.values).first(where: {
-            $0.active && $0.content.localizedCaseInsensitiveCompare(normalizedContent) == .orderedSame
-        }) {
+        // Fast path: an already-visible duplicate costs neither an embedding
+        // call nor a transaction. It is an optimization only — the check inside
+        // the transaction is the authoritative one.
+        if let existing = Self.activeDuplicate(
+            of: normalizedContent,
+            in: await engine.snapshot()
+        ) {
             return (existing, false)
         }
 
-        let entry = try await engine.remember(
-            normalizedContent,
-            category: category,
-            tags: tags,
-            source: MemorySource.tool,
-            trust: .medium,
-            scope: .project,
-            id: MemoryIdentifier.makeNew()
-        )
-        return (entry, true)
+        let embedding = try await embedder?.embed(normalizedContent)
+        let embeddingModel = embedder?.modelID
+        let id = MemoryIdentifier.makeNew()
+        return try await engine.transaction { graph in
+            if let existing = Self.activeDuplicate(of: normalizedContent, in: graph) {
+                return (existing, false)
+            }
+            var entry = GraphEntry(
+                id: id,
+                category: category,
+                content: normalizedContent,
+                tags: tags,
+                source: MemorySource.tool,
+                trust: .medium,
+                scope: .project,
+                embedding: embedding,
+                embeddingModel: embeddingModel
+            )
+            entry.refreshSearchText()
+            graph.addMemory(entry)
+            return (entry, true)
+        }
     }
 
     /// Replaces the content of an existing entry in place, preserving its id.
@@ -217,51 +388,103 @@ actor MemoryGraphStore {
     /// This is deliberately NOT `supersede`: the entry keeps its identity, its
     /// creation date, its archive state and its graph edges, so an id handed to
     /// the model stays valid after an update.
+    ///
+    /// The merge is applied to the entry *as the transaction finds it*, never to
+    /// the copy this call started from, so a concurrent archive survives an
+    /// update and vice versa: each writer changes only its own fields.
+    ///
+    /// The embedding is the one part that cannot be computed inside the
+    /// transaction (it is async) and that depends on the stored text (the
+    /// preserved `Timestamp` comes from the entry being replaced). So it is
+    /// predicted from a snapshot, and the transaction verifies the prediction:
+    /// if a concurrent change invalidated it, the loop re-embeds the text the
+    /// transaction actually produced.
     func update(
         id rawIdentifier: String,
         content: String,
         tags: [String]?,
         updatedAt: Date,
         timeZone: TimeZone
-    ) async throws -> MemoryEntry {
+    ) async throws -> GraphEntry {
         let id = try MemoryIdentifier.validated(rawIdentifier)
         let normalizedContent = MemoryContent.normalized(content)
         guard !normalizedContent.isEmpty else {
             throw MemoryServiceError.missingField("content")
         }
-        guard var entry = await engine.snapshot().memories[id] else {
+        guard let current = await engine.snapshot().memories[id] else {
             throw MemoryServiceError.entryNotFound(rawIdentifier)
         }
 
-        entry.content = MemoryService.contentWithUpdateMetadata(
-            normalizedContent,
-            existingEntry: entry,
-            updatedAt: updatedAt,
-            timeZone: timeZone
+        var embedded = try await embedded(
+            MemoryService.contentWithUpdateMetadata(
+                normalizedContent,
+                existingEntry: current,
+                updatedAt: updatedAt,
+                timeZone: timeZone
+            )
         )
-        if let tags {
-            entry.tags = tags
+        // Without an embedder there is no vector to keep in sync, so the
+        // prediction never has to be re-checked.
+        let verifiesEmbedding = embedder != nil
+
+        for attempt in 0..<Self.maximumUpdateAttempts {
+            let pending = embedded
+            // Last round: accept the embedding computed for a very slightly
+            // different text rather than fail a user-visible update over a
+            // race. A stale vector degrades ranking; it never corrupts content.
+            let acceptsStaleEmbedding = attempt == Self.maximumUpdateAttempts - 1
+            let outcome = try await engine.transaction { graph -> UpdateOutcome in
+                guard var entry = graph.memories[id] else {
+                    return .missing
+                }
+                let finalContent = MemoryService.contentWithUpdateMetadata(
+                    normalizedContent,
+                    existingEntry: entry,
+                    updatedAt: updatedAt,
+                    timeZone: timeZone
+                )
+                guard acceptsStaleEmbedding
+                        || !verifiesEmbedding
+                        || pending.content == finalContent else {
+                    return .staleEmbedding(finalContent)
+                }
+                entry.content = finalContent
+                if let tags {
+                    entry.tags = tags
+                }
+                entry.updatedAt = updatedAt
+                entry.refreshSearchText()
+                entry.setEmbedding(pending.values, model: pending.model)
+                graph.addMemory(entry)
+                return .updated(entry)
+            }
+
+            switch outcome {
+            case let .updated(entry):
+                return entry
+            case .missing:
+                throw MemoryServiceError.entryNotFound(rawIdentifier)
+            case let .staleEmbedding(finalContent):
+                embedded = try await self.embedded(finalContent)
+            }
         }
-        entry.updatedAt = updatedAt
-        entry.refreshSearchText()
-        let embedder = MemoryEmbedding.provider()
-        entry.setEmbedding(
-            try await embedder?.embed(entry.content),
-            model: embedder?.modelID
-        )
-        try await engine.insert(entry)
-        return entry
+        throw MemoryServiceError.entryNotFound(rawIdentifier)
     }
 
-    func setArchived(_ isArchived: Bool, id rawIdentifier: String) async throws -> MemoryEntry {
+    func setArchived(_ isArchived: Bool, id rawIdentifier: String) async throws -> GraphEntry {
         let id = try MemoryIdentifier.validated(rawIdentifier)
-        guard var entry = await engine.snapshot().memories[id] else {
-            throw MemoryServiceError.entryNotFound(rawIdentifier)
+        let updatedAt = Date()
+        return try await engine.transaction { graph in
+            guard var entry = graph.memories[id] else {
+                throw MemoryServiceError.entryNotFound(rawIdentifier)
+            }
+            // Only the archive flag is touched, so an update that commits
+            // around this one keeps its content.
+            entry.active = !isArchived
+            entry.updatedAt = updatedAt
+            graph.addMemory(entry)
+            return entry
         }
-        entry.active = !isArchived
-        entry.updatedAt = Date()
-        try await engine.insert(entry)
-        return entry
     }
 
     func delete(id rawIdentifier: String) async throws {
@@ -273,10 +496,54 @@ actor MemoryGraphStore {
 
     // MARK: - Helpers
 
+    /// Bounded because each retry is caused by a *concurrent* commit on the
+    /// same entry; more than a couple of rounds means a pathological contention
+    /// pattern, and the last round commits unconditionally anyway.
+    private static let maximumUpdateAttempts = 3
+
+    private enum UpdateOutcome: Sendable {
+        case updated(GraphEntry)
+        case missing
+        /// The transaction produced a different text than the one embedded;
+        /// carries that text so the caller can embed it and retry.
+        case staleEmbedding(String)
+    }
+
+    /// An embedding paired with the exact text it describes, so a transaction
+    /// can tell whether it still applies.
+    private struct EmbeddedContent: Sendable {
+        let content: String
+        let values: [Float]?
+        let model: String?
+    }
+
+    private func embedded(_ content: String) async throws -> EmbeddedContent {
+        EmbeddedContent(
+            content: content,
+            values: try await embedder?.embed(content),
+            model: embedder?.modelID
+        )
+    }
+
+    /// The active entry a write would duplicate, if any.
+    ///
+    /// Newest-first so the answer is deterministic when several nodes share
+    /// content, and case-insensitive so trivial re-phrasings of the same line do
+    /// not create a second copy.
+    private static func activeDuplicate(
+        of normalizedContent: String,
+        in graph: MemoryGraph
+    ) -> GraphEntry? {
+        ordered(graph.memories.values).first {
+            $0.active
+                && $0.content.localizedCaseInsensitiveCompare(normalizedContent) == .orderedSame
+        }
+    }
+
     /// Journal order: newest first, with a stable tie-break.
     private static func ordered(
-        _ entries: some Sequence<MemoryEntry>
-    ) -> [MemoryEntry] {
+        _ entries: some Sequence<GraphEntry>
+    ) -> [GraphEntry] {
         entries.sorted { lhs, rhs in
             if lhs.createdAt != rhs.createdAt {
                 return lhs.createdAt > rhs.createdAt
@@ -287,7 +554,7 @@ actor MemoryGraphStore {
 
     /// Term-coverage score for archived entries, which the engine's retrieval
     /// paths skip. Zero means "no match".
-    private static func lexicalScore(_ entry: MemoryEntry, query: String) -> Int {
+    private static func lexicalScore(_ entry: GraphEntry, query: String) -> Int {
         let normalizedQuery = query
             .lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -346,6 +613,9 @@ enum MemoryIdentifier {
 
 enum MemorySource {
     static let tool = "memory.write"
+    /// Fallback attribution for entries produced by the automatic extractor
+    /// when the draft itself carries no source.
+    static let extraction = "memory.learn"
 }
 
 // MARK: - Store registry
@@ -398,6 +668,43 @@ enum MemoryEmbedding {
     static let environmentModelKey = "ZENCODE_MEMORY_EMBEDDING_MODEL"
     static let environmentAPIKeyKey = "ZENCODE_MEMORY_EMBEDDING_API_KEY"
 
+    /// Task-local override for provider resolution.
+    ///
+    /// Embeddings are opt-in and, when configured, reach out to a real network
+    /// endpoint. Tests must never make that call involuntarily just because the
+    /// developer's shell exports `ZENCODE_MEMORY_EMBEDDING_*`. A `setenv`-based
+    /// override would be process-global and racy across concurrently running
+    /// tests, so the injection seam is a task-local instead — the same shape as
+    /// ``AppStorageDirectory/withSupportDirectoryURL(_:operation:)`` and
+    /// ``MemoryAutomationSettings/scopedSideModel``. It is inherited by the
+    /// unstructured `Task` that `MemoryGraphStoreRegistry` uses to open the
+    /// engine, and it never leaks into a concurrently running suite.
+    ///
+    /// The double optional distinguishes three states:
+    /// - `nil` (outer) — the default, unbound state: resolve from the real
+    ///   process environment. This is production behavior.
+    /// - `.some(nil)` — force "no provider", ignoring the environment. Use this
+    ///   in tests to guarantee no network call is made even when the real
+    ///   environment carries a provider.
+    /// - `.some(provider)` — force a specific provider, ignoring the
+    ///   environment. Use this to test provider wiring deterministically.
+    @TaskLocal static var override: (any EmbeddingProvider)?? = nil
+
+    /// Runs `operation` with a forced provider resolution.
+    ///
+    /// Pass `nil` to force "no provider" — no environment lookup, no network.
+    /// Pass a provider to force it regardless of the environment. Outside this
+    /// scope the unbound resolver is used: in production it consults the real
+    /// environment; under a test harness it returns nil unconditionally.
+    static func withProvider<T: Sendable>(
+        _ provider: (any EmbeddingProvider)?,
+        operation: @Sendable () async throws -> T
+    ) async rethrows -> T {
+        try await $override.withValue(Optional(provider)) {
+            try await operation()
+        }
+    }
+
     /// Embeddings are opt-in. With no provider configured, `recall` uses pure
     /// BM25 lexical seeds and entries store no vector. The default
     /// `DeterministicHashEmbeddingProvider` is a feature-hashing bag-of-words
@@ -409,7 +716,30 @@ enum MemoryEmbedding {
     /// they were embedded with, and the engine only compares vectors from a
     /// matching model, so a provider change degrades to lexical BM25 retrieval
     /// instead of returning wrong matches.
+    ///
+    /// A task-local override (``withProvider(_:operation:)``) takes precedence
+    /// over the environment when bound, so tests can inject or disable a
+    /// provider without touching the process-global environment.
+    ///
+    /// Under a test harness the real process environment is never consulted:
+    /// it may carry a network-capable embedding provider the developer never
+    /// intended a test to reach, and `providerFromEnvironment` reads
+    /// `ProcessInfo` directly (which cannot be isolated per-task). Tests that
+    /// need a provider must bind one explicitly via
+    /// ``withProvider(_:operation:)``.
     static func provider() -> (any EmbeddingProvider)? {
+        switch override {
+        case .none:
+            guard !AppStorageDirectory.isRunningUnderTestHarness else {
+                return nil
+            }
+            return providerFromEnvironment()
+        case .some(let forced):
+            return forced
+        }
+    }
+
+    private static func providerFromEnvironment() -> (any EmbeddingProvider)? {
         let environment = ProcessInfo.processInfo.environment
         guard let rawEndpoint = environment[environmentEndpointKey]?
             .trimmingCharacters(in: .whitespacesAndNewlines),

@@ -237,6 +237,7 @@ extension RemoteSessionSnapshotTests {
                 refreshToken: "test-refresh-token",
                 expiresAt: Date().addingTimeInterval(3600)
             ),
+            applyTurnMemory: false,
             onEvent: { _ in }
         )
 
@@ -278,6 +279,7 @@ extension RemoteSessionSnapshotTests {
                 refreshToken: "test-refresh-token",
                 expiresAt: Date().addingTimeInterval(3600)
             ),
+            applyTurnMemory: false,
             onEvent: { _ in }
         )
         let secondRequests = fixture.capturedRequests()

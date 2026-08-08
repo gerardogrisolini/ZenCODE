@@ -16,12 +16,23 @@ extension AnthropicSubscriptionGenerationClient {
     /// session the moment it happens. A local copy would have been discarded by
     /// the caller, which only writes the assistant reply back, so the very next
     /// round (and every snapshot) would have replayed the uncompacted history.
+    ///
+    /// `applyTurnMemory` decides whether the turn's memory block is merged into
+    /// the outgoing copy of the last user message; the caller enables it on
+    /// every round of the tool loop. This function materialises the message
+    /// array itself from the lease instead of receiving it from the caller, so
+    /// the caller cannot apply the memory block on its side; the decision has
+    /// to be passed in and honoured here. It must be forwarded unchanged
+    /// through the preflight-compaction recursion below: that recursion
+    /// re-issues the *same* round, so dropping the flag there would silently
+    /// lose the block whenever a round happens to compact.
     func streamAnthropicMessages(
         lease: SessionLease,
         modelID: String,
         modelLLMID: String,
         credentials: AnthropicSubscriptionCredentials,
         includeThinkingBlocks: Bool = true,
+        applyTurnMemory: Bool,
         preflightCompactionAttempt: Int = 0,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> RemoteStreamResult {
@@ -48,8 +59,16 @@ extension AnthropicSubscriptionGenerationClient {
         let expectsPromptCache = RemoteGenerationClient.messagesExpectPromptCache(
             session.messages
         )
+        // The outgoing copy is the only thing that carries the memory block.
+        // `session.messages` stays untouched, so the actor-owned history, every
+        // snapshot taken from it, and the cache key are unaffected — and the
+        // prompt-cache expectation above is measured against that unmodified
+        // array on purpose.
+        let outgoingMessages = applyTurnMemory
+            ? RemoteGenerationClient.applyingCurrentTurnMemory(to: session.messages)
+            : session.messages
         let anthropicPayload = Self.anthropicMessagesPayload(
-            from: toolCatalog.wireMessages(from: session.messages),
+            from: toolCatalog.wireMessages(from: outgoingMessages),
             includeThinkingBlocks: replayThinkingBlocks
         )
         let requestMessages = Self.addingCacheControlBreakpoints(
@@ -77,10 +96,14 @@ extension AnthropicSubscriptionGenerationClient {
             tools: tools
         )
         // Remember what this request costs beyond the conversation itself, so a
-        // context-limit retry can subtract the real tool/system overhead.
+        // context-limit retry can subtract the real tool/system overhead. The
+        // outgoing copy is used deliberately: the estimate above was measured
+        // from that same array, so pairing it with the unmodified history would
+        // charge the memory block to the static overhead and inflate the cached
+        // reservation for every later round of the turn.
         recordRequestOverhead(
             estimate: requestEstimate,
-            messages: session.messages,
+            messages: outgoingMessages,
             for: lease
         )
         // Bounded: each successful compaction is guaranteed to shrink the
@@ -102,6 +125,7 @@ extension AnthropicSubscriptionGenerationClient {
                     modelLLMID: modelLLMID,
                     credentials: credentials,
                     includeThinkingBlocks: includeThinkingBlocks,
+                    applyTurnMemory: applyTurnMemory,
                     preflightCompactionAttempt: preflightCompactionAttempt + 1,
                     onEvent: onEvent
                 )

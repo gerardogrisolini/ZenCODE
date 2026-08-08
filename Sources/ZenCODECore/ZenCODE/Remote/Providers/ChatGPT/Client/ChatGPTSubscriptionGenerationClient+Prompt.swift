@@ -154,8 +154,16 @@ extension ChatGPTSubscriptionGenerationClient {
                     throw ChatGPTSubscriptionGenerationError.missingSession
                 }
                 session = latestSession
+                // Applied to the outgoing copy alone on every tool round: each
+                // round rebuilds from the fresh `session.messages` value, so
+                // the block appears exactly once per request. Keeping
+                // `session.messages` free of the block means it never reaches
+                // history, snapshots or the cache key.
+                let outgoingMessages = RemoteGenerationClient.applyingCurrentTurnMemory(
+                    to: session.messages
+                )
                 let requestPayload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
-                    from: toolCatalog.wireMessages(from: session.messages),
+                    from: toolCatalog.wireMessages(from: outgoingMessages),
                     continuation: session.continuation
                 )
                 let hasContinuationReplay = requestPayload.previousResponseID?.nilIfBlank != nil

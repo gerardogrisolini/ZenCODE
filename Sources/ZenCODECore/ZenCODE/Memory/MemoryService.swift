@@ -11,8 +11,8 @@ import ZenMemory
 /// Async facade over the per-workspace ZenMemory graph.
 ///
 /// The durable store is the graph, not `MEMORY.md`. An existing `MEMORY.md` is
-/// imported once on first open and then left untouched on disk as a legacy
-/// human-readable artifact.
+/// imported on first open (in memory only — see ``MemoryGraphStore/open``) and
+/// then left untouched on disk as a legacy human-readable artifact.
 ///
 /// `@unchecked Sendable`: the only stored property is a `FileManager`, which is
 /// not formally `Sendable` but is documented as safe to call from multiple
@@ -103,6 +103,7 @@ public final class MemoryService: @unchecked Sendable {
     ) async throws -> [MemoryEntry] {
         try await store(for: workspaceRootURL)
             .entries(includeArchived: includeArchived, limit: limit)
+            .map { MemoryEntry($0) }
     }
 
     public func searchEntries(
@@ -119,7 +120,7 @@ public final class MemoryService: @unchecked Sendable {
             query: normalizedQuery,
             includeArchived: includeArchived,
             limit: limit
-        )
+        ).map { MemoryEntry($0) }
     }
 
     public func entry(
@@ -128,6 +129,7 @@ public final class MemoryService: @unchecked Sendable {
     ) async throws -> MemoryEntry? {
         try await store(for: workspaceRootURL)
             .entry(id: MemoryIdentifier.validated(id))
+            .map { MemoryEntry($0) }
     }
 
     // MARK: - Mutations
@@ -139,15 +141,40 @@ public final class MemoryService: @unchecked Sendable {
         category: MemoryCategory = .fact,
         tags: [String] = []
     ) async throws -> MemoryEntry {
+        try await writeEntryOutcome(
+            content: content,
+            workspaceRootURL: workspaceRootURL,
+            category: category,
+            tags: tags
+        ).entry
+    }
+
+    /// Writes an entry and reports whether it was actually created.
+    ///
+    /// The store deduplicates against active entries, so a write can legitimately
+    /// resolve to an existing entry. `writeEntry` must keep returning a plain
+    /// `MemoryEntry` to preserve the public 1.1.x contract, so the created flag
+    /// is propagated internally through this variant instead. The tool layer
+    /// uses it to report a truthful `written` / `deduplicated` result rather than
+    /// claiming every call wrote something.
+    func writeEntryOutcome(
+        content: String,
+        workspaceRootURL: URL?,
+        category: MemoryCategory = .fact,
+        tags: [String] = []
+    ) async throws -> MemoryWriteOutcome {
         let result = try await store(for: workspaceRootURL).write(
             content: content,
-            category: category,
+            category: category.engineCategory,
             tags: tags
         )
         if result.created {
             Self.notifyMemoryEntriesChanged()
         }
-        return result.entry
+        return MemoryWriteOutcome(
+            entry: MemoryEntry(result.entry),
+            created: result.created
+        )
     }
 
     /// Replaces the content of an entry in place, preserving its id.
@@ -168,7 +195,7 @@ public final class MemoryService: @unchecked Sendable {
             timeZone: timeZone
         )
         Self.notifyMemoryEntriesChanged()
-        return entry
+        return MemoryEntry(entry)
     }
 
     @discardableResult
@@ -188,7 +215,7 @@ public final class MemoryService: @unchecked Sendable {
         let entry = try await store(for: workspaceRootURL)
             .setArchived(isArchived, id: id)
         Self.notifyMemoryEntriesChanged()
-        return entry
+        return MemoryEntry(entry)
     }
 
     public func deleteEntry(
@@ -221,7 +248,7 @@ public final class MemoryService: @unchecked Sendable {
     /// did not supply them.
     static func contentWithUpdateMetadata(
         _ content: String,
-        existingEntry: MemoryEntry,
+        existingEntry: GraphEntry,
         updatedAt: Date,
         timeZone: TimeZone
     ) -> String {
@@ -245,6 +272,19 @@ public final class MemoryService: @unchecked Sendable {
         }
         return lines.joined(separator: "\n")
     }
+}
+
+/// Outcome of a memory write, including whether an entry was actually created.
+///
+/// Internal on purpose: the public write API keeps returning `MemoryEntry` to
+/// preserve the 1.1.x contract, and this carries the extra bit the tool layer
+/// needs to describe the result honestly.
+struct MemoryWriteOutcome: Sendable {
+    let entry: MemoryEntry
+    let created: Bool
+
+    /// The store found an equivalent active entry and reused it.
+    var deduplicated: Bool { !created }
 }
 
 public enum MemoryServiceError: LocalizedError {

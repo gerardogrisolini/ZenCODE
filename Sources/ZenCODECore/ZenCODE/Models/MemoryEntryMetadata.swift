@@ -61,7 +61,7 @@ nonisolated struct MemoryEntryMetadata: Sendable {
     }
 }
 
-extension MemoryEntry {
+extension GraphEntry {
     var metadata: MemoryEntryMetadata {
         MemoryEntryMetadata(content: content)
     }

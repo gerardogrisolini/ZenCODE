@@ -275,20 +275,36 @@ public actor AgentCoreSessionRunner {
             prompt: prompt
         )
 
+        // Bounded and best-effort: this returns nil on timeout, failure, or an
+        // empty graph, and the turn then proceeds with a request that is
+        // byte-identical to one sent with memory switched off.
+        let memoryBlock = await MemoryTurnCoordinator.shared.memoryBlock(
+            sessionID: configuration.sessionID,
+            workspaceRootURL: configuration.workingDirectory,
+            prompt: prompt
+        )
+
         do {
             let response = try await AgentToolAuthorizationContext.$turnID.withValue(promptID) {
-                try await backend.sendPrompt(
-                    sessionID: configuration.sessionID,
-                    prompt: prompt,
-                    attachments: attachments,
-                    onEvent: { event in
-                        await turnRecorder.record(event)
-                        if case let .toolCallStarted(toolCall) = event {
-                            await onToolWillExecute?(toolCall)
+                // Nested inside the existing turn-scoped binding, and around
+                // the same call, so the block reaches request assembly through
+                // the actor hop exactly the way `turnID` already reaches tool
+                // executors. It is scoped to this one `sendPrompt`, so nothing
+                // that outlives the turn can observe it.
+                try await MemoryTurnContext.$currentTurnMemoryBlock.withValue(memoryBlock) {
+                    try await backend.sendPrompt(
+                        sessionID: configuration.sessionID,
+                        prompt: prompt,
+                        attachments: attachments,
+                        onEvent: { event in
+                            await turnRecorder.record(event)
+                            if case let .toolCallStarted(toolCall) = event {
+                                await onToolWillExecute?(toolCall)
+                            }
+                            await onEvent(event)
                         }
-                        await onEvent(event)
-                    }
-                )
+                    )
+                }
             }
             try verifyBackendGeneration(generation)
             await finalizeTurn(
@@ -361,6 +377,25 @@ public actor AgentCoreSessionRunner {
         )
         guard self.backendGeneration == backendGeneration else {
             return
+        }
+        // Extraction runs only for a turn that actually completed, and only
+        // when it is double-gated (explicit opt-in plus a configured side
+        // model). The await is one actor hop that registers the work: the
+        // side-model call itself runs in a task the coordinator owns, so the
+        // turn-ended event below is not delayed by it and close/reset can still
+        // cancel it. Only the last operator message and the assistant reply
+        // that followed it are handed over, never the whole history and never
+        // tool output.
+        if outcome.status == .completed,
+           MemoryAutomationSettings.isAutoExtractionEnabled,
+           let conversation = MemoryTurnCoordinator.extractionConversation(
+               from: await recorder.snapshot().history
+           ) {
+            await MemoryTurnCoordinator.shared.scheduleExtraction(
+                sessionID: configuration.sessionID,
+                workspaceRootURL: configuration.workingDirectory,
+                conversation: conversation
+            )
         }
         await onEvent(.sessionSnapshot(recovery.snapshot))
         await onEvent(.turnEnded(outcome))
@@ -735,6 +770,10 @@ public actor AgentCoreSessionRunner {
         invalidateSessionGeneration(for: sessionID)
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
+        // The rebuilt session keeps its identity but starts a new conversation,
+        // so it must not inherit paused recall or an extraction scheduled for
+        // the history that is being dropped.
+        await MemoryTurnCoordinator.shared.discard(sessionID: sessionID)
         // The transient bus lives inside the backend tree: release an
         // unresolved synthetic batch so it is re-offered instead of lost, while
         // keeping live observers attached across the rebuild. The room stays
@@ -786,6 +825,7 @@ public actor AgentCoreSessionRunner {
         lastKnownSessionSnapshots.removeAll()
         for sessionID in sessionIDs {
             _ = await interruptSubAgents(rootSessionID: sessionID)
+            await MemoryTurnCoordinator.shared.discard(sessionID: sessionID)
             // Same ordering as `rebuildSession`: the room is fenced across the
             // backend clear, never merely before it.
             let chatReset = await sharedChatCoordinatorStorage?.beginReset(roomID: sessionID)
@@ -823,6 +863,18 @@ public actor AgentCoreSessionRunner {
         // graph after `flush` has already written the checkpoint, losing the
         // update or producing an inconsistent snapshot.
         await waitForPromptTasks(for: sessionID)
+        // A recreated session reuses the id, so its recall state has to go with
+        // the incarnation that owned it; anything still extracting for this
+        // conversation is cancelled rather than left running past the close.
+        //
+        // This runs *before* the throwing checkpoint flush on purpose: a turn
+        // that was extracting when the session closed must be stopped even if
+        // `flush` throws, otherwise the now-orphaned extraction could commit
+        // late. `discard` is best-effort (it cancels but does not wait), and the
+        // cancellation it signals is observed by the `Task.checkCancellation()`
+        // gates in ``MemoryGraphStore/learn(from:)`` and
+        // ``ZenMemory/transaction(_:)``.
+        await MemoryTurnCoordinator.shared.discard(sessionID: sessionID)
         try await taskOrchestrator.flush(sessionID: sessionID)
         promptSkillProvidersBySessionID.removeValue(forKey: sessionID)
         // Terminate coordination for this room so a suspended observer resumes
@@ -875,6 +927,18 @@ public actor AgentCoreSessionRunner {
         backendPreparation?.cancel()
         backendPreparation = nil
         sessionGenerations.removeAll()
+        // Memory extraction outlives individual turns by design, so it is the
+        // one piece of per-turn work that a backend teardown must stop
+        // explicitly. Cancelled and drained behind a bound, so a side model
+        // parked in a socket read cannot hold shutdown open.
+        //
+        // Run before the throwing checkpoint flush: if `flush` throws, the
+        // extractions must still be stopped — a cancelled turn's late answer
+        // must not commit after the runtime that scheduled it is gone. The
+        // cancellation signalled here is observed by the `Task.checkCancellation()`
+        // gates in ``MemoryGraphStore/learn(from:)`` and
+        // ``ZenMemory/transaction(_:)``.
+        await MemoryTurnCoordinator.shared.cancelPendingExtractions()
         try await taskOrchestrator.flush()
         // Terminate every task-graph event observer so suspended `events(...)`
         // consumers resume instead of waiting forever after shutdown.

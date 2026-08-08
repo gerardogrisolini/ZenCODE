@@ -186,7 +186,7 @@ extension DirectToolExecutor {
                 name: toolCall.name,
                 arguments: Self.toolArguments(from: toolCall.argumentsJSON)
             )
-            let output = try await MemoryTool.execute(
+            let output = try await MemoryTool.executeAsync(
                 request,
                 context: MemoryToolContext(workingDirectory: workingDirectory)
             ).text

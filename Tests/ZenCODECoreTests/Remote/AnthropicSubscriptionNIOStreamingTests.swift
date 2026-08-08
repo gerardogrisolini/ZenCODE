@@ -53,6 +53,7 @@ struct AnthropicSubscriptionNIOStreamingTests {
             modelID: "claude-haiku-4-5",
             modelLLMID: "claude-haiku-4-5",
             credentials: credentials(),
+            applyTurnMemory: false,
             onEvent: { event in
                 events.append(event)
             }
@@ -107,6 +108,7 @@ struct AnthropicSubscriptionNIOStreamingTests {
                 modelID: "claude-haiku-4-5",
                 modelLLMID: "claude-haiku-4-5",
                 credentials: credentials(),
+                applyTurnMemory: false,
                 onEvent: { _ in }
             )
             Issue.record("Expected the Anthropic 429 response to fail.")
@@ -143,6 +145,7 @@ struct AnthropicSubscriptionNIOStreamingTests {
                 modelID: "claude-haiku-4-5",
                 modelLLMID: "claude-haiku-4-5",
                 credentials: credentials(),
+                applyTurnMemory: false,
                 onEvent: { _ in }
             )
             Issue.record("Expected the pre-head close to propagate without replay.")
@@ -184,6 +187,7 @@ struct AnthropicSubscriptionNIOStreamingTests {
                 modelID: "claude-haiku-4-5",
                 modelLLMID: "claude-haiku-4-5",
                 credentials: credentials(),
+                applyTurnMemory: false,
                 onEvent: { event in
                     events.append(event)
                 }

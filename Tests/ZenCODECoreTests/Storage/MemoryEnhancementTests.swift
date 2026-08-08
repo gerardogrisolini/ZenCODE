@@ -25,7 +25,7 @@ struct MemoryEnhancementTests {
         Next: query it only when relevant.
         """
 
-        let entry = MemoryEntry(category: .fact, content: content)
+        let entry = ZenCODECore.MemoryEntry(content: content)
         let metadata = entry.metadata
 
         #expect(entry.content == content)
@@ -63,11 +63,11 @@ struct MemoryEnhancementTests {
                 minute: 45
             ).date)
 
-            let output = try await MemoryTool.execute(
+            let output = try await MemoryTool.executeAsync(
                 ToolRequest(
                     name: "memory.update",
                     arguments: [
-                        "id": .string(original.id),
+                        "id": .string(original.id.uuidString),
                         "content": .string("""
                         Summary: updated transport decision.
                         State: the validated implementation is active.
@@ -113,12 +113,12 @@ struct MemoryEnhancementTests {
                 workspaceRootURL: workspace.workspaceURL
             )
             _ = try await service.archiveEntry(
-                id: entry.id,
+                id: entry.id.uuidString,
                 workspaceRootURL: workspace.workspaceURL
             )
 
             _ = try await service.updateEntry(
-                id: entry.id,
+                id: entry.id.uuidString,
                 content: "Summary: corrected archived project state.",
                 workspaceRootURL: workspace.workspaceURL
             )
@@ -154,7 +154,7 @@ struct MemoryEnhancementTests {
                 workspaceRootURL: workspace.workspaceURL
             )
 
-            let output = try await MemoryTool.execute(
+            let output = try await MemoryTool.executeAsync(
                 ToolRequest(
                     name: "memory.read",
                     arguments: ["detail": .string("index")]
@@ -191,7 +191,7 @@ struct MemoryEnhancementTests {
                 workspaceRootURL: workspace.workspaceURL
             )
 
-            let output = try await MemoryTool.execute(
+            let output = try await MemoryTool.executeAsync(
                 ToolRequest(name: "memory.read", arguments: [:]),
                 context: MemoryToolContext(workingDirectory: workspace.workspaceURL),
                 memoryService: service
@@ -243,6 +243,10 @@ struct MemoryEnhancementTests {
         // Regression: with the passthrough selector every recalled candidate
         // was selected, so weak partial matches were boosted toward confidence
         // 1.0. The score-threshold selector must instead decay them.
+        //
+        // Maintenance is exercised through the automatic recall path
+        // (`store.context`), not `memory.search`: search is read-only and must
+        // not mutate retrievalCount/confidence/access/link.
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
         try await workspace.withIsolatedSupport {
@@ -256,11 +260,11 @@ struct MemoryEnhancementTests {
                 workspaceRootURL: workspace.workspaceURL
             )
 
-            _ = try await service.searchEntries(
-                query: "transport architecture",
-                workspaceRootURL: workspace.workspaceURL,
-                limit: 10
+            let store = try await MemoryGraphStoreRegistry.shared.store(
+                forWorkspaceRoot: workspace.workspaceURL,
+                graphURL: workspace.graphURL()
             )
+            _ = try await store.context(for: "transport architecture")
 
             let after = try await service.readEntries(
                 workspaceRootURL: workspace.workspaceURL,
@@ -287,6 +291,9 @@ struct MemoryEnhancementTests {
         // the graph until cascade retrieval returned noise. The threshold
         // selector keeps only strong hits, so co-relevance edges must not
         // accumulate across repeated recalls.
+        //
+        // Tested through the automatic recall path (`store.context`), not
+        // `memory.search`: search is read-only and never creates edges.
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
         try await workspace.withIsolatedSupport {
@@ -304,17 +311,17 @@ struct MemoryEnhancementTests {
                 workspaceRootURL: workspace.workspaceURL
             )
 
+            let store = try await MemoryGraphStoreRegistry.shared.store(
+                forWorkspaceRoot: workspace.workspaceURL,
+                graphURL: workspace.graphURL()
+            )
             // Each query strongly matches exactly one entry; the other two
             // share only the common term and fall below the 0.5 floor. Under
             // the old passthrough selector the first recall alone would have
             // produced a complete triangle of relatesTo edges.
             for query in ["transport architecture", "transport layer", "transport cost"] {
                 for _ in 0..<3 {
-                    _ = try await service.searchEntries(
-                        query: query,
-                        workspaceRootURL: workspace.workspaceURL,
-                        limit: 10
-                    )
+                    _ = try await store.context(for: query)
                 }
             }
 
@@ -371,9 +378,9 @@ struct MemoryEnhancementTests {
     func confidenceDecaysWithAgeAndVariesByCategory() {
         let now = Date()
         let sixtyDaysAgo = now.addingTimeInterval(-60 * 86_400)
-        let fresh = MemoryEntry(category: .fact, content: "fresh fact", createdAt: now)
-        let oldFact = MemoryEntry(category: .fact, content: "old fact", createdAt: sixtyDaysAgo)
-        let oldCorrection = MemoryEntry(
+        let fresh = GraphEntry(category: .fact, content: "fresh fact", createdAt: now)
+        let oldFact = GraphEntry(category: .fact, content: "old fact", createdAt: sixtyDaysAgo)
+        let oldCorrection = GraphEntry(
             category: .correction,
             content: "old correction",
             createdAt: sixtyDaysAgo
@@ -388,7 +395,7 @@ struct MemoryEnhancementTests {
 
     @Test
     func confidenceBoostAndDecayMoveTheStoredValue() {
-        var entry = MemoryEntry(category: .fact, content: "boostable fact")
+        var entry = GraphEntry(category: .fact, content: "boostable fact")
         entry.decayConfidence(by: 0.5)
         #expect(entry.confidence == 0.5)
 
@@ -417,7 +424,7 @@ struct MemoryEnhancementTests {
                 tags: ["persistence"]
             )
             _ = try await service.archiveEntry(
-                id: second.id,
+                id: second.id.uuidString,
                 workspaceRootURL: workspace.workspaceURL
             )
 
@@ -432,8 +439,8 @@ struct MemoryEnhancementTests {
             let all = await reopened.entries(includeArchived: true, limit: 100)
 
             #expect(all.count == 2)
-            #expect(all.contains { $0.id == first.id })
-            #expect(all.contains { $0.isArchived && $0.id == second.id })
+            #expect(all.contains { $0.id == first.id.uuidString })
+            #expect(all.contains { $0.isArchived && $0.id == second.id.uuidString })
             #expect(Set(all.flatMap(\.tags)) == ["persistence"])
         }
     }
@@ -477,8 +484,11 @@ struct MemoryEnhancementTests {
             #expect(firstEntries.count == 3)
             #expect(firstEntries.contains { $0.isArchived })
 
-            // The graph file now exists, so a second open must load it instead
-            // of re-running the migration.
+            // The migration is deterministic (identity is derived from the
+            // journal), so a second open re-migrates from MEMORY.md and
+            // converges on the same nodes. open no longer persists the graph
+            // — the first mutation will — so re-migration is the expected path
+            // until a write has created the file.
             let second = try await MemoryGraphStore.open(
                 graphURL: graphURL,
                 workspaceRootURL: workspace.workspaceURL
@@ -554,7 +564,7 @@ struct MemoryEnhancementTests {
                 workspaceRootURL: workspace.workspaceURL
             )
             _ = try await service.archiveEntry(
-                id: archived.id,
+                id: archived.id.uuidString,
                 workspaceRootURL: workspace.workspaceURL
             )
 
@@ -650,7 +660,7 @@ struct MemoryEnhancementTests {
                     ),
                 ] {
                     do {
-                        _ = try await MemoryTool.execute(
+                        _ = try await MemoryTool.executeAsync(
                             request,
                             context: MemoryToolContext(workingDirectory: workspace.workspaceURL),
                             memoryService: service
@@ -709,7 +719,7 @@ struct MemoryEnhancementTests {
             #expect(firstRead.source == MemoryGraphStore.migrationSource)
 
             _ = try await service.updateEntry(
-                id: firstRead.id,
+                id: firstRead.id.uuidString,
                 content: """
                 Summary: migrated legacy entry.
                 State: the identifier now lives in the graph.
@@ -751,7 +761,7 @@ struct MemoryEnhancementTests {
                     group.addTask {
                         await barrier.wait()
                         _ = try await MemoryService().updateEntry(
-                            id: original.id,
+                            id: original.id.uuidString,
                             content: """
                             Summary: concurrent state \(index).
                             State: serialized update \(index).

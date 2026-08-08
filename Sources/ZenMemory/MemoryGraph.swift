@@ -160,6 +160,13 @@ public struct GraphMetadata: Codable, Sendable, Equatable {
 public struct MemoryGraph: Codable, Sendable, Equatable {
     public static let currentGraphVersion: UInt32 = 2
 
+    /// Assumed `graph_version` for files written before the version key
+    /// existed. Their schema matches the earliest versioned format; loading
+    /// decodes them with the current contract defaults and normalizes them to
+    /// `currentGraphVersion` in memory. The on-disk file is only rewritten by
+    /// an explicit save, never by loading.
+    public static let legacyGraphVersion: UInt32 = 1
+
     public var graphVersion: UInt32
     public var memories: [String: MemoryEntry]
     public var tags: [String: TagEntry]
@@ -184,6 +191,38 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
         self.edges = edges
         self.reverseEdges = reverseEdges
         self.metadata = metadata
+    }
+
+    // Explicit Codable: `graph_version` is optional on the wire so files that
+    // predate the version key decode with a defined legacy default instead of
+    // failing with keyNotFound. Every coding key below matches the synthesized
+    // names exactly (camelCase here, snake_case on the wire through the
+    // persistence key strategies), so existing files keep their wire format.
+    private enum CodingKeys: String, CodingKey {
+        case graphVersion, memories, tags, clusters, edges, reverseEdges, metadata
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        graphVersion = try c.decodeIfPresent(UInt32.self, forKey: .graphVersion)
+            ?? Self.legacyGraphVersion
+        memories = try c.decode([String: MemoryEntry].self, forKey: .memories)
+        tags = try c.decode([String: TagEntry].self, forKey: .tags)
+        clusters = try c.decode([String: ClusterEntry].self, forKey: .clusters)
+        edges = try c.decode([String: [MemoryEdge]].self, forKey: .edges)
+        reverseEdges = try c.decode([String: [String]].self, forKey: .reverseEdges)
+        metadata = try c.decode(GraphMetadata.self, forKey: .metadata)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(graphVersion, forKey: .graphVersion)
+        try c.encode(memories, forKey: .memories)
+        try c.encode(tags, forKey: .tags)
+        try c.encode(clusters, forKey: .clusters)
+        try c.encode(edges, forKey: .edges)
+        try c.encode(reverseEdges, forKey: .reverseEdges)
+        try c.encode(metadata, forKey: .metadata)
     }
 
     public var memoryCount: Int { memories.count }
@@ -273,7 +312,20 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
     public func outgoingEdges(from id: String) -> [MemoryEdge] { edges[id] ?? [] }
     public func incomingNodes(to id: String) -> [String] { reverseEdges[id] ?? [] }
 
+    /// Creates a `relatesTo` edge between two memories and records link
+    /// discovery.
+    ///
+    /// The guard makes this a **no-op when either endpoint no longer exists or
+    /// has been deactivated** (archived/superseded). Co-relevance links are
+    /// discovered during retrieval maintenance, which runs after the selector
+    /// `await`; a concurrent `forget` or archive can remove or deactivate one of
+    /// the endpoints in that window. Without the guard the edge — and its
+    /// reverse-edge — would dangle forever. Tag and cluster edges are created
+    /// through ``addEdge(from:to:kind:)`` and ``assign(memoryID:toCluster:)``,
+    /// which are unaffected.
     public mutating func linkMemories(from: String, to: String, weight: Float) {
+        guard let source = memories[from], source.active,
+              let target = memories[to], target.active else { return }
         addEdge(from: from, to: to, kind: .relatesTo(weight: min(max(weight, 0), 1)))
         metadata.linkDiscoveryCount &+= 1
     }
@@ -294,7 +346,8 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
         seeds: [ScoredMemoryID],
         maxDepth: Int = 2,
         maxResults: Int = 10,
-        edgeDecay: Float = 0.7
+        edgeDecay: Float = 0.7,
+        scope: MemoryScope = .all
     ) -> [ScoredMemoryID] {
         metadata.retrievalCount &+= 1
         guard maxResults > 0 else { return [] }
@@ -305,12 +358,20 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
             var depth: Int
         }
 
+        /// A memory may be seeded, traversed, or returned only when it is
+        /// active and inside the requested scope. Archived nodes never enter
+        /// the queue, so they cannot act as bridges to their neighbours.
+        func isRetrievable(_ id: String) -> Bool {
+            guard let memory = memories[id] else { return false }
+            return memory.active && MemorySearch.scopeAllows(memory.scope, requested: scope)
+        }
+
         var visited = Set<String>()
         var results: [String: Float] = [:]
         var queue: [QueueItem] = []
         var cursor = 0
 
-        for seed in seeds where memories[seed.id] != nil {
+        for seed in seeds where isRetrievable(seed.id) {
             queue.append(.init(id: seed.id, score: seed.score, depth: 0))
             results[seed.id] = max(results[seed.id] ?? -.infinity, seed.score)
         }
@@ -320,7 +381,7 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
             cursor += 1
             guard !visited.contains(item.id) else { continue }
             visited.insert(item.id)
-            guard item.depth < maxDepth else { continue }
+            guard item.depth < maxDepth, isRetrievable(item.id) else { continue }
 
             for edge in outgoingEdges(from: item.id) {
                 let target = edge.target
@@ -329,13 +390,13 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
                 let newScore = item.score * edge.kind.traversalWeight * decay
 
                 if target.hasPrefix("tag:") || target.hasPrefix("cluster:") {
-                    for sourceID in incomingNodes(to: target) where memories[sourceID] != nil && !visited.contains(sourceID) {
+                    for sourceID in incomingNodes(to: target) where isRetrievable(sourceID) && !visited.contains(sourceID) {
                         if newScore > (results[sourceID] ?? -.infinity) {
                             results[sourceID] = newScore
                             queue.append(.init(id: sourceID, score: newScore, depth: item.depth + 1))
                         }
                     }
-                } else if memories[target] != nil, newScore > (results[target] ?? -.infinity) {
+                } else if isRetrievable(target), newScore > (results[target] ?? -.infinity) {
                     results[target] = newScore
                     queue.append(.init(id: target, score: newScore, depth: item.depth + 1))
                 }
