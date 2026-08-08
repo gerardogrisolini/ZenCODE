@@ -754,12 +754,47 @@ enum MemoryEmbedding {
                 return nil
             }
             if let endpoint = settings.endpointURL {
-                return OpenAICompatibleEmbeddingProvider(endpoint: endpoint)
+                return OpenAICompatibleEmbeddingProvider(
+                    endpoint: endpoint,
+                    model: settings.model,
+                    apiKey: providerAPIKey(
+                        manifest: manifest,
+                        providerID: settings.providerID,
+                        endpoint: endpoint
+                    )
+                )
             }
             // endpoint present but invalid: degrade to absent and try the env.
         }
         // Field absent (or invalid endpoint): legacy environment fallback.
         return providerFromEnvironment(environment)
+    }
+
+    /// Derives the embedding Authorization key from the provider referenced by
+    /// `providerID` (set only by the OpenRouter preset) without duplicating the
+    /// secret in the embeddings manifest. The key is reused only when all of
+    /// the following hold: the reference resolves to a provider actually present
+    /// in the manifest, that provider is OpenRouter, and the embedding endpoint
+    /// is itself an OpenRouter endpoint. Any other combination — custom/legacy
+    /// endpoint-only configurations, a stale or edited providerID, or an
+    /// endpoint pointing at a different host — yields no key, so a manipulated
+    /// `settings.json` can never forward an OpenRouter key to an arbitrary
+    /// host.
+    private static func providerAPIKey(
+        manifest: AgentSettingsManifest?,
+        providerID: UUID?,
+        endpoint: URL
+    ) -> String? {
+        guard let providerID,
+              let manifest,
+              let provider = manifest.providers.first(where: { $0.id == providerID }),
+              AgentRemoteProvider.isOpenRouterBaseURL(provider.baseURL),
+              AgentRemoteProvider.isOpenRouterBaseURL(endpoint.absoluteString) else {
+            return nil
+        }
+        return manifest.remoteAPIKeysByProviderID[
+            providerID.uuidString.lowercased()
+        ]
     }
 
     private static func providerFromEnvironment(

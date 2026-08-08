@@ -44,3 +44,24 @@ func explicitCompatibilityModelRemainsEncodedWhenProvided() throws {
     #expect(provider.modelID == "server-selected-model")
     #expect(json["model"] as? String == "server-selected-model")
 }
+
+@Test
+func modelAndAPIKeyAreSentInRequestWhenProvided() throws {
+    let endpoint = try #require(URL(string: "https://openrouter.ai/api/v1/embeddings"))
+    let provider = OpenAICompatibleEmbeddingProvider(
+        endpoint: endpoint,
+        model: "qwen/qwen3-embedding-8b",
+        apiKey: "sk-openrouter-test"
+    )
+
+    let request = try provider.request(for: "hello")
+    let body = try #require(request.httpBody)
+    let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+
+    #expect(request.httpMethod == "POST")
+    #expect(request.url == endpoint)
+    #expect(json["model"] as? String == "qwen/qwen3-embedding-8b")
+    #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk-openrouter-test")
+    #expect(provider.requestModel == "qwen/qwen3-embedding-8b")
+    #expect(provider.modelID == "qwen/qwen3-embedding-8b")
+}

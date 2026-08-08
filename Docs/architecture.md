@@ -367,15 +367,33 @@ embedder is configured, merging the semantic and lexical rankings before the
 cascade.
 
 Embeddings are opt-in and off by default. With no provider configured, entries
-carry no vector and retrieval is pure BM25 plus graph expansion. The only
-embedding configuration is an endpoint: the persisted settings manifest
-(`AgentMemoryEmbeddingSettingsManifest`, manifest version 11, `settings.json`
-`memoryEmbedding`) stores a single normalized absolute HTTP(S) URL — no model
-identifier, no API key — configured interactively from setup ("Memory
-embeddings": BM25 only / add / change / remove endpoint, detail line "BM25
-only" or the stored endpoint). Setup validates the URL format entirely locally:
-it never probes the endpoint, never enumerates models, and never asks for
-credentials. For compatibility, the legacy environment variable
+carry no vector and retrieval is pure BM25 plus graph expansion. The persisted
+settings manifest (`AgentMemoryEmbeddingSettingsManifest`, manifest version 12,
+`settings.json` `memoryEmbedding`) stores a normalized absolute HTTP(S)
+endpoint — plus, optionally, an OpenAI-compatible `model` identifier and a
+non-secret `providerID` reference to a configured provider whose API key the
+resolver reuses at runtime. Legacy v11 endpoint-only values decode unchanged
+(`model`/`providerID` nil) and re-encode byte-identically. Setup configures it
+interactively ("Memory embeddings": BM25 only / add / change / remove endpoint,
+detail line "BM25 only" or the stored endpoint, with the model appended when
+present). When at least one configured provider is OpenRouter, setup proposes an
+OpenRouter choice immediately, precompiled to the canonical endpoint
+`https://openrouter.ai/api/v1/embeddings` with model `qwen/qwen3-embedding-8b`
+and the referenced provider's ID; without an OpenRouter provider no such
+proposal appears. The manual add/change-endpoint path stays endpoint-only by
+design: it never carries over the preset's model/provider reference, so an
+edited endpoint cannot silently reuse the provider's key. Setup validates the
+URL format entirely locally: it never
+probes the endpoint, never enumerates models, and never asks for credentials.
+The embedding request never duplicates the provider's API key: when
+`providerID` is set the resolver reads
+`remoteAPIKeysByProviderID[providerID.uuidString.lowercased()]` at runtime only
+if the reference resolves to a configured OpenRouter provider **and** the
+embedding endpoint is itself an OpenRouter endpoint; any mismatch (custom or
+legacy endpoint-only setups, a stale `providerID`, an endpoint on a different
+host) sends the request without Authorization, so a manipulated `settings.json`
+can never forward an OpenRouter key to an arbitrary host. For compatibility,
+the legacy environment variable
 `ZENCODE_MEMORY_EMBEDDING_ENDPOINT` is still honoured as a fallback when the
 manifest field is absent (i.e. a legacy v10 install that never went through
 setup); an explicitly disabled manifest suppresses it. `MemoryEmbedding.provider(...)`
@@ -383,7 +401,8 @@ resolves task-local override first, then manifest endpoint or disabled, then
 environment only when the manifest field is absent, then BM25. The endpoint
 identifies the embedding model itself: `OpenAICompatibleEmbeddingProvider` derives a stable
 endpoint-hash `modelID` when none is supplied and deliberately omits `model`
-from the request body, so an endpoint-only server chooses. The engine still
+from the request body, so an endpoint-only server chooses; a stored `model` is
+sent in the request body instead. The engine still
 ships `DeterministicHashEmbeddingProvider` (a 128-dimension signed feature-hashing
 bag-of-words encoder, not a semantic model), but it is no longer wired in by
 default. Entries record their `embeddingModel`, so a provider change degrades to

@@ -24,7 +24,7 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         case memoryEmbedding
     }
 
-    public static let currentVersion = 11
+    public static let currentVersion = 12
     public static let minimumSupportedVersion = 4
 
     public let version: Int
@@ -41,9 +41,11 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
     /// ISO language code (e.g. "it", "en") for the model's natural-language
     /// responses. When nil, the operating system language is used at runtime.
     public let responseLanguage: String?
-    /// Optional endpoint-only configuration for semantic memory embeddings.
-    /// When absent, the runtime may inherit the legacy endpoint environment
-    /// variable; an explicit disabled value forces pure BM25 retrieval.
+    /// Optional configuration for semantic memory embeddings. Legacy v11
+    /// endpoint-only values decode unchanged (`model`/`providerID` nil). When
+    /// the whole field is absent, the runtime may inherit the legacy endpoint
+    /// environment variable; an explicit disabled value forces pure BM25
+    /// retrieval.
     public let memoryEmbedding: AgentMemoryEmbeddingSettingsManifest?
 
     public init(
