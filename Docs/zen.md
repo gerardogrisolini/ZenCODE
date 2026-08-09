@@ -64,9 +64,10 @@ Creates files under `~/.zencode/`:
 ## Command Line Options
 
 ```text
-zen [--doctor] [--acp] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
+zen [--version] [--doctor] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N] [--verbose]
 ```
 
+- `--version`: print the ZenCODE version and exit.
 - `--doctor`: print a redacted, read-only diagnostic report and exit. It never
   starts setup, accesses a provider, creates configuration, or writes a log.
 - `--acp`: run ACP JSON-RPC over stdio.
@@ -81,7 +82,7 @@ zen [--doctor] [--acp] [--install-features [id,id,...]] [--no-features] [--zen-p
 - `--max-output-tokens N`: maximum generated tokens per model call.
 - `--verbose`: show status/tool progress on stderr.
 
-Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, `ZENCODE_AGENT_MODEL`, `ZENCODE_AGENT_CWD`, `ZENCODE_AGENT_SKILLS`, `ZENCODE_AGENT_VERBOSE`.
+Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, `ZENCODE_AGENT_MODEL`, `ZENCODE_AGENT_CWD`, `ZENCODE_AGENT_SKILLS`, `ZENCODE_AGENT_MAX_TOOL_ROUNDS`, `ZENCODE_AGENT_MAX_OUTPUT_TOKENS`, and `ZENCODE_AGENT_VERBOSE`.
 
 ## Optional Feature Packages
 
@@ -255,7 +256,7 @@ replies with `agent.message(to: "operator")`; if a provider instead completes
 with ordinary final output, the runtime delivers that output to `operator`
 without involving the coordinator or duplicating an explicit chat reply. The
 chat is in-memory and never persisted; a session reset drops it. See
-[agents.md](agents.md#shared-chat).
+[agents.md](agents.md#messages).
 
 ### Saving and Loading Plans
 

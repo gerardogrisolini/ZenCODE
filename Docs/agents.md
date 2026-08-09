@@ -122,9 +122,10 @@ Three participant kinds share the room:
 | `to` | Recipients |
 | --- | --- |
 | `direct` (default) | The exact `id`/`name`/`ids` named. A direct message wakes an idle recipient immediately. |
+| `operator` | The human terminal operator only. |
 | `coordinator` | The coordinator only. |
 | `peers` | Every other active delegated agent, never the sender. |
-| `all` | The coordinator and every active delegated agent except the sender. An operator broadcast reaches every active recipient including the coordinator. |
+| `all` | The human terminal operator, coordinator, and every active delegated agent except the sender. |
 
 From the terminal the operator addresses the room with a leading mention:
 `@coordinator`, `@all`, or a readable `@agent-name` handle derived from each
@@ -148,7 +149,11 @@ coordinator or agent turn instructs the recipient to answer through
 `agent.message`: ordinary model output is never part of the chat, so both the
 coordinator and a delegated agent must send their reply via `agent.message`,
 regardless of who the sender is. The operator sees every chat message rendered
-in the terminal; a delegated agent sees only what its mailbox delivers.
+in the terminal; a delegated agent sees only what its mailbox delivers. If a
+delegated agent's direct conversational turn was started by the operator and it
+ends without calling `agent.message`, the runtime delivers its final output once
+to `operator` as a fallback rather than routing it through the coordinator or
+duplicating an explicit chat reply.
 
 Delivery is serialised in each recipient's work loop rather than tied to a tool
 call. Every message — to an idle, running or standby agent — is drained from the

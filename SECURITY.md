@@ -8,7 +8,7 @@ supported.
 
 | Version | Supported |
 | ------- | --------- |
-| latest release (`1.0.x`) | ✅ |
+| latest release | ✅ |
 | older tags | ❌ |
 
 ## Reporting a vulnerability

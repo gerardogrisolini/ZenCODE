@@ -26,7 +26,7 @@ Run the same gate CI runs before opening a pull request:
 
 ```bash
 swift build --target ZenCODECore     # fast shared-runtime compile
-swift test                           # full non-live suite
+swift test --no-parallel             # full non-live suite and release/CI gate
 swift build -c release --product zen # release product
 bash -n Scripts/*.sh                 # shell syntax
 git diff --check                     # whitespace hygiene

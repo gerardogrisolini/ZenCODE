@@ -41,19 +41,19 @@ riferimenti al checkout sono riportati per rendere verificabili le decisioni.
   dispositivo, opzioni e versione OS. Apple prevede anche la compilazione
   ahead-of-time in asset `.aimodelc` per architettura, che riduce ma non elimina
   il lavoro on-device [A6][A7].
-- Il repository corrente è deliberatamente **remote-only**:
-  `Docs/architecture.md:60-73` dichiara che non ospita pesi né inferenza
+- Il repository corrente è deliberatamente **remote-only**: la sezione
+  [Provider Boundary](architecture.md#provider-boundary) dichiara che non ospita pesi né inferenza
   in-process. Il commit `8cf38fec` (*Removed local inference*, 19 luglio 2026)
   ha rimosso MLX, flag `--mlx` e relativi target. Non esiste un backend locale
   da riaccendere tramite una sola opzione.
 - Il punto di estensione esistente è
-  `AgentRuntimeBackend` (`Sources/ZenCODECore/ZenCODE/Agent/Runtime/Configuration/AgentRuntimeConfiguration.swift:466-539`)
-  e la relativa factory (`:97-100`). `AgentCoreSessionRunner` riceve già una
+  `AgentRuntimeBackend` (`Sources/ZenCODECore/ZenCODE/Agent/Runtime/Configuration/AgentRuntimeConfiguration.swift`)
+  e la relativa factory. `AgentCoreSessionRunner` riceve già una
   `backendFactory` e conserva l'orchestratore di sessione
-  (`Sources/ZenCODECore/ZenCODE/Agent/Core/Coordinator/AgentCoreSessionRunner.swift:55-71`).
+  (`Sources/ZenCODECore/ZenCODE/Agent/Core/Coordinator/AgentCoreSessionRunner.swift`).
 - `AgentCoreBackend` idrata un backend con orchestratore, executor dei
   sotto-agent, provider degli strumenti e sessioni **prima** di pubblicarlo
-  (`Sources/ZenCODECore/ZenCODE/Agent/Core/Coordinator/AgentCoreBackend.swift:347-410`).
+  (`Sources/ZenCODECore/ZenCODE/Agent/Core/Coordinator/AgentCoreBackend.swift`).
   Il backend locale deve conservare quest'ordine.
 
 ### Ipotesi progettuali da validare
@@ -114,22 +114,22 @@ licenze e dipendenze.
 L'integrazione non deve cambiare il significato di un turno, di una sessione o
 di un task graph. I confini rilevanti sono:
 
-1. `Sources/zen/CLI/ZenCODEMain.swift:12-68` rimane il composition root del
+1. `Sources/zen/CLI/ZenCODEMain.swift` rimane il composition root del
    processo: valida, esegue setup e passa il controllo al runner CLI. La
    selezione di un backend Core AI deve avvenire qui o nello strato di
    composizione immediatamente sottostante, non nella TUI e non nel grafo task.
 2. `AgentCoreSessionRunner` possiede ciclo di vita, snapshot, restore,
    autorizzazioni, generazioni/fencing e un singolo `SessionTaskOrchestrator`.
    Prima registra la sessione e il task graph, poi crea il backend
-   (`AgentCoreSessionRunner.swift:87-114`); la preparazione è single-flight e
-   fenced contro reset/shutdown (`:749-850`). Queste responsabilità non migrano
+   (`AgentCoreSessionRunner.swift`); la preparazione è single-flight e
+   fenced contro reset/shutdown. Queste responsabilità non migrano
    nel runtime Core AI.
 3. `AgentCoreBackend` resta il facade che risolve e idrata il
    `AgentRuntimeBackend`. La factory custom è già preferita al factory remoto
-   predefinito (`AgentCoreBackend.swift:347-381`).
+   predefinito (`AgentCoreBackend.swift`).
 4. `AgentRemoteBackendFactory` e i client remoti rimangono immutati e
    utilizzabili su tutte le piattaforme
-   (`Sources/ZenCODECore/ZenCODE/Agent/Core/Factory/AgentRemoteBackendFactory.swift:14-144`).
+   (`Sources/ZenCODECore/ZenCODE/Agent/Core/Factory/AgentRemoteBackendFactory.swift`).
    Una selezione locale non usa chiavi remote e un errore locale non effettua
    fallback di rete silenzioso.
 5. Il contratto `AgentRuntimeBackend` conserva creazione/aggiornamento/chiusura
@@ -139,7 +139,7 @@ di un task graph. I confini rilevanti sono:
    TUI; non va introdotto un canale Core AI parallelo.
 6. Il salvataggio di sessione conserva history, configurazione, transcript e
    `SessionCheckpointTree`; il backend può ricostruire stato transitorio ma non
-   eliminare né sostituire il graph (`Docs/architecture.md:58`). Una KV cache o
+   eliminare né sostituire il graph (vedi [Compatibility Contract](architecture.md#compatibility-contract)). Una KV cache o
    un bookmark Core AI non diventa parte dello schema di snapshot senza una
    migrazione esplicita e retrocompatibile.
 7. `Package.swift` dichiara oggi Swift tools 6.3, target comuni e macOS 26, ma
@@ -383,15 +383,15 @@ come contratto del progetto:
 
 ### Riferimenti del repository
 
-- `Docs/architecture.md:24-45, 58, 60-73` — graph SwiftPM, proprietà del task
-  graph e confine provider remoto vigente.
-- `Package.swift:1-169` — Swift tools 6.3, target condivisi e piattaforma
+- `Docs/architecture.md` — graph SwiftPM, proprietà del task graph e confine
+  provider remoto vigente.
+- `Package.swift` — Swift tools 6.3, target condivisi e piattaforma
   dichiarata macOS 26.
-- `Sources/zen/CLI/ZenCODEMain.swift:12-68` — composition root e setup.
-- `Sources/ZenCODECore/ZenCODE/Agent/Runtime/Configuration/AgentRuntimeConfiguration.swift:97-100, 466-539` — factory e protocollo runtime.
-- `Sources/ZenCODECore/ZenCODE/Agent/Core/Coordinator/AgentCoreSessionRunner.swift:55-71, 87-114, 749-850` — factory, lifecycle e fencing.
-- `Sources/ZenCODECore/ZenCODE/Agent/Core/Coordinator/AgentCoreBackend.swift:24-41, 347-410` — risoluzione e hydration.
-- `Sources/ZenCODECore/ZenCODE/Agent/Core/Factory/AgentRemoteBackendFactory.swift:14-144` — factory remota da mantenere separata.
+- `Sources/zen/CLI/ZenCODEMain.swift` — composition root e setup.
+- `Sources/ZenCODECore/ZenCODE/Agent/Runtime/Configuration/AgentRuntimeConfiguration.swift` — factory e protocollo runtime.
+- `Sources/ZenCODECore/ZenCODE/Agent/Core/Coordinator/AgentCoreSessionRunner.swift` — factory, lifecycle e fencing.
+- `Sources/ZenCODECore/ZenCODE/Agent/Core/Coordinator/AgentCoreBackend.swift` — risoluzione e hydration.
+- `Sources/ZenCODECore/ZenCODE/Agent/Core/Factory/AgentRemoteBackendFactory.swift` — factory remota da mantenere separata.
 - `Tests/ZenCODECoreTests/Agent/AgentCoreSessionRunnerTests.swift` e
   `Tests/ZenCODECoreTests/Runtime/SessionTaskOrchestratorTests.swift` — punti
   di estensione per regressioni di sessione e task graph.
