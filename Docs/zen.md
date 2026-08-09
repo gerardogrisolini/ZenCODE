@@ -250,8 +250,12 @@ destinations (`direct`, `operator`, `coordinator`, `peers`, `all`); `operator`
 addresses only the human terminal operator. Every message is shown
 as a blue card in every active terminal, and each recipient — idle, running or
 standby — replies to it as the next serial turn of its own work loop, without
-depending on a tool call. The chat is in-memory and never persisted; a session
-reset drops it. See [agents.md](agents.md#shared-chat).
+depending on a tool call. A direct turn started by the human operator normally
+replies with `agent.message(to: "operator")`; if a provider instead completes
+with ordinary final output, the runtime delivers that output to `operator`
+without involving the coordinator or duplicating an explicit chat reply. The
+chat is in-memory and never persisted; a session reset drops it. See
+[agents.md](agents.md#shared-chat).
 
 ### Saving and Loading Plans
 

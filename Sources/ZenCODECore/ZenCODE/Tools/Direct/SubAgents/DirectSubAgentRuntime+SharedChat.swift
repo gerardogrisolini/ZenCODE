@@ -58,6 +58,12 @@ extension DirectSubAgentRuntime {
             destination: destination,
             text: boundedText
         )
+        if let effectiveSenderID,
+           delivery.recipients.contains(where: { $0.kind == .operator }),
+           var sender = agents[effectiveSenderID] {
+            sender.currentTurnSentOperatorMessage = true
+            agents[effectiveSenderID] = sender
+        }
         // A display name is not an identity: any agent may be named
         // "operator" or "coordinator". Model-facing delivery output therefore
         // always includes the actor-owned kind and stable identifier, with the
@@ -211,7 +217,11 @@ extension DirectSubAgentRuntime {
                 return
             }
             do {
-                try queuePrompt(Self.sharedChatPrompt(deliverable), for: agentID)
+                try queuePrompt(
+                    Self.sharedChatPrompt(deliverable),
+                    for: agentID,
+                    repliesToOperator: deliverable.contains { $0.sender.kind == .operator }
+                )
             } catch {
                 guard var current = agents[agentID] else { return }
                 current.latestError = "Unable to deliver shared-chat message: \(error.localizedDescription)"

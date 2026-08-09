@@ -529,6 +529,7 @@ extension DirectSubAgentRuntime {
         }
         if discardingPendingPrompts {
             agent.pendingPrompts.removeAll()
+            agent.pendingOperatorReplyFlags.removeAll()
         }
         // `runTask` is deliberately left untouched: the work loop owns it and
         // clears it when it exits. Clearing it here while the loop is still in
@@ -644,6 +645,7 @@ extension DirectSubAgentRuntime {
             let runTask = agent.runTask
             agent.runTask = nil
             agent.pendingPrompts.removeAll()
+            agent.pendingOperatorReplyFlags.removeAll()
             agent.pendingRelease = false
             agent.pendingReleaseReason = nil
             agent.status = .closed
@@ -703,6 +705,7 @@ extension DirectSubAgentRuntime {
         let task = agent.runTask
         agent.runTask = nil
         agent.pendingPrompts.removeAll()
+        agent.pendingOperatorReplyFlags.removeAll()
         agent.pendingRelease = false
         agent.pendingReleaseReason = nil
         agent.status = .closed

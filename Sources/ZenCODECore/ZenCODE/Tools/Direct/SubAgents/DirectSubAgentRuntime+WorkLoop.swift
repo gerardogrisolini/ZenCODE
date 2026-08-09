@@ -20,7 +20,11 @@ extension DirectSubAgentRuntime {
         case denied
     }
 
-    public func queuePrompt(_ prompt: String, for agentID: String) throws {
+    public func queuePrompt(
+        _ prompt: String,
+        for agentID: String,
+        repliesToOperator: Bool = false
+    ) throws {
         guard var agent = agents[agentID] else {
             throw DirectSubAgentRuntimeError.agentNotFound(agentID)
         }
@@ -29,6 +33,7 @@ extension DirectSubAgentRuntime {
         }
 
         agent.pendingPrompts.append(prompt)
+        agent.pendingOperatorReplyFlags.append(repliesToOperator)
         agent.latestError = nil
         if agent.status != .running {
             agent.status = .queued
@@ -162,6 +167,11 @@ extension DirectSubAgentRuntime {
         }
 
         let prompt = agent.pendingPrompts.removeFirst()
+        let repliesToOperator = agent.pendingOperatorReplyFlags.isEmpty
+            ? false
+            : agent.pendingOperatorReplyFlags.removeFirst()
+        agent.currentTurnRepliesToOperator = repliesToOperator
+        agent.currentTurnSentOperatorMessage = false
         agent.status = .running
         agent.currentActivity = nil
         agent.pendingContentBuffer = nil
@@ -342,6 +352,22 @@ extension DirectSubAgentRuntime {
         agent.updatedAt = .now
         agents[agentID] = agent
 
+        // A direct operator message is a normal agent conversation, not a
+        // coordinator turn. Models are instructed to answer with
+        // `agent.message`, but a provider may still finish with ordinary output.
+        // Preserve direct delivery in that case; a successful explicit chat
+        // send marks the turn and suppresses this fallback.
+        if agent.currentTurnRepliesToOperator,
+           !agent.currentTurnSentOperatorMessage,
+           !trimmedOutput.isEmpty {
+            _ = try? await sharedChat.send(
+                roomID: agent.rootSessionID,
+                senderID: agentID,
+                destination: .operator,
+                text: trimmedOutput
+            )
+        }
+
         switch authorization {
         case .standby:
             // Standby turn: do NOT interact with the task orchestrator. The
@@ -411,6 +437,7 @@ extension DirectSubAgentRuntime {
             return
         }
         agent.pendingPrompts.removeAll()
+        agent.pendingOperatorReplyFlags.removeAll()
         agent.runTask = nil
         if agent.status != .closed {
             agent.status = .failed
@@ -448,6 +475,7 @@ extension DirectSubAgentRuntime {
             return
         }
         agent.pendingPrompts.removeAll()
+        agent.pendingOperatorReplyFlags.removeAll()
         agent.runTask = nil
         if agent.status != .closed {
             agent.status = .closed

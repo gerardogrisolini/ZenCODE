@@ -521,8 +521,20 @@ public actor AgentCoreSessionRunner {
     public func sharedChatMentionHandles(
         rootSessionID: String
     ) async -> [String: String] {
+        await sharedChatMentionRoster(rootSessionID: rootSessionID).handleMap
+    }
+
+    /// Returns participants and readable handles from one roster snapshot, so a
+    /// join/leave between separate backend reads cannot mismatch labels and IDs.
+    public func sharedChatMentionRoster(
+        rootSessionID: String
+    ) async -> (
+        participants: [AgentSharedChat.Participant],
+        handleMap: [String: String]
+    ) {
         let participants = await sharedChatParticipants(rootSessionID: rootSessionID)
-        return await sharedChatMentionCatalog().handleMap(for: participants)
+        let handleMap = await sharedChatMentionCatalog().handleMap(for: participants)
+        return (participants, handleMap)
     }
 
     /// Resolves a readable mention handle to its stable participant id, or nil

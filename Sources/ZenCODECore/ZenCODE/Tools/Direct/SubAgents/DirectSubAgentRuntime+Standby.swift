@@ -332,6 +332,7 @@ extension DirectSubAgentRuntime {
             agent.runTask = nil
         }
         agent.pendingPrompts.removeAll()
+        agent.pendingOperatorReplyFlags.removeAll()
         agent.pendingRelease = false
         agent.pendingReleaseReason = nil
         agent.status = .closed

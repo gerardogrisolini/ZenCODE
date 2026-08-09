@@ -12,10 +12,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- The terminal `@` autocomplete now builds display labels and routing IDs from
+  one live participant snapshot. Departed agents are removed from handle
+  resolution immediately, while their aliases remain reserved against reuse;
+  returning instances with the same stable ID recover their original route.
+
 - Replies from a delegated agent to a direct human-operator message now use the
   dedicated `agent.message` destination `operator` instead of being routed to
   the coordinator. Operator replies remain visible through the transient room
-  transcript and never enter the coordinator mailbox.
+  transcript and never enter the coordinator mailbox. If a provider completes
+  that direct conversational turn without calling `agent.message`, its final
+  output is delivered to `operator` as a non-duplicating runtime fallback.
 
 - Shared chat delivery is now serialised in each recipient's work loop instead
   of tied to a tool call. The inline-delivery mechanism that appended live

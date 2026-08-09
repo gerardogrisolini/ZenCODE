@@ -2884,6 +2884,91 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func operatorMessageReceivesFinalOutputWhenAgentDoesNotCallMessageTool() async throws {
+        let backend = CapturingSubAgentRuntimeBackend(responseText: "Direct fallback reply")
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+
+        _ = try await runtime.sendSharedChatMessage(
+            text: "Reply directly to me",
+            destination: .direct([agentID]),
+            rootSessionID: "root"
+        )
+        await backend.waitUntilSentPromptCount(1)
+
+        var reply: AgentSharedChat.Message?
+        while reply == nil {
+            reply = await runtime.sharedChatTranscriptMessages(rootSessionID: "root")
+                .first { $0.text == "Direct fallback reply" }
+            if reply == nil { await Task.yield() }
+        }
+        let deliveredReply = try #require(reply)
+        #expect(deliveredReply.sender.id == agentID)
+        #expect(deliveredReply.recipientIDs == [AgentSharedChat.operatorID(for: "root")])
+        #expect(await runtime.drainCoordinatorSharedChatMessages(rootSessionID: "root").isEmpty)
+        await runtime.shutdown()
+    }
+
+    @Test
+    func explicitOperatorReplySuppressesFinalOutputFallback() async throws {
+        let backend = CapturingSubAgentRuntimeBackend(
+            responseText: "ordinary final output",
+            borrowedToolCallOnPrompt: AgentBorrowedToolCall(
+                id: "reply-call",
+                name: "agent.message",
+                argumentsJSON: #"{"to":"operator","message":"explicit reply"}"#
+            )
+        )
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("worker"),
+                "profile": .string("Developer")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+
+        _ = try await runtime.sendSharedChatMessage(
+            text: "Reply directly to me",
+            destination: .direct([agentID]),
+            rootSessionID: "root"
+        )
+        await backend.waitUntilSentPromptCount(1)
+
+        while await runtime.sharedChatTranscriptMessages(rootSessionID: "root")
+            .contains(where: { $0.text == "explicit reply" }) == false {
+            await Task.yield()
+        }
+        // Let recordCompletion run after the borrowed tool returns.
+        while await runtime.snapshots().first?.latestOutput != "ordinary final output" {
+            await Task.yield()
+        }
+        let agentMessages = await runtime.sharedChatTranscriptMessages(rootSessionID: "root")
+            .filter { $0.sender.id == agentID }
+        #expect(agentMessages.map(\.text) == ["explicit reply"])
+        #expect(agentMessages.first?.recipientIDs == [AgentSharedChat.operatorID(for: "root")])
+        await runtime.shutdown()
+    }
+
+    @Test
     func childDirectToolExecutorBorrowsOnlyAgentToolsAndKeepsTaskAndTodoRuntimesLocal() async throws {
         let orchestrator = SessionTaskOrchestrator()
         let unavailableFactory: DirectSubAgentContextualBackendFactory = { _ in
@@ -3769,6 +3854,7 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     private var sessions: [CreatedSession] = []
     private let responseText: String
     private let blocksPrompts: Bool
+    private let borrowedToolCallOnPrompt: AgentBorrowedToolCall?
     private var sentPrompts: [String] = []
     private var sentPromptCountWaiters: [SentPromptCountWaiter] = []
     // A shared fixture may serve multiple roots. Keep blocked turns keyed by
@@ -3792,9 +3878,14 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
         let continuation: CheckedContinuation<Void, Never>
     }
 
-    init(responseText: String = "done", blocksPrompts: Bool = false) {
+    init(
+        responseText: String = "done",
+        blocksPrompts: Bool = false,
+        borrowedToolCallOnPrompt: AgentBorrowedToolCall? = nil
+    ) {
         self.responseText = responseText
         self.blocksPrompts = blocksPrompts
+        self.borrowedToolCallOnPrompt = borrowedToolCallOnPrompt
     }
 
     func installTaskOrchestrator(
@@ -3899,6 +3990,9 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     ) async throws -> DirectAgentResponse {
         sentPrompts.append(prompt)
         resumeSentPromptCountWaiters()
+        if let borrowedToolCallOnPrompt, let borrowedSubAgentToolExecutor {
+            _ = try await borrowedSubAgentToolExecutor(borrowedToolCallOnPrompt)
+        }
         if blocksPrompts {
             // `AgentRuntimeBackend.shutdown()` has no session/root argument.
             // Let cancellation of the owning work loop release this turn

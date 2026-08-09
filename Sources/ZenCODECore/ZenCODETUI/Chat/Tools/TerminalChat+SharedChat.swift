@@ -19,11 +19,10 @@ extension TerminalChat {
     /// always resolves back to the stable participant identifier.
     func panelSuggestionsForCurrentAgent() async -> [TerminalCommandSuggestion] {
         let commands = commandSuggestionsForCurrentAgent()
-        let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sessionID)
-        let handleMap = await sessionRunner.sharedChatMentionHandles(rootSessionID: sessionID)
+        let roster = await sessionRunner.sharedChatMentionRoster(rootSessionID: sessionID)
         return commands + Self.sharedChatMentionSuggestions(
-            for: participants,
-            handleMap: handleMap
+            for: roster.participants,
+            handleMap: roster.handleMap
         )
     }
 

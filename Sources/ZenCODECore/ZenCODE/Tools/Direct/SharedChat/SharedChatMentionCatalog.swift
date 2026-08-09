@@ -67,6 +67,7 @@ public actor SharedChatMentionCatalog {
     /// keeps its existing handle.
     func handle(for participant: AgentSharedChat.Participant) -> String {
         if let existing = participantIDToHandle[participant.id] {
+            handleToParticipantID[existing] = participant.id
             return existing
         }
         let base = Self.sanitizedBaseHandle(from: participant.name)
@@ -91,8 +92,19 @@ public actor SharedChatMentionCatalog {
     func handleMap(
         for participants: [AgentSharedChat.Participant]
     ) -> [String: String] {
+        let activeParticipants = participants.filter {
+            $0.kind == .agent && $0.isActive
+        }
+        let activeParticipantIDs = Set(activeParticipants.map(\.id))
+
+        // Historical assignments stay reserved so an alias never changes owner,
+        // but only the current roster may remain routable.
+        handleToParticipantID = handleToParticipantID.filter {
+            activeParticipantIDs.contains($0.value)
+        }
+
         var map: [String: String] = [:]
-        for participant in participants where participant.kind == .agent && participant.isActive {
+        for participant in activeParticipants {
             let handle = self.handle(for: participant)
             map[handle] = participant.id
         }

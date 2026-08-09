@@ -75,6 +75,25 @@ struct SharedChatMentionCatalogTests {
     }
 
     @Test
+    func departedParticipantsStopResolvingWhileTheirAliasesStayReserved() async {
+        let catalog = SharedChatMentionCatalog()
+        _ = await catalog.handleMap(for: [
+            AgentSharedChat.Participant(id: "first", name: "Developer", kind: .agent),
+        ])
+        #expect(await catalog.participantID(forHandle: "developer") == "first")
+
+        _ = await catalog.handleMap(for: [])
+        #expect(await catalog.participantID(forHandle: "developer") == nil)
+
+        let replacement = await catalog.handleMap(for: [
+            AgentSharedChat.Participant(id: "second", name: "Developer", kind: .agent),
+        ])
+        #expect(replacement == ["developer-2": "second"])
+        #expect(await catalog.participantID(forHandle: "developer") == nil)
+        #expect(await catalog.participantID(forHandle: "developer-2") == "second")
+    }
+
+    @Test
     func returningParticipantKeepsItsHandle() async {
         let catalog = SharedChatMentionCatalog()
         let first = await catalog.handleMap(for: [
@@ -86,6 +105,13 @@ struct SharedChatMentionCatalogTests {
             AgentSharedChat.Participant(id: "stable", name: "Planner", kind: .agent),
         ])
         #expect(second["planner"] == "stable")
+        _ = await catalog.handleMap(for: [])
+        #expect(await catalog.participantID(forHandle: "planner") == nil)
+        let returned = await catalog.handleMap(for: [
+            AgentSharedChat.Participant(id: "stable", name: "Planner", kind: .agent),
+        ])
+        #expect(returned["planner"] == "stable")
+        #expect(await catalog.participantID(forHandle: "planner") == "stable")
     }
 
     @Test

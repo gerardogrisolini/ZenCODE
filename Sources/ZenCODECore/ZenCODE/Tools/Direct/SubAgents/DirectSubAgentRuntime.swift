@@ -93,6 +93,12 @@ public actor DirectSubAgentRuntime {
         public var updatedAt: Date
         public var status: Status
         public var pendingPrompts: [String]
+        /// Kept index-aligned with `pendingPrompts`. A true entry means the turn
+        /// was created by a direct human-operator message and therefore needs a
+        /// runtime fallback reply if the model does not call `agent.message`.
+        var pendingOperatorReplyFlags: [Bool] = []
+        var currentTurnRepliesToOperator = false
+        var currentTurnSentOperatorMessage = false
         public var latestOutput: String?
         /// Monotonic identity of the latest completed response for transient
         /// presentation. Unlike `updatedAt`, this does not change when the agent

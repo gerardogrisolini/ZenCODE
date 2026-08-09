@@ -72,6 +72,36 @@ struct AgentSharedChatCoordinatorTests {
     }
 
     @Test
+    func directAgentReplyReachesOperatorWithoutStartingCoordinatorTurn() async throws {
+        let room = "room-\(UUID().uuidString)"
+        let chat = try await makeChat(roomID: room, agents: ["worker"])
+        let coordinator = makeCoordinator(chat: chat, pollInterval: .seconds(60))
+        let subscription = await coordinator.observeSubscription(roomID: room)
+        let observation = await Observation.make(stream: subscription.events)
+
+        try await chat.send(
+            roomID: room,
+            senderID: "worker",
+            destination: .operator,
+            text: "Direct reply"
+        )
+        await coordinator.poll(roomID: room)
+
+        let events = await observation.wait(untilAtLeast: 1) {
+            $0.contains { $0.renderedMessages?.map(\.text) == ["Direct reply"] }
+        }
+        let reply = try #require(
+            events.compactMap(\.renderedMessages).flatMap { $0 }.first {
+                $0.text == "Direct reply"
+            }
+        )
+        #expect(reply.recipientIDs == [AgentSharedChat.operatorID(for: room)])
+        #expect(events.compactMap(\.autoTrigger).isEmpty)
+        #expect(await coordinator.pendingMessageCount(roomID: room) == 0)
+        await observation.cancel()
+    }
+
+    @Test
     func promptsKeepHumanOperatorDistinctFromAnAgentNamedOperator() {
         let human = AgentSharedChat.Participant(
             id: "operator:room-1",
