@@ -617,7 +617,7 @@ actor MemoryGraphStoreRegistry {
             return try await pending.value
         }
 
-        let task = Task {
+        let task = Task(executorPreference: MemoryLegacyBridge.taskExecutor) {
             try await MemoryGraphStore.open(
                 graphURL: graphURL,
                 workspaceRootURL: workspaceRootURL

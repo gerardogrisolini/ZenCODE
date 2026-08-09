@@ -14,7 +14,7 @@ import Testing
 /// race is reproduced by controlling *when* a drain returns rather than by
 /// hoping for a timing window: the drain gate suspends inside the coordinator's
 /// own suspension point, which is exactly where teardown used to slip through.
-@Suite
+@Suite(.timeLimit(.minutes(1)))
 struct AgentSharedChatCoordinatorConcurrencyTests {
     // MARK: - Offer / busy / claim atomicity
 
@@ -715,13 +715,11 @@ struct AgentSharedChatCoordinatorConcurrencyTests {
 
     private static func waitForActiveAutoTriggerID(
         from coordinator: AgentSharedChatCoordinator,
-        roomID: String,
-        timeout: Duration = .seconds(5)
+        roomID: String
     ) async -> UUID? {
         await waitForActiveAutoTrigger(
             from: coordinator,
-            roomID: roomID,
-            timeout: timeout
+            roomID: roomID
         )?.id
     }
 
@@ -729,39 +727,26 @@ struct AgentSharedChatCoordinatorConcurrencyTests {
     /// injecting exactly the prompt the Core minted for that batch.
     private static func waitForActiveAutoTrigger(
         from coordinator: AgentSharedChatCoordinator,
-        roomID: String,
-        timeout: Duration = .seconds(5)
+        roomID: String
     ) async -> AgentSharedChatAutoTrigger? {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
+        while true {
             if let trigger = await coordinator.activeAutoTrigger(roomID: roomID) {
                 return trigger
             }
             await Task.yield()
-            try? await Task.sleep(for: .milliseconds(1))
         }
-        return await coordinator.activeAutoTrigger(roomID: roomID)
     }
 
-    /// Waits for an actor-observable condition instead of asserting on the
-    /// instant a call returns.
-    ///
     /// A room with observers runs its own monitor, so an explicit `poll` may
-    /// coalesce with a drain that is already in flight. The coalesced request
-    /// is never lost — that drain serves it in its next round — so waiting for
-    /// the state keeps these interleaving tests deterministic instead of
-    /// assuming which poll owned the drain.
+    /// coalesce with a drain that is already in flight. Wait for the state edge
+    /// rather than treating a five-second deadline as successful synchronization.
     private static func waitUntil(
-        timeout: Duration = .seconds(5),
         _ condition: @Sendable () async -> Bool
     ) async -> Bool {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            if await condition() { return true }
+        while !(await condition()) {
             await Task.yield()
-            try? await Task.sleep(for: .milliseconds(1))
         }
-        return await condition()
+        return true
     }
 
     private static func makeRoomID() -> String {

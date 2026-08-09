@@ -6,7 +6,51 @@
 //
 
 import Foundation
+import Synchronization
 import ToolCore
+
+/// One-shot barrier between creating a prompt task and publishing it in the
+/// runner's cancellation registry.
+///
+/// `Task.yield()` would merely hint to the executor and cannot establish an
+/// ordering edge. `wait()` intentionally does not react to cancellation: a
+/// task cancelled while parked must remain parked until `open()` follows its
+/// registration, so its finalisation cannot clear an as-yet-unregistered ID.
+private final class AgentCorePromptTaskRegistrationGate: Sendable {
+    private struct State {
+        var isOpen = false
+        var waiter: CheckedContinuation<Void, Never>?
+    }
+
+    private let state = Mutex(State())
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let shouldResume = state.withLock { state in
+                guard !state.isOpen else {
+                    return true
+                }
+                state.waiter = continuation
+                return false
+            }
+            if shouldResume {
+                continuation.resume()
+            }
+        }
+    }
+
+    func open() {
+        let waiter = state.withLock { state -> CheckedContinuation<Void, Never>? in
+            guard !state.isOpen else {
+                return nil
+            }
+            state.isOpen = true
+            defer { state.waiter = nil }
+            return state.waiter
+        }
+        waiter?.resume()
+    }
+}
 
 public actor AgentCoreSessionRunner {
     public static var isAvailable: Bool {
@@ -704,7 +748,9 @@ public actor AgentCoreSessionRunner {
         let (stream, continuation) = AsyncThrowingStream<DirectAgentEvent, Error>.makeStream()
         let promptID = UUID()
         let outcomeTracker = AgentCorePromptOutcomeTracker()
+        let registrationGate = AgentCorePromptTaskRegistrationGate()
         let task = Task(name: "Agent prompt stream", priority: .userInitiated) {
+            await registrationGate.wait()
             #if os(macOS)
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .latencyCritical],
@@ -715,6 +761,7 @@ public actor AgentCoreSessionRunner {
             }
             #endif
             do {
+                try Task.checkCancellation()
                 _ = try await sendPrompt(
                     configuration: configuration,
                     prompt: prompt,
@@ -739,6 +786,7 @@ public actor AgentCoreSessionRunner {
             }
         }
         promptTaskRegistry.register(task, id: promptID, sessionID: configuration.sessionID)
+        registrationGate.open()
         continuation.onTermination = { _ in
             task.cancel()
         }

@@ -20,7 +20,7 @@ private func builtInDirectSubAgentProfileResolver(
     )
 }
 
-@Suite
+@Suite(.timeLimit(.minutes(1)))
 struct DirectSubAgentRuntimeTests {
     private static let catalogProviderID = UUID(
         uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -360,9 +360,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil
         )
         let agentID = try #require(await runtime.snapshots().first?.id)
-        while await backend.sentPromptCount() == 0 {
-            await Task.yield()
-        }
+        await backend.waitUntilSentPromptCount(1)
 
         await runtime.recordEvent(.thought("Considering the "), agentID: agentID)
         let firstSnapshot = try #require(await runtime.snapshots().first)
@@ -405,9 +403,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil
         )
         let agentID = try #require(await runtime.snapshots().first?.id)
-        while await backend.sentPromptCount() == 0 {
-            await Task.yield()
-        }
+        await backend.waitUntilSentPromptCount(1)
 
         await runtime.recordEvent(.thought("private reasoning"), agentID: agentID)
         let thinkingSnapshot = try #require(await runtime.snapshots().first)
@@ -1346,7 +1342,7 @@ struct DirectSubAgentRuntimeTests {
                 workingDirectory: workingDirectory,
                 parentAllowedToolNames: nil
             )
-            _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+            await runtime.waitForDirectSubAgentTestWorkLoops()
         }
 
         #expect(await executor.subAgentSnapshots().map(\.name) == ["second"])
@@ -1436,7 +1432,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        await runtime.waitForDirectSubAgentTestWorkLoops()
 
         let task = try await orchestrator.task(sessionID: "root", taskID: "task-a")
         let agent = try #require(await runtime.snapshots().first)
@@ -1482,7 +1478,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        await runtime.waitForDirectSubAgentTestWorkLoops()
 
         let firstAgent = try #require(await runtime.snapshots().first)
         let completed = try await orchestrator.task(
@@ -1512,10 +1508,7 @@ struct DirectSubAgentRuntimeTests {
         }
 
         try await runtime.queuePrompt("stale correction", for: firstAgent.id)
-        _ = await runtime.waitForAgents(arguments: [
-            "id": .string(firstAgent.id),
-            "timeoutSeconds": .number(5),
-        ])
+        await runtime.waitForDirectSubAgentTestWorkLoops(agentID: firstAgent.id)
         #expect(await backend.sentPromptCount() == 1)
         #expect(await runtime.snapshots().first?.pending == false)
 
@@ -1677,7 +1670,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        await runtime.waitForDirectSubAgentTestWorkLoops()
         let agentID = try #require(await runtime.snapshots().first?.id)
 
         _ = try await orchestrator.createGraph(
@@ -2024,7 +2017,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        await runtime.waitForDirectSubAgentTestWorkLoops()
 
         let task = try await orchestrator.task(sessionID: "root", taskID: "task-a")
         #expect(task.task.status == .completed)
@@ -2885,8 +2878,7 @@ struct DirectSubAgentRuntimeTests {
         // The actor callback only schedules the drain; it must not make the
         // sender await model work. Once scheduled, the existing work loop starts
         // the idle agent immediately.
-        try await Task.sleep(for: .milliseconds(30))
-        _ = await runtime.waitForAgents(arguments: ["id": .string(agentID), "timeoutSeconds": .number(2)])
+        await backend.waitUntilSentPromptCount(1)
         #expect(await backend.sentPromptCount() == 1)
         await runtime.shutdown()
     }
@@ -3131,7 +3123,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        await runtime.waitForDirectSubAgentTestWorkLoops()
 
         let agent = try #require(await runtime.snapshots().first)
         let task = try await orchestrator.task(sessionID: "root", taskID: "task-a").task
@@ -3181,7 +3173,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        await runtime.waitForDirectSubAgentTestWorkLoops()
         let agent = try #require(await runtime.snapshots().first)
         #expect(agent.status == .standby)
         #expect(await backend.sentPromptCount() == 1)
@@ -3193,10 +3185,7 @@ struct DirectSubAgentRuntimeTests {
                 "message": .string("Can you summarize?"),
             ]
         )
-        _ = await runtime.waitForAgents(arguments: [
-            "id": .string(agent.id),
-            "timeoutSeconds": .number(5),
-        ])
+        await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agent.id)
 
         #expect(await backend.sentPromptCount() == 2)
 
@@ -3241,7 +3230,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        await runtime.waitForDirectSubAgentTestWorkLoops()
 
         let agent = try #require(await runtime.snapshots().first)
         let task = try await orchestrator.task(sessionID: "root", taskID: "task-a").task
@@ -3298,7 +3287,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        await runtime.waitForDirectSubAgentTestWorkLoops()
         let agent = try #require(await runtime.snapshots().first)
         #expect(agent.status == .standby)
         #expect(await backend.sentPromptCount() == 1)
@@ -3311,10 +3300,7 @@ struct DirectSubAgentRuntimeTests {
                 "message": .string("Can you summarize?"),
             ]
         )
-        _ = await runtime.waitForAgents(arguments: [
-            "id": .string(agent.id),
-            "timeoutSeconds": .number(5),
-        ])
+        await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agent.id)
 
         #expect(await backend.sentPromptCount() == 2)
 
@@ -3355,7 +3341,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        await runtime.waitForDirectSubAgentTestWorkLoops()
         let agent = try #require(await runtime.snapshots().first)
 
         let taskBeforeStandbyTurn = try await orchestrator.task(
@@ -3371,10 +3357,7 @@ struct DirectSubAgentRuntimeTests {
                 "message": .string("Follow-up question"),
             ]
         )
-        _ = await runtime.waitForAgents(arguments: [
-            "id": .string(agent.id),
-            "timeoutSeconds": .number(5),
-        ])
+        await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agent.id)
 
         let taskAfterStandbyTurn = try await orchestrator.task(
             sessionID: "root",
@@ -3421,7 +3404,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        await runtime.waitForDirectSubAgentTestWorkLoops()
         let agent = try #require(await runtime.snapshots().first)
         #expect(agent.status == .standby)
 
@@ -3437,11 +3420,11 @@ struct DirectSubAgentRuntimeTests {
         ))
         #expect(graph.state == .completed)
 
-        // The graph completion observer releases standby agents asynchronously.
-        // Poll until the agent is closed (bounded wait) instead of a fixed
-        // sleep, which was flaky under CPU contention and `--no-parallel`.
-        let releasedAgent = await pollUntilStatus(.closed, agentID: agent.id, in: runtime)
-        #expect(releasedAgent?.status == .closed)
+        // Backend shutdown is emitted only after the graph observer has released
+        // the resident. It is the lifecycle edge under test, unlike a snapshot
+        // poll that may run before the observer is scheduled.
+        await backend.waitUntilShutdownCount(1)
+        #expect(await runtime.snapshots().first { $0.id == agent.id }?.status == .closed)
 
         await runtime.shutdown()
     }
@@ -3480,7 +3463,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        await runtime.waitForDirectSubAgentTestWorkLoops()
         let firstAgent = try #require(await runtime.snapshots().first)
         #expect(firstAgent.status == .standby)
 
@@ -3507,7 +3490,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        await runtime.waitForDirectSubAgentTestWorkLoops()
 
         let agents = await runtime.snapshots()
         let firstAgentAfter = agents.first { $0.id == firstAgent.id }
@@ -3630,7 +3613,7 @@ struct DirectSubAgentRuntimeTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+        await runtime.waitForDirectSubAgentTestWorkLoops()
         let agent = try #require(await runtime.snapshots().first)
         #expect(agent.status == .standby)
 
@@ -3647,7 +3630,7 @@ struct DirectSubAgentRuntimeTests {
                 "message": .string("Summarize the work"),
             ]
         )
-        try await awaitBlocked(backend)
+        await backend.waitUntilBlocked()
 
         // The graph completes while the standby turn is in flight.
         _ = try await orchestrator.validateTaskResult(
@@ -3672,8 +3655,8 @@ struct DirectSubAgentRuntimeTests {
         // When the in-flight turn lands, the flagged release is completed and the
         // agent is closed — it never returns to `.standby`.
         await backend.release()
-        let released = try #require(await pollUntilStatus(.closed, agentID: agent.id, in: runtime))
-        #expect(released.status == .closed)
+        await backend.waitUntilShutdown()
+        #expect(await runtime.snapshots().first { $0.id == agent.id }?.status == .closed)
         #expect(await backend.shutdownCount() == 1)
 
         await runtime.shutdown()
@@ -3754,6 +3737,26 @@ private final class FailAfterFirstSubAgentBackendFactory: @unchecked Sendable {
     }
 }
 
+private extension DirectSubAgentRuntime {
+    /// `createAgents`, `agent.message`, and shared-chat wake-ups install a
+    /// single `runTask` synchronously. Await the captured tasks themselves so
+    /// tests observe a completed turn rather than an arbitrary `agent.wait`
+    /// polling deadline.
+    func waitForDirectSubAgentTestWorkLoops(agentID: String? = nil) async {
+        let tasks: [Task<Void, Never>]
+        if let agentID, let task = agents[agentID]?.runTask {
+            tasks = [task]
+        } else if agentID != nil {
+            tasks = []
+        } else {
+            tasks = agents.values.compactMap(\.runTask)
+        }
+        for task in tasks {
+            await task.value
+        }
+    }
+}
+
 private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     struct CreatedSession: Sendable {
         let id: String
@@ -3767,10 +3770,27 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     private let responseText: String
     private let blocksPrompts: Bool
     private var sentPrompts: [String] = []
+    private var sentPromptCountWaiters: [SentPromptCountWaiter] = []
+    // A shared fixture may serve multiple roots. Keep blocked turns keyed by
+    // their backend session so cancellation of one runtime cannot release the
+    // other runtime's prompt.
+    private var blockedPromptContinuations: [String: CheckedContinuation<Void, Never>] = [:]
+    private var blockedPromptCancellationRequests: Set<String> = []
     private var shutdownCalls = 0
+    private var shutdownCountWaiters: [ShutdownCountWaiter] = []
     private var installedTaskOrchestrator = false
     private var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
     private(set) var toolProviderUpdates: [(providers: [AgentToolProvider], sessionID: String?)] = []
+
+    private struct SentPromptCountWaiter {
+        let count: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    private struct ShutdownCountWaiter {
+        let count: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
 
     init(responseText: String = "done", blocksPrompts: Bool = false) {
         self.responseText = responseText
@@ -3858,6 +3878,7 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
 
     func shutdown() {
         shutdownCalls += 1
+        resumeShutdownCountWaiters()
     }
 
     func preloadModel(
@@ -3871,14 +3892,25 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     }
 
     func sendPrompt(
-        sessionID _: String,
+        sessionID: String,
         prompt: String,
         attachments _: [AgentRuntimeAttachment],
         onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
         sentPrompts.append(prompt)
+        resumeSentPromptCountWaiters()
         if blocksPrompts {
-            try await Task.sleep(nanoseconds: 60_000_000_000)
+            // `AgentRuntimeBackend.shutdown()` has no session/root argument.
+            // Let cancellation of the owning work loop release this turn
+            // instead of making shutdown resume every shared-fixture waiter.
+            await withTaskCancellationHandler {
+                await waitForBlockedPromptRelease(sessionID: sessionID)
+            } onCancel: {
+                Task {
+                    await self.cancelBlockedPrompt(sessionID: sessionID)
+                }
+            }
+            try Task.checkCancellation()
         }
         return DirectAgentResponse(
             text: responseText,
@@ -3907,8 +3939,63 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
         sentPrompts.count
     }
 
+    func waitUntilSentPromptCount(_ count: Int) async {
+        guard sentPrompts.count < count else { return }
+        await withCheckedContinuation { continuation in
+            sentPromptCountWaiters.append(
+                SentPromptCountWaiter(count: count, continuation: continuation)
+            )
+        }
+    }
+
     func shutdownCount() -> Int {
         shutdownCalls
+    }
+
+    func waitUntilShutdownCount(_ count: Int) async {
+        guard shutdownCalls < count else { return }
+        await withCheckedContinuation { continuation in
+            shutdownCountWaiters.append(
+                ShutdownCountWaiter(count: count, continuation: continuation)
+            )
+        }
+    }
+
+    private func resumeSentPromptCountWaiters() {
+        let ready = sentPromptCountWaiters.filter { sentPrompts.count >= $0.count }
+        sentPromptCountWaiters.removeAll { sentPrompts.count >= $0.count }
+        for waiter in ready {
+            waiter.continuation.resume()
+        }
+    }
+
+    private func waitForBlockedPromptRelease(sessionID: String) async {
+        if blockedPromptCancellationRequests.remove(sessionID) != nil {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            if blockedPromptCancellationRequests.remove(sessionID) != nil {
+                continuation.resume()
+            } else {
+                blockedPromptContinuations[sessionID] = continuation
+            }
+        }
+    }
+
+    private func cancelBlockedPrompt(sessionID: String) {
+        if let continuation = blockedPromptContinuations.removeValue(forKey: sessionID) {
+            continuation.resume()
+        } else {
+            blockedPromptCancellationRequests.insert(sessionID)
+        }
+    }
+
+    private func resumeShutdownCountWaiters() {
+        let ready = shutdownCountWaiters.filter { shutdownCalls >= $0.count }
+        shutdownCountWaiters.removeAll { shutdownCalls >= $0.count }
+        for waiter in ready {
+            waiter.continuation.resume()
+        }
     }
 }
 
@@ -3959,7 +4046,7 @@ private func standbyScenario(
         parentAllowedToolNames: nil,
         rootSessionID: rootSessionID
     )
-    _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
+    await runtime.waitForDirectSubAgentTestWorkLoops()
     guard let agent = await runtime.snapshots().first,
           agent.status == .standby else {
         throw StandbyFixtureError.agentNotReady
@@ -3978,41 +4065,6 @@ private func exhaustStandbyBudget(
     }
 }
 
-/// Polls a runtime until the agent with `agentID` reaches `status`, or `timeout`
-/// seconds elapse. Returns the matching snapshot, or the last observed snapshot
-/// on timeout so callers can assert exactly. Replaces fixed `Task.sleep` waits
-/// that were flaky under CPU contention and `--no-parallel`.
-private func pollUntilStatus(
-    _ status: DirectSubAgentRuntime.Status,
-    agentID: String,
-    in runtime: DirectSubAgentRuntime,
-    timeout: TimeInterval = 5
-) async -> DirectSubAgentRuntime.AgentSnapshot? {
-    let deadline = Date().addingTimeInterval(timeout)
-    var last: DirectSubAgentRuntime.AgentSnapshot?
-    while Date() < deadline {
-        let snapshot = await runtime.snapshots().first { $0.id == agentID }
-        last = snapshot
-        if snapshot?.status == status { return snapshot }
-        try? await Task.sleep(for: .milliseconds(50))
-    }
-    return last
-}
-
-/// Waits until the blocking backend has suspended inside `sendPrompt`, proving
-/// the agent's standby follow-up turn is genuinely in flight.
-private func awaitBlocked(
-    _ backend: BlockingSubAgentRuntimeBackend,
-    timeout: TimeInterval = 5
-) async throws {
-    let deadline = Date().addingTimeInterval(timeout)
-    while Date() < deadline {
-        if await backend.isBlocked() { return }
-        try? await Task.sleep(for: .milliseconds(20))
-    }
-    throw StandbyFixtureError.agentNotReady
-}
-
 /// A controllable `AgentRuntimeBackend` whose `sendPrompt` suspends until
 /// `release()` is called, so a standby follow-up turn can be held in flight
 /// while a test mutates the task graph. The first turn (the task attempt)
@@ -4025,6 +4077,8 @@ private actor BlockingSubAgentRuntimeBackend: AgentRuntimeBackend {
     private var released = false
     private var blocked = false
     private var continuation: CheckedContinuation<Void, Never>?
+    private var blockedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var shutdownWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(responseText: String = "done") {
         self.responseText = responseText
@@ -4040,12 +4094,22 @@ private actor BlockingSubAgentRuntimeBackend: AgentRuntimeBackend {
         continuation = nil
     }
 
-    func isBlocked() -> Bool {
-        blocked
+    func waitUntilBlocked() async {
+        guard !blocked else { return }
+        await withCheckedContinuation { continuation in
+            blockedWaiters.append(continuation)
+        }
     }
 
     func shutdownCount() -> Int {
         shutdownCalls
+    }
+
+    func waitUntilShutdown() async {
+        guard shutdownCalls == 0 else { return }
+        await withCheckedContinuation { continuation in
+            shutdownWaiters.append(continuation)
+        }
     }
 
     func sentPromptCount() -> Int {
@@ -4065,6 +4129,11 @@ private actor BlockingSubAgentRuntimeBackend: AgentRuntimeBackend {
             // turn suspended: if so, skip the gate entirely (no deadlock).
             if !released {
                 blocked = true
+                let waiters = blockedWaiters
+                blockedWaiters.removeAll()
+                for waiter in waiters {
+                    waiter.resume()
+                }
                 await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                     self.continuation = continuation
                 }
@@ -4113,6 +4182,11 @@ private actor BlockingSubAgentRuntimeBackend: AgentRuntimeBackend {
 
     func shutdown() async {
         shutdownCalls += 1
+        let waiters = shutdownWaiters
+        shutdownWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 
     func preloadModel(

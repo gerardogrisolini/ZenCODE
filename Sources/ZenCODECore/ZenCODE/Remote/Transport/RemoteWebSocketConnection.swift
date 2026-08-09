@@ -319,6 +319,16 @@ actor RemoteWebSocketDriver {
         activeRead.resume(throwing: CancellationError())
     }
 
+    /// Read-only synchronization hook used by the transport integration tests.
+    ///
+    /// A `true` result means a public `receive()` has installed its continuation
+    /// and handed the request to the read loop. In an idle fixture, the loop is
+    /// consequently awaiting the inbound stream. This intentionally observes
+    /// existing actor state only; it does not affect WebSocket behavior.
+    func hasParkedReceiveForTesting() -> Bool {
+        isReceiving && activeRead != nil && pendingReads.isEmpty && !isClosed
+    }
+
     private func enqueueWrite(_ request: WriteRequest) {
         guard !isClosed else {
             switch request {

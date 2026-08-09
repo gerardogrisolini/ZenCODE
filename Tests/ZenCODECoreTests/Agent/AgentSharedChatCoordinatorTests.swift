@@ -9,7 +9,7 @@ import Testing
 
 /// Covers the Core-owned auto-trigger: monitoring, drain batching and the
 /// single-flight idle/busy decision that used to live in the terminal loop.
-@Suite
+@Suite(.timeLimit(.minutes(1)))
 struct AgentSharedChatCoordinatorTests {
     // MARK: - Idle
 
@@ -974,25 +974,18 @@ struct AgentSharedChatCoordinatorTests {
         // Start the previously stalled reader, then let the next transcript
         // pass recover only IDs made due by that stream's evictions.
         let stalled = await Observation.make(stream: stalledSubscription.events)
-        var recovered = false
-        for _ in 0 ..< 16 {
-            await coordinator.poll(roomID: room)
-            let stalledIDs = Set(
-                await stalled.snapshot()
-                    .compactMap(\.renderedMessages)
-                    .flatMap { $0 }
-                    .map(\.id)
-            )
-            if stalledIDs == transcriptIDs {
-                recovered = true
-                break
-            }
-            await Task.yield()
-        }
-        #expect(recovered)
+        let stalledEvents = await pollUntilObservationReceives(
+            transcriptIDs,
+            coordinator: coordinator,
+            roomID: room,
+            observation: stalled
+        )
+        #expect(
+            Set(stalledEvents.compactMap(\.renderedMessages).flatMap { $0 }.map(\.id))
+                == transcriptIDs
+        )
 
         let healthyEvents = await healthy.snapshot()
-        let stalledEvents = await stalled.snapshot()
         for message in produced {
             #expect(Self.countOccurrences(of: message.id, in: healthyEvents) == 1)
             #expect(Self.countOccurrences(of: message.id, in: stalledEvents) == 1)
@@ -1032,20 +1025,28 @@ struct AgentSharedChatCoordinatorTests {
             )
         }
         await coordinator.poll(roomID: room)
-        // The first observer received the live emissions.
-        _ = await first.wait(untilAtLeast: 1) { $0.contains { $0.renderedMessages != nil } }
+        let transcript = await chat.messages(roomID: room)
+        let transcriptIDs = Set(transcript.map(\.id))
+        // The first observer establishes that the entire burst was emitted
+        // before the late subscription is created, rather than merely seeing
+        // whichever first batch the scheduler happened to forward.
+        _ = await first.wait(untilAtLeast: 1) {
+            Set($0.compactMap(\.renderedMessages).flatMap { $0 }.map(\.id)) == transcriptIDs
+        }
 
         // A late observer attaches after the burst was already emitted. It must
         // receive a replay of the bounded transcript, not an empty stream.
         let lateSubscription = await coordinator.observeSubscription(roomID: room)
         let late = await Observation.make(stream: lateSubscription.events)
-        let replayed = await late.wait(untilAtLeast: 1) { $0.contains { $0.renderedMessages != nil } }
+        let replayed = await late.wait(untilAtLeast: 1) {
+            Set($0.compactMap(\.renderedMessages).flatMap { $0 }.map(\.id)) == transcriptIDs
+        }
         let replayedTexts = replayed.compactMap(\.renderedMessages).flatMap { $0 }.map(\.text)
         // The transcript is bounded: every retained message is replayed.
-        let transcript = await chat.messages(roomID: room).map(\.text)
-        #expect(Set(replayedTexts) == Set(transcript))
-        #expect(transcript.contains("replay 0"))
-        #expect(transcript.contains("replay \(count - 1)"))
+        let transcriptTexts = transcript.map(\.text)
+        #expect(Set(replayedTexts) == Set(transcriptTexts))
+        #expect(transcriptTexts.contains("replay 0"))
+        #expect(transcriptTexts.contains("replay \(count - 1)"))
 
         await coordinator.stop(roomID: room)
         await first.cancel()
@@ -1115,23 +1116,17 @@ struct AgentSharedChatCoordinatorTests {
         // next poll offers the missing retained IDs to it, recovering every
         // message that was dropped while it was stalled.
         let observer = await Observation.make(stream: stalledSubscription.events)
-        var recovered = false
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while ContinuousClock.now < deadline {
-            await coordinator.poll(roomID: room)
-            let seen = Set(
-                await observer.snapshot()
-                    .compactMap(\.renderedMessages)
-                    .flatMap { $0 }
-                    .map(\.id)
-            )
-            if seen == transcriptIDs {
-                recovered = true
-                break
-            }
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(recovered, "the stalled observer must recover every retained message")
+        let recoveredEvents = await pollUntilObservationReceives(
+            transcriptIDs,
+            coordinator: coordinator,
+            roomID: room,
+            observation: observer
+        )
+        #expect(
+            Set(recoveredEvents.compactMap(\.renderedMessages).flatMap { $0 }.map(\.id))
+                == transcriptIDs,
+            "the stalled observer must recover every retained message"
+        )
 
         await observer.cancel()
         await coordinator.stopAll()
@@ -1209,23 +1204,17 @@ struct AgentSharedChatCoordinatorTests {
         // next poll offers the missing retained IDs to this observer, including
         // the one evicted by the trigger.
         let observer = await Observation.make(stream: stalledSubscription.events)
-        var recovered = false
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while ContinuousClock.now < deadline {
-            await coordinator.poll(roomID: room)
-            let seen = Set(
-                await observer.snapshot()
-                    .compactMap(\.renderedMessages)
-                    .flatMap { $0 }
-                    .map(\.id)
-            )
-            if seen == transcriptIDs {
-                recovered = true
-                break
-            }
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(recovered, "an auto-trigger eviction must not lose retained messages")
+        let recoveredEvents = await pollUntilObservationReceives(
+            transcriptIDs,
+            coordinator: coordinator,
+            roomID: room,
+            observation: observer
+        )
+        #expect(
+            Set(recoveredEvents.compactMap(\.renderedMessages).flatMap { $0 }.map(\.id))
+                == transcriptIDs,
+            "an auto-trigger eviction must not lose retained messages"
+        )
 
         await observer.cancel()
         await coordinator.stopAll()
@@ -1574,22 +1563,17 @@ struct AgentSharedChatCoordinatorTests {
 
     // MARK: - Helpers
 
-    /// Waits for an actor-observable condition instead of asserting on the
-    /// instant a call returns. A room with observers runs its own monitor, so
-    /// an explicit `poll` may coalesce with a drain already in flight; the
-    /// coalesced request is never lost, it is served by that drain's next
-    /// round.
+    /// A room with observers runs its own monitor, so an explicit `poll` may
+    /// coalesce with a drain already in flight. Wait for the actual state edge
+    /// rather than returning after a wall-clock budget; the suite time limit is
+    /// the safeguard for a real liveness regression.
     private func waitUntil(
-        timeout: Duration = .seconds(5),
         _ condition: @Sendable () async -> Bool
     ) async -> Bool {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            if await condition() { return true }
+        while !(await condition()) {
             await Task.yield()
-            try? await Task.sleep(for: .milliseconds(1))
         }
-        return await condition()
+        return true
     }
 
     private func makeChat(
@@ -1641,6 +1625,29 @@ struct AgentSharedChatCoordinatorTests {
         )
     }
 
+    /// Recovery needs explicit polls because the test intentionally disables the
+    /// ticker. Keep driving those polls until the observer has received the
+    /// complete retained transcript; no attempt count or elapsed-time guess is
+    /// part of the asserted behaviour.
+    private func pollUntilObservationReceives(
+        _ expectedMessageIDs: Set<UUID>,
+        coordinator: AgentSharedChatCoordinator,
+        roomID: String,
+        observation: Observation
+    ) async -> [AgentSharedChatCoordinatorEvent] {
+        while true {
+            let events = await observation.snapshot()
+            let receivedMessageIDs = Set(
+                events.compactMap(\.renderedMessages).flatMap { $0 }.map(\.id)
+            )
+            if receivedMessageIDs == expectedMessageIDs {
+                return events
+            }
+            await coordinator.poll(roomID: roomID)
+            await Task.yield()
+        }
+    }
+
     private static func countOccurrences(
         of messageID: UUID,
         in events: [AgentSharedChatCoordinatorEvent]
@@ -1665,12 +1672,21 @@ private extension AgentSharedChatCoordinatorEvent {
     }
 }
 
-/// Collects coordinator events without ever blocking a test forever: every wait
-/// is bounded by a deadline and returns whatever has been observed so far.
+/// Collects coordinator events and resumes waiters only when the event sequence
+/// they assert actually arrives. This eliminates scheduler-dependent polling
+/// from the Shared Chat tests.
 private actor Observation {
     private var events: [AgentSharedChatCoordinatorEvent] = []
     private var isFinished = false
     private var task: Task<Void, Never>?
+    private var eventWaiters: [UUID: EventWaiter] = [:]
+    private var finishWaiters: [CheckedContinuation<Void, Never>] = []
+
+    private struct EventWaiter {
+        let minimumCount: Int
+        let predicate: @Sendable ([AgentSharedChatCoordinatorEvent]) -> Bool
+        let continuation: CheckedContinuation<[AgentSharedChatCoordinatorEvent], Never>
+    }
 
     static func make(
         stream: AsyncStream<AgentSharedChatCoordinatorEvent>
@@ -1691,10 +1707,21 @@ private actor Observation {
 
     private func append(_ event: AgentSharedChatCoordinatorEvent) {
         events.append(event)
+        resumeSatisfiedEventWaiters()
     }
 
     private func markFinished() {
         isFinished = true
+        let eventWaiters = self.eventWaiters
+        self.eventWaiters.removeAll()
+        for waiter in eventWaiters.values {
+            waiter.continuation.resume(returning: events)
+        }
+        let finishWaiters = self.finishWaiters
+        self.finishWaiters.removeAll()
+        for waiter in finishWaiters {
+            waiter.resume()
+        }
     }
 
     func snapshot() -> [AgentSharedChatCoordinatorEvent] {
@@ -1708,27 +1735,43 @@ private actor Observation {
 
     func wait(
         untilAtLeast count: Int,
-        timeout: Duration = .seconds(5),
         satisfying predicate: (@Sendable ([AgentSharedChatCoordinatorEvent]) -> Bool)? = nil
     ) async -> [AgentSharedChatCoordinatorEvent] {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            let current = events
-            if current.count >= count, predicate?(current) ?? true {
-                return current
-            }
-            try? await Task.sleep(for: .milliseconds(5))
+        let predicate = predicate ?? { _ in true }
+        guard !(events.count >= count && predicate(events)) else {
+            return events
         }
-        return events
+        guard !isFinished else {
+            return events
+        }
+        return await withCheckedContinuation { continuation in
+            eventWaiters[UUID()] = EventWaiter(
+                minimumCount: count,
+                predicate: predicate,
+                continuation: continuation
+            )
+        }
     }
 
-    func waitUntilFinished(timeout: Duration = .seconds(5)) async -> Bool {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            if isFinished { return true }
-            try? await Task.sleep(for: .milliseconds(5))
+    private func resumeSatisfiedEventWaiters() {
+        let readyIDs = eventWaiters.compactMap { entry in
+            let waiter = entry.value
+            return events.count >= waiter.minimumCount && waiter.predicate(events)
+                ? entry.key
+                : nil
         }
-        return isFinished
+        for id in readyIDs {
+            guard let waiter = eventWaiters.removeValue(forKey: id) else { continue }
+            waiter.continuation.resume(returning: events)
+        }
+    }
+
+    func waitUntilFinished() async -> Bool {
+        guard !isFinished else { return true }
+        await withCheckedContinuation { continuation in
+            finishWaiters.append(continuation)
+        }
+        return true
     }
 }
 

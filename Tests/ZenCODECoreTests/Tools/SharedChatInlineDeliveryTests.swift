@@ -19,7 +19,7 @@ import ToolCore
 /// in flight, but the auto-trigger is held back until the room goes idle) is
 /// covered by
 /// ``AgentSharedChatCoordinatorTests/busyRoomDrainsMailboxToPendingButHoldsBackTriggerUntilTurnEnds()``.
-@Suite
+@Suite(.timeLimit(.minutes(1)))
 struct SharedChatInlineDeliveryTests {
 
     // MARK: - DirectToolExecutor: no mailbox drain, no modelOutput rewrite
@@ -113,12 +113,16 @@ struct SharedChatInlineDeliveryTests {
             parentAllowedToolNames: nil,
             rootSessionID: root
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
         let agentID = try #require(
             await runtime.snapshots().first { $0.name == "runner" }?.id
         )
         // Wait until the initial prompt is in flight so the agent is .running.
-        try await backend.waitUntilPromptCount(1)
+        await backend.waitUntilPromptCount(1)
+        let mailboxDrain = MailboxDrainCompletion()
+        try await runtime.installMailboxDrainCompletion(
+            for: agentID,
+            completion: mailboxDrain
+        )
 
         // The coordinator sends a direct message to the running agent. The
         // mailbox is drained even while running and the message is queued.
@@ -133,7 +137,10 @@ struct SharedChatInlineDeliveryTests {
         // The coordinator-facing summary states the message was delivered live.
         #expect(summary.contains("Delivered live message"))
 
-        // The message was drained from the mailbox and queued as a prompt.
+        // `onMessageAvailable` starts its drain in an unstructured task. The
+        // fixture signals only after that task returned from the mailbox drain,
+        // establishing the happens-before edge required before inspecting it.
+        await mailboxDrain.waitForCompletion()
         let mailboxLeftover = await runtime.sharedChat.drain(
             roomID: root,
             participantID: agentID,
@@ -144,7 +151,7 @@ struct SharedChatInlineDeliveryTests {
         // Releasing the initial prompt lets the current turn end; the queued
         // message becomes the next prompt.
         await backend.releasePrompt()
-        try await backend.waitUntilPromptCount(2)
+        await backend.waitUntilPromptCount(2)
         let queuedPrompt = await backend.prompt(at: 1)
         #expect(queuedPrompt?.contains("queued while running") == true)
 
@@ -175,15 +182,15 @@ struct SharedChatInlineDeliveryTests {
             parentAllowedToolNames: nil,
             rootSessionID: root
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
         let agentID = try #require(
             await runtime.snapshots().first { $0.name == "idle-worker" }?.id
         )
         // Let the initial prompt start, then release it so the agent settles
         // back to idle before the shared-chat message arrives.
-        try await backend.waitUntilPromptCount(1)
+        await backend.waitUntilPromptCount(1)
         await backend.releasePrompt()
-        try await Self.waitForAgentStatus(agentID: agentID, runtime: runtime) { $0 == .idle }
+        await runtime.waitForInlineDeliveryWorkLoop(agentID: agentID)
+        #expect(await runtime.snapshots().first { $0.id == agentID }?.status == .idle)
 
         // The agent is idle; the coordinator sends a direct message. The
         // mailbox is drained and a prompt is queued, which the work loop picks
@@ -197,7 +204,7 @@ struct SharedChatInlineDeliveryTests {
             parentAllowedToolNames: nil
         )
         // The shared-chat prompt reached the backend, proving it was queued.
-        try await backend.waitUntilPromptCount(2)
+        await backend.waitUntilPromptCount(2)
         let lastPrompt = await backend.prompt(at: 1)
         #expect(lastPrompt?.contains("queued for the idle agent") == true)
 
@@ -228,11 +235,10 @@ struct SharedChatInlineDeliveryTests {
             parentAllowedToolNames: nil,
             rootSessionID: root
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
         let agentID = try #require(
             await runtime.snapshots().first { $0.name == "serial-worker" }?.id
         )
-        try await backend.waitUntilPromptCount(1)
+        await backend.waitUntilPromptCount(1)
 
         // Message arrives while the agent is running → drained and queued.
         _ = try await runtime.messageSharedChat(
@@ -248,7 +254,7 @@ struct SharedChatInlineDeliveryTests {
         // The turn ends. The work loop picks up the queued message as the next
         // serial turn.
         await backend.releasePrompt()
-        try await backend.waitUntilPromptCount(2)
+        await backend.waitUntilPromptCount(2)
         let queuedPrompt = await backend.prompt(at: 1)
         #expect(queuedPrompt?.contains("survive the running turn") == true)
 
@@ -307,14 +313,14 @@ struct SharedChatInlineDeliveryTests {
             parentAllowedToolNames: nil,
             rootSessionID: "root"
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
         let agentID = try #require(
             await runtime.snapshots().first { $0.name == "standby-worker" }?.id
         )
         // The attempt completed and the graph is still active, so the agent is
         // parked in standby with its initial prompt already consumed.
-        try await Self.waitForAgentStatus(agentID: agentID, runtime: runtime) { $0 == .standby }
-        try await backend.waitUntilPromptCount(1)
+        await runtime.waitForInlineDeliveryWorkLoop(agentID: agentID)
+        #expect(await runtime.snapshots().first { $0.id == agentID }?.status == .standby)
+        await backend.waitUntilPromptCount(1)
 
         // The coordinator broadcasts to every active participant. The standby
         // resident is one of them, so it must receive the prompt — it is no
@@ -331,7 +337,7 @@ struct SharedChatInlineDeliveryTests {
 
         // The broadcast became the standby agent's next serial turn, with the
         // mailbox drained (the work loop consumed it).
-        try await backend.waitUntilPromptCount(2)
+        await backend.waitUntilPromptCount(2)
         let broadcastPrompt = await backend.prompt(at: 1)
         #expect(broadcastPrompt?.contains("broadcast reaches standby") == true)
         let mailboxLeftover = await runtime.sharedChat.drain(
@@ -344,30 +350,66 @@ struct SharedChatInlineDeliveryTests {
         await runtime.shutdown()
     }
 
-    // MARK: - Helpers
+}
 
-    /// Polls the runtime snapshots until the target agent satisfies the
-    /// predicate, with the same bounded-wait discipline used by the coordinator
-    /// test suite.
-    private static func waitForAgentStatus(
-        agentID: String,
-        runtime: DirectSubAgentRuntime,
-        timeout: Duration = .seconds(5),
-        satisfying predicate: @Sendable @escaping (DirectSubAgentRuntime.Status) -> Bool
+private extension DirectSubAgentRuntime {
+    /// Replaces the runtime's wake-up callback with the same drain task plus a
+    /// test-only completion signal. The signal fires after the drain returns,
+    /// including its single-flight cleanup in `defer`, rather than when the
+    /// callback merely schedules the task.
+    func installMailboxDrainCompletion(
+        for agentID: String,
+        completion: MailboxDrainCompletion
     ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            if let snapshot = await runtime.snapshots().first(where: { $0.id == agentID }),
-               predicate(snapshot.status)
-            {
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(5))
+        guard let agent = agents[agentID] else {
+            throw DirectSubAgentRuntimeError.agentNotFound(agentID)
         }
-        let snapshot = try #require(
-            await runtime.snapshots().first(where: { $0.id == agentID })
+        let runtime = self
+        _ = try await sharedChat.registerAgent(
+            id: agent.id,
+            name: agent.name,
+            roomID: agent.rootSessionID,
+            onMessageAvailable: {
+                Task(name: "ZenCODE.tests.shared-chat.agent-drain") {
+                    await runtime.drainSharedChatMailbox(for: agentID)
+                    await completion.markCompleted()
+                }
+            }
         )
-        Issue.record("Agent \(agentID) did not reach expected status; current: \(snapshot.status)")
+    }
+
+    /// The record owns exactly one work-loop task. Awaiting that task establishes
+    /// the transition after a released prompt without guessing how long actor
+    /// scheduling will take under parallel test load.
+    func waitForInlineDeliveryWorkLoop(agentID: String) async {
+        guard let task = agents[agentID]?.runTask else { return }
+        await task.value
+    }
+}
+
+/// One-shot completion edge from the callback-owned mailbox-drain task to the
+/// test. Actor isolation makes either ordering safe: a completion recorded
+/// before `waitForCompletion()` is retained, otherwise the waiter is resumed by
+/// the drain's post-return signal.
+private actor MailboxDrainCompletion {
+    private var completed = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func waitForCompletion() async {
+        guard !completed else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func markCompleted() {
+        guard !completed else { return }
+        completed = true
+        let waiters = self.waiters
+        self.waiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 }
 
@@ -381,6 +423,12 @@ private actor InlineDeliveryTestBackend: AgentRuntimeBackend {
     private var prompts: [String] = []
     private var shouldBlock = false
     private var releaseContinuations: [CheckedContinuation<Void, Never>] = []
+    private var promptCountWaiters: [PromptCountWaiter] = []
+
+    private struct PromptCountWaiter {
+        let count: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
 
     func setBlocking(_ value: Bool) {
         shouldBlock = value
@@ -393,19 +441,17 @@ private actor InlineDeliveryTestBackend: AgentRuntimeBackend {
         return prompts[index]
     }
 
-    /// Waits until at least `count` prompts have been recorded, with a bounded
-    /// deadline so a stuck work loop fails the test rather than hanging it.
+    /// A prompt is the delivery boundary this suite observes. Registering the
+    /// waiter in the same actor that appends it makes the edge race-free without
+    /// using a wall-clock polling budget.
     func waitUntilPromptCount(
-        _ count: Int,
-        timeout: Duration = .seconds(5)
-    ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            if prompts.count >= count { return }
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        if prompts.count < count {
-            Issue.record("Expected \(count) prompts, got \(prompts.count)")
+        _ count: Int
+    ) async {
+        guard prompts.count < count else { return }
+        await withCheckedContinuation { continuation in
+            promptCountWaiters.append(
+                PromptCountWaiter(count: count, continuation: continuation)
+            )
         }
     }
 
@@ -505,6 +551,7 @@ private actor InlineDeliveryTestBackend: AgentRuntimeBackend {
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
         prompts.append(prompt)
+        resumePromptCountWaiters()
         if shouldBlock {
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 releaseContinuations.append(continuation)
@@ -514,4 +561,12 @@ private actor InlineDeliveryTestBackend: AgentRuntimeBackend {
     }
 
     func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? { nil }
+
+    private func resumePromptCountWaiters() {
+        let ready = promptCountWaiters.filter { prompts.count >= $0.count }
+        promptCountWaiters.removeAll { prompts.count >= $0.count }
+        for waiter in ready {
+            waiter.continuation.resume()
+        }
+    }
 }

@@ -29,6 +29,7 @@
 //  None of this exposes MemoryEngine: the wrappers speak only in ZenCODECore DTOs.
 //
 
+import Dispatch
 import Foundation
 import Synchronization
 import ToolCore
@@ -66,14 +67,44 @@ public enum MemoryLegacyBridgeError: LocalizedError {
     }
 }
 
+/// Executor used for the asynchronous half of the deprecated blocking bridge.
+///
+/// A `Task` without an executor preference runs on Swift's cooperative global
+/// pool. That is unsafe here: a group of async callers can all enter a legacy
+/// synchronous wrapper, park their cooperative workers in `semaphore.wait()`,
+/// and leave no worker available to start the tasks that would signal them.
+///
+/// The queue deliberately belongs only to this deprecated bridge. It keeps the
+/// compatibility path from starving the normal memory/turn executors, while a
+/// `Task` (rather than `Task.detached`) still inherits the caller's task-local
+/// support-directory and embedding overrides.
+private final class MemoryLegacyBridgeTaskExecutor: TaskExecutor {
+    private let queue = DispatchQueue(
+        label: "zencode.memory.legacy-bridge",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+
+    func enqueue(_ job: consuming ExecutorJob) {
+        let unownedJob = UnownedJob(job)
+        queue.async { [self] in
+            unownedJob.runSynchronously(on: asUnownedTaskExecutor())
+        }
+    }
+}
+
 /// Runs async work from a synchronous caller with a bounded wait.
 ///
 /// Deadlock safety, and its limits, precisely:
 ///
-/// * The work runs on the concurrency pool; the caller's thread is the only one
-///   that blocks. Nothing in the memory path is `@MainActor`, and the graph is
-///   reached through plain `actor`s, so blocking the main thread here cannot
-///   deadlock against the work itself.
+/// * The work runs on a dedicated task executor backed by a dispatch queue; the
+///   caller's thread is the only one that blocks. Nothing in the memory path is
+///   `@MainActor`, and the graph is reached through plain `actor`s, so blocking
+///   the main thread here cannot deadlock against the work itself.
+/// * Keeping that work off Swift's cooperative global executor is essential:
+///   concurrent legacy calls can block every cooperative worker in this bridge,
+///   but their completion work still starts on the dedicated executor and
+///   releases them.
 /// * The wait is **bounded**. If the budget expires the pending task is
 ///   cancelled and a diagnosable error is thrown, so a pathological case
 ///   degrades into a visible failure instead of an unbounded hang.
@@ -89,6 +120,9 @@ enum MemoryLegacyBridge {
     /// Generous enough for a cold graph open plus an embedding pass, small
     /// enough that a stuck call surfaces instead of hanging a session.
     static let defaultTimeout: TimeInterval = 60
+    /// Shared with the registry's cold-open task so an unstructured task does
+    /// not lose the bridge's executor preference under legacy contention.
+    static let taskExecutor: any TaskExecutor = MemoryLegacyBridgeTaskExecutor()
 
     private final class ResultBox<Value: Sendable>: Sendable {
         private let storage = Mutex<Result<Value, any Error>?>(nil)
@@ -109,7 +143,7 @@ enum MemoryLegacyBridge {
     ) throws -> Value {
         let box = ResultBox<Value>()
         let semaphore = DispatchSemaphore(value: 0)
-        let task = Task {
+        let task = Task(executorPreference: taskExecutor) {
             do {
                 box.set(.success(try await work()))
             } catch {
@@ -170,7 +204,7 @@ enum MemoryLegacyBridge {
     ) throws -> Value {
         let box = ResultBox<Value>()
         let semaphore = DispatchSemaphore(value: 0)
-        _ = Task {
+        _ = Task(executorPreference: taskExecutor) {
             do {
                 box.set(.success(try await work()))
             } catch {

@@ -24,7 +24,7 @@ import ToolCore
 ///   any tool boundary;
 /// - agent→agent traffic is rendered but never auto-triggers the coordinator;
 /// - two active observations each receive the same `Message.id` exactly once.
-@Suite
+@Suite(.timeLimit(.minutes(1)))
 struct SharedChatEndToEndTests {
 
     // MARK: - 1. Child executor → coordinator via borrowed agent.message
@@ -56,8 +56,8 @@ struct SharedChatEndToEndTests {
             parentAllowedToolNames: nil,
             rootSessionID: room
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
         let child = try #require(await runtime.snapshots().first)
+        await runtime.waitForEndToEndWorkLoop(agentID: child.id)
         let chat = await runtime.sharedChat
 
         // The coordinator observes the very same bus the runtime registered the
@@ -173,12 +173,12 @@ struct SharedChatEndToEndTests {
             parentAllowedToolNames: nil,
             rootSessionID: root
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
         let agentID = try #require(
             await runtime.snapshots().first { $0.name == "standby-worker" }?.id
         )
-        try await Self.waitForAgentStatus(agentID: agentID, runtime: runtime) { $0 == .standby }
-        try await backend.waitUntilPromptCount(1)
+        await runtime.waitForEndToEndWorkLoop(agentID: agentID)
+        #expect(await runtime.snapshots().first { $0.id == agentID }?.status == .standby)
+        await backend.waitUntilPromptCount(1)
 
         // Direct bus delivery, from the coordinator identity: no tool call, no
         // `messageAgents` bridge.
@@ -192,7 +192,7 @@ struct SharedChatEndToEndTests {
 
         // The standby agent's wake-up callback drained the mailbox and the work
         // loop answered with a serial turn: the backend records the next prompt.
-        try await backend.waitUntilPromptCount(2)
+        await backend.waitUntilPromptCount(2)
         let secondPrompt = await backend.prompt(at: 1)
         #expect(secondPrompt?.contains("wake up standby") == true)
         #expect(secondPrompt?.contains("[Live chat messages]") == true)
@@ -227,12 +227,11 @@ struct SharedChatEndToEndTests {
             parentAllowedToolNames: nil,
             rootSessionID: root
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
         let agentID = try #require(
             await runtime.snapshots().first { $0.name == "serial-worker" }?.id
         )
         // The initial prompt is in flight: the agent is `.running`.
-        try await backend.waitUntilPromptCount(1)
+        await backend.waitUntilPromptCount(1)
 
         // Deliver directly through the bus while the turn is in flight.
         let delivery = try await chat.send(
@@ -248,7 +247,7 @@ struct SharedChatEndToEndTests {
 
         // The current turn ends; the queued message becomes the next prompt.
         await backend.releasePrompt()
-        try await backend.waitUntilPromptCount(2)
+        await backend.waitUntilPromptCount(2)
         let secondPrompt = await backend.prompt(at: 1)
         #expect(secondPrompt?.contains("queued while running") == true)
         #expect(secondPrompt?.contains("[Live chat messages]") == true)
@@ -416,28 +415,14 @@ struct SharedChatEndToEndTests {
         return url
     }
 
-    /// Polls the runtime snapshots until the target agent satisfies the
-    /// predicate, with the same bounded-wait discipline used by the coordinator
-    /// test suite.
-    private static func waitForAgentStatus(
-        agentID: String,
-        runtime: DirectSubAgentRuntime,
-        timeout: Duration = .seconds(5),
-        satisfying predicate: @Sendable @escaping (DirectSubAgentRuntime.Status) -> Bool
-    ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            if let snapshot = await runtime.snapshots().first(where: { $0.id == agentID }),
-               predicate(snapshot.status)
-            {
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        let snapshot = try #require(
-            await runtime.snapshots().first(where: { $0.id == agentID })
-        )
-        Issue.record("Agent \(agentID) did not reach expected status; current: \(snapshot.status)")
+}
+
+private extension DirectSubAgentRuntime {
+    /// The test owns the agent's one serial work-loop. Its completion is the
+    /// state transition being asserted, unlike a timeout-based snapshot poll.
+    func waitForEndToEndWorkLoop(agentID: String) async {
+        guard let task = agents[agentID]?.runTask else { return }
+        await task.value
     }
 }
 
@@ -455,11 +440,19 @@ private extension AgentSharedChatCoordinatorEvent {
     }
 }
 
-/// Collects coordinator events without ever blocking a test forever: every wait
-/// is bounded by a deadline and returns whatever has been observed so far.
+/// Collects coordinator events and resumes a waiter only when its asserted
+/// event sequence arrives. This keeps observation ordering independent of the
+/// cooperative scheduler's latency.
 private actor Observation {
     private var events: [AgentSharedChatCoordinatorEvent] = []
     private var task: Task<Void, Never>?
+    private var eventWaiters: [UUID: EventWaiter] = [:]
+
+    private struct EventWaiter {
+        let minimumCount: Int
+        let predicate: @Sendable ([AgentSharedChatCoordinatorEvent]) -> Bool
+        let continuation: CheckedContinuation<[AgentSharedChatCoordinatorEvent], Never>
+    }
 
     static func make(
         stream: AsyncStream<AgentSharedChatCoordinatorEvent>
@@ -479,6 +472,7 @@ private actor Observation {
 
     private func append(_ event: AgentSharedChatCoordinatorEvent) {
         events.append(event)
+        resumeSatisfiedWaiters()
     }
 
     func snapshot() -> [AgentSharedChatCoordinatorEvent] {
@@ -492,18 +486,32 @@ private actor Observation {
 
     func wait(
         untilAtLeast count: Int,
-        timeout: Duration = .seconds(5),
         satisfying predicate: (@Sendable ([AgentSharedChatCoordinatorEvent]) -> Bool)? = nil
     ) async -> [AgentSharedChatCoordinatorEvent] {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            let current = events
-            if current.count >= count, predicate?(current) ?? true {
-                return current
-            }
-            try? await Task.sleep(for: .milliseconds(5))
+        let predicate = predicate ?? { _ in true }
+        guard !(events.count >= count && predicate(events)) else {
+            return events
         }
-        return events
+        return await withCheckedContinuation { continuation in
+            eventWaiters[UUID()] = EventWaiter(
+                minimumCount: count,
+                predicate: predicate,
+                continuation: continuation
+            )
+        }
+    }
+
+    private func resumeSatisfiedWaiters() {
+        let readyIDs = eventWaiters.compactMap { entry in
+            let waiter = entry.value
+            return events.count >= waiter.minimumCount && waiter.predicate(events)
+                ? entry.key
+                : nil
+        }
+        for id in readyIDs {
+            guard let waiter = eventWaiters.removeValue(forKey: id) else { continue }
+            waiter.continuation.resume(returning: events)
+        }
     }
 }
 
@@ -528,7 +536,13 @@ private actor EndToEndRuntimeBackend: AgentRuntimeBackend {
     private var prompts: [String] = []
     private var shouldBlock = false
     private var releaseContinuations: [CheckedContinuation<Void, Never>] = []
+    private var promptCountWaiters: [PromptCountWaiter] = []
     private var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
+
+    private struct PromptCountWaiter {
+        let count: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
 
     func setBlocking(_ value: Bool) {
         shouldBlock = value
@@ -541,19 +555,14 @@ private actor EndToEndRuntimeBackend: AgentRuntimeBackend {
         return prompts[index]
     }
 
-    /// Waits until at least `count` prompts have been recorded, with a bounded
-    /// deadline so a stuck work loop fails the test rather than hanging it.
-    func waitUntilPromptCount(
-        _ count: Int,
-        timeout: Duration = .seconds(5)
-    ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            if prompts.count >= count { return }
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        if prompts.count < count {
-            Issue.record("Expected \(count) prompts, got \(prompts.count)")
+    /// A prompt is the delivery boundary this suite observes. Registering the
+    /// waiter in the producer actor makes the edge race-free without polling.
+    func waitUntilPromptCount(_ count: Int) async {
+        guard prompts.count < count else { return }
+        await withCheckedContinuation { continuation in
+            promptCountWaiters.append(
+                PromptCountWaiter(count: count, continuation: continuation)
+            )
         }
     }
 
@@ -646,11 +655,20 @@ private actor EndToEndRuntimeBackend: AgentRuntimeBackend {
         onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
         prompts.append(prompt)
+        resumePromptCountWaiters()
         await waitForRelease()
         return DirectAgentResponse(
             text: "done",
             stopReason: "stop",
             modelID: "test-model"
         )
+    }
+
+    private func resumePromptCountWaiters() {
+        let ready = promptCountWaiters.filter { prompts.count >= $0.count }
+        promptCountWaiters.removeAll { prompts.count >= $0.count }
+        for waiter in ready {
+            waiter.continuation.resume()
+        }
     }
 }
