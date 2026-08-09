@@ -12,6 +12,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Replies from a delegated agent to a direct human-operator message now use the
+  dedicated `agent.message` destination `operator` instead of being routed to
+  the coordinator. Operator replies remain visible through the transient room
+  transcript and never enter the coordinator mailbox.
+
 - Shared chat delivery is now serialised in each recipient's work loop instead
   of tied to a tool call. The inline-delivery mechanism that appended live
   messages to the result of the next tool boundary has been removed: every

@@ -113,6 +113,9 @@ public actor AgentSharedChat {
     public enum Destination: Sendable, Equatable {
         /// Exact participant identifiers or active participant names.
         case direct([String])
+        /// The terminal operator, who consumes messages through the observation
+        /// stream and does not own a mailbox.
+        case `operator`
         case coordinator
         /// Every other active delegated agent, never the sender.
         case peers
@@ -1087,6 +1090,8 @@ public actor AgentSharedChat {
                 return participant
             }
             .filter { $0.id != senderID && seen.insert($0.id).inserted }
+        case .operator:
+            recipients = active.filter { $0.kind == .operator && $0.id != senderID }
         case .coordinator:
             recipients = active.filter { $0.kind == .coordinator && $0.id != senderID }
         case .peers:
@@ -1096,6 +1101,8 @@ public actor AgentSharedChat {
         }
         guard !recipients.isEmpty else {
             switch destination {
+            case .operator:
+                break
             case .coordinator:
                 throw Error.coordinatorUnavailable
             case .peers:

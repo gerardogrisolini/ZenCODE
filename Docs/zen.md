@@ -246,7 +246,8 @@ and every active agent, or a readable `@agent-name` handle (derived from each
 instance's display name) to message it directly. Autocomplete lists every active
 agent by its readable handle; routing always resolves back to the stable agent
 id behind the alias. The LLM side uses the `agent.message` tool with the same
-destinations (`direct`, `coordinator`, `peers`, `all`). Every message is shown
+destinations (`direct`, `operator`, `coordinator`, `peers`, `all`); `operator`
+addresses only the human terminal operator. Every message is shown
 as a blue card in every active terminal, and each recipient — idle, running or
 standby — replies to it as the next serial turn of its own work loop, without
 depending on a tool call. The chat is in-memory and never persisted; a session

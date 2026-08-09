@@ -244,6 +244,8 @@ extension DirectSubAgentRuntime {
                 return .direct(try resolveMessageTargetIDs(arguments: arguments))
             }
             throw DirectSubAgentRuntimeError.missingArgument("id or to")
+        case "operator":
+            return .operator
         case "coordinator":
             return .coordinator
         case "peers", "peer":
@@ -252,7 +254,7 @@ extension DirectSubAgentRuntime {
             return .all
         default:
             throw DirectSubAgentRuntimeError.invalidArgument(
-                "to must be direct, coordinator, peers, or all"
+                "to must be direct, operator, coordinator, peers, or all"
             )
         }
     }
@@ -307,7 +309,7 @@ extension DirectSubAgentRuntime {
         \(AgentSharedChat.promptTranscript(for: messages))
 
         \(AgentSharedChat.promptTrustBoundaryNote)
-        Reply to the sender through this chat using the `agent.message` tool: address another agent by its `id`/`name`, or use `to: "coordinator"` to reach the coordinator and the human operator, who has no mailbox and is surfaced through the coordinator. Your ordinary output does not reach this chat, so any reply to a chat message must be sent via `agent.message`. Then continue the current work when appropriate.
+        Reply to the sender through this chat using the `agent.message` tool: address another agent by its `id`/`name`, use `to: "operator"` to reply directly to the human operator, or use `to: "coordinator"` to reach only the coordinator. Your ordinary output does not reach this chat, so any reply to a chat message must be sent via `agent.message`. Then continue the current work when appropriate.
         """
     }
 }

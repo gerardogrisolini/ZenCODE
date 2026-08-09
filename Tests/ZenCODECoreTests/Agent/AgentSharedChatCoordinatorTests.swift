@@ -103,6 +103,9 @@ struct AgentSharedChatCoordinatorTests {
         let humanIdentity = "Operator (human, id: operator:room-1)"
         let agentIdentity = "Agent (id: agent-operator, name: operator)"
 
+        #expect(agentPrompt.contains("use `to: \"operator\"` to reply directly to the human operator"))
+        #expect(agentPrompt.contains("use `to: \"coordinator\"` to reach only the coordinator"))
+
         for prompt in [coordinatorPrompt, agentPrompt] {
             #expect(prompt.contains("[message 1] from \(humanIdentity)\n  | human instruction"))
             #expect(prompt.contains("[message 2] from \(agentIdentity)\n  | agent report"))

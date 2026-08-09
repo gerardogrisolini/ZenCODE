@@ -2403,6 +2403,43 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func agentReplyToOperatorDoesNotEnterCoordinatorMailbox() async throws {
+        let chat = AgentSharedChat()
+        _ = try await chat.registerCoordinator(roomID: "root")
+        _ = try await chat.registerAgent(id: "worker-id", name: "worker", roomID: "root")
+
+        let delivery = try await chat.send(
+            roomID: "root",
+            senderID: "worker-id",
+            destination: .operator,
+            text: "Risposta per te"
+        )
+
+        #expect(delivery.recipients.map(\.id) == [AgentSharedChat.operatorID(for: "root")])
+        #expect(delivery.message.recipientIDs == [AgentSharedChat.operatorID(for: "root")])
+        #expect(await chat.drain(
+            roomID: "root",
+            participantID: AgentSharedChat.coordinatorID(for: "root")
+        ).isEmpty)
+    }
+
+    @Test
+    func agentMessageAcceptsExplicitOperatorDestination() async throws {
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+
+        let destination = try await runtime.sharedChatDestination(
+            arguments: ["to": .string("operator")],
+            senderIDOverride: "worker-id"
+        )
+
+        #expect(destination == .operator)
+        await runtime.shutdown()
+    }
+
+    @Test
     func terminalSharedChatBridgeUsesTrustedOperatorForCoordinatorMessages() async throws {
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },

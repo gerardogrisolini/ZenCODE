@@ -65,7 +65,7 @@ struct DirectToolCatalogSchemaTests {
         let to = try #require(properties["to"] as? [String: Any])
 
         #expect(to["type"] as? String == "string")
-        #expect(to["enum"] as? [String] == ["direct", "coordinator", "peers", "all"])
+        #expect(to["enum"] as? [String] == ["direct", "operator", "coordinator", "peers", "all"])
         #expect(properties["target"] != nil)
     }
 
