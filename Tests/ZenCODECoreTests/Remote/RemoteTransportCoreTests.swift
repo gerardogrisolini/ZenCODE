@@ -318,7 +318,12 @@ struct RemoteTransportCoreTests {
 
     @Test("WebSocket send completes while a receive is already parked")
     func webSocketSendProceedsWhileReceiveIsPending() async throws {
-        let server = try await LocalWebSocketTestServer.start()
+        let serverReady = TestSignal()
+        let server = try await LocalWebSocketTestServer.start(
+            onWebSocketReady: {
+                Task { await serverReady.signal() }
+            }
+        )
         let transport = RemoteTransportCore(owningEventLoopThreads: 1)
 
         do {
@@ -328,22 +333,30 @@ struct RemoteTransportCoreTests {
                     headers: [RemoteHTTPHeader(name: "x-transport-test", value: "websocket")]
                 )
             )
+            // `handlerAdded` is a concrete server-side edge: the echo handler
+            // is installed before the client starts its parked receive.
+            try await wait(for: serverReady)
 
             // Mirror the ChatGPT driver: a reader parks on receive() first,
             // then a ping is sent on an otherwise idle connection. The ping
             // frame must be written while the receive is still awaiting.
+            let receiveTask = Task {
+                try await socket.receive()
+            }
+            defer { receiveTask.cancel() }
+
+            // Do not infer this from elapsed time. The driver reports that the
+            // receive request has left its queue for the read loop; this idle
+            // fixture cannot complete it before the ping is written.
+            try await awaitWebSocketReceiveParked(socket.driver)
+            let pingPayload = Data("readiness".utf8)
+            try await socket.send(.ping(pingPayload))
+
             let received = try await withThrowingTaskGroup(
                 of: RemoteWebSocketFrame?.self
             ) { group in
                 group.addTask {
-                    try await socket.receive()
-                }
-                group.addTask {
-                    // Give the receive a moment to park on the inbound stream.
-                    try await Task.sleep(for: .milliseconds(100))
-                    let pingPayload = Data("readiness".utf8)
-                    try await socket.send(.ping(pingPayload))
-                    return nil
+                    try await receiveTask.value
                 }
                 group.addTask {
                     try await Task.sleep(for: .seconds(5))
@@ -1333,6 +1346,25 @@ private func wait(for signal: TestSignal) async throws {
     }
 }
 
+/// Waits for the actual driver state instead of treating a scheduler delay as
+/// proof that `receive()` reached the inbound stream. The deadline is only a
+/// failure bound; the observed parked state is the synchronization edge.
+private func awaitWebSocketReceiveParked(
+    _ driver: RemoteWebSocketDriver,
+    timeout: Duration = .seconds(5)
+) async throws {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while ContinuousClock.now < deadline {
+        if await driver.hasParkedReceiveForTesting() {
+            return
+        }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    guard await driver.hasParkedReceiveForTesting() else {
+        throw RemoteTransportError.timeout
+    }
+}
+
 /// Weak holder for an internal driver actor, so a test can observe that the
 /// parked run-task released it after the last public handle was dropped.
 private final class WeakBox<T: AnyObject & Sendable>: Sendable {
@@ -1470,7 +1502,8 @@ private final class LocalWebSocketTestServer: @unchecked Sendable {
     }
 
     static func start(
-        resetOnText: String? = nil
+        resetOnText: String? = nil,
+        onWebSocketReady: (@Sendable () -> Void)? = nil
     ) async throws -> LocalWebSocketTestServer {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let upgrader = NIOWebSocketServerUpgrader(
@@ -1480,7 +1513,10 @@ private final class LocalWebSocketTestServer: @unchecked Sendable {
             },
             upgradePipelineHandler: { channel, _ in
                 channel.pipeline.addHandler(
-                    LocalWebSocketEchoHandler(resetOnText: resetOnText)
+                    LocalWebSocketEchoHandler(
+                        resetOnText: resetOnText,
+                        onHandlerAdded: onWebSocketReady
+                    )
                 )
             }
         )
@@ -1531,9 +1567,18 @@ private final class LocalWebSocketEchoHandler:
     typealias OutboundOut = WebSocketFrame
 
     private let resetOnText: String?
+    private let onHandlerAdded: (@Sendable () -> Void)?
 
-    init(resetOnText: String?) {
+    init(
+        resetOnText: String?,
+        onHandlerAdded: (@Sendable () -> Void)? = nil
+    ) {
         self.resetOnText = resetOnText
+        self.onHandlerAdded = onHandlerAdded
+    }
+
+    func handlerAdded(context: ChannelHandlerContext) {
+        onHandlerAdded?()
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {

@@ -81,14 +81,18 @@ public enum AgentSharedChatCoordinatorEvent: Sendable, Equatable {
 ///   losing it, unless a turn already injected it;
 /// * every queue and every observer stream is bounded with an explicit eviction
 ///   policy, so a stalled consumer cannot grow memory without limit;
+/// * transcript message delivery is accounted independently for each observer:
+///   an attach-time replay and a concurrent poll cannot suppress or duplicate a
+///   raw `.messages` event for another stream;
 /// * draining is bounded per poll and every suspension is generation-fenced
 ///   *before* the next one, so one hot room cannot starve the others, a drain
 ///   that outlives its room can never resurrect it, and a stale poll can never
 ///   consume the mailbox of the instance that replaced it;
-/// * the mailbox is not drained while a turn is in flight: inline message
-///   delivery owns the mailbox for the whole duration of the turn, so the
-///   monitor leaves it untouched and drains the leftover the instant the room
-///   goes idle (see ``poll(roomID:)``);
+/// * the mailbox is drained even while a turn is in flight: a message that
+///   lands mid-turn is parked in `pending` and shown to every observer, but the
+///   single-flight `evaluate` keeps it from starting a turn until the room goes
+///   idle, so `noteTurnEnded` is what re-arms the next auto-trigger
+///   (see ``poll(roomID:)``);
 /// * a backend rebuild fences the room for its whole duration
 ///   (``beginReset(roomID:)``/``endReset(_:)``), so nothing is drained from a
 ///   bus that is about to be cleared and no offer opens a turn against a
@@ -256,11 +260,16 @@ public actor AgentSharedChatCoordinator {
         var needsTriggerReoffer = false
         var triggerReofferCount = 0
         var droppedEventCount = 0
-        /// IDs of messages already emitted as `.messages` events to observers.
-        /// Prevents re-emitting the same transcript message on every poll while
-        /// the read-only `allRoomMessages` source keeps returning the full
-        /// bounded transcript. Bounded by the same limit as the transcript.
-        var emittedMessageIDs: Set<UUID> = []
+        /// Message IDs currently enqueued or already delivered to each active
+        /// observer. This is deliberately per-observer: a transcript replay for
+        /// a new subscriber must never decide what an older subscriber has seen.
+        ///
+        /// The map is intersected with the bounded transcript after every poll,
+        /// so each set has the same upper bound as the source transcript. When a
+        /// `bufferingNewest` stream evicts a `.messages` event, only the IDs in
+        /// that evicted event are removed for that observer; the just-enqueued
+        /// event remains represented (see ``recordYieldResult``).
+        var enqueuedMessageIDsBySubscriber: [UUID: Set<UUID>] = [:]
 
         var turnsInFlight: Int { activeTurns.count }
 
@@ -312,20 +321,40 @@ public actor AgentSharedChatCoordinator {
         }
         var room = rooms[roomID] ?? makeRoom()
         room.subscribers[subscriberID] = continuation
+        // The ledger starts empty for every subscription. It is intentionally
+        // not inherited from the room or another observer: transcript delivery
+        // is owed independently to each stream.
+        room.enqueuedMessageIDsBySubscriber[subscriberID] = []
         // A newly attached observer restores the room's ability to answer an
         // outstanding trigger, so the overflow re-offer budget starts again.
         room.triggerReofferCount = 0
+        let pending = room.pending
+        let activeTrigger = room.activeTrigger
+        let generation = room.generation
         rooms[roomID] = room
 
         // A consumer that attaches after a close/reset must still see whatever
         // never reached a synthetic turn, so replay the parked batch.
-        if !room.pending.isEmpty {
-            continuation.yield(.messages(room.pending))
+        if !pending.isEmpty {
+            emitMessages(pending, roomID: roomID, onlyTo: subscriberID)
         }
         // An unclaimed trigger is replayed too: it is the recovery path for an
         // observer that dropped the original broadcast under buffer overflow.
-        if let trigger = room.activeTrigger {
-            continuation.yield(.autoTrigger(trigger))
+        if let trigger = activeTrigger {
+            emit(.autoTrigger(trigger), roomID: roomID, onlyTo: subscriberID)
+        }
+        // Replay the bounded room transcript to this observer. The live box is
+        // rendered from the transcript, so a consumer that attaches after
+        // agent-to-agent traffic must see every retained message — not only the
+        // ones still parked in `pending`. The replay and a concurrent poll both
+        // go through `emitMessages`, so actor-isolated per-observer state makes
+        // their ordering irrelevant without relying on TUI deduplication.
+        Task(name: "ZenCODE.shared-chat.transcript-replay") { [weak self] in
+            await self?.replayTranscript(
+                to: subscriberID,
+                roomID: roomID,
+                generation: generation
+            )
         }
         startMonitorIfNeeded(roomID: roomID)
         evaluate(roomID: roomID)
@@ -374,6 +403,7 @@ public actor AgentSharedChatCoordinator {
         let subscribers = room.subscribers
         room.subscribers.removeAll()
         room.busyObservers.removeAll()
+        room.enqueuedMessageIDsBySubscriber.removeAll()
         rooms[roomID] = room
         for continuation in subscribers.values {
             continuation.finish()
@@ -416,6 +446,10 @@ public actor AgentSharedChatCoordinator {
         room.isPolling = false
         room.pollRequested = false
         room.isAwaitingSourceRebuild = true
+        // The source transcript belongs to the backend being rebuilt. Keep no
+        // delivery acknowledgement across that boundary: IDs from the retired
+        // transcript must neither suppress nor be recovered into the new one.
+        room.enqueuedMessageIDsBySubscriber.removeAll()
         rooms[roomID] = room
         return ResetToken(roomID: roomID, generation: room.generation)
     }
@@ -714,6 +748,28 @@ public actor AgentSharedChatCoordinator {
         rooms[Self.normalizedRoomID(rawRoomID)]?.monitorTask != nil
     }
 
+    /// Replays the bounded room transcript to one observer. Called when a new
+    /// observer attaches so it sees every retained message — including
+    /// agent-to-agent traffic that never entered the coordinator mailbox and was
+    /// already emitted to existing observers.
+    ///
+    /// Fetching the source is asynchronous, but applying its result is an actor
+    /// step and uses the same per-observer helper as a poll. Therefore either
+    /// ordering is safe: a poll that wins marks this observer first, while a
+    /// replay that wins cannot suppress delivery to a different observer.
+    private func replayTranscript(
+        to subscriberID: UUID,
+        roomID: String,
+        generation: UInt64
+    ) async {
+        let allMessages = await source.allRoomMessages(roomID)
+        guard rooms[roomID]?.generation == generation,
+              rooms[roomID]?.subscribers[subscriberID] != nil else {
+            return
+        }
+        emitMessages(allMessages, roomID: roomID, onlyTo: subscriberID)
+    }
+
     // MARK: - Monitor
 
     private func startMonitorIfNeeded(roomID: String) {
@@ -798,51 +854,40 @@ public actor AgentSharedChatCoordinator {
                 requestPoll(roomID: roomID)
                 return
             }
-            // Hold-back: while a turn is in flight the coordinator must not
-            // steal messages from the shared-chat mailbox. Inline delivery —
-            // surfaced through the result of the consumer's next tool call —
-            // owns the mailbox for the duration of the turn, so a destructive
-            // drain here would race it and swallow the very batch it is about
-            // to present. The drain is simply deferred: `noteTurnEnded` re-arms
-            // the poll, so whatever stayed in the mailbox is drained the instant
-            // the room goes idle and becomes the next auto-trigger exactly as it
-            // does today. The check reads only actor-isolated state, so no
-            // suspension opens between it and the decision to skip.
-            let drained: [AgentSharedChat.Message]
-            if rooms[roomID]?.activeTurns.isEmpty ?? true {
-                // The room dictionary entry survives `stop`, so messages drained
-                // across a teardown are parked instead of dropped. A *removed* or
-                // *reset* room is different: the runtime tree that produced these
-                // messages is gone, so they die with it rather than resurfacing
-                // in an instance that never owned them.
-                drained = await source.drainCoordinatorMessages(roomID)
-                guard rooms[roomID]?.generation == generation else { return }
-            } else {
-                drained = []
-            }
+            // The coordinator mailbox is always drained, even while a turn is
+            // in flight. An inbound message is parked in `pending` and shown to
+            // every observer immediately; the single-flight `evaluate` keeps it
+            // from starting a turn until the room is genuinely idle, so it
+            // simply becomes the next queued auto-trigger once `noteTurnEnded`
+            // re-arms the room. This is safe because the coordinator mailbox is
+            // its own participant inbox — distinct from any agent mailbox and
+            // from the work a running turn is performing — so the drain can
+            // neither race nor duplicate a batch that turn is already carrying.
+            //
+            // The room dictionary entry survives `stop`, so messages drained
+            // across a teardown are parked instead of dropped. A *removed* or
+            // *reset* room is different: the runtime tree that produced these
+            // messages is gone, so they die with it rather than resurfacing in
+            // an instance that never owned them.
+            let drained = await source.drainCoordinatorMessages(roomID)
+            guard rooms[roomID]?.generation == generation else { return }
             ingest(participants: participants, messages: drained, roomID: roomID)
             // Emit agent-to-agent messages that never enter the coordinator
-            // mailbox. The transcript source is read-only, so filter by
-            // `emittedMessageIDs` to avoid re-emitting on every poll.
+            // mailbox. The transcript source is read-only and returns the full
+            // bounded history; `deliverTranscript` filters it independently for
+            // each observer, so a new observer's replay can never affect an
+            // existing observer's delivery.
             let allMessages = await source.allRoomMessages(roomID)
             guard rooms[roomID]?.generation == generation else { return }
-            if var room = rooms[roomID], !allMessages.isEmpty {
-                let newDisplayMessages = allMessages.filter {
-                    !room.emittedMessageIDs.contains($0.id)
-                }
-                if !newDisplayMessages.isEmpty {
-                    emit(.messages(newDisplayMessages), roomID: roomID)
-                }
-                // Rebuild from the live transcript so stale IDs from evicted
-                // messages are pruned automatically.
-                room.emittedMessageIDs = Set(allMessages.map(\.id))
-                rooms[roomID] = room
-            }
+            // This is both the ordinary agent-to-agent path and recovery after
+            // a dropped `.messages` event: evicted IDs were made due only for
+            // that observer, so the helper re-enqueues just those IDs without
+            // replaying them to healthy observers.
+            deliverTranscript(allMessages, roomID: roomID)
             if !drained.isEmpty {
                 // A mailbox drain is bounded per call; keep pulling until the
-                // mailbox is empty so a burst is never left behind. This never
-                // fires for a skipped drain, so the hold-back cannot spin the
-                // bounded loop against an unchanging mailbox.
+                // mailbox is empty so a burst is never left behind. The next
+                // round re-checks the generation fence before draining again.
                 rooms[roomID]?.pollRequested = true
             }
         } while rooms[roomID]?.pollRequested == true && rounds < Self.maximumDrainRoundsPerPoll
@@ -915,7 +960,6 @@ public actor AgentSharedChatCoordinator {
             if room.pending.count > Self.maximumPendingMessages {
                 room.pending.removeFirst(room.pending.count - Self.maximumPendingMessages)
             }
-            room.emittedMessageIDs.formUnion(messages.map(\.id))
         }
         rooms[roomID] = room
 
@@ -923,7 +967,7 @@ public actor AgentSharedChatCoordinator {
             emit(.participantsChanged(participants), roomID: roomID)
         }
         if !messages.isEmpty {
-            emit(.messages(messages), roomID: roomID)
+            emitMessages(messages, roomID: roomID)
         }
         evaluate(roomID: roomID)
     }
@@ -988,24 +1032,147 @@ public actor AgentSharedChatCoordinator {
         }
     }
 
-    /// Publishes to every subscriber of a room.
-    ///
-    /// Each stream is bounded, so a stalled consumer evicts its own oldest
-    /// events instead of growing without limit. A drop is recorded and marks
-    /// the room for a trigger re-offer, so losing render events never loses the
-    /// coordination decision itself.
-    private func emit(_ event: AgentSharedChatCoordinatorEvent, roomID: String) {
+    /// Prunes every observer ledger to the live bounded transcript, then offers
+    /// each observer only the IDs it still lacks. This is the one recovery path
+    /// after a dropped `.messages` event: `recordYieldResult` makes just the
+    /// evicted IDs due again, and this next transcript pass sends them only to
+    /// that observer.
+    private func deliverTranscript(
+        _ messages: [AgentSharedChat.Message],
+        roomID: String
+    ) {
         guard var room = rooms[roomID] else { return }
-        var droppedCount = 0
-        for continuation in room.subscribers.values {
-            if case .dropped = continuation.yield(event) {
-                droppedCount += 1
+        let retainedMessageIDs = Set(messages.map(\.id))
+        var prunedLedger: [UUID: Set<UUID>] = [:]
+        for (subscriberID, deliveredIDs) in room.enqueuedMessageIDsBySubscriber {
+            guard room.subscribers[subscriberID] != nil else { continue }
+            let retainedDeliveredIDs = deliveredIDs.intersection(retainedMessageIDs)
+            if !retainedDeliveredIDs.isEmpty {
+                prunedLedger[subscriberID] = retainedDeliveredIDs
             }
         }
-        guard droppedCount > 0 else { return }
-        room.droppedEventCount += droppedCount
-        room.needsTriggerReoffer = true
+        room.enqueuedMessageIDsBySubscriber = prunedLedger
         rooms[roomID] = room
+        emitMessages(messages, roomID: roomID)
+    }
+
+    /// Offers message IDs to one observer or every observer in a room. A source
+    /// may return the full bounded transcript on every call, but each stream is
+    /// sent only the IDs absent from its own ledger. This helper is deliberately
+    /// shared by coordinator-mailbox ingestion, transcript polling, attach-time
+    /// replay and overflow recovery; no caller relies on a room-wide decision or
+    /// on a renderer to hide duplicate raw events.
+    private func emitMessages(
+        _ messages: [AgentSharedChat.Message],
+        roomID: String,
+        onlyTo subscriberID: UUID? = nil
+    ) {
+        guard !messages.isEmpty, var room = rooms[roomID] else { return }
+        let subscriberIDs = subscriberID.map { [$0] } ?? Array(room.subscribers.keys)
+        for id in subscriberIDs {
+            guard let continuation = room.subscribers[id] else { continue }
+            var knownIDs = room.enqueuedMessageIDsBySubscriber[id] ?? []
+            // A malformed source cannot make one raw event contain the same ID
+            // twice. In the normal case this simply filters the full transcript
+            // down to the IDs this observer has not seen yet.
+            let dueMessages = messages.filter { message in
+                knownIDs.insert(message.id).inserted
+            }
+            guard !dueMessages.isEmpty else { continue }
+            recordYieldResult(
+                continuation.yield(.messages(dueMessages)),
+                enqueuing: .messages(dueMessages),
+                for: id,
+                in: &room
+            )
+        }
+        rooms[roomID] = room
+    }
+
+    /// Publishes a non-message event to one observer or every observer. Keeping
+    /// the yield bookkeeping here as well matters because a newly enqueued
+    /// trigger or participant update may evict an older `.messages` event from
+    /// a bounded stream.
+    private func emit(
+        _ event: AgentSharedChatCoordinatorEvent,
+        roomID: String,
+        onlyTo subscriberID: UUID? = nil
+    ) {
+        if case let .messages(messages) = event {
+            emitMessages(messages, roomID: roomID, onlyTo: subscriberID)
+            return
+        }
+        guard var room = rooms[roomID] else { return }
+        let subscriberIDs = subscriberID.map { [$0] } ?? Array(room.subscribers.keys)
+        for id in subscriberIDs {
+            guard let continuation = room.subscribers[id] else { continue }
+            recordYieldResult(
+                continuation.yield(event),
+                enqueuing: event,
+                for: id,
+                in: &room
+            )
+        }
+        rooms[roomID] = room
+    }
+
+    /// Records exactly what `AsyncStream` accepted. With `.bufferingNewest`, a
+    /// `.dropped(consumed:)` result means the fresh event is still enqueued and
+    /// the *consumed* older event is the one that became unavailable. Therefore
+    /// the old event's IDs become due again before the fresh event's IDs are
+    /// marked, preserving the fresh mark even if malformed input reused an ID.
+    /// A terminated continuation receives no acknowledgement at all.
+    private func recordYieldResult(
+        _ result: AsyncStream<AgentSharedChatCoordinatorEvent>.Continuation.YieldResult,
+        enqueuing event: AgentSharedChatCoordinatorEvent,
+        for subscriberID: UUID,
+        in room: inout Room
+    ) {
+        switch result {
+        case .enqueued:
+            markMessageIDs(in: event, for: subscriberID, in: &room)
+        case let .dropped(consumed: evicted):
+            room.droppedEventCount += 1
+            // Every dropped event, regardless of its payload, retains the
+            // existing trigger re-offer contract.
+            room.needsTriggerReoffer = true
+            makeMessageIDsRecoverable(in: evicted, for: subscriberID, in: &room)
+            markMessageIDs(in: event, for: subscriberID, in: &room)
+        case .terminated:
+            // `onTermination` performs the full teardown; discard the ledger
+            // immediately so a terminated stream is never considered delivered.
+            room.enqueuedMessageIDsBySubscriber.removeValue(forKey: subscriberID)
+        @unknown default:
+            // Future yield outcomes are not a delivery acknowledgement.
+            break
+        }
+    }
+
+    private func markMessageIDs(
+        in event: AgentSharedChatCoordinatorEvent,
+        for subscriberID: UUID,
+        in room: inout Room
+    ) {
+        guard case let .messages(messages) = event, !messages.isEmpty else { return }
+        room.enqueuedMessageIDsBySubscriber[subscriberID, default: []]
+            .formUnion(messages.map(\.id))
+    }
+
+    private func makeMessageIDsRecoverable(
+        in event: AgentSharedChatCoordinatorEvent,
+        for subscriberID: UUID,
+        in room: inout Room
+    ) {
+        guard case let .messages(messages) = event, !messages.isEmpty,
+              var deliveredIDs = room.enqueuedMessageIDsBySubscriber[subscriberID] else {
+            return
+        }
+        deliveredIDs.subtract(messages.map(\.id))
+        if deliveredIDs.isEmpty {
+            room.enqueuedMessageIDsBySubscriber.removeValue(forKey: subscriberID)
+        } else {
+            room.enqueuedMessageIDsBySubscriber[subscriberID] = deliveredIDs
+        }
     }
 
     private func removeSubscriber(_ id: UUID, roomID: String) {
@@ -1022,6 +1189,7 @@ public actor AgentSharedChatCoordinator {
         guard var room = rooms[roomID], room.subscribers[id] != nil else { return }
         let continuation = room.subscribers.removeValue(forKey: id)
         room.busyObservers.remove(id)
+        room.enqueuedMessageIDsBySubscriber.removeValue(forKey: id)
         // The claim owner is leaving. If its turn never started, the batch
         // returns to the head of the queue for another observer; if a turn is
         // already carrying it, the claim is released without requeueing, so a

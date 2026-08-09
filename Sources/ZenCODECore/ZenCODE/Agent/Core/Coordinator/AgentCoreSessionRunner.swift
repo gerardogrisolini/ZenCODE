@@ -6,7 +6,51 @@
 //
 
 import Foundation
+import Synchronization
 import ToolCore
+
+/// One-shot barrier between creating a prompt task and publishing it in the
+/// runner's cancellation registry.
+///
+/// `Task.yield()` would merely hint to the executor and cannot establish an
+/// ordering edge. `wait()` intentionally does not react to cancellation: a
+/// task cancelled while parked must remain parked until `open()` follows its
+/// registration, so its finalisation cannot clear an as-yet-unregistered ID.
+private final class AgentCorePromptTaskRegistrationGate: Sendable {
+    private struct State {
+        var isOpen = false
+        var waiter: CheckedContinuation<Void, Never>?
+    }
+
+    private let state = Mutex(State())
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let shouldResume = state.withLock { state in
+                guard !state.isOpen else {
+                    return true
+                }
+                state.waiter = continuation
+                return false
+            }
+            if shouldResume {
+                continuation.resume()
+            }
+        }
+    }
+
+    func open() {
+        let waiter = state.withLock { state -> CheckedContinuation<Void, Never>? in
+            guard !state.isOpen else {
+                return nil
+            }
+            state.isOpen = true
+            defer { state.waiter = nil }
+            return state.waiter
+        }
+        waiter?.resume()
+    }
+}
 
 public actor AgentCoreSessionRunner {
     public static var isAvailable: Bool {
@@ -50,6 +94,10 @@ public actor AgentCoreSessionRunner {
     /// single-flight auto-trigger decision. Built lazily so its message source
     /// can capture this runner weakly and never form a reference cycle.
     private var sharedChatCoordinatorStorage: AgentSharedChatCoordinator?
+    /// Actor-isolated catalogue of readable `@mention` handles. Built lazily and
+    /// reset alongside the shared-chat coordinator so aliases are never recycled
+    /// within a session but start clean on a new one.
+    private var sharedChatMentionCatalogStorage: SharedChatMentionCatalog?
     private var promptAuthorizationHandlers: [UUID: AgentToolAuthorizationHandler] = [:]
     /// Maps each prompt ID to the session it belongs to so `authorizeTool`
     /// can route authorization requests to the correct handler.
@@ -275,20 +323,36 @@ public actor AgentCoreSessionRunner {
             prompt: prompt
         )
 
+        // Bounded and best-effort: this returns nil on timeout, failure, or an
+        // empty graph, and the turn then proceeds with a request that is
+        // byte-identical to one sent with memory switched off.
+        let memoryBlock = await MemoryTurnCoordinator.shared.memoryBlock(
+            sessionID: configuration.sessionID,
+            workspaceRootURL: configuration.workingDirectory,
+            prompt: prompt
+        )
+
         do {
             let response = try await AgentToolAuthorizationContext.$turnID.withValue(promptID) {
-                try await backend.sendPrompt(
-                    sessionID: configuration.sessionID,
-                    prompt: prompt,
-                    attachments: attachments,
-                    onEvent: { event in
-                        await turnRecorder.record(event)
-                        if case let .toolCallStarted(toolCall) = event {
-                            await onToolWillExecute?(toolCall)
+                // Nested inside the existing turn-scoped binding, and around
+                // the same call, so the block reaches request assembly through
+                // the actor hop exactly the way `turnID` already reaches tool
+                // executors. It is scoped to this one `sendPrompt`, so nothing
+                // that outlives the turn can observe it.
+                try await MemoryTurnContext.$currentTurnMemoryBlock.withValue(memoryBlock) {
+                    try await backend.sendPrompt(
+                        sessionID: configuration.sessionID,
+                        prompt: prompt,
+                        attachments: attachments,
+                        onEvent: { event in
+                            await turnRecorder.record(event)
+                            if case let .toolCallStarted(toolCall) = event {
+                                await onToolWillExecute?(toolCall)
+                            }
+                            await onEvent(event)
                         }
-                        await onEvent(event)
-                    }
-                )
+                    )
+                }
             }
             try verifyBackendGeneration(generation)
             await finalizeTurn(
@@ -438,6 +502,47 @@ public actor AgentCoreSessionRunner {
         )
         sharedChatCoordinatorStorage = coordinator
         return coordinator
+    }
+
+    /// The actor-isolated mention catalogue for this session. Handles are
+    /// readable aliases derived from participant names; routing is always by
+    /// stable participant id.
+    func sharedChatMentionCatalog() -> SharedChatMentionCatalog {
+        if let sharedChatMentionCatalogStorage {
+            return sharedChatMentionCatalogStorage
+        }
+        let catalog = SharedChatMentionCatalog()
+        sharedChatMentionCatalogStorage = catalog
+        return catalog
+    }
+
+    /// Returns a handle → participant-id map for the current room roster. Used
+    /// by the autocomplete list (display) and the mention parser (routing).
+    public func sharedChatMentionHandles(
+        rootSessionID: String
+    ) async -> [String: String] {
+        await sharedChatMentionRoster(rootSessionID: rootSessionID).handleMap
+    }
+
+    /// Returns participants and readable handles from one roster snapshot, so a
+    /// join/leave between separate backend reads cannot mismatch labels and IDs.
+    public func sharedChatMentionRoster(
+        rootSessionID: String
+    ) async -> (
+        participants: [AgentSharedChat.Participant],
+        handleMap: [String: String]
+    ) {
+        let participants = await sharedChatParticipants(rootSessionID: rootSessionID)
+        let handleMap = await sharedChatMentionCatalog().handleMap(for: participants)
+        return (participants, handleMap)
+    }
+
+    /// Resolves a readable mention handle to its stable participant id, or nil
+    /// when no live mapping exists.
+    public func resolveSharedChatMentionHandle(
+        _ handle: String
+    ) async -> String? {
+        await sharedChatMentionCatalog().participantID(forHandle: handle)
     }
 
     /// Subscribes to live shared-chat coordination.
@@ -655,7 +760,9 @@ public actor AgentCoreSessionRunner {
         let (stream, continuation) = AsyncThrowingStream<DirectAgentEvent, Error>.makeStream()
         let promptID = UUID()
         let outcomeTracker = AgentCorePromptOutcomeTracker()
+        let registrationGate = AgentCorePromptTaskRegistrationGate()
         let task = Task(name: "Agent prompt stream", priority: .userInitiated) {
+            await registrationGate.wait()
             #if os(macOS)
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .latencyCritical],
@@ -666,6 +773,7 @@ public actor AgentCoreSessionRunner {
             }
             #endif
             do {
+                try Task.checkCancellation()
                 _ = try await sendPrompt(
                     configuration: configuration,
                     prompt: prompt,
@@ -690,6 +798,7 @@ public actor AgentCoreSessionRunner {
             }
         }
         promptTaskRegistry.register(task, id: promptID, sessionID: configuration.sessionID)
+        registrationGate.open()
         continuation.onTermination = { _ in
             task.cancel()
         }
@@ -735,6 +844,9 @@ public actor AgentCoreSessionRunner {
         invalidateSessionGeneration(for: sessionID)
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
+        // The rebuilt session keeps its identity but starts a new conversation,
+        // so it must not inherit paused recall from the history being dropped.
+        await MemoryTurnCoordinator.shared.discard(sessionID: sessionID)
         // The transient bus lives inside the backend tree: release an
         // unresolved synthetic batch so it is re-offered instead of lost, while
         // keeping live observers attached across the rebuild. The room stays
@@ -745,6 +857,9 @@ public actor AgentCoreSessionRunner {
         if let chatReset {
             await sharedChatCoordinatorStorage?.endReset(chatReset)
         }
+        // A rebuilt session is a fresh conversation: readable mention aliases
+        // start clean so they are never inherited from the dropped roster.
+        await sharedChatMentionCatalogStorage?.reset()
     }
 
     /// Discards a logical session, including its persisted task graph.
@@ -786,6 +901,7 @@ public actor AgentCoreSessionRunner {
         lastKnownSessionSnapshots.removeAll()
         for sessionID in sessionIDs {
             _ = await interruptSubAgents(rootSessionID: sessionID)
+            await MemoryTurnCoordinator.shared.discard(sessionID: sessionID)
             // Same ordering as `rebuildSession`: the room is fenced across the
             // backend clear, never merely before it.
             let chatReset = await sharedChatCoordinatorStorage?.beginReset(roomID: sessionID)
@@ -823,6 +939,10 @@ public actor AgentCoreSessionRunner {
         // graph after `flush` has already written the checkpoint, losing the
         // update or producing an inconsistent snapshot.
         await waitForPromptTasks(for: sessionID)
+        // A recreated session reuses the id, so its recall health belongs to
+        // the incarnation that owned the conversation. Drop it before the
+        // throwing checkpoint flush so a failed close cannot strand a pause.
+        await MemoryTurnCoordinator.shared.discard(sessionID: sessionID)
         try await taskOrchestrator.flush(sessionID: sessionID)
         promptSkillProvidersBySessionID.removeValue(forKey: sessionID)
         // Terminate coordination for this room so a suspended observer resumes
@@ -885,6 +1005,7 @@ public actor AgentCoreSessionRunner {
         // The runtime tree that produced the transient transcript is gone, so
         // finish every observer and drop the parked batches with it.
         await sharedChatCoordinatorStorage?.stopAll()
+        await sharedChatMentionCatalogStorage?.reset()
         activeRuntimeConfiguration = nil
         let backendToShutdown = backend
         backend = nil
@@ -1038,7 +1159,7 @@ public actor AgentCoreSessionRunner {
         activeRuntimeConfiguration = configuration
         ZenLogger.debug(
             .viewModelRuntime,
-            "agent core session runner initialized model=\(configuration.modelID ?? "default") cwd=\(configuration.workingDirectoryPath)."
+            "agent core session runner initialized model=\(configuration.modelID ?? "default") workingDirectory=\(configuration.workingDirectoryPath)."
         )
         return backend
     }

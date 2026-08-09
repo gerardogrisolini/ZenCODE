@@ -8,32 +8,33 @@ import Testing
 @testable import ZenCODECore
 import ToolCore
 
-/// Covers the priority inline delivery of shared-chat messages: a message that
-/// arrives while a turn is in flight is injected into the ``DirectAgentToolResult/modelOutput``
-/// of the first tool boundary, instead of being deferred to the end of the turn.
+/// Covers the shared-chat delivery contract after inline delivery was removed:
+/// the executor never drains a mailbox or rewrites a tool result, and every
+/// recipient — idle, running or standby — receives a live message as a serial
+/// turn in its own work loop, queued by the mailbox drain, independent of any
+/// future tool call. There is no post-delivery broadcast filter: every
+/// participant the bus includes in a delivery receives its prompt.
 ///
-/// The hold-back side (the mailbox is not drained while the agent or the
-/// coordinator room is busy) is tested here for the sub-agent runtime; the
-/// coordinator-room hold-back is covered by
-/// ``AgentSharedChatCoordinatorTests/busyRoomHoldsBackMailboxDrainUntilTurnEnds()``.
-@Suite
+/// The coordinator-room behaviour (the mailbox is drained even while a turn is
+/// in flight, but the auto-trigger is held back until the room goes idle) is
+/// covered by
+/// ``AgentSharedChatCoordinatorTests/busyRoomDrainsMailboxToPendingButHoldsBackTriggerUntilTurnEnds()``.
+@Suite(.timeLimit(.minutes(1)))
 struct SharedChatInlineDeliveryTests {
 
-    // MARK: - DirectToolExecutor: modelOutput injection
+    // MARK: - DirectToolExecutor: no mailbox drain, no modelOutput rewrite
 
-    /// A tool call whose participant has messages waiting in the shared-chat
-    /// mailbox returns a result whose `modelOutput` carries the inline delivery
-    /// block, while `output`, `summary` and `status` are byte-for-byte identical
-    /// to the same call against an empty mailbox.
+    /// A tool call never touches the shared-chat mailbox: the result is returned
+    /// byte-for-byte identical whether or not a message is waiting, and
+    /// `modelOutput` always equals `output`. Delivery is now handled exclusively
+    /// by the mailbox drain, not by the tool executor.
     @Test
-    func inlineDeliveryInjectsMessagesIntoModelOutputAndPreservesOutputFields() async throws {
-        let room = "inline-room-\(UUID().uuidString)"
+    func executorDoesNotDrainMailboxOrModifyModelOutput() async throws {
+        let room = "no-drain-room-\(UUID().uuidString)"
         let chat = AgentSharedChat()
         _ = try await chat.registerCoordinator(roomID: room)
         _ = try await chat.registerAgent(id: "alpha", name: "alpha", roomID: room)
 
-        // The coordinator executor (senderID nil) reads the room's coordinator
-        // mailbox.
         let executor = DirectToolExecutor(
             authorizationHandler: { _ in false },
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
@@ -44,14 +45,14 @@ struct SharedChatInlineDeliveryTests {
         )
 
         let toolCall = DirectAgentToolCall(
-            id: "denied-exec",
+            id: "exec",
             name: "local.exec",
             argumentsObject: ["command": "whoami"],
             argumentsJSON: #"{"command":"whoami"}"#
         )
         let workingDirectory = URL(fileURLWithPath: "/tmp")
 
-        // Base case: empty mailbox — modelOutput is untouched.
+        // Base case: empty mailbox.
         let base = await executor.execute(
             sessionID: room,
             toolCall: toolCall,
@@ -67,181 +68,33 @@ struct SharedChatInlineDeliveryTests {
             text: "hello from alpha"
         )
 
-        // With a waiting message the inline block is appended to modelOutput,
-        // but the visible panel fields stay identical to the base case.
-        let injected = await executor.execute(
-            sessionID: room,
-            toolCall: toolCall,
-            workingDirectory: workingDirectory
-        )
-        #expect(injected.output == base.output)
-        #expect(injected.summary == base.summary)
-        #expect(injected.status == base.status)
-        #expect(injected.attachments == base.attachments)
-        #expect(injected.modelOutput.contains("hello from alpha"))
-        #expect(
-            injected.modelOutput.contains(
-                "[Live chat messages received while you were working]"
-            )
-        )
-        // modelOutput grew beyond the plain output.
-        #expect(injected.modelOutput != injected.output)
-        // The mailbox was drained by the execution, so a second call is clean.
-        let afterDrain = await executor.execute(
-            sessionID: room,
-            toolCall: toolCall,
-            workingDirectory: workingDirectory
-        )
-        #expect(afterDrain.modelOutput == afterDrain.output)
-    }
-
-    // MARK: - Recipient identity
-
-    /// A child executor (senderID valued) reads its own agent mailbox; the
-    /// coordinator executor (senderID nil) reads the room's coordinator mailbox.
-    /// Neither crosses over to the other participant's mailbox.
-    @Test
-    func childAndCoordinatorExecutorsReadTheirOwnMailboxes() async throws {
-        let room = "identity-room-\(UUID().uuidString)"
-        let chat = AgentSharedChat()
-        _ = try await chat.registerCoordinator(roomID: room)
-        _ = try await chat.registerAgent(id: "child", name: "child", roomID: room)
-        let coordinatorID = AgentSharedChat.coordinatorID(for: room)
-
-        let coordinatorExecutor = DirectToolExecutor(
-            authorizationHandler: { _ in false },
-            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            sharedChat: chat,
-            sharedChatSenderID: nil,
-            sharedChatRootSessionID: room,
-            subAgentContextualBackendFactory: { _ in InlineDeliveryTestBackend() }
-        )
-        let childExecutor = DirectToolExecutor(
-            authorizationHandler: { _ in false },
-            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            sharedChat: chat,
-            sharedChatSenderID: "child",
-            sharedChatRootSessionID: room,
-            subAgentContextualBackendFactory: { _ in InlineDeliveryTestBackend() }
-        )
-
-        let toolCall = DirectAgentToolCall(
-            id: "denied-exec",
-            name: "local.exec",
-            argumentsObject: ["command": "true"],
-            argumentsJSON: #"{"command":"true"}"#
-        )
-        let cwd = URL(fileURLWithPath: "/tmp")
-
-        // A message from the coordinator to the child lands in the *child's*
-        // mailbox, not the coordinator's. The coordinator executor sees nothing;
-        // the child executor sees it.
-        try await chat.send(
-            roomID: room,
-            senderID: coordinatorID,
-            destination: .direct(["child"]),
-            text: "for the child only"
-        )
-        let coordinatorResult = await coordinatorExecutor.execute(
-            sessionID: room,
-            toolCall: toolCall,
-            workingDirectory: cwd
-        )
-        #expect(coordinatorResult.modelOutput == coordinatorResult.output)
-        let childResult = await childExecutor.execute(
-            sessionID: room,
-            toolCall: toolCall,
-            workingDirectory: cwd
-        )
-        #expect(childResult.modelOutput.contains("for the child only"))
-
-        // A message from the child to the coordinator lands in the
-        // *coordinator's* mailbox. The child executor (whose mailbox is now
-        // empty after the drain above) sees nothing; the coordinator executor
-        // sees it.
-        try await chat.send(
-            roomID: room,
-            senderID: "child",
-            destination: .coordinator,
-            text: "for the coordinator only"
-        )
-        let childResult2 = await childExecutor.execute(
-            sessionID: room,
-            toolCall: toolCall,
-            workingDirectory: cwd
-        )
-        #expect(childResult2.modelOutput == childResult2.output)
-        let coordinatorResult2 = await coordinatorExecutor.execute(
-            sessionID: room,
-            toolCall: toolCall,
-            workingDirectory: cwd
-        )
-        #expect(coordinatorResult2.modelOutput.contains("for the coordinator only"))
-    }
-
-    /// A message whose sender is the draining participant is dropped by the
-    /// inline delivery filter, so a broadcast echo cannot loop the agent onto
-    /// itself. The bus itself never delivers a self-addressed message through
-    /// its public `send` API (every destination resolves with
-    /// `$0.id != senderID`), so this guard is a defensive backstop. It is
-    /// exercised implicitly by every test above — each relies on the filter to
-    /// avoid re-injecting a participant's own messages — and verified here in
-    /// the positive direction: a foreign sender IS delivered, and the drain is
-    /// destructive so the same message cannot be re-read on the next tool call.
-    @Test
-    func foreignSenderIsDeliveredAndDrainIsDestructive() async throws {
-        let room = "drain-room-\(UUID().uuidString)"
-        let chat = AgentSharedChat()
-        _ = try await chat.registerCoordinator(roomID: room)
-        _ = try await chat.registerAgent(id: "sender", name: "sender", roomID: room)
-
-        let executor = DirectToolExecutor(
-            authorizationHandler: { _ in false },
-            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            sharedChat: chat,
-            sharedChatSenderID: nil,
-            sharedChatRootSessionID: room,
-            subAgentContextualBackendFactory: { _ in InlineDeliveryTestBackend() }
-        )
-        let toolCall = DirectAgentToolCall(
-            id: "denied-exec",
-            name: "local.exec",
-            argumentsObject: ["command": "true"],
-            argumentsJSON: #"{"command":"true"}"#
-        )
-        let cwd = URL(fileURLWithPath: "/tmp")
-
-        try await chat.send(
-            roomID: room,
-            senderID: "sender",
-            destination: .coordinator,
-            text: "legitimate message"
-        )
-
+        // The executor does not drain the mailbox: modelOutput stays equal to
+        // output and the message is still sitting in the bus mailbox.
         let result = await executor.execute(
             sessionID: room,
             toolCall: toolCall,
-            workingDirectory: cwd
+            workingDirectory: workingDirectory
         )
-        #expect(result.modelOutput.contains("legitimate message"))
-
-        // The drain consumed the mailbox, so a second tool call sees nothing.
-        let result2 = await executor.execute(
-            sessionID: room,
-            toolCall: toolCall,
-            workingDirectory: cwd
+        #expect(result.modelOutput == result.output)
+        #expect(!result.modelOutput.contains("hello from alpha"))
+        #expect(!result.modelOutput.contains("[Live chat messages"))
+        let leftover = await chat.drain(
+            roomID: room,
+            participantID: AgentSharedChat.coordinatorID(for: room),
+            limit: AgentSharedChat.maximumMessagesPerInjectedPrompt
         )
-        #expect(result2.modelOutput == result2.output)
+        #expect(leftover.map(\.text) == ["hello from alpha"])
     }
 
-    // MARK: - Sub-agent hold-back
+    // MARK: - Sub-agent delivery: drain while running
 
     /// A message delivered to an agent whose turn is in flight (`.running`) is
-    /// neither drained from the mailbox nor queued as a pending prompt. The
-    /// agent's own executor will surface it inline at the next tool boundary.
+    /// drained from the mailbox and queued as a pending prompt. The agent
+    /// answers it as the next serial turn, the moment the current one ends —
+    /// never deferred to a future tool call.
     @Test
-    func runningAgentHoldsBackMessageInMailboxWithoutQueuing() async throws {
-        let root = "holdback-root-\(UUID().uuidString)"
+    func runningAgentReceivesMessageAsQueuedPromptWhileTurnInFlight() async throws {
+        let root = "running-root-\(UUID().uuidString)"
         let backend = InlineDeliveryTestBackend()
         await backend.setBlocking(true)
         let runtime = DirectSubAgentRuntime(
@@ -256,55 +109,58 @@ struct SharedChatInlineDeliveryTests {
                 "profile": .string("Developer"),
                 "prompt": .string("Initial")
             ],
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-inline-holdback-\(UUID().uuidString)"),
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-running-\(UUID().uuidString)"),
             parentAllowedToolNames: nil,
             rootSessionID: root
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
         let agentID = try #require(
             await runtime.snapshots().first { $0.name == "runner" }?.id
         )
         // Wait until the initial prompt is in flight so the agent is .running.
-        try await backend.waitUntilPromptCount(1)
+        await backend.waitUntilPromptCount(1)
+        let mailboxDrain = MailboxDrainCompletion()
+        try await runtime.installMailboxDrainCompletion(
+            for: agentID,
+            completion: mailboxDrain
+        )
 
-        // The coordinator sends a direct message to the running agent. Because
-        // the agent has a turn in flight, the coordinator→direct path leaves the
-        // mailbox untouched (inline delivery) instead of draining and queuing.
+        // The coordinator sends a direct message to the running agent. The
+        // mailbox is drained even while running and the message is queued.
         let summary = try await runtime.messageSharedChat(
             arguments: [
                 "id": .string(agentID),
-                "message": .string("held back while running")
+                "message": .string("queued while running")
             ],
             rootSessionID: root,
             parentAllowedToolNames: nil
         )
-        // The coordinator-facing summary explicitly states that no prompt was
-        // queued and the message was delivered live.
-        #expect(summary.contains("delivered live"))
-        #expect(summary.contains("no prompt was queued"))
+        // The coordinator-facing summary states the message was delivered live.
+        #expect(summary.contains("Delivered live message"))
 
-        let snapshot = try #require(await runtime.snapshots().first { $0.id == agentID })
-        #expect(snapshot.status == .running)
-        // No additional prompt was queued: the backend still has only the
-        // initial prompt.
-        #expect(await backend.promptCount() == 1)
-        // The message is still in the agent's mailbox, untouched.
-        let leftover = await runtime.sharedChat.drain(
+        // `onMessageAvailable` starts its drain in an unstructured task. The
+        // fixture signals only after that task returned from the mailbox drain,
+        // establishing the happens-before edge required before inspecting it.
+        await mailboxDrain.waitForCompletion()
+        let mailboxLeftover = await runtime.sharedChat.drain(
             roomID: root,
             participantID: agentID,
             limit: AgentSharedChat.maximumMessagesPerInjectedPrompt
         )
-        #expect(leftover.map(\.text) == ["held back while running"])
+        #expect(mailboxLeftover.isEmpty)
 
-        // Clean up: the mailbox was drained above to verify the hold-back, so
-        // there is nothing left for the end-of-turn rearm to queue. Release the
-        // blocked initial prompt and shut down.
+        // Releasing the initial prompt lets the current turn end; the queued
+        // message becomes the next prompt.
+        await backend.releasePrompt()
+        await backend.waitUntilPromptCount(2)
+        let queuedPrompt = await backend.prompt(at: 1)
+        #expect(queuedPrompt?.contains("queued while running") == true)
+
         await backend.releasePrompt()
         await runtime.shutdown()
     }
 
     /// A message delivered to an idle agent (no turn in flight) is drained and
-    /// queued as a pending prompt, exactly as before the inline optimisation.
+    /// queued as a pending prompt immediately, exactly as before.
     @Test
     func idleAgentQueuesMessageAsPendingPromptAsBefore() async throws {
         let root = "idle-root-\(UUID().uuidString)"
@@ -322,23 +178,23 @@ struct SharedChatInlineDeliveryTests {
                 "profile": .string("Developer"),
                 "prompt": .string("Initial")
             ],
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-inline-idle-\(UUID().uuidString)"),
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-idle-\(UUID().uuidString)"),
             parentAllowedToolNames: nil,
             rootSessionID: root
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
         let agentID = try #require(
             await runtime.snapshots().first { $0.name == "idle-worker" }?.id
         )
         // Let the initial prompt start, then release it so the agent settles
         // back to idle before the shared-chat message arrives.
-        try await backend.waitUntilPromptCount(1)
+        await backend.waitUntilPromptCount(1)
         await backend.releasePrompt()
-        try await Self.waitForAgentStatus(agentID: agentID, runtime: runtime) { $0 == .idle }
+        await runtime.waitForInlineDeliveryWorkLoop(agentID: agentID)
+        #expect(await runtime.snapshots().first { $0.id == agentID }?.status == .idle)
 
-        // The agent is idle; the coordinator sends a direct message. The old
-        // behaviour must be preserved: the mailbox is drained and a prompt is
-        // queued, which the work loop picks up immediately.
+        // The agent is idle; the coordinator sends a direct message. The
+        // mailbox is drained and a prompt is queued, which the work loop picks
+        // up immediately.
         _ = try await runtime.messageSharedChat(
             arguments: [
                 "id": .string(agentID),
@@ -347,9 +203,8 @@ struct SharedChatInlineDeliveryTests {
             rootSessionID: root,
             parentAllowedToolNames: nil
         )
-        // The shared-chat prompt reached the backend, proving it was queued and
-        // not held back.
-        try await backend.waitUntilPromptCount(2)
+        // The shared-chat prompt reached the backend, proving it was queued.
+        await backend.waitUntilPromptCount(2)
         let lastPrompt = await backend.prompt(at: 1)
         #expect(lastPrompt?.contains("queued for the idle agent") == true)
 
@@ -357,11 +212,11 @@ struct SharedChatInlineDeliveryTests {
         await runtime.shutdown()
     }
 
-    /// A message held back while the agent was running becomes a queued prompt
-    /// when the turn ends: the end-of-turn re-arm drains the leftover mailbox.
+    /// A message queued while the agent was running is processed as the next
+    /// serial turn when the current one ends.
     @Test
-    func heldBackMessageBecomesQueuedPromptWhenTurnEnds() async throws {
-        let root = "noloss-root-\(UUID().uuidString)"
+    func messageToRunningAgentIsProcessedAfterTurnEnds() async throws {
+        let root = "serial-root-\(UUID().uuidString)"
         let backend = InlineDeliveryTestBackend()
         await backend.setBlocking(true)
         let runtime = DirectSubAgentRuntime(
@@ -372,39 +227,38 @@ struct SharedChatInlineDeliveryTests {
         )
         _ = try await runtime.createAgents(
             arguments: [
-                "name": .string("noloss-worker"),
+                "name": .string("serial-worker"),
                 "profile": .string("Developer"),
                 "prompt": .string("Initial")
             ],
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-inline-noloss-\(UUID().uuidString)"),
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-serial-\(UUID().uuidString)"),
             parentAllowedToolNames: nil,
             rootSessionID: root
         )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
         let agentID = try #require(
-            await runtime.snapshots().first { $0.name == "noloss-worker" }?.id
+            await runtime.snapshots().first { $0.name == "serial-worker" }?.id
         )
-        try await backend.waitUntilPromptCount(1)
+        await backend.waitUntilPromptCount(1)
 
-        // Message arrives while the agent is running → held back in the mailbox.
+        // Message arrives while the agent is running → drained and queued.
         _ = try await runtime.messageSharedChat(
             arguments: [
                 "id": .string(agentID),
-                "message": .string("survive the hold-back")
+                "message": .string("survive the running turn")
             ],
             rootSessionID: root,
             parentAllowedToolNames: nil
         )
         #expect(await backend.promptCount() == 1)
 
-        // The turn ends. The work-loop exit path re-arms the drain, which finds
-        // the leftover message and queues it as a prompt.
+        // The turn ends. The work loop picks up the queued message as the next
+        // serial turn.
         await backend.releasePrompt()
-        try await backend.waitUntilPromptCount(2)
+        await backend.waitUntilPromptCount(2)
         let queuedPrompt = await backend.prompt(at: 1)
-        #expect(queuedPrompt?.contains("survive the hold-back") == true)
+        #expect(queuedPrompt?.contains("survive the running turn") == true)
 
-        // The mailbox is now empty — the re-arm drained it.
+        // The mailbox is now empty — the drain consumed it.
         let mailboxLeftover = await runtime.sharedChat.drain(
             roomID: root,
             participantID: agentID,
@@ -416,30 +270,146 @@ struct SharedChatInlineDeliveryTests {
         await runtime.shutdown()
     }
 
-    // MARK: - Helpers
+    // MARK: - Broadcast reaches standby residents
 
-    /// Polls the runtime snapshots until the target agent satisfies the
-    /// predicate, with the same bounded-wait discipline used by the coordinator
-    /// test suite.
-    private static func waitForAgentStatus(
-        agentID: String,
-        runtime: DirectSubAgentRuntime,
-        timeout: Duration = .seconds(5),
-        satisfying predicate: @Sendable @escaping (DirectSubAgentRuntime.Status) -> Bool
-    ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            if let snapshot = await runtime.snapshots().first(where: { $0.id == agentID }),
-               predicate(snapshot.status)
-            {
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        let snapshot = try #require(
-            await runtime.snapshots().first(where: { $0.id == agentID })
+    /// A `peers`/`all` broadcast must reach a standby resident: with the
+    /// post-delivery broadcast filter removed, every participant the bus
+    /// includes in a delivery receives its serialized prompt through the
+    /// mailbox/work loop — no tool boundary, no dropped broadcast. The standby
+    /// agent answers it as its next serial turn.
+    @Test
+    func broadcastReachesStandbyResidentAsAQueuedPrompt() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "workflow",
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "task-a",
+                    title: "Implement",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                )
+            ]
         )
-        Issue.record("Agent \(agentID) did not reach expected status; current: \(snapshot.status)")
+        let backend = InlineDeliveryTestBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in
+                AgentProfile(id: "dev", name: "Developer", tools: [])
+            }
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("standby-worker"),
+                "profile": .string("Developer"),
+                "taskID": .string("task-a"),
+                "prompt": .string("Do the work")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-broadcast-\(UUID().uuidString)"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "root"
+        )
+        let agentID = try #require(
+            await runtime.snapshots().first { $0.name == "standby-worker" }?.id
+        )
+        // The attempt completed and the graph is still active, so the agent is
+        // parked in standby with its initial prompt already consumed.
+        await runtime.waitForInlineDeliveryWorkLoop(agentID: agentID)
+        #expect(await runtime.snapshots().first { $0.id == agentID }?.status == .standby)
+        await backend.waitUntilPromptCount(1)
+
+        // The coordinator broadcasts to every active participant. The standby
+        // resident is one of them, so it must receive the prompt — it is no
+        // longer filtered out after `sharedChat.send` declared it delivered.
+        let summary = try await runtime.messageSharedChat(
+            arguments: [
+                "to": .string("all"),
+                "message": .string("broadcast reaches standby")
+            ],
+            rootSessionID: "root",
+            parentAllowedToolNames: nil
+        )
+        #expect(summary.contains("Delivered live message"))
+
+        // The broadcast became the standby agent's next serial turn, with the
+        // mailbox drained (the work loop consumed it).
+        await backend.waitUntilPromptCount(2)
+        let broadcastPrompt = await backend.prompt(at: 1)
+        #expect(broadcastPrompt?.contains("broadcast reaches standby") == true)
+        let mailboxLeftover = await runtime.sharedChat.drain(
+            roomID: "root",
+            participantID: agentID,
+            limit: AgentSharedChat.maximumMessagesPerInjectedPrompt
+        )
+        #expect(mailboxLeftover.isEmpty)
+
+        await runtime.shutdown()
+    }
+
+}
+
+private extension DirectSubAgentRuntime {
+    /// Replaces the runtime's wake-up callback with the same drain task plus a
+    /// test-only completion signal. The signal fires after the drain returns,
+    /// including its single-flight cleanup in `defer`, rather than when the
+    /// callback merely schedules the task.
+    func installMailboxDrainCompletion(
+        for agentID: String,
+        completion: MailboxDrainCompletion
+    ) async throws {
+        guard let agent = agents[agentID] else {
+            throw DirectSubAgentRuntimeError.agentNotFound(agentID)
+        }
+        let runtime = self
+        _ = try await sharedChat.registerAgent(
+            id: agent.id,
+            name: agent.name,
+            roomID: agent.rootSessionID,
+            onMessageAvailable: {
+                Task(name: "ZenCODE.tests.shared-chat.agent-drain") {
+                    await runtime.drainSharedChatMailbox(for: agentID)
+                    await completion.markCompleted()
+                }
+            }
+        )
+    }
+
+    /// The record owns exactly one work-loop task. Awaiting that task establishes
+    /// the transition after a released prompt without guessing how long actor
+    /// scheduling will take under parallel test load.
+    func waitForInlineDeliveryWorkLoop(agentID: String) async {
+        guard let task = agents[agentID]?.runTask else { return }
+        await task.value
+    }
+}
+
+/// One-shot completion edge from the callback-owned mailbox-drain task to the
+/// test. Actor isolation makes either ordering safe: a completion recorded
+/// before `waitForCompletion()` is retained, otherwise the waiter is resumed by
+/// the drain's post-return signal.
+private actor MailboxDrainCompletion {
+    private var completed = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func waitForCompletion() async {
+        guard !completed else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func markCompleted() {
+        guard !completed else { return }
+        completed = true
+        let waiters = self.waiters
+        self.waiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 }
 
@@ -453,6 +423,12 @@ private actor InlineDeliveryTestBackend: AgentRuntimeBackend {
     private var prompts: [String] = []
     private var shouldBlock = false
     private var releaseContinuations: [CheckedContinuation<Void, Never>] = []
+    private var promptCountWaiters: [PromptCountWaiter] = []
+
+    private struct PromptCountWaiter {
+        let count: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
 
     func setBlocking(_ value: Bool) {
         shouldBlock = value
@@ -465,19 +441,17 @@ private actor InlineDeliveryTestBackend: AgentRuntimeBackend {
         return prompts[index]
     }
 
-    /// Waits until at least `count` prompts have been recorded, with a bounded
-    /// deadline so a stuck work loop fails the test rather than hanging it.
+    /// A prompt is the delivery boundary this suite observes. Registering the
+    /// waiter in the same actor that appends it makes the edge race-free without
+    /// using a wall-clock polling budget.
     func waitUntilPromptCount(
-        _ count: Int,
-        timeout: Duration = .seconds(5)
-    ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            if prompts.count >= count { return }
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        if prompts.count < count {
-            Issue.record("Expected \(count) prompts, got \(prompts.count)")
+        _ count: Int
+    ) async {
+        guard prompts.count < count else { return }
+        await withCheckedContinuation { continuation in
+            promptCountWaiters.append(
+                PromptCountWaiter(count: count, continuation: continuation)
+            )
         }
     }
 
@@ -577,6 +551,7 @@ private actor InlineDeliveryTestBackend: AgentRuntimeBackend {
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
         prompts.append(prompt)
+        resumePromptCountWaiters()
         if shouldBlock {
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 releaseContinuations.append(continuation)
@@ -586,4 +561,12 @@ private actor InlineDeliveryTestBackend: AgentRuntimeBackend {
     }
 
     func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? { nil }
+
+    private func resumePromptCountWaiters() {
+        let ready = promptCountWaiters.filter { prompts.count >= $0.count }
+        promptCountWaiters.removeAll { prompts.count >= $0.count }
+        for waiter in ready {
+            waiter.continuation.resume()
+        }
+    }
 }

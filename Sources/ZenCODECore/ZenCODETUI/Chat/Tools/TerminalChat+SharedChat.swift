@@ -14,22 +14,35 @@ extension TerminalChat {
     private nonisolated static let maximumSharedChatTerminalInputUTF8 = AgentSharedChat.maximumMessageUTF8Length
 
     /// The input-panel catalogue combines ordinary slash commands with live
-    /// agent mentions. Mention handles intentionally encode the stable
-    /// participant identifier rather than its display name: names are mutable,
-    /// may contain spaces/control characters, and need not be unique.
+    /// agent mentions. Mention handles are readable aliases derived from the
+    /// participant's display name by the actor-isolated catalogue, while routing
+    /// always resolves back to the stable participant identifier.
     func panelSuggestionsForCurrentAgent() async -> [TerminalCommandSuggestion] {
         let commands = commandSuggestionsForCurrentAgent()
-        let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sessionID)
-        return commands + Self.sharedChatMentionSuggestions(for: participants)
+        let roster = await sessionRunner.sharedChatMentionRoster(rootSessionID: sessionID)
+        return commands + Self.sharedChatMentionSuggestions(
+            for: roster.participants,
+            handleMap: roster.handleMap
+        )
     }
 
     /// Builds discoverable reserved mentions plus safe, unique direct mentions
-    /// for active agent *instances*. The `agent-` prefix and Base64URL preserve
-    /// a one-to-one mapping with an instance ID even when profile/display names
-    /// are duplicated, mutable or contain whitespace.
+    /// for active agent *instances*. `@coordinator` and `@all` are always the
+    /// first two suggestions and are never offered as direct-agent handles
+    /// (the catalogue disambiguates a colliding agent to `@all-2` /
+    /// `@coordinator-2`). The remaining agents are ordered by their readable
+    /// display name (locale-aware, case-insensitive) with `joinedAt` as the
+    /// tie-breaker, never by handle or by the internal id. Each `@handle` is a
+    /// readable alias assigned by the catalogue from the participant's display
+    /// name; the stable id is never leaked into the autocomplete list.
     nonisolated static func sharedChatMentionSuggestions(
-        for participants: [AgentSharedChat.Participant]
+        for participants: [AgentSharedChat.Participant],
+        handleMap: [String: String]
     ) -> [TerminalCommandSuggestion] {
+        let idToHandle = Dictionary(
+            handleMap.map { ($0.value, $0.key) },
+            uniquingKeysWith: { _, latest in latest }
+        )
         var seenHandles = Set<String>()
         let reserved = [
             TerminalCommandSuggestion(
@@ -43,9 +56,17 @@ extension TerminalChat {
         ]
         let agents = participants
             .filter { $0.kind == .agent && $0.isActive }
+            .sorted { lhs, rhs in
+                switch lhs.name.localizedCaseInsensitiveCompare(rhs.name) {
+                case .orderedAscending: return true
+                case .orderedDescending: return false
+                case .orderedSame: return lhs.joinedAt < rhs.joinedAt
+                }
+            }
             .compactMap { participant -> TerminalCommandSuggestion? in
-                let handle = sharedChatMentionHandle(forParticipantID: participant.id)
-                guard handle != "all", seenHandles.insert(handle).inserted else {
+                guard let handle = idToHandle[participant.id],
+                      handle != "all", handle != "coordinator",
+                      seenHandles.insert(handle).inserted else {
                     return nil
                 }
                 let label = sharedChatSuggestionLabel(participant.name)
@@ -54,17 +75,13 @@ extension TerminalChat {
                     summary: "message active agent: \(label)"
                 )
             }
-        return (reserved + agents).sorted {
-            $0.command.localizedCaseInsensitiveCompare($1.command) == .orderedAscending
-        }
+        return reserved + agents
     }
 
-    /// Returns an ASCII-only, reversible mention handle for an agent ID. This
-    /// is deliberately separate from a display name and is never `all`.
+    /// Hidden backward-compatibility handle: the legacy `@agent-Base64` spelling
+    /// is still accepted by the parser but never offered by the autocomplete
+    /// list. It encodes the stable participant identifier reversibly.
     nonisolated static func sharedChatMentionHandle(forParticipantID participantID: String) -> String {
-        // Registered IDs already satisfy this bound. Keeping it at this public
-        // presentation boundary as well prevents a manually reconstructed
-        // participant snapshot from forcing an unbounded Base64 allocation.
         let boundedID = sharedChatBoundedRawInput(participantID)
         let encoded = Data(boundedID.utf8)
             .base64EncodedString()
@@ -94,11 +111,16 @@ extension TerminalChat {
         case route(SharedChatMentionRoute)
     }
 
-    /// Parses only a leading mention. `@coordinator` and `@all` target live
-    /// destinations; every direct mention must be an ID-backed terminal-safe
-    /// handle emitted by ``sharedChatMentionSuggestions(for:)``.
+    /// Parses only a leading mention. `@coordinator` and `@all` always target
+    /// the live broadcast destinations — the catalogue reserves those spellings
+    /// for the whole session, so an agent named `all` or `coordinator` is
+    /// disambiguated to `@all-2` / `@coordinator-2` and routes by its stable
+    /// id; every other direct mention resolves a readable handle from the
+    /// catalogue back to the stable participant id, with a hidden fallback to
+    /// the legacy `@agent-Base64` spelling for backward compatibility.
     nonisolated static func parseSharedChatMention(
-        from rawInput: String
+        from rawInput: String,
+        readableHandles: [String: String] = [:]
     ) -> SharedChatMentionParse {
         let input = sharedChatBoundedRawInput(rawInput)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -109,8 +131,7 @@ extension TerminalChat {
         }
 
         let rawTarget = mention.dropFirst()
-        // The only supported direct spelling is an ID-derived Base64URL handle.
-        // Reject a huge token before materialising it as a String for folding or
+        // Reject a huge token before materialising it as a String for lookup or
         // Base64 decoding.
         guard rawTarget.utf8.count <= maximumSharedChatMentionHandleUTF8Length else {
             return .none
@@ -121,7 +142,11 @@ extension TerminalChat {
             destination = .coordinator
         } else if target.caseInsensitiveCompare("all") == .orderedSame {
             destination = .all
+        } else if let participantID = readableHandles[target] {
+            // Readable catalogue handle: routing is always by stable id.
+            destination = .direct([participantID])
         } else if let participantID = sharedChatParticipantID(fromMentionHandle: target) {
+            // Hidden backward-compatibility: the legacy `@agent-Base64` spelling.
             destination = .direct([participantID])
         } else {
             return .none
@@ -140,12 +165,16 @@ extension TerminalChat {
     }
 
     /// Compatibility convenience for callers interested only in a complete
-    /// route. Input handling must use ``parseSharedChatMention(from:)`` so it
-    /// can diagnose a recognised mention without text.
+    /// route. Input handling must use ``parseSharedChatMention(from:readableHandles:)``
+    /// so it can diagnose a recognised mention without text.
     nonisolated static func sharedChatMentionRoute(
-        from rawInput: String
+        from rawInput: String,
+        readableHandles: [String: String] = [:]
     ) -> SharedChatMentionRoute? {
-        guard case let .route(route) = parseSharedChatMention(from: rawInput) else {
+        guard case let .route(route) = parseSharedChatMention(
+            from: rawInput,
+            readableHandles: readableHandles
+        ) else {
             return nil
         }
         return route

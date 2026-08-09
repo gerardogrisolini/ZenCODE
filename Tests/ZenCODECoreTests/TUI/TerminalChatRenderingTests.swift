@@ -1334,7 +1334,7 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func markdownFormatterWrapsLongPlainLinesToFixedWidth() {
+    func markdownFormatterEmitsLongPlainLineWithoutSyntheticWrap() {
         var formatter = TerminalMarkdownStreamFormatter(
             isEnabled: true,
             renderWidth: 20,
@@ -1344,17 +1344,16 @@ struct TerminalChatRenderingTests {
 
         let rendered = formatter.consume(line + "\n") + formatter.finish()
 
-        let visibleRows = rendered
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { TerminalANSIText.visibleWidth(String($0)) }
-        // One column is reserved for the chat inset, so rows stay within 19.
-        #expect(visibleRows.allSatisfy { $0 <= 19 })
-        #expect(visibleRows.contains { $0 > 0 })
+        // The complete logical line is emitted intact; the terminal owns the
+        // physical wrap, so no synthetic newlines are inserted.
+        let lines = rendered.components(separatedBy: "\n")
+        #expect(lines.count == 2)
+        #expect(lines[0] == line)
         #expect(rendered.contains("word"))
     }
 
     @Test
-    func markdownFormatterRestoresFullWidthAfterStreamedInlineMarkdownTail() {
+    func markdownFormatterEmitsStreamedInlineTailWithoutSyntheticWrap() {
         let renderWidth = 80
         var formatter = TerminalMarkdownStreamFormatter(
             isEnabled: true,
@@ -1362,29 +1361,23 @@ struct TerminalChatRenderingTests {
             supportsHyperlinks: false
         )
         // The safe prose prefix is emitted immediately. The following strong
-        // marker makes the remaining text an inline tail that must account for
-        // the prefix only on its first physical row.
+        // marker makes the remaining text an inline tail; the formatter renders
+        // it without injecting any synthetic line breaks.
         let prefix = String(repeating: "plain ", count: 10)
         let tail = "**Browser** lo consente per lo sviluppo locale. Il permesso resta valido per una pagina aperta o navigata esplicitamente su loopback, incluse risorse HMR WebSocket locali."
 
         let streamedPrefix = formatter.consume(prefix)
         let renderedTail = formatter.consume(tail + "\n") + formatter.finish()
-        let visibleTailLines = TerminalANSIText.stripANSI(renderedTail)
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .map(String.init)
 
         #expect(streamedPrefix == prefix)
+        // The strong marker is rendered, not left literal.
         #expect(!renderedTail.contains("**"))
-        #expect(
-            visibleTailLines.dropFirst().contains {
-                TerminalANSIText.visibleWidth($0) > renderWidth / 2
-            }
-        )
-        #expect(
-            visibleTailLines.allSatisfy {
-                TerminalANSIText.visibleWidth($0) <= renderWidth - 1
-            }
-        )
+        #expect(renderedTail.contains("\u{1B}[1mBrowser\u{1B}[0m"))
+        // No synthetic newlines: only the source line break remains.
+        let withoutTrailingNewline = renderedTail.hasSuffix("\n")
+            ? String(renderedTail.dropLast())
+            : renderedTail
+        #expect(!withoutTrailingNewline.contains("\n"))
     }
 
     @Test
@@ -1408,8 +1401,9 @@ struct TerminalChatRenderingTests {
             .map(String.init)
             .filter { $0.contains("│") || $0.contains("─") }
         #expect(!boxRows.isEmpty)
-        // Every box-drawing row exceeds the render width, proving wrapIfNeeded
-        // left the table untouched instead of breaking it across lines.
+        // Every box-drawing row exceeds the render width, proving the
+        // structured-surface renderer left the table untouched instead of
+        // breaking it across lines.
         #expect(boxRows.allSatisfy { TerminalANSIText.visibleWidth($0) > 12 })
     }
 

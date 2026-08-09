@@ -157,7 +157,7 @@ public enum ZenCODECommandLineRunner {
             || argument == "--model"
             || argument == "--agent"
             || argument == "--acp"
-            || argument == "--cwd"
+            || argument == "--working-directory"
             || argument == "--skills"
             || argument == "--max-tool-rounds"
             || argument == "--max-output-tokens"

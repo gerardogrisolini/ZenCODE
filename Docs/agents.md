@@ -127,10 +127,21 @@ Three participant kinds share the room:
 | `all` | The coordinator and every active delegated agent except the sender. An operator broadcast reaches every active recipient including the coordinator. |
 
 From the terminal the operator addresses the room with a leading mention:
-`@coordinator`, `@all`, or the `@agent-…` handle an active instance advertises.
-That handle is ID-backed, so it survives duplicate or renamed agents. A
-recognised mention without a message body is rejected as invalid input rather
-than queued behind a running generation.
+`@coordinator`, `@all`, or a readable `@agent-name` handle derived from each
+active instance's display name by an actor-isolated catalogue. The handle is a
+presentation alias: routing always resolves back to the stable participant id,
+so it survives duplicate or renamed agents. Aliases are never recycled within a
+session, and duplicate names are disambiguated with a numeric suffix
+(`@worker`, `@worker-2`). `@all` and `@coordinator` are reserved for the whole
+session, so an agent that collides with either name is offered as `@all-2` or
+`@coordinator-2` and routes to that agent — the bare broadcast spellings can
+never be captured. A name that yields no readable slug (Unicode-only, bidi-only
+or punctuation-only) falls back to the stable handle `@agent` (with numeric
+suffixes for further collisions); internal ids and UUIDs are never shown. The
+legacy `@agent-Base64` spelling remains accepted for backward compatibility but
+is never offered by the autocomplete list. A recognised mention without a
+message body is rejected as invalid input rather than queued behind a running
+generation.
 
 Replies travel back through the same chat. Any message injected into a
 coordinator or agent turn instructs the recipient to answer through
@@ -139,16 +150,18 @@ coordinator and a delegated agent must send their reply via `agent.message`,
 regardless of who the sender is. The operator sees every chat message rendered
 in the terminal; a delegated agent sees only what its mailbox delivers.
 
-Delivery is priority-based rather than turn-based. A recipient that is idle
-receives the message as a new turn, as before. A recipient with a turn already in
-flight is not interrupted and does not wait for that turn to end: the message
-stays in its mailbox and is appended to the result of the recipient's next tool
-call, which asks it to reply immediately and then resume the work it was doing.
-Only the model-facing tool result carries the injected block; the rendered tool
-output is unchanged, because the terminal already shows the message itself. A
-turn that ends before making another tool call falls back to the previous
-behaviour, so a message is never lost — it becomes a queued prompt for an agent
-and the coordinator's usual synthetic turn.
+Delivery is serialised in each recipient's work loop rather than tied to a tool
+call. Every message — to an idle, running or standby agent — is drained from the
+bounded mailbox and queued as a prompt, so the reply is the next turn of that
+agent. A recipient with a turn in flight is not interrupted: its message is
+queued and answered the moment the current turn ends, independent of whether the
+agent makes any further tool call. This makes a standby agent reply to a message
+without depending on a tool boundary at all. A message is never lost or
+delivered twice: each recipient has exactly one delivery channel, and the
+coordinator authorises at most one synthetic turn from the chat at a time. The
+blue message card is rendered from the bounded room transcript and reaches every
+active observer within the transcript bound, deduplicated by message id;
+shared-chat events are never dropped from the terminal queue.
 
 The coordinator authorises at most one synthetic turn from the chat at a time,
 never starting a second generation behind a running one. `agent.message` is a

@@ -21,9 +21,10 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         case chatGPTSubscriptionCredentials
         case anthropicSubscriptionCredentials
         case responseLanguage
+        case memoryEmbedding
     }
 
-    public static let currentVersion = 10
+    public static let currentVersion = 12
     public static let minimumSupportedVersion = 4
 
     public let version: Int
@@ -40,6 +41,12 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
     /// ISO language code (e.g. "it", "en") for the model's natural-language
     /// responses. When nil, the operating system language is used at runtime.
     public let responseLanguage: String?
+    /// Optional configuration for semantic memory embeddings. Legacy v11
+    /// endpoint-only values decode unchanged (`model`/`providerID` nil). When
+    /// the whole field is absent, the runtime may inherit the legacy endpoint
+    /// environment variable; an explicit disabled value forces pure BM25
+    /// retrieval.
+    public let memoryEmbedding: AgentMemoryEmbeddingSettingsManifest?
 
     public init(
         version: Int = Self.currentVersion,
@@ -53,7 +60,8 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         localExecAllowedCommands: [String] = [],
         chatGPTSubscriptionCredentials: CodexAgentCredentials? = nil,
         anthropicSubscriptionCredentials: AnthropicSubscriptionCredentials? = nil,
-        responseLanguage: String? = nil
+        responseLanguage: String? = nil,
+        memoryEmbedding: AgentMemoryEmbeddingSettingsManifest? = nil
     ) {
         let normalizedProviders = Self.normalizedProviders(
             providers,
@@ -86,6 +94,15 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         self.chatGPTSubscriptionCredentials = chatGPTSubscriptionCredentials
         self.anthropicSubscriptionCredentials = anthropicSubscriptionCredentials
         self.responseLanguage = responseLanguage?.nilIfBlank
+        // Tri-state: absent (nil) preserves legacy env fallback; an explicit
+        // disabled marker (nil endpoint) or a valid endpoint is kept; a non-nil
+        // endpoint that fails validation is dropped.
+        if let memoryEmbedding {
+            self.memoryEmbedding = (memoryEmbedding.isExplicitlyDisabled || memoryEmbedding.isConfigured)
+                ? memoryEmbedding : nil
+        } else {
+            self.memoryEmbedding = nil
+        }
     }
 
     public init(from decoder: Decoder) throws {
@@ -132,6 +149,10 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
             responseLanguage: try container.decodeIfPresent(
                 String.self,
                 forKey: .responseLanguage
+            ),
+            memoryEmbedding: try container.decodeIfPresent(
+                AgentMemoryEmbeddingSettingsManifest.self,
+                forKey: .memoryEmbedding
             )
         )
     }
@@ -168,6 +189,9 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         if let responseLanguage {
             try container.encode(responseLanguage, forKey: .responseLanguage)
         }
+        if let memoryEmbedding {
+            try container.encode(memoryEmbedding, forKey: .memoryEmbedding)
+        }
     }
 
     public var isEmpty: Bool {
@@ -182,6 +206,7 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
             && chatGPTSubscriptionCredentials == nil
             && anthropicSubscriptionCredentials == nil
             && responseLanguage == nil
+            && memoryEmbedding == nil
     }
 
     private static func normalizedLocalExecAllowedCommands(_ commands: [String]) -> [String] {

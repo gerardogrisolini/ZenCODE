@@ -259,75 +259,68 @@ struct TerminalMarkdownStreamFormatterTests {
         #expect(rest.isEmpty)
     }
 
-    // MARK: (e) Tail wrapping respects prefix column
+    // MARK: (e) No synthetic wrapping; the terminal owns line breaks
 
     @Test
-    func tailWrappingRespectsPrefixColumn() {
+    func narrowWidthDoesNotInjectSyntheticNewlines() {
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 8,
+            supportsHyperlinks: false
+        )
+
+        // A very narrow injected width must not cause the formatter to insert its
+        // own line breaks. The terminal performs the physical auto-wrap; the
+        // formatter only preserves the source newline.
+        let rendered = formatter.consume("word word word word word\n")
+            + formatter.finish()
+
+        let lines = rendered.components(separatedBy: "\n")
+        #expect(lines.count == 2) // content line + the empty tail after "\n"
+        #expect(lines[0] == "word word word word word")
+    }
+
+    @Test
+    func inlineTailStaysContiguousWithEmittedPrefix() {
         var formatter = TerminalMarkdownStreamFormatter(
             isEnabled: true,
             renderWidth: 20,
             supportsHyperlinks: false
         )
 
-        // The prefix "1234567890" (10 cols) streams immediately. The tail
-        // must wrap accounting for those 10 columns so the combined first
-        // visual line does not overflow width 20.
         let first = formatter.consume("1234567890")
         #expect(first == "1234567890")
 
-        let rest = formatter.consume(" word word word word word\n")
+        let rest = formatter.consume(" `code` word\n")
         let rendered = first + rest
 
-        // No single visual line should exceed the terminal width.
-        for line in rendered.components(separatedBy: "\n") {
-            let width = TerminalANSIText.visibleWidth(line)
-            #expect(width <= 20, "Line too wide (\(width)): \(line)")
-        }
+        // Only the source newline survives: no synthetic wrap splits the streamed
+        // prefix from its inline tail.
+        #expect(rendered.hasSuffix("\n"))
+        let withoutTrailingNewline = String(rendered.dropLast())
+        #expect(!withoutTrailingNewline.contains("\n"))
+        #expect(withoutTrailingNewline.hasPrefix("1234567890"))
+        #expect(rendered.contains("\u{1B}[38;5;180m"))
+        #expect(!TerminalANSIText.stripANSI(rendered).contains("`code`"))
     }
 
     @Test
-    func tailWrappingUsesTerminalColumnsForWideCJKPrefix() {
+    func wideCJKPrefixDoesNotTriggerWrapping() {
         var formatter = TerminalMarkdownStreamFormatter(
             isEnabled: true,
-            renderWidth: 20,
+            renderWidth: 8,
             supportsHyperlinks: false
         )
 
-        // Five CJK graphemes occupy ten terminal columns, not five character
-        // positions. The buffered inline tail must wrap from column ten.
+        // Five CJK graphemes occupy ten terminal columns, exceeding the narrow
+        // width. The formatter must not wrap; the terminal handles the layout.
         let first = formatter.consume("漢字語花猫")
         #expect(first == "漢字語花猫")
 
-        let rendered = first + formatter.consume(" word word word\n")
-        for line in rendered.components(separatedBy: "\n") {
-            let width = TerminalANSIText.visibleWidth(line)
-            #expect(width <= 20, "Line too wide (\(width)): \(line)")
-        }
-    }
-
-    @Test
-    func tailWrappingIncludesExternalEmojiPrefixColumns() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 20,
-            supportsHyperlinks: false
-        )
-        let bubble = "💬 "
-        formatter.reserveLeadingOutputColumns(
-            TerminalANSIText.visibleWidth(bubble)
-        )
-
-        let first = formatter.consume("1234567890 ")
-        let rest = formatter.consume("`code` word word word\n")
-        let rendered = bubble + first + rest
-
-        for line in rendered.components(separatedBy: "\n") {
-            let width = TerminalANSIText.visibleWidth(line)
-            // The formatter reserves the twentieth terminal cell for the chat
-            // inset, including the wide emoji in the first row's calculation.
-            #expect(width <= 19, "Line too wide (\(width)): \(line)")
-        }
-        #expect(!TerminalANSIText.stripANSI(rendered).contains("`code`"))
+        let rendered = first + formatter.consume(" word word\n")
+        let lines = rendered.components(separatedBy: "\n")
+        #expect(lines.count == 2)
+        #expect(lines[0] == "漢字語花猫 word word")
     }
 
     // MARK: (f) Unicode boundaries across deltas

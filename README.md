@@ -178,8 +178,8 @@ swift build -c release --product zen
 
 zen --help
 zen --doctor
-zen --cwd /path/to/project
-zen --acp --cwd /path/to/project
+zen --working-directory /path/to/project
+zen --acp --working-directory /path/to/project
 ```
 
 ## More Docs

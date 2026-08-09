@@ -132,7 +132,8 @@ public enum AgentSettingsManifestStore {
                     localExecAllowedCommands: current.localExecAllowedCommands,
                     chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
                     anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
-                    responseLanguage: current.responseLanguage
+                    responseLanguage: current.responseLanguage,
+                    memoryEmbedding: current.memoryEmbedding
                 ),
                 to: settingsURL()
             )
@@ -157,7 +158,8 @@ public enum AgentSettingsManifestStore {
                     localExecAllowedCommands: current.localExecAllowedCommands,
                     chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
                     anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
-                    responseLanguage: current.responseLanguage
+                    responseLanguage: current.responseLanguage,
+                    memoryEmbedding: current.memoryEmbedding
                 ),
                 to: settingsURL()
             )
@@ -182,7 +184,8 @@ public enum AgentSettingsManifestStore {
                     localExecAllowedCommands: current.localExecAllowedCommands,
                     chatGPTSubscriptionCredentials: credentials,
                     anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
-                    responseLanguage: current.responseLanguage
+                    responseLanguage: current.responseLanguage,
+                    memoryEmbedding: current.memoryEmbedding
                 ),
                 to: settingsURL()
             )
@@ -207,7 +210,8 @@ public enum AgentSettingsManifestStore {
                     localExecAllowedCommands: current.localExecAllowedCommands,
                     chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
                     anthropicSubscriptionCredentials: credentials,
-                    responseLanguage: current.responseLanguage
+                    responseLanguage: current.responseLanguage,
+                    memoryEmbedding: current.memoryEmbedding
                 ),
                 to: settingsURL()
             )
@@ -230,7 +234,8 @@ public enum AgentSettingsManifestStore {
                     localExecAllowedCommands: current.localExecAllowedCommands,
                     chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
                     anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
-                    responseLanguage: languageCode
+                    responseLanguage: languageCode,
+                    memoryEmbedding: current.memoryEmbedding
                 ),
                 to: settingsURL()
             )

@@ -50,10 +50,6 @@ public actor DirectSubAgentRuntime {
     /// Period of the standby reaper cycle that enforces the idle timeout and
     /// the turn budget.
     static let standbyReaperInterval: TimeInterval = 60
-    /// Upper bound on the remembered identifiers of peers/all broadcasts. Only
-    /// the recent window matters: a mailbox message is classified once, when it
-    /// is drained, and the room transcript is itself bounded.
-    static let maximumTrackedBroadcastMessages = 512
 
     public static func unavailableContextualBackendFactory(
         _ context: BackendContext
@@ -97,6 +93,12 @@ public actor DirectSubAgentRuntime {
         public var updatedAt: Date
         public var status: Status
         public var pendingPrompts: [String]
+        /// Kept index-aligned with `pendingPrompts`. A true entry means the turn
+        /// was created by a direct human-operator message and therefore needs a
+        /// runtime fallback reply if the model does not call `agent.message`.
+        var pendingOperatorReplyFlags: [Bool] = []
+        var currentTurnRepliesToOperator = false
+        var currentTurnSentOperatorMessage = false
         public var latestOutput: String?
         /// Monotonic identity of the latest completed response for transient
         /// presentation. Unlike `updatedAt`, this does not change when the agent
@@ -475,18 +477,6 @@ public actor DirectSubAgentRuntime {
     var graphObserverTasks: [String: Task<Void, Never>] = [:]
     /// Periodic reaper that enforces standby timeout and turn budget.
     var standbyReaperTask: Task<Void, Never>?
-    /// Identifiers of live-chat messages delivered as a `peers`/`all`
-    /// broadcast. Standby agents stay registered in the room so direct messages
-    /// still reach them, but a broadcast must not spend a standby turn (and an
-    /// LLM round-trip) on an agent that was not addressed.
-    var broadcastMessageIDs: Set<UUID> = []
-    /// Insertion order of ``broadcastMessageIDs``, used to evict the oldest
-    /// entries once the tracked window is full.
-    var broadcastMessageIDOrder: [UUID] = []
-    /// Number of `peers`/`all` sends whose delivery has not been classified
-    /// yet. While it is non-zero a standby agent leaves its mailbox untouched,
-    /// because the bus wakes recipients from inside `send`.
-    var pendingBroadcastSends = 0
 
     /// Live default with a known read-only resolver; safe to snapshot both
     /// manifests under one lock. The legacy resolver-taking overload below stays
@@ -628,8 +618,6 @@ public actor DirectSubAgentRuntime {
             observer.cancel()
         }
         graphObserverTasks.removeAll()
-        broadcastMessageIDs.removeAll()
-        broadcastMessageIDOrder.removeAll()
 
         let records = Array(agents.values)
         agents.removeAll()
@@ -664,6 +652,10 @@ public actor DirectSubAgentRuntime {
             )
         }
         for record in records {
+            // Every record is a child session with its own recall state. The
+            // runtime can be torn down without the enclosing runner, so each
+            // child must release its state explicitly.
+            await MemoryTurnCoordinator.shared.discard(sessionID: record.sessionID)
             await record.backend.updateBorrowedSubAgentToolExecutor(nil)
             await record.backend.shutdown()
         }

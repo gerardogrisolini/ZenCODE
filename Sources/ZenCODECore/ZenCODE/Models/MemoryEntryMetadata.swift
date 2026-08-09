@@ -60,8 +60,39 @@ nonisolated struct MemoryEntryMetadata: Sendable {
     }
 }
 
-extension MemoryEntry {
+extension GraphEntry {
     var metadata: MemoryEntryMetadata {
         MemoryEntryMetadata(content: content)
+    }
+}
+
+extension MemoryEntryMetadata {
+    /// Parses the journal `Timestamp:` field back into a `Date`.
+    ///
+    /// Used by the graph migration so an imported entry keeps its original
+    /// creation date instead of the import date. Returns `nil` when the field
+    /// is absent or not in the journal's `yyyy-MM-dd HH:mm ZoneID` shape.
+    var timestampDate: Date? {
+        guard let timestamp else {
+            return nil
+        }
+        return Self.date(fromTimestamp: timestamp)
+    }
+
+    static func date(fromTimestamp timestamp: String) -> Date? {
+        let components = timestamp.split(separator: " ", omittingEmptySubsequences: true)
+        guard components.count >= 2 else {
+            return nil
+        }
+        let dateAndTime = components.prefix(2).joined(separator: " ")
+        let zoneIdentifier = components.count >= 3 ? String(components[2]) : nil
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        formatter.timeZone = zoneIdentifier.flatMap { TimeZone(identifier: $0) }
+            ?? TimeZone(abbreviation: zoneIdentifier ?? "")
+            ?? .current
+        return formatter.date(from: dateAndTime)
     }
 }

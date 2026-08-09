@@ -13,7 +13,6 @@ struct SwiftBuildTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let target: String?
         let product: String?
         let configuration: String?
@@ -45,7 +44,6 @@ struct SwiftBuildTool: FeatureTool {
         let workingDirectory = SwiftToolsSupport.workingDirectory(
             path: input.path,
             workingDirectory: input.workingDirectory,
-            cwd: input.cwd,
             context: context
         )
         let result = try await SwiftToolsSupport.runSwift(
@@ -62,7 +60,6 @@ struct SwiftTestTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let filter: String?
         let target: String?
         let configuration: String?
@@ -93,7 +90,6 @@ struct SwiftTestTool: FeatureTool {
         let workingDirectory = SwiftToolsSupport.workingDirectory(
             path: input.path,
             workingDirectory: input.workingDirectory,
-            cwd: input.cwd,
             context: context
         )
         let result = try await SwiftToolsSupport.runSwift(
@@ -110,7 +106,6 @@ struct SwiftRunTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let executable: String?
         let product: String?
         let configuration: String?
@@ -147,7 +142,6 @@ struct SwiftRunTool: FeatureTool {
         let workingDirectory = SwiftToolsSupport.workingDirectory(
             path: input.path,
             workingDirectory: input.workingDirectory,
-            cwd: input.cwd,
             context: context
         )
         let result = try await SwiftToolsSupport.runSwift(
@@ -164,7 +158,6 @@ struct SwiftPackageTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let action: String?
         let timeoutSeconds: Int?
         let timeout: Int?
@@ -195,7 +188,6 @@ struct SwiftPackageTool: FeatureTool {
         let workingDirectory = SwiftToolsSupport.workingDirectory(
             path: input.path,
             workingDirectory: input.workingDirectory,
-            cwd: input.cwd,
             context: context
         )
         let result = try await SwiftToolsSupport.runSwift(
@@ -266,10 +258,9 @@ private enum SwiftToolsSupport {
     static func workingDirectory(
         path: String?,
         workingDirectory: String?,
-        cwd: String?,
         context: FeatureContext
     ) -> URL {
-        let candidate = [workingDirectory, cwd, path]
+        let candidate = [workingDirectory, path]
             .compactMap { $0?.nilIfBlank }
             .first
         return context.resolvePath(candidate ?? ".")
@@ -580,7 +571,7 @@ private enum SwiftToolsSupport {
         let diagnostics = parseDiagnostics(from: combined)
         let buildErrors = diagnostics.filter { $0.severity == .error }
         let failures = parseTestFailures(from: combined)
-        let summary = parseTestSummary(from: combined)
+        let summaries = parseTestSummaries(from: combined)
 
         var lines: [String] = []
         lines.append("command: \(command)")
@@ -589,7 +580,10 @@ private enum SwiftToolsSupport {
         } else {
             lines.append("status: \(result.exitCode == 0 ? "passed" : "failed") (exit \(result.exitCode))")
         }
-        if let summary {
+        if let aggregate = aggregateTestSummary(summaries) {
+            lines.append("summary: \(aggregate)")
+            lines.append(contentsOf: summaries.map { "  " + $0 })
+        } else if let summary = summaries.last {
             lines.append("summary: \(summary)")
         }
 
@@ -604,7 +598,7 @@ private enum SwiftToolsSupport {
         if result.exitCode != 0 {
             // Always surface raw output tail when tests fail, so the model sees full context.
             lines.append("\nRaw output:")
-            lines.append(tail(of: combined, lines: 60))
+            lines.append(tail(of: combined, lines: 200))
         }
         return lines.joined(separator: "\n")
     }
@@ -734,7 +728,9 @@ private enum SwiftToolsSupport {
                 || trimmed.hasPrefix("✘")
                 || trimmed.contains("recorded an issue")
                 || (trimmed.contains("Test Case") && trimmed.contains("failed"))
-            guard isFailure else {
+            // The run-level summary carries the same failure mark but is not a
+            // failing test; it is reported separately as the run summary.
+            guard isFailure, !isTestRunSummary(trimmed) else {
                 continue
             }
             guard seen.insert(trimmed).inserted else {
@@ -745,28 +741,92 @@ private enum SwiftToolsSupport {
         return failures
     }
 
-    static func parseTestSummary(from output: String) -> String? {
-        var legacySummary: String?
-        var swiftTestingSummary: String?
+    /// True for the Swift Testing run-level summary line, which is not a test
+    /// failure even when it is prefixed with the failure mark.
+    static func isTestRunSummary(_ line: String) -> Bool {
+        line.contains("Test run with")
+    }
+
+    /// Every run-level summary produced by the command, in output order.
+    ///
+    /// `swift test` emits one summary per test bundle, and Swift Testing and
+    /// XCTest each report separately, so keeping only the last line reports a
+    /// single bundle as if it were the whole run. All summaries are returned so
+    /// the caller can surface the complete picture.
+    static func parseTestSummaries(from output: String) -> [String] {
+        var legacySummaries: [String] = []
+        var swiftTestingSummaries: [String] = []
+        var seen = Set<String>()
         for line in output.components(separatedBy: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             // Swift Testing (import Testing) reports with "Test run with …".
             // It is the authoritative summary when present because it reflects
             // the actual matched tests, while the legacy XCTest runner may
             // print "Executed 0 tests" for the same filter.
-            if trimmed.contains("Test run with") {
-                swiftTestingSummary = trimmed
+            if isTestRunSummary(trimmed) {
+                guard seen.insert(trimmed).inserted else { continue }
+                swiftTestingSummaries.append(trimmed)
             } else if trimmed.hasPrefix("Executed ")
                 || (trimmed.hasPrefix("Test Suite") && (trimmed.contains("passed") || trimmed.contains("failed"))) {
-                legacySummary = trimmed
+                guard seen.insert(trimmed).inserted else { continue }
+                legacySummaries.append(trimmed)
             }
         }
-        return swiftTestingSummary ?? legacySummary
+        return swiftTestingSummaries.isEmpty ? legacySummaries : swiftTestingSummaries
     }
+
+    /// Totals across every Swift Testing summary line, so a multi-bundle run is
+    /// reported as one number instead of the last bundle's number.
+    static func aggregateTestSummary(_ summaries: [String]) -> String? {
+        let runSummaries = summaries.filter(isTestRunSummary)
+        guard runSummaries.count > 1 else { return nil }
+
+        var tests = 0
+        var suites = 0
+        var failed = false
+        for summary in runSummaries {
+            tests += count(of: "test", in: summary) ?? 0
+            suites += count(of: "suite", in: summary) ?? 0
+            if summary.contains("failed") {
+                failed = true
+            }
+        }
+        guard tests > 0 else { return nil }
+
+        var text = "\(tests) tests"
+        if suites > 0 {
+            text += " in \(suites) suites"
+        }
+        return text + " across \(runSummaries.count) runs \(failed ? "failed" : "passed")"
+    }
+
+    /// Reads the integer immediately preceding a noun such as `tests`/`suites`.
+    private static func count(of noun: String, in line: String) -> Int? {
+        let tokens = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+        for (index, token) in tokens.enumerated()
+        where token.lowercased().hasPrefix(noun) && index > 0 {
+            if let value = Int(tokens[index - 1]) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    /// Upper bound for a single raw-output line. Toolchain failures echo the
+    /// whole `swift-frontend` invocation on one line, which is several thousand
+    /// characters and would otherwise consume the entire output budget and push
+    /// the actual diagnostics out of view.
+    private static let maximumRawLineLength = 500
 
     private static func tail(of text: String, lines count: Int) -> String {
         let lines = text.components(separatedBy: "\n")
-        return lines.suffix(count).joined(separator: "\n")
+        return lines.suffix(count).map(clampLineLength).joined(separator: "\n")
+    }
+
+    private static func clampLineLength(_ line: String) -> String {
+        guard line.count > maximumRawLineLength else { return line }
+        let elided = line.count - maximumRawLineLength
+        return line.prefix(maximumRawLineLength) + "… (+\(elided) characters elided)"
     }
 }
 
@@ -786,25 +846,25 @@ private enum SwiftToolsFeatureError: LocalizedError {
 
 extension SwiftBuildTool {
     static var presentation: ToolPresentationDefinition {
-        .standard(title: "Swift package", action: "Build", kind: .execute, targetKeyPaths: ["target", "product", "path", "workingDirectory", "cwd"])
+        .standard(title: "Swift package", action: "Build", kind: .execute, targetKeyPaths: ["target", "product", "path", "workingDirectory"])
     }
 }
 
 extension SwiftTestTool {
     static var presentation: ToolPresentationDefinition {
-        .standard(title: "Swift tests", action: "Test", kind: .execute, targetKeyPaths: ["filter", "target", "path", "workingDirectory", "cwd"])
+        .standard(title: "Swift tests", action: "Test", kind: .execute, targetKeyPaths: ["filter", "target", "path", "workingDirectory"])
     }
 }
 
 extension SwiftRunTool {
     static var presentation: ToolPresentationDefinition {
-        .standard(title: "Swift executable", action: "Run", kind: .execute, targetKeyPaths: ["executable", "product", "path", "workingDirectory", "cwd"])
+        .standard(title: "Swift executable", action: "Run", kind: .execute, targetKeyPaths: ["executable", "product", "path", "workingDirectory"])
     }
 }
 
 extension SwiftPackageTool {
     static var presentation: ToolPresentationDefinition {
-        .standard(title: "Swift package", action: "Manage", kind: .manage, targetKeyPaths: ["action", "path", "workingDirectory", "cwd"])
+        .standard(title: "Swift package", action: "Manage", kind: .manage, targetKeyPaths: ["action", "path", "workingDirectory"])
     }
 }
 

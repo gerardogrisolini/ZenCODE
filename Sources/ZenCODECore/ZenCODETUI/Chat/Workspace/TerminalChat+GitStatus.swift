@@ -37,6 +37,7 @@ extension TerminalChat {
             case .failed, .closed:
                 isTerminal = true
             case .queued, .running:
+                // `.closing` is pending work, not a completion boundary.
                 isTerminal = false
             }
             guard isTerminal else {

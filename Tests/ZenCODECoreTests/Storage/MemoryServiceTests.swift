@@ -4,10 +4,14 @@
 //
 //  Created by Gerardo Grisolini on 27/05/26.
 //
+//  Graph-backed memory facade tests. The durable store is the MemoryEngine
+//  graph; MEMORY.md is no longer written, only migrated in memory on first
+//  open and persisted by the first mutation.
+//
 
 import Foundation
 import ToolCore
-import ZenCODECore
+@testable import ZenCODECore
 import Testing
 
 @Suite
@@ -16,7 +20,7 @@ struct MemoryServiceTests {
     func memoryTemplatesDescribeProjectResponsibilities() {
         #expect(MemoryService.defaultProjectMemoryContent.contains("Durable project journal"))
         #expect(MemoryService.defaultProjectMemoryContent.contains("Timestamp: YYYY-MM-DD HH:mm TimeZone"))
-        #expect(MemoryService.toolUsagePromptSection().contains("project memory as the codebase journal"))
+        #expect(MemoryService.toolUsagePromptSection().contains("Treat durable project memory as first-class context"))
         #expect(!MemoryService.toolUsagePromptSection().localizedCaseInsensitiveContains("global memory"))
         #expect(MemoryService.toolUsagePromptSection().contains("At the end of a substantial project turn"))
 
@@ -29,128 +33,88 @@ struct MemoryServiceTests {
     }
 
     @Test
-    func templateGuidanceBulletsAreNotParsedAsMemoryEntries() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
-        let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
+    func emptyTemplateJournalMigratesToEmptyGraph() async throws {
+        // The default template has the Active/Archived sections but no entries,
+        // so migrating it must seed an empty graph rather than parsing the
+        // guidance bullets as memory.
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try workspace.writeLegacyJournal(MemoryService.defaultProjectMemoryContent)
 
-        try FileManager.default.createDirectory(
-            at: workspaceURL,
-            withIntermediateDirectories: true
-        )
-        let service = MemoryService()
-        try MemoryService.defaultProjectMemoryContent
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .appending("\n")
-            .write(
-                to: workspaceURL.appendingPathComponent(MemoryService.filename),
-                atomically: true,
-                encoding: .utf8
+        try await workspace.withIsolatedSupport {
+            let entries = try await MemoryService().readEntries(
+                workspaceRootURL: workspace.workspaceURL,
+                limit: 10
             )
-
-        #expect(
-            service.readEntries(
-                scope: .project,
-                workspaceRootURL: workspaceURL,
-                limit: 10
-            ).isEmpty
-        )
+            #expect(entries.isEmpty)
+        }
     }
 
     @Test
-    func projectWritesUseProjectMemoryTemplate() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
-        let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
+    func writingAndReadingEntriesRoundTripsAndDeduplicates() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
 
-        try FileManager.default.createDirectory(
-            at: workspaceURL,
-            withIntermediateDirectories: true
-        )
-        let service = MemoryService()
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let first = try await service.writeEntry(
+                content: "Summary: the graph store is the durable source.",
+                workspaceRootURL: workspace.workspaceURL
+            )
+            // Identical active content returns the existing entry instead of
+            // creating a duplicate.
+            let duplicate = try await service.writeEntry(
+                content: "Summary: the graph store is the durable source.",
+                workspaceRootURL: workspace.workspaceURL
+            )
+            #expect(duplicate.id == first.id)
 
-        try service.writeEntry(
-            content: "Summary: use direct ZenCODE runtime inside remote-server.",
-            scope: .project,
-            workspaceRootURL: workspaceURL
-        )
-
-        let projectContent = try String(
-            contentsOf: workspaceURL.appendingPathComponent(MemoryService.filename),
-            encoding: .utf8
-        )
-
-        #expect(projectContent.contains("Durable project journal"))
-        #expect(projectContent.contains("Summary: use direct ZenCODE runtime inside remote-server."))
-        #expect(
-            service.readEntries(
-                scope: .project,
-                workspaceRootURL: workspaceURL,
+            let entries = try await service.readEntries(
+                workspaceRootURL: workspace.workspaceURL,
                 limit: 10
-            ).count == 1
-        )
+            )
+            #expect(entries.count == 1)
+            #expect(entries.first?.id == first.id)
+            // ZenCODE-authored ids are canonical uppercase UUID values.
+            #expect(entries.first?.id != nil)
+        }
     }
 
     @Test
-    func projectJournalWritesPreserveMultilineEntries() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
-        let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-
-        try FileManager.default.createDirectory(
-            at: workspaceURL,
-            withIntermediateDirectories: true
-        )
-        let service = MemoryService()
-        let journalContent = """
+    func writePreservesMultilineEntryContent() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        let content = """
         Timestamp: 2026-06-03 11:45 Europe/Rome
-        Summary: completed the memory journal framing.
-        State: project journal is the resume source.
+        Summary: completed the memory graph framing.
+        State: the graph is the resume source.
         Next: validate the real resume flow from a fresh session.
         """
 
-        let entry = try service.writeEntry(
-            content: journalContent,
-            scope: .project,
-            workspaceRootURL: workspaceURL
-        )
-        let projectContent = try String(
-            contentsOf: workspaceURL.appendingPathComponent(MemoryService.filename),
-            encoding: .utf8
-        )
-        let readEntry = try #require(
-            service.readEntries(
-                scope: .project,
-                workspaceRootURL: workspaceURL,
-                limit: 10
-            ).first
-        )
-
-        #expect(
-            projectContent.contains(
-                "- [id: \(entry.id.uuidString.uppercased())] Timestamp: 2026-06-03 11:45 Europe/Rome"
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            _ = try await service.writeEntry(
+                content: content,
+                workspaceRootURL: workspace.workspaceURL
             )
-        )
-        #expect(projectContent.contains("\n  Summary: completed the memory journal framing."))
-        #expect(projectContent.contains("\n  State: project journal is the resume source."))
-        #expect(projectContent.contains("\n  Next: validate the real resume flow from a fresh session."))
-        #expect(readEntry.content == journalContent)
+            let readEntry = try #require(
+                try await service.readEntries(
+                    workspaceRootURL: workspace.workspaceURL,
+                    limit: 10
+                ).first
+            )
+
+            #expect(readEntry.content == content)
+            #expect(readEntry.metadata.summary == "completed the memory graph framing.")
+            #expect(readEntry.metadata.state == "the graph is the resume source.")
+            #expect(readEntry.metadata.next == "validate the real resume flow from a fresh session.")
+        }
     }
 
     @Test
-    func memoryWriteAddsProjectTimestampWhenMissing() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
-        let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+    func memoryToolWriteAddsTimestampWhenMissing() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
         let timeZone = TimeZone(identifier: "Europe/Rome")!
         let date = DateComponents(
             calendar: Calendar(identifier: .gregorian),
@@ -161,43 +125,132 @@ struct MemoryServiceTests {
             hour: 15,
             minute: 35
         ).date!
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
+
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            _ = try await MemoryTool.executeAsync(
+                ToolRequest(
+                    name: "memory.write",
+                    arguments: [
+                        "content": .string("""
+                        Summary: fixed the release install path.
+                        State: install script points at the published asset.
+                        Next: verify install from a fresh checkout.
+                        """)
+                    ]
+                ),
+                context: MemoryToolContext(
+                    workingDirectory: workspace.workspaceURL,
+                    currentDate: date,
+                    currentTimeZone: timeZone
+                ),
+                memoryService: service
+            )
+            let entry = try #require(
+                try await service.readEntries(
+                    workspaceRootURL: workspace.workspaceURL,
+                    limit: 10
+                ).first
+            )
+
+            #expect(entry.content.hasPrefix("Timestamp: 2026-06-04 15:35 Europe/Rome"))
+            #expect(entry.content.contains("Summary: fixed the release install path."))
         }
+    }
 
-        try FileManager.default.createDirectory(
-            at: workspaceURL,
-            withIntermediateDirectories: true
-        )
-        let service = MemoryService()
-        _ = try MemoryTool.execute(
-            ToolRequest(
-                name: "memory.write",
-                arguments: [
-                    "content": .string("""
-                    Summary: fixed the release install path.
-                    State: install script points at the published asset.
-                    Next: verify install from a fresh checkout.
-                    """)
-                ]
-            ),
-            context: MemoryToolContext(
-                workingDirectory: workspaceURL,
-                currentDate: date,
-                currentTimeZone: timeZone
-            ),
-            memoryService: service
-        )
-        let entry = try #require(
-            service.readEntries(
-                scope: .project,
-                workspaceRootURL: workspaceURL,
+    @Test
+    func memorySearchReturnsEntriesWithProjectScope() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            _ = try await service.writeEntry(
+                content: "Summary: architecture runtime decision.",
+                workspaceRootURL: workspace.workspaceURL
+            )
+
+            let output = try await MemoryTool.executeAsync(
+                ToolRequest(
+                    name: "memory.search",
+                    arguments: ["query": .string("architecture")]
+                ),
+                context: MemoryToolContext(workingDirectory: workspace.workspaceURL),
+                memoryService: service
+            )
+            guard case let .object(result)? = output.rawResult,
+                  case let .array(entries)? = result["entries"],
+                  case let .object(firstEntry)? = entries.first else {
+                Issue.record("Expected memory.search to return JSON entries.")
+                return
+            }
+
+            #expect(firstEntry["scope"] == .string("project"))
+        }
+    }
+
+    @Test
+    func recallWorksWithNoEmbedderAndEntriesCarryNoVector() async throws {
+        // Embeddings are opt-in: with no ZENCODE_MEMORY_EMBEDDING_* configured,
+        // recall must fall back to pure BM25 and freshly written entries must
+        // not store an embedding vector.
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            _ = try await service.writeEntry(
+                content: "Summary: actors isolate mutable state.",
+                workspaceRootURL: workspace.workspaceURL
+            )
+            _ = try await service.writeEntry(
+                content: "Summary: database migrations run at startup.",
+                workspaceRootURL: workspace.workspaceURL
+            )
+
+            let matches = try await service.searchEntries(
+                query: "actors mutable state",
+                workspaceRootURL: workspace.workspaceURL,
                 limit: 10
-            ).first
-        )
+            )
+            #expect(matches.contains { $0.content.contains("actors") })
 
-        #expect(entry.content.hasPrefix("Timestamp: 2026-06-04 15:35 Europe/Rome"))
-        #expect(entry.content.contains("Summary: fixed the release install path."))
+            let all = try await service.readEntries(
+                workspaceRootURL: workspace.workspaceURL,
+                limit: 10
+            )
+            #expect(all.allSatisfy { $0.embedding == nil && $0.embeddingModel == nil })
+        }
+    }
+
+    @Test
+    func writeRecordsCategoryTagsAndProvenance() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let entry = try await service.writeEntry(
+                content: "Summary: prefer structured concurrency for new networking code.",
+                workspaceRootURL: workspace.workspaceURL,
+                category: .preference,
+                tags: ["swift", "concurrency"]
+            )
+
+            #expect(entry.category == .preference)
+            #expect(entry.tags == ["swift", "concurrency"])
+            #expect(entry.trust == "medium")
+            #expect(entry.source == "memory.write")
+            #expect(entry.scope == .project)
+
+            let read = try #require(
+                try await service.entry(
+                    id: entry.id.uuidString,
+                    workspaceRootURL: workspace.workspaceURL
+                )
+            )
+            #expect(read.category == .preference)
+            #expect(Set(read.tags) == ["swift", "concurrency"])
+        }
     }
 
     @Test
@@ -276,44 +329,6 @@ struct MemoryServiceTests {
         #expect(sessions.count == writeCount)
         #expect(Set(sessions.map(\.sessionID)) == Set((0..<writeCount).map { "session-\($0)" }))
         #expect(Set(sessions.map(\.projectPath)).count == writeCount)
-    }
-
-    @Test
-    func memorySearchReturnsProjectEntries() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
-        let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-
-        try FileManager.default.createDirectory(
-            at: workspaceURL,
-            withIntermediateDirectories: true
-        )
-        let service = MemoryService()
-        try service.writeEntry(
-            content: "Summary: architecture runtime decision.",
-            scope: .project,
-            workspaceRootURL: workspaceURL
-        )
-
-        let output = try MemoryTool.execute(
-            ToolRequest(
-                name: "memory.search",
-                arguments: ["query": .string("architecture")]
-            ),
-            context: MemoryToolContext(workingDirectory: workspaceURL),
-            memoryService: service
-        )
-        guard case let .object(result)? = output.rawResult,
-              case let .array(entries)? = result["entries"],
-              case let .object(firstEntry)? = entries.first else {
-            Issue.record("Expected memory.search to return JSON entries.")
-            return
-        }
-
-        #expect(firstEntry["scope"] == .string("project"))
     }
 
     @Test

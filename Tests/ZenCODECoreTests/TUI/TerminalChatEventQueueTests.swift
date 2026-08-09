@@ -165,9 +165,11 @@ struct TerminalChatEventQueueTests {
 
     /// The Core bounds every observer stream; without a bound here the same
     /// growth would simply move into the task that forwards those events into
-    /// the terminal. Under overflow the render events go first, oldest first.
+    /// the terminal. Under overflow the evictable roster events go first, oldest
+    /// first; a shared-chat message is never evicted (backpressure guarantees it
+    /// reaches every active observer).
     @Test
-    func overflowEvictsOldestRenderEventsFirst() async {
+    func overflowEvictsOldestEvictableRenderEventsFirst() async {
         let queue = TerminalChatEventQueue(capacity: 3)
         queue.send(.sharedChatMessages(roomID: "room", messages: []))
         queue.send(.sharedChatParticipantsChanged(roomID: "room"))
@@ -184,13 +186,17 @@ struct TerminalChatEventQueueTests {
                 delivered.append(event)
             }
         }
-        // The oldest render event was evicted; ordering of the survivors holds.
+        // The non-evictable shared-chat message survives; the oldest evictable
+        // roster event was evicted, leaving the newest roster event last.
         #expect(delivered.count == 3)
-        if case .sharedChatParticipantsChanged = delivered[0] {} else {
-            Issue.record("Expected the oldest render event to be evicted first")
+        if case .sharedChatMessages = delivered[0] {} else {
+            Issue.record("Expected the shared-chat message to survive overflow")
         }
         if case .input(.submitted("operator work")) = delivered[1] {} else {
             Issue.record("Expected operator work to survive the overflow")
+        }
+        if case .sharedChatParticipantsChanged = delivered[2] {} else {
+            Issue.record("Expected the newest roster event to survive")
         }
     }
 

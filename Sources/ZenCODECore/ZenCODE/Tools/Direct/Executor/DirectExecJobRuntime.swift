@@ -94,6 +94,66 @@ final class DirectExecJobTranscript: Sendable {
     }
 }
 
+#if os(macOS) || os(Linux)
+/// Serializes readability callbacks with the final pipe drain. Once `finish()`
+/// returns, every byte already written by the exited process is in the transcript.
+private final class DirectExecJobOutputReader: Sendable {
+    private let isFinishing = Mutex(false)
+    private let handle: FileHandle
+    private let transcript: DirectExecJobTranscript
+
+    init(handle: FileHandle, transcript: DirectExecJobTranscript) {
+        self.handle = handle
+        self.transcript = transcript
+
+        let descriptor = handle.fileDescriptor
+        let currentFlags = fcntl(descriptor, F_GETFL)
+        if currentFlags >= 0 {
+            _ = fcntl(descriptor, F_SETFL, currentFlags | O_NONBLOCK)
+        }
+    }
+
+    func start() {
+        handle.readabilityHandler = { [self] _ in
+            isFinishing.withLock { isFinishing in
+                guard !isFinishing else { return }
+                drainAvailableBytes()
+            }
+        }
+    }
+
+    /// Stops future callbacks, waits for an in-flight callback, then performs a
+    /// non-blocking drain. A descendant may still hold the write end open, so
+    /// waiting for EOF here would incorrectly keep an exited shell alive forever.
+    func finish() {
+        handle.readabilityHandler = nil
+        isFinishing.withLock { isFinishing in
+            isFinishing = true
+            drainAvailableBytes()
+        }
+    }
+
+    private func drainAvailableBytes() {
+        let descriptor = handle.fileDescriptor
+        var scratch = [UInt8](repeating: 0, count: 65_536)
+        while true {
+            let bytesRead = scratch.withUnsafeMutableBytes { buffer -> Int in
+                guard let baseAddress = buffer.baseAddress else { return 0 }
+                return read(descriptor, baseAddress, buffer.count)
+            }
+            if bytesRead > 0 {
+                transcript.append(Data(scratch[0 ..< bytesRead]))
+                continue
+            }
+            if bytesRead < 0, errno == EINTR {
+                continue
+            }
+            return
+        }
+    }
+}
+#endif
+
 /// Owns background shell jobs started by `local.exec` with background=true.
 /// Job launch stays behind the `local.exec` authorization gate; `exec.job`
 /// only manages processes that were already approved and started.
@@ -121,6 +181,7 @@ public actor DirectExecJobRuntime {
         let startedAt = Date()
         let process: Process
         let exitMonitor: FeatureProcessExitMonitor
+        let outputReaders: [DirectExecJobOutputReader]
         let transcript: DirectExecJobTranscript
         var status: JobStatus = .running
         var exitCode: Int32?
@@ -141,6 +202,7 @@ public actor DirectExecJobRuntime {
             workingDirectory: String,
             process: Process,
             exitMonitor: FeatureProcessExitMonitor,
+            outputReaders: [DirectExecJobOutputReader],
             transcript: DirectExecJobTranscript
         ) {
             self.id = id
@@ -148,6 +210,7 @@ public actor DirectExecJobRuntime {
             self.workingDirectory = workingDirectory
             self.process = process
             self.exitMonitor = exitMonitor
+            self.outputReaders = outputReaders
             self.transcript = transcript
         }
     }
@@ -199,16 +262,9 @@ public actor DirectExecJobRuntime {
         // let them steal keystrokes (including authorization answers) for as
         // long as they run.
         process.standardInput = FileHandle.nullDevice
-        for handle in [stdoutPipe.fileHandleForReading, stderrPipe.fileHandleForReading] {
-            handle.readabilityHandler = { fileHandle in
-                let chunk = fileHandle.availableData
-                if chunk.isEmpty {
-                    fileHandle.readabilityHandler = nil
-                } else {
-                    transcript.append(chunk)
-                }
-            }
-        }
+        let outputReaders = [stdoutPipe.fileHandleForReading, stderrPipe.fileHandleForReading]
+            .map { DirectExecJobOutputReader(handle: $0, transcript: transcript) }
+        outputReaders.forEach { $0.start() }
 
         let exitMonitor = FeatureProcessExitMonitor { [weak self] exitCode in
             Task(name: "local.exec background job exit monitor") {
@@ -232,6 +288,7 @@ public actor DirectExecJobRuntime {
             workingDirectory: workingDirectory.path,
             process: process,
             exitMonitor: exitMonitor,
+            outputReaders: outputReaders,
             transcript: transcript
         )
         #if os(Linux)
@@ -376,6 +433,9 @@ public actor DirectExecJobRuntime {
         guard let job = jobsByID[jobID], job.status == .running else {
             return
         }
+        // Process termination can beat Foundation's readability callbacks on
+        // Linux. Synchronize and drain both pipes before exposing terminal state.
+        job.outputReaders.forEach { $0.finish() }
         job.status = job.killRequested ? .killed : .exited
         job.exitCode = exitCode
         job.finishedAt = Date()

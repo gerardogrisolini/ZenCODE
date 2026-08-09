@@ -51,11 +51,11 @@ and restores the conversation without closing the app.
 
 Creates files under `~/.zencode/`:
 
-- `settings.json` — provider/model configuration, selected model, optional Telegram and voice settings.
+- `settings.json` — provider/model configuration, selected model, optional Telegram, voice, and memory-embedding settings (endpoint, optional model).
 - `permissions.json` — persistent runtime approvals.
 - `agents.json` — agent profiles, authorized model bindings, tools, and instructions.
 - `AGENTS.md` — global operating guidance.
-- `MEMORY.md` — lightweight global resume index.
+- `memory/` — per-workspace project memory graphs: one `memory.graph.json` per workspace, under a SHA-256 digest of the workspace path.
 - `sessions/` — saved session snapshots grouped by project.
 - `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans.
 - `features/` — generated Builder packages and installed optional feature packages.
@@ -64,7 +64,7 @@ Creates files under `~/.zencode/`:
 ## Command Line Options
 
 ```text
-zen [--doctor] [--acp] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--agent NAME] [--model MODEL_ID] [--cwd PATH] [--skills LIST]
+zen [--doctor] [--acp] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
 ```
 
 - `--doctor`: print a redacted, read-only diagnostic report and exit. It never
@@ -75,7 +75,7 @@ zen [--doctor] [--acp] [--install-features [id,id,...]] [--no-features] [--zen-p
 - `--zen-package-path DIR`: use this ZenCODE checkout as the feature source and rewritten local package dependency. This is useful after a manual installation; platform installers preserve their checkout under `~/.zencode/source/` automatically.
 - `--agent NAME`: select an agent profile (default: `Developer`).
 - `--model MODEL_ID`: request a model override for the direct session; delegated sub-agents remain restricted to the selected profile's authorized bindings.
-- `--cwd PATH`: working directory for local tools.
+- `--working-directory PATH`: working directory for local tools.
 - `--skills LIST`: initial skill selection by name/number, `all`, or `none`.
 - `--max-tool-rounds N`: maximum model/tool loop rounds per prompt.
 - `--max-output-tokens N`: maximum generated tokens per model call.
@@ -242,10 +242,20 @@ Commands start with `/`:
 While sub-agents are active, the coordinator and the agent instances share a
 live, transient chat room. From the terminal, address it with a leading mention:
 `@coordinator` to message the live coordinator, `@all` to reach the coordinator
-and every active agent, or the `@agent-…` handle an instance advertises to
-message it directly. The LLM side uses the `agent.message` tool with the same
-destinations (`direct`, `coordinator`, `peers`, `all`). The chat is in-memory and
-never persisted; a session reset drops it. See [agents.md](agents.md#shared-chat).
+and every active agent, or a readable `@agent-name` handle (derived from each
+instance's display name) to message it directly. Autocomplete lists every active
+agent by its readable handle; routing always resolves back to the stable agent
+id behind the alias. The LLM side uses the `agent.message` tool with the same
+destinations (`direct`, `operator`, `coordinator`, `peers`, `all`); `operator`
+addresses only the human terminal operator. Every message is shown
+as a blue card in every active terminal, and each recipient — idle, running or
+standby — replies to it as the next serial turn of its own work loop, without
+depending on a tool call. A direct turn started by the human operator normally
+replies with `agent.message(to: "operator")`; if a provider instead completes
+with ordinary final output, the runtime delivers that output to `operator`
+without involving the coordinator or duplicating an explicit chat reply. The
+chat is in-memory and never persisted; a session reset drops it. See
+[agents.md](agents.md#shared-chat).
 
 ### Saving and Loading Plans
 
@@ -395,18 +405,19 @@ Durable context is separated by responsibility:
 
 - Project `AGENTS.md` — workspace-specific constraints and workflows. Check into version control.
 - Global `~/.zencode/AGENTS.md` — cross-workspace operating rules.
-- Project `MEMORY.md` — codebase journal with `Timestamp`, `Summary`, `State`, and `Next`; `Updated` records changes to an existing entry.
-- Global `~/.zencode/MEMORY.md` — lightweight resume index only.
+- Project memory — a per-workspace graph of durable project facts stored outside the working tree at `~/.zencode/memory/<workspace-digest>/memory.graph.json` (honouring `ZENCODE_SUPPORT_DIRECTORY`). A legacy project `MEMORY.md` is imported into the graph in memory on first open and then left untouched — the graph file is created only by the first memory mutation or recall maintenance, so a cold search/read never writes — and `MEMORY.md` itself is no longer written. Memory is project-scoped only; there is no global memory store.
 
-The Memory tool group supports maintaining the journal without accumulating avoidable duplicates:
+The Memory tool group maintains project memory without accumulating avoidable duplicates:
 
 - `memory.read` reads recent entries; use `detail: "index"` for a compact summary/ID view and the default `detail: "full"` for complete content.
-- `memory.search` ranks exact phrases and structured `Summary`/`State` matches ahead of incidental body mentions.
-- `memory.write` appends a new entry.
-- `memory.update` brings an existing entry current without changing its ID or archive state; it preserves the original `Timestamp` and adds `Updated` when omitted.
-- `memory.archive` removes stale entries from normal resume context without deleting their history.
+- `memory.search` runs BM25 keyword retrieval over the graph and follows links to related entries; with an embedding provider configured it fuses semantic hits in via reciprocal-rank fusion. It is strictly read-only: searching never rewrites the graph or its retrieval statistics — only automatic recall performs that maintenance.
+- `memory.write` adds a new entry; writing content that already matches an active entry returns that entry instead of duplicating it, and the tool says so — the result reports `written`/`deduplicated` truthfully instead of claiming every call saved something.
+- `memory.update` rewrites an entry in place: the id, creation date, and archive state are preserved, the original `Timestamp` is kept and `Updated` added when omitted.
+- `memory.archive` deactivates a stale entry by id so it stops influencing retrieval without being deleted.
 
-Before writing, search for an active entry about the same durable project fact. Update it when appropriate instead of appending a duplicate, and do not write when nothing materially changed. The journal remains ordinary Markdown: existing entries and the `## Active` / `## Archived` format require no migration. Legacy entries without an `[id: …]` marker receive a deterministic ID when read; their next successful mutation persists that ID. Mutations are serialized within one ZenCODE process; separate processes editing the same `MEMORY.md` are not coordinated.
+Before writing, search for an active entry about the same durable project fact. Update it when appropriate instead of appending a duplicate, and do not write when nothing materially changed. Embeddings are opt-in and off by default: without a provider, entries carry no vector and retrieval is pure BM25 keyword matching. The embedding configuration is an endpoint URL plus an optional model: configure it in `/setup` ("Memory embeddings": BM25 only / add / change / remove), where an OpenRouter choice is proposed immediately when OpenRouter is among the configured providers (canonical endpoint `https://openrouter.ai/api/v1/embeddings`, model `qwen/qwen3-embedding-8b`), or for compatibility export `ZENCODE_MEMORY_EMBEDDING_ENDPOINT` (endpoint only). Setup validates the URL locally and never connects to it. When a model is configured ZenCODE sends it in the request body; otherwise the endpoint identifies the embedding model itself and the request omits `model`, so an endpoint-only OpenAI-compatible `/v1/embeddings` server chooses. The OpenRouter preset reuses the configured provider's API key at runtime only when the referenced provider is a configured OpenRouter provider and the embedding endpoint is itself an OpenRouter endpoint — the key is never duplicated in the embedding settings, and manual endpoint edits reset to an endpoint-only configuration so an edited endpoint can never forward the key to another host; custom/legacy endpoint-only setups send no Authorization header. Entries record the model identity that embedded them, so changing the provider degrades retrieval to keyword matching instead of returning mismatched results. Mutations are serialized per workspace within one ZenCODE process, and each one commits only after the graph save succeeded: a failing save leaves the in-memory graph unchanged.
+
+The vendored engine ships optional intelligence layers — a query analyzer (default `DirectMemoryQueryAnalyzer`, which uses the prompt as the query), a selector, an extractor (default `NoopMemoryExtractor`, which extracts nothing) and a context formatter — plus `context(for:)` (a ready-to-inject memory block) and `learn(from:)`; these remain unwired engine internals. Automatic recall is wired and on by default: before each turn ZenCODE retrieves relevant entries — BM25 plus graph expansion locally (or semantic similarity plus fusion when an endpoint is configured), never a second LLM call — and injects them as a labelled `<project-memory>` block into the outgoing copy of the last user message on every tool round, bounded by a deadline (`ZENCODE_MEMORY_RECALL_TIMEOUT_MS`, default 150 ms) so a slow, broken, or empty graph degrades to no memory instead of delaying the turn. The block itself does add input tokens to the request, so it is capped by a character budget (`ZENCODE_MEMORY_RECALL_MAX_CHARACTERS`, default 4 000 characters ≈ about 1k tokens, clamped to [200, 32 000]); recalled content is escaped so it cannot close the container, and the payload is truncated on line boundaries with a notice when it does not fit. The block is a transient per-turn channel merged into the outgoing copy of the last user message only — exactly once per round, because it is never written back into the session — and it never enters conversation history, saved-session snapshots, or the session cache key, so saved sessions and prompt caching are unaffected. Delegated sub-agent turns receive the same recall. The main model reads and writes durable memory explicitly through the five `memory.*` tools above. `ZENCODE_MEMORY_AUTO_RECALL` (default on) switches recall off.
 
 ZenCODE reads `AGENTS.md` from the working directory when present. Startup never creates or rewrites it.
 
@@ -421,10 +432,10 @@ ZenCODE reads `AGENTS.md` from the working directory when present. Startup never
 ## ACP Mode
 
 ```bash
-zen --acp --cwd /path/to/project
+zen --acp --working-directory /path/to/project
 ```
 
-stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, and tool exposure. `--agent`, `--model`, `--cwd`, `--skills`, and token environment variables still apply.
+stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, and tool exposure. `--agent`, `--model`, `--working-directory`, `--skills`, and token environment variables still apply.
 
 ## Recommended Workflow
 
@@ -437,7 +448,7 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, a
 7. `/changes diff` and Git — inspect changes.
 8. `/review` — read-only review before commit.
 9. `/sessions name` — save meaningful checkpoints.
-10. Update project `MEMORY.md` at handoff points.
+10. Update project memory at handoff points (via `memory.write` / `memory.update`).
 
 ## Troubleshooting
 

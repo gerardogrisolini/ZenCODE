@@ -10,7 +10,10 @@ import Glibc
 @testable import ZenCODECore
 import Testing
 
-@Suite
+/// Process exit is asynchronous by design. The tests wait for the runtime's
+/// terminal status, not a guessed wall-clock delay; the suite limit remains the
+/// guard against a genuine process-management regression.
+@Suite(.timeLimit(.minutes(1)))
 struct DirectExecJobRuntimeTests {
     @Test
     func catalogExposesExecJobAndBackgroundFlag() {
@@ -133,34 +136,20 @@ struct DirectExecJobRuntimeTests {
         #expect(startResult.status == .completed)
         #expect(startResult.output.contains("Started background job job-1"))
 
-        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
-        var pollOutput = ""
-        repeat {
-            let pollResult = await executor.execute(
-                sessionID: "exec-job-tests",
-                toolCall: DirectAgentToolCall(
-                    id: "call-2",
-                    name: "exec.job",
-                    argumentsObject: ["action": "poll", "id": "job-1"],
-                    argumentsJSON: #"{"action":"poll","id":"job-1"}"#
-                ),
-                workingDirectory: workingDirectory,
-                allowedToolNames: ["local.exec", "exec.job"]
-            )
-            pollOutput = pollResult.output
-            if pollOutput.contains("exited (code 0)"),
-               pollOutput.contains("executor-background") {
-                break
-            }
-            try await Task.sleep(for: .milliseconds(100))
-        } while ContinuousClock.now < deadline
+        let pollOutput = await pollExecutorUntil(
+            executor: executor,
+            sessionID: "exec-job-tests",
+            workingDirectory: workingDirectory
+        ) {
+            $0.contains("exited (code 0)") && $0.contains("executor-background")
+        }
         #expect(
             pollOutput.contains("exited (code 0)"),
-            "Background job did not exit within 30 seconds. Last poll:\n\(pollOutput)"
+            "Background job did not report its exit. Last poll:\n\(pollOutput)"
         )
         #expect(
             pollOutput.contains("executor-background"),
-            "Background job transcript was incomplete after 30 seconds. Last poll:\n\(pollOutput)"
+            "Background job transcript was incomplete. Last poll:\n\(pollOutput)"
         )
 
         let listResult = await executor.execute(
@@ -200,16 +189,43 @@ struct DirectExecJobRuntimeTests {
     private func pollUntil(
         runtime: DirectExecJobRuntime,
         jobID: String,
-        timeout: TimeInterval = 10,
         condition: (String) -> Bool
     ) async throws -> String {
-        let deadline = Date().addingTimeInterval(timeout)
         var output = try await runtime.poll(jobID: jobID, offset: 0)
-        while !condition(output), Date() < deadline {
-            try await Task.sleep(nanoseconds: 100_000_000)
+        while !condition(output) {
+            await Task.yield()
             output = try await runtime.poll(jobID: jobID, offset: 0)
         }
         return output
+    }
+
+    /// The executor owns the job runtime, so exercising the tool dispatch needs
+    /// to perform the real `exec.job` call each round. Yielding lets the process
+    /// exit monitor publish its status without making test correctness depend on
+    /// a fixed sleep interval.
+    private func pollExecutorUntil(
+        executor: DirectToolExecutor,
+        sessionID: String,
+        workingDirectory: URL,
+        condition: (String) -> Bool
+    ) async -> String {
+        while true {
+            let pollResult = await executor.execute(
+                sessionID: sessionID,
+                toolCall: DirectAgentToolCall(
+                    id: UUID().uuidString,
+                    name: "exec.job",
+                    argumentsObject: ["action": "poll", "id": "job-1"],
+                    argumentsJSON: #"{"action":"poll","id":"job-1"}"#
+                ),
+                workingDirectory: workingDirectory,
+                allowedToolNames: ["local.exec", "exec.job"]
+            )
+            if condition(pollResult.output) {
+                return pollResult.output
+            }
+            await Task.yield()
+        }
     }
 #endif
 
@@ -237,32 +253,22 @@ struct DirectExecJobRuntimeTests {
             workingDirectory: FileManager.default.temporaryDirectory
         )
 
-        // Wait for the child PID to land in the marker file.
-        let startDeadline = Date().addingTimeInterval(5)
-        var childPID: Int32 = 0
-        while Date() < startDeadline {
-            if let text = try? String(contentsOf: markerURL, encoding: .utf8),
-               let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                childPID = pid
-                break
-            }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-        try #require(childPID > 0)
+        // Wait for the child PID to land in the marker file. The marker itself
+        // is the process-start handshake, so there is no scheduling budget to
+        // tune under parallel CI load.
+        let childPID = await waitForLinuxChildPID(at: markerURL)
+        #expect(childPID > 0)
 
         _ = try await runtime.kill(jobID: "job-1")
         _ = try await pollUntil(runtime: runtime, jobID: "job-1") {
             $0.contains("killed")
         }
 
-        // Allow time for the SIGTERM → 2s grace → SIGKILL escalation to stop the
-        // whole group. Minimal CI containers do not always run an init process
-        // that promptly reaps orphaned zombies; `kill(pid, 0)` still succeeds for
-        // those already-dead processes, so inspect the Linux process state too.
-        let reapDeadline = Date().addingTimeInterval(6)
-        while Date() < reapDeadline {
-            if !linuxProcessIsRunning(childPID) { break }
-            try await Task.sleep(nanoseconds: 100_000_000)
+        // `kill(pid, 0)` still succeeds for exited-but-unreaped zombies in
+        // minimal containers, so inspect `/proc` until the child is no longer
+        // executable. The suite time limit bounds an actual runtime regression.
+        while linuxProcessIsRunning(childPID) {
+            await Task.yield()
         }
         #expect(
             !linuxProcessIsRunning(childPID),
@@ -293,6 +299,16 @@ struct DirectExecJobRuntimeTests {
             return true
         }
         return fields[1] != "Z" && fields[1] != "X" && fields[1] != "x"
+    }
+
+    private func waitForLinuxChildPID(at markerURL: URL) async -> Int32 {
+        while true {
+            if let text = try? String(contentsOf: markerURL, encoding: .utf8),
+               let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return pid
+            }
+            await Task.yield()
+        }
     }
 #endif
 }

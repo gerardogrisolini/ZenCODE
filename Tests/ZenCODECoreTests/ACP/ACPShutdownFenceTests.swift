@@ -116,7 +116,9 @@ struct ACPShutdownFenceTests {
         )
         return ZenCODEACPBridge(
             configuration: configuration,
-            writer: ACPWriter(),
+            // These tests assert lifecycle state, not transport bytes.
+            // Avoid interleaving JSON on the process-wide stdout across cases.
+            writer: ACPWriter(sink: { _ in }),
             backendFactory: { _, _ in
                 createdBackends?.increment()
                 return ShutdownFenceBackend(preloadGate: gate)

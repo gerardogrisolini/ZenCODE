@@ -186,7 +186,7 @@ extension DirectToolExecutor {
                 name: toolCall.name,
                 arguments: Self.toolArguments(from: toolCall.argumentsJSON)
             )
-            let output = try MemoryTool.execute(
+            let output = try await MemoryTool.executeAsync(
                 request,
                 context: MemoryToolContext(workingDirectory: workingDirectory)
             ).text
@@ -207,7 +207,7 @@ extension DirectToolExecutor {
             throw DirectToolError.missingArgument("command")
         }
         let cwd = resolvePath(
-            arguments.string("cwd", "workingDirectory") ?? ".",
+            arguments.string("workingDirectory") ?? ".",
             cwd: workingDirectory
         )
         if let deniedOutput = await deniedLocalExecOutputIfNeeded(

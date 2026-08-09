@@ -92,7 +92,9 @@ struct ACPSessionLifecycleConcurrencyTests {
         )
         return ZenCODEACPBridge(
             configuration: configuration,
-            writer: ACPWriter(),
+            // These tests assert bridge and runner state, not transport bytes.
+            // Avoid interleaving JSON on the process-wide stdout across cases.
+            writer: ACPWriter(sink: { _ in }),
             backendFactory: { _, _ in backend }
         )
     }

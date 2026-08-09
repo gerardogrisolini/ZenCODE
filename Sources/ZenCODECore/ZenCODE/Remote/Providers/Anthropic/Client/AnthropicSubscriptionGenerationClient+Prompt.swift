@@ -79,6 +79,13 @@ extension AnthropicSubscriptionGenerationClient {
                         modelLLMID: modelLLMID,
                         credentials: credentials,
                         includeThinkingBlocks: !didRetryAfterThinkingReplayRejection,
+                        // Every tool round. The inner `while true` retries
+                        // (thinking-replay rejection, context-limit compaction)
+                        // are re-attempts of this same round and legitimately
+                        // keep the block; each round's outgoing copy is rebuilt
+                        // from `session.messages`, so the block appears exactly
+                        // once per request.
+                        applyTurnMemory: true,
                         onEvent: onEvent
                     )
                 } catch {

@@ -20,7 +20,7 @@ struct AgentConfigurationTests {
             "zen",
             "--agent",
             "Developer",
-            "--cwd",
+            "--working-directory",
             "/tmp",
         ])
     }
@@ -57,7 +57,7 @@ struct AgentConfigurationTests {
             arguments: [
                 "zen",
                 "--help",
-                "--cwd",
+                "--working-directory",
                 explicitDirectory.path,
             ]
         )

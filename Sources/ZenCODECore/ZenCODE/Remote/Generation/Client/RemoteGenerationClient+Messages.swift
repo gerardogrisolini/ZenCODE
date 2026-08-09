@@ -56,6 +56,72 @@ extension RemoteGenerationClient {
         ] + (contextMessage.map { [$0] } ?? []) + seededHistory
     }
 
+    /// Returns a copy of `messages` with the current turn's memory block
+    /// appended to the last user message.
+    ///
+    /// This is the single place where automatically recalled memory enters a
+    /// provider request, and it is shared by every concrete generation client
+    /// so the three wire formats cannot drift apart.
+    ///
+    /// Contract:
+    ///
+    /// - The input is returned **unchanged** when the block is nil or blank, so
+    ///   a turn without memory produces a byte-identical payload.
+    /// - Only the outgoing copy is touched. Callers pass `session.messages` by
+    ///   value and must never write the result back, which is what keeps the
+    ///   block out of conversation history, saved snapshots and the session
+    ///   cache key.
+    /// - Multimodal content is preserved: when the last user message already
+    ///   carries an array of content items (text plus images), the block is
+    ///   appended as one more `text` item instead of clobbering the array with
+    ///   a string, which would silently drop the attached images.
+    /// - Callers apply this on **every** tool round, always against the current
+    ///   value of `session.messages`. Because the block is never written back,
+    ///   each round's outgoing copy is rebuilt from the fresh original and
+    ///   carries the block exactly once; applying the helper to an array that
+    ///   already contains the block (a previous outgoing copy) is what would
+    ///   duplicate it, and call sites never do that.
+    ///
+    /// The default argument reads the task-local at the *call site*, which is
+    /// what makes the turn-scoped binding visible here without threading the
+    /// block through every provider signature.
+    public static func applyingCurrentTurnMemory(
+        to messages: [[String: Any]],
+        block: String? = MemoryTurnContext.currentTurnMemoryBlock
+    ) -> [[String: Any]] {
+        guard let block = block?.nilIfBlank else {
+            return messages
+        }
+        guard let lastUserIndex = messages.lastIndex(where: { message in
+            stringValue(message["role"])?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() == "user"
+        }) else {
+            // No user message to attach to (a replayed tool-only tail, for
+            // example). Injecting a synthetic one would change the shape of the
+            // conversation, so the request is left exactly as it was.
+            return messages
+        }
+
+        var updated = messages
+        var message = updated[lastUserIndex]
+        if let text = message["content"] as? String {
+            message["content"] = text.isEmpty ? block : "\(text)\n\n\(block)"
+        } else if var items = message["content"] as? [[String: Any]] {
+            items.append([
+                "type": "text",
+                "text": block
+            ])
+            message["content"] = items
+        } else {
+            // Unrecognized content shape: leave the request untouched rather
+            // than guessing a representation the provider may reject.
+            return messages
+        }
+        updated[lastUserIndex] = message
+        return updated
+    }
+
     private static func appendingTaskWorkflowPolicy(
         to message: [String: Any],
         allowedToolNames: Set<String>?
@@ -110,6 +176,7 @@ extension RemoteGenerationClient {
         }
         return allowedToolNames.contains { $0.hasPrefix("memory.") }
     }
+
 
     public static func remoteMessage(from message: AgentRuntimeMessage) -> [String: Any]? {
         var payload = remoteMessage(

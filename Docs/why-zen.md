@@ -22,7 +22,7 @@ Why this project exists and where it differs from other coding agents.
 
 ## Performance
 
-- Low client overhead: prompt assembly, tool dispatch, and streaming run in a single compiled Swift process, so the only network hop is the request to your chosen provider.
+- Low client overhead: prompt assembly, tool dispatch, and streaming run in a single compiled Swift process. The main model uses one provider request per round; optional semantic memory adds a separate call only to the configured embedding endpoint.
 - Resume without re-work: sessions restore from on-disk snapshots and checkpoint trees, so continuing a conversation reuses the saved transcript and plan instead of rebuilding local state from scratch.
 - Tiny footprint on modest hardware: compiled ahead of time to a native binary with no interpreter or Node runtime, ZenCODE starts in around 20 MB of RAM, growing with the size of the session it keeps in memory. That makes it an ideal fit for constrained devices like a Raspberry Pi, where it stays fast and responsive while the heavy model work runs on the provider.
 
@@ -39,7 +39,7 @@ Why this project exists and where it differs from other coding agents.
 - Capability-based delegation: each profile's model bindings carry a capability score (1–10) and every task a complexity (1–10), so the coordinator steers each unit of work to the lowest-capability sub-agent that still meets it — matching effort to task instead of picking by seniority. See [bindings.md](bindings.md).
 - Dynamic Swift Features: the Builder generates reusable Swift packages as durable tools.
 - Change tracking and `/undo` as a safety net.
-- Saved sessions with checkpoint trees: per-project snapshots with branching, checkpoints, and in-place restore from any point; project `MEMORY.md` journal, `AGENTS.md` for durable guidance.
+- Saved sessions with checkpoint trees: per-project snapshots with branching, checkpoints, and in-place restore from any point; per-project graph-backed memory with automatic recall — BM25 keyword retrieval plus graph expansion (no second LLM call), injected into every round of the turn as a character-budgeted block (about 1k tokens by default) — optional semantic search via an embeddings configuration (endpoint, optional model; set up in `/setup`, with an OpenRouter proposal when OpenRouter is a configured provider; pure BM25 when unset), and explicit model-managed durable memory through the five `memory.*` tools; plus `AGENTS.md` for durable guidance.
 - Modular skills selectable per session, installable from GitHub or a local folder.
 
 ## Extras

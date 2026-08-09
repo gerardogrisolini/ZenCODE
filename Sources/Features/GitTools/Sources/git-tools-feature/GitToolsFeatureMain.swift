@@ -13,7 +13,6 @@ struct GitStatusTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
     }
 
     static let name = "git.status"
@@ -29,7 +28,6 @@ struct GitDiffTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let staged: Bool?
         let cached: Bool?
         let file: String?
@@ -69,7 +67,6 @@ struct GitShowTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let revision: String?
         let rev: String?
         let commit: String?
@@ -83,7 +80,7 @@ struct GitShowTool: FeatureTool {
     static let inputSchema = buildInputSchema(
         [.string("revision"), .string("rev"), .string("commit")]
             + CommonSchemaProperties.pathAliases
-            + [.string("workingDirectory"), .string("cwd")]
+            + [.string("workingDirectory")]
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
@@ -100,7 +97,6 @@ struct GitLogTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let limit: Int?
         let n: Int?
     }
@@ -122,7 +118,6 @@ struct GitBranchTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let all: Bool?
         let remotes: Bool?
         let contains: String?
@@ -153,7 +148,6 @@ struct GitRemoteTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
     }
 
     static let name = "git.remote"
@@ -169,7 +163,6 @@ struct GitLsFilesTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let includeUntracked: Bool?
         let maxResults: Int?
         let max_results: Int?
@@ -200,7 +193,6 @@ struct GitGrepTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let pattern: String?
         let paths: [String]?
         let maxResults: Int?
@@ -250,7 +242,6 @@ struct GitBlameTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let file: String?
         let file_path: String?
         let startLine: Int?
@@ -261,7 +252,7 @@ struct GitBlameTool: FeatureTool {
     static let description = "Shows git blame for a file, optionally scoped to a line range."
     static let inputSchema = buildInputSchema(
         [.string("file"), .string("path"), .string("file_path"),
-         .string("workingDirectory"), .string("cwd"),
+         .string("workingDirectory"),
          .number("startLine"), .number("endLine")],
         required: ["file"]
     )
@@ -285,7 +276,6 @@ struct GitAddTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let paths: [String]?
         let all: Bool?
     }
@@ -317,7 +307,6 @@ struct GitRestoreTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let paths: [String]?
         let staged: Bool?
         let worktree: Bool?
@@ -357,7 +346,6 @@ struct GitCommitTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let message: String?
         let all: Bool?
     }
@@ -386,7 +374,6 @@ struct GitPushTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let remote: String?
         let branch: String?
         let refspec: String?
@@ -444,7 +431,6 @@ struct GitFetchTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let remote: String?
         let branch: String?
         let refspec: String?
@@ -486,7 +472,6 @@ struct GitPullTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let remote: String?
         let branch: String?
         let refspec: String?
@@ -533,7 +518,6 @@ struct GitStashTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let action: String?
         let message: String?
         let stash: String?
@@ -560,7 +544,6 @@ struct GitSwitchTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
-        let cwd: String?
         let branch: String?
         let create: Bool?
     }
@@ -618,7 +601,7 @@ private func gitPresentation(
     title: String,
     action: String,
     kind: ToolPresentationKind = .read,
-    targetKeys: [String] = ["path", "workingDirectory", "cwd"]
+    targetKeys: [String] = ["path", "workingDirectory"]
 ) -> ToolPresentationDefinition {
     .standard(title: title, action: action, kind: kind, targetKeyPaths: targetKeys)
 }
@@ -655,7 +638,7 @@ extension GitLogTool {
 
 extension GitBranchTool {
     static var presentation: ToolPresentationDefinition {
-        gitPresentation(title: "Git branches", action: "List", targetKeys: ["contains", "path", "workingDirectory", "cwd"])
+        gitPresentation(title: "Git branches", action: "List", targetKeys: ["contains", "path", "workingDirectory"])
     }
 }
 

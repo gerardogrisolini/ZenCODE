@@ -11,6 +11,48 @@ import Glibc
 import Dispatch
 import Foundation
 
+/// Serializes ordinary and shared-chat-generated turns in the blocking input
+/// fallback. Unlike the interactive panel, that loop has no event queue whose
+/// `isGenerating` state can provide the same exclusion.
+private actor TerminalBlockingPromptGate {
+    private var isHeld = false
+    private var waiters: [(
+        id: UUID,
+        continuation: CheckedContinuation<Bool, Never>
+    )] = []
+
+    func acquire() async -> Bool {
+        guard !Task.isCancelled else { return false }
+        guard isHeld else {
+            isHeld = true
+            return true
+        }
+        let waiterID = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                waiters.append((waiterID, continuation))
+            }
+        } onCancel: {
+            Task(name: "ZenCODE.TUI.blocking-prompt-gate-cancel") {
+                await self.cancelWaiter(waiterID)
+            }
+        }
+    }
+
+    func release() {
+        guard !waiters.isEmpty else {
+            isHeld = false
+            return
+        }
+        waiters.removeFirst().continuation.resume(returning: true)
+    }
+
+    private func cancelWaiter(_ id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        waiters.remove(at: index).continuation.resume(returning: false)
+    }
+}
+
 extension TerminalChat {
     /// Mirrors staged attachments into the input panel.  `promptAttempt`
     /// consumes local attachments synchronously, so callers invoke this as
@@ -132,7 +174,71 @@ extension TerminalChat {
 
     func runBlockingInputLoop(initialInputLine: String?) async throws {
         var pendingInputLine = initialInputLine
-        while true {
+        let promptGate = TerminalBlockingPromptGate()
+
+        func startSharedChatObservation(
+            roomID: String
+        ) async -> (
+            observation: AgentSharedChatCoordinator.Observation,
+            task: Task<Void, Never>
+        ) {
+            let observation = await sessionRunner.attachSharedChatObservation(
+                rootSessionID: roomID
+            )
+            let task = Task(name: "ZenCODE.TUI.blocking-shared-chat-events") { [weak self] in
+                for await event in observation.events {
+                    guard let self else { return }
+                    switch event {
+                    case let .messages(messages):
+                        // Operator messages were rendered synchronously by
+                        // `sendSharedChatMention`; render only incoming traffic.
+                        await self.renderSharedChatMessages(
+                            messages.filter { $0.sender.kind != .operator }
+                        )
+                    case .participantsChanged:
+                        break
+                    case let .autoTrigger(trigger):
+                        guard trigger.roomID == self.sessionID,
+                              trigger.roomID == observation.roomID else {
+                            await self.sessionRunner.declineSharedChatAutoTrigger(
+                                id: trigger.id,
+                                rootSessionID: trigger.roomID
+                            )
+                            continue
+                        }
+                        let claim = await self.sessionRunner.resolveSharedChatAutoTrigger(
+                            id: trigger.id,
+                            observation: observation,
+                            resolution: .started
+                        )
+                        guard claim == .acquired else { continue }
+
+                        guard await promptGate.acquire() else { return }
+                        // Session replacement can race while this trigger waits
+                        // behind an ordinary turn. The claimed batch is returned
+                        // by detach below rather than sent into the new session.
+                        guard trigger.roomID == self.sessionID else {
+                            await promptGate.release()
+                            continue
+                        }
+                        await self.runPromptBlocking(
+                            self.promptAttempt(
+                                prompt: trigger.prompt,
+                                origin: .local,
+                                isUserVisible: false
+                            )
+                        )
+                        await promptGate.release()
+                    }
+                }
+            }
+            return (observation, task)
+        }
+
+        var observedRoomID = sessionID
+        var sharedChatObservation = await startSharedChatObservation(roomID: observedRoomID)
+        var shouldContinue = true
+        while shouldContinue {
             let promptInput: String
             if stdinIsTerminal {
                 guard let line = await Self.readLineOffActor(
@@ -156,22 +262,46 @@ extension TerminalChat {
 
             switch await submittedLineAction(promptInput) {
             case .continueChat:
-                continue
+                break
             case .exitChat:
-                return
+                shouldContinue = false
             case .requestSetup:
                 requestedRuntimeSetup = true
-                return
+                shouldContinue = false
             case let .runPrompt(prompt):
+                guard await promptGate.acquire() else {
+                    shouldContinue = false
+                    break
+                }
                 await runPromptBlocking(promptAttempt(prompt: prompt))
+                await promptGate.release()
             case let .runHiddenPrompt(prompt, purpose):
+                guard await promptGate.acquire() else {
+                    shouldContinue = false
+                    break
+                }
                 await runPromptBlocking(
                     promptAttempt(prompt: prompt, isUserVisible: false, purpose: purpose)
                 )
+                await promptGate.release()
             case let .prefillPrompt(prompt):
                 await writeSystemMessage("Draft prompt:\n\(prompt)\n")
             }
+
+            if shouldContinue, observedRoomID != sessionID {
+                sharedChatObservation.task.cancel()
+                await sharedChatObservation.task.value
+                await sessionRunner.detachSharedChatObservation(
+                    sharedChatObservation.observation
+                )
+                observedRoomID = sessionID
+                sharedChatObservation = await startSharedChatObservation(roomID: observedRoomID)
+            }
         }
+
+        sharedChatObservation.task.cancel()
+        await sharedChatObservation.task.value
+        await sessionRunner.detachSharedChatObservation(sharedChatObservation.observation)
     }
 
     func runInteractivePanelLoop() async throws {
@@ -195,7 +325,13 @@ extension TerminalChat {
                 for await event in observation.events {
                     switch event {
                     case let .messages(messages):
-                        eventQueue.send(
+                        // Shared-chat messages are never evicted from the
+                        // bounded runtime queue: the box must reach this
+                        // observer within the transcript bound, so the forwarder
+                        // applies backpressure instead of dropping. The TUI
+                        // deduplicates by message id, so a replayed transcript
+                        // cannot double-render.
+                        _ = await eventQueue.sendWithBackpressure(
                             .sharedChatMessages(roomID: roomID, messages: messages)
                         )
                     case .participantsChanged:
@@ -231,6 +367,12 @@ extension TerminalChat {
         // observer never renders the same Message.id twice. The history is
         // bounded like the room transcript it mirrors.
         var renderedSharedChatMessageIDs = TerminalChat.SharedChatRenderedMessageIDs()
+        // Readable mention handles for the current roster (handle → participant
+        // id). Refreshed whenever the participant list changes so the parser
+        // always routes by the latest stable id behind a readable `@handle`.
+        var readableSharedChatMentionHandles = await sessionRunner.sharedChatMentionHandles(
+            rootSessionID: sharedChatRoomID
+        )
 
         defer {
             // Stop producers before terminating the queue so no task keeps
@@ -291,6 +433,9 @@ extension TerminalChat {
                 roomID: sharedChatRoomID
             )
             renderedSharedChatMessageIDs.removeAll()
+            readableSharedChatMentionHandles = await sessionRunner.sharedChatMentionHandles(
+                rootSessionID: sharedChatRoomID
+            )
             await synchronizeSharedChatConsumerBusyState()
         }
 
@@ -484,7 +629,10 @@ extension TerminalChat {
                     // branches so an operator can reach active agents and the
                     // coordinator while the terminal is generating. The Core
                     // coordinator still serializes any coordinator turn.
-                    switch Self.parseSharedChatMention(from: line) {
+                    switch Self.parseSharedChatMention(
+                        from: line,
+                        readableHandles: readableSharedChatMentionHandles
+                    ) {
                     case let .route(route):
                         if let messageID = await sendSharedChatMention(route) {
                             // The outbound card was rendered synchronously.
@@ -646,6 +794,9 @@ extension TerminalChat {
                 )
             case .sharedChatParticipantsChanged:
                 // Room binding was verified before entering this switch.
+                readableSharedChatMentionHandles = await sessionRunner.sharedChatMentionHandles(
+                    rootSessionID: sharedChatRoomID
+                )
                 await refreshSharedChatPanelSuggestions()
             case let .telegramMessage(message):
                 await handleTelegramMessage(

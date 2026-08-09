@@ -80,6 +80,7 @@ public enum ZenCODESetupRunner {
                     continue
                 }
                 try resetRemoteConfiguration()
+                await MemoryGraphStoreRegistry.shared.reset()
                 printCompletion()
                 return .reset
             }
@@ -106,6 +107,9 @@ public enum ZenCODESetupRunner {
                 stagedAgentProfiles: session.agentProfiles,
                 expectedBaseline: manifestBaseline
             )
+            if session.originalManifest?.memoryEmbedding != finalManifest.memoryEmbedding {
+                await MemoryGraphStoreRegistry.shared.reset()
+            }
             printResult(result, settingsWasWritten: shouldWriteSettings)
             printCompletion()
             return .configured
@@ -235,6 +239,10 @@ public enum ZenCODESetupRunner {
         case .responseLanguage:
             return SetupSectionConfigurationResult(
                 manifest: try configureResponseLanguage(existingManifest: manifest)
+            )
+        case .memoryEmbedding:
+            return SetupSectionConfigurationResult(
+                manifest: try configureMemoryEmbedding(in: manifest)
             )
         case .agentModels:
             let currentManifest = try requireExistingManifest(manifest)

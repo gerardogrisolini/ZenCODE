@@ -529,6 +529,7 @@ extension DirectSubAgentRuntime {
         }
         if discardingPendingPrompts {
             agent.pendingPrompts.removeAll()
+            agent.pendingOperatorReplyFlags.removeAll()
         }
         // `runTask` is deliberately left untouched: the work loop owns it and
         // clears it when it exits. Clearing it here while the loop is still in
@@ -644,6 +645,7 @@ extension DirectSubAgentRuntime {
             let runTask = agent.runTask
             agent.runTask = nil
             agent.pendingPrompts.removeAll()
+            agent.pendingOperatorReplyFlags.removeAll()
             agent.pendingRelease = false
             agent.pendingReleaseReason = nil
             agent.status = .closed
@@ -682,6 +684,10 @@ extension DirectSubAgentRuntime {
             }
             runTask?.cancel()
             await sharedChat.unregisterParticipant(id: agent.id, roomID: agent.rootSessionID)
+            // Same reason as `closeAgent`, once per child session: a delegated
+            // turn resolves recall under the sub-agent's own session id, and an
+            // interrupted root session must not leave that health state behind.
+            await MemoryTurnCoordinator.shared.discard(sessionID: agent.sessionID)
             await agent.backend.updateBorrowedSubAgentToolExecutor(nil)
             await agent.backend.shutdown()
             await releaseTasklessDelegationReservation(releasedReservation)
@@ -699,6 +705,7 @@ extension DirectSubAgentRuntime {
         let task = agent.runTask
         agent.runTask = nil
         agent.pendingPrompts.removeAll()
+        agent.pendingOperatorReplyFlags.removeAll()
         agent.pendingRelease = false
         agent.pendingReleaseReason = nil
         agent.status = .closed
@@ -734,6 +741,11 @@ extension DirectSubAgentRuntime {
         }
         task?.cancel()
         await sharedChat.unregisterParticipant(id: agent.id, roomID: agent.rootSessionID)
+        // Delegated turns receive automatic recall, so a closed sub-agent has
+        // recall state keyed by its own session id. Drop it here: the runtime
+        // recreates sub-agents freely, and a new one must not inherit a paused
+        // recall budget from the incarnation it replaces.
+        await MemoryTurnCoordinator.shared.discard(sessionID: agent.sessionID)
         await agent.backend.updateBorrowedSubAgentToolExecutor(nil)
         await agent.backend.shutdown()
         await releaseTasklessDelegationReservation(releasedReservation)
