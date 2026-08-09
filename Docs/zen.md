@@ -64,7 +64,7 @@ Creates files under `~/.zencode/`:
 ## Command Line Options
 
 ```text
-zen [--doctor] [--acp] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--agent NAME] [--model MODEL_ID] [--cwd PATH] [--skills LIST]
+zen [--doctor] [--acp] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
 ```
 
 - `--doctor`: print a redacted, read-only diagnostic report and exit. It never
@@ -75,7 +75,7 @@ zen [--doctor] [--acp] [--install-features [id,id,...]] [--no-features] [--zen-p
 - `--zen-package-path DIR`: use this ZenCODE checkout as the feature source and rewritten local package dependency. This is useful after a manual installation; platform installers preserve their checkout under `~/.zencode/source/` automatically.
 - `--agent NAME`: select an agent profile (default: `Developer`).
 - `--model MODEL_ID`: request a model override for the direct session; delegated sub-agents remain restricted to the selected profile's authorized bindings.
-- `--cwd PATH`: working directory for local tools.
+- `--working-directory PATH`: working directory for local tools.
 - `--skills LIST`: initial skill selection by name/number, `all`, or `none`.
 - `--max-tool-rounds N`: maximum model/tool loop rounds per prompt.
 - `--max-output-tokens N`: maximum generated tokens per model call.
@@ -427,10 +427,10 @@ ZenCODE reads `AGENTS.md` from the working directory when present. Startup never
 ## ACP Mode
 
 ```bash
-zen --acp --cwd /path/to/project
+zen --acp --working-directory /path/to/project
 ```
 
-stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, and tool exposure. `--agent`, `--model`, `--cwd`, `--skills`, and token environment variables still apply.
+stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, and tool exposure. `--agent`, `--model`, `--working-directory`, `--skills`, and token environment variables still apply.
 
 ## Recommended Workflow
 

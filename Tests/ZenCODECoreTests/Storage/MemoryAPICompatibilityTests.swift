@@ -4,7 +4,7 @@
 //
 //  Verifies that ZenCODECore's public memory surface matches the 1.1.x
 //  contract: `MemoryEntry` has `id: UUID`, is `Hashable`, and neither the
-//  types nor the method signatures expose ZenMemory engine types.
+//  types nor the method signatures expose MemoryEngine engine types.
 //
 
 import Foundation

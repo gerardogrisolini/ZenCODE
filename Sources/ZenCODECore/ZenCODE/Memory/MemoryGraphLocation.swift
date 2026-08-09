@@ -2,7 +2,7 @@
 //  MemoryGraphLocation.swift
 //  ZenCODE
 //
-//  Resolves where a workspace's ZenMemory graph is persisted.
+//  Resolves where a workspace's MemoryEngine graph is persisted.
 //
 
 import Crypto

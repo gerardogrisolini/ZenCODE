@@ -4,7 +4,6 @@
 //
 
 import Foundation
-import ZenMemory
 
 /// Structured fields derived from a journal entry's human-readable content.
 ///

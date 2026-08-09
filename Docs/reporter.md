@@ -23,7 +23,7 @@ The `Reporter` is a standard profile — select it directly or delegate to it:
 
 ```text
 /agents Reporter                         # switch to the Reporter profile
-zen --agent Reporter --cwd /path/to/proj  # launch directly
+zen --agent Reporter --working-directory /path/to/proj  # launch directly
 ```
 
 As a coordinator, delegate focused analysis to a `Reporter` sub-agent with `agent.create` and select the `Reporter` profile explicitly. The sub-agent receives that profile's configured toolset (`files`, search, text, Git); the creation request cannot override it.

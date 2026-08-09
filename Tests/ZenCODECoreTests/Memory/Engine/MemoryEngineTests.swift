@@ -1,17 +1,17 @@
 import Foundation
 import Testing
-@testable import ZenMemory
+@testable import ZenCODECore
 
 @Test func categoryCodableRoundTrip() throws {
-    let values: [MemoryCategory] = [.fact, .preference, .entity, .correction, .custom("procedure")]
+    let values: [EngineMemoryCategory] = [.fact, .preference, .entity, .correction, .custom("procedure")]
     let data = try JSONEncoder().encode(values)
-    let decoded = try JSONDecoder().decode([MemoryCategory].self, from: data)
+    let decoded = try JSONDecoder().decode([EngineMemoryCategory].self, from: data)
     #expect(decoded == values)
 }
 
 @Test func confidenceDecaysByCategory() {
     let oldDate = Date().addingTimeInterval(-30 * 86_400)
-    let entry = MemoryEntry(category: .fact, content: "old fact", createdAt: oldDate)
+    let entry = EngineMemoryEntry(category: .fact, content: "old fact", createdAt: oldDate)
     let confidence = entry.effectiveConfidence()
     #expect(confidence > 0.45)
     #expect(confidence < 0.6)
@@ -19,8 +19,8 @@ import Testing
 
 @Test func cascadeTraversesSharedTag() {
     var graph = MemoryGraph()
-    let a = MemoryEntry(id: "a", category: .fact, content: "Swift package", tags: ["swift"])
-    let b = MemoryEntry(id: "b", category: .fact, content: "Swift actors", tags: ["swift"])
+    let a = EngineMemoryEntry(id: "a", category: .fact, content: "Swift package", tags: ["swift"])
+    let b = EngineMemoryEntry(id: "b", category: .fact, content: "Swift actors", tags: ["swift"])
     graph.addMemory(a)
     graph.addMemory(b)
 
@@ -36,9 +36,9 @@ import Testing
 
 @Test func semanticSearchDoesNotMixEmbeddingModels() {
     var graph = MemoryGraph()
-    var a = MemoryEntry(id: "a", category: .fact, content: "A")
+    var a = EngineMemoryEntry(id: "a", category: .fact, content: "A")
     a.setEmbedding([1, 0], model: "model-a")
-    var b = MemoryEntry(id: "b", category: .fact, content: "B")
+    var b = EngineMemoryEntry(id: "b", category: .fact, content: "B")
     b.setEmbedding([1, 0], model: "model-b")
     graph.addMemory(a)
     graph.addMemory(b)
@@ -56,7 +56,7 @@ import Testing
 
 @Test func lexicalSearchFindsEmbeddingMismatch() {
     var graph = MemoryGraph()
-    var memory = MemoryEntry(id: "mismatch", category: .fact, content: "Linux Swift server memory")
+    var memory = EngineMemoryEntry(id: "mismatch", category: .fact, content: "Linux Swift server memory")
     memory.setEmbedding([1, 0], model: "old-model")
     graph.addMemory(memory)
 
@@ -79,7 +79,7 @@ import Testing
     let persistence = JSONMemoryPersistence(url: file)
 
     var graph = MemoryGraph()
-    graph.addMemory(MemoryEntry(id: "a", category: .preference, content: "Use Swift", tags: ["swift"]))
+    graph.addMemory(EngineMemoryEntry(id: "a", category: .preference, content: "Use Swift", tags: ["swift"]))
     try await persistence.save(graph)
     let loaded = try await persistence.load()
 
@@ -90,10 +90,10 @@ import Testing
 
 @Test func highLevelRecallAndPendingPipeline() async throws {
     let embedder = DeterministicHashEmbeddingProvider(dimensions: 64)
-    var config = ZenMemoryConfiguration()
+    var config = MemoryEngineConfiguration()
     config.similarityThreshold = 0
     config.maxResults = 5
-    let memory = ZenMemory(embedder: embedder, configuration: config)
+    let memory = MemoryEngine(embedder: embedder, configuration: config)
 
     _ = try await memory.remember("Swift actors protect mutable state", tags: ["swift", "actors"])
     _ = try await memory.remember("Linux is a supported deployment target", tags: ["linux"])
@@ -159,7 +159,7 @@ import Testing
 }
 
 @Test func lexicalOnlyWorksWithoutEmbedder() async throws {
-    let memory = ZenMemory()
+    let memory = MemoryEngine()
     _ = try await memory.remember("Use actors for shared mutable state", tags: ["swift", "concurrency"])
     _ = try await memory.remember("Database migrations run at application startup", tags: ["database"])
 
@@ -206,7 +206,7 @@ private actor QueuedLanguageModel: MemoryLanguageModel {
 }
 
 @Test func analyzerCanSkipRecall() async throws {
-    let memory = ZenMemory(
+    let memory = MemoryEngine(
         queryAnalyzer: FixedQueryAnalyzer(
             plan: MemoryQueryPlan(shouldRecall: false)
         )
@@ -229,7 +229,7 @@ private actor QueuedLanguageModel: MemoryLanguageModel {
             intent: "recall storage decision"
         )
     )
-    let memory = ZenMemory(queryAnalyzer: analyzer)
+    let memory = MemoryEngine(queryAnalyzer: analyzer)
     _ = try await memory.remember(
         "GRDB is the selected persistence layer",
         tags: ["storage", "database"]
@@ -243,7 +243,7 @@ private actor QueuedLanguageModel: MemoryLanguageModel {
     let analyzer = FixedQueryAnalyzer(
         plan: MemoryQueryPlan(shouldRecall: true, queries: ["swift database"])
     )
-    let memory = ZenMemory(
+    let memory = MemoryEngine(
         queryAnalyzer: analyzer,
         selector: IDSelector(ids: ["db"])
     )
@@ -266,7 +266,7 @@ private actor QueuedLanguageModel: MemoryLanguageModel {
             )
         ]
     )
-    let memory = ZenMemory(extractor: extractor)
+    let memory = MemoryEngine(extractor: extractor)
     let stored = try await memory.learn(from: "conversation text")
 
     #expect(stored.count == 1)
@@ -292,8 +292,8 @@ private actor QueuedLanguageModel: MemoryLanguageModel {
         #"{"selected":["b","invented"]}"#
     ])
     let selector = LLMMemorySelector(model: model)
-    let a = MemoryCandidate(memory: MemoryEntry(id: "a", category: .fact, content: "A"), score: 0.9)
-    let b = MemoryCandidate(memory: MemoryEntry(id: "b", category: .fact, content: "B"), score: 0.8)
+    let a = MemoryCandidate(memory: EngineMemoryEntry(id: "a", category: .fact, content: "A"), score: 0.9)
+    let b = MemoryCandidate(memory: EngineMemoryEntry(id: "b", category: .fact, content: "B"), score: 0.8)
 
     let selected = try await selector.select(context: "test", candidates: [a, b], limit: 3)
     #expect(selected.map(\.memory.id) == ["b"])

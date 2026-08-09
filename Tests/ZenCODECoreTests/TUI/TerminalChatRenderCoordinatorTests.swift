@@ -627,7 +627,7 @@ struct TerminalChatRenderCoordinatorTests {
             id: "tool-overflowing-scroll-region",
             name: "local.exec",
             argumentsObject: [
-                "cwd": "/tmp/project",
+                "workingDirectory": "/tmp/project",
                 "command": script
             ],
             argumentsJSON: "{}"

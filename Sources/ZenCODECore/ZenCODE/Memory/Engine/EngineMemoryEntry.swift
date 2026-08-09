@@ -1,14 +1,14 @@
 import Foundation
 
-public let unspecifiedEmbeddingModel = "unspecified"
+let unspecifiedEmbeddingModel = "unspecified"
 
-public enum TrustLevel: String, Codable, Sendable, CaseIterable {
+enum TrustLevel: String, Codable, Sendable, CaseIterable {
     case high
     case medium
     case low
 }
 
-public enum MemoryScope: String, Codable, Sendable, CaseIterable {
+enum EngineMemoryScope: String, Codable, Sendable, CaseIterable {
     case project
     case global
     case all
@@ -17,7 +17,7 @@ public enum MemoryScope: String, Codable, Sendable, CaseIterable {
     public var includesGlobal: Bool { self == .global || self == .all }
 }
 
-public enum MemoryCategory: Hashable, Sendable {
+enum EngineMemoryCategory: Hashable, Sendable {
     case fact
     case preference
     case entity
@@ -35,7 +35,7 @@ public enum MemoryCategory: Hashable, Sendable {
     }
 }
 
-extension MemoryCategory: Codable {
+extension EngineMemoryCategory: Codable {
     private enum CustomKey: String, CodingKey { case custom }
 
     public init(from decoder: Decoder) throws {
@@ -65,7 +65,7 @@ extension MemoryCategory: Codable {
     }
 }
 
-public struct Reinforcement: Codable, Sendable, Equatable {
+struct Reinforcement: Codable, Sendable, Equatable {
     public var sessionID: String
     public var messageIndex: Int
     public var timestamp: Date
@@ -77,9 +77,9 @@ public struct Reinforcement: Codable, Sendable, Equatable {
     }
 }
 
-public struct MemoryEntry: Codable, Sendable, Identifiable, Equatable {
+struct EngineMemoryEntry: Codable, Sendable, Identifiable, Equatable {
     public var id: String
-    public var category: MemoryCategory
+    public var category: EngineMemoryCategory
     public var content: String
     public var tags: [String]
     public var searchText: String
@@ -95,16 +95,16 @@ public struct MemoryEntry: Codable, Sendable, Identifiable, Equatable {
     public var embedding: [Float]?
     public var embeddingModel: String?
     public var confidence: Float
-    public var scope: MemoryScope
+    public var scope: EngineMemoryScope
 
     public init(
         id: String? = nil,
-        category: MemoryCategory,
+        category: EngineMemoryCategory,
         content: String,
         tags: [String] = [],
         source: String? = nil,
         trust: TrustLevel = .medium,
-        scope: MemoryScope = .project,
+        scope: EngineMemoryScope = .project,
         createdAt: Date = Date(),
         updatedAt: Date? = nil,
         embedding: [Float]? = nil,
@@ -212,7 +212,7 @@ public struct MemoryEntry: Codable, Sendable, Identifiable, Equatable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
-        category = try c.decode(MemoryCategory.self, forKey: .category)
+        category = try c.decode(EngineMemoryCategory.self, forKey: .category)
         content = try c.decode(String.self, forKey: .content)
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         searchText = try c.decodeIfPresent(String.self, forKey: .searchText)
@@ -229,7 +229,7 @@ public struct MemoryEntry: Codable, Sendable, Identifiable, Equatable {
         embedding = try c.decodeIfPresent([Float].self, forKey: .embedding)
         embeddingModel = try c.decodeIfPresent(String.self, forKey: .embeddingModel)
         confidence = try c.decodeIfPresent(Float.self, forKey: .confidence) ?? 1
-        scope = try c.decodeIfPresent(MemoryScope.self, forKey: .scope) ?? .project
+        scope = try c.decodeIfPresent(EngineMemoryScope.self, forKey: .scope) ?? .project
     }
 
     public func encode(to encoder: Encoder) throws {

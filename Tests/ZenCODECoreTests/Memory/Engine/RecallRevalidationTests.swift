@@ -1,6 +1,6 @@
 //
 //  RecallRevalidationTests.swift
-//  ZenMemoryTests
+//  ZenCODECoreTests (memory engine)
 //
 //  Deterministic coverage for the recall re-validation contract: after the
 //  selector `await`, a concurrent forget/archive can make previously retrieved
@@ -11,7 +11,7 @@
 
 import Foundation
 import Testing
-@testable import ZenMemory
+@testable import ZenCODECore
 
 // MARK: - Selector test double
 
@@ -19,7 +19,7 @@ import Testing
 ///
 /// This deterministically opens the reentrancy window that the default
 /// ``TopScoreMemorySelector`` only exposes probabilistically: while the
-/// selector is blocked the ``ZenMemory`` actor is free to process a concurrent
+/// selector is blocked the ``MemoryEngine`` actor is free to process a concurrent
 /// mutation, so the test can arrange exactly the interleaving that produces
 /// stale candidates.
 private actor BlockingSelector: MemorySelector {
@@ -70,9 +70,9 @@ private func waitForCondition(
 
 @Test func linkMemoriesNoOpsForMissingOrInactiveNodes() {
     var graph = MemoryGraph()
-    graph.addMemory(MemoryEntry(id: "alive", category: .fact, content: "alive entry"))
-    graph.addMemory(MemoryEntry(id: "buddy", category: .fact, content: "buddy entry"))
-    var archived = MemoryEntry(id: "archived", category: .fact, content: "archived entry")
+    graph.addMemory(EngineMemoryEntry(id: "alive", category: .fact, content: "alive entry"))
+    graph.addMemory(EngineMemoryEntry(id: "buddy", category: .fact, content: "buddy entry"))
+    var archived = EngineMemoryEntry(id: "archived", category: .fact, content: "archived entry")
     archived.active = false
     graph.addMemory(archived)
 
@@ -105,14 +105,14 @@ private func waitForCondition(
 
 @Test func recallRevalidatesAfterConcurrentForgetAndArchive() async throws {
     let selector = BlockingSelector()
-    let memory = ZenMemory(selector: selector)
+    let memory = MemoryEngine(selector: selector)
 
     _ = try await memory.remember("alpha fact about swift actors", tags: ["swift"], id: "alpha")
     _ = try await memory.remember("beta fact about swift structs", tags: ["swift"], id: "beta")
     _ = try await memory.remember("gamma fact about swift classes", tags: ["swift"], id: "gamma")
 
     // Start recall — it parks inside the BlockingSelector, leaving the
-    // ZenMemory actor free to process concurrent mutations.
+    // MemoryEngine actor free to process concurrent mutations.
     let recallTask = Task<MemoryRecallResult, Error> {
         try await memory.recallDetailed("swift")
     }
@@ -166,9 +166,9 @@ private func waitForCondition(
 
 @Test func recallRevalidatesAfterConcurrentScopeChange() async throws {
     let selector = BlockingSelector()
-    var config = ZenMemoryConfiguration()
+    var config = MemoryEngineConfiguration()
     // Force scope .project so an entry re-scoped to .global drops out.
-    let memory = ZenMemory(selector: selector, configuration: config)
+    let memory = MemoryEngine(selector: selector, configuration: config)
     _ = try await memory.remember("alpha project fact", tags: ["topic"], scope: .project, id: "alpha")
     _ = try await memory.remember("beta project fact", tags: ["topic"], scope: .project, id: "beta")
 
@@ -197,7 +197,7 @@ private func waitForCondition(
 // MARK: - Normal recall semantics preserved
 
 @Test func recallMaintenancePreservesConfidenceAccessAndLinksOnStableGraph() async throws {
-    let memory = ZenMemory()
+    let memory = MemoryEngine()
 
     _ = try await memory.remember("alpha fact about swift", tags: ["swift"], id: "alpha")
     _ = try await memory.remember("beta fact about swift", tags: ["swift"], id: "beta")

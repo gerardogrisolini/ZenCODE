@@ -3,14 +3,14 @@ import Foundation
 import FoundationNetworking
 #endif
 
-public protocol EmbeddingProvider: Sendable {
+protocol EmbeddingProvider: Sendable {
     var modelID: String { get }
     func embed(_ text: String) async throws -> [Float]
 }
 
 /// Dependency-free deterministic embedder intended for tests, demos and offline plumbing.
 /// It is a signed feature-hashing bag-of-words encoder; it is NOT a semantic language model.
-public struct DeterministicHashEmbeddingProvider: EmbeddingProvider {
+struct DeterministicHashEmbeddingProvider: EmbeddingProvider {
     public let modelID: String
     public let dimensions: Int
 
@@ -43,7 +43,7 @@ public struct DeterministicHashEmbeddingProvider: EmbeddingProvider {
     }
 }
 
-public enum OpenAICompatibleEmbeddingError: Error, Sendable {
+enum OpenAICompatibleEmbeddingError: Error, Sendable {
     case invalidResponse
     case httpStatus(Int, String)
     case emptyEmbedding
@@ -51,7 +51,7 @@ public enum OpenAICompatibleEmbeddingError: Error, Sendable {
 
 /// Works with OpenAI-compatible `/v1/embeddings` endpoints (OpenAI, Ollama-compatible gateways,
 /// vLLM/LM Studio gateways that expose the same JSON contract, etc.).
-public struct OpenAICompatibleEmbeddingProvider: EmbeddingProvider {
+struct OpenAICompatibleEmbeddingProvider: EmbeddingProvider {
     public let modelID: String
     public let endpoint: URL
     public let apiKey: String?

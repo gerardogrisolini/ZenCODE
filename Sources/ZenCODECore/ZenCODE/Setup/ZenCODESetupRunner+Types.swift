@@ -18,6 +18,22 @@ enum SetupSectionCategory {
     case recommended
     case optional
     case finish
+
+    /// Display order of the menu groups. The main setup menu prints a group
+    /// heading whenever the category changes between consecutive items, so the
+    /// options must be laid out in this order to avoid repeating a heading.
+    var displayOrder: Int {
+        switch self {
+        case .required:
+            return 0
+        case .recommended:
+            return 1
+        case .optional:
+            return 2
+        case .finish:
+            return 3
+        }
+    }
 }
 
 struct SetupSectionConfigurationResult {

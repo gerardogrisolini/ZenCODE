@@ -4,13 +4,12 @@
 //
 //  Created by Gerardo Grisolini on 27/05/26.
 //
-//  Graph-backed memory facade tests. The durable store is the ZenMemory
+//  Graph-backed memory facade tests. The durable store is the MemoryEngine
 //  graph; MEMORY.md is no longer written, only migrated in memory on first
 //  open and persisted by the first mutation.
 //
 
 import Foundation
-import ZenMemory
 import ToolCore
 @testable import ZenCODECore
 import Testing

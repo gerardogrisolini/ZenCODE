@@ -21,7 +21,6 @@
 //
 
 import Foundation
-import ZenMemory
 @testable import ZenCODECore
 import Testing
 
@@ -66,7 +65,7 @@ private func makeStore(
 ) -> MemoryGraphStore {
     MemoryGraphStore(
         graphURL: URL(fileURLWithPath: "/dev/null/graph.json"),
-        engine: ZenMemory(
+        engine: MemoryEngine(
             persistence: persistence,
             extractor: DeterministicDraftExtractor(drafts: drafts)
         ),
@@ -399,7 +398,7 @@ struct MemoryStoreTransactionTests {
         let persistence = GatedStorePersistence()
         let store = MemoryGraphStore(
             graphURL: URL(fileURLWithPath: "/dev/null/graph.json"),
-            engine: ZenMemory(
+            engine: MemoryEngine(
                 persistence: persistence,
                 extractor: DeterministicDraftExtractor(drafts: [
                     MemoryDraft(content: "Summary: a late learned fact.")

@@ -1099,7 +1099,7 @@ public actor AgentCoreSessionRunner {
         activeRuntimeConfiguration = configuration
         ZenLogger.debug(
             .viewModelRuntime,
-            "agent core session runner initialized model=\(configuration.modelID ?? "default") cwd=\(configuration.workingDirectoryPath)."
+            "agent core session runner initialized model=\(configuration.modelID ?? "default") workingDirectory=\(configuration.workingDirectoryPath)."
         )
         return backend
     }

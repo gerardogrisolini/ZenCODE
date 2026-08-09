@@ -6,7 +6,6 @@
 import Foundation
 @testable import ZenCODECore
 import Testing
-import ZenMemory
 
 @Suite("Memory embedding setup")
 struct MemoryEmbeddingSetupTests {

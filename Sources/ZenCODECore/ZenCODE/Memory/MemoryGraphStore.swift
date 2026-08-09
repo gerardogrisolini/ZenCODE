@@ -2,11 +2,10 @@
 //  MemoryGraphStore.swift
 //  ZenCODE
 //
-//  Actor-backed adapter over the vendored ZenMemory graph engine.
+//  Actor-backed adapter over the vendored MemoryEngine graph engine.
 //
 
 import Foundation
-import ZenMemory
 
 /// Serializes read-modify-write sequences against one workspace graph.
 ///
@@ -18,13 +17,13 @@ import ZenMemory
 /// `SavedSessionsStore`.
 actor MemoryGraphStore {
     let graphURL: URL
-    private let engine: ZenMemory
+    private let engine: MemoryEngine
     /// Kept from `open` rather than re-resolved per call: `update` and `write`
     /// must embed with the same provider the engine was opened with, otherwise
     /// entries would carry vectors the engine refuses to compare.
     private let embedder: (any EmbeddingProvider)?
 
-    init(graphURL: URL, engine: ZenMemory, embedder: (any EmbeddingProvider)?) {
+    init(graphURL: URL, engine: MemoryEngine, embedder: (any EmbeddingProvider)?) {
         self.graphURL = graphURL
         self.engine = engine
         self.embedder = embedder
@@ -78,7 +77,7 @@ actor MemoryGraphStore {
         // Construct the engine directly with the in-memory graph and the same
         // persistence instance. The engine's `transaction(_:)` will call
         // `persist` on the first mutation, atomically writing the full graph.
-        let engine = ZenMemory(
+        let engine = MemoryEngine(
             graph: initialGraph,
             embedder: embedder,
             persistence: persistence,
@@ -216,9 +215,9 @@ actor MemoryGraphStore {
     /// returns the ready-to-inject memory block, or an empty string when
     /// nothing was selected.
     ///
-    /// Deliberately NOT `ZenMemory.submitContext(_:)` / `takePending()`.
+    /// Deliberately NOT `MemoryEngine.submitContext(_:)` / `takePending()`.
     /// That pair looks like the natural fit for "prepare memories for the next
-    /// turn", but it is unsafe here: `ZenMemory.pending` is a single unkeyed
+    /// turn", but it is unsafe here: `MemoryEngine.pending` is a single unkeyed
     /// array on the engine actor, and `takePending()` drains it wholesale.
     /// Meanwhile `MemoryGraphStoreRegistry` caches exactly one store — and so
     /// one engine — per workspace graph URL, which every concurrent session,
@@ -240,7 +239,7 @@ actor MemoryGraphStore {
     /// remains available for API and engine-level transaction tests that inject
     /// a deterministic extractor directly.
     ///
-    /// Deliberately NOT `ZenMemory.learn(from:)`, on two counts:
+    /// Deliberately NOT `MemoryEngine.learn(from:)`, on two counts:
     ///
     /// - **Identity.** The engine mints library-shaped ids
     ///   (`mem_<millis>_<uuid>`), but every ZenCODE maintenance path goes

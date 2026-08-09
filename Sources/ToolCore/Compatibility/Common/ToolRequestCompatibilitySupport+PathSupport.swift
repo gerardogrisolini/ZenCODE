@@ -8,7 +8,6 @@
 import Foundation
 
 nonisolated let workspaceRelativePathArgumentKeys: Set<String> = [
-    "cwd",
     "destinationPath",
     "destination_path",
     "dir",

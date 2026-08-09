@@ -16,7 +16,7 @@ import ToolCore
 /// one sent without recalled memory.
 ///
 /// Retrieval is performed inline for the prompt being sent. It is deliberately
-/// not prefetched through `ZenMemory.submitContext(_:)` / `takePending()`: that
+/// not prefetched through `MemoryEngine.submitContext(_:)` / `takePending()`: that
 /// pending queue is shared by sessions using the same workspace store, while
 /// inline `context(for:)` keeps each result bound to the prompt that requested
 /// it and avoids an empty first turn.

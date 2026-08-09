@@ -33,7 +33,7 @@ public struct AgentConfiguration: Sendable {
     Autonomous ZenCODE CLI and ACP agent.
 
     Usage:
-      zen [--acp] [--agent NAME] [--model MODEL_ID] [--cwd PATH] [--skills LIST]
+      zen [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
 
     Modes:
       default                Human terminal chat.
@@ -42,7 +42,8 @@ public struct AgentConfiguration: Sendable {
     Agent runtime:
       --agent NAME           Agent profile from ~/.zencode/agents.json. Default is used when omitted.
       --model MODEL_ID        Model id, remoteapimodel:<uuid>, or remoteapi:<uuid>. Overrides the agent-selected model for this run.
-      --cwd PATH              Working directory for local tools. Default: current directory, or home when launched from the executable directory.
+      --working-directory PATH
+                              Working directory for local tools. Default: current directory, or home when launched from the executable directory.
       --skills LIST           Initial chat skill selection by name/number, all, or none. In chat mode use /skills to change or install skills.
       --max-tool-rounds N     Maximum model/tool loop rounds per prompt. Default: \(AgentToolRoundPolicy.defaultMaxToolRounds).
       --max-output-tokens N   Maximum generated tokens per model call. Default: model default.
@@ -163,7 +164,7 @@ public struct AgentConfiguration: Sendable {
                 rawAgentName = arguments[index]
             case "--acp":
                 rawRunMode = AgentRunMode.acp.rawValue
-            case "--cwd":
+            case "--working-directory":
                 index += 1
                 guard index < arguments.count else {
                     throw AgentConfigurationError.missingValue(argument)

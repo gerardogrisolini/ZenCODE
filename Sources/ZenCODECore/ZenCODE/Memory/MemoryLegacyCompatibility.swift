@@ -26,7 +26,7 @@
 //  pre-existing call sites compile unchanged and only emit a deprecation
 //  warning.
 //
-//  None of this exposes ZenMemory: the wrappers speak only in ZenCODECore DTOs.
+//  None of this exposes MemoryEngine: the wrappers speak only in ZenCODECore DTOs.
 //
 
 import Foundation

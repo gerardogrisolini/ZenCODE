@@ -6,9 +6,8 @@
 //
 
 import Foundation
-import ZenMemory
 
-/// Async facade over the per-workspace ZenMemory graph.
+/// Async facade over the per-workspace MemoryEngine graph.
 ///
 /// The durable store is the graph, not `MEMORY.md`. An existing `MEMORY.md` is
 /// imported on first open (in memory only — see ``MemoryGraphStore/open``) and

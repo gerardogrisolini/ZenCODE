@@ -161,10 +161,30 @@ extension ZenCODESetupRunner {
             SetupSectionOption(section: .cancel, detail: "discard changes")
         ]
         #if !canImport(AVFoundation)
-        return options.filter { $0.section != .voice }
+        let available = options.filter { $0.section != .voice }
         #else
-        return options
+        let available = options
         #endif
+        return groupedByCategory(available)
+    }
+
+    /// Lays the options out in category order while preserving the authored
+    /// order inside each category. The menu renderer starts a new heading on
+    /// every category change, so an option listed out of category order would
+    /// print its group heading a second time.
+    static func groupedByCategory(
+        _ options: [SetupSectionOption]
+    ) -> [SetupSectionOption] {
+        options.enumerated()
+            .sorted { lhs, rhs in
+                let lhsOrder = lhs.element.section.category.displayOrder
+                let rhsOrder = rhs.element.section.category.displayOrder
+                if lhsOrder != rhsOrder {
+                    return lhsOrder < rhsOrder
+                }
+                return lhs.offset < rhs.offset
+            }
+            .map(\.element)
     }
 
     static func setupStatusMarker(_ isReady: Bool, optional: Bool = false) -> String {

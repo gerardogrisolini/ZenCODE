@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ScoredMemoryID: Codable, Sendable, Equatable {
+struct ScoredMemoryID: Codable, Sendable, Equatable {
     public var id: String
     public var score: Float
 
@@ -10,17 +10,17 @@ public struct ScoredMemoryID: Codable, Sendable, Equatable {
     }
 }
 
-public struct MemoryCandidate: Sendable, Equatable {
-    public var memory: MemoryEntry
+struct MemoryCandidate: Sendable, Equatable {
+    public var memory: EngineMemoryEntry
     public var score: Float
 
-    public init(memory: MemoryEntry, score: Float) {
+    public init(memory: EngineMemoryEntry, score: Float) {
         self.memory = memory
         self.score = score
     }
 }
 
-public enum MemorySearch {
+enum MemorySearch {
     public static func cosineSimilarity(_ lhs: [Float], _ rhs: [Float]) -> Float {
         guard lhs.count == rhs.count, !lhs.isEmpty else { return 0 }
         var dot: Float = 0
@@ -39,7 +39,7 @@ public enum MemorySearch {
         graph: MemoryGraph,
         queryEmbedding: [Float],
         modelID: String,
-        scope: MemoryScope = .all,
+        scope: EngineMemoryScope = .all,
         threshold: Float = 0.4,
         limit: Int = 10
     ) -> [ScoredMemoryID] {
@@ -63,7 +63,7 @@ public enum MemorySearch {
     public static func lexicalBM25(
         graph: MemoryGraph,
         query: String,
-        scope: MemoryScope = .all,
+        scope: EngineMemoryScope = .all,
         limit: Int = 10,
         k1: Float = 1.2,
         b: Float = 0.75
@@ -79,9 +79,9 @@ public enum MemorySearch {
     }
 
     public static func lexicalBM25(
-        memories: [MemoryEntry],
+        memories: [EngineMemoryEntry],
         query: String,
-        scope: MemoryScope = .all,
+        scope: EngineMemoryScope = .all,
         limit: Int = 10,
         k1: Float = 1.2,
         b: Float = 0.75
@@ -90,7 +90,7 @@ public enum MemorySearch {
         let queryTokens = tokens(query)
         guard !queryTokens.isEmpty else { return [] }
 
-        let documents: [(MemoryEntry, [String])] = memories
+        let documents: [(EngineMemoryEntry, [String])] = memories
             .filter { $0.active && scopeAllows($0.scope, requested: scope) }
             .map { ($0, tokens($0.searchableText)) }
 
@@ -170,10 +170,10 @@ public enum MemorySearch {
     /// Creates a lightweight ranking from analyzer-produced tags and entities. Exact tag matches
     /// are strongest; entity token matches in content provide an additional lexical signal.
     public static func metadataRanking(
-        memories: [MemoryEntry],
+        memories: [EngineMemoryEntry],
         tags: [String],
         entities: [String],
-        scope: MemoryScope = .all,
+        scope: EngineMemoryScope = .all,
         limit: Int = 10
     ) -> [ScoredMemoryID] {
         guard limit > 0, !tags.isEmpty || !entities.isEmpty else { return [] }
@@ -205,7 +205,7 @@ public enum MemorySearch {
             .map(String.init)
     }
 
-    public static func scopeAllows(_ memoryScope: MemoryScope, requested: MemoryScope) -> Bool {
+    public static func scopeAllows(_ memoryScope: EngineMemoryScope, requested: EngineMemoryScope) -> Bool {
         switch requested {
         case .all: true
         case .project: memoryScope == .project || memoryScope == .all

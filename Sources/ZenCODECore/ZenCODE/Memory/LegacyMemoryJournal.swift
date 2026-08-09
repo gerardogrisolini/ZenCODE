@@ -4,7 +4,7 @@
 //
 //  Parser for the legacy human-readable MEMORY.md journal.
 //
-//  MEMORY.md is no longer the durable store: the ZenMemory graph is. This
+//  MEMORY.md is no longer the durable store: the MemoryEngine graph is. This
 //  parser exists solely so an existing journal can be imported into the graph
 //  once, without losing any entry. The file itself is never rewritten.
 //

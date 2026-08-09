@@ -36,7 +36,8 @@ extension TerminalChat {
                 isTerminal = snapshot.latestOutput?.nilIfBlank != nil
             case .failed, .closed:
                 isTerminal = true
-            case .queued, .running:
+            case .queued, .running, .closing:
+                // `.closing` is pending work, not a completion boundary.
                 isTerminal = false
             }
             guard isTerminal else {

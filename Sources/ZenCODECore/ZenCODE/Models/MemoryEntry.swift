@@ -6,7 +6,7 @@
 //
 //  Public DTO layer for ZenCODECore.
 //
-//  The durable store is the vendored ZenMemory graph, but ZenMemory is an
+//  The durable store is the vendored MemoryEngine graph, but MemoryEngine is an
 //  internal target (not a published product). These public types preserve the
 //  ZenCODECore 1.1.x contract — `id: UUID`, `Hashable`, journal-shaped
 //  `MemoryScope` — while the graph engine stays hidden behind the facade.
@@ -14,7 +14,6 @@
 //
 
 import Foundation
-import ZenMemory
 
 // MARK: - Content normalization (shared)
 
@@ -36,8 +35,8 @@ public enum MemoryContent {
 
 // MARK: - Collision-free engine references
 //
-// The `ZenMemory` module name is shadowed by its `ZenMemory` actor, so
-// `ZenMemory.MemoryEntry` / `ZenMemory.MemoryScope` / `ZenMemory.MemoryCategory`
+// The `MemoryEngine` module name is shadowed by its `MemoryEngine` actor, so
+// `MemoryEngine.MemoryEntry` / `MemoryEngine.MemoryScope` / `MemoryEngine.MemoryCategory`
 // cannot be written. ZenCODECore also declares its own public `MemoryEntry` /
 // `MemoryScope` / `MemoryCategory`, so the unqualified names resolve to the
 // DTOs. These internal aliases let the graph adapter and migration code refer
@@ -80,7 +79,7 @@ public nonisolated enum MemoryCategory: String, Codable, CaseIterable, Hashable,
 ///
 /// This is the public ZenCODECore DTO. It carries the original journal-shaped
 /// identity (`id: UUID`, `Hashable`) and the additive graph capabilities
-/// (`category`, `tags`). The underlying ZenMemory graph node is never exposed.
+/// (`category`, `tags`). The underlying MemoryEngine graph node is never exposed.
 public nonisolated struct MemoryEntry: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
     public var scope: MemoryScope

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import ZenMemory
+@testable import ZenCODECore
 
 /// The graph cascade must be bounded by the requested scope: seeds, the nodes
 /// it expands, and the results it returns all have to be inside the scope.
@@ -8,8 +8,8 @@ import Testing
 /// neighbours.
 @Test func cascadeKeepsLinkedOutOfScopeMemoryOutOfResults() {
     var graph = MemoryGraph()
-    let project = MemoryEntry(id: "project", category: .fact, content: "Project fact", scope: .project)
-    let global = MemoryEntry(id: "global", category: .fact, content: "Global fact", scope: .global)
+    let project = EngineMemoryEntry(id: "project", category: .fact, content: "Project fact", scope: .project)
+    let global = EngineMemoryEntry(id: "global", category: .fact, content: "Global fact", scope: .global)
     graph.addMemory(project)
     graph.addMemory(global)
     graph.linkMemories(from: "project", to: "global", weight: 0.9)
@@ -28,9 +28,9 @@ import Testing
 
 @Test func cascadeDoesNotUseOutOfScopeNodeAsBridge() {
     var graph = MemoryGraph()
-    let start = MemoryEntry(id: "start", category: .fact, content: "Start", scope: .project)
-    let bridge = MemoryEntry(id: "bridge", category: .fact, content: "Global bridge", scope: .global)
-    let end = MemoryEntry(id: "end", category: .fact, content: "End", scope: .project)
+    let start = EngineMemoryEntry(id: "start", category: .fact, content: "Start", scope: .project)
+    let bridge = EngineMemoryEntry(id: "bridge", category: .fact, content: "Global bridge", scope: .global)
+    let end = EngineMemoryEntry(id: "end", category: .fact, content: "End", scope: .project)
     graph.addMemory(start)
     graph.addMemory(bridge)
     graph.addMemory(end)
@@ -52,8 +52,8 @@ import Testing
 
 @Test func cascadeReturnsLinkedMemoryInsideScope() {
     var graph = MemoryGraph()
-    let start = MemoryEntry(id: "start", category: .fact, content: "Start", scope: .project)
-    let end = MemoryEntry(id: "end", category: .fact, content: "End", scope: .project)
+    let start = EngineMemoryEntry(id: "start", category: .fact, content: "Start", scope: .project)
+    let end = EngineMemoryEntry(id: "end", category: .fact, content: "End", scope: .project)
     graph.addMemory(start)
     graph.addMemory(end)
     graph.linkMemories(from: "start", to: "end", weight: 0.9)
@@ -70,7 +70,7 @@ import Testing
 
 @Test func cascadeSkipsArchivedSeed() {
     var graph = MemoryGraph()
-    var archived = MemoryEntry(id: "archived", category: .fact, content: "Archived")
+    var archived = EngineMemoryEntry(id: "archived", category: .fact, content: "Archived")
     archived.active = false
     graph.addMemory(archived)
 
@@ -86,10 +86,10 @@ import Testing
 
 @Test func cascadeDoesNotUseArchivedNodeAsBridge() {
     var graph = MemoryGraph()
-    let start = MemoryEntry(id: "start", category: .fact, content: "Start")
-    var archived = MemoryEntry(id: "archived", category: .fact, content: "Archived bridge")
+    let start = EngineMemoryEntry(id: "start", category: .fact, content: "Start")
+    var archived = EngineMemoryEntry(id: "archived", category: .fact, content: "Archived bridge")
     archived.active = false
-    let end = MemoryEntry(id: "end", category: .fact, content: "End")
+    let end = EngineMemoryEntry(id: "end", category: .fact, content: "End")
     graph.addMemory(start)
     graph.addMemory(archived)
     graph.addMemory(end)
@@ -111,9 +111,9 @@ import Testing
 
 @Test func cascadeStillTraversesActiveBridge() {
     var graph = MemoryGraph()
-    let start = MemoryEntry(id: "start", category: .fact, content: "Start")
-    let bridge = MemoryEntry(id: "bridge", category: .fact, content: "Active bridge")
-    let end = MemoryEntry(id: "end", category: .fact, content: "End")
+    let start = EngineMemoryEntry(id: "start", category: .fact, content: "Start")
+    let bridge = EngineMemoryEntry(id: "bridge", category: .fact, content: "Active bridge")
+    let end = EngineMemoryEntry(id: "end", category: .fact, content: "End")
     graph.addMemory(start)
     graph.addMemory(bridge)
     graph.addMemory(end)
@@ -132,8 +132,8 @@ import Testing
 
 @Test func cascadeSharedTagTraversalStillFindsActiveInScopeMemories() {
     var graph = MemoryGraph()
-    let a = MemoryEntry(id: "a", category: .fact, content: "Swift package", tags: ["swift"], scope: .project)
-    let b = MemoryEntry(id: "b", category: .fact, content: "Swift actors", tags: ["swift"], scope: .project)
+    let a = EngineMemoryEntry(id: "a", category: .fact, content: "Swift package", tags: ["swift"], scope: .project)
+    let b = EngineMemoryEntry(id: "b", category: .fact, content: "Swift actors", tags: ["swift"], scope: .project)
     graph.addMemory(a)
     graph.addMemory(b)
 

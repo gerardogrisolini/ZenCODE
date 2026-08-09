@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import ZenMemory
+@testable import ZenCODECore
 
 /// The loader must reject graphs written by a newer engine than this build
 /// supports, without rewriting or otherwise mutating the file on disk.

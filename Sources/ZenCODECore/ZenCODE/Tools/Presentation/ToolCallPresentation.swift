@@ -56,7 +56,6 @@ public enum ToolCallPresentation {
         "sourcePath",
         "destinationPath",
         "workingDirectory",
-        "cwd",
         "filePath",
         "sourceFilePath",
         "directoryPath"
@@ -82,7 +81,6 @@ public enum ToolCallPresentation {
         "path",
         "workingDirectory",
         "working_directory",
-        "cwd",
         "identifier",
         "id",
         "name",

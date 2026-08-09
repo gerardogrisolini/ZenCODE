@@ -29,7 +29,7 @@ enum GitToolsSupport {
         input: T,
         context: FeatureContext
     ) -> URL {
-        context.resolvePath(firstNonBlank(input.workingDirectory, input.cwd) ?? ".")
+        context.resolvePath(input.workingDirectory?.nilIfBlank ?? ".")
     }
 
     static func gitStashArguments(action: String, input: GitStashTool.Input) throws -> [String] {

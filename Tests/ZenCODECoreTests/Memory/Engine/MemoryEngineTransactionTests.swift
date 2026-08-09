@@ -1,6 +1,6 @@
 //
-//  ZenMemoryTransactionTests.swift
-//  ZenMemoryTests
+//  MemoryEngineTransactionTests.swift
+//  ZenCODECoreTests (memory engine)
 //
 //  Covers the engine's transactional contract: mutations are serialized against
 //  one another despite actor reentrancy, and they are committed to the live
@@ -12,7 +12,7 @@
 
 import Foundation
 import Testing
-@testable import ZenMemory
+@testable import ZenCODECore
 
 // MARK: - Persistence doubles
 
@@ -63,7 +63,7 @@ private actor ControlledPersistence: MemoryPersistence {
 
 @Test func rememberLeavesGraphUnchangedWhenSaveFails() async throws {
     let persistence = ControlledPersistence(failing: true)
-    let memory = ZenMemory(persistence: persistence)
+    let memory = MemoryEngine(persistence: persistence)
 
     await #expect(throws: MemoryPersistenceFailure.self) {
         _ = try await memory.remember("a durable fact", id: "kept-out")
@@ -77,8 +77,8 @@ private actor ControlledPersistence: MemoryPersistence {
 
 @Test func insertLeavesGraphUnchangedWhenSaveFails() async throws {
     let persistence = ControlledPersistence(failing: true)
-    let memory = ZenMemory(persistence: persistence)
-    let entry = MemoryEntry(id: "rejected", category: .fact, content: "not committed")
+    let memory = MemoryEngine(persistence: persistence)
+    let entry = EngineMemoryEntry(id: "rejected", category: .fact, content: "not committed")
 
     await #expect(throws: MemoryPersistenceFailure.self) {
         try await memory.insert(entry)
@@ -89,7 +89,7 @@ private actor ControlledPersistence: MemoryPersistence {
 
 @Test func forgetKeepsEntryWhenSaveFails() async throws {
     let persistence = ControlledPersistence()
-    let memory = ZenMemory(persistence: persistence)
+    let memory = MemoryEngine(persistence: persistence)
     _ = try await memory.remember("a durable fact", id: "keeper")
 
     await persistence.setFailing(true)
@@ -105,7 +105,7 @@ private actor ControlledPersistence: MemoryPersistence {
 
 @Test func failedSaveIsRecoverableWithoutLosingLaterWrites() async throws {
     let persistence = ControlledPersistence(failing: true)
-    let memory = ZenMemory(persistence: persistence)
+    let memory = MemoryEngine(persistence: persistence)
 
     await #expect(throws: MemoryPersistenceFailure.self) {
         _ = try await memory.remember("lost fact", id: "lost")
@@ -123,7 +123,7 @@ private actor ControlledPersistence: MemoryPersistence {
 
 @Test func recallMaintenanceIsRolledBackWhenSaveFails() async throws {
     let persistence = ControlledPersistence()
-    let memory = ZenMemory(persistence: persistence)
+    let memory = MemoryEngine(persistence: persistence)
     _ = try await memory.remember("actors protect mutable state", tags: ["swift"], id: "a")
     let before = await memory.snapshot()
 
@@ -142,7 +142,7 @@ private actor ControlledPersistence: MemoryPersistence {
 
 @Test func successfulRecallCommitsRetrievalCount() async throws {
     let persistence = ControlledPersistence()
-    let memory = ZenMemory(persistence: persistence)
+    let memory = MemoryEngine(persistence: persistence)
     _ = try await memory.remember("actors protect mutable state", tags: ["swift"], id: "a")
 
     _ = try await memory.recall("actors")
@@ -160,7 +160,7 @@ private actor ControlledPersistence: MemoryPersistence {
     // while the others are ready to run: without a write lock the reentrant
     // read-modify-write below would drop increments.
     let persistence = ControlledPersistence(holdEachSaveFor: .milliseconds(2))
-    let memory = ZenMemory(persistence: persistence)
+    let memory = MemoryEngine(persistence: persistence)
     let rounds = 24
 
     await withTaskGroup(of: Void.self) { group in
@@ -180,7 +180,7 @@ private actor ControlledPersistence: MemoryPersistence {
 
 @Test func concurrentReadModifyWriteKeepsEveryWriterField() async throws {
     let persistence = ControlledPersistence(holdEachSaveFor: .milliseconds(2))
-    let memory = ZenMemory(persistence: persistence)
+    let memory = MemoryEngine(persistence: persistence)
     _ = try await memory.remember("shared entry", id: "shared")
 
     // Two writers touching different fields of the same node. Under reentrancy
@@ -206,7 +206,7 @@ private actor ControlledPersistence: MemoryPersistence {
 
 @Test func concurrentRemembersAllLand() async throws {
     let persistence = ControlledPersistence(holdEachSaveFor: .milliseconds(1))
-    let memory = ZenMemory(persistence: persistence)
+    let memory = MemoryEngine(persistence: persistence)
     let count = 16
 
     await withTaskGroup(of: Void.self) { group in
@@ -225,7 +225,7 @@ private actor ControlledPersistence: MemoryPersistence {
 
 @Test func transactionWithoutChangesDoesNotPersist() async throws {
     let persistence = ControlledPersistence()
-    let memory = ZenMemory(persistence: persistence)
+    let memory = MemoryEngine(persistence: persistence)
     _ = try await memory.remember("a durable fact", id: "a")
     let savesAfterWrite = await persistence.saveCount
 
@@ -240,11 +240,11 @@ private actor ControlledPersistence: MemoryPersistence {
 @Test func throwingTransactionCommitsNothing() async throws {
     struct Rejected: Error {}
     let persistence = ControlledPersistence()
-    let memory = ZenMemory(persistence: persistence)
+    let memory = MemoryEngine(persistence: persistence)
 
     await #expect(throws: Rejected.self) {
         try await memory.transaction { graph in
-            graph.addMemory(MemoryEntry(id: "half-written", category: .fact, content: "x"))
+            graph.addMemory(EngineMemoryEntry(id: "half-written", category: .fact, content: "x"))
             throw Rejected()
         }
     }
@@ -262,7 +262,7 @@ private struct StubExtractor: MemoryExtractor {
 
 @Test func learnStoresTheWholeBatchOrNothing() async throws {
     let persistence = ControlledPersistence(failing: true)
-    let memory = ZenMemory(
+    let memory = MemoryEngine(
         persistence: persistence,
         extractor: StubExtractor(drafts: [
             MemoryDraft(content: "first extracted fact"),
@@ -330,7 +330,7 @@ private func waitForCondition(
 
 @Test func cancelledTransactionWaitingForTheWriteLockCommitsNothing() async throws {
     let persistence = GatedPersistence()
-    let memory = ZenMemory(persistence: persistence)
+    let memory = MemoryEngine(persistence: persistence)
 
     // Task A takes the write lock and parks inside persistence, holding it until
     // the gate opens. Its only job is to occupy the lock.

@@ -3,11 +3,11 @@ import Foundation
 import FoundationNetworking
 #endif
 
-public protocol MemoryLanguageModel: Sendable {
+protocol MemoryLanguageModel: Sendable {
     func complete(system: String, user: String) async throws -> String
 }
 
-public enum OpenAICompatibleChatError: Error, Sendable {
+enum OpenAICompatibleChatError: Error, Sendable {
     case invalidResponse
     case httpStatus(Int, String)
     case emptyResponse
@@ -15,7 +15,7 @@ public enum OpenAICompatibleChatError: Error, Sendable {
 
 /// Minimal OpenAI-compatible chat-completions client used by the optional intelligence layer.
 /// The endpoint should point to a `/v1/chat/completions` compatible route.
-public struct OpenAICompatibleChatModel: MemoryLanguageModel {
+struct OpenAICompatibleChatModel: MemoryLanguageModel {
     public let endpoint: URL
     public let model: String
     public let apiKey: String?
@@ -87,13 +87,13 @@ public struct OpenAICompatibleChatModel: MemoryLanguageModel {
     }
 }
 
-public enum MemoryIntelligenceError: Error, Sendable, Equatable {
+enum MemoryIntelligenceError: Error, Sendable, Equatable {
     case invalidJSON(String)
 }
 
 /// Uses a small/fast language model to decide whether memory recall is useful and to rewrite
 /// the prompt into lexical queries, tags and entities. No embedding model is required.
-public struct LLMMemoryQueryAnalyzer: MemoryQueryAnalyzer {
+struct LLMMemoryQueryAnalyzer: MemoryQueryAnalyzer {
     public let model: any MemoryLanguageModel
     public let maxQueries: Int
 
@@ -131,7 +131,7 @@ public struct LLMMemoryQueryAnalyzer: MemoryQueryAnalyzer {
 }
 
 /// Uses a language model to remove false-positive retrievals before memories enter the main context.
-public struct LLMMemorySelector: MemorySelector {
+struct LLMMemorySelector: MemorySelector {
     public let model: any MemoryLanguageModel
     public let maxCandidates: Int
 
@@ -169,14 +169,14 @@ public struct LLMMemorySelector: MemorySelector {
 
 /// Extracts durable memories from a completed turn or transcript. The host controls when this
 /// is called, so extraction never adds latency unless explicitly enabled in the agent workflow.
-public struct LLMMemoryExtractor: MemoryExtractor {
+struct LLMMemoryExtractor: MemoryExtractor {
     public let model: any MemoryLanguageModel
-    public let defaultScope: MemoryScope
+    public let defaultScope: EngineMemoryScope
     public let maxMemories: Int
 
     public init(
         model: any MemoryLanguageModel,
-        defaultScope: MemoryScope = .project,
+        defaultScope: EngineMemoryScope = .project,
         maxMemories: Int = 6
     ) {
         self.model = model
@@ -205,7 +205,7 @@ public struct LLMMemoryExtractor: MemoryExtractor {
         return response.memories.prefix(maxMemories).compactMap { item in
             let content = item.content.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !content.isEmpty else { return nil }
-            let category: MemoryCategory = switch item.category?.lowercased() {
+            let category: EngineMemoryCategory = switch item.category?.lowercased() {
             case "preference": .preference
             case "entity": .entity
             case "correction": .correction

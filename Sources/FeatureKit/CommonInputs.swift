@@ -33,17 +33,16 @@ public func firstNonBlank(_ values: [String?]) -> String? {
 
 // MARK: - Common input protocols
 
-/// Resolves the working directory from `workingDirectory`, `cwd`, or `path`.
+/// Resolves the working directory from `workingDirectory` or `path`.
 public protocol WorkingDirectoryInput {
     var path: String? { get }
     var workingDirectory: String? { get }
-    var cwd: String? { get }
 }
 
 public extension WorkingDirectoryInput {
-    /// Returns the first non-blank value from `workingDirectory`, `cwd`, `path`.
+    /// Returns the first non-blank value from `workingDirectory`, `path`.
     func resolvedWorkingDirectory() -> String? {
-        firstNonBlank(workingDirectory, cwd, path)
+        firstNonBlank(workingDirectory, path)
     }
 }
 
@@ -298,11 +297,10 @@ public struct InputSchemaBuilder {
 /// Common property groups used across many tools. Reusing these keeps the
 /// advertised alias set consistent everywhere and makes adding tools faster.
 public enum CommonSchemaProperties {
-    /// `path`, `workingDirectory`, `cwd` — filesystem / shell / git tools.
+    /// `path`, `workingDirectory` — filesystem / shell / git tools.
     public static let workingDirectory: [SchemaProperty] = [
         .string("path"),
         .string("workingDirectory"),
-        .string("cwd"),
     ]
 
     /// `path`, `file_path` — the common two-alias file target.

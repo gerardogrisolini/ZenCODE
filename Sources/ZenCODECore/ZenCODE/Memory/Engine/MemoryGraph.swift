@@ -1,6 +1,6 @@
 import Foundation
 
-public enum EdgeKind: Sendable, Equatable {
+enum EdgeKind: Sendable, Equatable {
     case hasTag
     case inCluster
     case relatesTo(weight: Float)
@@ -63,7 +63,7 @@ extension EdgeKind: Codable {
     }
 }
 
-public struct MemoryEdge: Codable, Sendable, Equatable {
+struct MemoryEdge: Codable, Sendable, Equatable {
     public var target: String
     public var kind: EdgeKind
 
@@ -111,7 +111,7 @@ public struct MemoryEdge: Codable, Sendable, Equatable {
     }
 }
 
-public struct TagEntry: Codable, Sendable, Equatable {
+struct TagEntry: Codable, Sendable, Equatable {
     public var id: String
     public var name: String
     public var description: String?
@@ -127,7 +127,7 @@ public struct TagEntry: Codable, Sendable, Equatable {
     }
 }
 
-public struct ClusterEntry: Codable, Sendable, Equatable {
+struct ClusterEntry: Codable, Sendable, Equatable {
     public var id: String
     public var name: String?
     public var centroid: [Float]
@@ -145,7 +145,7 @@ public struct ClusterEntry: Codable, Sendable, Equatable {
     }
 }
 
-public struct GraphMetadata: Codable, Sendable, Equatable {
+struct GraphMetadata: Codable, Sendable, Equatable {
     public var lastClusterUpdate: Date?
     public var retrievalCount: UInt64
     public var linkDiscoveryCount: UInt64
@@ -157,7 +157,7 @@ public struct GraphMetadata: Codable, Sendable, Equatable {
     }
 }
 
-public struct MemoryGraph: Codable, Sendable, Equatable {
+struct MemoryGraph: Codable, Sendable, Equatable {
     public static let currentGraphVersion: UInt32 = 2
 
     /// Assumed `graph_version` for files written before the version key
@@ -168,7 +168,7 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
     public static let legacyGraphVersion: UInt32 = 1
 
     public var graphVersion: UInt32
-    public var memories: [String: MemoryEntry]
+    public var memories: [String: EngineMemoryEntry]
     public var tags: [String: TagEntry]
     public var clusters: [String: ClusterEntry]
     public var edges: [String: [MemoryEdge]]
@@ -177,7 +177,7 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
 
     public init(
         graphVersion: UInt32 = MemoryGraph.currentGraphVersion,
-        memories: [String: MemoryEntry] = [:],
+        memories: [String: EngineMemoryEntry] = [:],
         tags: [String: TagEntry] = [:],
         clusters: [String: ClusterEntry] = [:],
         edges: [String: [MemoryEdge]] = [:],
@@ -206,7 +206,7 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         graphVersion = try c.decodeIfPresent(UInt32.self, forKey: .graphVersion)
             ?? Self.legacyGraphVersion
-        memories = try c.decode([String: MemoryEntry].self, forKey: .memories)
+        memories = try c.decode([String: EngineMemoryEntry].self, forKey: .memories)
         tags = try c.decode([String: TagEntry].self, forKey: .tags)
         clusters = try c.decode([String: ClusterEntry].self, forKey: .clusters)
         edges = try c.decode([String: [MemoryEdge]].self, forKey: .edges)
@@ -230,7 +230,7 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
     public var edgeCount: Int { edges.values.reduce(0) { $0 + $1.count } }
 
     @discardableResult
-    public mutating func addMemory(_ input: MemoryEntry) -> String {
+    public mutating func addMemory(_ input: EngineMemoryEntry) -> String {
         var entry = input
         entry.refreshSearchText()
         let id = entry.id
@@ -250,7 +250,7 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
     }
 
     @discardableResult
-    public mutating func removeMemory(id: String) -> MemoryEntry? {
+    public mutating func removeMemory(id: String) -> EngineMemoryEntry? {
         guard let entry = memories.removeValue(forKey: id) else { return nil }
         removeTagEdges(for: entry)
 
@@ -270,7 +270,7 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
         return entry
     }
 
-    public mutating func updateMemory(_ entry: MemoryEntry) {
+    public mutating func updateMemory(_ entry: EngineMemoryEntry) {
         _ = addMemory(entry)
     }
 
@@ -347,7 +347,7 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
         maxDepth: Int = 2,
         maxResults: Int = 10,
         edgeDecay: Float = 0.7,
-        scope: MemoryScope = .all
+        scope: EngineMemoryScope = .all
     ) -> [ScoredMemoryID] {
         metadata.retrievalCount &+= 1
         guard maxResults > 0 else { return [] }
@@ -436,7 +436,7 @@ public struct MemoryGraph: Codable, Sendable, Equatable {
         }
     }
 
-    private mutating func removeTagEdges(for entry: MemoryEntry) {
+    private mutating func removeTagEdges(for entry: EngineMemoryEntry) {
         for tagName in entry.tags {
             let tagID = "tag:\(tagName)"
             removeEdge(from: entry.id, to: tagID, kind: .hasTag)

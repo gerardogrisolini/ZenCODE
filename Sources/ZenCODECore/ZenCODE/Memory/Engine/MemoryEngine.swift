@@ -1,13 +1,13 @@
 import Foundation
 
-public enum MemoryIntelligenceFailurePolicy: String, Codable, Sendable, Equatable {
+enum MemoryIntelligenceFailurePolicy: String, Codable, Sendable, Equatable {
     /// Fall back to direct lexical retrieval / score-based selection if an analyzer or selector fails.
     case fallback
     /// Surface intelligence-layer errors to the caller.
     case propagate
 }
 
-public struct ZenMemoryConfiguration: Sendable, Equatable {
+struct MemoryEngineConfiguration: Sendable, Equatable {
     public var similarityThreshold: Float
     public var maxSemanticHits: Int
     public var maxLexicalHits: Int
@@ -63,7 +63,7 @@ public struct ZenMemoryConfiguration: Sendable, Equatable {
 ///
 /// The default path is dependency-free lexical retrieval. Query analysis, semantic embeddings,
 /// LLM-based selection, extraction and persistent indexes are all optional, pluggable layers.
-public actor ZenMemory {
+actor MemoryEngine {
     private var graph: MemoryGraph
     private let embedder: (any EmbeddingProvider)?
     private let lexicalIndex: any MemoryIndex
@@ -72,7 +72,7 @@ public actor ZenMemory {
     private let selector: any MemorySelector
     private let extractor: any MemoryExtractor
     private let contextFormatter: any MemoryContextFormatter
-    private var configuration: ZenMemoryConfiguration
+    private var configuration: MemoryEngineConfiguration
     private var pending: [MemoryCandidate] = []
     private var backgroundTasks: [UUID: Task<Void, Never>] = [:]
     /// Write-lock state backing ``transaction(_:)``. See that method for why
@@ -89,7 +89,7 @@ public actor ZenMemory {
         selector: any MemorySelector = TopScoreMemorySelector(),
         extractor: any MemoryExtractor = NoopMemoryExtractor(),
         contextFormatter: any MemoryContextFormatter = BulletMemoryContextFormatter(),
-        configuration: ZenMemoryConfiguration = .init()
+        configuration: MemoryEngineConfiguration = .init()
     ) {
         self.graph = graph
         self.lexicalIndex = lexicalIndex
@@ -110,10 +110,10 @@ public actor ZenMemory {
         selector: any MemorySelector = TopScoreMemorySelector(),
         extractor: any MemoryExtractor = NoopMemoryExtractor(),
         contextFormatter: any MemoryContextFormatter = BulletMemoryContextFormatter(),
-        configuration: ZenMemoryConfiguration = .init()
-    ) async throws -> ZenMemory {
+        configuration: MemoryEngineConfiguration = .init()
+    ) async throws -> MemoryEngine {
         let graph = try await persistence.load()
-        return ZenMemory(
+        return MemoryEngine(
             graph: graph,
             lexicalIndex: lexicalIndex,
             embedder: embedder,
@@ -128,7 +128,7 @@ public actor ZenMemory {
 
     public func snapshot() -> MemoryGraph { graph }
 
-    public func setConfiguration(_ configuration: ZenMemoryConfiguration) {
+    public func setConfiguration(_ configuration: MemoryEngineConfiguration) {
         self.configuration = configuration
     }
 
@@ -202,14 +202,14 @@ public actor ZenMemory {
     @discardableResult
     public func remember(
         _ content: String,
-        category: MemoryCategory = .fact,
+        category: EngineMemoryCategory = .fact,
         tags: [String] = [],
         source: String? = nil,
         trust: TrustLevel = .medium,
-        scope: MemoryScope = .project,
+        scope: EngineMemoryScope = .project,
         confidence: Float = 1,
         id: String? = nil
-    ) async throws -> MemoryEntry {
+    ) async throws -> EngineMemoryEntry {
         let embedding: [Float]?
         let embeddingModel: String?
         if let embedder {
@@ -220,7 +220,7 @@ public actor ZenMemory {
             embeddingModel = nil
         }
 
-        var entry = MemoryEntry(
+        var entry = EngineMemoryEntry(
             id: id,
             category: category,
             content: content,
@@ -246,12 +246,12 @@ public actor ZenMemory {
     /// The whole batch is stored in one transaction, so a failing save leaves
     /// none of it behind rather than half of it.
     @discardableResult
-    public func learn(from context: String) async throws -> [MemoryEntry] {
+    public func learn(from context: String) async throws -> [EngineMemoryEntry] {
         let drafts = try await extractor.extract(from: context)
-        var prepared: [MemoryEntry] = []
+        var prepared: [EngineMemoryEntry] = []
         prepared.reserveCapacity(drafts.count)
         for draft in drafts where !draft.content.isEmpty {
-            var entry = MemoryEntry(
+            var entry = EngineMemoryEntry(
                 id: nil,
                 category: draft.category,
                 content: draft.content,
@@ -278,7 +278,7 @@ public actor ZenMemory {
         try await extractor.extract(from: context)
     }
 
-    public func insert(_ entry: MemoryEntry, persist: Bool = true) async throws {
+    public func insert(_ entry: EngineMemoryEntry, persist: Bool = true) async throws {
         if persist {
             try await transaction { $0.addMemory(entry) }
         } else {
@@ -288,7 +288,7 @@ public actor ZenMemory {
         }
     }
 
-    public func forget(id: String) async throws -> MemoryEntry? {
+    public func forget(id: String) async throws -> EngineMemoryEntry? {
         try await transaction { $0.removeMemory(id: id) }
     }
 
@@ -332,7 +332,7 @@ public actor ZenMemory {
     /// on a save error, use ``searchReadOnlyDetailed(_:scope:)`` instead.
     public func recallDetailed(
         _ prompt: String,
-        scope: MemoryScope = .all
+        scope: EngineMemoryScope = .all
     ) async throws -> MemoryRecallResult {
         let (plan, candidates, selected) = try await retrieveAndSelect(prompt, scope: scope)
         // Retrieval maintenance is a read-modify-write like any other: it runs
@@ -378,7 +378,7 @@ public actor ZenMemory {
     /// transactional maintenance unchanged.
     public func searchReadOnlyDetailed(
         _ prompt: String,
-        scope: MemoryScope = .all
+        scope: EngineMemoryScope = .all
     ) async throws -> MemoryRecallResult {
         let (plan, candidates, selected) = try await retrieveAndSelect(prompt, scope: scope)
         return MemoryRecallResult(plan: plan, candidates: candidates, selected: selected)
@@ -391,7 +391,7 @@ public actor ZenMemory {
     /// effects and no persistence dependency.
     public func searchReadOnly(
         _ query: String,
-        scope: MemoryScope = .all
+        scope: EngineMemoryScope = .all
     ) async throws -> [MemoryCandidate] {
         try await searchReadOnlyDetailed(query, scope: scope).selected
     }
@@ -406,7 +406,7 @@ public actor ZenMemory {
     /// resulting maintenance transaction runs afterwards.
     private func retrieveAndSelect(
         _ prompt: String,
-        scope: MemoryScope
+        scope: EngineMemoryScope
     ) async throws -> (plan: MemoryQueryPlan, candidates: [MemoryCandidate], selected: [MemoryCandidate]) {
         let plan = try await analyzeWithPolicy(prompt)
         guard plan.shouldRecall, configuration.maxResults > 0 else {
@@ -500,20 +500,20 @@ public actor ZenMemory {
         return (plan, candidates, selected)
     }
 
-    public func recall(_ query: String, scope: MemoryScope = .all) async throws -> [MemoryCandidate] {
+    public func recall(_ query: String, scope: EngineMemoryScope = .all) async throws -> [MemoryCandidate] {
         try await recallDetailed(query, scope: scope).selected
     }
 
     /// Returns the exact memory block that can be injected into a model prompt.
     /// An empty string means the analyzer/selector found nothing worth injecting.
-    public func context(for prompt: String, scope: MemoryScope = .all) async throws -> String {
+    public func context(for prompt: String, scope: EngineMemoryScope = .all) async throws -> String {
         let result = try await recallDetailed(prompt, scope: scope)
         return contextFormatter.format(result.selected)
     }
 
     /// Starts the complete analyze -> retrieve -> select pipeline in a background task and exposes
     /// its selected memories to the next agent turn.
-    public func submitContext(_ context: String, scope: MemoryScope = .all) {
+    public func submitContext(_ context: String, scope: EngineMemoryScope = .all) {
         let token = UUID()
         let task = Task { [weak self] in
             guard let self else { return }
@@ -624,7 +624,7 @@ public actor ZenMemory {
         candidates: [MemoryCandidate],
         selected: [MemoryCandidate],
         against graph: MemoryGraph,
-        scope: MemoryScope
+        scope: EngineMemoryScope
     ) -> RevalidatedRecall {
         func isValid(_ id: String) -> Bool {
             guard let memory = graph.memories[id],
@@ -644,7 +644,7 @@ public actor ZenMemory {
         _ graph: inout MemoryGraph,
         all: [MemoryCandidate],
         selected: [MemoryCandidate],
-        configuration: ZenMemoryConfiguration
+        configuration: MemoryEngineConfiguration
     ) {
         // Kept here rather than in `cascadeRetrieve`, which now runs on a copy:
         // this is the single place where a retrieval reaches the live graph.

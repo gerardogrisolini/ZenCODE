@@ -171,7 +171,7 @@ public enum AgentCoreAppSessionFactory {
     ) throws -> AgentConfiguration {
         var arguments = [
             "ZenCODE",
-            "--cwd",
+            "--working-directory",
             request.workingDirectory.path,
             "--max-tool-rounds",
             "\(AgentToolRoundPolicy.normalizedMaxToolRounds(request.maxToolRounds))"

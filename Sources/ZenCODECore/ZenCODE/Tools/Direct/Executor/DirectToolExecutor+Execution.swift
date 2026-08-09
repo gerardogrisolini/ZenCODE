@@ -207,7 +207,7 @@ extension DirectToolExecutor {
             throw DirectToolError.missingArgument("command")
         }
         let cwd = resolvePath(
-            arguments.string("cwd", "workingDirectory") ?? ".",
+            arguments.string("workingDirectory") ?? ".",
             cwd: workingDirectory
         )
         if let deniedOutput = await deniedLocalExecOutputIfNeeded(

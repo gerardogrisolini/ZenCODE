@@ -1,6 +1,6 @@
 import Foundation
 
-public struct MemoryQueryPlan: Codable, Sendable, Equatable {
+struct MemoryQueryPlan: Codable, Sendable, Equatable {
     public var shouldRecall: Bool
     public var queries: [String]
     public var tags: [String]
@@ -38,13 +38,13 @@ public struct MemoryQueryPlan: Codable, Sendable, Equatable {
     }
 }
 
-public protocol MemoryQueryAnalyzer: Sendable {
+protocol MemoryQueryAnalyzer: Sendable {
     func analyze(_ prompt: String) async throws -> MemoryQueryPlan
 }
 
 /// Zero-cost default analyzer. It treats the current prompt as the retrieval query.
 /// Replace it with an LLM-backed analyzer when semantic query rewriting is useful.
-public struct DirectMemoryQueryAnalyzer: MemoryQueryAnalyzer {
+struct DirectMemoryQueryAnalyzer: MemoryQueryAnalyzer {
     public init() {}
 
     public func analyze(_ prompt: String) async throws -> MemoryQueryPlan {
@@ -52,7 +52,7 @@ public struct DirectMemoryQueryAnalyzer: MemoryQueryAnalyzer {
     }
 }
 
-public protocol MemorySelector: Sendable {
+protocol MemorySelector: Sendable {
     func select(
         context: String,
         candidates: [MemoryCandidate],
@@ -61,7 +61,7 @@ public protocol MemorySelector: Sendable {
 }
 
 /// Dependency-free selector that keeps the highest-scoring candidates.
-public struct TopScoreMemorySelector: MemorySelector {
+struct TopScoreMemorySelector: MemorySelector {
     public var minimumScore: Float
 
     public init(minimumScore: Float = 0) {
@@ -85,22 +85,22 @@ public struct TopScoreMemorySelector: MemorySelector {
     }
 }
 
-public struct MemoryDraft: Codable, Sendable, Equatable {
+struct MemoryDraft: Codable, Sendable, Equatable {
     public var content: String
-    public var category: MemoryCategory
+    public var category: EngineMemoryCategory
     public var tags: [String]
     public var source: String?
     public var trust: TrustLevel
-    public var scope: MemoryScope
+    public var scope: EngineMemoryScope
     public var confidence: Float
 
     public init(
         content: String,
-        category: MemoryCategory = .fact,
+        category: EngineMemoryCategory = .fact,
         tags: [String] = [],
         source: String? = nil,
         trust: TrustLevel = .medium,
-        scope: MemoryScope = .project,
+        scope: EngineMemoryScope = .project,
         confidence: Float = 1
     ) {
         self.content = content.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -113,16 +113,16 @@ public struct MemoryDraft: Codable, Sendable, Equatable {
     }
 }
 
-public protocol MemoryExtractor: Sendable {
+protocol MemoryExtractor: Sendable {
     func extract(from context: String) async throws -> [MemoryDraft]
 }
 
-public struct NoopMemoryExtractor: MemoryExtractor {
+struct NoopMemoryExtractor: MemoryExtractor {
     public init() {}
     public func extract(from context: String) async throws -> [MemoryDraft] { [] }
 }
 
-public struct MemoryRecallResult: Sendable, Equatable {
+struct MemoryRecallResult: Sendable, Equatable {
     public var plan: MemoryQueryPlan
     public var candidates: [MemoryCandidate]
     public var selected: [MemoryCandidate]
@@ -138,12 +138,12 @@ public struct MemoryRecallResult: Sendable, Equatable {
     }
 }
 
-public protocol MemoryContextFormatter: Sendable {
+protocol MemoryContextFormatter: Sendable {
     func format(_ memories: [MemoryCandidate]) -> String
 }
 
 /// Formats selected memories as a compact block that can be inserted into an agent prompt.
-public struct BulletMemoryContextFormatter: MemoryContextFormatter {
+struct BulletMemoryContextFormatter: MemoryContextFormatter {
     public var heading: String
     public var includeScores: Bool
 

@@ -15,7 +15,6 @@
 //
 
 import Foundation
-import ZenMemory
 @testable import ZenCODECore
 import Testing
 
@@ -81,7 +80,7 @@ struct MemoryReadOnlySearchStoreTests {
     @Test
     func storeSearchDoesNotMutateEngineGraphMetadata() async throws {
         let persistence = RecordingPersistence()
-        let engine = ZenMemory(persistence: persistence)
+        let engine = MemoryEngine(persistence: persistence)
         let store = MemoryGraphStore(
             graphURL: URL(fileURLWithPath: "/dev/null/graph.json"),
             engine: engine,
@@ -110,7 +109,7 @@ struct MemoryReadOnlySearchStoreTests {
 
     @Test
     func storeSearchSucceedsWhenPersistenceAlwaysFails() async throws {
-        let engine = ZenMemory(persistence: AlwaysFailingPersistence())
+        let engine = MemoryEngine(persistence: AlwaysFailingPersistence())
         let store = MemoryGraphStore(
             graphURL: URL(fileURLWithPath: "/dev/null/graph.json"),
             engine: engine,
@@ -128,7 +127,7 @@ struct MemoryReadOnlySearchStoreTests {
     @Test
     func automaticRecallStillAppliesMaintenanceThroughStore() async throws {
         let persistence = RecordingPersistence()
-        let engine = ZenMemory(persistence: persistence)
+        let engine = MemoryEngine(persistence: persistence)
         let store = MemoryGraphStore(
             graphURL: URL(fileURLWithPath: "/dev/null/graph.json"),
             engine: engine,

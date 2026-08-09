@@ -1,10 +1,10 @@
 //
 //  EmbeddingProviderTests.swift
-//  ZenMemoryTests
+//  ZenCODECoreTests (memory engine)
 //
 
 import Foundation
-@testable import ZenMemory
+@testable import ZenCODECore
 import Testing
 
 @Test

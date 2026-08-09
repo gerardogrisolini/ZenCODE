@@ -1,17 +1,17 @@
 import Foundation
 
-public protocol MemoryPersistence: Sendable {
+protocol MemoryPersistence: Sendable {
     func load() async throws -> MemoryGraph
     func save(_ graph: MemoryGraph) async throws
 }
 
-public enum MemoryPersistenceError: Error, Sendable, Equatable {
+enum MemoryPersistenceError: Error, Sendable, Equatable {
     /// The graph file was written by a newer engine than this build supports.
     /// The file is rejected and left byte-identical on disk.
     case unsupportedGraphVersion(UInt32)
 }
 
-public actor JSONMemoryPersistence: MemoryPersistence {
+actor JSONMemoryPersistence: MemoryPersistence {
     public let url: URL
 
     public init(url: URL) {
@@ -68,7 +68,7 @@ public actor JSONMemoryPersistence: MemoryPersistence {
     }
 }
 
-public actor InMemoryPersistence: MemoryPersistence {
+actor InMemoryPersistence: MemoryPersistence {
     private var graph: MemoryGraph
 
     public init(graph: MemoryGraph = MemoryGraph()) {

@@ -1,6 +1,6 @@
 //
 //  ReadOnlySearchTests.swift
-//  ZenMemoryTests
+//  ZenCODECoreTests (memory engine)
 //
 //  Verifies the read-only search path: `searchReadOnly` performs the same
 //  retrieval as `recall` but applies no maintenance and never touches
@@ -9,7 +9,7 @@
 
 import Foundation
 import Testing
-@testable import ZenMemory
+@testable import ZenCODECore
 
 // MARK: - Doubles
 
@@ -35,7 +35,7 @@ struct ReadOnlySearchTests {
 
     @Test
     func searchReadOnlyReturnsResults() async throws {
-        let engine = ZenMemory(persistence: RecordingPersistence())
+        let engine = MemoryEngine(persistence: RecordingPersistence())
         try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
         try await engine.remember("Database migrations run at startup", tags: ["database"])
 
@@ -46,7 +46,7 @@ struct ReadOnlySearchTests {
 
     @Test
     func searchReadOnlyAndRecallSelectSameEntries() async throws {
-        let engine = ZenMemory(persistence: RecordingPersistence())
+        let engine = MemoryEngine(persistence: RecordingPersistence())
         try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
         try await engine.remember("Database migrations run at startup", tags: ["database"])
 
@@ -62,7 +62,7 @@ struct ReadOnlySearchTests {
 
     @Test
     func searchReadOnlyDoesNotMutateRetrievalCount() async throws {
-        let engine = ZenMemory(persistence: RecordingPersistence())
+        let engine = MemoryEngine(persistence: RecordingPersistence())
         try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
         try await engine.remember("Database migrations run at startup", tags: ["database"])
 
@@ -77,7 +77,7 @@ struct ReadOnlySearchTests {
 
     @Test
     func searchReadOnlyDoesNotChangeConfidence() async throws {
-        let engine = ZenMemory(persistence: RecordingPersistence())
+        let engine = MemoryEngine(persistence: RecordingPersistence())
         try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
         try await engine.remember("Database migrations run at startup", tags: ["database"])
 
@@ -90,7 +90,7 @@ struct ReadOnlySearchTests {
 
     @Test
     func searchReadOnlyDoesNotCreateLinks() async throws {
-        let engine = ZenMemory(persistence: RecordingPersistence())
+        let engine = MemoryEngine(persistence: RecordingPersistence())
         try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
         try await engine.remember("Swift structured concurrency guide", tags: ["swift"])
 
@@ -104,7 +104,7 @@ struct ReadOnlySearchTests {
     @Test
     func searchReadOnlyNeverPersists() async throws {
         let persistence = RecordingPersistence()
-        let engine = ZenMemory(persistence: persistence)
+        let engine = MemoryEngine(persistence: persistence)
         try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
 
         let savesBefore = await persistence.saved.count
@@ -117,10 +117,10 @@ struct ReadOnlySearchTests {
 
     @Test
     func searchReadOnlySucceedsEvenWhenPersistenceAlwaysFails() async throws {
-        let engine = ZenMemory(persistence: AlwaysFailingPersistence())
+        let engine = MemoryEngine(persistence: AlwaysFailingPersistence())
         // Seed without persistence so the failing save is not triggered by setup.
         try await engine.insert(
-            MemoryEntry(id: "entry", category: .fact, content: "database migrations at startup"),
+            EngineMemoryEntry(id: "entry", category: .fact, content: "database migrations at startup"),
             persist: false
         )
         // Must not throw — the read-only path never calls save.
@@ -133,7 +133,7 @@ struct ReadOnlySearchTests {
     @Test
     func recallStillAppliesTransactionalMaintenance() async throws {
         let persistence = RecordingPersistence()
-        let engine = ZenMemory(persistence: persistence)
+        let engine = MemoryEngine(persistence: persistence)
         try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
         try await engine.remember("Swift structured concurrency guide", tags: ["swift"])
 
@@ -150,7 +150,7 @@ struct ReadOnlySearchTests {
     @Test
     func recallStillCreatesCoRelevanceLinks() async throws {
         let persistence = RecordingPersistence()
-        let engine = ZenMemory(persistence: persistence)
+        let engine = MemoryEngine(persistence: persistence)
         try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
         try await engine.remember("Swift structured concurrency guide", tags: ["swift"])
 
