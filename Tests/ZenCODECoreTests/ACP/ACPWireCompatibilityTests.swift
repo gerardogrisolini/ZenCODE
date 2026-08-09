@@ -611,6 +611,48 @@ private extension ACPCompatibilityTests {
         #expect(ZenCODEACPBridge.subscriptionUsageJSONData(for: status) == nil)
     }
 
+    @Test(arguments: [
+        (AgentSharedChat.ParticipantKind.coordinator, "Coordinator"),
+        (.agent, "Worker")
+    ])
+    func sharedChatUsesStandardRenderedACPChunk(
+        kind: AgentSharedChat.ParticipantKind,
+        name: String
+    ) throws {
+        let message = AgentSharedChat.Message(
+            roomID: "acp-session",
+            sender: AgentSharedChat.Participant(id: "sender", name: name, kind: kind),
+            recipientIDs: ["operator", "coordinator:root"],
+            text: "live update"
+        )
+
+        let data = try #require(ZenCODEACPBridge.sharedChatUpdate(for: message))
+        let object = try #require(data.objectValue)
+        let content = try #require(object["content"]?.objectValue)
+
+        #expect(object["sessionUpdate"]?.acpStringValue == "agent_message_chunk")
+        #expect(content["type"]?.acpStringValue == "text")
+        #expect(content["text"]?.acpStringValue == "[\(name)] live update")
+    }
+
+    /// Operator traffic is already on the client's screen, so it is not
+    /// forwarded: rendering it would duplicate the host's own input.
+    @Test
+    func sharedChatDropsOperatorMessagesInsteadOfDuplicatingThem() throws {
+        let message = AgentSharedChat.Message(
+            roomID: "acp-session",
+            sender: AgentSharedChat.Participant(
+                id: "operator:acp-session",
+                name: "operator",
+                kind: .operator
+            ),
+            recipientIDs: ["coordinator:root"],
+            text: "hello"
+        )
+
+        #expect(ZenCODEACPBridge.sharedChatUpdate(for: message) == nil)
+    }
+
     @Test
     func tokenUsageUpdateIsStillASessionUpdateWithUsedAndSize() throws {
         let status = DirectAgentContextWindowStatus(

@@ -530,6 +530,9 @@ extension TerminalChat {
         await synchronizeLocalExecAccessModeStatusBar()
 
         await configureConsentReader(eventQueue: eventQueue)
+        // The panel pulls live mentions while a mention token is being edited,
+        // so the roster list stays correct even if a push refresh was missed.
+        await installSharedChatMentionSuggestionsProvider()
 
         guard await startPanelInput() else {
             await statusBar.stop()

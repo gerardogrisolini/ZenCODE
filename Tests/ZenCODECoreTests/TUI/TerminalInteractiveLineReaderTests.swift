@@ -12,6 +12,56 @@ import Testing
 
 @Suite
 struct TerminalInteractiveLineReaderTests {
+    /// A roster notification can be lost (the terminal queue evicts exactly
+    /// this event class first, and the coordinator publishes it only on a
+    /// signature change). The panel therefore pulls the live mention catalogue
+    /// while the operator edits a mention token, so every active agent is
+    /// offered instead of only the reserved broadcast handles.
+    @Test
+    func mentionDraftPullsLiveMentionSuggestions() async {
+        let reader = TerminalInteractiveLineReader()
+        await reader.setPanelCommandSuggestions([
+            TerminalCommandSuggestion(command: "/help", summary: "help"),
+            TerminalCommandSuggestion(command: "@coordinator ", summary: "coordinator"),
+            TerminalCommandSuggestion(command: "@all ", summary: "all")
+        ])
+        reader.setPanelMentionSuggestionsProvider {
+            [
+                TerminalCommandSuggestion(command: "@coordinator ", summary: "coordinator"),
+                TerminalCommandSuggestion(command: "@all ", summary: "all"),
+                TerminalCommandSuggestion(command: "@dev ", summary: "message active agent: dev")
+            ]
+        }
+
+        await reader.setPanelText("@")
+        await reader.refreshPanelMentionSuggestionsIfNeeded()
+
+        let commands = reader.state.withLock { $0.panelCommandSuggestions.map(\.command) }
+        #expect(commands == ["/help", "@coordinator ", "@all ", "@dev "])
+    }
+
+    /// The pull is scoped to mention editing: a slash-command draft must not
+    /// query the shared-chat roster on every keystroke.
+    @Test
+    func slashCommandDraftDoesNotPullMentionSuggestions() async {
+        let reader = TerminalInteractiveLineReader()
+        await reader.setPanelCommandSuggestions([
+            TerminalCommandSuggestion(command: "/help", summary: "help")
+        ])
+        let didCallProvider = Mutex(false)
+        reader.setPanelMentionSuggestionsProvider {
+            didCallProvider.withLock { $0 = true }
+            return []
+        }
+
+        await reader.setPanelText("/he")
+        await reader.refreshPanelMentionSuggestionsIfNeeded()
+
+        #expect(didCallProvider.withLock { $0 } == false)
+        let commands = reader.state.withLock { $0.panelCommandSuggestions.map(\.command) }
+        #expect(commands == ["/help"])
+    }
+
     @Test
     func commandSuggestionWindowKeepsSelectedSuggestionVisible() {
         let suggestions = (0..<10).map { index in

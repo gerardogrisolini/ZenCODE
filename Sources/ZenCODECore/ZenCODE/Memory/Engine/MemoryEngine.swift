@@ -59,6 +59,48 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
     }
 }
 
+/// Visible, redacted diagnostic emission for semantic embedding failures.
+///
+/// ``ZenLogger`` alone cannot satisfy "print a visible error": it is opt-in
+/// (`ZENCODE_LOG`) and disabled by default. This helper therefore always
+/// writes one redacted ERROR line to the preserved stderr descriptor
+/// (``AgentOutput/standardError``, never stdout) and additionally feeds the
+/// opt-in diagnostic file — unless the logger already targets stderr, in which
+/// case a duplicate line is avoided. `stderrWriter` and `loggerDestination`
+/// are seams so tests can prove the emission and the dedup decision without
+/// touching the process-global stderr or the global logger configuration.
+enum MemorySemanticFallbackDiagnostics {
+    /// The visible line: same category/level/redaction contract as the
+    /// diagnostic channel, with a trailing newline for the raw descriptor.
+    static func visibleLine(message: String) -> String {
+        ZenLogger.formattedMessage(level: .error, category: .memory, message: message) + "\n"
+    }
+
+    static func emitVisibleError(
+        message: String,
+        loggerDestination: String? = ZenLogger.destinationDescription,
+        stderrWriter: ((Data) throws -> Void)? = nil
+    ) {
+        let data = Data(visibleLine(message: message).utf8)
+        if let stderrWriter {
+            try? stderrWriter(data)
+        } else {
+            try? AgentOutput.standardError.write(contentsOf: data)
+        }
+        if shouldDuplicateToZenLogger(destinationDescription: loggerDestination) {
+            ZenLogger.error(.memory, message)
+        }
+    }
+
+    /// Whether the diagnostic-file channel should also receive the line.
+    /// `true` when the logger is disabled (the `ZenLogger.error` call is then
+    /// a no-op) or points at a file; `false` only when it already writes to
+    /// stderr, so the visible line is not duplicated.
+    static func shouldDuplicateToZenLogger(destinationDescription: String?) -> Bool {
+        destinationDescription != "stderr"
+    }
+}
+
 /// Cross-platform agent memory engine.
 ///
 /// The default path is dependency-free lexical retrieval. Query analysis, semantic embeddings,
@@ -75,10 +117,24 @@ actor MemoryEngine {
     private var configuration: MemoryEngineConfiguration
     private var pending: [MemoryCandidate] = []
     private var backgroundTasks: [UUID: Task<Void, Never>] = [:]
+    /// Visible-diagnostic sink for semantic embedding failures during
+    /// recall/search. Defaults to an always-visible redacted ERROR line on the
+    /// preserved stderr descriptor (plus the opt-in ZenLogger file channel
+    /// unless it already targets stderr); tests inject a deterministic
+    /// recorder instead of touching process-global stderr or the logger
+    /// configuration.
+    private let semanticFailureReporter: @Sendable (String) -> Void
     /// Write-lock state backing ``transaction(_:)``. See that method for why
     /// actor isolation alone is not enough.
     private var isWriting = false
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Default reporter: always emits a redacted ERROR line on the preserved
+    /// stderr descriptor (visible even with `ZENCODE_LOG` off) and feeds the
+    /// opt-in diagnostic file unless it already targets stderr.
+    private static let defaultSemanticFailureReporter: @Sendable (String) -> Void = { message in
+        MemorySemanticFallbackDiagnostics.emitVisibleError(message: message)
+    }
 
     public init(
         graph: MemoryGraph = MemoryGraph(),
@@ -89,7 +145,8 @@ actor MemoryEngine {
         selector: any MemorySelector = TopScoreMemorySelector(),
         extractor: any MemoryExtractor = NoopMemoryExtractor(),
         contextFormatter: any MemoryContextFormatter = BulletMemoryContextFormatter(),
-        configuration: MemoryEngineConfiguration = .init()
+        configuration: MemoryEngineConfiguration = .init(),
+        semanticFailureReporter: @escaping @Sendable (String) -> Void = MemoryEngine.defaultSemanticFailureReporter
     ) {
         self.graph = graph
         self.lexicalIndex = lexicalIndex
@@ -100,6 +157,7 @@ actor MemoryEngine {
         self.extractor = extractor
         self.contextFormatter = contextFormatter
         self.configuration = configuration
+        self.semanticFailureReporter = semanticFailureReporter
     }
 
     public static func open(
@@ -110,7 +168,8 @@ actor MemoryEngine {
         selector: any MemorySelector = TopScoreMemorySelector(),
         extractor: any MemoryExtractor = NoopMemoryExtractor(),
         contextFormatter: any MemoryContextFormatter = BulletMemoryContextFormatter(),
-        configuration: MemoryEngineConfiguration = .init()
+        configuration: MemoryEngineConfiguration = .init(),
+        semanticFailureReporter: @escaping @Sendable (String) -> Void = MemoryEngine.defaultSemanticFailureReporter
     ) async throws -> MemoryEngine {
         let graph = try await persistence.load()
         return MemoryEngine(
@@ -122,7 +181,8 @@ actor MemoryEngine {
             selector: selector,
             extractor: extractor,
             contextFormatter: contextFormatter,
-            configuration: configuration
+            configuration: configuration,
+            semanticFailureReporter: semanticFailureReporter
         )
     }
 
@@ -442,17 +502,46 @@ actor MemoryEngine {
         if !metadata.isEmpty { rankings.append(metadata) }
 
         if let embedder, configuration.maxSemanticQueries > 0 {
-            for query in queries.prefix(configuration.maxSemanticQueries) {
-                let queryEmbedding = try await embedder.embed(query)
-                let semantic = MemorySearch.semantic(
-                    graph: graph,
-                    queryEmbedding: queryEmbedding,
-                    modelID: embedder.modelID,
-                    scope: scope,
-                    threshold: configuration.similarityThreshold,
-                    limit: configuration.maxSemanticHits
+            let semanticQueries = Array(queries.prefix(configuration.maxSemanticQueries))
+            var semanticFailures = 0
+            var firstFailure: (any Error)?
+            for query in semanticQueries {
+                do {
+                    let queryEmbedding = try await embedder.embed(query)
+                    let semantic = MemorySearch.semantic(
+                        graph: graph,
+                        queryEmbedding: queryEmbedding,
+                        modelID: embedder.modelID,
+                        scope: scope,
+                        threshold: configuration.similarityThreshold,
+                        limit: configuration.maxSemanticHits
+                    )
+                    if !semantic.isEmpty { rankings.append(semantic) }
+                } catch let cancellation as CancellationError {
+                    // Cancellation is not an endpoint failure: keep it
+                    // observable so callers can still stop a cancelled recall.
+                    throw cancellation
+                } catch {
+                    // A cancellation that surfaced as another error type (for
+                    // example `URLError.cancelled`) must not be degraded into
+                    // a BM25 fallback.
+                    try Task.checkCancellation()
+                    // The lexical/BM25 rankings above are already computed, so
+                    // an embedding-endpoint failure must not fail the whole
+                    // retrieval: report it through the configured reporter
+                    // (always-visible stderr line by default) and continue
+                    // with BM25-only results.
+                    semanticFailures += 1
+                    if firstFailure == nil { firstFailure = error }
+                }
+            }
+            if semanticFailures > 0 {
+                // Visible, redacted diagnostic. Never include the query text,
+                // embedding vectors, endpoint URLs, HTTP response bodies
+                // (which can echo input or carry credentials), or API keys.
+                semanticFailureReporter(
+                    "semantic embedding retrieval failed (\(Self.embeddingFailureSummary(firstFailure))); continuing with BM25-only results (failedQueries=\(semanticFailures)/\(semanticQueries.count))."
                 )
-                if !semantic.isEmpty { rankings.append(semantic) }
             }
         }
 
@@ -498,6 +587,27 @@ actor MemoryEngine {
 
         let selected = try await selectWithPolicy(context: prompt, candidates: candidates)
         return (plan, candidates, selected)
+    }
+
+    /// Maps an embedding failure to a short, secret-free summary for the
+    /// diagnostic channel. By construction it never includes the query text,
+    /// embedding vectors, endpoint URLs, HTTP response bodies (which can echo
+    /// input or carry credentials), or API keys — only stable status/type
+    /// information that is safe to log.
+    private static func embeddingFailureSummary(_ error: (any Error)?) -> String {
+        guard let error else { return "unknown" }
+        if let embeddingError = error as? OpenAICompatibleEmbeddingError {
+            switch embeddingError {
+            case .httpStatus(let status, _):
+                return "httpStatus \(status)"
+            case .emptyEmbedding:
+                return "emptyEmbedding"
+            }
+        }
+        if let urlError = error as? URLError {
+            return "transportError \(urlError.code.rawValue)"
+        }
+        return "\(type(of: error))"
     }
 
     public func recall(_ query: String, scope: EngineMemoryScope = .all) async throws -> [MemoryCandidate] {

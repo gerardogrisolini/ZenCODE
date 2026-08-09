@@ -10,6 +10,25 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- The terminal `@` autocomplete no longer shows only `@coordinator` and `@all`
+  when agents are live. The input panel now pulls the current shared-chat roster
+  while a mention token is being edited, instead of depending solely on roster
+  notifications, which the bounded terminal queue evicts first and which the
+  coordinator published only on a roster-signature change. A dropped roster
+  event is now also re-published on the next coordination poll, and `/agent` no
+  longer clears the mention entries from the panel catalogue.
+- Live shared-chat messages are now rendered by ACP clients. A sub-agent that
+  reports through `agent.message` reaches the ACP host as a standard
+  `agent_message_chunk` instead of being visible only in the terminal UI. The
+  renderer is attached once per session incarnation, is kept in a bridge-scoped
+  registry so no session-state rebuild (prompt refresh, `@agent` routing,
+  `set_model`) can silently drop it, is attached after a `session/load` history
+  replay so transcripts are never interleaved, skips operator traffic the client
+  already displays, and is awaited to quiescence by `session/close` and
+  `shutdown`.
+
 ## [1.2.0] - 2026-08-09
 
 ### Added

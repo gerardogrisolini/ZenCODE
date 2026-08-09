@@ -258,6 +258,11 @@ public actor AgentSharedChatCoordinator {
         /// Set when a subscriber buffer evicted an event, so the next poll can
         /// re-offer an outstanding trigger that may have been evicted with it.
         var needsTriggerReoffer = false
+        /// Set when a subscriber buffer evicted an event, so the next poll
+        /// re-publishes the roster even when its signature did not change.
+        /// Without this, a dropped `participantsChanged` is never repeated and a
+        /// consumer keeps rendering a stale `@mention` list.
+        var needsParticipantsReemit = false
         var triggerReofferCount = 0
         var droppedEventCount = 0
         /// Message IDs currently enqueued or already delivered to each active
@@ -952,8 +957,10 @@ public actor AgentSharedChatCoordinator {
         let signature = participants.map { "\($0.id)|\($0.name)|\($0.isActive)" }
         // An empty first observation is not a change: it would only make the
         // consumer refresh a roster that never had participants.
-        let participantsChanged = room.participantSignature != signature
-            && !(room.participantSignature == nil && signature.isEmpty)
+        let participantsChanged = room.needsParticipantsReemit
+            || (room.participantSignature != signature
+                && !(room.participantSignature == nil && signature.isEmpty))
+        room.needsParticipantsReemit = false
         room.participantSignature = signature
         if !messages.isEmpty {
             room.pending.append(contentsOf: messages)
@@ -1136,6 +1143,7 @@ public actor AgentSharedChatCoordinator {
             // Every dropped event, regardless of its payload, retains the
             // existing trigger re-offer contract.
             room.needsTriggerReoffer = true
+            room.needsParticipantsReemit = true
             makeMessageIDsRecoverable(in: evicted, for: subscriberID, in: &room)
             markMessageIDs(in: event, for: subscriberID, in: &room)
         case .terminated:

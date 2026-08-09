@@ -375,6 +375,10 @@ extension ZenCODEACPBridge {
             invalidateLifecycleOperations(sessionID: sessionID, epoch: closedEpoch)
         }
         updateSessionSleepAssertion()
+        // Wait for the shared-chat renderer to go quiet before answering: after
+        // this returns no further `session/update` can be emitted for a session
+        // the host is closing.
+        await stopSharedChatForwarding(sessionID: sessionID)
         await sessionRunner.closeSession(id: sessionID)
         // Re-drop in case a racing handler re-created the entry while the
         // runner was closing the session.
@@ -382,6 +386,9 @@ extension ZenCODEACPBridge {
            resurrected.epoch == closedSession?.epoch {
             sessions.removeValue(forKey: sessionID)
             updateSessionSleepAssertion()
+            // A renderer attached for that resurrected entry would outlive its
+            // session, so it is torn down with it.
+            await stopSharedChatForwarding(sessionID: sessionID)
         }
         // `closeSession` suspends: a shutdown landing there already failed all
         // pending requests, so do not write a late reply.

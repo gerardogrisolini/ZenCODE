@@ -129,6 +129,17 @@ public final class TerminalInteractiveLineReader: Sendable {
         var panelPendingAttachmentCount = 0
         var panelOverlayOverride: TerminalPanelModeOverride?
         var panelCommandSuggestions: [TerminalCommandSuggestion] = []
+        /// Pull-based source of live `@mention` suggestions.
+        ///
+        /// Roster changes reach the panel as push events, but those events are
+        /// the only evictable entry of the bounded terminal queue and are emitted
+        /// only when the roster signature changes. Asking for the current roster
+        /// while the operator is actually typing a mention makes the list correct
+        /// even when a push notification was dropped.
+        var panelMentionSuggestionsProvider: (@Sendable () async -> [TerminalCommandSuggestion])?
+        /// Single-flight guard so a burst of keystrokes cannot start one roster
+        /// query per key.
+        var isRefreshingMentionSuggestions = false
         /// Cancellation token of the panel loop's in-flight blocking read. Stopping
         /// the panel cancels it so the loop unwinds at once instead of waiting out
         /// the current read timeout while the caller awaits the task.

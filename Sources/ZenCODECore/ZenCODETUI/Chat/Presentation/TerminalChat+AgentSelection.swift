@@ -62,7 +62,9 @@ extension TerminalChat {
         let previousManualModelIDOverride = manualModelIDOverride
         let previousManualThinkingSelectionOverride = manualThinkingSelectionOverride
         selectedAgent = agent
-        await interactiveReader.setPanelCommandSuggestions(commandSuggestionsForCurrentAgent())
+        await interactiveReader.setPanelCommandSuggestions(
+            await panelSuggestionsForCurrentAgent()
+        )
         await applyAgentProfile(agent)
         activeSessionSystemPromptOverride = nil
         activePlan = nil

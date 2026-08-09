@@ -19,11 +19,7 @@ extension TerminalChat {
     /// always resolves back to the stable participant identifier.
     func panelSuggestionsForCurrentAgent() async -> [TerminalCommandSuggestion] {
         let commands = commandSuggestionsForCurrentAgent()
-        let roster = await sessionRunner.sharedChatMentionRoster(rootSessionID: sessionID)
-        return commands + Self.sharedChatMentionSuggestions(
-            for: roster.participants,
-            handleMap: roster.handleMap
-        )
+        return commands + (await sharedChatMentionSuggestions())
     }
 
     /// Builds discoverable reserved mentions plus safe, unique direct mentions
@@ -95,6 +91,25 @@ extension TerminalChat {
         await interactiveReader.setPanelCommandSuggestions(
             await panelSuggestionsForCurrentAgent()
         )
+    }
+
+    /// Live `@mention` catalogue only (reserved destinations plus the active
+    /// agent instances). The input panel pulls this while the operator is
+    /// editing a mention, so the list never depends on a roster notification
+    /// having been delivered.
+    func sharedChatMentionSuggestions() async -> [TerminalCommandSuggestion] {
+        let roster = await sessionRunner.sharedChatMentionRoster(rootSessionID: sessionID)
+        return Self.sharedChatMentionSuggestions(
+            for: roster.participants,
+            handleMap: roster.handleMap
+        )
+    }
+
+    /// Installs the pull-based mention source on the input panel.
+    func installSharedChatMentionSuggestionsProvider() async {
+        interactiveReader.setPanelMentionSuggestionsProvider { [weak self] in
+            await self?.sharedChatMentionSuggestions() ?? []
+        }
     }
 
     struct SharedChatMentionRoute: Sendable, Equatable {

@@ -294,6 +294,54 @@ extension TerminalInteractiveLineReader {
         await renderPanel()
     }
 
+    /// Installs the live `@mention` source used while the operator edits a
+    /// mention token. Passing `nil` removes it.
+    public func setPanelMentionSuggestionsProvider(
+        _ provider: (@Sendable () async -> [TerminalCommandSuggestion])?
+    ) {
+        withPanelLock { state in
+            state.panelMentionSuggestionsProvider = provider
+        }
+    }
+
+    /// Replaces the `@mention` entries of the catalogue with a fresh roster
+    /// snapshot while the cursor is completing a mention.
+    ///
+    /// Slash-command entries are untouched, so this never races the
+    /// agent-scoped command catalogue. The refresh is single-flight and only
+    /// runs for a mention token, so ordinary typing performs no extra work.
+    func refreshPanelMentionSuggestionsIfNeeded() async {
+        let provider = withPanelLock { state -> (@Sendable () async -> [TerminalCommandSuggestion])? in
+            guard let provider = state.panelMentionSuggestionsProvider,
+                  !state.isRefreshingMentionSuggestions,
+                  TerminalPromptCompletion.completion(
+                      buffer: state.panelBuffer,
+                      cursorIndex: state.panelCursorIndex
+                  )?.kind == .mention else {
+                return nil
+            }
+            state.isRefreshingMentionSuggestions = true
+            return provider
+        }
+        guard let provider else { return }
+        let mentions = await provider()
+        let didChange = withPanelLock { state -> Bool in
+            state.isRefreshingMentionSuggestions = false
+            let commands = state.panelCommandSuggestions.filter {
+                !$0.command.hasPrefix("@")
+            }
+            let updated = commands + mentions
+            guard updated != state.panelCommandSuggestions else {
+                return false
+            }
+            state.panelCommandSuggestions = updated
+            state.panelCommandSuggestionIndex = 0
+            return true
+        }
+        guard didChange else { return }
+        await renderPanel()
+    }
+
     public func setQueuedPromptCount(_ count: Int) async {
         withPanelLock { state in
             state.panelQueuedPromptCount = max(0, count)
@@ -452,6 +500,9 @@ extension TerminalInteractiveLineReader {
         case .ignored:
             return
         case .changed:
+            // A mention token asks the chat for the live roster before drawing,
+            // so the list is current even when a roster push event was lost.
+            await refreshPanelMentionSuggestionsIfNeeded()
             await renderPanel()
         case let .submitted(line):
             await onEvent(.submitted(line))
