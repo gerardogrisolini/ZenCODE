@@ -1,7 +1,4 @@
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 protocol EmbeddingProvider: Sendable {
     var modelID: String { get }
@@ -44,13 +41,17 @@ struct DeterministicHashEmbeddingProvider: EmbeddingProvider {
 }
 
 enum OpenAICompatibleEmbeddingError: Error, Sendable {
-    case invalidResponse
     case httpStatus(Int, String)
     case emptyEmbedding
 }
 
 /// Works with OpenAI-compatible `/v1/embeddings` endpoints (OpenAI, Ollama-compatible gateways,
 /// vLLM/LM Studio gateways that expose the same JSON contract, etc.).
+///
+/// Requests are driven through the same shared SwiftNIO transport
+/// (``RemoteTransportCore``) that the generation providers use, so embeddings
+/// share one HTTP/SSE engine, TLS stack, and event-loop group rather than a
+/// separate `URLSession` stack.
 struct OpenAICompatibleEmbeddingProvider: EmbeddingProvider {
     public let modelID: String
     public let endpoint: URL
@@ -59,14 +60,14 @@ struct OpenAICompatibleEmbeddingProvider: EmbeddingProvider {
     /// A caller-supplied OpenAI-compatible model. `nil` deliberately omits
     /// `model` from the request so an endpoint-only server can choose it.
     public let requestModel: String?
-    private let session: URLSession
+    private let transport: RemoteTransportCore
 
     public init(
         endpoint: URL,
         model: String? = nil,
         apiKey: String? = nil,
         extraHeaders: [String: String] = [:],
-        session: URLSession = .shared
+        transport: RemoteTransportCore = RemoteTransportCore()
     ) {
         self.endpoint = endpoint
         let normalizedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -75,7 +76,7 @@ struct OpenAICompatibleEmbeddingProvider: EmbeddingProvider {
         self.modelID = requestModel ?? Self.endpointModelID(for: endpoint)
         self.apiKey = apiKey
         self.extraHeaders = extraHeaders
-        self.session = session
+        self.transport = transport
     }
 
     public func embed(_ text: String) async throws -> [Float] {
@@ -84,14 +85,19 @@ struct OpenAICompatibleEmbeddingProvider: EmbeddingProvider {
             let data: [Item]
         }
 
-        let request = try request(for: text)
+        let request = try streamingRequest(for: text)
+        let response = try await transport.openHTTPStream(request)
 
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw OpenAICompatibleEmbeddingError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else {
-            throw OpenAICompatibleEmbeddingError.httpStatus(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        guard (200..<300).contains(response.status) else {
+            let body = try await collectBody(from: response.body)
+            throw OpenAICompatibleEmbeddingError.httpStatus(
+                response.status,
+                String(data: body, encoding: .utf8) ?? ""
+            )
         }
-        let decoded = try JSONDecoder().decode(ResponseBody.self, from: data)
+
+        let body = try await collectBody(from: response.body)
+        let decoded = try JSONDecoder().decode(ResponseBody.self, from: body)
         guard let embedding = decoded.data.sorted(by: { ($0.index ?? 0) < ($1.index ?? 0) }).first?.embedding,
               !embedding.isEmpty else {
             throw OpenAICompatibleEmbeddingError.emptyEmbedding
@@ -99,9 +105,18 @@ struct OpenAICompatibleEmbeddingProvider: EmbeddingProvider {
         return embedding
     }
 
+    /// Collects the full HTTP response body into a single `Data`.
+    private func collectBody(from body: RemoteHTTPBody) async throws -> Data {
+        var data = Data()
+        for try await chunk in body {
+            data.append(chunk)
+        }
+        return data
+    }
+
     /// Builds the request without performing I/O. Kept internal so request
     /// shape can be tested without contacting an embedding service.
-    func request(for text: String) throws -> URLRequest {
+    func streamingRequest(for text: String) throws -> RemoteHTTPStreamingRequest {
         struct RequestBody: Encodable {
             let input: String
             let model: String?
@@ -118,15 +133,26 @@ struct OpenAICompatibleEmbeddingProvider: EmbeddingProvider {
             }
         }
 
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let apiKey { request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization") }
-        for (key, value) in extraHeaders { request.setValue(value, forHTTPHeaderField: key) }
-        request.httpBody = try JSONEncoder().encode(
+        var headers = [
+            RemoteHTTPHeader(name: "Content-Type", value: "application/json")
+        ]
+        if let apiKey {
+            headers.append(RemoteHTTPHeader(name: "Authorization", value: "Bearer \(apiKey)"))
+        }
+        for (key, value) in extraHeaders {
+            headers.append(RemoteHTTPHeader(name: key, value: value))
+        }
+
+        let body = try JSONEncoder().encode(
             RequestBody(input: text, model: requestModel)
         )
-        return request
+
+        return RemoteHTTPStreamingRequest(
+            url: endpoint,
+            method: "POST",
+            headers: headers,
+            body: body
+        )
     }
 
     /// A stable, endpoint-derived graph identity for endpoint-only providers.
