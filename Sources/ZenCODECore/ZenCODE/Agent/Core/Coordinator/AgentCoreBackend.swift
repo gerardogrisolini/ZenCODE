@@ -39,6 +39,7 @@ public actor AgentCoreBackend {
     private var sessions: [String: SessionSeed] = [:]
     private var taskOrchestrator: SessionTaskOrchestrator?
     private var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
+    private var sharedChatMessageAvailableHandler: (@Sendable (String) -> Void)?
     private var toolProvidersBySessionID: [String: [AgentToolProvider]] = [:]
     private let backendFactory: AgentRuntimeBackendFactory?
 
@@ -235,6 +236,13 @@ public actor AgentCoreBackend {
     ) async {
         borrowedSubAgentToolExecutor = executor
         await applyBorrowedSubAgentToolExecutor(to: activeBackend)
+    }
+
+    public func updateSharedChatMessageAvailableHandler(
+        _ handler: (@Sendable (String) -> Void)?
+    ) async {
+        sharedChatMessageAvailableHandler = handler
+        await applySharedChatMessageAvailableHandler(to: activeBackend)
     }
 
     public func updateToolProviders(
@@ -473,6 +481,8 @@ public actor AgentCoreBackend {
         try verifyBackendGeneration(generation)
         await applyBorrowedSubAgentToolExecutor(to: backend)
         try verifyBackendGeneration(generation)
+        await applySharedChatMessageAvailableHandler(to: backend)
+        try verifyBackendGeneration(generation)
         await applyToolProviders(to: backend)
         try verifyBackendGeneration(generation)
         for (sessionID, seed) in sessions {
@@ -511,6 +521,16 @@ public actor AgentCoreBackend {
         if let backend {
             await backend.updateBorrowedSubAgentToolExecutor(
                 borrowedSubAgentToolExecutor
+            )
+        }
+    }
+
+    private func applySharedChatMessageAvailableHandler(
+        to backend: (any AgentRuntimeBackend)?
+    ) async {
+        if let backend {
+            await backend.updateSharedChatMessageAvailableHandler(
+                sharedChatMessageAvailableHandler
             )
         }
     }

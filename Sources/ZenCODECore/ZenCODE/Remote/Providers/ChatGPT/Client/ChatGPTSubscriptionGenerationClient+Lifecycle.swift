@@ -179,6 +179,12 @@ extension ChatGPTSubscriptionGenerationClient {
         await toolExecutor.updateBorrowedSubAgentToolExecutor(executor)
     }
 
+    public func updateSharedChatMessageAvailableHandler(
+        _ handler: (@Sendable (String) -> Void)?
+    ) async {
+        await toolExecutor.updateSharedChatMessageAvailableHandler(handler)
+    }
+
     public func updateToolProviders(
         _ providers: [AgentToolProvider],
         sessionID: String? = nil

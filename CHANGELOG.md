@@ -12,6 +12,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Coordinator-originated `agent.message` traffic now wakes shared-chat
+  transcript observers immediately. Direct coordinator→sub-agent messages no
+  longer depend on the periodic safety poll before their blue terminal card (or
+  ACP update) is emitted.
 - The terminal `@` autocomplete no longer shows only `@coordinator` and `@all`
   when agents are live. The input panel now pulls the current shared-chat roster
   while a mention token is being edited, instead of depending solely on roster

@@ -360,12 +360,14 @@ extension DirectSubAgentRuntime {
         if agent.currentTurnRepliesToOperator,
            !agent.currentTurnSentOperatorMessage,
            !trimmedOutput.isEmpty {
-            _ = try? await sharedChat.send(
+            if (try? await sharedChat.send(
                 roomID: agent.rootSessionID,
                 senderID: agentID,
                 destination: .operator,
                 text: trimmedOutput
-            )
+            )) != nil {
+                sharedChatMessageAvailableHandler?(agent.rootSessionID)
+            }
         }
 
         switch authorization {

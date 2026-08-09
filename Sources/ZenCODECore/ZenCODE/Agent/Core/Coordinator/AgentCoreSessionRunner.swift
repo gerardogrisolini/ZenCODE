@@ -559,7 +559,15 @@ public actor AgentCoreSessionRunner {
     public func attachSharedChatObservation(
         rootSessionID: String
     ) async -> AgentSharedChatCoordinator.Observation {
-        await sharedChatCoordinator().observeSubscription(roomID: rootSessionID)
+        let coordinator = sharedChatCoordinator()
+        if let backend {
+            await backend.updateSharedChatMessageAvailableHandler { roomID in
+                Task(name: "ZenCODE.shared-chat.transcript-wake") {
+                    await coordinator.requestPoll(roomID: roomID)
+                }
+            }
+        }
+        return await coordinator.observeSubscription(roomID: rootSessionID)
     }
 
     /// Detaches one observer without ending coordination for the room's other

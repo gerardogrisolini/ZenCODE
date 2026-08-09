@@ -638,6 +638,12 @@ public protocol AgentRuntimeBackend: Actor {
         _ executor: AgentBorrowedToolExecutor?
     ) async
 
+    /// Installs the wake-up used by shared-chat renderers. The callback carries
+    /// the root room whose bounded transcript changed.
+    func updateSharedChatMessageAvailableHandler(
+        _ handler: (@Sendable (String) -> Void)?
+    ) async
+
     func updateToolProviders(
         _ providers: [AgentToolProvider],
         sessionID: String?
@@ -709,6 +715,10 @@ extension AgentRuntimeBackend {
 
     public func updateBorrowedSubAgentToolExecutor(
         _ executor: AgentBorrowedToolExecutor?
+    ) async {}
+
+    public func updateSharedChatMessageAvailableHandler(
+        _ handler: (@Sendable (String) -> Void)?
     ) async {}
 
     public func updateToolProviders(

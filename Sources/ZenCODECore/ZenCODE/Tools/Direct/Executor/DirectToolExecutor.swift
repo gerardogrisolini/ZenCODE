@@ -234,6 +234,12 @@ public actor DirectToolExecutor {
         borrowedSubAgentToolExecutor = executor
     }
 
+    public func updateSharedChatMessageAvailableHandler(
+        _ handler: (@Sendable (String) -> Void)?
+    ) async {
+        await subAgentRuntime.updateSharedChatMessageAvailableHandler(handler)
+    }
+
     public func updateToolProviders(
         _ providers: [AgentToolProvider],
         sessionID: String? = nil

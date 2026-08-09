@@ -58,6 +58,7 @@ extension DirectSubAgentRuntime {
             destination: destination,
             text: boundedText
         )
+        sharedChatMessageAvailableHandler?(roomID)
         if let effectiveSenderID,
            delivery.recipients.contains(where: { $0.kind == .operator }),
            var sender = agents[effectiveSenderID] {
@@ -82,11 +83,18 @@ extension DirectSubAgentRuntime {
     ) async throws -> AgentSharedChat.Delivery {
         let roomID = sharedChatRootSessionID ?? rootSessionID.nilIfBlank ?? "default"
         _ = try await sharedChat.registerCoordinator(roomID: roomID)
-        return try await sharedChat.sendFromOperator(
+        let delivery = try await sharedChat.sendFromOperator(
             roomID: roomID,
             destination: destination,
             text: text
         )
+        return delivery
+    }
+
+    public func updateSharedChatMessageAvailableHandler(
+        _ handler: (@Sendable (String) -> Void)?
+    ) {
+        sharedChatMessageAvailableHandler = handler
     }
 
     // MARK: - Broadcast classification

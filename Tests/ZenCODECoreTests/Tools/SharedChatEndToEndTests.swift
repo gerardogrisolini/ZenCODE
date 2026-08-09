@@ -18,6 +18,8 @@ import ToolCore
 ///
 /// - a child executor's borrowed `agent.message` to the coordinator is observed
 ///   exactly once and produces no new tool call;
+/// - a coordinator `agent.message` to a sub-agent wakes transcript rendering
+///   immediately, without waiting for the safety ticker;
 /// - a direct bus message (not the `agent.message` tool) wakes a task-bound
 ///   standby agent and the backend receives the next prompt;
 /// - a message to a running agent is processed as the next serial turn, without
@@ -125,6 +127,66 @@ struct SharedChatEndToEndTests {
         let finalRendered = finalEvents.compactMap(\.renderedMessages).flatMap { $0 }
         #expect(finalRendered.filter { $0.text == "hello from child" }.count == 1)
         #expect(finalEvents.compactMap(\.autoTrigger).count == 1)
+
+        await observation.cancel()
+    }
+
+    // MARK: - Coordinator → agent transcript wake-up
+
+    /// Coordinator-originated direct messages do not enter the coordinator's
+    /// mailbox. Their blue card therefore depends on the room-wide transcript
+    /// wake-up, not on the mailbox callback. Keep the safety ticker effectively
+    /// disabled here so only the explicit delivery notification can pass.
+    @Test
+    func coordinatorMessageToAgentWakesTranscriptRenderingWithoutTicker() async throws {
+        let room = "room-\(UUID().uuidString)"
+        let workingDirectory = try Self.temporaryDirectory(named: "SharedChatE2E-outgoing")
+        defer { try? FileManager.default.removeItem(at: workingDirectory) }
+        let backend = EndToEndRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in Self.developerProfile }
+        )
+        defer { Task { await runtime.shutdown() } }
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("recipient"),
+                "profile": .string("Developer"),
+                "prompt": .string("Initial work"),
+            ],
+            workingDirectory: workingDirectory,
+            parentAllowedToolNames: nil,
+            rootSessionID: room
+        )
+        let recipient = try #require(await runtime.snapshots().first)
+        let coordinator = Self.makeCoordinator(
+            chat: await runtime.sharedChat,
+            pollInterval: .seconds(60)
+        )
+        defer { Task { await coordinator.stopAll() } }
+        let subscription = await coordinator.observeSubscription(roomID: room)
+        let observation = await Observation.make(stream: subscription.events)
+        await runtime.updateSharedChatMessageAvailableHandler { changedRoom in
+            Task { await coordinator.requestPoll(roomID: changedRoom) }
+        }
+
+        _ = try await runtime.messageSharedChat(
+            arguments: [
+                "id": .string(recipient.id),
+                "message": .string("coordinator follow-up"),
+            ],
+            rootSessionID: room,
+            parentAllowedToolNames: nil
+        )
+
+        let events = await observation.wait(untilAtLeast: 1) { collected in
+            collected.contains {
+                $0.renderedMessages?.contains { $0.text == "coordinator follow-up" } == true
+            }
+        }
+        let rendered = events.compactMap(\.renderedMessages).flatMap { $0 }
+        #expect(rendered.filter { $0.text == "coordinator follow-up" }.count == 1)
+        #expect(events.compactMap(\.autoTrigger).isEmpty)
 
         await observation.cancel()
     }

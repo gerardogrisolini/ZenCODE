@@ -462,6 +462,10 @@ public actor DirectSubAgentRuntime {
     public let sharedChatSenderID: String?
     /// A child uses its parent root room, not its private backend session id.
     public let sharedChatRootSessionID: String?
+    /// Wakes Core transcript observers after a successful delivery. Mailbox
+    /// callbacks remain recipient-specific; this callback is room-wide because
+    /// coordinator→agent and agent→agent traffic must also be rendered.
+    var sharedChatMessageAvailableHandler: (@Sendable (String) -> Void)?
     private var agentStorage: [String: AgentRecord] = [:]
     /// Lifecycle-transition failures that happen during global shutdown, when
     /// no individual agent record remains available to carry the error.
@@ -569,6 +573,7 @@ public actor DirectSubAgentRuntime {
         self.sharedChat = sharedChat
         self.sharedChatSenderID = sharedChatSenderID?.nilIfBlank
         self.sharedChatRootSessionID = sharedChatRootSessionID?.nilIfBlank
+        self.sharedChatMessageAvailableHandler = nil
     }
 
     public func installTaskOrchestrator(
