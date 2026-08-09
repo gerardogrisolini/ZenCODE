@@ -12,10 +12,10 @@
 //  It has three parts:
 //  (a) Equivalence: streaming a long document (>= 20k characters) in tiny 1–3
 //      character deltas must produce the same *visible* output as consuming the
-//      whole document in a single block followed by `finish()`. Streaming emits a
-//      safe prose prefix immediately (unwrapped) while the block path reflows to
-//      the render width, so the comparison is made on ANSI-stripped, whitespace-
-//      collapsed text. Covered constructs: plain prose, inline markers, list,
+//      whole document in a single block followed by `finish()`. Conversational
+//      prose is never reflowed (the terminal owns the wrap); structured surfaces
+//      such as tables and fenced code are still laid out to the render width, so
+//      the comparison is made on ANSI-stripped, whitespace-collapsed text. Covered constructs: plain prose, inline markers, list,
 //      GFM table, fenced code.
 //  (b) Golden transcript: a mixed end-to-end sequence (prompt -> thought ->
 //      compact tool started/completed -> assistant content -> sub-agent overview)
@@ -57,9 +57,11 @@ struct TerminalChatRenderingBaselineTests {
 
     /// The visible text of a rendered fragment: ANSI escape sequences removed and
     /// every run of horizontal/vertical whitespace collapsed to a single space,
-    /// trimmed. Streaming emits an unwrapped safe prefix while the block path
-    /// reflows to the render width; collapsing whitespace makes the two directly
-    /// comparable while still detecting any lost or reordered visible glyphs.
+    /// trimmed. Conversational prose is emitted verbatim (no reflow) while
+    /// structured surfaces (tables, code blocks) are laid out to the render
+    /// width; collapsing whitespace makes the streamed and blocked paths
+    /// directly comparable while still detecting any lost or reordered visible
+    /// glyphs.
     private func visibleNormalized(_ text: String) -> String {
         let stripped = TerminalANSIText.stripANSI(text)
         let pieces = stripped.split(
@@ -68,8 +70,8 @@ struct TerminalChatRenderingBaselineTests {
         return pieces.joined(separator: " ")
     }
 
-    /// A fixed-width, hyperlink-free formatter so the block path reflows
-    /// deterministically regardless of the host terminal.
+    /// A fixed-width, hyperlink-free formatter so structured surfaces (tables,
+    /// fenced code) lay out deterministically regardless of the host terminal.
     private func makeEquivalenceFormatter() -> TerminalMarkdownStreamFormatter {
         TerminalMarkdownStreamFormatter(
             isEnabled: true,
@@ -117,8 +119,8 @@ struct TerminalChatRenderingBaselineTests {
 
     private static let proseParagraph = """
     The rendering pipeline turns model output into terminal text without losing \
-    any visible content along the way. Prose flows continuously and wraps at the \
-    configured render width so long paragraphs stay readable inside the viewport.
+    any visible content along the way. Prose flows continuously; the terminal \
+    performs its own wrap so long paragraphs stay readable inside the viewport.
     """
 
     private static let inlineMarkerLine =
@@ -174,7 +176,7 @@ struct TerminalChatRenderingBaselineTests {
     @Test("Simple prose: streaming matches single-block rendering")
     func plainProseStreamingEquivalence() {
         // Repeat the paragraph so the streamed line crosses the incremental
-        // flush thresholds while still being reflowed as prose in the block path.
+        // flush thresholds while still being rendered as prose.
         let text = Array(repeating: Self.proseParagraph, count: 100)
             .joined(separator: "\n\n") + "\n"
         #expect(text.count >= 20_000)

@@ -150,9 +150,6 @@ actor TerminalChatRenderCoordinator {
         }
     }
 
-    /// Incremental accounting for a terminal thought stream. Visible text is
-    /// hard-wrapped to a terminal-safe width before it is emitted, so the budget
-    /// describes physical terminal rows rather than source newline count.
     private enum OverviewContent: Sendable {
         case markdown(String)
         case subAgents(
@@ -218,10 +215,6 @@ actor TerminalChatRenderCoordinator {
     /// finishes so every turn gets exactly one prefix.
     private var assistantBubblePrefixPending = true
     private var thoughtStreamingState: StreamingContentState
-    /// Visible-cell position within the current physical thought row. It
-    /// persists across streaming deltas so a long no-newline paragraph wraps
-    /// consistently even when arriving token-by-token.
-    private var thoughtWrapColumn = 0
     /// A submitted prompt starts a transcript turn. The first prompt remains
     /// unadorned; every later one receives exactly one visual turn separator.
     private var hasWrittenSubmittedPrompt = false
@@ -347,7 +340,6 @@ actor TerminalChatRenderCoordinator {
         finishAssistantContentFormatting()
         if !thoughtStreamingState.isStreaming {
             thoughtStreamingState.isStreaming = true
-            thoughtWrapColumn = 0
             // Render the title one shade lighter than the dimmed thinking body
             // so the label stands apart from the reasoning text.
             let title = "\(TerminalStyle.Thinking.title)🤔 thinking…\(TerminalStyle.reset)"
@@ -370,11 +362,6 @@ actor TerminalChatRenderCoordinator {
         )
         guard !normalizedDelta.isEmpty else {
             return
-        }
-        if assistantBubblePrefixPending {
-            assistantStreamingState.markdownFormatter.reserveLeadingOutputColumns(
-                TerminalANSIText.visibleWidth(Self.assistantBubblePrefix)
-            )
         }
         var renderedContent = assistantStreamingState.markdownFormatter.consume(normalizedDelta)
         if assistantBubblePrefixPending, !renderedContent.isEmpty {
@@ -442,19 +429,16 @@ actor TerminalChatRenderCoordinator {
             return
         }
         writeRenderedThought(renderedThought)
-        thoughtWrapColumn = 0
         writeStreamingChat("\n\n", to: .standardError)
         flushPendingStreamingWrites()
     }
 
-    /// Wraps terminal thinking after Markdown has been rendered so long
-    /// paragraphs do not rely on the terminal's own auto-wrap. ANSI control
-    /// sequences are copied through as indivisible tokens. All thinking lines
-    /// are emitted — no content is folded or omitted.
+    /// Renders thinking after Markdown so long paragraphs rely on the
+    /// terminal's own auto-wrap rather than a hard column-based wrap. All
+    /// thinking content is emitted verbatim — nothing is folded or omitted.
     private func writeRenderedThought(_ renderedThought: String) {
-        let filteredThought = filteredTerminalThought(renderedThought)
         let markdown = TerminalChatTextFormatting.renderThoughtMarkdown(
-            filteredThought,
+            renderedThought,
             standardErrorIsTerminal: standardErrorIsTerminal
         )
         if !markdown.isEmpty {
@@ -464,105 +448,6 @@ actor TerminalChatRenderCoordinator {
                 preservesSpacing: true
             )
         }
-    }
-
-    private func filteredTerminalThought(_ renderedThought: String) -> String {
-        guard standardErrorIsTerminal, !renderedThought.isEmpty else {
-            return renderedThought
-        }
-
-        // Every emitted row receives `lineInset`; keep one trailing cell unused
-        // to avoid terminal-dependent auto-wrap at exactly the final column.
-        // Because wrapping is explicit, the row count remains stable both
-        // in captured tests and in a real TTY.
-        let physicalLineWidth = max(
-            1,
-            columnWidthProvider() - TerminalChat.displayWidth(lineInset) - 1
-        )
-        var output = ""
-        var index = renderedThought.startIndex
-        while index < renderedThought.endIndex {
-            if renderedThought[index] == "\u{1B}",
-               let escapeEnd = Self.terminalEscapeSequenceEnd(
-                   in: renderedThought,
-                   from: index
-               ) {
-                output += renderedThought[index..<escapeEnd]
-                index = escapeEnd
-                continue
-            }
-
-            let character = renderedThought[index]
-            if Self.isTerminalLineBreak(character) {
-                output.append(character)
-                thoughtWrapColumn = 0
-            } else {
-                let characterWidth = TerminalANSIText.visibleWidth(of: character)
-                if thoughtWrapColumn > 0,
-                   thoughtWrapColumn + characterWidth > physicalLineWidth {
-                    output.append("\n")
-                    thoughtWrapColumn = 0
-                }
-
-                output.append(character)
-                thoughtWrapColumn += characterWidth
-            }
-            index = renderedThought.index(after: index)
-        }
-        return output
-    }
-
-    private static func isTerminalLineBreak(_ character: Character) -> Bool {
-        character.unicodeScalars.contains { scalar in
-            CharacterSet.newlines.contains(scalar)
-        }
-    }
-
-    /// Returns the first index after a CSI or OSC terminal escape. Rendered
-    /// Markdown normally contributes SGR sequences, but accepting OSC too keeps
-    /// the folding boundary safe when hyperlinks are enabled.
-    private static func terminalEscapeSequenceEnd(
-        in text: String,
-        from start: String.Index
-    ) -> String.Index? {
-        let introducer = text.index(after: start)
-        guard introducer < text.endIndex else {
-            return nil
-        }
-
-        switch text[introducer] {
-        case "[":
-            var cursor = text.index(after: introducer)
-            while cursor < text.endIndex {
-                let character = text[cursor]
-                if character.unicodeScalars.count == 1,
-                   let scalar = character.unicodeScalars.first,
-                   (0x40...0x7E).contains(scalar.value) {
-                    return text.index(after: cursor)
-                }
-                cursor = text.index(after: cursor)
-            }
-        case "]":
-            var cursor = text.index(after: introducer)
-            while cursor < text.endIndex {
-                let character = text[cursor]
-                if character == "\u{7}",
-                   cursor < text.endIndex {
-                    return text.index(after: cursor)
-                }
-                if character == "\u{1B}" {
-                    let following = text.index(after: cursor)
-                    if following < text.endIndex, text[following] == "\\" {
-                        return text.index(after: following)
-                    }
-                }
-                cursor = text.index(after: cursor)
-            }
-        default:
-            // A two-byte escape (for example ESC 7) is atomic as well.
-            return text.index(after: introducer)
-        }
-        return nil
     }
 
     private static func finishStreamingContent(

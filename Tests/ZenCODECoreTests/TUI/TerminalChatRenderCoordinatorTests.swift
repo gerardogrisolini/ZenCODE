@@ -1422,14 +1422,17 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func terminalThinkingWrapsNoNewlineTextByPhysicalRows() async {
+    func terminalThinkingStaysContiguousAcrossDeltasAtNarrowWidth() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
             columnWidthProvider: { 8 }
         )
 
-        // With one trailing terminal cell reserved, each physical thought row
-        // has seven content columns. The state must persist across deltas.
+        // The coordinator no longer hard-wraps thinking; a narrow width must not
+        // inject synthetic newlines. Send the thought across multiple deltas so
+        // the streaming state is exercised, then assert the captured text is the
+        // contiguous source content (plus only the coordinator's framing
+        // newlines), not split by a computed column boundary.
         await renderer.writeThought("abcdefghij")
         await renderer.writeThought("klmnopqrst")
         await renderer.finishThoughtOutput()
@@ -1441,8 +1444,9 @@ struct TerminalChatRenderCoordinatorTests {
                 .joined()
         )
 
-        #expect(stderr.contains("abcdefg\nhijklmn\n"))
-        #expect(stderr.contains("opqrst"))
+        // The whole thought survives unbroken across the narrow width.
+        #expect(stderr.contains("abcdefghijklmnopqrst"))
+        #expect(!stderr.contains("abcdefg\nhijklmn\n"))
         #expect(!stderr.contains("thinking lines omitted"))
     }
 
@@ -1585,6 +1589,35 @@ struct TerminalChatRenderCoordinatorTests {
             .map(\.text)
             .joined()
         #expect(TerminalANSIText.stripANSI(stdout) == "💬 Answer\n")
+    }
+
+    @Test
+    func assistantContentWithNarrowWidthStaysContiguousAfterBubblePrefix() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: false,
+            standardOutputIsTerminal: true,
+            columnWidthProvider: { 10 }
+        )
+
+        // The `💬 ` prefix shares the first output row. A narrow width must not
+        // make the formatter inject synthetic line breaks before or after the
+        // terminal's own auto-wrap: only the source newline survives.
+        await renderer.writeAssistantContent("one two three four five six seven\n")
+        await renderer.finishStreamingOutput()
+
+        let stdout = await renderer.capturedWriteEvents()
+            .filter { $0.channel == .standardOutput }
+            .map(\.text)
+            .joined()
+        let visible = TerminalANSIText.stripANSI(stdout)
+
+        // The bubble prefix is present and the content is contiguous.
+        #expect(visible.hasPrefix("💬 "))
+        #expect(visible.contains("one two three four five six seven"))
+        // No synthetic line break between the prefix and the content.
+        let afterPrefix = String(visible.dropFirst("💬 ".count))
+        #expect(afterPrefix.hasSuffix("\n"))
+        #expect(!String(afterPrefix.dropLast()).contains("\n"))
     }
 
     @Test

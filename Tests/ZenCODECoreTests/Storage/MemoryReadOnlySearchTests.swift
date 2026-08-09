@@ -116,7 +116,7 @@ struct MemoryReadOnlySearchStoreTests {
             embedder: nil
         )
         try await engine.insert(
-            MemoryEntry(id: "entry", category: .fact, content: "database migrations"),
+            EngineMemoryEntry(id: "entry", category: .fact, content: "database migrations"),
             persist: false
         )
         // Must not throw — read-only path never calls save.
