@@ -14,6 +14,27 @@ public actor LocalExecPermissionAuthorizer {
         case deny
     }
 
+    /// Detailed result used when another consent surface (for example Telegram)
+    /// is presented at the same time. The public Boolean API intentionally keeps
+    /// its existing fail-closed contract, while the coordinator must distinguish
+    /// an explicit rejection from a terminal that is unavailable or cancelled.
+    enum AuthorizationOutcome: Sendable, Equatable {
+        case allowedOnce
+        case allowedAlways
+        case denied
+        case unavailable
+        case cancelled
+
+        var isApproved: Bool {
+            switch self {
+            case .allowedOnce, .allowedAlways:
+                true
+            case .denied, .unavailable, .cancelled:
+                false
+            }
+        }
+    }
+
     private struct DialogWaiter {
         let id: UUID
         let continuation: CheckedContinuation<Bool, Never>
@@ -64,8 +85,14 @@ public actor LocalExecPermissionAuthorizer {
     }
 
     public func authorize(_ request: AgentToolAuthorizationRequest) async -> Bool {
+        await authorizationOutcome(for: request).isApproved
+    }
+
+    func authorizationOutcome(
+        for request: AgentToolAuthorizationRequest
+    ) async -> AuthorizationOutcome {
         guard Self.gatedToolNames.contains(request.toolName) else {
-            return true
+            return .allowedOnce
         }
 
         // Consent is presented on the terminal for every platform. SSH sessions
@@ -74,7 +101,7 @@ public actor LocalExecPermissionAuthorizer {
         loadPersistedAllowedCommandsIfNeeded()
         let cacheKeys = permissionCacheKeys(for: request)
         if cacheKeys.allSatisfy(alwaysAllowedKeys.contains) {
-            return true
+            return .allowedAlways
         }
 
         // Actor isolation alone does not serialize this method across
@@ -82,29 +109,29 @@ public actor LocalExecPermissionAuthorizer {
         // awaited. Explicitly queue dialogs so concurrent tool calls can never
         // install multiple readers on the same TTY or fight over panel focus.
         guard await acquireDialogSlot() else {
-            return false
+            return Task.isCancelled ? .cancelled : .unavailable
         }
         defer { releaseDialogSlot() }
         guard !Task.isCancelled else {
-            return false
+            return .cancelled
         }
 
         // A request ahead of us may have selected Always while this request was
         // queued, so avoid presenting a now-redundant dialog.
         if cacheKeys.allSatisfy(alwaysAllowedKeys.contains) {
-            return true
+            return .allowedAlways
         }
 
         guard let decision = await presentDialog(for: request) else {
-            return false
+            return Task.isCancelled ? .cancelled : .unavailable
         }
         guard !Task.isCancelled else {
-            return false
+            return .cancelled
         }
 
         switch decision {
         case .allowOnce:
-            return true
+            return .allowedOnce
         case .allowAlways:
             alwaysAllowedKeys.formUnion(cacheKeys)
             // Only shell command identities are persisted across sessions;
@@ -112,9 +139,23 @@ public actor LocalExecPermissionAuthorizer {
             if request.toolName == "local.exec" {
                 Self.persistAllowedCommand(request.command)
             }
-            return true
+            return .allowedAlways
         case .deny:
-            return false
+            return .denied
+        }
+    }
+
+    /// Imports an "always" decision made on another consent surface into the
+    /// terminal authorizer's session cache. This keeps later local and Telegram
+    /// turns consistent even if Telegram is disabled after the decision.
+    func recordAlwaysAuthorization(for request: AgentToolAuthorizationRequest) {
+        guard Self.gatedToolNames.contains(request.toolName) else {
+            return
+        }
+        loadPersistedAllowedCommandsIfNeeded()
+        alwaysAllowedKeys.formUnion(permissionCacheKeys(for: request))
+        if request.toolName == "local.exec" {
+            Self.persistAllowedCommand(request.command)
         }
     }
 

@@ -268,9 +268,8 @@ struct TelegramTUITests {
     }
 
     /// While Telegram mirrors the session every turn owns an authorization
-    /// handler: a mirrored turn must never fall back to a terminal dialog that
-    /// the remote operator cannot answer, and the local operator must not lose
-    /// the dialog for prompts they typed themselves.
+    /// handler, regardless of whether its prompt came from the terminal or the
+    /// linked chat.
     @Test
     func telegramInstallsAuthorizationHandlerForMirroredTurns() throws {
         let terminal = try Self.activeTelegramTerminal()
@@ -322,13 +321,94 @@ struct TelegramTUITests {
         #expect(!deleteApproved)
     }
 
-    private static func activeTelegramTerminal() throws -> TerminalChat {
+    /// A locally submitted turn must send an actionable Telegram request too;
+    /// answering the terminal dialog first cancels the remote wait and continues.
+    @Test
+    func mirroredLocalTurnCanBeAuthorizedFromTerminal() async throws {
+        let authorizer = LocalExecPermissionAuthorizer()
+        await authorizer.setConsentReader { _ in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            return Task.isCancelled ? nil : "r"
+        }
+        let terminal = try Self.activeTelegramTerminal(permissionAuthorizer: authorizer)
+        let collector = TelegramTestMessageCollector()
+        terminal.activeTelegramProgressReporter = TerminalTelegramTurnProgressReporter(
+            chatID: 42
+        ) { message, _ in
+            await collector.append(message)
+            return true
+        }
+        let request = Self.authorizationRequest(
+            toolName: "local.delete",
+            title: "Delete Sources/Terminal.swift",
+            kind: "destructive",
+            command: "delete Sources/Terminal.swift"
+        )
+
+        let authorization = Task {
+            await terminal.authorizeTelegramToolRequest(request, origin: .local)
+        }
+        let telegramRequest = await collector.firstMessage()
+
+        #expect(telegramRequest.contains("Permission required"))
+        #expect(telegramRequest.contains("/allow"))
+        #expect(await authorization.value)
+    }
+
+    /// The same coordinated request can be resolved from Telegram while the
+    /// terminal dialog is pending; cancelling that dialog must not deny the tool.
+    @Test
+    func mirroredLocalTurnCanBeAuthorizedFromTelegram() async throws {
+        let authorizer = LocalExecPermissionAuthorizer()
+        await authorizer.setConsentReader { _ in
+            do {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                return "c"
+            } catch {
+                return nil
+            }
+        }
+        let terminal = try Self.activeTelegramTerminal(permissionAuthorizer: authorizer)
+        let collector = TelegramTestMessageCollector()
+        terminal.activeTelegramProgressReporter = TerminalTelegramTurnProgressReporter(
+            chatID: 42
+        ) { message, _ in
+            await collector.append(message)
+            return true
+        }
+        let request = Self.authorizationRequest(
+            toolName: "local.delete",
+            title: "Delete Sources/Telegram.swift",
+            kind: "destructive",
+            command: "delete Sources/Telegram.swift"
+        )
+
+        let authorization = Task {
+            await terminal.authorizeTelegramToolRequest(request, origin: .local)
+        }
+        let telegramRequest = await collector.firstMessage()
+        let requestID = try #require(Self.telegramPermissionRequestID(in: telegramRequest))
+        _ = await terminal.telegramPermissionBroker.handleMessage(
+            "/allow \(requestID)",
+            chatID: 42
+        )
+
+        #expect(await authorization.value)
+    }
+
+    private static func activeTelegramTerminal(
+        permissionAuthorizer: LocalExecPermissionAuthorizer? = nil
+    ) throws -> TerminalChat {
         let configuration = try AgentConfiguration(
             hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
         )
-        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false)
+        let terminal = TerminalChat(
+            configuration: configuration,
+            stdinIsTerminal: false,
+            permissionAuthorizer: permissionAuthorizer
+        )
         terminal.telegramLinkedChatID = 42
         terminal.telegramControlState = TerminalTelegramControlState(
             isConfigured: true,

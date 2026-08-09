@@ -8,6 +8,11 @@
 import Foundation
 import ToolCore
 
+private enum TerminalTelegramAuthorizationChannelResult: Sendable {
+    case terminal(LocalExecPermissionAuthorizer.AuthorizationOutcome)
+    case telegram(TerminalTelegramPermissionOutcome)
+}
+
 extension TerminalChat {
     func handleTelegramCommand(_ command: String) async {
         let argument = Self.slashCommandArguments(
@@ -298,17 +303,9 @@ extension TerminalChat {
     /// Returns the authorization handler for a turn whose progress is mirrored
     /// to Telegram.
     ///
-    /// Both routes gate exactly the terminal authorizer's set, so a mirrored
-    /// turn can never perform an operation a purely local turn would have to
-    /// confirm. They differ only in who is asked:
-    ///
-    /// * a prompt that arrived from Telegram is answered on Telegram, and the
-    ///   terminal only reports the pending request. Presenting the blocking
-    ///   terminal dialog to an operator who is not at the machine is what left
-    ///   the session waiting with nothing asked anywhere;
-    /// * a prompt typed locally keeps the terminal dialog, and the linked chat
-    ///   is told that the turn is waiting for a local decision instead of
-    ///   appearing to stall.
+    /// Both routes gate exactly the terminal authorizer's set. The terminal and
+    /// linked Telegram chat are asked concurrently, regardless of where the turn
+    /// originated, and the first explicit decision resolves the request.
     func telegramToolAuthorizationHandler(
         for origin: TerminalPromptOrigin
     ) -> AgentToolAuthorizationHandler? {
@@ -331,81 +328,82 @@ extension TerminalChat {
             return true
         }
 
-        guard let remoteChatID = origin.telegramChatID else {
-            return await authorizeLocalToolRequestMirroredToTelegram(
-                request,
-                origin: origin
-            )
-        }
-
-        guard telegramLinkedChatID == remoteChatID,
-              telegramControlState.isActive else {
-            // The chat that submitted the prompt can no longer be asked, and
-            // nobody is at the terminal for it: refuse instead of running an
-            // unconfirmed gated operation.
+        guard let chatID = telegramOutgoingChatID(for: origin) else {
             await writeFailureMessage(
                 "ZenCODE: Telegram cannot request permission for \(request.toolName); the operation was denied.\n"
             )
             return false
         }
 
-        return await authorizeRemoteToolRequest(request, chatID: remoteChatID)
-    }
-
-    /// Asks the Telegram chat that submitted the prompt.
-    private func authorizeRemoteToolRequest(
-        _ request: AgentToolAuthorizationRequest,
-        chatID: Int64
-    ) async -> Bool {
-        if await telegramPermissionBroker.isAlreadyAuthorized(request) {
+        let terminalAlreadyAuthorized = await permissionAuthorizer.isAlreadyAuthorized(request)
+        let telegramAlreadyAuthorized = await telegramPermissionBroker.isAlreadyAuthorized(request)
+        if terminalAlreadyAuthorized || telegramAlreadyAuthorized {
             return true
         }
         await writeSystemMessage(Self.telegramPermissionPendingText(for: request))
 
-        let outcome = await telegramPermissionBroker.authorize(
-            request,
-            chatID: chatID
-        ) { [weak self] message in
-            await self?.sendTelegramTurnMessage(message, to: chatID) ?? false
+        let winningResult = await withTaskGroup(
+            of: TerminalTelegramAuthorizationChannelResult.self,
+            returning: TerminalTelegramAuthorizationChannelResult?.self
+        ) { group in
+            group.addTask { [permissionAuthorizer] in
+                .terminal(await permissionAuthorizer.authorizationOutcome(for: request))
+            }
+            group.addTask { [weak self, telegramPermissionBroker] in
+                let outcome = await telegramPermissionBroker.authorize(
+                    request,
+                    chatID: chatID
+                ) { [weak self] message in
+                    await self?.sendTelegramTurnMessage(message, to: chatID) ?? false
+                }
+                return .telegram(outcome)
+            }
+
+            while let result = await group.next() {
+                switch result {
+                case let .terminal(outcome):
+                    switch outcome {
+                    case .allowedOnce, .allowedAlways, .denied:
+                        group.cancelAll()
+                        return result
+                    case .unavailable, .cancelled:
+                        continue
+                    }
+                case let .telegram(outcome):
+                    switch outcome {
+                    case .notRequired, .allowedOnce, .allowedAlways, .denied:
+                        group.cancelAll()
+                        return result
+                    case .timedOut, .undeliverable, .cancelled:
+                        continue
+                    }
+                }
+            }
+            return nil
         }
 
-        await writeTelegramPermissionOutcome(outcome, request: request)
-        return outcome.isApproved
-    }
-
-    /// Keeps the terminal dialog authoritative for a locally submitted prompt
-    /// while telling the mirrored chat why the turn paused.
-    private func authorizeLocalToolRequestMirroredToTelegram(
-        _ request: AgentToolAuthorizationRequest,
-        origin: TerminalPromptOrigin
-    ) async -> Bool {
-        guard !(await permissionAuthorizer.isAlreadyAuthorized(request)) else {
-            return await permissionAuthorizer.authorize(request)
+        switch winningResult {
+        case let .terminal(outcome):
+            let approved = outcome.isApproved
+            await sendTelegramTurnMessage(
+                approved
+                    ? "✅ Permission granted in the terminal for \(request.toolName). Continuing."
+                    : "⛔ Permission denied in the terminal for \(request.toolName).",
+                to: chatID
+            )
+            return approved
+        case let .telegram(outcome):
+            if outcome == .allowedAlways {
+                await permissionAuthorizer.recordAlwaysAuthorization(for: request)
+            }
+            await writeTelegramPermissionOutcome(outcome, request: request)
+            return outcome.isApproved
+        case nil:
+            await writeFailureMessage(
+                "ZenCODE: no authorization channel could resolve \(request.toolName); the operation was denied.\n"
+            )
+            return false
         }
-
-        await sendTelegramTurnMessageIfLinked(
-            """
-            🔐 Permission required in the ZenCODE terminal
-            \(request.title)
-
-            Tool:
-            \(request.toolName)
-
-            Command:
-            \(request.command)
-
-            Waiting for the local operator to answer.
-            """,
-            origin: origin
-        )
-        let approved = await permissionAuthorizer.authorize(request)
-        await sendTelegramTurnMessageIfLinked(
-            approved
-                ? "✅ Permission granted in the terminal for \(request.toolName). Continuing."
-                : "⛔ Permission denied in the terminal for \(request.toolName).",
-            origin: origin
-        )
-        return approved
     }
 
     private static func telegramPermissionPendingText(
@@ -413,8 +411,8 @@ extension TerminalChat {
     ) -> String {
         """
 
-        Telegram permission required: \(request.title)
-        Waiting for /allow, /always or /deny in the linked chat.
+        Permission required: \(request.title)
+        Approve or deny in the terminal, or use /allow, /always or /deny in the linked chat.
 
         """
     }
