@@ -125,7 +125,7 @@ struct MemoryReadOnlySearchStoreTests {
     }
 
     @Test
-    func automaticRecallStillAppliesMaintenanceThroughStore() async throws {
+    func automaticRecallAppliesMaintenanceThroughStoreWithoutImmediateSave() async throws {
         let persistence = RecordingPersistence()
         let engine = MemoryEngine(persistence: persistence)
         let store = MemoryGraphStore(
@@ -147,7 +147,7 @@ struct MemoryReadOnlySearchStoreTests {
         let savesAfter = await persistence.saved.count
 
         #expect(retrievalAfter > retrievalBefore)
-        #expect(savesAfter > savesBefore)
+        #expect(savesAfter == savesBefore)
     }
 
     // MARK: - Cold-open (graph file absent)

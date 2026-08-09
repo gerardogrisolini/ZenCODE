@@ -43,6 +43,7 @@ struct DeterministicHashEmbeddingProvider: EmbeddingProvider {
 enum OpenAICompatibleEmbeddingError: Error, Sendable {
     case httpStatus(Int, String)
     case emptyEmbedding
+    case responseBodyTooLarge(maximumBytes: Int)
 }
 
 /// Works with OpenAI-compatible `/v1/embeddings` endpoints (OpenAI, Ollama-compatible gateways,
@@ -53,6 +54,12 @@ enum OpenAICompatibleEmbeddingError: Error, Sendable {
 /// share one HTTP/SSE engine, TLS stack, and event-loop group rather than a
 /// separate `URLSession` stack.
 struct OpenAICompatibleEmbeddingProvider: EmbeddingProvider {
+    /// Embedding responses are small JSON documents (even for high-dimensional
+    /// vectors), so a 1 MiB cap leaves ample room for compatible gateways while
+    /// preventing an endpoint from making the client accumulate an unbounded
+    /// response body.
+    static let maximumResponseBodyBytes = 1 * 1_024 * 1_024
+
     public let modelID: String
     public let endpoint: URL
     public let apiKey: String?
@@ -105,10 +112,19 @@ struct OpenAICompatibleEmbeddingProvider: EmbeddingProvider {
         return embedding
     }
 
-    /// Collects the full HTTP response body into a single `Data`.
+    /// Collects the HTTP response body into a single `Data`, stopping before
+    /// retaining any bytes beyond the embedding response limit.
     private func collectBody(from body: RemoteHTTPBody) async throws -> Data {
         var data = Data()
         for try await chunk in body {
+            guard chunk.count <= Self.maximumResponseBodyBytes - data.count else {
+                // Do not leave the NIO producer draining an oversized response
+                // after the caller has already received the terminal error.
+                body.cancel()
+                throw OpenAICompatibleEmbeddingError.responseBodyTooLarge(
+                    maximumBytes: Self.maximumResponseBodyBytes
+                )
+            }
             data.append(chunk)
         }
         return data

@@ -102,6 +102,43 @@ struct MemoryEnhancementTests {
     }
 
     @Test
+    func memoryUpdatePreservesSubsecondCreatedAtAfterLockedJSONReload() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let original = try await service.writeEntry(
+                content: """
+                Summary: precise creation timestamp.
+                State: the persisted graph keeps subsecond precision.
+                Next: update without rewriting creation time.
+                """,
+                workspaceRootURL: workspace.workspaceURL
+            )
+            let originalSeconds = original.createdAt.timeIntervalSince1970
+            // Date() is expected to carry a subsecond component on supported
+            // platforms; keep the assertion so this test cannot pass while
+            // silently exercising a whole-second fixture.
+            #expect(originalSeconds != floor(originalSeconds))
+
+            let updated = try await service.updateEntry(
+                id: original.id.uuidString,
+                content: """
+                Summary: updated precise creation timestamp.
+                State: the original creation instant remains unchanged.
+                Next: preserve it through the locked reload.
+                """,
+                workspaceRootURL: workspace.workspaceURL,
+                updatedAt: Date(timeIntervalSince1970: 1_754_665_696.123456),
+                timeZone: TimeZone(secondsFromGMT: 0)!
+            )
+
+            #expect(updated.createdAt == original.createdAt)
+            #expect(updated.createdAt.timeIntervalSince1970 == originalSeconds)
+        }
+    }
+
+    @Test
     func memoryUpdatePreservesArchivedState() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }

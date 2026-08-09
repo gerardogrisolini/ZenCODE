@@ -198,4 +198,103 @@ struct EmbeddingFallbackTests {
             Issue.record("unexpected error type: \(error)")
         }
     }
+
+    @Test
+    func writeAndUpdateKeepTextWhenEmbeddingFails() async throws {
+        let messages = Mutex<[String]>([])
+        let provider = AlwaysFailingEmbeddingProvider()
+        let engine = MemoryEngine(
+            embedder: provider,
+            semanticFailureReporter: { message in
+                messages.withLock { $0.append(message) }
+            }
+        )
+        let store = MemoryGraphStore(
+            graphURL: URL(fileURLWithPath: "/dev/null/embedding-fallback.graph.json"),
+            engine: engine,
+            embedder: provider,
+            semanticFailureReporter: { message in
+                messages.withLock { $0.append(message) }
+            }
+        )
+
+        let written = try await store.write(
+            content: "Summary: lexical fallback keeps the durable text.",
+            category: .fact,
+            tags: ["fallback"]
+        )
+        #expect(written.created)
+        #expect(written.entry.embedding == nil)
+        #expect(written.entry.embeddingModel == nil)
+
+        let updated = try await store.update(
+            id: written.entry.id,
+            content: "Summary: lexical fallback keeps the updated durable text.",
+            tags: ["fallback", "updated"],
+            updatedAt: Date(),
+            timeZone: .current
+        )
+        #expect(updated.embedding == nil)
+        #expect(updated.embeddingModel == nil)
+
+        // The failed semantic query is also degraded to BM25, proving the
+        // text-only entry remains searchable after both mutations.
+        let results = try await store.search(
+            query: "updated durable text",
+            includeArchived: false,
+            limit: 10
+        )
+        #expect(results.contains { $0.id == written.entry.id })
+        #expect(messages.withLock { $0.count } >= 3)
+    }
+
+    @Test
+    func legacyMigrationKeepsTextWhenEmbeddingFails() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("embedding-migration-fallback-\(UUID().uuidString)", isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        let graphURL = root.appendingPathComponent("memory.graph.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let identifier = UUID().uuidString
+        let journal = """
+        # MEMORY.md
+
+        ## Active
+
+        - [id: \(identifier)] Summary: migrated text remains available offline.
+        """
+        try journal.write(
+            to: workspace.appendingPathComponent(MemoryService.filename),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let messages = Mutex<[String]>([])
+        try await MemoryEmbedding.withProvider(AlwaysFailingEmbeddingProvider()) {
+            let store = try await MemoryGraphStore.open(
+                graphURL: graphURL,
+                workspaceRootURL: workspace,
+                semanticFailureReporter: { message in
+                    messages.withLock { $0.append(message) }
+                }
+            )
+            let entries = await store.entries(includeArchived: false, limit: 10)
+            let entry = try #require(entries.first)
+            #expect(entry.content.contains("migrated text remains available offline"))
+            #expect(entry.embedding == nil)
+            #expect(entry.embeddingModel == nil)
+
+            // Persist the migrated graph and verify the text-only node survives
+            // the same JSON path used by normal mutations.
+            try await store.saveGraph()
+        }
+
+        let persisted = try await JSONMemoryPersistence(url: graphURL).load()
+        let entry = try #require(persisted.memories.values.first)
+        #expect(entry.content.contains("migrated text remains available offline"))
+        #expect(entry.embedding == nil)
+        #expect(entry.embeddingModel == nil)
+        #expect(messages.withLock { $0.count } == 1)
+    }
 }

@@ -22,11 +22,20 @@ actor MemoryGraphStore {
     /// must embed with the same provider the engine was opened with, otherwise
     /// entries would carry vectors the engine refuses to compare.
     private let embedder: (any EmbeddingProvider)?
+    /// Shared with the engine so mutation-time embedding degradation is
+    /// observable without making the operation fail.
+    private let semanticFailureReporter: @Sendable (String) -> Void
 
-    init(graphURL: URL, engine: MemoryEngine, embedder: (any EmbeddingProvider)?) {
+    init(
+        graphURL: URL,
+        engine: MemoryEngine,
+        embedder: (any EmbeddingProvider)?,
+        semanticFailureReporter: @escaping @Sendable (String) -> Void = MemoryEmbeddingFallback.defaultReporter
+    ) {
         self.graphURL = graphURL
         self.engine = engine
         self.embedder = embedder
+        self.semanticFailureReporter = semanticFailureReporter
     }
 
     // MARK: - Opening and migration
@@ -50,7 +59,8 @@ actor MemoryGraphStore {
     /// directly and skip migration.
     static func open(
         graphURL: URL,
-        workspaceRootURL: URL
+        workspaceRootURL: URL,
+        semanticFailureReporter: @escaping @Sendable (String) -> Void = MemoryEmbeddingFallback.defaultReporter
     ) async throws -> MemoryGraphStore {
         // `FileManager.default` is used deliberately: this runs inside a
         // detached task, and `FileManager` is not `Sendable`, so an injected
@@ -70,6 +80,7 @@ actor MemoryGraphStore {
             initialGraph = try await migratedGraph(
                 workspaceRootURL: workspaceRootURL,
                 embedder: embedder,
+                semanticFailureReporter: semanticFailureReporter,
                 fileManager: fileManager
             )
         }
@@ -85,15 +96,22 @@ actor MemoryGraphStore {
             // Product recall is intentionally dependency-free. `learn(from:)`
             // remains an internal engine seam, but opening a product store never
             // installs a network-backed extractor or makes a generation request.
-            extractor: NoopMemoryExtractor()
+            extractor: NoopMemoryExtractor(),
+            semanticFailureReporter: semanticFailureReporter
         )
-        return MemoryGraphStore(graphURL: graphURL, engine: engine, embedder: embedder)
+        return MemoryGraphStore(
+            graphURL: graphURL,
+            engine: engine,
+            embedder: embedder,
+            semanticFailureReporter: semanticFailureReporter
+        )
     }
 
     /// Builds the initial graph from the legacy journal, losslessly.
     private static func migratedGraph(
         workspaceRootURL: URL,
         embedder: (any EmbeddingProvider)?,
+        semanticFailureReporter: @escaping @Sendable (String) -> Void,
         fileManager: FileManager
     ) async throws -> MemoryGraph {
         var graph = MemoryGraph()
@@ -126,6 +144,12 @@ actor MemoryGraphStore {
                 }
                 previousCreatedAt = createdAt
 
+                let embedded = try await MemoryEmbeddingFallback.embed(
+                    legacy.content,
+                    with: embedder,
+                    operation: "migration",
+                    reporter: semanticFailureReporter
+                )
                 var entry = GraphEntry(
                     id: MemoryIdentifier.canonical(legacy.id),
                     category: .fact,
@@ -136,8 +160,8 @@ actor MemoryGraphStore {
                     scope: .project,
                     createdAt: createdAt,
                     updatedAt: createdAt,
-                    embedding: try await embedder?.embed(legacy.content),
-                    embeddingModel: embedder?.modelID
+                    embedding: embedded.values,
+                    embeddingModel: embedded.model
                 )
                 entry.active = !legacy.isArchived
                 graph.addMemory(entry)
@@ -262,6 +286,12 @@ actor MemoryGraphStore {
         for draft in drafts {
             let normalizedContent = MemoryContent.normalized(draft.content)
             guard !normalizedContent.isEmpty else { continue }
+            let embedded = try await MemoryEmbeddingFallback.embed(
+                normalizedContent,
+                with: embedder,
+                operation: "learn",
+                reporter: semanticFailureReporter
+            )
             var entry = GraphEntry(
                 id: MemoryIdentifier.makeNew(),
                 category: draft.category,
@@ -270,8 +300,8 @@ actor MemoryGraphStore {
                 source: draft.source ?? MemorySource.learn,
                 trust: draft.trust,
                 scope: draft.scope,
-                embedding: try await embedder?.embed(normalizedContent),
-                embeddingModel: embedder?.modelID,
+                embedding: embedded.values,
+                embeddingModel: embedded.model,
                 confidence: draft.confidence
             )
             entry.refreshSearchText()
@@ -338,8 +368,12 @@ actor MemoryGraphStore {
             return (existing, false)
         }
 
-        let embedding = try await embedder?.embed(normalizedContent)
-        let embeddingModel = embedder?.modelID
+        let embedded = try await MemoryEmbeddingFallback.embed(
+            normalizedContent,
+            with: embedder,
+            operation: "write",
+            reporter: semanticFailureReporter
+        )
         let id = MemoryIdentifier.makeNew()
         return try await engine.transaction { graph in
             if let existing = Self.activeDuplicate(of: normalizedContent, in: graph) {
@@ -353,8 +387,8 @@ actor MemoryGraphStore {
                 source: MemorySource.tool,
                 trust: .medium,
                 scope: .project,
-                embedding: embedding,
-                embeddingModel: embeddingModel
+                embedding: embedded.values,
+                embeddingModel: embedded.model
             )
             entry.refreshSearchText()
             graph.addMemory(entry)
@@ -497,10 +531,16 @@ actor MemoryGraphStore {
     }
 
     private func embedded(_ content: String) async throws -> EmbeddedContent {
-        EmbeddedContent(
+        let embedded = try await MemoryEmbeddingFallback.embed(
+            content,
+            with: embedder,
+            operation: "update",
+            reporter: semanticFailureReporter
+        )
+        return EmbeddedContent(
             content: content,
-            values: try await embedder?.embed(content),
-            model: embedder?.modelID
+            values: embedded.values,
+            model: embedded.model
         )
     }
 

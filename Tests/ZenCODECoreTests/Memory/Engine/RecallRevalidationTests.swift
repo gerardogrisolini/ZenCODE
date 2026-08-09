@@ -164,6 +164,91 @@ private func waitForCondition(
     #expect(snapshot.metadata.linkDiscoveryCount == 0)
 }
 
+@Test func recallRevalidatesAgainstCrossProcessDurableGraph() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("recall-cross-process-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("memory.json")
+
+    let writer = try await MemoryEngine.open(
+        persistence: JSONMemoryPersistence(url: file)
+    )
+    _ = try await writer.remember(
+        "actors protect mutable state",
+        tags: ["swift"],
+        id: "a"
+    )
+
+    let selector = BlockingSelector()
+    let reader = try await MemoryEngine.open(
+        persistence: JSONMemoryPersistence(url: file),
+        selector: selector
+    )
+    let recallTask = Task<MemoryRecallResult, Error> {
+        try await reader.recallDetailed("actors")
+    }
+    await selector.waitUntilEntered()
+
+    // The reader's local graph still contains `a`, but another engine commits
+    // its removal while the selector is suspended. Revalidation must happen
+    // against the durable graph under the same persistence lock as checkpoint.
+    _ = try await writer.forget(id: "a")
+
+    await selector.release()
+    let result = try await recallTask.value
+    #expect(result.candidates.isEmpty)
+    #expect(result.selected.isEmpty)
+    #expect(await reader.snapshot().memories["a"] == nil)
+
+    let persisted = try await JSONMemoryPersistence(url: file).load()
+    #expect(persisted.memories["a"] == nil)
+}
+
+@Test func recallReturnsCurrentCrossProcessUpdateWithoutCheckpointSave() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("recall-cross-process-update-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("memory.json")
+
+    let writer = try await MemoryEngine.open(
+        persistence: JSONMemoryPersistence(url: file)
+    )
+    _ = try await writer.remember(
+        "actors protect mutable state",
+        tags: ["swift"],
+        id: "a"
+    )
+
+    let selector = BlockingSelector()
+    let reader = try await MemoryEngine.open(
+        persistence: JSONMemoryPersistence(url: file),
+        selector: selector
+    )
+    let recallTask = Task<MemoryRecallResult, Error> {
+        try await reader.recallDetailed("actors")
+    }
+    await selector.waitUntilEntered()
+
+    try await writer.transaction { graph in
+        guard var entry = graph.memories["a"] else { return }
+        entry.content = "actors now protect updated state"
+        entry.refreshSearchText()
+        graph.addMemory(entry)
+    }
+    let durableBeforeRecall = try Data(contentsOf: file)
+
+    await selector.release()
+    let result = try await recallTask.value
+    let candidate = try #require(result.candidates.first { $0.memory.id == "a" })
+    #expect(candidate.memory.content == "actors now protect updated state")
+    #expect((await reader.snapshot()).memories["a"]?.content == "actors now protect updated state")
+
+    // One pending recall is below the default checkpoint threshold, so the
+    // cross-process reload/revalidation must not rewrite the durable bytes.
+    let durableAfterRecall = try Data(contentsOf: file)
+    #expect(durableAfterRecall == durableBeforeRecall)
+}
+
 @Test func recallRevalidatesAfterConcurrentScopeChange() async throws {
     let selector = BlockingSelector()
     var config = MemoryEngineConfiguration()

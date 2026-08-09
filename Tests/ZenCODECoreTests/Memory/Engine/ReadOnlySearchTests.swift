@@ -131,7 +131,7 @@ struct ReadOnlySearchTests {
     // MARK: - Contrast: recall keeps maintenance
 
     @Test
-    func recallStillAppliesTransactionalMaintenance() async throws {
+    func recallAppliesMaintenanceAndDefersItsPersistence() async throws {
         let persistence = RecordingPersistence()
         let engine = MemoryEngine(persistence: persistence)
         try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
@@ -144,7 +144,34 @@ struct ReadOnlySearchTests {
         let savesAfter = await persistence.saved.count
 
         #expect(retrievalAfter > retrievalBefore)
-        #expect(savesAfter > savesBefore)
+        #expect(savesAfter == savesBefore)
+        try await engine.flushRecallMaintenance()
+        #expect(await persistence.saved.count == savesBefore + 1)
+    }
+
+    @Test
+    func recallMaintenanceBatchesUntilCheckpointAndExplicitWritesAbsorbIt() async throws {
+        let persistence = RecordingPersistence()
+        let configuration = MemoryEngineConfiguration(recallMaintenanceCheckpointSize: 3)
+        let engine = MemoryEngine(persistence: persistence, configuration: configuration)
+        try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
+        try await engine.remember("Swift structured concurrency guide", tags: ["swift"])
+        let savesAfterSetup = await persistence.saved.count
+
+        _ = try await engine.recall("Swift actors concurrency")
+        _ = try await engine.recall("Swift actors concurrency")
+        #expect(await persistence.saved.count == savesAfterSetup)
+
+        // The third derived maintenance record triggers one checkpoint, rather
+        // than encoding the complete graph after each useful recall.
+        _ = try await engine.recall("Swift actors concurrency")
+        #expect(await persistence.saved.count == savesAfterSetup + 1)
+
+        _ = try await engine.recall("Swift actors concurrency")
+        let beforeExplicitWrite = await persistence.saved.count
+        try await engine.remember("An explicit durable fact", tags: ["swift"])
+        // The explicit write commits itself and the pending recall in one save.
+        #expect(await persistence.saved.count == beforeExplicitWrite + 1)
     }
 
     @Test

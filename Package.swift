@@ -105,10 +105,18 @@ let targets: [Target] = [
         dependencies: zenCODEDependencies,
         swiftSettings: zenCODESwiftSettings
     ),
+    // Built as a test dependency so the persistence suite can exercise two
+    // genuinely independent processes without exposing engine internals.
+    .executableTarget(
+        name: "MemoryPersistenceTestHelper",
+        dependencies: ["ZenCODECore"],
+        swiftSettings: memberImportVisibilitySettings
+    ),
     .testTarget(
         name: "ZenCODECoreTests",
         dependencies: [
             "ZenCODECore",
+            "MemoryPersistenceTestHelper",
             "FeatureMCPBridgeKit",
             "FeatureKit",
             "LocalToolsSupport",

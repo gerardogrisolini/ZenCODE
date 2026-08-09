@@ -2,9 +2,11 @@
 //  MemoryEngineTransactionTests.swift
 //  ZenCODECoreTests (memory engine)
 //
-//  Covers the engine's transactional contract: mutations are serialized against
-//  one another despite actor reentrancy, and they are committed to the live
-//  graph only after persistence accepted them.
+//  Covers the engine's transactional contract: explicit mutations are serialized
+//  against one another despite actor reentrancy and are committed to the live
+//  graph only after persistence accepts them. Automatic recall maintenance has
+//  a separate contract: it is visible immediately, remains pending until a
+//  checkpoint, and survives a failed checkpoint for retry.
 //
 //  Every test is deterministic: the failing/slow persistence doubles below make
 //  the interleaving window explicit instead of relying on timing luck.
@@ -121,9 +123,51 @@ private actor ControlledPersistence: MemoryPersistence {
     #expect(saved.memories.keys.sorted() == ["stored"])
 }
 
-@Test func recallMaintenanceIsRolledBackWhenSaveFails() async throws {
+@Test func recallMaintenanceIsPendingWhenFlushFailsAndCanBeRetried() async throws {
     let persistence = ControlledPersistence()
     let memory = MemoryEngine(persistence: persistence)
+    _ = try await memory.remember("actors protect mutable state", tags: ["swift"], id: "a")
+    let before = await memory.snapshot()
+    let savesAfterSetup = await persistence.saveCount
+
+    // Automatic recall maintenance is visible immediately, but the default
+    // checkpoint threshold leaves it pending instead of saving on every recall.
+    await persistence.setFailing(true)
+    _ = try await memory.recall("actors")
+    let visible = await memory.snapshot()
+    #expect(visible.metadata.retrievalCount == before.metadata.retrievalCount &+ 1)
+    let beforeEntry = try #require(before.memories["a"])
+    let visibleEntry = try #require(visible.memories["a"])
+    #expect(visibleEntry.accessCount == beforeEntry.accessCount &+ 1)
+    #expect(await persistence.saveCount == savesAfterSetup)
+    let durableBefore = try #require(await persistence.lastSaved)
+    #expect(durableBefore == before)
+
+    // A failed explicit flush is observable, but must not roll back the
+    // in-memory maintenance or consume its intent.
+    await #expect(throws: MemoryPersistenceFailure.self) {
+        try await memory.flushRecallMaintenance()
+    }
+    let afterFailure = await memory.snapshot()
+    #expect(afterFailure == visible)
+    #expect(await persistence.lastSaved == durableBefore)
+
+    // Retrying after the store recovers persists the same maintenance exactly
+    // once; a second flush proves the pending intent was consumed on success.
+    await persistence.setFailing(false)
+    try await memory.flushRecallMaintenance()
+    let durableAfterRetry = try #require(await persistence.lastSaved)
+    #expect(durableAfterRetry.metadata.retrievalCount == visible.metadata.retrievalCount)
+    #expect(durableAfterRetry.memories["a"]?.accessCount == visible.memories["a"]?.accessCount)
+    let savesAfterRetry = await persistence.saveCount
+    try await memory.flushRecallMaintenance()
+    #expect(await persistence.saveCount == savesAfterRetry)
+}
+
+@Test func failedAutomaticCheckpointRetainsPendingMaintenanceForRetry() async throws {
+    let persistence = ControlledPersistence()
+    let configuration = MemoryEngineConfiguration(recallMaintenanceCheckpointSize: 1)
+    let memory = MemoryEngine(persistence: persistence, configuration: configuration)
     _ = try await memory.remember("actors protect mutable state", tags: ["swift"], id: "a")
     let before = await memory.snapshot()
 
@@ -132,12 +176,21 @@ private actor ControlledPersistence: MemoryPersistence {
         _ = try await memory.recall("actors")
     }
 
-    // Retrieval maintenance (confidence boost/decay, co-relevance links and the
-    // retrieval counter) is a graph mutation like any other: a failed save must
-    // leave none of it behind.
-    let after = await memory.snapshot()
-    #expect(after == before)
-    #expect(after.metadata.retrievalCount == before.metadata.retrievalCount)
+    // The automatic checkpoint failed after maintenance became visible. The
+    // intent remains queued, rather than being mistaken for a rolled-back read.
+    let visible = await memory.snapshot()
+    #expect(visible.metadata.retrievalCount == before.metadata.retrievalCount &+ 1)
+    let beforeEntry = try #require(before.memories["a"])
+    let visibleEntry = try #require(visible.memories["a"])
+    #expect(visibleEntry.accessCount == beforeEntry.accessCount &+ 1)
+    let durableBefore = try #require(await persistence.lastSaved)
+    #expect(durableBefore == before)
+
+    await persistence.setFailing(false)
+    try await memory.flushRecallMaintenance()
+    let durableAfterRetry = try #require(await persistence.lastSaved)
+    #expect(durableAfterRetry.metadata.retrievalCount == visible.metadata.retrievalCount)
+    #expect(durableAfterRetry.memories["a"]?.accessCount == visible.memories["a"]?.accessCount)
 }
 
 @Test func successfulRecallCommitsRetrievalCount() async throws {
@@ -147,10 +200,133 @@ private actor ControlledPersistence: MemoryPersistence {
 
     _ = try await memory.recall("actors")
 
-    let snapshot = await memory.snapshot()
-    #expect(snapshot.metadata.retrievalCount == 1)
-    // The committed graph is the one that reached the disk.
+    // The maintenance is visible before its durability boundary, while the
+    // previous graph remains the one saved by the setup write.
+    let visible = await memory.snapshot()
+    #expect(visible.metadata.retrievalCount == 1)
+    #expect(await persistence.lastSaved?.metadata.retrievalCount == 0)
+
+    try await memory.flushRecallMaintenance()
     #expect(await persistence.lastSaved?.metadata.retrievalCount == 1)
+}
+
+@Test func explicitWriteAbsorbsPendingRecallMaintenanceExactlyOnce() async throws {
+    let persistence = ControlledPersistence()
+    let memory = MemoryEngine(persistence: persistence)
+    _ = try await memory.remember("actors protect mutable state", tags: ["swift"], id: "a")
+
+    _ = try await memory.recall("actors")
+    #expect(await memory.snapshot().metadata.retrievalCount == 1)
+
+    // The explicit write is an immediate durability boundary. Its save must
+    // include the pending recall, but must not replay it on the already-visible
+    // non-transactional graph.
+    _ = try await memory.remember("actors are reentrant", id: "b")
+    let committed = try #require(await persistence.lastSaved)
+    #expect(committed.metadata.retrievalCount == 1)
+    #expect(committed.memories["a"]?.accessCount == 1)
+    #expect(committed.memories["b"] != nil)
+}
+
+@Test func saveFlushesPendingRecallMaintenanceExactlyOnce() async throws {
+    let persistence = ControlledPersistence()
+    let memory = MemoryEngine(persistence: persistence)
+    _ = try await memory.remember("actors protect mutable state", tags: ["swift"], id: "a")
+
+    _ = try await memory.recall("actors")
+    let visible = await memory.snapshot()
+
+    // `save()` is also a durability boundary and must consume the pending
+    // intent. A later flush must therefore be a no-op, not a replay.
+    try await memory.save()
+    let saved = try #require(await persistence.lastSaved)
+    #expect(saved.metadata.retrievalCount == visible.metadata.retrievalCount)
+    #expect(saved.memories["a"]?.accessCount == visible.memories["a"]?.accessCount)
+    let savesAfterSave = await persistence.saveCount
+    try await memory.flushRecallMaintenance()
+    #expect(await persistence.saveCount == savesAfterSave)
+}
+
+@Test func noOpTransactionFlushesPendingRecallMaintenanceExactlyOnce() async throws {
+    let persistence = ControlledPersistence()
+    let memory = MemoryEngine(persistence: persistence)
+    _ = try await memory.remember("actors protect mutable state", tags: ["swift"], id: "a")
+
+    _ = try await memory.recall("actors")
+    let visible = await memory.snapshot()
+    let savesBeforeTransaction = await persistence.saveCount
+
+    // Even an idempotent explicit transaction is a durability boundary when
+    // recall maintenance is pending. A no-op without pending remains covered
+    // by transactionWithoutChangesDoesNotPersist below.
+    _ = try await memory.transaction { _ in () }
+    #expect(await persistence.saveCount == savesBeforeTransaction + 1)
+    let saved = try #require(await persistence.lastSaved)
+    #expect(saved.metadata.retrievalCount == visible.metadata.retrievalCount)
+    #expect(saved.memories["a"]?.accessCount == visible.memories["a"]?.accessCount)
+
+    let savesAfterTransaction = await persistence.saveCount
+    try await memory.flushRecallMaintenance()
+    #expect(await persistence.saveCount == savesAfterTransaction)
+}
+
+@Test func coldJSONCheckpointReplaysPendingMaintenanceOnce() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("memory-engine-cold-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("memory.json")
+
+    var initial = MemoryGraph()
+    initial.addMemory(
+        EngineMemoryEntry(
+            id: "a",
+            category: .fact,
+            content: "actors protect mutable state",
+            tags: ["swift"]
+        )
+    )
+    let persistence = JSONMemoryPersistence(url: file)
+    let memory = MemoryEngine(graph: initial, persistence: persistence)
+    #expect(!FileManager.default.fileExists(atPath: file.path))
+
+    _ = try await memory.recall("actors")
+    let visible = await memory.snapshot()
+    #expect(visible.metadata.retrievalCount == 1)
+    #expect(visible.memories["a"]?.accessCount == 1)
+    #expect(!FileManager.default.fileExists(atPath: file.path))
+
+    try await memory.flushRecallMaintenance()
+    let persisted = try await persistence.load()
+    #expect(persisted.metadata.retrievalCount == 1)
+    #expect(persisted.memories["a"]?.accessCount == 1)
+    #expect(persisted.memories.count == 1)
+}
+
+@Test func coldJSONExplicitWriteAbsorbsPendingMaintenanceOnce() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("memory-engine-cold-write-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("memory.json")
+
+    var initial = MemoryGraph()
+    initial.addMemory(
+        EngineMemoryEntry(
+            id: "a",
+            category: .fact,
+            content: "actors protect mutable state",
+            tags: ["swift"]
+        )
+    )
+    let persistence = JSONMemoryPersistence(url: file)
+    let memory = MemoryEngine(graph: initial, persistence: persistence)
+
+    _ = try await memory.recall("actors")
+    _ = try await memory.remember("actors are reentrant", id: "b")
+
+    let persisted = try await persistence.load()
+    #expect(persisted.metadata.retrievalCount == 1)
+    #expect(persisted.memories["a"]?.accessCount == 1)
+    #expect(persisted.memories["b"] != nil)
 }
 
 // MARK: - Serialization under actor reentrancy
@@ -281,6 +457,62 @@ private struct StubExtractor: MemoryExtractor {
     #expect(await memory.snapshot().memories.count == 2)
     // One transaction for the batch, not one save per draft.
     #expect(await persistence.saveCount == 2)
+}
+
+private enum RecallCancellationOutcome: Sendable, Equatable {
+    case succeeded
+    case cancelled
+    case failed
+}
+
+@Test func cancelledRecallWaitingForTheWriteLockCommitsNoMaintenance() async throws {
+    let persistence = GatedPersistence()
+    let memory = MemoryEngine(persistence: persistence)
+    try await memory.insert(
+        EngineMemoryEntry(
+            id: "a",
+            category: .fact,
+            content: "actors protect mutable state",
+            tags: ["swift"]
+        ),
+        persist: false
+    )
+
+    // Occupy the write lock with a save that is held by the gate.
+    let holder = Task<Void, Never> {
+        _ = try? await memory.transaction { graph in
+            graph.metadata.linkDiscoveryCount += 1
+        }
+    }
+    await waitForCondition { await persistence.saveEnteredCount >= 1 }
+
+    // The recall has already started while the holder is suspended and queues
+    // behind its lock. Cancelling it must be observed after the lock resumes,
+    // before revalidation or maintenance can touch the graph.
+    let queued = Task<RecallCancellationOutcome, Never> {
+        do {
+            _ = try await memory.recall("actors")
+            return .succeeded
+        } catch is CancellationError {
+            return .cancelled
+        } catch {
+            return .failed
+        }
+    }
+    try? await Task.sleep(for: .milliseconds(50))
+    queued.cancel()
+
+    await persistence.release()
+    let outcome = await queued.value
+    _ = await holder.value
+    #expect(outcome == .cancelled)
+
+    let snapshot = await memory.snapshot()
+    #expect(snapshot.metadata.retrievalCount == 0)
+    let savesAfterRecall = await persistence.saveCount
+    #expect(savesAfterRecall == 1)
+    try await memory.flushRecallMaintenance()
+    #expect(await persistence.saveCount == savesAfterRecall)
 }
 
 // MARK: - Cancellation while queued for the write lock

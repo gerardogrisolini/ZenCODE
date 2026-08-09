@@ -23,6 +23,10 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
     public var strengthenCoRelevantLinks: Bool
     public var includeOriginalQuery: Bool
     public var intelligenceFailurePolicy: MemoryIntelligenceFailurePolicy
+    /// Number of automatic recalls whose derived maintenance may stay in
+    /// memory before a durable checkpoint. Explicit mutations checkpoint them
+    /// as part of their own immediate transaction.
+    public var recallMaintenanceCheckpointSize: Int
 
     public init(
         similarityThreshold: Float = 0.4,
@@ -39,7 +43,8 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
         decayRejectedBy: Float = 0.01,
         strengthenCoRelevantLinks: Bool = true,
         includeOriginalQuery: Bool = true,
-        intelligenceFailurePolicy: MemoryIntelligenceFailurePolicy = .fallback
+        intelligenceFailurePolicy: MemoryIntelligenceFailurePolicy = .fallback,
+        recallMaintenanceCheckpointSize: Int = 4
     ) {
         self.similarityThreshold = similarityThreshold
         self.maxSemanticHits = maxSemanticHits
@@ -56,6 +61,7 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
         self.strengthenCoRelevantLinks = strengthenCoRelevantLinks
         self.includeOriginalQuery = includeOriginalQuery
         self.intelligenceFailurePolicy = intelligenceFailurePolicy
+        self.recallMaintenanceCheckpointSize = max(1, recallMaintenanceCheckpointSize)
     }
 }
 
@@ -99,6 +105,92 @@ enum MemorySemanticFallbackDiagnostics {
     static func shouldDuplicateToZenLogger(destinationDescription: String?) -> Bool {
         destinationDescription != "stderr"
     }
+
+    /// Maps an embedding failure to a short, secret-free summary for the
+    /// diagnostic channel. By construction it never includes the query or
+    /// memory text, embedding vectors, endpoint URLs, HTTP response bodies
+    /// (which can echo input or carry credentials), or API keys — only stable
+    /// status/type information that is safe to log.
+    static func embeddingFailureSummary(_ error: (any Error)?) -> String {
+        guard let error else { return "unknown" }
+        if let embeddingError = error as? OpenAICompatibleEmbeddingError {
+            switch embeddingError {
+            case .httpStatus(let status, _):
+                return "httpStatus \(status)"
+            case .emptyEmbedding:
+                return "emptyEmbedding"
+            case .responseBodyTooLarge:
+                return "responseBodyTooLarge"
+            }
+        }
+        if let urlError = error as? URLError {
+            return "transportError \(urlError.code.rawValue)"
+        }
+        return "\(type(of: error))"
+    }
+
+    /// Builds the redacted diagnostic used when a mutation keeps the text but
+    /// drops its unavailable vector. The operation name is a fixed call-site
+    /// label; callers must not pass user content here.
+    static func mutationFallbackMessage(
+        operation: String,
+        error: (any Error)?
+    ) -> String {
+        "semantic embedding \(operation) failed (\(embeddingFailureSummary(error))); continuing without vector with BM25-only retrieval."
+    }
+}
+
+/// Best-effort embedding seam for memory mutations.
+///
+/// Embeddings improve ranking but are never required for durable memory. A
+/// provider outage therefore degrades an entry to its text/search index while
+/// preserving the original operation's cancellation semantics. The caller
+/// supplies the diagnostic sink so engine-level tests can capture messages and
+/// product paths can keep the always-visible stderr behaviour.
+enum MemoryEmbeddingFallback {
+    struct Result: Sendable {
+        let values: [Float]?
+        let model: String?
+    }
+
+    static let defaultReporter: @Sendable (String) -> Void = { message in
+        MemorySemanticFallbackDiagnostics.emitVisibleError(message: message)
+    }
+
+    static func embed(
+        _ text: String,
+        with embedder: (any EmbeddingProvider)?,
+        operation: String,
+        reporter: @escaping @Sendable (String) -> Void = MemoryEmbeddingFallback.defaultReporter
+    ) async throws -> Result {
+        guard let embedder else {
+            return Result(values: nil, model: nil)
+        }
+
+        do {
+            return Result(
+                values: try await embedder.embed(text),
+                model: embedder.modelID
+            )
+        } catch let cancellation as CancellationError {
+            // A caller cancellation must not be mistaken for an endpoint
+            // outage and silently commit a mutation.
+            throw cancellation
+        } catch {
+            // Some transports surface cancellation as a different error type
+            // (for example URLError.cancelled). Preserve it whenever the task
+            // is actually cancelled, while treating an ordinary endpoint
+            // failure as a BM25-only degradation.
+            try Task.checkCancellation()
+            reporter(
+                MemorySemanticFallbackDiagnostics.mutationFallbackMessage(
+                    operation: operation,
+                    error: error
+                )
+            )
+            return Result(values: nil, model: nil)
+        }
+    }
 }
 
 /// Cross-platform agent memory engine.
@@ -118,8 +210,9 @@ actor MemoryEngine {
     private var pending: [MemoryCandidate] = []
     private var backgroundTasks: [UUID: Task<Void, Never>] = [:]
     /// Visible-diagnostic sink for semantic embedding failures during
-    /// recall/search. Defaults to an always-visible redacted ERROR line on the
-    /// preserved stderr descriptor (plus the opt-in ZenLogger file channel
+    /// recall/search and best-effort memory mutations. Defaults to an
+    /// always-visible redacted ERROR line on the preserved stderr descriptor
+    /// (plus the opt-in ZenLogger file channel
     /// unless it already targets stderr); tests inject a deterministic
     /// recorder instead of touching process-global stderr or the logger
     /// configuration.
@@ -128,13 +221,18 @@ actor MemoryEngine {
     /// actor isolation alone is not enough.
     private var isWriting = false
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Store recall intents, not a stale graph: a checkpoint replays them over
+    /// the newest graph while the transactional persistence lock is held.
+    private var pendingRecallMaintenance: [PendingRecallMaintenance] = []
+    /// Seed used only when a transactional persistence has no durable file yet.
+    /// It must represent the graph before the first pending intent; using the
+    /// live graph here would replay that intent twice on a cold checkpoint.
+    private var pendingRecallBaseGraph: MemoryGraph?
 
     /// Default reporter: always emits a redacted ERROR line on the preserved
     /// stderr descriptor (visible even with `ZENCODE_LOG` off) and feeds the
     /// opt-in diagnostic file unless it already targets stderr.
-    private static let defaultSemanticFailureReporter: @Sendable (String) -> Void = { message in
-        MemorySemanticFallbackDiagnostics.emitVisibleError(message: message)
-    }
+    private static let defaultSemanticFailureReporter = MemoryEmbeddingFallback.defaultReporter
 
     public init(
         graph: MemoryGraph = MemoryGraph(),
@@ -214,8 +312,10 @@ actor MemoryEngine {
     ///    exactly as it was instead of silently diverging from disk, and a body
     ///    that throws changes nothing at all.
     ///
-    /// Persistence is skipped when the body left the graph unchanged, so a
-    /// look-only or no-op transaction never touches the disk.
+    /// Persistence is skipped when the body left the graph unchanged and there
+    /// is no pending recall maintenance, so a look-only or ordinary no-op
+    /// transaction never touches the disk. A pending maintenance batch is
+    /// itself a durability boundary for an explicit transaction.
     @discardableResult
     public func transaction<T: Sendable>(
         _ body: @Sendable (inout MemoryGraph) throws -> T
@@ -229,12 +329,52 @@ actor MemoryEngine {
             // `defer` in `withWriteLock` still releases the lock when this throws,
             // so a cancelled waiter neither commits nor strands the lock.
             try Task.checkCancellation()
+            let pending = pendingRecallMaintenance
+            if let transactionalPersistence = persistence as? any MemoryTransactionalPersistence {
+                // A separate process may have committed since this engine last
+                // wrote. Reloading inside the persistence lock makes our body
+                // operate on that newest graph rather than overwriting it.
+                // The durable graph does not include the in-memory pending
+                // maintenance, so replay those intents exactly once here. If
+                // the file is still absent, the saved base is the graph from
+                // before the first pending intent rather than the live overlay.
+                let initialGraph = pendingRecallBaseGraph ?? graph
+                let committed = try await transactionalPersistence.transaction(initialGraph: initialGraph) { graph in
+                    Self.apply(pending, to: &graph)
+                    return try body(&graph)
+                }
+                // Even a no-op body may have observed another process's newer
+                // graph; retain that reload locally without causing a save.
+                graph = committed.graph
+                pendingRecallMaintenance.removeAll()
+                pendingRecallBaseGraph = nil
+                return committed.result
+            }
+
+            // Non-transactional persistence has no durable reload boundary:
+            // `graph` already contains the pending maintenance as its visible
+            // state. Start the draft from it directly; replaying the intents
+            // here would apply every recall twice when an explicit mutation
+            // absorbs the batch.
             var draft = graph
             let result = try body(&draft)
-            guard draft != graph else { return result }
+            // A pending recall overlay is already visible in `graph`; an
+            // explicit transaction must still make it durable even when its
+            // own body is idempotent.
+            guard draft != graph || !pending.isEmpty else { return result }
             try await persist(draft)
             graph = draft
+            pendingRecallMaintenance.removeAll()
+            pendingRecallBaseGraph = nil
             return result
+        }
+    }
+
+    /// Explicit durability boundary for accumulated automatic-recall
+    /// maintenance. Read-only search never invokes this method.
+    public func flushRecallMaintenance() async throws {
+        try await withWriteLock {
+            try await flushPendingRecallMaintenanceLocked()
         }
     }
 
@@ -270,15 +410,12 @@ actor MemoryEngine {
         confidence: Float = 1,
         id: String? = nil
     ) async throws -> EngineMemoryEntry {
-        let embedding: [Float]?
-        let embeddingModel: String?
-        if let embedder {
-            embedding = try await embedder.embed(content)
-            embeddingModel = embedder.modelID
-        } else {
-            embedding = nil
-            embeddingModel = nil
-        }
+        let embedded = try await MemoryEmbeddingFallback.embed(
+            content,
+            with: embedder,
+            operation: "write",
+            reporter: semanticFailureReporter
+        )
 
         var entry = EngineMemoryEntry(
             id: id,
@@ -288,8 +425,8 @@ actor MemoryEngine {
             source: source,
             trust: trust,
             scope: scope,
-            embedding: embedding,
-            embeddingModel: embeddingModel,
+            embedding: embedded.values,
+            embeddingModel: embedded.model,
             confidence: confidence
         )
         entry.refreshSearchText()
@@ -311,6 +448,12 @@ actor MemoryEngine {
         var prepared: [EngineMemoryEntry] = []
         prepared.reserveCapacity(drafts.count)
         for draft in drafts where !draft.content.isEmpty {
+            let embedded = try await MemoryEmbeddingFallback.embed(
+                draft.content,
+                with: embedder,
+                operation: "learn",
+                reporter: semanticFailureReporter
+            )
             var entry = EngineMemoryEntry(
                 id: nil,
                 category: draft.category,
@@ -319,8 +462,8 @@ actor MemoryEngine {
                 source: draft.source,
                 trust: draft.trust,
                 scope: draft.scope,
-                embedding: try await embedder?.embed(draft.content),
-                embeddingModel: embedder?.modelID,
+                embedding: embedded.values,
+                embeddingModel: embedded.model,
                 confidence: draft.confidence
             )
             entry.refreshSearchText()
@@ -386,38 +529,129 @@ actor MemoryEngine {
     /// selector decide which memories are safe and useful to inject into the main agent context.
     ///
     /// This is the *automatic* recall path: after selection it applies
-    /// transactional retrieval maintenance (retrieval count, confidence
-    /// boost/decay, co-relevance links) and commits it through persistence. For
-    /// an explicitly read-only lookup that must never mutate the graph or fail
-    /// on a save error, use ``searchReadOnlyDetailed(_:scope:)`` instead.
+    /// retrieval maintenance to the live in-memory graph immediately, then
+    /// queues the maintenance intent for a durable checkpoint. Explicitly call
+    /// ``flushRecallMaintenance()`` (or cross an automatic checkpoint threshold)
+    /// to persist it. For an explicitly read-only lookup that must never mutate
+    /// the graph or fail on a save error, use
+    /// ``searchReadOnlyDetailed(_:scope:)`` instead.
     public func recallDetailed(
         _ prompt: String,
         scope: EngineMemoryScope = .all
     ) async throws -> MemoryRecallResult {
         let (plan, candidates, selected) = try await retrieveAndSelect(prompt, scope: scope)
-        // Retrieval maintenance is a read-modify-write like any other: it runs
-        // in a transaction so it neither clobbers a concurrent write nor leaves
-        // boosted confidences behind when the save fails.
+        // Retrieval maintenance is immediately visible in memory and records a
+        // replayable intent for the next checkpoint, so it neither clobbers a
+        // concurrent write nor becomes un-retryable when persistence is down.
         //
         // **Re-validation.** `retrieveAndSelect` built its candidates and
         // awaited the selector; a concurrent `forget` or archive can land in
-        // that suspension window. The maintenance transaction takes a fresh
-        // draft, so we re-check existence, active and scope *inside* it and
-        // feed only the survivors to maintenance and to the returned result.
+        // that suspension window. The maintenance lock re-checks existence,
+        // active and scope, then records only the survivors for replay.
         let settings = configuration
-        let revalidated = try await transaction { graph -> RevalidatedRecall in
+        let revalidated = try await withWriteLock {
+            // `withWriteLock` uses a non-throwing continuation while queued;
+            // re-check cancellation after acquiring the lock so a timed-out
+            // recall cannot mutate maintenance for a result never delivered.
+            try Task.checkCancellation()
+
+            if let transactionalPersistence = persistence as? any MemoryTransactionalPersistence {
+                // The local graph is still updated immediately, but the
+                // durable reload, revalidation and checkpoint share one
+                // persistence lock. This prevents returning a candidate another
+                // engine archived after retrieval but before maintenance.
+                if pendingRecallMaintenance.isEmpty {
+                    // Preserve the pre-maintenance seed for a cold transactional
+                    // checkpoint. A JSON store with no file will use this graph
+                    // and replay the intent exactly once.
+                    pendingRecallBaseGraph = graph
+                }
+                let localValid = Self.revalidate(
+                    candidates: candidates,
+                    selected: selected,
+                    against: graph,
+                    scope: scope
+                )
+                Self.maintainAfterRetrieval(
+                    &graph,
+                    all: localValid.candidates,
+                    selected: localValid.selected,
+                    configuration: settings
+                )
+                pendingRecallMaintenance.append(
+                    PendingRecallMaintenance(
+                        candidateIDs: localValid.candidates.map(\.memory.id),
+                        selectedIDs: Set(localValid.selected.map(\.memory.id)),
+                        scope: scope,
+                        configuration: settings
+                    )
+                )
+                let pending = pendingRecallMaintenance
+                let shouldCheckpoint = pending.count >= settings.recallMaintenanceCheckpointSize
+                let initialGraph = pendingRecallBaseGraph ?? graph
+                let committed = try await transactionalPersistence.transaction(initialGraph: initialGraph) { durable in
+                    // Build the pending overlay separately. Leaving the durable
+                    // draft untouched below the threshold guarantees that this
+                    // read/revalidation transaction cannot accidentally save on
+                    // every recall; only a real checkpoint replaces it.
+                    var overlay = durable
+                    Self.apply(pending, to: &overlay)
+                    // Replay all local intents over the graph loaded under the
+                    // process-wide lock, then validate the result that callers
+                    // will receive against that same durable state.
+                    let durableValid = Self.revalidate(
+                        candidates: candidates,
+                        selected: selected,
+                        against: overlay,
+                        scope: scope
+                    )
+                    if shouldCheckpoint {
+                        durable = overlay
+                    }
+                    return durableValid
+                }
+                if committed.didChange {
+                    graph = committed.graph
+                    pendingRecallMaintenance.removeAll()
+                    pendingRecallBaseGraph = nil
+                } else {
+                    // The lock gave us the newest durable graph without a
+                    // checkpoint; overlay every pending intent for local reads.
+                    graph = committed.graph
+                    Self.apply(pendingRecallMaintenance, to: &graph)
+                }
+                return committed.result
+            }
+
             let valid = Self.revalidate(
                 candidates: candidates,
                 selected: selected,
                 against: graph,
                 scope: scope
             )
+            if pendingRecallMaintenance.isEmpty {
+                // Preserve the pre-maintenance seed for a cold transactional
+                // checkpoint. A JSON store with no file will use this graph and
+                // replay the intent exactly once.
+                pendingRecallBaseGraph = graph
+            }
             Self.maintainAfterRetrieval(
                 &graph,
                 all: valid.candidates,
                 selected: valid.selected,
                 configuration: settings
             )
+            pendingRecallMaintenance.append(
+                PendingRecallMaintenance(
+                    candidateIDs: valid.candidates.map(\.memory.id),
+                    selectedIDs: Set(valid.selected.map(\.memory.id)),
+                    scope: scope,
+                    configuration: settings
+                )
+            )
+            if pendingRecallMaintenance.count >= settings.recallMaintenanceCheckpointSize {
+                try await flushPendingRecallMaintenanceLocked()
+            }
             return valid
         }
         return MemoryRecallResult(
@@ -589,25 +823,8 @@ actor MemoryEngine {
         return (plan, candidates, selected)
     }
 
-    /// Maps an embedding failure to a short, secret-free summary for the
-    /// diagnostic channel. By construction it never includes the query text,
-    /// embedding vectors, endpoint URLs, HTTP response bodies (which can echo
-    /// input or carry credentials), or API keys — only stable status/type
-    /// information that is safe to log.
     private static func embeddingFailureSummary(_ error: (any Error)?) -> String {
-        guard let error else { return "unknown" }
-        if let embeddingError = error as? OpenAICompatibleEmbeddingError {
-            switch embeddingError {
-            case .httpStatus(let status, _):
-                return "httpStatus \(status)"
-            case .emptyEmbedding:
-                return "emptyEmbedding"
-            }
-        }
-        if let urlError = error as? URLError {
-            return "transportError \(urlError.code.rawValue)"
-        }
-        return "\(type(of: error))"
+        MemorySemanticFallbackDiagnostics.embeddingFailureSummary(error)
     }
 
     public func recall(_ query: String, scope: EngineMemoryScope = .all) async throws -> [MemoryCandidate] {
@@ -648,8 +865,18 @@ actor MemoryEngine {
         for task in tasks { await task.value }
     }
 
+    /// Persists the current graph and treats the call as a durability
+    /// boundary for any automatic-recall maintenance accumulated in memory.
+    /// A failed save leaves those intents queued so a later save/flush can
+    /// retry them.
     public func save() async throws {
-        try await withWriteLock { try await persist(graph) }
+        try await withWriteLock {
+            if pendingRecallMaintenance.isEmpty {
+                try await persist(graph)
+            } else {
+                try await flushPendingRecallMaintenanceLocked()
+            }
+        }
     }
 
     private func retrievalQueries(from plan: MemoryQueryPlan, originalPrompt: String) -> [String] {
@@ -729,24 +956,28 @@ actor MemoryEngine {
     /// selector `await` has resumed. A concurrent `forget` (entry removed) or
     /// archive (entry deactivated or scope-changed) that landed during that
     /// window makes a previously valid candidate stale. This drops any
-    /// candidate whose ID is gone, inactive, or outside the requested scope.
+    /// candidate whose ID is gone, inactive, or outside the requested scope,
+    /// and refreshes surviving payloads from that current graph.
     private static func revalidate(
         candidates: [MemoryCandidate],
         selected: [MemoryCandidate],
         against graph: MemoryGraph,
         scope: EngineMemoryScope
     ) -> RevalidatedRecall {
-        func isValid(_ id: String) -> Bool {
-            guard let memory = graph.memories[id],
+        func refreshed(_ candidate: MemoryCandidate) -> MemoryCandidate? {
+            guard let memory = graph.memories[candidate.memory.id],
                   memory.active,
                   MemorySearch.scopeAllows(memory.scope, requested: scope) else {
-                return false
+                return nil
             }
-            return true
+            // Retrieval happened before the durable reload. Preserve the score
+            // computed for that query, but return the current persisted entry so
+            // cross-process updates are visible to the caller.
+            return MemoryCandidate(memory: memory, score: candidate.score)
         }
         return RevalidatedRecall(
-            candidates: candidates.filter { isValid($0.memory.id) },
-            selected: selected.filter { isValid($0.memory.id) }
+            candidates: candidates.compactMap(refreshed),
+            selected: selected.compactMap(refreshed)
         )
     }
 
@@ -779,6 +1010,47 @@ actor MemoryEngine {
                 graph.linkMemories(from: rhs, to: lhs, weight: 0.7)
             }
         }
+    }
+
+    private struct PendingRecallMaintenance: Sendable {
+        let candidateIDs: [String]
+        let selectedIDs: Set<String>
+        let scope: EngineMemoryScope
+        let configuration: MemoryEngineConfiguration
+    }
+
+    private static func apply(_ pending: [PendingRecallMaintenance], to graph: inout MemoryGraph) {
+        for record in pending {
+            let candidates = record.candidateIDs.compactMap { id -> MemoryCandidate? in
+                guard let memory = graph.memories[id],
+                      memory.active,
+                      MemorySearch.scopeAllows(memory.scope, requested: record.scope) else { return nil }
+                return MemoryCandidate(memory: memory, score: 0)
+            }
+            let selected = candidates.filter { record.selectedIDs.contains($0.memory.id) }
+            maintainAfterRetrieval(&graph, all: candidates, selected: selected, configuration: record.configuration)
+        }
+    }
+
+    /// Caller owns `withWriteLock`. JSON persistence reloads the current graph
+    /// under its process-wide lock before replaying pending intents and saving
+    /// once. If no file exists yet, `pendingRecallBaseGraph` seeds the graph
+    /// from before the first intent, avoiding a cold-start double replay. A
+    /// failed checkpoint leaves the in-memory intents retryable.
+    private func flushPendingRecallMaintenanceLocked() async throws {
+        guard !pendingRecallMaintenance.isEmpty else { return }
+        let pending = pendingRecallMaintenance
+        if let transactionalPersistence = persistence as? any MemoryTransactionalPersistence {
+            let initialGraph = pendingRecallBaseGraph ?? graph
+            let committed = try await transactionalPersistence.transaction(initialGraph: initialGraph) { graph in
+                Self.apply(pending, to: &graph)
+            }
+            graph = committed.graph
+        } else {
+            try await persist(graph)
+        }
+        pendingRecallMaintenance.removeAll()
+        pendingRecallBaseGraph = nil
     }
 
     private func persist(_ graph: MemoryGraph) async throws {
