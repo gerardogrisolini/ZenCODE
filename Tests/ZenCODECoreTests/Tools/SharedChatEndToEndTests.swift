@@ -104,8 +104,8 @@ struct SharedChatEndToEndTests {
             } && collected.compactMap(\.autoTrigger).count == 1
         }
         // Exactly one `.messages` event carries the child's message, once.
-        #expect(events.compactMap(\.renderedMessages).flatMap { $0 }
-            .filter { $0.text == "hello from child" }.count == 1)
+        let childRendered = events.compactMap(\.renderedMessages).flatMap { $0 }
+        #expect(childRendered.filter { $0.text == "hello from child" }.count == 1)
         // One synthetic coordinator turn, no more: the room is single-flight.
         #expect(events.compactMap(\.autoTrigger).count == 1)
         #expect(await coordinator.pendingMessageCount(roomID: room) == 0)
@@ -122,8 +122,8 @@ struct SharedChatEndToEndTests {
         // Re-reading the complete transcript must remain raw-event idempotent.
         await coordinator.poll(roomID: room)
         let finalEvents = await observation.snapshot()
-        #expect(finalEvents.compactMap(\.renderedMessages).flatMap { $0 }
-            .filter { $0.text == "hello from child" }.count == 1)
+        let finalRendered = finalEvents.compactMap(\.renderedMessages).flatMap { $0 }
+        #expect(finalRendered.filter { $0.text == "hello from child" }.count == 1)
         #expect(finalEvents.compactMap(\.autoTrigger).count == 1)
 
         await observation.cancel()
