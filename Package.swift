@@ -66,6 +66,11 @@ let targets: [Target] = [
             .product(name: "NIOPosix", package: "swift-nio"),
             .product(name: "NIOWebSocket", package: "swift-nio"),
             .product(name: "NIOSSL", package: "swift-nio-ssl"),
+            .product(
+                name: "CoreAILM",
+                package: "coreai-models",
+                condition: .when(platforms: [.macOS])
+            ),
             "FeatureKit",
             "ToolCore",
             "FeatureMCPBridgeKit",
@@ -155,13 +160,17 @@ let dependencies: [Package.Dependency] = [
     .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
     .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.8.0"),
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0"),
-    .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.37.0")
+    .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.37.0"),
+    .package(
+        url: "https://github.com/apple/coreai-models.git",
+        revision: "16777134f3d6df44abffa142d04c2284f83d6b53"
+    )
 ]
 
 let package = Package(
     name: "ZenCODE",
     platforms: [
-        .macOS(.v26)
+        .macOS("27.0")
     ],
     products: products,
     dependencies: dependencies,

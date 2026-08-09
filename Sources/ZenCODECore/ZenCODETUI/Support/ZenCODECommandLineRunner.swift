@@ -66,7 +66,8 @@ public enum ZenCODECommandLineRunner {
                 let sessionRunner = AgentCoreSessionRunner(
                     defaultToolAuthorizationHandler: { request in
                         await permissionAuthorizer.authorize(request)
-                    }
+                    },
+                    backendFactory: CoreAILocalBackendFactory.factory
                 )
                 var resumeSnapshot: TerminalChatResumeSnapshot?
                 do {
@@ -110,7 +111,10 @@ public enum ZenCODECommandLineRunner {
                 break
             }
 
-            await AgentRuntimeLauncher.runACP(configuration: configuration)
+            await AgentRuntimeLauncher.runACP(
+                configuration: configuration,
+                backendFactory: CoreAILocalBackendFactory.factory
+            )
         } catch {
             AgentOutput.standardError.writeString(
                 "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"

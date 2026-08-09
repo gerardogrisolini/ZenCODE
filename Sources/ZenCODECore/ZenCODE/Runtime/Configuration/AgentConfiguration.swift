@@ -41,7 +41,7 @@ public struct AgentConfiguration: Sendable {
 
     Agent runtime:
       --agent NAME           Agent profile from ~/.zencode/agents.json. Default is used when omitted.
-      --model MODEL_ID        Model id, remoteapimodel:<uuid>, or remoteapi:<uuid>. Overrides the agent-selected model for this run.
+      --model MODEL_ID        Model id, coreai:qwen, remoteapimodel:<uuid>, or remoteapi:<uuid>. Overrides the agent-selected model for this run.
       --working-directory PATH
                               Working directory for local tools. Default: current directory, or home when launched from the executable directory.
       --skills LIST           Initial chat skill selection by name/number, all, or none. In chat mode use /skills to change or install skills.
