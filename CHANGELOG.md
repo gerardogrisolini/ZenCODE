@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-09
+
 ### Fixed
 
 - Coordinator-originated `agent.message` traffic now wakes shared-chat
@@ -562,7 +564,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.4...v1.2.0
 [1.1.4]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.2...v1.1.3
