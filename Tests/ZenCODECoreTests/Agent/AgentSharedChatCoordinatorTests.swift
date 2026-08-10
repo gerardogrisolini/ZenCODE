@@ -205,13 +205,11 @@ struct AgentSharedChatCoordinatorTests {
 
     // MARK: - Busy
 
-    /// While a turn is in flight the coordinator mailbox is still drained: the
-    /// inbound message is parked in `pending` and shown to the observer, but the
-    /// single-flight `evaluate` stays blocked by the busy state, so no
-    /// auto-trigger is minted. Ending the turn re-arms the room and the queued
-    /// message becomes exactly one synthetic turn.
+    /// While a turn is in flight the coordinator leaves its mailbox to inline
+    /// tool-result delivery. If the turn ends before another tool boundary, the
+    /// mailbox is drained and becomes exactly one synthetic fallback turn.
     @Test
-    func busyRoomDrainsMailboxToPendingButHoldsBackTriggerUntilTurnEnds() async throws {
+    func busyRoomLeavesMailboxForInlineDeliveryUntilTurnEnds() async throws {
         let room = "room-\(UUID().uuidString)"
         let chat = try await makeChat(roomID: room, agents: ["planner"])
         let coordinator = makeCoordinator(chat: chat, pollInterval: .seconds(60))
@@ -233,18 +231,16 @@ struct AgentSharedChatCoordinatorTests {
         )
         await coordinator.poll(roomID: room)
 
-        // The message is drained into `pending` and rendered to the observer,
-        // but the busy state keeps `evaluate` from starting a turn: there is no
-        // auto-trigger while the operator turn is in flight.
-        #expect(await waitUntil { await coordinator.pendingMessageCount(roomID: room) == 1 })
+        // The read-only transcript is rendered, but the destructive mailbox
+        // drain is held back for the active turn's next tool result.
+        #expect(await coordinator.pendingMessageCount(roomID: room) == 0)
         #expect(await observation.snapshot().compactMap(\.autoTrigger).isEmpty)
         let displayed = await observation.wait(untilAtLeast: 1) {
             $0.contains { $0.renderedMessages?.map(\.text) == ["while busy"] }
         }
         #expect(displayed.contains { $0.renderedMessages?.map(\.text) == ["while busy"] })
 
-        // Ending the turn re-arms the room. The queued message becomes exactly
-        // one synthetic turn; `pending` is drained back to zero.
+        // Ending without another tool call re-arms the fallback drain.
         await coordinator.noteTurnEnded(operatorTurn)
         let events = await observation.wait(untilAtLeast: 1) { $0.contains { $0.autoTrigger != nil } }
         let triggers = events.compactMap(\.autoTrigger)
@@ -1952,6 +1948,12 @@ private actor SharedChatRuntimeBackend: AgentRuntimeBackend {
             participantID: AgentSharedChat.coordinatorID(for: rootSessionID),
             limit: AgentSharedChat.maximumMessagesPerInjectedPrompt
         )
+    }
+
+    func sharedChatTranscriptMessages(
+        rootSessionID: String
+    ) async -> [AgentSharedChat.Message] {
+        await chat.messages(roomID: rootSessionID)
     }
 
     func sendPrompt(

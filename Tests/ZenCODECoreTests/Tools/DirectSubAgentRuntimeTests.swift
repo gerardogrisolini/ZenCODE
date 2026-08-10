@@ -2438,6 +2438,10 @@ struct DirectSubAgentRuntimeTests {
             contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
             profileResolver: builtInDirectSubAgentProfileResolver
         )
+        let notifiedRooms = Mutex<[String]>([])
+        await runtime.updateSharedChatMessageAvailableHandler { roomID in
+            notifiedRooms.withLock { $0.append(roomID) }
+        }
         let delivery = try await runtime.sendSharedChatMessage(
             text: "Review the live status",
             destination: .coordinator,
@@ -2447,6 +2451,7 @@ struct DirectSubAgentRuntimeTests {
         #expect(delivery.message.sender.id == AgentSharedChat.operatorID(for: "root"))
         #expect(delivery.message.sender.kind == .operator)
         #expect(delivery.recipients.map(\.id) == [AgentSharedChat.coordinatorID(for: "root")])
+        #expect(notifiedRooms.withLock { $0 } == ["root"])
         #expect(await runtime.drainCoordinatorSharedChatMessages(rootSessionID: "root")
             .map(\.text) == ["Review the live status"])
         await runtime.shutdown()

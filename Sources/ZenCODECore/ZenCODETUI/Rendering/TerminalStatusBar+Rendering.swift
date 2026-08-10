@@ -134,12 +134,24 @@ extension TerminalStatusBar {
         max(0, sharedChatReaderReservedRowsLocked(state: &state) - 2)
     }
 
+    /// Rows the docked reader may occupy inside the bottom-panel budget.
+    ///
+    /// The priority order at small heights is fixed: the minimum scrollable
+    /// transcript first, then one editor row, then the dock, and suggestions
+    /// last — `inputPanelSuggestionRowCountLocked` already yields its rows to an
+    /// attached observation. A dock gets header/body/footer together; when that
+    /// does not fit it degrades to its header only, never stealing scroll rows.
+    ///
+    /// At the smallest geometry `minimumRowsLocked` accepts (8 rows with a
+    /// panel) chrome (3) + status (2) + one editor row + two scrollable rows
+    /// already consume the screen, so no reserved row is left. The compact
+    /// indicator is not dropped there: it degrades into the existing mode row
+    /// (see `inputPanelRenderSequenceLocked`), which keeps the unread counter
+    /// visible without shrinking the transcript region below its minimum or
+    /// emitting a degenerate one-line scrolling region.
     func sharedChatReaderReservedRowsLocked(state: inout State) -> Int {
         guard let dock = state.sharedChatReaderDock, state.inputPanelState != nil else { return 0 }
 
-        // Reserve the minimum usable editor (one text row) before allocating
-        // the dock.  A dock gets header/body/footer together; when that does
-        // not fit it degrades to its header only, never stealing scroll rows.
         let available = state.row
             - Self.minimumScrollableRows
             - Self.inputPanelChromeRows
@@ -147,12 +159,28 @@ extension TerminalStatusBar {
             - inputPanelSuggestionRowCountLocked(state: &state)
             - 1
         guard available > 0 else { return 0 }
+        guard dock.isExpanded else { return 1 }
         let fullDockRows = min(
             8,
             dock.rows(width: statusBoxContentWidthLocked(state: &state)).count + 2,
             available
         )
         return fullDockRows >= 3 ? fullDockRows : 1
+    }
+
+    /// Compact unread indicator folded into the input panel's mode row.
+    ///
+    /// Returned only when an attached observation cannot be given a reserved
+    /// row of its own, so the counter degrades instead of disappearing.
+    func sharedChatReaderModeRowBadgeLocked(state: inout State) -> String? {
+        guard let dock = state.sharedChatReaderDock,
+              sharedChatReaderReservedRowsLocked(state: &state) == 0 else {
+            return nil
+        }
+        if dock.isExpanded, dock.entries.isEmpty {
+            return "Chat: 0 messages · Ctrl+Y close"
+        }
+        return "Chat: \(dock.unreadCount) unread · Ctrl+Y \(dock.isExpanded ? "close" : "read")"
     }
 
     func sharedChatReaderRenderSequenceLocked(state: inout State) -> String {
@@ -164,29 +192,38 @@ extension TerminalStatusBar {
         let top = max(1, state.row - reservedBottomRowsLocked(state: &state) + 1)
         let start = statusBoxStartColumnLocked(state: &state)
         let rows = dock.rows(width: width)
-        let visible = Array(rows.dropFirst(dock.scrollOffset).prefix(viewport))
+        let visible = Array(rows.enumerated().dropFirst(dock.scrollOffset).prefix(viewport))
         let headerText: String
-        if dock.entries.isEmpty {
-            headerText = "Shared chat · 0 messages · Ctrl+Y close"
+        if !dock.isExpanded {
+            let messageLabel = dock.entries.count == 1 ? "message" : "messages"
+            headerText = "Chat · \(dock.entries.count) \(messageLabel) · \(dock.unreadCount) unread"
+        } else if dock.entries.isEmpty {
+            headerText = "Chat · 0 messages · Ctrl+Y close"
         } else {
-            headerText = "Shared chat · \(dock.selectedIndex + 1)/\(dock.entries.count) · \(dock.unreadCount) unread · Ctrl+Y close"
+            headerText = "Chat · \(dock.selectedIndex + 1)/\(dock.entries.count) · \(dock.unreadCount) unread · Ctrl+Y close"
         }
         guard sharedChatReaderReservedRowsLocked(state: &state) > 0 else { return "" }
-        // Match the transient shared-chat message card: it deliberately uses
-        // the light-blue shared-chat palette rather than the orange input
-        // chrome, so the dock and transcript are one visual surface.
+        // Keep the collapsed reader visually identifiable as shared chat: its
+        // single reserved row is the same light-blue bordered header used by
+        // the expanded reader, rather than unframed body-coloured text.
         let palette = TerminalStyle.SharedChat.palette(for: TerminalMarkdownPalette.detected.appearance)
         let boxWidth = statusBoxWidthLocked(state: &state)
         let topTitle = Self.fit(headerText, width: max(1, boxWidth - 5))
         let topRule = String(repeating: "─", count: max(0, boxWidth - TerminalChat.displayWidth(topTitle) - 5))
         let header = "\(palette.border)╭─ \(palette.title)\(topTitle)\(palette.border) \(topRule)╮\(TerminalStyle.reset)"
+        guard dock.isExpanded else {
+            return "\u{1B}7\u{1B}[\(top);\(start)H\u{1B}[2K\(header)\u{1B}8"
+        }
+        // Use the dedicated light-blue shared-chat palette rather than the
+        // orange input chrome.
         let footerText = Self.fit("↑/↓ scroll · ←/→ message · Home/End first/last", width: max(1, boxWidth - 5))
         let footerRule = String(repeating: "─", count: max(0, boxWidth - TerminalChat.displayWidth(footerText) - 5))
         let footer = "\(palette.border)╰─ \(palette.body)\(footerText)\(palette.border) \(footerRule)╯\(TerminalStyle.reset)"
         var sequence = "\u{1B}7"
         let lines = viewport > 0
-            ? [header] + visible.map {
-                "\(palette.border)│\(TerminalStyle.reset) \(palette.body)\(Self.padded(Self.fit($0, width: width), width: width))\(TerminalStyle.reset) \(palette.border)│\(TerminalStyle.reset)"
+            ? [header] + visible.map { index, row in
+                let textStyle = index == 1 ? TerminalStyle.Text.muted : TerminalStyle.Text.primary
+                return "\(palette.border)│\(TerminalStyle.reset) \(textStyle)\(Self.padded(Self.fit(row, width: width), width: width))\(TerminalStyle.reset) \(palette.border)│\(TerminalStyle.reset)"
             } + [footer]
             : [header]
         for (offset, line) in lines.enumerated() {
@@ -224,6 +261,7 @@ extension TerminalStatusBar {
                 modeText: inputPanelState.modeText,
                 helpText: inputPanelState.helpText,
                 compactHelpText: inputPanelState.compactHelpText,
+                sharedChatBadge: sharedChatReaderModeRowBadgeLocked(state: &state),
                 width: contentWidth
             ),
             width: contentWidth
@@ -302,14 +340,19 @@ extension TerminalStatusBar {
         modeText: String,
         helpText: String,
         compactHelpText: String?,
+        sharedChatBadge: String? = nil,
         width: Int
     ) -> String {
-        let fullText = "\(modeText) · \(helpText)"
+        // When present, the badge is the only remaining shared-chat indicator:
+        // the panel budget could not afford a dock row. It leads the row so the
+        // trailing `fit` truncation can never be what removes it.
+        let badgePrefix = sharedChatBadge.map { "\($0) · " } ?? ""
+        let fullText = "\(badgePrefix)\(modeText) · \(helpText)"
         guard visibleCharacterCount(fullText) > width,
               let compactHelpText else {
             return fit(fullText, width: width)
         }
-        return fit("\(modeText) · \(compactHelpText)", width: width)
+        return fit("\(badgePrefix)\(modeText) · \(compactHelpText)", width: width)
     }
     
     func statusRenderSequenceLocked(state: inout State) -> String {
@@ -402,7 +445,8 @@ extension TerminalStatusBar {
             minimumReservedRows = Self.standaloneStatusRows
         } else {
             // Geometry must remain valid for short (8-row) terminals even
-            // when a dock is open: the dock can be omitted/header-only.
+            // when a dock is open: at that height the dock claims no reserved
+            // row and its unread counter is folded into the mode row instead.
             minimumReservedRows = Self.inputPanelChromeRows + Self.attachedStatusRows + 1
         }
         return max(5, minimumReservedRows + Self.minimumScrollableRows)

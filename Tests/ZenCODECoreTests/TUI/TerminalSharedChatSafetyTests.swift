@@ -9,23 +9,18 @@ import Testing
 @Suite
 struct TerminalSharedChatSafetyTests {
     @Test
-    func sharedChatCardRendersControlsBidiAndUnicodeSeparatorsAsInertMarkers() {
+    func sharedChatReaderSanitizesControlsBidiAndUnicodeSeparators() {
         let hostile = "text\u{001B}[31m\u{202E}\u{061C}\u{200D}\u{2028}row\u{2029}paragraph\u{0085}"
-        let card = TerminalChat.renderSharedChatCard(
-            route: "operator\u{202E} → coordinator\u{2029}",
-            text: hostile,
-            terminalColumns: 120,
-            usesColor: false
-        )
+        let sanitized = TerminalChat.sharedChatTerminalSafeText(hostile)
 
-        #expect(card.contains("␛[31m"))
-        #expect(card.contains("<U+202E>"))
-        #expect(card.contains("<U+061C>"))
-        #expect(card.contains("<U+200D>"))
-        #expect(card.contains("<LS>"))
-        #expect(card.contains("<PS>"))
-        #expect(card.contains("<C1-85>"))
-        #expect(!card.unicodeScalars.contains { scalar in
+        #expect(sanitized.contains("␛[31m"))
+        #expect(sanitized.contains("<U+202E>"))
+        #expect(sanitized.contains("<U+061C>"))
+        #expect(sanitized.contains("<U+200D>"))
+        #expect(sanitized.contains("<LS>"))
+        #expect(sanitized.contains("<PS>"))
+        #expect(sanitized.contains("<C1-85>"))
+        #expect(!sanitized.unicodeScalars.contains { scalar in
             scalar.value == 0x1B
                 || scalar.value == 0x2028
                 || scalar.value == 0x2029

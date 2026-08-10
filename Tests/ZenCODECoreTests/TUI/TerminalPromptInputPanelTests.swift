@@ -191,7 +191,7 @@ struct TerminalPromptInputPanelTests {
         #expect(generatingHelp.contains("Esc stop"))
         #expect(
             reader.withPanelLock { reader.panelCompactHelpTextLocked(state: $0) }
-                == "Enter queue · Esc stop · Ctrl+G access"
+                == "Enter queue · Esc stop · Ctrl+G access · Ctrl+Y chat"
         )
 
         reader.withPanelLock { state in
@@ -225,7 +225,7 @@ struct TerminalPromptInputPanelTests {
 
         #expect(
             reader.withPanelLock { reader.panelCompactHelpTextLocked(state: $0) }
-                == "Enter send · Esc clear · Ctrl+G access"
+                == "Enter send · Esc clear · Ctrl+G access · Ctrl+Y chat"
         )
     }
 

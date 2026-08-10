@@ -53,6 +53,151 @@ private actor TerminalBlockingPromptGate {
     }
 }
 
+/// Keeps exactly one live shared-chat observation attached for the blocking
+/// input fallback.
+///
+/// A stream can finish because a backend was replaced while retaining the same
+/// root session id. That fallback has no runtime event loop and parks inside
+/// `readLine` for an unbounded time, so a lifecycle flag it only inspects after
+/// the operator finally submits a line would leave the room unobserved in the
+/// meantime. Recovery therefore lives on the producer path: the same task that
+/// consumes the stream re-attaches when the stream ends without cancellation,
+/// which makes repair immediate and independent of input.
+///
+/// Every dependency is injected, so the recovery, room-change, cancellation and
+/// retry-pacing paths are exercised end to end instead of through a bookkeeping
+/// set that production code would still have to poll.
+actor TerminalSharedChatObservationSupervisor {
+    struct Environment: Sendable {
+        var attach: @Sendable (String) async -> AgentSharedChatCoordinator.Observation
+        var detach: @Sendable (AgentSharedChatCoordinator.Observation) async -> Void
+        var handleEvent: @Sendable (
+            AgentSharedChatCoordinatorEvent,
+            AgentSharedChatCoordinator.Observation
+        ) async -> Void
+        /// Cooperative pause applied only when a replacement stream ends
+        /// without ever delivering an event. A backend that keeps closing the
+        /// stream immediately then degrades to a bounded retry instead of a hot
+        /// attach loop, while a healthy stream re-attaches without delay.
+        var backoff: @Sendable (Int) async -> Void = { attempt in
+            let milliseconds = min(2_000, 50 << min(max(0, attempt - 1), 5))
+            try? await Task.sleep(for: .milliseconds(milliseconds))
+        }
+    }
+
+    private let environment: Environment
+    private var roomID: String
+    private var current: (
+        observation: AgentSharedChatCoordinator.Observation,
+        task: Task<Void, Never>
+    )?
+    /// Retires an in-flight attach or a late stream completion whose binding
+    /// was already replaced by a room change, a teardown, or a newer recovery.
+    private var generation = 0
+    private var emptyRestartCount = 0
+    private var isStopped = false
+    /// Automatic re-attachments performed after a non-cancelled end.
+    private(set) var recoveryCount = 0
+
+    init(roomID: String, environment: Environment) {
+        self.roomID = roomID
+        self.environment = environment
+    }
+
+    func start() async {
+        guard !isStopped, current == nil else { return }
+        await bind()
+    }
+
+    /// Observation currently attached, for callers that must address the live
+    /// observer identity. `nil` only while a replacement is being attached.
+    func currentObservation() -> AgentSharedChatCoordinator.Observation? {
+        current?.observation
+    }
+
+    /// Follows a `/new` or `/resume` room swap. Same-room ends are already
+    /// repaired by the producer path, so this stays a pure room-change hook.
+    func follow(roomID newRoomID: String) async {
+        guard !isStopped else { return }
+        guard newRoomID != roomID || current == nil else { return }
+        roomID = newRoomID
+        emptyRestartCount = 0
+        await teardownCurrent()
+        await bind()
+    }
+
+    /// Local teardown. Cancellation is not a reason to attach a replacement, so
+    /// this permanently retires the supervisor.
+    func stop() async {
+        guard !isStopped else { return }
+        isStopped = true
+        await teardownCurrent()
+    }
+
+    private func bind() async {
+        guard !isStopped, current == nil else { return }
+        generation += 1
+        let generation = self.generation
+        let roomID = self.roomID
+        let environment = self.environment
+        let observation = await environment.attach(roomID)
+        guard !isStopped, generation == self.generation else {
+            // A stop or a room change landed while attaching: release the
+            // subscription instead of leaking it into a retired generation.
+            await environment.detach(observation)
+            return
+        }
+        current = (
+            observation,
+            Task(name: "ZenCODE.TUI.blocking-shared-chat-events") { [weak self] in
+                var didHandleEvent = false
+                for await event in observation.events {
+                    if Task.isCancelled { break }
+                    didHandleEvent = true
+                    await environment.handleEvent(event, observation)
+                }
+                guard !Task.isCancelled else { return }
+                await self?.observationDidEnd(
+                    generation: generation,
+                    didHandleEvent: didHandleEvent
+                )
+            }
+        )
+    }
+
+    /// Producer-side repair for a stream that finished on its own.
+    private func observationDidEnd(generation: Int, didHandleEvent: Bool) async {
+        guard !isStopped, generation == self.generation, let ended = current else {
+            return
+        }
+        // Release the finished subscription before attaching its replacement so
+        // the Core never sees two observers for this one terminal.
+        current = nil
+        await environment.detach(ended.observation)
+        guard !isStopped, generation == self.generation else { return }
+        if didHandleEvent {
+            emptyRestartCount = 0
+        } else {
+            emptyRestartCount += 1
+            await environment.backoff(emptyRestartCount)
+            guard !isStopped, generation == self.generation else { return }
+        }
+        recoveryCount += 1
+        await bind()
+    }
+
+    private func teardownCurrent() async {
+        // Retire the outgoing generation first: a completion racing this
+        // teardown must not schedule a replacement behind our back.
+        generation += 1
+        guard let retired = current else { return }
+        current = nil
+        retired.task.cancel()
+        await retired.task.value
+        await environment.detach(retired.observation)
+    }
+}
+
 extension TerminalChat {
     /// Mirrors staged attachments into the input panel.  `promptAttempt`
     /// consumes local attachments synchronously, so callers invoke this as
@@ -172,71 +317,86 @@ extension TerminalChat {
         }
     }
 
+    /// Handles one shared-chat event for the blocking input fallback.
+    ///
+    /// Keeping this out of the stream pump leaves the supervisor responsible for
+    /// stream lifecycle only, while room binding, trigger claiming and turn
+    /// serialization stay here, unchanged.
+    private func handleBlockingSharedChatEvent(
+        _ event: AgentSharedChatCoordinatorEvent,
+        observation: AgentSharedChatCoordinator.Observation,
+        promptGate: TerminalBlockingPromptGate
+    ) async {
+        switch event {
+        case .messages:
+            // Shared-chat traffic is visible only in the reader panel. Never
+            // append it to the main conversation transcript.
+            break
+        case .participantsChanged:
+            break
+        case let .autoTrigger(trigger):
+            guard trigger.roomID == sessionID,
+                  trigger.roomID == observation.roomID else {
+                await sessionRunner.declineSharedChatAutoTrigger(
+                    id: trigger.id,
+                    rootSessionID: trigger.roomID
+                )
+                return
+            }
+            let claim = await sessionRunner.resolveSharedChatAutoTrigger(
+                id: trigger.id,
+                observation: observation,
+                resolution: .started
+            )
+            guard claim == .acquired else { return }
+
+            guard await promptGate.acquire() else { return }
+            // Session replacement can race while this trigger waits
+            // behind an ordinary turn. The claimed batch is returned
+            // by detach below rather than sent into the new session.
+            guard trigger.roomID == sessionID else {
+                await promptGate.release()
+                return
+            }
+            await runPromptBlocking(
+                promptAttempt(
+                    prompt: trigger.prompt,
+                    origin: .local,
+                    isUserVisible: false
+                )
+            )
+            await promptGate.release()
+        }
+    }
+
     func runBlockingInputLoop(initialInputLine: String?) async throws {
         var pendingInputLine = initialInputLine
         let promptGate = TerminalBlockingPromptGate()
-
-        func startSharedChatObservation(
-            roomID: String
-        ) async -> (
-            observation: AgentSharedChatCoordinator.Observation,
-            task: Task<Void, Never>
-        ) {
-            let observation = await sessionRunner.attachSharedChatObservation(
-                rootSessionID: roomID
-            )
-            let task = Task(name: "ZenCODE.TUI.blocking-shared-chat-events") { [weak self] in
-                for await event in observation.events {
-                    guard let self else { return }
-                    switch event {
-                    case let .messages(messages):
-                        // Operator messages were rendered synchronously by
-                        // `sendSharedChatMention`; render only incoming traffic.
-                        await self.renderSharedChatMessages(
-                            messages.filter { $0.sender.kind != .operator }
-                        )
-                    case .participantsChanged:
-                        break
-                    case let .autoTrigger(trigger):
-                        guard trigger.roomID == self.sessionID,
-                              trigger.roomID == observation.roomID else {
-                            await self.sessionRunner.declineSharedChatAutoTrigger(
-                                id: trigger.id,
-                                rootSessionID: trigger.roomID
-                            )
-                            continue
-                        }
-                        let claim = await self.sessionRunner.resolveSharedChatAutoTrigger(
-                            id: trigger.id,
-                            observation: observation,
-                            resolution: .started
-                        )
-                        guard claim == .acquired else { continue }
-
-                        guard await promptGate.acquire() else { return }
-                        // Session replacement can race while this trigger waits
-                        // behind an ordinary turn. The claimed batch is returned
-                        // by detach below rather than sent into the new session.
-                        guard trigger.roomID == self.sessionID else {
-                            await promptGate.release()
-                            continue
-                        }
-                        await self.runPromptBlocking(
-                            self.promptAttempt(
-                                prompt: trigger.prompt,
-                                origin: .local,
-                                isUserVisible: false
-                            )
-                        )
-                        await promptGate.release()
-                    }
+        // This loop is parked inside `readLine` for an unbounded time, so the
+        // observation lifecycle cannot depend on it: the supervisor re-attaches
+        // from the producer path as soon as a stream ends without cancellation.
+        let sharedChatObservations = TerminalSharedChatObservationSupervisor(
+            roomID: sessionID,
+            environment: TerminalSharedChatObservationSupervisor.Environment(
+                attach: { [sessionRunner] roomID in
+                    await sessionRunner.attachSharedChatObservation(
+                        rootSessionID: roomID
+                    )
+                },
+                detach: { [sessionRunner] observation in
+                    await sessionRunner.detachSharedChatObservation(observation)
+                },
+                handleEvent: { [weak self] event, observation in
+                    await self?.handleBlockingSharedChatEvent(
+                        event,
+                        observation: observation,
+                        promptGate: promptGate
+                    )
                 }
-            }
-            return (observation, task)
-        }
+            )
+        )
+        await sharedChatObservations.start()
 
-        var observedRoomID = sessionID
-        var sharedChatObservation = await startSharedChatObservation(roomID: observedRoomID)
         var shouldContinue = true
         while shouldContinue {
             let promptInput: String
@@ -288,24 +448,26 @@ extension TerminalChat {
                 await writeSystemMessage("Draft prompt:\n\(prompt)\n")
             }
 
-            if shouldContinue, observedRoomID != sessionID {
-                sharedChatObservation.task.cancel()
-                await sharedChatObservation.task.value
-                await sessionRunner.detachSharedChatObservation(
-                    sharedChatObservation.observation
-                )
-                observedRoomID = sessionID
-                sharedChatObservation = await startSharedChatObservation(roomID: observedRoomID)
+            if shouldContinue {
+                // A stream that ended by itself was already repaired; this only
+                // follows a `/new` or `/resume` room swap.
+                await sharedChatObservations.follow(roomID: sessionID)
             }
         }
 
-        sharedChatObservation.task.cancel()
-        await sharedChatObservation.task.value
-        await sessionRunner.detachSharedChatObservation(sharedChatObservation.observation)
+        await sharedChatObservations.stop()
     }
 
     func runInteractivePanelLoop() async throws {
         let eventQueue = TerminalChatEventQueue()
+        // SIGWINCH is handled by the status-bar actor, but reader ownership
+        // belongs to this one FIFO consumer. The handler only enqueues the
+        // collapse notification, so it cannot form an actor callback cycle.
+        await statusBar.setSharedChatReaderCollapseHandler { observationID in
+            _ = await eventQueue.sendWithBackpressure(
+                .sharedChatReaderCollapsed(observationID: observationID)
+            )
+        }
         var queuedPrompts = TerminalQueuedPromptBuffer()
         var generationTask: Task<Void, Never>?
         let remoteTranscriptions = TerminalVoiceTranscriptionRegistry()
@@ -349,6 +511,22 @@ extension TerminalChat {
                         }
                     }
                 }
+                // `stop` or a backend replacement can finish an observation
+                // without changing the session identifier. Surface that lifecycle
+                // edge to the serialized loop; cancellation is local teardown,
+                // not a reason to attach a replacement observer.
+                guard !Task.isCancelled else { return }
+                // Do this at the producer lifecycle boundary rather than after
+                // a potentially slow slash-command replacement returns. The
+                // status bar accepts the observation identity, so a late old
+                // completion cannot erase the replacement dock.
+                await statusBar.removeSharedChatReader(ownedBy: observation.id)
+                _ = await eventQueue.sendWithBackpressure(
+                    .sharedChatObservationEnded(
+                        roomID: roomID,
+                        observationID: observation.id
+                    )
+                )
             }
             return (observation, task)
         }
@@ -362,11 +540,6 @@ extension TerminalChat {
         )
         var isGenerating = false
         var isQueuedPromptStartScheduled = false
-        // Rendering history belongs to this terminal observer only. A message
-        // replayed to a second observer must remain visible there, while one
-        // observer never renders the same Message.id twice. The history is
-        // bounded like the room transcript it mirrors.
-        var renderedSharedChatMessageIDs = TerminalChat.SharedChatRenderedMessageIDs()
         // This history is terminal-local and bounded. It is deliberately not
         // routed through the session store, so opening the reader can never
         // affect transcripts or snapshots.
@@ -394,6 +567,9 @@ extension TerminalChat {
             let observation = sharedChatObservation.observation
             Task(name: "ZenCODE.TUI.shared-chat-detach") { [sessionRunner] in
                 await sessionRunner.detachSharedChatObservation(observation)
+            }
+            Task(name: "ZenCODE.TUI.shared-chat-reader-remove") { [statusBar] in
+                await statusBar.removeSharedChatReader()
             }
         }
 
@@ -428,19 +604,27 @@ extension TerminalChat {
         /// Follows a session swap (`/new`, `/resume`) without losing live
         /// coordination: the retired room is released back to the Core and the
         /// new one is observed from its first message.
-        func rebindSharedChatObservationIfNeeded() async {
-            guard sharedChatRoomID != sessionID else { return }
+        func rebindSharedChatObservationIfNeeded(force: Bool = false) async {
+            guard force || sharedChatRoomID != sessionID else { return }
             let retiredObservation = sharedChatObservation
             retiredObservation.task.cancel()
             await sessionRunner.detachSharedChatObservation(retiredObservation.observation)
+            // A finished stream is not an active observation. Remove rather
+            // than collapse its dock; a replacement attachment below restores
+            // the intentionally persistent compact zero-message dock.
+            await statusBar.removeSharedChatReader()
             sharedChatRoomID = sessionID
             sharedChatObservation = await startSharedChatObservation(
                 roomID: sharedChatRoomID
             )
-            renderedSharedChatMessageIDs.removeAll()
             sharedChatReadingBuffer = TerminalSharedChatReadingBuffer()
             isSharedChatReaderOpen = false
-            await statusBar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: false)
+            await statusBar.setSharedChatReader(
+                entries: [],
+                unreadCount: 0,
+                isExpanded: false,
+                observationID: sharedChatObservation.observation.id
+            )
             interactiveReader.setSharedChatReaderOpen(false)
             readableSharedChatMentionHandles = await sessionRunner.sharedChatMentionHandles(
                 rootSessionID: sharedChatRoomID
@@ -547,6 +731,14 @@ extension TerminalChat {
             await statusBar.stop()
             throw TerminalChatError.interactivePromptUnavailable
         }
+        // An attached observation is the active-chat signal. Show its compact
+        // indicator even before the first message arrives.
+        await statusBar.setSharedChatReader(
+            entries: [],
+            unreadCount: 0,
+            isExpanded: false,
+            observationID: sharedChatObservation.observation.id
+        )
         func handleSubmittedPanelLine(
             _ line: String,
             origin: TerminalPromptOrigin = .local
@@ -646,12 +838,7 @@ extension TerminalChat {
                         readableHandles: readableSharedChatMentionHandles
                     ) {
                     case let .route(route):
-                        if let messageID = await sendSharedChatMention(route) {
-                            // The outbound card was rendered synchronously.
-                            // If the coordinator receives this same message,
-                            // its later event is suppressed only in this TUI.
-                            renderedSharedChatMessageIDs.insert(messageID)
-                        }
+                        await sendSharedChatMention(route)
                         continue
                     case .missingText:
                         await writeFailureMessage(
@@ -716,17 +903,39 @@ extension TerminalChat {
                     let entries = sharedChatReadingBuffer.messages.map {
                         TerminalSharedChatReaderEntry(message: $0, participantMap: participantMap)
                     }
-                    let isOpening = !isSharedChatReaderOpen
-                    if isOpening {
-                        sharedChatReadingBuffer.openReader()
-                    } else {
-                        sharedChatReadingBuffer.closeReader()
-                    }
                     // The dock is rendered by the status bar in the panel's
                     // reserved rows; generation and the normal input loop keep running.
-                    await statusBar.setSharedChatReader(entries: entries, unreadCount: sharedChatReadingBuffer.unreadCount, isExpanded: isOpening)
-                    isSharedChatReaderOpen = isOpening
-                    interactiveReader.setSharedChatReaderOpen(isOpening)
+                    guard !isSharedChatReaderOpen else {
+                        sharedChatReadingBuffer.closeReader()
+                        await statusBar.setSharedChatReader(
+                            entries: entries,
+                            unreadCount: sharedChatReadingBuffer.unreadCount,
+                            isExpanded: false,
+                            observationID: sharedChatObservation.observation.id
+                        )
+                        isSharedChatReaderOpen = false
+                        interactiveReader.setSharedChatReaderOpen(false)
+                        continue
+                    }
+                    // Opening is a single status-bar transaction: it validates
+                    // the viewport, commits expanded + selection and repaints
+                    // without an intervening await, and reports whether a
+                    // payload row was actually shown. Only then is opening a
+                    // read action, so the unread state is consumed after it.
+                    let didExpand = await statusBar.expandSharedChatReader(
+                        entries: entries,
+                        unreadCount: 0,
+                        selection: .message(sharedChatReadingBuffer.messages.last?.id),
+                        observationID: sharedChatObservation.observation.id
+                    )
+                    guard didExpand else {
+                        // Nothing was committed: the compact dock keeps
+                        // advertising the unread traffic instead of hiding it.
+                        continue
+                    }
+                    sharedChatReadingBuffer.openReader()
+                    isSharedChatReaderOpen = true
+                    interactiveReader.setSharedChatReaderOpen(true)
                 case let .sharedChatReaderNavigation(action):
                     guard isSharedChatReaderOpen else { continue }
                     let unreadCountBeforeNavigation = sharedChatReadingBuffer.unreadCount
@@ -746,13 +955,29 @@ extension TerminalChat {
                         await statusBar.setSharedChatReader(
                             entries: entries,
                             unreadCount: sharedChatReadingBuffer.unreadCount,
-                            isExpanded: true
+                            isExpanded: true,
+                            observationID: sharedChatObservation.observation.id
                         )
                     }
                 case .endOfInput:
                     generationTask?.cancel()
                     break eventLoop
                 }
+            case let .sharedChatReaderCollapsed(observationID):
+                // A resize already committed the compact dock. Apply the other
+                // three reader states in this serialized runtime loop, and
+                // ignore a late callback from a retired observer.
+                guard let observationID, observationID == sharedChatObservation.observation.id else {
+                    continue
+                }
+                // The resize producer may have yielded while a refresh was
+                // suspended. Reconcile on this FIFO after that refresh, so this
+                // collapse is authoritative and cannot leave the status dock
+                // expanded after its buffer/input peers have closed.
+                await statusBar.collapseSharedChatReader(ownedBy: observationID)
+                sharedChatReadingBuffer.closeReader()
+                isSharedChatReaderOpen = false
+                interactiveReader.setSharedChatReaderOpen(false)
             case let .generationCompleted(result):
                 generationTask = nil
                 isGenerating = false
@@ -788,29 +1013,32 @@ extension TerminalChat {
                 }
                 scheduleQueuedPromptIfNeeded()
             case let .sharedChatMessages(_, messages):
-                // Rendering only: the decision to start a turn belongs to the
+                // The decision to start a turn belongs to the
                 // Core coordinator and arrives as a separate auto-trigger.
                 // Room binding was verified before entering this switch.
-                // Keep the transcript reader independent from card rendering:
-                // outbound operator IDs are pre-recorded below to suppress a
-                // duplicate card, but their eventual transcript entry must
-                // still appear as unread in the reader.
-                let newlyBufferedMessages = sharedChatReadingBuffer.append(messages)
-                let newlyReceivedMessages = Self.newlyReceivedSharedChatMessages(
-                    messages,
-                    renderedMessageIDs: &renderedSharedChatMessageIDs
+                // The terminal-local reader buffer owns identity deduplication;
+                // replayed messages therefore update neither the dock nor its
+                // unread counter twice.
+                let newMessages = sharedChatReadingBuffer.append(messages)
+                guard !newMessages.isEmpty else { continue }
+                let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sharedChatRoomID)
+                let participantMap = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
+                let entries = sharedChatReadingBuffer.messages.map { TerminalSharedChatReaderEntry(message: $0, participantMap: participantMap) }
+                await statusBar.setSharedChatReader(
+                    entries: entries,
+                    unreadCount: sharedChatReadingBuffer.unreadCount,
+                    isExpanded: isSharedChatReaderOpen,
+                    observationID: sharedChatObservation.observation.id
                 )
-                await renderSharedChatCompactMessages(
-                    newlyReceivedMessages,
-                    unreadCount: sharedChatReadingBuffer.unreadCount
-                )
-                if isSharedChatReaderOpen, !newlyBufferedMessages.isEmpty {
-                    let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sharedChatRoomID)
-                    let participantMap = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
-                    let entries = sharedChatReadingBuffer.messages.map { TerminalSharedChatReaderEntry(message: $0, participantMap: participantMap) }
-                    await statusBar.setSharedChatReader(entries: entries, unreadCount: sharedChatReadingBuffer.unreadCount, isExpanded: true)
-                }
                 await refreshSharedChatPanelSuggestions()
+            case let .sharedChatObservationEnded(_, observationID):
+                // Ignore a delayed completion from an observation we already
+                // retired. A current stream ending is a lifecycle boundary even
+                // if the session/room identifier was reused by the backend.
+                guard observationID == sharedChatObservation.observation.id else {
+                    continue
+                }
+                await rebindSharedChatObservationIfNeeded(force: true)
             case let .sharedChatAutoTrigger(trigger):
                 // The Core authorised exactly one synthetic turn. Do not publish
                 // an idle update before claiming it: another observer may take

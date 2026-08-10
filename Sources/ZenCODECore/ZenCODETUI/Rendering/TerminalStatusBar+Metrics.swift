@@ -292,6 +292,10 @@ extension TerminalStatusBar {
                 - Self.minimumScrollableRows
                 - Self.inputPanelChromeRows
                 - Self.attachedStatusRows
+                // An active observation owns one compact row before optional
+                // suggestions. This keeps its unread counter discoverable on
+                // the smallest supported panel.
+                - (state.sharedChatReaderDock == nil ? 0 : 1)
                 - 1
         )
         return min(requested, available)

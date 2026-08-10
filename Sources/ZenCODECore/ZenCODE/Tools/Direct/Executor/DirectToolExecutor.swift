@@ -456,29 +456,67 @@ public actor DirectToolExecutor {
                 workingDirectory: workingDirectory,
                 allowedToolNames: allowedToolNames
             )
-            return result(
-                output: execution.output,
-                toolName: toolCall.name,
-                status: .completed,
-                attachments: execution.attachments
+            return await deliveringInlineSharedChatMessages(
+                result(
+                    output: execution.output,
+                    toolName: toolCall.name,
+                    status: .completed,
+                    attachments: execution.attachments
+                ),
+                sessionID: sessionID
             )
         } catch {
             if let executorError = error as? DirectToolExecutorError,
                case let .authorizationDenied(denialOutput) = executorError {
-                return result(
-                    output: denialOutput,
-                    toolName: toolCall.name,
-                    status: .permissionDenied,
-                    attachments: []
+                return await deliveringInlineSharedChatMessages(
+                    result(
+                        output: denialOutput,
+                        toolName: toolCall.name,
+                        status: .permissionDenied,
+                        attachments: []
+                    ),
+                    sessionID: sessionID
                 )
             }
             let output = "Tool error: \(error.localizedDescription)"
-            return DirectAgentToolResult(
-                output: output,
-                summary: output,
-                status: Self.toolResultStatus(for: error)
+            return await deliveringInlineSharedChatMessages(
+                DirectAgentToolResult(
+                    output: output,
+                    summary: output,
+                    status: Self.toolResultStatus(for: error)
+                ),
+                sessionID: sessionID
             )
         }
+    }
+
+    /// Injects live messages into the recipient's next model round while its
+    /// current turn is still running. Only model-facing output is extended;
+    /// visible tool output stays unchanged because the terminal `Chat` reader
+    /// and other observers render the same message from the transient room. `sharedChatSenderID` identifies a delegated agent;
+    /// absence of that identity means the coordinator owns the tool execution.
+    private func deliveringInlineSharedChatMessages(
+        _ result: DirectAgentToolResult,
+        sessionID: String?
+    ) async -> DirectAgentToolResult {
+        let roomID = sharedChatRootSessionID ?? sessionID?.nilIfBlank ?? "default"
+        let participantID = sharedChatSenderID ?? AgentSharedChat.coordinatorID(for: roomID)
+        let messages = await sharedChat.drain(
+            roomID: roomID,
+            participantID: participantID,
+            limit: AgentSharedChat.maximumMessagesPerInjectedPrompt
+        )
+        let deliverable = messages.filter { $0.sender.id != participantID }
+        guard !deliverable.isEmpty else { return result }
+        return DirectAgentToolResult(
+            output: result.output,
+            summary: result.summary,
+            modelOutput: result.modelOutput
+                + "\n\n"
+                + DirectSubAgentRuntime.inlineSharedChatDeliveryBlock(deliverable),
+            status: result.status,
+            attachments: result.attachments
+        )
     }
 
     private func result(

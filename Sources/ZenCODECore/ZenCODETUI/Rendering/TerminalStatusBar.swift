@@ -79,6 +79,9 @@ public actor TerminalStatusBar {
         var inputPanelRevision: UInt64 = 0
         var inputPanelState: InputPanelState?
         var sharedChatReaderDock: TerminalSharedChatReaderDock?
+        /// Identity of the observation that installed the dock. A completion
+        /// from a retired stream may clear only its own overlay.
+        var sharedChatReaderObservationID: UUID?
         var localExecAccessMode: AgentLocalExecAccessMode = .standard
         var latestModelID: String?
         var latestThinkingSelection: AgentThinkingSelection?
@@ -101,6 +104,10 @@ public actor TerminalStatusBar {
     /// Injectable write sink used in place of `output?.writeString` when set.
     /// Production code leaves this nil; tests supply a closure to observe output.
     var outputSink: (@Sendable (String) -> Void)?
+    /// A one-way notification into the terminal runtime FIFO. It is deliberately
+    /// not a callback into the input actor: resize commits the visual collapse
+    /// first, then the FIFO serializes ownership of the reader/input states.
+    var sharedChatReaderCollapseHandler: (@Sendable (UUID?) async -> Void)?
     var state = State()
     var outputBatchDepth = 0
     var batchedOutput = ""
@@ -215,16 +222,25 @@ public actor TerminalStatusBar {
     func setSharedChatReader(
         entries: [TerminalSharedChatReaderEntry],
         unreadCount: Int,
-        isExpanded: Bool
+        isExpanded: Bool,
+        selection: TerminalSharedChatReaderDock.Selection = .preserve,
+        observationID: UUID? = nil
     ) {
         withOutputBatch {
             let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
-            if isExpanded {
-                var dock = state.sharedChatReaderDock ?? TerminalSharedChatReaderDock()
-                dock.replace(entries: entries, unreadCount: unreadCount)
-                state.sharedChatReaderDock = dock
-            } else {
+            if entries.isEmpty, !isExpanded {
+                // A closed reader with no history has no visible state. An open
+                // empty reader is retained so Ctrl+Y can still paint its compact
+                // "0 messages" header and toggle it closed again.
                 state.sharedChatReaderDock = nil
+            } else {
+                var dock = state.sharedChatReaderDock ?? TerminalSharedChatReaderDock()
+                dock.replace(entries: entries, unreadCount: unreadCount, selection: selection)
+                dock.isExpanded = isExpanded
+                state.sharedChatReaderDock = dock
+            }
+            if let observationID {
+                state.sharedChatReaderObservationID = observationID
             }
             guard state.isStarted else { return }
             let newReservedRows = reservedBottomRowsLocked(state: &state)
@@ -234,6 +250,132 @@ public actor TerminalStatusBar {
             clearReservedRowsLocked(state: &state, count: max(oldReservedRows, newReservedRows))
             writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
             renderLocked(state: &state)
+        }
+    }
+
+    /// Removes the overlay when its observation is no longer active.
+    func removeSharedChatReader() {
+        removeSharedChatReader(ownedBy: nil)
+    }
+
+    /// Removes a dock only when it still belongs to the terminating observer.
+    /// This makes stream completion safe to handle directly from its producer,
+    /// while a replacement attachment is concurrently installing its compact
+    /// dock on this actor.
+    func removeSharedChatReader(ownedBy observationID: UUID?) {
+        withOutputBatch {
+            if let observationID,
+               state.sharedChatReaderObservationID != observationID {
+                return
+            }
+            guard state.sharedChatReaderDock != nil || state.sharedChatReaderObservationID != nil else { return }
+            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
+            state.sharedChatReaderDock = nil
+            state.sharedChatReaderObservationID = nil
+            guard state.isStarted else { return }
+            clearReservedRowsLocked(state: &state, count: oldReservedRows)
+            writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
+            renderLocked(state: &state)
+        }
+    }
+
+    /// Authoritatively returns the active observation's reader to its compact
+    /// dock. Unlike removal this retains the entries, unread count and compact
+    /// header; unlike the resize producer it is safe to run after a suspended
+    /// refresh has attempted a stale re-expansion.
+    ///
+    /// This intentionally does not call `sharedChatReaderCollapseHandler`.
+    /// That handler is producer-to-FIFO delivery only, and notifying from the
+    /// FIFO reconciliation would create a callback cycle.
+    func collapseSharedChatReader(ownedBy observationID: UUID) {
+        withOutputBatch {
+            guard state.sharedChatReaderObservationID == observationID,
+                  var dock = state.sharedChatReaderDock,
+                  dock.isExpanded else {
+                return
+            }
+            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
+            dock.isExpanded = false
+            state.sharedChatReaderDock = dock
+            guard state.isStarted else { return }
+            let newReservedRows = reservedBottomRowsLocked(state: &state)
+            clearReservedRowsLocked(state: &state, count: max(oldReservedRows, newReservedRows))
+            writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
+            renderLocked(state: &state)
+        }
+    }
+
+    /// Installs the one-way delivery used when a productive resize makes the
+    /// expanded reader impossible to display. The handler should enqueue work
+    /// only; calling this actor back from it would create a resize callback loop.
+    func setSharedChatReaderCollapseHandler(
+        _ handler: (@Sendable (UUID?) async -> Void)?
+    ) {
+        sharedChatReaderCollapseHandler = handler
+    }
+
+    /// Expands the docked reader as one indivisible status-bar transaction.
+    ///
+    /// Viewport validation, state commit and repaint happen in a single actor
+    /// operation with no suspension point between them, so a concurrent
+    /// SIGWINCH resize is observed either entirely before or entirely after the
+    /// commit and can no longer land between a separate "can expand" check and
+    /// the write that depended on it.
+    ///
+    /// Returns `true` when opening committed a visible reader state. With
+    /// messages, at least one payload row must be paintable before unread state
+    /// may be consumed. With no messages, the compact `0 messages` header (or
+    /// its minimum-height mode-row fallback) is itself the visible open state.
+    @discardableResult
+    func expandSharedChatReader(
+        entries: [TerminalSharedChatReaderEntry],
+        unreadCount: Int,
+        selection: TerminalSharedChatReaderDock.Selection = .preserve,
+        observationID: UUID? = nil
+    ) -> Bool {
+        withOutputBatch {
+            let previousDock = state.sharedChatReaderDock
+            let previousObservationID = state.sharedChatReaderObservationID
+            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
+            var dock = previousDock ?? TerminalSharedChatReaderDock()
+            dock.replace(entries: entries, unreadCount: unreadCount, selection: selection)
+            dock.isExpanded = true
+            state.sharedChatReaderDock = dock
+            if let observationID {
+                state.sharedChatReaderObservationID = observationID
+            }
+            // Measure the candidate layout rather than a previous one: this is
+            // the geometry the commit below would paint. A pending resize is a
+            // known-stale measurement whose render is suppressed. A populated
+            // reader therefore needs payload space; an empty reader only needs
+            // the input panel where its compact open state is rendered.
+            let payloadRows = min(
+                sharedChatReaderViewportRowsLocked(state: &state),
+                dock.rows(width: statusBoxContentWidthLocked(state: &state)).count
+            )
+            let hasVisibleOpenState = entries.isEmpty
+                ? state.inputPanelState != nil
+                : payloadRows >= 1
+            guard state.isStarted, !state.isResizePending, hasVisibleOpenState else {
+                state.sharedChatReaderDock = previousDock
+                state.sharedChatReaderObservationID = previousObservationID
+                return false
+            }
+            let newReservedRows = reservedBottomRowsLocked(state: &state)
+            if newReservedRows > oldReservedRows {
+                scrollOutputRegionUpLocked(
+                    state: &state,
+                    by: newReservedRows - oldReservedRows,
+                    reservedRows: oldReservedRows
+                )
+            }
+            clearReservedRowsLocked(
+                state: &state,
+                count: max(oldReservedRows, newReservedRows)
+            )
+            writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
+            renderLocked(state: &state)
+            return true
         }
     }
 
@@ -479,13 +621,15 @@ public actor TerminalStatusBar {
         row: Int = 24,
         columns: Int = 100,
         modelID: String? = nil,
-        isProcessing: Bool = false
+        isProcessing: Bool = false,
+        isResizePending: Bool = false
     ) {
         state.isStarted = true
         state.row = row
         state.columns = columns
         state.latestModelID = modelID
         state.isProcessing = isProcessing
+        state.isResizePending = isResizePending
     }
 
     /// Renders the status-only overlay using the actor's current state. Exposed

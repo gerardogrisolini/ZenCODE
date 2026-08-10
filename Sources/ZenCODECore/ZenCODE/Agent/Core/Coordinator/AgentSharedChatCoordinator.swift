@@ -859,23 +859,19 @@ public actor AgentSharedChatCoordinator {
                 requestPoll(roomID: roomID)
                 return
             }
-            // The coordinator mailbox is always drained, even while a turn is
-            // in flight. An inbound message is parked in `pending` and shown to
-            // every observer immediately; the single-flight `evaluate` keeps it
-            // from starting a turn until the room is genuinely idle, so it
-            // simply becomes the next queued auto-trigger once `noteTurnEnded`
-            // re-arms the room. This is safe because the coordinator mailbox is
-            // its own participant inbox — distinct from any agent mailbox and
-            // from the work a running turn is performing — so the drain can
-            // neither race nor duplicate a batch that turn is already carrying.
-            //
-            // The room dictionary entry survives `stop`, so messages drained
-            // across a teardown are parked instead of dropped. A *removed* or
-            // *reset* room is different: the runtime tree that produced these
-            // messages is gone, so they die with it rather than resurfacing in
-            // an instance that never owned them.
-            let drained = await source.drainCoordinatorMessages(roomID)
-            guard rooms[roomID]?.generation == generation else { return }
+            // While a coordinator turn is active, its direct-tool executor owns
+            // this mailbox and injects messages into the next model-facing tool
+            // result. Do not steal that batch into `pending`: doing so would
+            // delay the reply until a synthetic post-turn generation. If the
+            // turn ends without another tool call, `noteTurnEnded` re-arms this
+            // poll and the ordinary auto-trigger remains the lossless fallback.
+            let drained: [AgentSharedChat.Message]
+            if rooms[roomID]?.activeTurns.isEmpty ?? true {
+                drained = await source.drainCoordinatorMessages(roomID)
+                guard rooms[roomID]?.generation == generation else { return }
+            } else {
+                drained = []
+            }
             ingest(participants: participants, messages: drained, roomID: roomID)
             // Emit agent-to-agent messages that never enter the coordinator
             // mailbox. The transcript source is read-only and returns the full

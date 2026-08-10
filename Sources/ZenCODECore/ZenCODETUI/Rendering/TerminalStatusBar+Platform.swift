@@ -103,7 +103,9 @@ extension TerminalStatusBar {
         }
     }
 
-    func handleTerminalResize(generation: Int) {
+    func handleTerminalResize(generation: Int) async {
+        var collapsedObservationID: UUID?
+        var collapseHandler: (@Sendable (UUID?) async -> Void)?
         withOutputBatch {
             guard state.isStarted, generation == state.resizeGeneration else {
                 return
@@ -114,7 +116,26 @@ extension TerminalStatusBar {
                 return
             }
             state.isResizePending = false
+            // The compact header alone is not a reader viewport. Collapse the
+            // dock before repainting whenever the new geometry has no payload
+            // row, then let the runtime FIFO close its matching input/buffer
+            // reader states. Keeping the dock preserves its unread badge.
+            if var dock = state.sharedChatReaderDock, dock.isExpanded {
+                let payloadRows = min(
+                    sharedChatReaderViewportRowsLocked(state: &state),
+                    dock.rows(width: statusBoxContentWidthLocked(state: &state)).count
+                )
+                if payloadRows < 1 {
+                    dock.isExpanded = false
+                    state.sharedChatReaderDock = dock
+                    collapsedObservationID = state.sharedChatReaderObservationID
+                    collapseHandler = sharedChatReaderCollapseHandler
+                }
+            }
             renderLocked(state: &state)
+        }
+        if let collapsedObservationID {
+            await collapseHandler?(collapsedObservationID)
         }
     }
     

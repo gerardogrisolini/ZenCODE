@@ -8,28 +8,19 @@ import Testing
 @testable import ZenCODECore
 import ToolCore
 
-/// Covers the shared-chat delivery contract after inline delivery was removed:
-/// the executor never drains a mailbox or rewrites a tool result, and every
-/// recipient — idle, running or standby — receives a live message as a serial
-/// turn in its own work loop, queued by the mailbox drain, independent of any
-/// future tool call. There is no post-delivery broadcast filter: every
-/// participant the bus includes in a delivery receives its prompt.
+/// Covers the priority shared-chat delivery contract. A coordinator or delegated
+/// agent already in a turn receives pending messages in the model-facing result
+/// of its next tool call.
 ///
-/// The coordinator-room behaviour (the mailbox is drained even while a turn is
-/// in flight, but the auto-trigger is held back until the room goes idle) is
-/// covered by
-/// ``AgentSharedChatCoordinatorTests/busyRoomDrainsMailboxToPendingButHoldsBackTriggerUntilTurnEnds()``.
+/// If the coordinator turn ends without another tool call, its normal synthetic
+/// turn remains the fallback.
 @Suite(.timeLimit(.minutes(1)))
 struct SharedChatInlineDeliveryTests {
 
-    // MARK: - DirectToolExecutor: no mailbox drain, no modelOutput rewrite
+    // MARK: - DirectToolExecutor: coordinator inline delivery
 
-    /// A tool call never touches the shared-chat mailbox: the result is returned
-    /// byte-for-byte identical whether or not a message is waiting, and
-    /// `modelOutput` always equals `output`. Delivery is now handled exclusively
-    /// by the mailbox drain, not by the tool executor.
     @Test
-    func executorDoesNotDrainMailboxOrModifyModelOutput() async throws {
+    func coordinatorExecutorInjectsMailboxIntoModelOutputOnly() async throws {
         let room = "no-drain-room-\(UUID().uuidString)"
         let chat = AgentSharedChat()
         _ = try await chat.registerCoordinator(roomID: room)
@@ -68,32 +59,72 @@ struct SharedChatInlineDeliveryTests {
             text: "hello from alpha"
         )
 
-        // The executor does not drain the mailbox: modelOutput stays equal to
-        // output and the message is still sitting in the bus mailbox.
+        // The visible tool result is unchanged, while the model receives the
+        // live-chat block and the coordinator mailbox is consumed.
         let result = await executor.execute(
             sessionID: room,
             toolCall: toolCall,
             workingDirectory: workingDirectory
         )
-        #expect(result.modelOutput == result.output)
-        #expect(!result.modelOutput.contains("hello from alpha"))
-        #expect(!result.modelOutput.contains("[Live chat messages"))
+        #expect(result.output == base.output)
+        #expect(result.summary == base.summary)
+        #expect(!result.output.contains("hello from alpha"))
+        #expect(result.modelOutput.contains("hello from alpha"))
+        #expect(result.modelOutput.contains("[Live chat messages received while you were working]"))
+        #expect(result.modelOutput.contains("Reply NOW"))
         let leftover = await chat.drain(
             roomID: room,
             participantID: AgentSharedChat.coordinatorID(for: room),
             limit: AgentSharedChat.maximumMessagesPerInjectedPrompt
         )
-        #expect(leftover.map(\.text) == ["hello from alpha"])
+        #expect(leftover.isEmpty)
+    }
+
+    @Test
+    func delegatedAgentExecutorInjectsMailboxIntoCurrentModelTurn() async throws {
+        let room = "agent-inline-room-\(UUID().uuidString)"
+        let chat = AgentSharedChat()
+        _ = try await chat.registerCoordinator(roomID: room)
+        _ = try await chat.registerAgent(id: "worker", name: "worker", roomID: room)
+        let executor = DirectToolExecutor(
+            authorizationHandler: { _ in false },
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            sharedChat: chat,
+            sharedChatSenderID: "worker",
+            sharedChatRootSessionID: room,
+            subAgentContextualBackendFactory: { _ in InlineDeliveryTestBackend() }
+        )
+        try await chat.send(
+            roomID: room,
+            senderID: AgentSharedChat.coordinatorID(for: room),
+            destination: .direct(["worker"]),
+            text: "reply before continuing your current work"
+        )
+
+        let result = await executor.execute(
+            sessionID: "worker-session",
+            toolCall: DirectAgentToolCall(
+                id: "agent-exec",
+                name: "local.exec",
+                argumentsObject: ["command": "whoami"],
+                argumentsJSON: #"{"command":"whoami"}"#
+            ),
+            workingDirectory: URL(fileURLWithPath: "/tmp")
+        )
+
+        #expect(!result.output.contains("reply before continuing"))
+        #expect(result.modelOutput.contains("reply before continuing your current work"))
+        #expect(result.modelOutput.contains("Reply NOW"))
+        #expect(result.modelOutput.contains("After replying, resume the work you were doing."))
+        #expect(await chat.drain(roomID: room, participantID: "worker").isEmpty)
     }
 
     // MARK: - Sub-agent delivery: drain while running
 
-    /// A message delivered to an agent whose turn is in flight (`.running`) is
-    /// drained from the mailbox and queued as a pending prompt. The agent
-    /// answers it as the next serial turn, the moment the current one ends —
-    /// never deferred to a future tool call.
+    /// If a running agent makes no further tool call, its mailbox remains intact
+    /// until turn end and is then queued as the lossless fallback prompt.
     @Test
-    func runningAgentReceivesMessageAsQueuedPromptWhileTurnInFlight() async throws {
+    func runningAgentWithoutAnotherToolCallUsesQueuedPromptFallback() async throws {
         let root = "running-root-\(UUID().uuidString)"
         let backend = InlineDeliveryTestBackend()
         await backend.setBlocking(true)
@@ -124,8 +155,7 @@ struct SharedChatInlineDeliveryTests {
             completion: mailboxDrain
         )
 
-        // The coordinator sends a direct message to the running agent. The
-        // mailbox is drained even while running and the message is queued.
+        // The coordinator sends directly while the first turn is blocked.
         let summary = try await runtime.messageSharedChat(
             arguments: [
                 "id": .string(agentID),
@@ -137,19 +167,12 @@ struct SharedChatInlineDeliveryTests {
         // The coordinator-facing summary states the message was delivered live.
         #expect(summary.contains("Delivered live message"))
 
-        // `onMessageAvailable` starts its drain in an unstructured task. The
-        // fixture signals only after that task returned from the mailbox drain,
-        // establishing the happens-before edge required before inspecting it.
+        // The wake-up drain runs but must leave the mailbox to the active turn.
         await mailboxDrain.waitForCompletion()
-        let mailboxLeftover = await runtime.sharedChat.drain(
-            roomID: root,
-            participantID: agentID,
-            limit: AgentSharedChat.maximumMessagesPerInjectedPrompt
-        )
-        #expect(mailboxLeftover.isEmpty)
+        #expect(await backend.promptCount() == 1)
 
-        // Releasing the initial prompt lets the current turn end; the queued
-        // message becomes the next prompt.
+        // This fixture performs no tool call. Releasing the initial prompt ends
+        // the turn, re-arms the drain and starts the fallback prompt.
         await backend.releasePrompt()
         await backend.waitUntilPromptCount(2)
         let queuedPrompt = await backend.prompt(at: 1)

@@ -212,91 +212,28 @@ extension TerminalChat {
         }
     }
 
-    func sendSharedChatMention(_ route: SharedChatMentionRoute) async -> UUID? {
+    func sendSharedChatMention(_ route: SharedChatMentionRoute) async {
         guard await isCurrentSharedChatDirectDestination(route.destination) else {
             await writeFailureMessage("ZenCODE message: selected agent is no longer active.\n")
             await refreshSharedChatPanelSuggestions()
-            return nil
+            return
         }
 
         do {
-            let delivery = try await sessionRunner.sendSharedChatMessage(
+            _ = try await sessionRunner.sendSharedChatMessage(
                 text: route.text,
                 destination: route.destination,
                 rootSessionID: sessionID
             )
-            // Match the incoming-card route style (short display names) so the
-            // operator's own sent card reads identically to the cards rendered
-            // for messages received from agents, instead of leaking the long
-            // prompt-only transcript identities into the terminal card title.
-            let participantMap = Dictionary(
-                uniqueKeysWithValues: delivery.recipients.map { ($0.id, $0) }
-            )
-            await writePreformattedMessage(
-                Self.renderSharedChatCard(
-                    route: Self.sharedChatIncomingCardRoute(
-                        for: delivery.message,
-                        participantMap: participantMap
-                    ),
-                    text: delivery.message.text
-                )
-            )
             await refreshSharedChatPanelSuggestions()
-            return delivery.message.id
         } catch {
             let safeError = Self.sharedChatInlineTerminalSafeText(error.localizedDescription)
             await writeFailureMessage("ZenCODE message: \(safeError)\n")
-            return nil
         }
     }
 
-    /// Rendering history for one terminal observer.
-    ///
-    /// A long live session would otherwise accumulate one `UUID` per message
-    /// forever. The capacity mirrors ``AgentSharedChat/maximumRetainedMessagesPerRoom``,
-    /// the bound of the transcript this history deduplicates, and eviction is
-    /// FIFO: an id old enough to be evicted can no longer be replayed by the
-    /// Core, so eviction cannot resurrect a duplicate card.
-    struct SharedChatRenderedMessageIDs: Sendable {
-        static let capacity = AgentSharedChat.maximumRetainedMessagesPerRoom
-
-        private var identifiers: Set<UUID> = []
-        private var insertionOrder: [UUID] = []
-
-        var count: Int { identifiers.count }
-
-        init() {}
-
-        /// Records `id` and reports whether it is new to this observer.
-        @discardableResult
-        mutating func insert(_ id: UUID) -> Bool {
-            guard identifiers.insert(id).inserted else { return false }
-            insertionOrder.append(id)
-            if insertionOrder.count > Self.capacity {
-                let evicted = insertionOrder.removeFirst()
-                identifiers.remove(evicted)
-            }
-            return true
-        }
-
-        mutating func removeAll() {
-            identifiers.removeAll(keepingCapacity: true)
-            insertionOrder.removeAll(keepingCapacity: true)
-        }
-    }
-
-    /// Messages sent by agents to the coordinator are rendered before their
-    /// prompt injection. This preserves a visible audit trail while the actor
-    /// remains transient and independent from the persistent conversation.
-    nonisolated static func newlyReceivedSharedChatMessages(
-        _ messages: [AgentSharedChat.Message],
-        renderedMessageIDs: inout SharedChatRenderedMessageIDs
-    ) -> [AgentSharedChat.Message] {
-        messages.filter { renderedMessageIDs.insert($0.id) }
-    }
-
-    /// Builds the route label for a chat card from the message's sender and
-    /// resolved recipients. Uses short display names only.
+    /// Builds the route label shown for a reader entry from the message's
+    /// sender and resolved recipients. Uses short display names only.
     nonisolated static func sharedChatIncomingCardRoute(
         for message: AgentSharedChat.Message,
         participantMap: [String: AgentSharedChat.Participant] = [:]
@@ -318,105 +255,6 @@ extension TerminalChat {
             return "\(senderName) → \(AgentSharedChat.displayName(for: recipient))"
         }
         return "\(senderName) → Agent"
-    }
-
-    func renderSharedChatMessages(_ messages: [AgentSharedChat.Message]) async {
-        let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sessionID)
-        let participantMap = Dictionary(
-            uniqueKeysWithValues: participants.map { ($0.id, $0) }
-        )
-        for message in messages {
-            await writePreformattedMessage(
-                Self.renderSharedChatCard(
-                    route: Self.sharedChatIncomingCardRoute(
-                        for: message,
-                        participantMap: participantMap
-                    ),
-                    text: message.text
-                )
-            )
-        }
-    }
-
-    /// Compact, one-line transient notification used while the prompt panel is
-    /// active. Full message bodies are available only through the reader
-    /// overlay, keeping ordinary output usable during concurrent streaming.
-    func renderSharedChatCompactMessages(
-        _ messages: [AgentSharedChat.Message],
-        unreadCount: Int
-    ) async {
-        let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sessionID)
-        let participantMap = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
-        for message in messages {
-            await writePreformattedMessage(
-                TerminalSharedChatReaderDock.compactPreview(
-                    route: Self.sharedChatIncomingCardRoute(for: message, participantMap: participantMap),
-                    text: message.text,
-                    unreadCount: unreadCount,
-                    // Incoming output can race a SIGWINCH/cache update; use a
-                    // fresh measurement so a compact preview never overflows
-                    // immediately after the terminal is narrowed.
-                    width: Self.terminalColumnCount(forceRefresh: true)
-                )
-            )
-        }
-    }
-
-    /// Renders one transient chat message as a terminal-safe blue card. The
-    /// border remains visible in captured/plain output, while ANSI colors are
-    /// emitted only for an interactive terminal. At very narrow widths, the
-    /// box becomes a plain wrapped transcript instead of overflowing.
-    nonisolated static func renderSharedChatCard(
-        route rawRoute: String,
-        text rawText: String,
-        terminalColumns: Int = terminalColumnCount(),
-        usesColor: Bool = AgentOutput.standardErrorIsTerminal,
-        appearance: TerminalMarkdownPalette.Appearance = TerminalMarkdownPalette.detected.appearance
-    ) -> String {
-        let availableWidth = max(1, terminalColumns)
-        let safeRoute = sharedChatInlineTerminalSafeText(rawRoute)
-        let normalizedText = sharedChatTerminalSafeText(rawText)
-
-        // Four cells are necessary for the side borders and their interior
-        // spacing. Below this conservative minimum, a box would either lose
-        // all useful content or exceed the terminal, so emit plain rows.
-        guard availableWidth >= 12 else {
-            return renderSharedChatPlainFallback(
-                route: safeRoute,
-                text: normalizedText,
-                width: availableWidth
-            )
-        }
-
-        // Box width equals the full terminal width, matching the prompt bar.
-        let outerWidth = max(12, availableWidth)
-        let contentWidth = outerWidth - 4
-        let titlePrefix = "Message · \(safeRoute)"
-        let title = fitDisplayWidth(titlePrefix, width: outerWidth - 5)
-        // ╭─ + space + title + space + rule + ╮ must equal `outerWidth`.
-        let topRuleWidth = max(0, outerWidth - displayWidth(title) - 5)
-        let topRule = String(repeating: "─", count: topRuleWidth)
-        let top = "╭─ \(title) \(topRule)╮"
-        let bottom = "╰\(String(repeating: "─", count: outerWidth - 2))╯"
-        let rows = sharedChatWrappedRows(normalizedText, width: contentWidth)
-        let bodyRows = rows.map {
-            "│ \(sharedChatPaddedToDisplayWidth($0, width: contentWidth)) │"
-        }
-
-        guard usesColor else {
-            return ([top] + bodyRows + [bottom]).joined(separator: "\n") + "\n"
-        }
-
-        let palette = TerminalStyle.SharedChat.palette(for: appearance)
-        // `border` explicitly disables bold. The title is bold, so merely
-        // changing its foreground color would otherwise leak bold into the
-        // remainder of the top border.
-        let coloredTop = "\(palette.border)╭─ \(palette.title)\(title)\(palette.border) \(topRule)╮\(TerminalStyle.reset)"
-        let coloredRows = rows.map {
-            "\(palette.border)│\(TerminalStyle.reset) \(palette.body)\(sharedChatPaddedToDisplayWidth($0, width: contentWidth))\(TerminalStyle.reset) \(palette.border)│\(TerminalStyle.reset)"
-        }
-        let coloredBottom = "\(palette.border)\(bottom)\(TerminalStyle.reset)"
-        return ([coloredTop] + coloredRows + [coloredBottom]).joined(separator: "\n") + "\n"
     }
 
     /// Replaces controls with visible inert text, preserving LF as the sole
@@ -591,17 +429,4 @@ extension TerminalChat {
         return rows.isEmpty ? [""] : rows
     }
 
-    nonisolated static func sharedChatPaddedToDisplayWidth(_ text: String, width: Int) -> String {
-        text + String(repeating: " ", count: max(0, width - displayWidth(text)))
-    }
-
-    private nonisolated static func renderSharedChatPlainFallback(
-        route: String,
-        text: String,
-        width: Int
-    ) -> String {
-        let heading = fitDisplayWidth("Message · \(route)", width: width)
-        let rows = sharedChatWrappedRows(text, width: width)
-        return ([heading] + rows).joined(separator: "\n") + "\n"
-    }
 }

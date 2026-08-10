@@ -613,7 +613,7 @@ struct TerminalInteractiveLineReaderTests {
             reader.panelHelpTextLocked(state: $0).contains("Ctrl+T tools · Ctrl+G access")
         })
         #expect(reader.withPanelLock {
-            reader.panelCompactHelpTextLocked(state: $0) == "Enter send · Esc clear · Ctrl+G access"
+            reader.panelCompactHelpTextLocked(state: $0) == "Enter send · Esc clear · Ctrl+G access · Ctrl+Y chat"
         })
     }
 

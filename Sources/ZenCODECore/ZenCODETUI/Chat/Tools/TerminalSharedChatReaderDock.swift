@@ -11,9 +11,9 @@ struct TerminalSharedChatReadingBuffer: Sendable {
     static let capacity = AgentSharedChat.maximumRetainedMessagesPerRoom
 
     private(set) var messages: [AgentSharedChat.Message] = []
-    /// Reader history is deliberately independent from terminal-card rendering.
-    /// A locally rendered outbound message is already in the rendering history
-    /// before its transcript event arrives, but must still be readable here.
+    /// Reader history is deliberately independent from the scrolling transcript.
+    /// Outbound and inbound messages both arrive through the room observation and
+    /// remain readable here without being appended to that transcript.
     private var messageIDs: Set<UUID> = []
     private(set) var unreadCount = 0
     /// The message currently selected by the open reader. Keeping an identity
@@ -127,24 +127,44 @@ struct TerminalSharedChatReaderDock: Sendable, Equatable {
     var selectedIndex = 0
     var scrollOffset = 0
     var unreadCount = 0
+    /// An attached shared-chat observation keeps this dock present while it is
+    /// compact; expanding it only changes how that same state is rendered.
+    var isExpanded = false
 
-    static func compactPreview(route: String, text: String, unreadCount: Int, width: Int) -> String {
-        let available = max(1, width)
-        let badge = " [\(max(0, unreadCount)) unread · Ctrl+Y read]"
-        guard TerminalChat.displayWidth(badge) < available else {
-            return TerminalChat.fitDisplayWidth(available >= 3 ? "[\(max(0, unreadCount))]" : "•", width: available) + "\n"
-        }
-        let route = TerminalChat.sharedChatTerminalSafeText(route).replacingOccurrences(of: "\n", with: " ")
-        let text = TerminalChat.sharedChatTerminalSafeText(text).replacingOccurrences(of: "\n", with: " ")
-        return TerminalChat.fitDisplayWidth(TerminalChat.fitDisplayWidth("Message · \(route): \(text)", width: available - TerminalChat.displayWidth(badge)) + badge, width: available) + "\n"
+    enum Selection: Sendable, Equatable {
+        /// Keep the entry the operator is reading when it remains retained.
+        case preserve
+        /// Apply an explicit reader selection (used when opening the reader).
+        case message(UUID?)
     }
 
-    mutating func replace(entries: [TerminalSharedChatReaderEntry], unreadCount: Int) {
+    mutating func replace(
+        entries: [TerminalSharedChatReaderEntry],
+        unreadCount: Int,
+        selection: Selection = .preserve
+    ) {
         let selectedID = self.entries.indices.contains(selectedIndex) ? self.entries[selectedIndex].id : nil
         self.entries = Array(entries.suffix(TerminalSharedChatReadingBuffer.capacity))
         self.unreadCount = min(self.entries.count, max(0, unreadCount))
-        if let selectedID, let index = self.entries.firstIndex(where: { $0.id == selectedID }) {
+        let requestedID: UUID?
+        let isExplicitSelection: Bool
+        switch selection {
+        case .preserve:
+            requestedID = selectedID
+            isExplicitSelection = false
+        case let .message(id):
+            requestedID = id
+            isExplicitSelection = true
+        }
+        if let requestedID, let index = self.entries.firstIndex(where: { $0.id == requestedID }) {
             selectedIndex = index
+            // A programmatic selection is a navigation action just like the
+            // arrow keys, even when it names the already-selected entry.
+            // Live `.preserve` refreshes, on the other hand, leave the reader
+            // exactly where the operator was scrolling.
+            if isExplicitSelection {
+                scrollOffset = 0
+            }
         } else {
             selectedIndex = max(0, self.entries.count - 1)
             scrollOffset = 0
@@ -182,8 +202,9 @@ struct TerminalSharedChatReaderDock: Sendable, Equatable {
         guard entries.indices.contains(selectedIndex) else { return [] }
         let entry = entries[selectedIndex]
         let route = TerminalChat.sharedChatTerminalSafeText(entry.route).replacingOccurrences(of: "\n", with: " ")
-        return ["Message · \(route)"]
+        return ["", "Author: \(route)"]
             + TerminalChat.sharedChatWrappedRows(TerminalChat.sharedChatTerminalSafeText(entry.text), width: max(1, width))
+            + [""]
     }
 
     mutating func clamp(viewportRows: Int, width: Int) {
