@@ -481,7 +481,7 @@ extension DirectSubAgentRuntime {
                         + "and it is not eligible for standby (the graph may be "
                         + "terminal, the task may have been retried, or the standby "
                         + "budget may be exhausted). Use tasks.retry and "
-                        + "agent.create(taskID:) to begin a new attempt."
+                        + "a canonical agent.create item containing `taskID` to begin a new attempt."
                 )
             }
         }

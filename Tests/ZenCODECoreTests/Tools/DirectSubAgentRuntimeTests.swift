@@ -854,6 +854,7 @@ struct DirectSubAgentRuntimeTests {
         #expect(descriptor.description.contains("canonical agents array"))
         #expect(descriptor.description.contains("each item requires profile and model"))
         #expect(descriptor.description.contains("exact profile and binding references"))
+        #expect(descriptor.description.contains("taskID is never a root argument"))
         #expect(!descriptor.description.contains(TaskRecord.agentSelectionPolicy))
         #expect(!descriptor.inputSchema.contains("\"modelID\""))
         #expect(!descriptor.inputSchema.contains("toolNames"))

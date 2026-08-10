@@ -30,7 +30,7 @@ struct WorkflowCommandTests {
         #expect(graph.id.hasPrefix("workflow_"))
         #expect(prompt.contains("Active workflow task graph: \(graph.id)"))
         #expect(prompt.contains("execution.executor set to sub_agent"))
-        #expect(prompt.contains("do not start a task attempt directly with tasks.update"))
+        #expect(prompt.contains("Do not start a task attempt directly with tasks.update"))
     }
 
     @Test
@@ -65,13 +65,14 @@ struct WorkflowCommandTests {
             graphID: "workflow_test"
         )
 
-        #expect(prompt.contains("Every workflow task is delegated through agent.create(taskID:)"))
+        #expect(prompt.contains("canonical `agents` array"))
+        #expect(prompt.contains("task ID in the item's `taskID` field"))
         #expect(prompt.contains("the task graph enforces sub-agent execution"))
         #expect(!prompt.contains("your only direct actions"))
         #expect(!prompt.localizedCaseInsensitiveContains("read-only"))
         #expect(prompt.contains("validation is negative, record the task as failed"))
         #expect(prompt.contains("call tasks.retry"))
-        #expect(prompt.contains("new agent.create(taskID:)"))
+        #expect(prompt.contains("new canonical agent.create item containing `taskID`"))
         #expect(prompt.contains("Do not use agent.message to request corrections"))
         #expect(!prompt.contains("use agent.message to request corrections or"))
     }

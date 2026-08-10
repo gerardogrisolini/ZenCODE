@@ -68,7 +68,7 @@ extension AgentConfigurationTests {
 
         #expect(instructions.contains("Task workflow policy:"))
         #expect(instructions.contains("A `/workflow` graph requires every task to be delegated"))
-        #expect(instructions.contains("new agent.create(taskID:)"))
+        #expect(instructions.contains("new canonical agent.create item containing `taskID`"))
     }
 
     @Test
@@ -128,8 +128,11 @@ extension AgentConfigurationTests {
         #expect(policy.contains("coordinator execution remains permitted"))
         #expect(policy.contains("prefer a single delegation without manufacturing a task graph"))
         #expect(!policy.contains("you remain free to execute tasks directly"))
-        #expect(policy.contains("taskID to agent.create"))
-        #expect(policy.contains("every delegated agent must use taskID"))
+        #expect(policy.contains("canonical tasks.create `tasks` array"))
+        #expect(policy.contains("do not mix root-level single-task fields"))
+        #expect(policy.contains("agent.create `agents` item as `taskID`"))
+        #expect(policy.contains("never pass taskID as a root argument"))
+        #expect(policy.contains("every delegated agent must use `agents[].taskID`"))
         #expect(policy.contains("A `/workflow` graph requires every task to be delegated"))
         #expect(policy.contains("normal tool grant remains unchanged"))
         #expect(policy.contains("single self-contained delegation"))
@@ -146,7 +149,7 @@ extension AgentConfigurationTests {
         #expect(SystemPromptBuilder.taskWorkflowToolsAreAvailable(namespaceTools))
         #expect(SystemPromptBuilder.taskOrchestrationSection(
             allowedToolNames: namespaceTools
-        )?.contains("taskID to agent.create") == true)
+        )?.contains("agent.create `agents` item as `taskID`") == true)
 
         let coordinatorOnlyTools: Set<String> = [
             "tasks.create",

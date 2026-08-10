@@ -142,7 +142,8 @@ extension TerminalChat {
         - Create one or more separate code-quality/correctness Reviewers for the tracked \
         change surface. If a task graph is active, first add one independent review task per \
         Reviewer to that graph, including a single Reviewer, then call tasks.list with \
-        runnableOnly=true and pass each taskID to agent.create. Without an active graph, do \
+        runnableOnly=true and put each task ID in the corresponding canonical agent.create \
+        `agents` item's `taskID` field. Without an active graph, do \
         this before using more than one Reviewer. Partition independent files or concerns when \
         useful; a single taskless code Reviewer is sufficient only for a small self-contained \
         change.
@@ -195,8 +196,9 @@ extension TerminalChat {
       - Create the sub-agents with agent.create using role "Reviewer" and profile \
       "\(reviewer.id)"; Reviewers must not edit files.
       - If a task graph is active, append one independent review task per Reviewer to that \
-      graph, including a single Reviewer; call tasks.list with runnableOnly=true and pass each \
-      runnable taskID to agent.create. Without an active graph, define that workflow before \
+      graph, including a single Reviewer; call tasks.list with runnableOnly=true and put each \
+      runnable task ID in the corresponding canonical agent.create `agents` item's `taskID` \
+      field. Without an active graph, define that workflow before \
       using multiple Reviewers. If a taskless Reviewer is already active, wait for it to finish \
       and close it before activating a graph; it cannot be retroactively bound to a task.
       - Create at least one dedicated Reviewer for plan coverage or task-graph coverage.
@@ -324,9 +326,10 @@ extension TerminalChat {
       - When the review surface can be partitioned into independent areas (for \
       example distinct files, modules, or concerns), first call tasks.create once \
       with one independent review task per area, then call tasks.list with \
-      runnableOnly=true and spawn multiple Reviewers with the corresponding taskID \
-      values in a single agent.create call. If a task graph is already active, add a \
-      task and use taskID even for a single Reviewer. If a taskless Reviewer is already \
+      runnableOnly=true and spawn multiple Reviewers in one canonical agent.create `agents` \
+      array, putting each task ID in its corresponding item's `taskID` field. If a task graph \
+      is already active, add a task and use `agents[].taskID` even for a single Reviewer. If a \
+      taskless Reviewer is already \
       active, wait for it to finish and close it before activating a graph. If the change \
       is small or cannot be partitioned cleanly, a single self-contained Reviewer is fine.
       - Give each Reviewer a focused prompt describing its assigned subset of the \

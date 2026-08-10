@@ -6,6 +6,17 @@ import ToolCore
 @Suite
 struct DirectTaskToolAdapterTests {
     @Test
+    func tasksCreateDescriptorExplainsCanonicalBatchAndAgentClaimShapes() throws {
+        let descriptor = try #require(
+            DirectToolCatalog.todoTaskDescriptors.first { $0.name == "tasks.create" }
+        )
+
+        #expect(descriptor.description.contains("canonical tasks array"))
+        #expect(descriptor.description.contains("do not mix it with root-level single-task fields"))
+        #expect(descriptor.description.contains("agent.create agents item's taskID field"))
+    }
+
+    @Test
     func tasksNamespaceIsCanonicalAndSingularNamespaceIsRejected() {
         let advertisedNames = DirectToolCatalog.todoTaskDescriptors
             .map(\.name)

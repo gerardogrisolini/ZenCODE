@@ -33,7 +33,7 @@ public actor DirectTaskToolAdapter {
             let definitions = try Self.requestedTaskDefinitions(from: request.arguments)
             if Self.containsAssignee(in: request.arguments) {
                 throw SessionTaskOrchestratorError.permissionDenied(
-                    "Tasks are assigned atomically through agent.create(taskID:), not tasks.create."
+                    "Tasks are assigned atomically by putting the task ID in an agent.create agents item's taskID field, not tasks.create."
                 )
             }
             let graph = try await orchestrator.createTasks(
@@ -99,7 +99,7 @@ public actor DirectTaskToolAdapter {
             let taskID = try DirectTodoRuntime.requiredString(["id"], in: request.arguments)
             if Self.containsAssignee(in: request.arguments) {
                 throw SessionTaskOrchestratorError.permissionDenied(
-                    "Tasks are assigned atomically through agent.create(taskID:), not tasks.update."
+                    "Tasks are assigned atomically by putting the task ID in an agent.create agents item's taskID field, not tasks.update."
                 )
             }
             let update = try Self.taskUpdate(from: request.arguments)

@@ -166,16 +166,19 @@ public enum SystemPromptBuilder {
             Prefer delegation for non-trivial graph work whenever a compatible profile has the \
             tools required to perform it. Execute graph work directly only when the work is \
             trivial, delegation offers no meaningful benefit, no compatible profile can perform \
-            it, or shared mutable state makes delegation unsafe. When delegating graph work, pass \
-            its taskID to agent.create so the assignment and execution attempt are recorded \
-            atomically. Select the most suitable agent profile and one of its authorized model \
+            it, or shared mutable state makes delegation unsafe. When delegating graph work, put \
+            the task ID returned by tasks.create/tasks.list in each canonical \
+            agent.create `agents` item as `taskID`; never pass taskID as a root argument. This \
+            claims the assignment and execution attempt atomically. Select the most suitable \
+            agent profile and one of its authorized model \
             bindings from the delegatable roster: determine the task type and required tools, then \
             choose the lowest-capability binding that meets the task complexity. Delegate independent \
             runnable tasks together when \
             parallel execution is safe and useful; serialize work that mutates overlapping \
             files or shared state. When a task graph is already active, every delegated agent \
-            must use taskID; do not create taskless agents outside that workflow. A `/workflow` \
-            graph requires every task to be delegated through agent.create(taskID:); the \
+            must use `agents[].taskID`; do not create taskless agents outside that workflow. A \
+            `/workflow` graph requires every task to be delegated through the canonical \
+            agent.create `agents` array; the \
             coordinator cannot start a task attempt directly, although its normal tool grant \
             remains unchanged. For other task graphs, coordinator execution remains permitted \
             only under the fallback conditions above. For substantial self-contained work that \
@@ -183,15 +186,16 @@ public enum SystemPromptBuilder {
             task graph. \
             After a `/workflow` implementation task completes, validate its result. If validation \
             is negative, record the task as failed, call tasks.retry, then claim the new attempt \
-            with a new agent.create(taskID:); do not use agent.message to reopen a completed \
-            task.
+            with a new canonical agent.create item containing `taskID`; do not use agent.message \
+            to reopen a completed task.
             """
         } else {
             delegationInstruction = """
             When agent.create is unavailable, execute runnable graph work directly only in a \
             task graph that permits coordinator execution, and record its lifecycle with \
             tasks.update. Never create or directly execute work in a `/workflow` graph: it \
-            requires a sub-agent claim through agent.create(taskID:).
+            requires a sub-agent claim through a canonical agent.create `agents` item containing \
+            `taskID`.
             """
         }
 
@@ -200,9 +204,11 @@ public enum SystemPromptBuilder {
         Before launching multiple delegated agents or beginning work with multiple phases, \
         decide whether the request is a coordinated workflow. Create the session task graph \
         with tasks.create first when work has multiple units, dependencies, concurrent delegation, durable \
-        progress, retry, validation, or review requirements. Define the work items together \
-        with stable IDs and explicit dependencies (including empty dependencies for \
-        independent work), then use tasks.list with runnableOnly=true to choose work and \
+        progress, retry, validation, or review requirements. Define all work items in one \
+        canonical tasks.create `tasks` array; do not mix root-level single-task fields or the \
+        legacy `items` alias. Give every item a stable `id`, `title`, `description`, `complexity`, \
+        explicit `dependsOn` array (empty for independent work), `acceptanceCriteria`, and \
+        `execution`. Then use tasks.list with runnableOnly=true to choose work and \
         tasks.update to record progress, outcomes, blockers, and validation.
 
         When defining tasks, prefer a dependency graph that maximizes safe, useful parallelism \
