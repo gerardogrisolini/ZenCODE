@@ -417,10 +417,18 @@ struct TerminalInteractiveLineReaderTests {
     func controlShortcutsDecodeKittyAndModifyOtherKeysSequences() {
         let reader = TerminalInteractiveLineReader()
 
+        // The legacy raw C0 byte remains the baseline encoding for Ctrl+O.
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x0F) == .toggleSharedChatReader)
+        // Ctrl+Y is the cross-platform alternative (Ctrl+O is intercepted on macOS).
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x19) == .toggleSharedChatReader)
+        #expect(reader.keyFromCSI(Array("121;5u".utf8)) == .toggleSharedChatReader)
+        #expect(reader.keyFromCSI(Array("27;5;121~".utf8)) == .toggleSharedChatReader)
         #expect(reader.keyFromCSI(Array("97;5u".utf8)) == .home)
         #expect(reader.keyFromCSI(Array("27;5;97~".utf8)) == .home)
         #expect(reader.keyFromCSI(Array("103;5u".utf8)) == .toggleAccessMode)
         #expect(reader.keyFromCSI(Array("27;5;103~".utf8)) == .toggleAccessMode)
+        #expect(reader.keyFromCSI(Array("111;5u".utf8)) == .toggleSharedChatReader)
+        #expect(reader.keyFromCSI(Array("27;5;111~".utf8)) == .toggleSharedChatReader)
         #expect(reader.keyFromCSI(Array("116;5u".utf8)) == .toggleToolDetails)
         #expect(reader.keyFromCSI(Array("27;5;116~".utf8)) == .toggleToolDetails)
 
@@ -472,7 +480,8 @@ struct TerminalInteractiveLineReaderTests {
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x10) == .up)
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x0E) == .down)
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x07) == .toggleAccessMode)
-        #expect(TerminalInteractiveLineReader.controlKey(for: 0x0F) == nil)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x0F) == .toggleSharedChatReader)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x19) == .toggleSharedChatReader)
     }
 
     @Test
@@ -500,6 +509,57 @@ struct TerminalInteractiveLineReaderTests {
         // Readline draft-wide motion, reachable without Home/End keys.
         #expect(decode([0x1B, 0x3C]) == .bufferStart)
         #expect(decode([0x1B, 0x3E]) == .bufferEnd)
+
+        pipe.fileHandleForWriting.closeFile()
+    }
+
+    @Test
+    func oscSequencesDrainPayloadThroughBELAndST() {
+        let pipe = Pipe()
+        let reader = TerminalInteractiveLineReader(
+            rawInput: TerminalRawInput(
+                fileDescriptor: pipe.fileHandleForReading.fileDescriptor
+            )
+        )
+
+        // OSC payload is allowed to contain printable bytes and line breaks;
+        // BEL terminates it without leaking the payload into the draft.
+        pipe.fileHandleForWriting.write(
+            Data([0x1B, 0x5D] + Array("0;title\nsecond line".utf8) + [0x07, 0x78])
+        )
+        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .unknown)
+        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .character("x"))
+
+        // ST (`ESC \\`) is the other common OSC terminator.
+        pipe.fileHandleForWriting.write(
+            Data([0x1B, 0x5D] + Array("8;;https://example.com\nlabel".utf8) + [0x1B, 0x5C, 0x79])
+        )
+        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .unknown)
+        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .character("y"))
+
+        pipe.fileHandleForWriting.closeFile()
+    }
+
+    @Test
+    func unknownMultilineEscapeSequenceDoesNotLeakBytesIntoDraft() {
+        let pipe = Pipe()
+        let reader = TerminalInteractiveLineReader(
+            rawInput: TerminalRawInput(
+                fileDescriptor: pipe.fileHandleForReading.fileDescriptor
+            )
+        )
+
+        // Generic escape sequences have no dependable final-byte range. The
+        // entire multiline burst must be drained until the inter-byte timeout.
+        pipe.fileHandleForWriting.write(
+            Data([0x1B, 0x3F] + Array("vendor line one\nvendor line two\nvendor line three\n".utf8))
+        )
+        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .unknown)
+
+        // Write after the drain has returned to prove no payload byte remains
+        // queued as draft input.
+        pipe.fileHandleForWriting.write(Data([0x78]))
+        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .character("x"))
 
         pipe.fileHandleForWriting.closeFile()
     }
@@ -553,7 +613,7 @@ struct TerminalInteractiveLineReaderTests {
             reader.panelHelpTextLocked(state: $0).contains("Ctrl+T tools · Ctrl+G access")
         })
         #expect(reader.withPanelLock {
-            reader.panelCompactHelpTextLocked(state: $0) == "Enter send · Esc clear · Ctrl+G access"
+            reader.panelCompactHelpTextLocked(state: $0) == "Enter send · Esc clear · Ctrl+G access · Ctrl+Y chat"
         })
     }
 

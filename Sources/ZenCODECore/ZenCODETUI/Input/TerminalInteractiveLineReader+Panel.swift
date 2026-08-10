@@ -488,6 +488,22 @@ extension TerminalInteractiveLineReader {
         _ key: Key,
         onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
     ) async {
+        let readerAction = withPanelLock { state -> TerminalSharedChatReaderAction? in
+            guard state.panelSharedChatReaderIsOpen else { return nil }
+            switch key {
+            case .up: return .scrollUp
+            case .down: return .scrollDown
+            case .left: return .previousMessage
+            case .right: return .nextMessage
+            case .home, .bufferStart: return .firstMessage
+            case .end, .bufferEnd: return .lastMessage
+            default: return nil
+            }
+        }
+        if let readerAction {
+            await onEvent(.sharedChatReaderNavigation(readerAction))
+            return
+        }
         let effect = withPanelLock { state -> TerminalPromptEditorEffect in
             let effect = state.editor.apply(key, context: editorContextLocked(state: state))
             if case let .submitted(line) = effect {
@@ -518,7 +534,14 @@ extension TerminalInteractiveLineReader {
         case .toggleAccessMode:
             await onEvent(.toggleAccessModeRequested)
             await renderPanel()
+        case .toggleSharedChatReader:
+            await onEvent(.toggleSharedChatReaderRequested)
+            await renderPanel()
         }
+    }
+
+    func setSharedChatReaderOpen(_ isOpen: Bool) {
+        withPanelLock { state in state.panelSharedChatReaderIsOpen = isOpen }
     }
 
     func editorContextLocked(state: State) -> TerminalPromptEditorContext {
@@ -601,12 +624,12 @@ extension TerminalInteractiveLineReader {
             if hasActiveCommandSuggestionsLocked(state: state) {
                 return "↑/↓ select · Tab complete · Enter choose · Esc stop"
             }
-            return "Enter queue · Ctrl+T tools · Ctrl+G access · Esc stop"
+            return "Enter queue · Ctrl+T tools · Ctrl+G access · Ctrl+Y chat · Esc stop"
         }
         if hasActiveCommandSuggestionsLocked(state: state) {
             return "↑/↓ select · Tab complete · Enter choose · Esc dismiss"
         }
-        return "Enter send · Ctrl+T tools · Ctrl+G access · Esc clear"
+        return "Enter send · Ctrl+T tools · Ctrl+G access · Ctrl+Y chat · Esc clear"
     }
 
     func panelCompactHelpTextLocked(state: State) -> String? {
@@ -615,9 +638,9 @@ extension TerminalInteractiveLineReader {
             return nil
         }
         if state.panelIsProcessing {
-            return "Enter queue · Esc stop · Ctrl+G access"
+            return "Enter queue · Esc stop · Ctrl+G access · Ctrl+Y chat"
         }
-        return "Enter send · Esc clear · Ctrl+G access"
+        return "Enter send · Esc clear · Ctrl+G access · Ctrl+Y chat"
     }
 
     func hasActiveCommandSuggestionsLocked(state: State) -> Bool {

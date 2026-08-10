@@ -251,7 +251,7 @@ private func waitForCondition(
 
 @Test func recallRevalidatesAfterConcurrentScopeChange() async throws {
     let selector = BlockingSelector()
-    var config = MemoryEngineConfiguration()
+    let config = MemoryEngineConfiguration()
     // Force scope .project so an entry re-scoped to .global drops out.
     let memory = MemoryEngine(selector: selector, configuration: config)
     _ = try await memory.remember("alpha project fact", tags: ["topic"], scope: .project, id: "alpha")

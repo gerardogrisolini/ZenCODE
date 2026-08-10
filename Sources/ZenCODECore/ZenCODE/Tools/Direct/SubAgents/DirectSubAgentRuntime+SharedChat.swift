@@ -88,6 +88,11 @@ extension DirectSubAgentRuntime {
             destination: destination,
             text: text
         )
+        // Operator-originated terminal messages use the same room-wide wake-up
+        // as agent.message deliveries. Without it the transcript can render in
+        // the TUI while the coordinator mailbox remains asleep until the safety
+        // poll, so an @coordinator message appears sent but starts no turn.
+        sharedChatMessageAvailableHandler?(roomID)
         return delivery
     }
 
@@ -184,16 +189,14 @@ extension DirectSubAgentRuntime {
         guard var agent = agents[agentID], agent.status != .closed else {
             return
         }
-        // The mailbox is drained regardless of whether a turn is in flight.
-        // A message that arrives while the agent is running is queued as a
-        // pending prompt and answered by the next serial turn of its work loop,
-        // the moment the current turn ends — never deferred to a future tool
-        // call. This makes the standby/idle/running response turn independent
-        // of tool execution: every recipient replies exactly once, through the
-        // same queued-prompt channel, with no inline delivery and no double
-        // generation. There is no broadcast filter here: every participant the
-        // bus included in a delivery receives its prompt, or was excluded from
-        // the delivery before `send`.
+        // A running turn owns its mailbox through DirectToolExecutor. Leaving
+        // the batch untouched lets the next tool result inject it immediately
+        // into that same model turn. When no further tool call occurs, the work
+        // loop's existing end-of-turn re-arm drains it into a queued prompt as
+        // the lossless fallback.
+        guard agent.status != .running else {
+            return
+        }
         guard !agent.isDrainingSharedChatMailbox else {
             return
         }
@@ -209,6 +212,10 @@ extension DirectSubAgentRuntime {
             // Re-check liveness on every iteration: the agent may have been
             // closed between two drain calls.
             guard let current = agents[agentID], current.status != .closed else { return }
+            // Queueing the previous batch may already have started the agent.
+            // Preserve any remaining mailbox entries for that active turn's
+            // next tool boundary rather than creating a delayed second turn.
+            guard current.status != .running else { return }
             let messages = await sharedChat.drain(
                 roomID: agent.rootSessionID,
                 participantID: agentID,
@@ -328,6 +335,21 @@ extension DirectSubAgentRuntime {
 
         \(AgentSharedChat.promptTrustBoundaryNote)
         Reply to the sender through this chat using the `agent.message` tool: address another agent by its `id`/`name`, use `to: "operator"` to reply directly to the human operator, or use `to: "coordinator"` to reach only the coordinator. Your ordinary output does not reach this chat, so any reply to a chat message must be sent via `agent.message`. Then continue the current work when appropriate.
+        """
+    }
+
+    /// Model-facing delivery used when the coordinator is already inside a
+    /// turn. The message is appended to the next tool result, so the model can
+    /// reply immediately and then resume the work already in progress.
+    static func inlineSharedChatDeliveryBlock(
+        _ messages: [AgentSharedChat.Message]
+    ) -> String {
+        """
+        [Live chat messages received while you were working]
+        \(AgentSharedChat.promptTranscript(for: messages))
+
+        \(AgentSharedChat.promptTrustBoundaryNote)
+        These messages arrived during your current turn. Reply NOW through this chat using the `agent.message` tool: address a delegated agent by its `id`/`name`, use `to: "operator"` for the human operator, or use `to: "coordinator"` for the coordinator. Your ordinary output does not reach this chat, so a reply not sent via `agent.message` is never delivered. After replying, resume the work you were doing.
         """
     }
 }

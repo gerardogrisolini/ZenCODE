@@ -69,7 +69,7 @@ extension TerminalChat {
             readableHandles: await sessionRunner.sharedChatMentionHandles(rootSessionID: sessionID)
         ) {
         case let .route(sharedChatRoute):
-            _ = await sendSharedChatMention(sharedChatRoute)
+            await sendSharedChatMention(sharedChatRoute)
             return .continueChat
         case .missingText:
             await writeFailureMessage(

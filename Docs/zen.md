@@ -248,15 +248,38 @@ instance's display name) to message it directly. Autocomplete lists every active
 agent by its readable handle; routing always resolves back to the stable agent
 id behind the alias. The LLM side uses the `agent.message` tool with the same
 destinations (`direct`, `operator`, `coordinator`, `peers`, `all`); `operator`
-addresses only the human terminal operator. Every message is shown
-as a blue card in every active terminal, and each recipient — idle, running or
-standby — replies to it as the next serial turn of its own work loop, without
-depending on a tool call. A direct turn started by the human operator normally
+addresses only the human terminal operator. Every message is available in the
+terminal's transient `Chat` reader; it is not rendered as a message box in the
+main transcript. A coordinator or delegated agent already working receives the
+message in the model-facing result of its next tool call, replies immediately,
+and resumes its current work. If no further tool call occurs, a
+synthetic coordinator turn or queued agent prompt is the fallback. A
+direct turn started by the human operator normally
 replies with `agent.message(to: "operator")`; if a provider instead completes
 with ordinary final output, the runtime delivers that output to `operator`
 without involving the coordinator or duplicating an explicit chat reply. The
-chat is in-memory and never persisted; a session reset drops it. See
-[agents.md](agents.md#messages).
+chat is in-memory and never persisted; a session reset drops it. See the
+[Chat reader states](#chat-reader-states) below and [agents.md](agents.md#messages).
+
+#### Chat reader states
+
+The terminal opens the reader with `Ctrl+Y` (`Ctrl+O` also works where the
+terminal does not intercept it). The reader is a status-bar panel, separate
+from the scrolling conversation transcript:
+
+- **Closed with no messages:** the `Chat` panel is invisible and consumes no
+  reserved rows.
+- **Closed with messages:** the panel stays compact and shows the retained
+  total plus the unread count, for example `Chat · 2 messages · 2 unread`.
+- **Opened with no messages:** the panel remains compact, showing
+  `Chat · 0 messages · Ctrl+Y close`; it does not create an empty body or
+  footer.
+- **Opened with messages:** the panel expands to show the selected message,
+  unread count, and navigation hints. `Ctrl+Y` closes it back to the compact
+  state.
+
+Messages in every state remain out of the main transcript: the reader is the
+only terminal rendering surface for these live chat entries.
 
 ### Saving and Loading Plans
 

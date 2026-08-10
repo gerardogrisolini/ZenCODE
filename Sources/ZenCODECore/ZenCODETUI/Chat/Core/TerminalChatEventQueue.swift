@@ -276,6 +276,8 @@ private final class Storage: Sendable {
                  .telegramMessage,
                  .voicePromptCompleted,
                  .sharedChatMessages,
+                 .sharedChatObservationEnded,
+                 .sharedChatReaderCollapsed,
                  .sharedChatAutoTrigger:
                 false
             }

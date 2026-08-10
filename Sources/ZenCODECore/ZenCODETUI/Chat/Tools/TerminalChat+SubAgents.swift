@@ -551,7 +551,7 @@ extension TerminalChat {
 
         if let currentActivity {
             if currentActivity == "🤔 thinking…" {
-                lines.append(.regular(currentActivity, maxWrappedLines: 1))
+                lines.append(.regular(colorText(currentActivity, code: TerminalStyle.Thinking.title), maxWrappedLines: 1))
             } else {
                 lines.append(
                     subAgentOverviewEntryLine(
@@ -564,17 +564,20 @@ extension TerminalChat {
 
         if let currentToolName {
             let target = snapshot.currentToolTarget?.nilIfBlank
-            let title = target.map { "\(currentToolName) \($0)" } ?? currentToolName
+            let tool = colorText(inlineText(currentToolName), code: TerminalStyle.Tool.title)
+            let parameter = target.map {
+                colorText(" \(inlineText($0))", code: TerminalStyle.Tool.value)
+            } ?? ""
             lines.append(
                 subAgentOverviewEntryLine(
-                    "🛠️  \(inlineText(title))",
+                    "🛠️  \(tool)\(parameter)",
                     density: density
                 )
             )
         }
 
         if lines.isEmpty, snapshot.pending {
-            lines.append(.regular("🤔 thinking…", maxWrappedLines: 1))
+            lines.append(.regular(colorText("🤔 thinking…", code: TerminalStyle.Thinking.title), maxWrappedLines: 1))
         }
 
         // The most specific entry is appended last, so a capped presentation

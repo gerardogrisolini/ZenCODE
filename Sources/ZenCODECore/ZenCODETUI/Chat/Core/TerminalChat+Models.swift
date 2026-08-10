@@ -176,6 +176,12 @@ enum TerminalChatRuntimeEvent: Sendable {
     /// an already-enqueued event is consumed.
     case sharedChatMessages(roomID: String, messages: [AgentSharedChat.Message])
     case sharedChatParticipantsChanged(roomID: String)
+    /// An observation ended without the TUI cancelling it. Its UUID prevents a
+    /// late termination from a retired stream rebinding the current one.
+    case sharedChatObservationEnded(roomID: String, observationID: UUID)
+    /// The status-bar resize transaction collapsed the expanded dock before
+    /// repainting. The runtime loop owns the matching input/read-buffer state.
+    case sharedChatReaderCollapsed(observationID: UUID?)
     /// The Core coordinator authorised exactly one synthetic coordinator turn.
     case sharedChatAutoTrigger(AgentSharedChatAutoTrigger)
 
@@ -186,7 +192,8 @@ enum TerminalChatRuntimeEvent: Sendable {
     var sharedChatRoomID: String? {
         switch self {
         case let .sharedChatMessages(roomID, _),
-             let .sharedChatParticipantsChanged(roomID):
+             let .sharedChatParticipantsChanged(roomID),
+             let .sharedChatObservationEnded(roomID, _):
             roomID
         case let .sharedChatAutoTrigger(trigger):
             trigger.roomID
@@ -194,7 +201,8 @@ enum TerminalChatRuntimeEvent: Sendable {
              .generationCompleted,
              .startNextQueuedPrompt,
              .telegramMessage,
-             .voicePromptCompleted:
+             .voicePromptCompleted,
+             .sharedChatReaderCollapsed:
             nil
         }
     }

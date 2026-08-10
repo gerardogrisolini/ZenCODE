@@ -148,25 +148,31 @@ Replies travel back through the same chat. Any message injected into a
 coordinator or agent turn instructs the recipient to answer through
 `agent.message`: ordinary model output is never part of the chat, so both the
 coordinator and a delegated agent must send their reply via `agent.message`,
-regardless of who the sender is. The operator sees every chat message rendered
-in the terminal; a delegated agent sees only what its mailbox delivers. If a
-delegated agent's direct conversational turn was started by the operator and it
-ends without calling `agent.message`, the runtime delivers its final output once
+regardless of who the sender is. The operator sees every chat message in the
+terminal's transient `Chat` reader; a delegated agent sees only what its
+mailbox delivers. If a delegated agent's direct conversational turn was started
+by the operator and it ends without calling `agent.message`, the runtime
+delivers its final output once
 to `operator` as a fallback rather than routing it through the coordinator or
 duplicating an explicit chat reply.
 
-Delivery is serialised in each recipient's work loop rather than tied to a tool
-call. Every message — to an idle, running or standby agent — is drained from the
-bounded mailbox and queued as a prompt, so the reply is the next turn of that
-agent. A recipient with a turn in flight is not interrupted: its message is
-queued and answered the moment the current turn ends, independent of whether the
-agent makes any further tool call. This makes a standby agent reply to a message
-without depending on a tool boundary at all. A message is never lost or
-delivered twice: each recipient has exactly one delivery channel, and the
-coordinator authorises at most one synthetic turn from the chat at a time. The
-blue message card is rendered from the bounded room transcript and reaches every
-active observer within the transcript bound, deduplicated by message id;
-shared-chat events are never dropped from the terminal queue.
+Delivery is priority-based for the coordinator and delegated agents alike. When
+a recipient is already working, its next tool result injects the message into
+model-facing content (not visible tool output), so it replies immediately
+through `agent.message` and then resumes its current work. Idle and standby
+agents still receive a normal serialized work-loop prompt. If an active turn
+ends without another tool call, the ordinary synthetic coordinator turn or
+queued agent prompt is the lossless fallback. A message is never lost or
+delivered twice: each state has exactly one mailbox owner, and the coordinator
+authorises at most one
+synthetic turn from the chat at a time. The bounded room transcript is replayed
+to every active observer within the transcript bound and deduplicated by message
+id; each client chooses its presentation. Shared-chat events are never dropped
+from the terminal queue. In the terminal UI,
+those events feed only the transient `Chat` reader: closed empty is invisible,
+closed with messages is compact with total and unread counts, open empty remains
+compact, and open with messages is expanded; message boxes are never appended to
+the main transcript.
 
 The coordinator authorises at most one synthetic turn from the chat at a time,
 never starting a second generation behind a running one. `agent.message` is a

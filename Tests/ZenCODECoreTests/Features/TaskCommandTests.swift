@@ -44,11 +44,19 @@ struct TaskCommandTests {
             createdAt: now,
             updatedAt: now
         )
+        let third = TaskRecord(
+            id: "task-3",
+            title: "Finish",
+            order: 3,
+            status: .completed,
+            createdAt: now,
+            updatedAt: now
+        )
         let graph = TaskGraphSnapshot(
             id: "graph",
             source: .manual,
             state: .active,
-            tasks: [first, second],
+            tasks: [first, second, third],
             createdAt: now,
             updatedAt: now
         )
@@ -60,7 +68,7 @@ struct TaskCommandTests {
                 task: first,
                 isRunnable: false,
                 blockedBy: [],
-                blockedReason: "task status is in_progress",
+                blockedReason: "in_progress",
                 dependents: ["task-2"]
             ),
             TaskRecordView(
@@ -73,13 +81,51 @@ struct TaskCommandTests {
                 blockedReason: "waiting for dependencies: task-1",
                 dependents: []
             ),
+            TaskRecordView(
+                graphID: graph.id,
+                graphRevision: graph.revision,
+                graphState: graph.state,
+                task: third,
+                isRunnable: false,
+                blockedBy: [],
+                blockedReason: nil,
+                dependents: []
+            ),
         ]
 
-        let rendered = TerminalChat.taskGraphMarkdown(graph: graph, tasks: views)
+        let rendered = TerminalChat.taskGraphMarkdown(
+            graph: graph,
+            tasks: views,
+            ansiEnabled: true
+        )
+        #expect(rendered.contains("3 total"))
+        #expect(
+            rendered.contains(
+                "\(TerminalStyle.Status.active)▸ 1 running\(TerminalStyle.reset)"
+            )
+        )
+        #expect(
+            rendered.contains(
+                "\(TerminalStyle.Status.success)✓ 1 completed\(TerminalStyle.reset)"
+            )
+        )
+        #expect(
+            rendered.contains(
+                "\(TerminalStyle.Status.inactive)◇ 1 waiting\(TerminalStyle.reset)"
+            )
+        )
         #expect(rendered.contains("▸ `task-1`"))
         #expect(rendered.contains("agent-worker"))
         #expect(rendered.contains("○ `task-2`"))
-        #expect(rendered.contains("waits for: `task-1`"))
+        #expect(rendered.contains("waits: `task-1`"))
+
+        let plainText = TerminalChat.taskGraphMarkdown(
+            graph: graph,
+            tasks: views,
+            ansiEnabled: false
+        )
+        #expect(plainText.contains("🫧 Tasks:"))
+        #expect(!plainText.contains("\u{1B}"))
     }
 
     @Test
