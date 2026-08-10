@@ -367,6 +367,11 @@ extension TerminalChat {
         // observer never renders the same Message.id twice. The history is
         // bounded like the room transcript it mirrors.
         var renderedSharedChatMessageIDs = TerminalChat.SharedChatRenderedMessageIDs()
+        // This history is terminal-local and bounded. It is deliberately not
+        // routed through the session store, so opening the reader can never
+        // affect transcripts or snapshots.
+        var sharedChatReadingBuffer = TerminalSharedChatReadingBuffer()
+        var isSharedChatReaderOpen = false
         // Readable mention handles for the current roster (handle → participant
         // id). Refreshed whenever the participant list changes so the parser
         // always routes by the latest stable id behind a readable `@handle`.
@@ -433,6 +438,10 @@ extension TerminalChat {
                 roomID: sharedChatRoomID
             )
             renderedSharedChatMessageIDs.removeAll()
+            sharedChatReadingBuffer = TerminalSharedChatReadingBuffer()
+            isSharedChatReaderOpen = false
+            await statusBar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: false)
+            interactiveReader.setSharedChatReaderOpen(false)
             readableSharedChatMentionHandles = await sessionRunner.sharedChatMentionHandles(
                 rootSessionID: sharedChatRoomID
             )
@@ -701,6 +710,45 @@ extension TerminalChat {
                     await statusBar.update(localExecAccessMode: accessMode)
                     await writeAccessModeChangeMessage(accessMode)
                     await interactiveReader.refreshPanel()
+                case .toggleSharedChatReaderRequested:
+                    let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sharedChatRoomID)
+                    let participantMap = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
+                    let entries = sharedChatReadingBuffer.messages.map {
+                        TerminalSharedChatReaderEntry(message: $0, participantMap: participantMap)
+                    }
+                    let isOpening = !isSharedChatReaderOpen
+                    if isOpening {
+                        sharedChatReadingBuffer.openReader()
+                    } else {
+                        sharedChatReadingBuffer.closeReader()
+                    }
+                    // The dock is rendered by the status bar in the panel's
+                    // reserved rows; generation and the normal input loop keep running.
+                    await statusBar.setSharedChatReader(entries: entries, unreadCount: sharedChatReadingBuffer.unreadCount, isExpanded: isOpening)
+                    isSharedChatReaderOpen = isOpening
+                    interactiveReader.setSharedChatReaderOpen(isOpening)
+                case let .sharedChatReaderNavigation(action):
+                    guard isSharedChatReaderOpen else { continue }
+                    let unreadCountBeforeNavigation = sharedChatReadingBuffer.unreadCount
+                    sharedChatReadingBuffer.navigate(action)
+                    await statusBar.navigateSharedChatReader(action)
+                    // The status bar owns the visual selection, while the
+                    // terminal-local buffer owns the read marker. Refresh only
+                    // when reaching the newest message changed that marker;
+                    // `navigateSharedChatReader` has already applied the
+                    // selection so `replace` preserves it by message ID.
+                    if sharedChatReadingBuffer.unreadCount != unreadCountBeforeNavigation {
+                        let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sharedChatRoomID)
+                        let participantMap = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
+                        let entries = sharedChatReadingBuffer.messages.map {
+                            TerminalSharedChatReaderEntry(message: $0, participantMap: participantMap)
+                        }
+                        await statusBar.setSharedChatReader(
+                            entries: entries,
+                            unreadCount: sharedChatReadingBuffer.unreadCount,
+                            isExpanded: true
+                        )
+                    }
                 case .endOfInput:
                     generationTask?.cancel()
                     break eventLoop
@@ -743,11 +791,25 @@ extension TerminalChat {
                 // Rendering only: the decision to start a turn belongs to the
                 // Core coordinator and arrives as a separate auto-trigger.
                 // Room binding was verified before entering this switch.
+                // Keep the transcript reader independent from card rendering:
+                // outbound operator IDs are pre-recorded below to suppress a
+                // duplicate card, but their eventual transcript entry must
+                // still appear as unread in the reader.
+                let newlyBufferedMessages = sharedChatReadingBuffer.append(messages)
                 let newlyReceivedMessages = Self.newlyReceivedSharedChatMessages(
                     messages,
                     renderedMessageIDs: &renderedSharedChatMessageIDs
                 )
-                await renderSharedChatMessages(newlyReceivedMessages)
+                await renderSharedChatCompactMessages(
+                    newlyReceivedMessages,
+                    unreadCount: sharedChatReadingBuffer.unreadCount
+                )
+                if isSharedChatReaderOpen, !newlyBufferedMessages.isEmpty {
+                    let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sharedChatRoomID)
+                    let participantMap = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
+                    let entries = sharedChatReadingBuffer.messages.map { TerminalSharedChatReaderEntry(message: $0, participantMap: participantMap) }
+                    await statusBar.setSharedChatReader(entries: entries, unreadCount: sharedChatReadingBuffer.unreadCount, isExpanded: true)
+                }
                 await refreshSharedChatPanelSuggestions()
             case let .sharedChatAutoTrigger(trigger):
                 // The Core authorised exactly one synthetic turn. Do not publish

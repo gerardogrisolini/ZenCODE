@@ -62,6 +62,7 @@ extension TerminalInteractiveLineReader {
         case 0x10: return .up
         case 0x0E: return .down
         case 0x07: return .toggleAccessMode
+        case 0x0F, 0x19: return .toggleSharedChatReader
         case 0x0B: return .clearAfterCursor
         case 0x15: return .clearBeforeCursor
         case 0x14: return .toggleToolDetails
@@ -87,6 +88,9 @@ extension TerminalInteractiveLineReader {
             return readCSIKey()
         case 0x4F:
             return readSS3Key()
+        case 0x5D:
+            drainOSCSequence()
+            return .unknown
         case 0x1B:
             // Meta-prefixed escape sequence (ESC ESC [ …): the encoding used by
             // macOS Terminal.app and iTerm2 when the Option key is configured
@@ -131,6 +135,9 @@ extension TerminalInteractiveLineReader {
             return Self.metaModified(readCSIKey())
         case 0x4F:
             return Self.metaModified(readSS3Key())
+        case 0x5D:
+            drainOSCSequence()
+            return .unknown
         default:
             drainPendingEscapeSequence()
             return .unknown
@@ -174,27 +181,36 @@ extension TerminalInteractiveLineReader {
     }
 
     func readSS3Key() -> Key {
-        guard let byte = readByte(timeoutMilliseconds: Self.escapeSequenceContinuationTimeout) else {
-            return .unknown
+        var bytes: [UInt8] = []
+        while bytes.count < Self.escapeSequenceMaximumLength {
+            guard let byte = readByte(timeoutMilliseconds: Self.escapeSequenceContinuationTimeout) else {
+                return .unknown
+            }
+            bytes.append(byte)
+            guard byte >= 0x40 && byte <= 0x7E else {
+                continue
+            }
+
+            switch byte {
+            case 0x41:
+                return .up
+            case 0x42:
+                return .down
+            case 0x43:
+                return .right
+            case 0x44:
+                return .left
+            case 0x46:
+                return .end
+            case 0x48:
+                return .home
+            default:
+                return .unknown
+            }
         }
 
-        switch byte {
-        case 0x41:
-            return .up
-        case 0x42:
-            return .down
-        case 0x43:
-            return .right
-        case 0x44:
-            return .left
-        case 0x46:
-            return .end
-        case 0x48:
-            return .home
-        default:
-            drainPendingEscapeSequence()
-            return .unknown
-        }
+        drainPendingEscapeSequence()
+        return .unknown
     }
 
     func keyFromCSI(_ bytes: [UInt8]) -> Key {
@@ -461,6 +477,8 @@ extension TerminalInteractiveLineReader {
             return .toggleAccessMode
         case 14:
             return .down
+        case 15, 25:
+            return .toggleSharedChatReader
         case 16:
             return .up
         case 11:
@@ -504,6 +522,8 @@ extension TerminalInteractiveLineReader {
             return .home
         case 103 where isControlModified:
             return .toggleAccessMode
+        case 111 where isControlModified, 121 where isControlModified:
+            return .toggleSharedChatReader
         case 98 where isControlModified:
             return .left
         case 102 where isControlModified:
@@ -589,7 +609,34 @@ extension TerminalInteractiveLineReader {
     }
 
     func drainPendingEscapeSequence() {
+        // Generic escape sequences do not have a reliable final-byte class:
+        // unlike CSI/SS3, their payload may contain printable bytes and line
+        // breaks. Drain the bytes already arriving as one burst and use the
+        // inter-byte timeout as the only delimiter. In particular, do not use
+        // `escapeSequenceMaximumLength` here: a long or multiline sequence
+        // would otherwise leak its tail into the draft.
         while readByte(timeoutMilliseconds: Self.escapeSequenceContinuationTimeout) != nil {}
+    }
+
+    /// Drains an OSC payload, whose terminator is BEL, C1 ST, or `ESC \`.
+    /// Printable bytes (including newlines) are payload and must never be
+    /// mistaken for a CSI/SS3 final byte.
+    func drainOSCSequence() {
+        var sawEscape = false
+        while let byte = readByte(timeoutMilliseconds: Self.escapeSequenceContinuationTimeout) {
+            if byte == 0x07 || byte == 0x9C {
+                return
+            }
+
+            if sawEscape {
+                if byte == 0x5C {
+                    return
+                }
+                sawEscape = byte == 0x1B
+            } else {
+                sawEscape = byte == 0x1B
+            }
+        }
     }
 
     func readByte(timeoutMilliseconds: Int32? = nil) -> UInt8? {

@@ -38,7 +38,7 @@ struct SharedChatEndToEndTests {
     /// produced: the child mailbox stays empty and the transcript contains a
     /// single message addressed only to the coordinator.
     @Test
-    func childBorrowedAgentMessageToCoordinatorIsObservedExactlyOnceWithoutNewToolCall() async throws {
+    func childBorrowedAgentMessageWakesCoordinatorObserverWithoutSafetyPoll() async throws {
         let room = "room-\(UUID().uuidString)"
         let workingDirectory = try Self.temporaryDirectory(named: "SharedChatE2E-child")
         defer { try? FileManager.default.removeItem(at: workingDirectory) }
@@ -70,6 +70,11 @@ struct SharedChatEndToEndTests {
         defer { Task { await coordinator.stopAll() } }
         let subscription = await coordinator.observeSubscription(roomID: room)
         let observation = await Observation.make(stream: subscription.events)
+        // The safety ticker is deliberately too slow for this test. Delivery
+        // must wake the runtime handler, which requests the coordinator poll.
+        await runtime.updateSharedChatMessageAvailableHandler { changedRoom in
+            Task { await coordinator.requestPoll(roomID: changedRoom) }
+        }
 
         // The child executor borrows the parent runtime's coordination surface:
         // exactly the bridge a real delegated backend receives through
@@ -99,7 +104,6 @@ struct SharedChatEndToEndTests {
         #expect(result.output.contains("Delivered live message"))
         #expect(await callCounter.count == 1)
 
-        await coordinator.poll(roomID: room)
         let events = await observation.wait(untilAtLeast: 2) { collected in
             collected.contains {
                 $0.renderedMessages?.contains { $0.text == "hello from child" } == true
@@ -121,8 +125,8 @@ struct SharedChatEndToEndTests {
         #expect(transcript.first?.recipientIDs == [AgentSharedChat.coordinatorID(for: room)])
         #expect(transcript.first?.sender.id == child.id)
 
-        // Re-reading the complete transcript must remain raw-event idempotent.
-        await coordinator.poll(roomID: room)
+        // The live wake emitted the transcript exactly once; no explicit poll
+        // is used anywhere in this test.
         let finalEvents = await observation.snapshot()
         let finalRendered = finalEvents.compactMap(\.renderedMessages).flatMap { $0 }
         #expect(finalRendered.filter { $0.text == "hello from child" }.count == 1)

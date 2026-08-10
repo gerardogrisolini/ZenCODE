@@ -78,6 +78,7 @@ public actor TerminalStatusBar {
         var isResizePending = false
         var inputPanelRevision: UInt64 = 0
         var inputPanelState: InputPanelState?
+        var sharedChatReaderDock: TerminalSharedChatReaderDock?
         var localExecAccessMode: AgentLocalExecAccessMode = .standard
         var latestModelID: String?
         var latestThinkingSelection: AgentThinkingSelection?
@@ -205,6 +206,55 @@ public actor TerminalStatusBar {
                 )
                 writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
             }
+            renderLocked(state: &state)
+        }
+    }
+
+    /// Shows or refreshes the shared-chat reader inside the existing bottom panel.
+    /// No raw-input loop, terminal ownership, or alternate screen is involved.
+    func setSharedChatReader(
+        entries: [TerminalSharedChatReaderEntry],
+        unreadCount: Int,
+        isExpanded: Bool
+    ) {
+        withOutputBatch {
+            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
+            if isExpanded {
+                var dock = state.sharedChatReaderDock ?? TerminalSharedChatReaderDock()
+                dock.replace(entries: entries, unreadCount: unreadCount)
+                state.sharedChatReaderDock = dock
+            } else {
+                state.sharedChatReaderDock = nil
+            }
+            guard state.isStarted else { return }
+            let newReservedRows = reservedBottomRowsLocked(state: &state)
+            if newReservedRows > oldReservedRows {
+                scrollOutputRegionUpLocked(state: &state, by: newReservedRows - oldReservedRows, reservedRows: oldReservedRows)
+            }
+            clearReservedRowsLocked(state: &state, count: max(oldReservedRows, newReservedRows))
+            writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
+            renderLocked(state: &state)
+        }
+    }
+
+    func navigateSharedChatReader(_ action: TerminalSharedChatReaderAction) {
+        withOutputBatch {
+            guard var dock = state.sharedChatReaderDock else { return }
+            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
+            let width = statusBoxContentWidthLocked(state: &state)
+            dock.navigate(action, viewportRows: sharedChatReaderViewportRowsLocked(state: &state), width: width)
+            state.sharedChatReaderDock = dock
+            guard state.isStarted else { return }
+            let newReservedRows = reservedBottomRowsLocked(state: &state)
+            if newReservedRows > oldReservedRows {
+                scrollOutputRegionUpLocked(
+                    state: &state,
+                    by: newReservedRows - oldReservedRows,
+                    reservedRows: oldReservedRows
+                )
+            }
+            clearReservedRowsLocked(state: &state, count: max(oldReservedRows, newReservedRows))
+            writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
             renderLocked(state: &state)
         }
     }

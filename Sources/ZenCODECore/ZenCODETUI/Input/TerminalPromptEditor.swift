@@ -23,6 +23,7 @@ enum TerminalPromptEditorEffect: Equatable, Sendable {
     case endOfInput
     case toggleToolDetails
     case toggleAccessMode
+    case toggleSharedChatReader
 }
 
 /// Everything the reducer needs to know about the world without reaching for
@@ -219,6 +220,8 @@ struct TerminalPromptEditor: Equatable, Sendable {
             return .toggleToolDetails
         case .toggleAccessMode:
             return .toggleAccessMode
+        case .toggleSharedChatReader:
+            return .toggleSharedChatReader
         case .cancel:
             return cancel(context: context)
         case .endOfInput:

@@ -47,6 +47,9 @@ public final class TerminalInteractiveLineReader: Sendable {
         case toggleToolDetails
         /// `Ctrl+G`.
         case toggleAccessMode
+        /// `Ctrl+Y` opens the transient shared-chat reader.
+        /// (`Ctrl+O` also works but is intercepted by some macOS terminals.)
+        case toggleSharedChatReader
         case endOfInput
         case cancel
         case unknown
@@ -128,6 +131,7 @@ public final class TerminalInteractiveLineReader: Sendable {
         var panelQueuedPromptCount = 0
         var panelPendingAttachmentCount = 0
         var panelOverlayOverride: TerminalPanelModeOverride?
+        var panelSharedChatReaderIsOpen = false
         var panelCommandSuggestions: [TerminalCommandSuggestion] = []
         /// Pull-based source of live `@mention` suggestions.
         ///
@@ -364,7 +368,7 @@ public final class TerminalInteractiveLineReader: Sendable {
                 )
 
                 switch editor.apply(key, context: context) {
-                case .ignored, .toggleToolDetails, .toggleAccessMode, .cancelRequested:
+                case .ignored, .toggleToolDetails, .toggleAccessMode, .toggleSharedChatReader, .cancelRequested:
                     continue
                 case .changed:
                     redrawBuffer()

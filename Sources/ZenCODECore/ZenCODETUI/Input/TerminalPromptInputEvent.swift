@@ -10,6 +10,8 @@ public enum TerminalPromptInputEvent: Sendable {
     case cancelRequested
     case toggleToolDetailsRequested
     case toggleAccessModeRequested
+    case toggleSharedChatReaderRequested
+    case sharedChatReaderNavigation(TerminalSharedChatReaderAction)
     case endOfInput
 }
 

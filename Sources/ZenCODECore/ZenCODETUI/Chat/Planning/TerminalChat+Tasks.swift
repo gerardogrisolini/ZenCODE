@@ -199,7 +199,8 @@ extension TerminalChat {
 
     nonisolated static func taskGraphMarkdown(
         graph: TaskGraphSnapshot,
-        tasks: [TaskRecordView]
+        tasks: [TaskRecordView],
+        ansiEnabled: Bool = AgentOutput.standardErrorIsTerminal
     ) -> String {
         let completed = tasks.filter { $0.task.status == .completed }.count
         let running = tasks.filter { $0.task.status == .inProgress }.count
@@ -208,19 +209,70 @@ extension TerminalChat {
         let blocked = tasks.filter { $0.task.status == .blocked }.count
         let failed = tasks.filter { $0.task.status == .failed }.count
 
-        var summary = ["\(tasks.count) task", "\(completed) completed"]
-        if running > 0 { summary.append("\(running) running") }
-        if validating > 0 { summary.append("\(validating) awaiting validation") }
-        if waiting > 0 { summary.append("\(waiting) waiting") }
-        if blocked > 0 { summary.append("\(blocked) blocked") }
-        if failed > 0 { summary.append("\(failed) failed") }
+        var summary = ["\(tasks.count) total"]
+        if running > 0 {
+            summary.append(
+                taskSummarySegment(
+                    "▸ \(running) running",
+                    color: TerminalStyle.Status.active,
+                    ansiEnabled: ansiEnabled
+                )
+            )
+        }
+        if completed > 0 {
+            summary.append(
+                taskSummarySegment(
+                    "✓ \(completed) completed",
+                    color: TerminalStyle.Status.success,
+                    ansiEnabled: ansiEnabled
+                )
+            )
+        }
+        if validating > 0 {
+            summary.append(
+                taskSummarySegment(
+                    "◇ \(validating) awaiting validation",
+                    color: TerminalStyle.Status.inactive,
+                    ansiEnabled: ansiEnabled
+                )
+            )
+        }
+        if waiting > 0 {
+            summary.append(
+                taskSummarySegment(
+                    "◇ \(waiting) waiting",
+                    color: TerminalStyle.Status.inactive,
+                    ansiEnabled: ansiEnabled
+                )
+            )
+        }
+        if blocked > 0 {
+            summary.append(
+                taskSummarySegment(
+                    "⊘ \(blocked) blocked",
+                    color: TerminalStyle.Status.queued,
+                    ansiEnabled: ansiEnabled
+                )
+            )
+        }
+        if failed > 0 {
+            summary.append(
+                taskSummarySegment(
+                    "✗ \(failed) failed",
+                    color: TerminalStyle.Status.failure,
+                    ansiEnabled: ansiEnabled
+                )
+            )
+        }
 
         let orange = TerminalStyle.Accent.primary
         let reset = TerminalStyle.reset
+        let taskHeader = ansiEnabled ? "\(orange)Tasks:\(reset)" : "Tasks:"
         var lines = [
-            "🫧 \(orange)Tasks:\(reset)",
-            "**Graph:** `\(graph.id)` · **state:** `\(graph.state.rawValue)` · **revision:** \(graph.revision)",
-            summary.joined(separator: " · "),
+            "🫧 \(taskHeader)",
+            summary.joined(separator: " "),
+            "",
+            "**Graph:** `\(graph.id)` · **state:** `\(graph.state.rawValue)` · **revision:** `\(graph.revision)`",
         ]
         if tasks.isEmpty {
             lines.append("No tasks.")
@@ -242,12 +294,12 @@ extension TerminalChat {
             case .pending: marker = "○"
             }
             var suffix: [String] = []
-            suffix.append("complexity: \(view.task.complexity)/10")
+            suffix.append("complexity: `\(view.task.complexity)/10`")
             if let agentID = view.task.assigneeAgentID {
                 suffix.append(agentID)
             }
             if !view.blockedBy.isEmpty {
-                suffix.append("waits for: " + view.blockedBy.map { "`\($0)`" }.joined(separator: ", "))
+                suffix.append("waits: " + view.blockedBy.map { "`\($0)`" }.joined(separator: ", "))
             } else if let reason = view.blockedReason,
                       !view.isRunnable,
                       view.task.status != .completed {
@@ -257,6 +309,14 @@ extension TerminalChat {
             lines.append("\(marker) `\(view.task.id)`  \(escapedTaskMarkdown(view.task.title))\(metadata)")
         }
         return lines.joined(separator: "\n   ") + "\n\n"
+    }
+
+    nonisolated static func taskSummarySegment(
+        _ text: String,
+        color: String,
+        ansiEnabled: Bool
+    ) -> String {
+        ansiEnabled ? "\(color)\(text)\(TerminalStyle.reset)" : text
     }
 
     nonisolated static func taskDetailMarkdown(_ view: TaskRecordView) -> String {

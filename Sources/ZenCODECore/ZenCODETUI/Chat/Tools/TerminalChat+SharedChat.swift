@@ -338,6 +338,30 @@ extension TerminalChat {
         }
     }
 
+    /// Compact, one-line transient notification used while the prompt panel is
+    /// active. Full message bodies are available only through the reader
+    /// overlay, keeping ordinary output usable during concurrent streaming.
+    func renderSharedChatCompactMessages(
+        _ messages: [AgentSharedChat.Message],
+        unreadCount: Int
+    ) async {
+        let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sessionID)
+        let participantMap = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
+        for message in messages {
+            await writePreformattedMessage(
+                TerminalSharedChatReaderDock.compactPreview(
+                    route: Self.sharedChatIncomingCardRoute(for: message, participantMap: participantMap),
+                    text: message.text,
+                    unreadCount: unreadCount,
+                    // Incoming output can race a SIGWINCH/cache update; use a
+                    // fresh measurement so a compact preview never overflows
+                    // immediately after the terminal is narrowed.
+                    width: Self.terminalColumnCount(forceRefresh: true)
+                )
+            )
+        }
+    }
+
     /// Renders one transient chat message as a terminal-safe blue card. The
     /// border remains visible in captured/plain output, while ANSI colors are
     /// emitted only for an interactive terminal. At very narrow widths, the
@@ -399,7 +423,7 @@ extension TerminalChat {
     /// multiline separator. C0, C1, DEL, bidi/format controls and Unicode line
     /// separators are never emitted verbatim, so a payload cannot create an
     /// ANSI/OSC sequence, reorder a route label, or create a visual prompt row.
-    private nonisolated static func sharedChatTerminalSafeText(_ text: String) -> String {
+    nonisolated static func sharedChatTerminalSafeText(_ text: String) -> String {
         var result = ""
         var scalarCount = 0
         var utf8Count = 0
@@ -545,7 +569,7 @@ extension TerminalChat {
         return participantID
     }
 
-    private nonisolated static func sharedChatWrappedRows(_ text: String, width: Int) -> [String] {
+    nonisolated static func sharedChatWrappedRows(_ text: String, width: Int) -> [String] {
         let widthSafeText: String
         if width < 2 {
             // A two-cell glyph cannot physically fit a one-column terminal.
@@ -567,7 +591,7 @@ extension TerminalChat {
         return rows.isEmpty ? [""] : rows
     }
 
-    private nonisolated static func sharedChatPaddedToDisplayWidth(_ text: String, width: Int) -> String {
+    nonisolated static func sharedChatPaddedToDisplayWidth(_ text: String, width: Int) -> String {
         text + String(repeating: " ", count: max(0, width - displayWidth(text)))
     }
 

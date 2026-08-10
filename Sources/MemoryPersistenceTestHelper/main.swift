@@ -12,7 +12,7 @@ struct MemoryPersistenceTestHelper {
     static func main() async {
         let arguments = Array(CommandLine.arguments.dropFirst())
         guard arguments.count == 2 else {
-            fputs("usage: MemoryPersistenceTestHelper <workspace> <content>\n", stderr)
+            FileHandle.standardError.write(Data("usage: MemoryPersistenceTestHelper <workspace> <content>\n".utf8))
             exit(EXIT_FAILURE)
         }
 
@@ -23,7 +23,7 @@ struct MemoryPersistenceTestHelper {
                 workspaceRootURL: workspace
             )
         } catch {
-            fputs("MemoryPersistenceTestHelper: \(error)\n", stderr)
+            FileHandle.standardError.write(Data("MemoryPersistenceTestHelper: \(error)\n".utf8))
             exit(EXIT_FAILURE)
         }
     }

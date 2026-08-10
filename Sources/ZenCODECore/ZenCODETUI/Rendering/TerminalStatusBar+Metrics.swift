@@ -240,7 +240,7 @@ extension TerminalStatusBar {
     
     func inputPanelSuggestionRowsLocked(state: inout State, lines: [String]) -> [String] {
         let contentWidth = statusBoxContentWidthLocked(state: &state)
-        return lines.prefix(6).map { line in
+        return lines.prefix(inputPanelSuggestionRowCountLocked(state: &state)).map { line in
             Self.padded(Self.fit(line, width: contentWidth), width: contentWidth)
         }
     }
@@ -263,19 +263,38 @@ extension TerminalStatusBar {
     }
     
     func maximumInputPanelTextRowsLocked(state: inout State) -> Int {
-        let suggestionLineCount = state.inputPanelState?.suggestionLines.count ?? 0
         guard state.row > 0 else {
             return 1
         }
-        
+
+        // The dock is part of the same bottom-panel budget as the editor.  Do
+        // not let a tall draft consume the rows needed for the active reader,
+        // nor consume the scrolling region while calculating the draft limit.
         return max(
             1,
             state.row
             - Self.inputPanelChromeRows
-            - suggestionLineCount
+            - inputPanelSuggestionRowCountLocked(state: &state)
             - Self.attachedStatusRows
             - Self.minimumScrollableRows
+            - sharedChatReaderReservedRowsLocked(state: &state)
         )
+    }
+
+    func inputPanelSuggestionRowCountLocked(state: inout State) -> Int {
+        let requested = min(6, state.inputPanelState?.suggestionLines.count ?? 0)
+        guard state.row > 0 else { return requested }
+        // Suggestions share the bottom-panel budget with the editor and dock.
+        // Always retain one input row plus the minimum scrollable transcript.
+        let available = max(
+            0,
+            state.row
+                - Self.minimumScrollableRows
+                - Self.inputPanelChromeRows
+                - Self.attachedStatusRows
+                - 1
+        )
+        return min(requested, available)
     }
     
     static func inputPanelDisplayRows(
