@@ -894,6 +894,11 @@ public actor AgentSharedChatCoordinator {
         } while rooms[roomID]?.pollRequested == true && rounds < Self.maximumDrainRoundsPerPoll
 
         guard rooms[roomID]?.generation == generation else { return }
+        // Evaluate only after this poll has completed its bounded drain. Emitting
+        // a trigger from `ingest` exposes its batch while a later drain round is
+        // still suspended, allowing a consumer to observe a partially drained
+        // mailbox and race the remainder of the burst.
+        evaluate(roomID: roomID)
         reofferActiveTriggerIfNeeded(roomID: roomID)
         if rooms[roomID]?.pollRequested == true {
             // Budget spent with work still queued: wake the monitor again so the
@@ -972,7 +977,6 @@ public actor AgentSharedChatCoordinator {
         if !messages.isEmpty {
             emitMessages(messages, roomID: roomID)
         }
-        evaluate(roomID: roomID)
     }
 
     /// The single-flight decision. It is deliberately synchronous: no suspension

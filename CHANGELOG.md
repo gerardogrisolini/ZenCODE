@@ -10,6 +10,36 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-08-10
+
+### Added
+
+- A transient `Chat` reader is now available in the terminal for live shared-chat
+  messages. `Ctrl+Y` opens or closes it (`Ctrl+O` also works where supported),
+  with compact total/unread counts and expanded message navigation; entries stay
+  out of the main transcript.
+
+### Changed
+
+- Shared-chat messages delivered while the coordinator or a delegated agent is
+  already working are injected into the next tool result so the recipient can
+  reply immediately and resume its current turn. Idle and standby recipients
+  retain queued delivery, with a lossless fallback when no further tool call is
+  made.
+- Task-graph summaries now show total and color-coded status counts, use
+  terminal-safe plain text outside ANSI output, and present more compact task
+  details.
+
+### Fixed
+
+- Terminal shared-chat observations now reconnect after an unexpected
+  non-cancelled stream end or backend replacement, while bounded retries avoid a
+  hot loop when an empty stream repeatedly closes.
+- Operator messages to `@coordinator` now wake shared-chat processing immediately
+  instead of waiting for the safety poll.
+- Terminal escape and OSC sequences, including multiline and unknown payloads,
+  are drained safely instead of leaking bytes into prompt input.
+
 ## [1.2.1] - 2026-08-09
 
 ### Fixed
@@ -564,8 +594,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.1...HEAD
-[1.2.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.0...v1.2.1
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.1...v1.2.2
 [1.2.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.4...v1.2.0
 [1.1.4]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.2...v1.1.3
