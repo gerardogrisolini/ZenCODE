@@ -222,7 +222,7 @@ extension TerminalStatusBar {
         var sequence = "\u{1B}7"
         let lines = viewport > 0
             ? [header] + visible.map { index, row in
-                let textStyle = index == 1 ? TerminalStyle.Text.muted : TerminalStyle.Text.primary
+                let textStyle = index == 0 ? TerminalStyle.Text.muted : TerminalStyle.Text.primary
                 return "\(palette.border)│\(TerminalStyle.reset) \(textStyle)\(Self.padded(Self.fit(row, width: width), width: width))\(TerminalStyle.reset) \(palette.border)│\(TerminalStyle.reset)"
             } + [footer]
             : [header]

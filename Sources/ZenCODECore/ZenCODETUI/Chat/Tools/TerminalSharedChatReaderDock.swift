@@ -202,7 +202,7 @@ struct TerminalSharedChatReaderDock: Sendable, Equatable {
         guard entries.indices.contains(selectedIndex) else { return [] }
         let entry = entries[selectedIndex]
         let route = TerminalChat.sharedChatTerminalSafeText(entry.route).replacingOccurrences(of: "\n", with: " ")
-        return ["", "Author: \(route)"]
+        return ["Author: \(route)"]
             + TerminalChat.sharedChatWrappedRows(TerminalChat.sharedChatTerminalSafeText(entry.text), width: max(1, width))
             + [""]
     }

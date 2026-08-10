@@ -312,10 +312,9 @@ struct TerminalSharedChatReaderDockTests {
         var dock = TerminalSharedChatReaderDock()
         dock.replace(entries: [entry(1, text: "one two three four five six")], unreadCount: 1)
         let rows = dock.rows(width: 7)
-        #expect(rows.first == "")
-        #expect(rows.dropFirst().first?.contains("Author: Agent 1") == true)
+        #expect(rows.first?.contains("Author: Agent 1") == true)
         #expect(rows.last == "")
-        #expect(rows.count > 2)
+        #expect(rows.count > 1)
 
         dock.navigate(.scrollDown, viewportRows: 2, width: 7)
         #expect(dock.scrollOffset == 1)
@@ -502,6 +501,11 @@ struct TerminalSharedChatReaderDockTests {
         #expect(await statusBar.state.sharedChatReaderDock?.isExpanded == false)
         #expect(await statusBar.state.sharedChatReaderDock?.entries.count == 2)
         #expect(await statusBar.state.sharedChatReaderDock?.unreadCount == 2)
+        #expect(await statusBar.reservedRowsForOverlay() == 7)
+        #expect(await statusBar.scrollableOutputRowCapacity() == TerminalStatusBar.minimumScrollableRows)
+        // The compact header increases the bottom overlay from six to seven rows,
+        // so the transcript must be constrained to rows 1...2 on a 9-row terminal.
+        #expect(output.text.contains("\u{1B}[1;2r"))
         #expect(output.text.contains("Chat · 2 messages · 2 unread"))
         #expect(!output.text.contains("Ctrl+Y read"))
         #expect(output.text.contains("╭─ "))
