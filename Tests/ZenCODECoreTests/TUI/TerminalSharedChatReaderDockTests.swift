@@ -527,7 +527,8 @@ struct TerminalSharedChatReaderDockTests {
         #expect(didOpen)
         #expect(await statusBar.state.sharedChatReaderDock?.isExpanded == true)
         #expect(await statusBar.reservedRowsForOverlay() == 7)
-        #expect(output.text.contains("Chat · 0 messages · Ctrl+Y close"))
+        #expect(output.text.contains("Chat · 0 messages"))
+        #expect(!output.text.contains("Ctrl+Y"))
         #expect(!output.text.contains("↑/↓ scroll"))
 
         output.clear()

@@ -198,9 +198,9 @@ extension TerminalStatusBar {
             let messageLabel = dock.entries.count == 1 ? "message" : "messages"
             headerText = "Chat · \(dock.entries.count) \(messageLabel) · \(dock.unreadCount) unread"
         } else if dock.entries.isEmpty {
-            headerText = "Chat · 0 messages · Ctrl+Y close"
+            headerText = "Chat · 0 messages"
         } else {
-            headerText = "Chat · \(dock.selectedIndex + 1)/\(dock.entries.count) · \(dock.unreadCount) unread · Ctrl+Y close"
+            headerText = "Chat · \(dock.selectedIndex + 1)/\(dock.entries.count) · \(dock.unreadCount) unread"
         }
         guard sharedChatReaderReservedRowsLocked(state: &state) > 0 else { return "" }
         // Keep the collapsed reader visually identifiable as shared chat: its
