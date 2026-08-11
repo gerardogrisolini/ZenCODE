@@ -68,36 +68,29 @@ struct ChatGPTSubscriptionWebSocketPoolHTTPTeardownTests {
         let scopeID = "http-teardown-race"
         let request = RemoteHTTPStreamingRequest(url: server.url(path: "/stream"))
 
-        do {
-            let opening = Task<Result<Void, any Error>, Never> {
-                do {
-                    _ = try await pool.openHTTPStream(request, scopeID: scopeID)
-                    return .success(())
-                } catch {
-                    return .failure(error)
-                }
+        let opening = Task<Result<Void, any Error>, Never> {
+            do {
+                _ = try await pool.openHTTPStream(request, scopeID: scopeID)
+                return .success(())
+            } catch {
+                return .failure(error)
             }
-
-            await registrationGate.waitUntilArrived()
-            #expect(pool.hasPendingHTTPStream(scopeID: scopeID))
-
-            pool.closeAll()
-            await registrationGate.release()
-
-            switch await opening.value {
-            case .success:
-                Issue.record("A stream opened before closeAll was registered after teardown.")
-            case let .failure(error):
-                #expect(error is CancellationError)
-            }
-            #expect(!pool.hasPendingHTTPStream(scopeID: scopeID))
-            #expect(!pool.hasActiveHTTPStream(scopeID: scopeID))
-        } catch {
-            pool.closeAll()
-            try? await transport.shutdown()
-            await server.shutdown()
-            throw error
         }
+
+        await registrationGate.waitUntilArrived()
+        #expect(pool.hasPendingHTTPStream(scopeID: scopeID))
+
+        pool.closeAll()
+        await registrationGate.release()
+
+        switch await opening.value {
+        case .success:
+            Issue.record("A stream opened before closeAll was registered after teardown.")
+        case let .failure(error):
+            #expect(error is CancellationError)
+        }
+        #expect(!pool.hasPendingHTTPStream(scopeID: scopeID))
+        #expect(!pool.hasActiveHTTPStream(scopeID: scopeID))
 
         pool.closeAll()
         try await transport.shutdown()
@@ -184,7 +177,7 @@ struct ChatGPTSubscriptionWebSocketPoolHTTPTeardownTests {
         await registrationGate.waitUntilArrived()
         async let first: Void = pool.shutdown()
         async let second: Void = pool.shutdown()
-        await (first, second)
+        _ = await (first, second)
 
         await registrationGate.release()
         if case .success = await opening.value {

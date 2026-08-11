@@ -477,7 +477,11 @@ struct AgentSharedChatCoordinatorTests {
         _ = await idleObserver.wait(untilAtLeast: 1) { $0.contains { $0.renderedMessages != nil } }
         #expect(await busyObserver.snapshot().compactMap(\.autoTrigger).isEmpty)
         #expect(await idleObserver.snapshot().compactMap(\.autoTrigger).isEmpty)
-        #expect(await coordinator.pendingMessageCount(roomID: room) == 1)
+        // The room's monitor may already be draining, so the explicit poll can
+        // coalesce before the mailbox reaches `pending`.
+        #expect(await waitUntil {
+            await coordinator.pendingMessageCount(roomID: room) == 1
+        })
 
         // Detaching the busy observer releases exactly its own declaration and
         // the remaining observer is offered the preserved batch.

@@ -34,7 +34,7 @@ struct ChatGPTSubscriptionWebSocketTaskRaceTests {
                 adoptionReachedContinuation.yield()
                 // The hook runs outside the lifecycle mutex. Hold exactly the
                 // former publication window until cancellation wins it.
-                _ = continueAdoption.wait()
+                continueAdoption.wait()
             }
         )
 
