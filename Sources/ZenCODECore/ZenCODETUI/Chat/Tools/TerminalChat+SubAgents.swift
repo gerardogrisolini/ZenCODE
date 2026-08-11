@@ -174,7 +174,7 @@ extension TerminalChat {
     private enum SubAgentOverviewDensity: CaseIterable {
         /// Every metadata line, with multi-row activity and detail text.
         case full
-        /// Status header plus capped activity lines, without metadata.
+        /// Status header, agent/model identity, and capped activity lines.
         case compact
         /// Status header plus a single activity line, without separators.
         case dense
@@ -342,6 +342,16 @@ extension TerminalChat {
                 ) {
                     lines.append(.regular(model))
                 }
+            } else if density == .compact {
+                lines.append(
+                    .regular(
+                        renderSubAgentAgentAndModel(
+                            snapshot,
+                            modelTitleResolver: modelTitleResolver
+                        ),
+                        maxWrappedLines: 1
+                    )
+                )
             }
             let activityLines = renderSubAgentActivityLines(
                 snapshot,
@@ -381,6 +391,28 @@ extension TerminalChat {
             return "❌ \(inlineText(latestError))"
         }
         return renderSubAgentActivityLines(snapshot, density: .inline).first?.text
+    }
+
+    /// Keeps the essential agent identity on one row when the full metadata
+    /// presentation no longer fits the terminal.
+    private nonisolated static func renderSubAgentAgentAndModel(
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
+        modelTitleResolver: (String) -> String
+    ) -> String {
+        let agent = snapshot.profileName?.nilIfBlank
+            ?? snapshot.name.nilIfBlank
+            ?? snapshot.id
+        let agentText = subAgentMetadataText(
+            label: "agent:",
+            value: inlineText(agent)
+        )
+        guard let model = renderSubAgentModel(
+            snapshot,
+            modelTitleResolver: modelTitleResolver
+        ) else {
+            return agentText
+        }
+        return "\(agentText) \(dimText("·")) \(model)"
     }
 
     /// Trims a section that cannot fit even at the densest presentation,

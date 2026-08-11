@@ -2657,6 +2657,39 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func compactSubAgentOverviewIncludesAgentAndModelForEveryAgent() {
+        let now = Date(timeIntervalSince1970: 0)
+        let snapshots = (0..<2).map { index in
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "compact-agent-\(index)",
+                name: "worker-\(index)",
+                role: "",
+                profileName: "Developer",
+                status: .running,
+                pending: true,
+                modelID: "gpt-5.6",
+                latestOutput: nil,
+                latestError: nil,
+                createdAt: now,
+                updatedAt: now
+            )
+        }
+        // Full does not fit this budget, while compact fits exactly.
+        let compactRows = TerminalChat.renderSubAgentOverviewRowsForTesting(
+            snapshots,
+            rowBudget: 10
+        )
+
+        #expect(compactRows.count == 10)
+        #expect(
+            compactRows.filter {
+                $0.contains("agent: Developer") && $0.contains("model: gpt-5.6")
+            }.count == snapshots.count
+        )
+        #expect(compactRows.filter { $0.contains("id: compact-agent-") }.isEmpty)
+    }
+
+    @Test
     func subAgentOverviewFitsRowBudgetWhenManyAgentsRun() {
         let now = Date(timeIntervalSince1970: 0)
         let snapshots = (0..<12).map { index in
