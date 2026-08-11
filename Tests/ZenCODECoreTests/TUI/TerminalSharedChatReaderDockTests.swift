@@ -255,7 +255,7 @@ struct TerminalSharedChatReaderDockTests {
     }
 
     @Test
-    func openingReaderStartsAtNewestMessageAndConsumesExistingUnread() {
+    func openingReaderStartsAtFirstUnreadMessageAndConsumesExistingUnread() {
         let messages = (21...23).map(message)
         var buffer = TerminalSharedChatReadingBuffer()
         buffer.append(messages)
@@ -264,7 +264,38 @@ struct TerminalSharedChatReaderDockTests {
         buffer.openReader()
 
         #expect(buffer.isReaderOpen)
+        #expect(buffer.selectedMessageID == messages.first?.id)
+        #expect(buffer.unreadCount == 0)
+    }
+
+    @Test
+    func openingReaderWithoutUnreadStartsAtNewestMessage() {
+        let messages = (25...27).map(message)
+        var buffer = TerminalSharedChatReadingBuffer()
+        buffer.append(messages)
+        buffer.markRead()
+
+        buffer.openReader()
+
         #expect(buffer.selectedMessageID == messages.last?.id)
+        #expect(buffer.unreadCount == 0)
+    }
+
+    @Test
+    func openingReaderStartsAtFirstUnreadAfterReadHistory() {
+        let readMessages = (28...30).map(message)
+        let unreadMessages = (31...32).map(message)
+        var buffer = TerminalSharedChatReadingBuffer()
+        buffer.append(readMessages)
+        buffer.markRead()
+        buffer.append(unreadMessages)
+
+        #expect(buffer.unreadCount == unreadMessages.count)
+        #expect(buffer.readerOpeningMessageID == unreadMessages.first?.id)
+
+        buffer.openReader()
+
+        #expect(buffer.selectedMessageID == unreadMessages.first?.id)
         #expect(buffer.unreadCount == 0)
     }
 

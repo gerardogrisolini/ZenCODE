@@ -920,12 +920,13 @@ extension TerminalChat {
                     // Opening is a single status-bar transaction: it validates
                     // the viewport, commits expanded + selection and repaints
                     // without an intervening await, and reports whether a
-                    // payload row was actually shown. Only then is opening a
-                    // read action, so the unread state is consumed after it.
+                    // payload row was actually shown. Only then is opening
+                    // committed as a reader action, so its selection/read
+                    // state is applied after a visible payload is guaranteed.
                     let didExpand = await statusBar.expandSharedChatReader(
                         entries: entries,
                         unreadCount: 0,
-                        selection: .message(sharedChatReadingBuffer.messages.last?.id),
+                        selection: .message(sharedChatReadingBuffer.readerOpeningMessageID),
                         observationID: sharedChatObservation.observation.id
                     )
                     guard didExpand else {

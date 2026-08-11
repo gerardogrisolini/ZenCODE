@@ -22,6 +22,21 @@ struct TerminalSharedChatReadingBuffer: Sendable {
     private(set) var selectedMessageID: UUID?
     private(set) var isReaderOpen = false
 
+    /// The message the reader should show when it opens. Unread messages are
+    /// retained as a suffix of the bounded history, so the first unread entry
+    /// is the oldest message in that suffix. With no unread arrivals, opening
+    /// still starts at the newest message as it did before.
+    var readerOpeningMessageID: UUID? {
+        guard !messages.isEmpty else { return nil }
+        let targetIndex: Int
+        if unreadCount > 0 {
+            targetIndex = max(0, messages.count - min(unreadCount, messages.count))
+        } else {
+            targetIndex = messages.count - 1
+        }
+        return messages[targetIndex].id
+    }
+
     /// Adds transcript messages once per `Message.id` and returns the entries
     /// newly retained by the reader. The return value lets callers avoid
     /// refreshing an open dock for a replay without coupling this reader's
@@ -53,12 +68,13 @@ struct TerminalSharedChatReadingBuffer: Sendable {
         return appended
     }
 
-    /// Opens the reader at the newest retained message. Opening is an explicit
-    /// read action: existing messages are visible immediately and do not remain
-    /// advertised as unread while the reader is on the latest message.
+    /// Opens the reader at the first unread retained message when one exists.
+    /// Opening remains an explicit read action, so existing arrivals are
+    /// consumed after the visible reader state is committed. With no unread
+    /// arrivals, opening starts at the newest retained message as before.
     mutating func openReader() {
         isReaderOpen = true
-        selectedMessageID = messages.last?.id
+        selectedMessageID = readerOpeningMessageID
         markRead()
     }
 
