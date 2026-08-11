@@ -368,7 +368,8 @@ extension SessionTaskOrchestrator {
             blockedReason = "dependency \(failedDependency) \(status.rawValue)"
         } else if !blockedBy.isEmpty {
             blockedReason = "waiting for dependencies: \(blockedBy.joined(separator: ", "))"
-        } else if task.status != .pending {
+        } else if task.status != .pending,
+                  task.status != .inProgress {
             blockedReason = task.status.rawValue
         } else {
             blockedReason = nil

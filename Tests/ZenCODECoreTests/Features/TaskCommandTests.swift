@@ -68,7 +68,7 @@ struct TaskCommandTests {
                 task: first,
                 isRunnable: false,
                 blockedBy: [],
-                blockedReason: "in_progress",
+                blockedReason: nil,
                 dependents: ["task-2"]
             ),
             TaskRecordView(
@@ -116,6 +116,7 @@ struct TaskCommandTests {
         )
         #expect(rendered.contains("▸ `task-1`"))
         #expect(rendered.contains("agent-worker"))
+        #expect(!rendered.contains("in_progress"))
         #expect(rendered.contains("○ `task-2`"))
         #expect(rendered.contains("waits: `task-1`"))
 

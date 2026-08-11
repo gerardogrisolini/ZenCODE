@@ -102,6 +102,9 @@ struct SessionTaskOrchestratorTests {
             sessionID: "session",
             claims: [TaskClaim(taskID: "a", agentID: "agent-a")]
         ).first)
+        let running = try await orchestrator.task(sessionID: "session", taskID: "a")
+        #expect(running.task.status == .inProgress)
+        #expect(running.blockedReason == nil)
         #expect(try await orchestrator.completeAttempt(
             sessionID: "session", taskID: "a", attemptID: first.attemptID,
             output: "A done", requiresValidation: false
