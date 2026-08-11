@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 @testable import ZenCODECore
 import Testing
 
@@ -227,6 +228,55 @@ struct AgentCoreSessionRunnerTests {
         #expect(history[safe: 0]?.role == .user)
         #expect(history[safe: 0]?.content == "please stop")
         #expect(await runner.snapshotSession(id: sessionID)?.history == history)
+    }
+
+    @Test
+    func sendPromptWiresSessionLeaseBeforeStartingTheNextBackendTurn() async throws {
+        let backend = BlockingAgentRuntimeBackend()
+        let queued = RunnerLeaseQueueObserver()
+        let lease = AgentSessionTurnLease { sessionID in
+            queued.recordEnqueue(for: sessionID)
+        }
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in backend },
+            taskGraphStore: nil,
+            sessionTurnLease: lease
+        )
+        let sessionID = "session-lease-wiring-\(UUID().uuidString)"
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: []
+        )
+
+        let first = Task {
+            try await runner.sendPrompt(configuration: configuration, prompt: "first", attachments: [], onEvent: { _ in })
+        }
+        await backend.waitUntilPromptStarted()
+        let second = Task {
+            try await runner.sendPrompt(configuration: configuration, prompt: "second", attachments: [], onEvent: { _ in })
+        }
+        await queued.waitForEnqueueCount(1, sessionID: sessionID)
+        #expect(await backend.promptStartCount() == 1)
+
+        first.cancel()
+        do {
+            _ = try await first.value
+            Issue.record("The cancelled first turn unexpectedly completed.")
+        } catch is CancellationError {
+        }
+        await backend.waitUntilPromptStarted(count: 2)
+        #expect(await backend.promptStartCount() == 2)
+        second.cancel()
+        do {
+            _ = try await second.value
+            Issue.record("The cancelled second turn unexpectedly completed.")
+        } catch is CancellationError {
+        }
     }
 
     @Test
@@ -1299,8 +1349,8 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
 
 private actor BlockingAgentRuntimeBackend: AgentRuntimeBackend {
     private var sessions: [String: AgentRuntimeSessionSnapshot] = [:]
-    private var didStartPrompt = false
-    private var startContinuations: [CheckedContinuation<Void, Never>] = []
+    private var promptStarts = 0
+    private var startContinuations: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
     func createSession(
         id: String,
@@ -1379,11 +1429,11 @@ private actor BlockingAgentRuntimeBackend: AgentRuntimeBackend {
         attachments _: [AgentRuntimeAttachment],
         onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
-        didStartPrompt = true
-        for continuation in startContinuations {
-            continuation.resume()
+        promptStarts += 1
+        let ready = startContinuations.enumerated().filter { promptStarts >= $0.element.count }
+        for index in ready.map(\.offset).reversed() {
+            startContinuations.remove(at: index).continuation.resume()
         }
-        startContinuations.removeAll()
 
         try await Task.sleep(for: .seconds(30))
         return DirectAgentResponse(text: "", stopReason: "end_turn", modelID: "test-model")
@@ -1393,13 +1443,51 @@ private actor BlockingAgentRuntimeBackend: AgentRuntimeBackend {
         sessions[id]
     }
 
-    func waitUntilPromptStarted() async {
-        guard !didStartPrompt else {
+    func waitUntilPromptStarted(count: Int = 1) async {
+        guard promptStarts < count else {
             return
         }
 
         await withCheckedContinuation { continuation in
-            startContinuations.append(continuation)
+            startContinuations.append((count, continuation))
+        }
+    }
+
+    func promptStartCount() -> Int { promptStarts }
+}
+
+private final class RunnerLeaseQueueObserver: Sendable {
+    private struct State {
+        var counts: [String: Int] = [:]
+        var waiters: [(sessionID: String, count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+    }
+
+    private let state = Mutex(State())
+
+    func recordEnqueue(for sessionID: String) {
+        let ready: [CheckedContinuation<Void, Never>] = state.withLock { state in
+            state.counts[sessionID, default: 0] += 1
+            let count = state.counts[sessionID, default: 0]
+            let ready = state.waiters.enumerated().filter {
+                $0.element.sessionID == sessionID && count >= $0.element.count
+            }
+            for index in ready.map(\.offset).reversed() {
+                state.waiters.remove(at: index)
+            }
+            return ready.map(\.element.continuation)
+        }
+        ready.forEach { $0.resume() }
+    }
+
+    func waitForEnqueueCount(_ count: Int, sessionID: String) async {
+        guard !state.withLock({ $0.counts[sessionID, default: 0] >= count }) else { return }
+        await withCheckedContinuation { continuation in
+            let shouldResume = state.withLock { state -> Bool in
+                guard state.counts[sessionID, default: 0] < count else { return true }
+                state.waiters.append((sessionID, count, continuation))
+                return false
+            }
+            if shouldResume { continuation.resume() }
         }
     }
 }

@@ -90,6 +90,10 @@ public actor AgentCoreSessionRunner {
     /// prompt, allowlist, cache key, or remote session identity.
     private var promptSkillProvidersBySessionID: [String: PromptSkillSessionProvider] = [:]
     private var promptTaskRegistry = AgentCorePromptTaskRegistry()
+    /// Serializes complete prompt turns per session without coupling unrelated
+    /// sessions. It is deliberately outside backend state so a turn remains
+    /// ordered across backend creation, recovery, and finalisation.
+    private let sessionTurnLease: AgentSessionTurnLease
     /// Core-side owner of coordinator-mailbox monitoring, batching and the
     /// single-flight auto-trigger decision. Built lazily so its message source
     /// can capture this runner weakly and never form a reference cycle.
@@ -123,11 +127,30 @@ public actor AgentCoreSessionRunner {
         taskOrchestrator: SessionTaskOrchestrator? = nil,
         taskGraphStore: SessionTaskGraphStore? = SessionTaskGraphStore()
     ) {
+        self.init(
+            defaultToolAuthorizationHandler: defaultToolAuthorizationHandler,
+            mcpRuntime: mcpRuntime,
+            backendFactory: backendFactory,
+            taskOrchestrator: taskOrchestrator,
+            taskGraphStore: taskGraphStore,
+            sessionTurnLease: AgentSessionTurnLease()
+        )
+    }
+
+    init(
+        defaultToolAuthorizationHandler: AgentToolAuthorizationHandler? = nil,
+        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
+        backendFactory: AgentRuntimeBackendFactory? = nil,
+        taskOrchestrator: SessionTaskOrchestrator? = nil,
+        taskGraphStore: SessionTaskGraphStore? = SessionTaskGraphStore(),
+        sessionTurnLease: AgentSessionTurnLease
+    ) {
         self.defaultToolAuthorizationHandler = defaultToolAuthorizationHandler
         self.mcpRuntime = mcpRuntime
         self.backendFactory = backendFactory
         self.taskOrchestrator = taskOrchestrator
             ?? SessionTaskOrchestrator(store: taskGraphStore)
+        self.sessionTurnLease = sessionTurnLease
     }
 
     func localExecAccessMode() -> AgentLocalExecAccessMode {
@@ -260,6 +283,30 @@ public actor AgentCoreSessionRunner {
     }
 
     public func sendPrompt(
+        configuration: AgentCoreSessionConfiguration,
+        prompt: String,
+        attachments: [AgentRuntimeAttachment],
+        authorizeTool: AgentToolAuthorizationHandler? = nil,
+        onToolWillExecute: (@Sendable (DirectAgentToolCall) async -> Void)? = nil,
+        borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
+        toolProviders: [AgentToolProvider] = [],
+        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> DirectAgentResponse {
+        try await sessionTurnLease.withLease(sessionID: configuration.sessionID) { [self] in
+            try await self.sendPromptUsingLease(
+                configuration: configuration,
+                prompt: prompt,
+                attachments: attachments,
+                authorizeTool: authorizeTool,
+                onToolWillExecute: onToolWillExecute,
+                borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
+                toolProviders: toolProviders,
+                onEvent: onEvent
+            )
+        }
+    }
+
+    private func sendPromptUsingLease(
         configuration: AgentCoreSessionConfiguration,
         prompt: String,
         attachments: [AgentRuntimeAttachment],

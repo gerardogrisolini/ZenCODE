@@ -68,28 +68,73 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
         var lifecycle: Lifecycle = .suspended
         var closeCode: UInt16?
         var readinessWaiters: [CheckedContinuation<Void, Error>] = []
+        /// The task is adopted only while this state is `.connecting`.  Keeping
+        /// it in this same critical section makes cancellation before adoption
+        /// observable rather than a lost cancellation.
+        var connectionTask: Task<Void, Never>?
+        /// Retains a connected driver long enough for `cancel` to close a socket
+        /// that has already transitioned to `.completed` after an I/O failure.
+        var connectedDriver: ChatGPTSubscriptionNIOWebSocketDriver?
     }
 
-    private let connector: @Sendable () async throws -> RemoteWebSocketConnection
+    private let driverFactory: @Sendable () async throws -> ChatGPTSubscriptionNIOWebSocketDriver
+    private let closeDriver: @Sendable (
+        ChatGPTSubscriptionNIOWebSocketDriver,
+        UInt16?,
+        Data?
+    ) -> Void
+    /// Test-only seam deliberately invoked after `connecting` is published and
+    /// before the task is adopted. It is never called while `stateStorage` is
+    /// locked, so it may synchronously coordinate a deterministic interleaving.
+    private let beforeTaskAdoption: @Sendable () -> Void
     private let stateStorage = Mutex(State())
-    private let connectionTaskStorage = Mutex<Task<Void, Never>?>(nil)
-    /// Retains a connected driver long enough for `cancel` to close a socket
-    /// that has already transitioned to `.completed` after an I/O failure.
-    private let connectedDriverStorage = Mutex<ChatGPTSubscriptionNIOWebSocketDriver?>(nil)
 
     init(
         transport: RemoteTransportCore,
         request: RemoteWebSocketRequest
     ) {
-        connector = {
-            try await transport.connectWebSocket(request)
+        self.driverFactory = {
+            let connection = try await transport.connectWebSocket(request)
+            return ChatGPTSubscriptionNIOWebSocketDriver(connection: connection)
         }
+        self.closeDriver = { driver, closeCode, reason in
+            Task(name: "ChatGPT WebSocket cancellation") {
+                await driver.close(code: closeCode, reason: reason)
+            }
+        }
+        self.beforeTaskAdoption = {}
     }
 
     init(
-        connector: @escaping @Sendable () async throws -> RemoteWebSocketConnection
+        connector: @escaping @Sendable () async throws -> RemoteWebSocketConnection,
+        beforeTaskAdoption: @escaping @Sendable () -> Void = {}
     ) {
-        self.connector = connector
+        self.driverFactory = {
+            let connection = try await connector()
+            return ChatGPTSubscriptionNIOWebSocketDriver(connection: connection)
+        }
+        self.closeDriver = { driver, closeCode, reason in
+            Task(name: "ChatGPT WebSocket cancellation") {
+                await driver.close(code: closeCode, reason: reason)
+            }
+        }
+        self.beforeTaskAdoption = beforeTaskAdoption
+    }
+
+    /// Internal driver injection keeps task lifecycle teardown deterministic in
+    /// tests without opening a network connection.
+    init(
+        driverFactory: @escaping @Sendable () async throws -> ChatGPTSubscriptionNIOWebSocketDriver,
+        closeDriver: @escaping @Sendable (
+            ChatGPTSubscriptionNIOWebSocketDriver,
+            UInt16?,
+            Data?
+        ) -> Void,
+        beforeTaskAdoption: @escaping @Sendable () -> Void = {}
+    ) {
+        self.driverFactory = driverFactory
+        self.closeDriver = closeDriver
+        self.beforeTaskAdoption = beforeTaskAdoption
     }
 
     var closeCode: UInt16? {
@@ -116,6 +161,8 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
             guard case .suspended = state.lifecycle else {
                 return false
             }
+            // This is the adoption ticket. `cancel` can invalidate it before
+            // the Task exists; adoption below then cancels the just-created task.
             state.lifecycle = .connecting
             return true
         }
@@ -123,15 +170,13 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
             return
         }
 
-        let task = Task(name: "ChatGPT WebSocket connection") { [weak self] in
+        beforeTaskAdoption()
+        let connectionTask = Task(name: "ChatGPT WebSocket connection") { [weak self] in
             guard let self else {
                 return
             }
             do {
-                let connection = try await connector()
-                let driver = ChatGPTSubscriptionNIOWebSocketDriver(
-                    connection: connection
-                )
+                let driver = try await driverFactory()
                 await driver.start()
                 install(driver)
             } catch is CancellationError {
@@ -140,7 +185,18 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
                 fail(error)
             }
         }
-        connectionTaskStorage.withLock { $0 = task }
+        let shouldCancel = stateStorage.withLock { state -> Bool in
+            guard case .connecting = state.lifecycle else {
+                return true
+            }
+            state.connectionTask = connectionTask
+            return false
+        }
+        if shouldCancel {
+            // Cancellation won before task adoption. Do not publish a task into
+            // a terminal state; cancel it outside the mutex.
+            connectionTask.cancel()
+        }
     }
 
     func send(_ message: ChatGPTSubscriptionWebSocketMessage) async throws {
@@ -193,36 +249,36 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
         let result = stateStorage.withLock {
             state -> (
                 driver: ChatGPTSubscriptionNIOWebSocketDriver?,
-                waiters: [CheckedContinuation<Void, Error>]
+                waiters: [CheckedContinuation<Void, Error>],
+                task: Task<Void, Never>?
             ) in
             let driver: ChatGPTSubscriptionNIOWebSocketDriver?
             if case let .ready(value) = state.lifecycle {
                 driver = value
             } else {
-                driver = connectedDriverStorage.withLock { $0 }
+                driver = state.connectedDriver
             }
+            // Consume the retained driver even when cancellation already won.
+            // The local is closed below, outside the state mutex, exactly once.
+            state.connectedDriver = nil
             if matchesTerminalCancellation(state.lifecycle) {
-                return (driver, [])
+                return (driver, [], nil)
             }
             state.lifecycle = .cancelled
             state.closeCode = closeCode
             let waiters = state.readinessWaiters
             state.readinessWaiters.removeAll()
-            return (driver, waiters)
+            let task = state.connectionTask
+            state.connectionTask = nil
+            return (driver, waiters, task)
         }
 
-        connectionTaskStorage.withLock { task in
-            task?.cancel()
-            task = nil
-        }
-        connectedDriverStorage.withLock { $0 = nil }
+        result.task?.cancel()
         for waiter in result.waiters {
             waiter.resume(throwing: CancellationError())
         }
         if let driver = result.driver {
-            Task(name: "ChatGPT WebSocket cancellation") {
-                await driver.close(code: closeCode, reason: reason)
-            }
+            closeDriver(driver, closeCode, reason)
         }
     }
 
@@ -284,12 +340,12 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
                 return (true, [])
             }
             state.lifecycle = .ready(driver)
+            state.connectionTask = nil
+            state.connectedDriver = driver
             let waiters = state.readinessWaiters
             state.readinessWaiters.removeAll()
             return (false, waiters)
         }
-        connectionTaskStorage.withLock { $0 = nil }
-
         if result.shouldClose {
             Task(name: "ChatGPT WebSocket rejected connection") {
                 await driver.close(
@@ -299,7 +355,6 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
             }
             return
         }
-        connectedDriverStorage.withLock { $0 = driver }
         for waiter in result.waiters {
             waiter.resume()
         }
@@ -321,9 +376,9 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
             }
             let waiters = state.readinessWaiters
             state.readinessWaiters.removeAll()
+            state.connectionTask = nil
             return waiters
         }
-        connectionTaskStorage.withLock { $0 = nil }
         for waiter in result {
             waiter.resume(throwing: error)
         }
@@ -338,14 +393,13 @@ final class ChatGPTSubscriptionNIOWebSocketTask:
                 return false
             }
             state.lifecycle = .completed
+            state.connectionTask = nil
             if state.closeCode == nil {
                 state.closeCode = ChatGPTSubscriptionWebSocketCloseCode.abnormalClosure
             }
             return true
         }
-        if didTransition {
-            connectionTaskStorage.withLock { $0 = nil }
-        }
+        _ = didTransition
     }
 
     private func matchesTerminalCancellation(_ lifecycle: Lifecycle) -> Bool {

@@ -14,6 +14,10 @@ import ToolCore
 /// wire behaviour (the server is simply absent) is unchanged.
 public struct MCPRuntimeShutdownError: Error {}
 
+/// Thrown when an install loses the per-server-family replacement race to a
+/// newer install. Unlike shutdown, this leaves the newer server intact.
+public struct MCPRuntimeInstallSupersededError: Error {}
+
 public actor DirectMCPToolRuntime {
     enum ServerFamily: Hashable {
         case figma
@@ -59,6 +63,10 @@ public actor DirectMCPToolRuntime {
     /// duplicate executor/process creation.
     var discoveringFamilies: Set<ServerFamily> = []
     var servers: [Server] = []
+    /// The latest install request for each family. An owned install awaits its
+    /// transport while the actor is reentrant; this generation prevents it
+    /// from installing after a newer owned or borrowed request replaced it.
+    private var installationGenerations: [ServerFamily: UInt64] = [:]
     /// Bumped by every `shutdown()`. Any install or discovery that was already
     /// suspended compares against the generation it captured before the await
     /// and disconnects its executor instead of appending a server to a runtime
@@ -69,12 +77,33 @@ public actor DirectMCPToolRuntime {
         fileprivate let generation: UInt64
     }
 
+    struct InstallationFence: Sendable, Equatable {
+        fileprivate let family: ServerFamily
+        fileprivate let generation: UInt64
+    }
+
     func shutdownFence() -> ShutdownFence {
         ShutdownFence(generation: shutdownGeneration)
     }
 
     func isActive(_ fence: ShutdownFence) -> Bool {
         shutdownGeneration == fence.generation
+    }
+
+    /// Begins a replacement transaction for one family. This intentionally
+    /// invalidates a preceding transaction before it can resume from an await.
+    func installationFence(for family: ServerFamily) -> InstallationFence {
+        let generation = (installationGenerations[family] ?? 0) &+ 1
+        installationGenerations[family] = generation
+        return InstallationFence(family: family, generation: generation)
+    }
+
+    func isCurrent(_ fence: InstallationFence) -> Bool {
+        installationGenerations[fence.family] == fence.generation
+    }
+
+    func isActive(_ shutdownFence: ShutdownFence, installationFence: InstallationFence) -> Bool {
+        isActive(shutdownFence) && isCurrent(installationFence)
     }
 
     let autoDiscoverExternalConnectors: Bool
@@ -119,6 +148,8 @@ public actor DirectMCPToolRuntime {
         tools: [ToolDescriptor]
     ) async -> [DirectToolDescriptor] {
         let family = ServerFamily.external(Self.externalServerID(for: name))
+        let shutdownFence = shutdownFence()
+        let installFence = installationFence(for: family)
         let toolPrefix = Self.externalToolPrefix(for: name)
         let descriptors = ToolDescriptor.canonicalized(tools).map { tool in
             DirectToolDescriptor(
@@ -130,7 +161,14 @@ public actor DirectMCPToolRuntime {
                 presentation: tool.presentation
             )
         }
+        let previousServers = servers.filter { $0.family == family }
         servers.removeAll { $0.family == family }
+        for server in previousServers {
+            await server.disconnectIfOwned()
+        }
+        guard isActive(shutdownFence, installationFence: installFence) else {
+            return []
+        }
         guard !descriptors.isEmpty else {
             return []
         }
@@ -151,8 +189,9 @@ public actor DirectMCPToolRuntime {
         name: String,
         configuration: MCPServerConfiguration
     ) async throws -> [DirectToolDescriptor] {
-        let fence = shutdownFence()
         let family = ServerFamily.external(Self.externalServerID(for: name))
+        let shutdownFence = shutdownFence()
+        let installFence = installationFence(for: family)
         if let existingServer = servers.first(where: {
             $0.family == family
                 && $0.mcpConfiguration == configuration
@@ -166,8 +205,12 @@ public actor DirectMCPToolRuntime {
         for server in previousServers {
             await server.disconnectIfOwned()
         }
-        guard isActive(fence) else {
-            throw MCPRuntimeShutdownError()
+        guard isActive(shutdownFence, installationFence: installFence) else {
+            try throwIfInstallIsInactive(
+                shutdownFence: shutdownFence,
+                installationFence: installFence
+            )
+            return []
         }
 
         let toolPrefix = Self.externalToolPrefix(for: name)
@@ -178,9 +221,13 @@ public actor DirectMCPToolRuntime {
         )
         do {
             let tools = ToolDescriptor.canonicalized(try await executor.loadTools())
-            guard isActive(fence) else {
+            guard isActive(shutdownFence, installationFence: installFence) else {
                 await disconnectStaleExecutor(.remote(executor), ownsBackend: true)
-                throw MCPRuntimeShutdownError()
+                try throwIfInstallIsInactive(
+                    shutdownFence: shutdownFence,
+                    installationFence: installFence
+                )
+                return []
             }
             guard !tools.isEmpty else {
                 await executor.disconnect()
@@ -197,6 +244,14 @@ public actor DirectMCPToolRuntime {
                     presentation: tool.presentation
                 )
             }
+            guard isActive(shutdownFence, installationFence: installFence) else {
+                await disconnectStaleExecutor(.remote(executor), ownsBackend: true)
+                try throwIfInstallIsInactive(
+                    shutdownFence: shutdownFence,
+                    installationFence: installFence
+                )
+                return []
+            }
             servers.append(
                 Server(
                     family: family,
@@ -211,6 +266,21 @@ public actor DirectMCPToolRuntime {
         } catch {
             await executor.disconnect()
             throw error
+        }
+    }
+
+    /// Converts a failed fence check into the reason visible to the caller.
+    /// Kept after an await boundary rather than using `defer`: actor isolation
+    /// is re-entered at every suspension point.
+    func throwIfInstallIsInactive(
+        shutdownFence: ShutdownFence,
+        installationFence: InstallationFence
+    ) throws {
+        if !isActive(shutdownFence) {
+            throw MCPRuntimeShutdownError()
+        }
+        if !isCurrent(installationFence) {
+            throw MCPRuntimeInstallSupersededError()
         }
     }
 

@@ -56,6 +56,19 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         /// A closed incarnation is fenced permanently; its generation-qualified
         /// scope ID is never reused by a later logical session incarnation.
         var closedHTTPFallbackScopeIDs: Set<String> = []
+        /// `closeAll()` leaves the pool reusable. Its epoch fences an opener
+        /// against a teardown that races its pending-owner creation.
+        var httpStreamEpoch: UInt64 = 0
+        /// Unlike `closeAll()`, shutdown is terminal: no opener may be
+        /// constructed or promoted after this bit is set.
+        var isTerminallyShutdown = false
+        /// Every `closeAll()` contributes its cancelled openers to this chain.
+        /// A later terminal shutdown awaits it before closing an owned transport.
+        var httpStreamDrainTask: Task<Void, Never>?
+        /// The single terminal operation shared by all concurrent callers.
+        /// Its body captures the pool weakly, so storing it in `State` cannot
+        /// form a permanent pool -> state -> task -> pool cycle.
+        var shutdownTask: Task<Void, Never>?
         var pendingHTTPStreams: [UInt64: PendingHTTPStream] = [:]
         var activeHTTPStreams: [UInt64: ActiveHTTPStream] = [:]
         private var nextToken: UInt64 = 0
@@ -91,6 +104,34 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         var heartbeatIDToStart: UInt64?
     }
 
+    private struct RetiredHTTPStreams {
+        let pendingTasks: [Task<RemoteHTTPStreamingResponse, Error>]
+        let bodies: [RemoteHTTPBody]
+    }
+
+    /// A single-use asynchronous latch. Terminal shutdown publishes its task
+    /// while holding `state`, then opens this latch only after cancelling the
+    /// HTTP owners it retired outside that mutex.
+    private actor OneShotGate {
+        private var isOpen = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func wait() async {
+            guard !isOpen else { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+
+        func open() {
+            guard !isOpen else { return }
+            isOpen = true
+            let pendingWaiters = waiters
+            waiters.removeAll()
+            for waiter in pendingWaiters {
+                waiter.resume()
+            }
+        }
+    }
+
     static let defaultHeartbeatIntervalNanoseconds: UInt64 = 30 * 1_000_000_000
 
     /// A newly started WebSocket can report a transient connection failure if
@@ -123,6 +164,16 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     private let httpStreamOpener: @Sendable (
         RemoteHTTPStreamingRequest
     ) async throws -> RemoteHTTPStreamingResponse
+    /// Test seam for forcing the narrow interval between an HTTP opener
+    /// completing and ownership promotion into `activeHTTPStreams`.
+    private let beforeHTTPStreamRegistration: @Sendable () async -> Void
+    /// Test seam for observing that all retired HTTP work has drained before
+    /// this pool tears down the transport it owns.
+    private let beforeOwnedTransportShutdown: @Sendable () async -> Void
+    /// Test seam that records each caller once it has entered shutdown's
+    /// serialization point. It is synchronous specifically so it is safe to
+    /// invoke under `state`'s mutex.
+    private let didEnterShutdown: @Sendable () -> Void
     /// Non-nil only when this pool constructed the NIO transport itself. An
     /// injected transport remains owned by its embedding composition root.
     private let ownedTransport: RemoteTransportCore?
@@ -158,7 +209,13 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                 with: ChatGPTSubscriptionWebSocketCloseCode.normalClosure,
                 reason: nil
             )
-        }
+        },
+        httpStreamOpener: (@Sendable (
+            RemoteHTTPStreamingRequest
+        ) async throws -> RemoteHTTPStreamingResponse)? = nil,
+        beforeHTTPStreamRegistration: @escaping @Sendable () async -> Void = {},
+        beforeOwnedTransportShutdown: @escaping @Sendable () async -> Void = {},
+        didEnterShutdown: @escaping @Sendable () -> Void = {}
     ) {
         let resolvedTransport = transport ?? RemoteTransportCore()
         self.heartbeatIntervalNanoseconds = max(heartbeatIntervalNanoseconds, 1)
@@ -173,9 +230,12 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
             )
         }
         self.closeWebSocketTask = closeWebSocketTask
-        self.httpStreamOpener = { request in
+        self.httpStreamOpener = httpStreamOpener ?? { request in
             try await resolvedTransport.openHTTPStream(request)
         }
+        self.beforeHTTPStreamRegistration = beforeHTTPStreamRegistration
+        self.beforeOwnedTransportShutdown = beforeOwnedTransportShutdown
+        self.didEnterShutdown = didEnterShutdown
     }
 
     /// Idle time has no independent TTL: a session may wait on a long-running
@@ -418,24 +478,35 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         scopeID: String
     ) async throws -> HTTPStreamLease {
         let opener = httpStreamOpener
-        let openingTask = Task<RemoteHTTPStreamingResponse, Error> {
-            try await opener(request)
-        }
-        let token = state.withLock { state -> UInt64? in
-            guard !state.closedHTTPFallbackScopeIDs.contains(scopeID) else {
+        let pendingOwner = state.withLock {
+            state -> (token: UInt64, task: Task<RemoteHTTPStreamingResponse, Error>)?
+        in
+            // Task construction and publication share the same critical
+            // section as terminal shutdown. This prevents an unowned opener
+            // from escaping after the terminal fence linearizes.
+            guard !state.isTerminallyShutdown,
+                  !state.closedHTTPFallbackScopeIDs.contains(scopeID) else {
                 return nil
+            }
+
+            // Constructing and publishing the unstructured task is atomic
+            // with respect to teardown. Its operation executes independently
+            // after this short state mutation completes.
+            let openingTask = Task<RemoteHTTPStreamingResponse, Error> {
+                try await opener(request)
             }
             let token = state.makeToken()
             state.pendingHTTPStreams[token] = PendingHTTPStream(
                 scopeID: scopeID,
                 task: openingTask
             )
-            return token
+            return (token, openingTask)
         }
-        guard let token else {
-            openingTask.cancel()
+        guard let pendingOwner else {
             throw CancellationError()
         }
+        let token = pendingOwner.token
+        let openingTask = pendingOwner.task
 
         let response: RemoteHTTPStreamingResponse
         do {
@@ -451,9 +522,17 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
             throw error
         }
 
+        await beforeHTTPStreamRegistration()
+
         let didRegister = state.withLock { state -> Bool in
-            state.pendingHTTPStreams.removeValue(forKey: token)
-            guard !state.closedHTTPFallbackScopeIDs.contains(scopeID) else {
+            // `closeAll()` and `closeHTTPFallbackScope` remove a pending token
+            // before cancelling its opener. The opener may nevertheless win its
+            // cancellation race and return a response. Only the still-pending
+            // owner is allowed to promote that response to an active stream;
+            // otherwise teardown would leak a body after it completed.
+            guard state.pendingHTTPStreams.removeValue(forKey: token) != nil,
+                  !state.isTerminallyShutdown,
+                  !state.closedHTTPFallbackScopeIDs.contains(scopeID) else {
                 return false
             }
             state.activeHTTPStreams[token] = ActiveHTTPStream(
@@ -565,34 +644,31 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
 
     public func closeAll() {
         let retired = state.withLock {
-            state -> (
-                [Entry],
-                [TransientEntry],
-                [Task<RemoteHTTPStreamingResponse, Error>],
-                [RemoteHTTPBody]
-            ) in
+            state -> ([Entry], [TransientEntry], RetiredHTTPStreams) in
             let entries = Array(state.entries.values)
             let transientEntries = Array(state.transientEntries.values)
-            let pendingTasks = state.pendingHTTPStreams.values.map(\.task)
-            let httpBodies = state.activeHTTPStreams.values.map(\.body)
+            let httpStreams = retireHTTPStreams(in: &state)
+            let precedingDrain = state.httpStreamDrainTask
+            state.httpStreamDrainTask = Task {
+                if let precedingDrain {
+                    await precedingDrain.value
+                }
+                await Self.drain(httpStreams)
+            }
             state.entries.removeAll()
             state.transientEntries.removeAll()
-            state.pendingHTTPStreams.removeAll()
-            state.activeHTTPStreams.removeAll()
-            return (entries, transientEntries, pendingTasks, httpBodies)
+            return (entries, transientEntries, httpStreams)
         }
 
+        // Cancellation deliberately happens after relinquishing the mutex but
+        // before returning. The chained task only drains; deferring cancellation
+        // to it lets a closeAll caller race a terminal transport shutdown.
+        Self.cancel(retired.2)
         for entry in retired.0 {
             dispose(entry)
         }
         for entry in retired.1 {
             close(entry.task)
-        }
-        for task in retired.2 {
-            task.cancel()
-        }
-        for body in retired.3 {
-            body.cancel()
         }
     }
 
@@ -600,13 +676,97 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     /// transport. `closeAll()` remains reusable; after `shutdown()` the pool
     /// must not be used to acquire another connection.
     public func shutdown() async {
-        closeAll()
-        state.withLock {
-            $0.httpFallbackScopeIDs.removeAll()
-            $0.closedHTTPFallbackScopeIDs.removeAll()
+        let shutdown = state.withLock {
+            state -> (Task<Void, Never>, RetiredHTTPStreams?, OneShotGate?) in
+            didEnterShutdown()
+            if let shutdownTask = state.shutdownTask {
+                return (shutdownTask, nil, nil)
+            }
+
+            // The terminal bit, epoch increment, and retirement of every HTTP
+            // owner are one linearization point. Do not await while this mutex
+            // is held: cancellation/draining can re-enter transport code.
+            state.isTerminallyShutdown = true
+            let entries = Array(state.entries.values)
+            let transientEntries = Array(state.transientEntries.values)
+            let httpStreams = retireHTTPStreams(in: &state)
+            let precedingDrain = state.httpStreamDrainTask
+            state.entries.removeAll()
+            state.transientEntries.removeAll()
+            state.httpFallbackScopeIDs.removeAll()
+            state.closedHTTPFallbackScopeIDs.removeAll()
+
+            let currentDrain = Task {
+                if let precedingDrain {
+                    await precedingDrain.value
+                }
+                await Self.drain(httpStreams)
+            }
+            state.httpStreamDrainTask = currentDrain
+
+            // Keep this task independent from the pool. In particular, the
+            // task is retained by `State`, so capturing `self` here would keep
+            // the pool alive throughout an indefinitely stalled HTTP drain.
+            let terminalGate = OneShotGate()
+            let closeWebSocketTask = self.closeWebSocketTask
+            let ownedTransport = self.ownedTransport
+            let beforeOwnedTransportShutdown = self.beforeOwnedTransportShutdown
+            let task = Task {
+                await terminalGate.wait()
+                for entry in entries {
+                    entry.heartbeatTask?.cancel()
+                    closeWebSocketTask(entry.task)
+                }
+                for entry in transientEntries {
+                    closeWebSocketTask(entry.task)
+                }
+                // The current drain includes every preceding closeAll drain,
+                // so coalesced shutdown callers all observe the same boundary.
+                await currentDrain.value
+                if let ownedTransport {
+                    await beforeOwnedTransportShutdown()
+                    try? await ownedTransport.shutdown()
+                }
+            }
+            state.shutdownTask = task
+            return (task, httpStreams, terminalGate)
         }
-        if let ownedTransport {
-            try? await ownedTransport.shutdown()
+        // As with closeAll, cancellation must not wait for the drain chain:
+        // an earlier closeAll drain can be blocked by an opener that ignores
+        // cancellation until its deterministic completion gate is released.
+        if let retired = shutdown.1 {
+            Self.cancel(retired)
+            // `shutdownTask` is already visible to coalescing callers, but it
+            // cannot observe/drain the retired owners before this cancellation
+            // completes. This is the required cancellation -> drain edge.
+            await shutdown.2?.open()
+        }
+        await shutdown.0.value
+    }
+
+    private func retireHTTPStreams(in state: inout State) -> RetiredHTTPStreams {
+        let retired = RetiredHTTPStreams(
+            pendingTasks: state.pendingHTTPStreams.values.map(\.task),
+            bodies: state.activeHTTPStreams.values.map(\.body)
+        )
+        state.httpStreamEpoch &+= 1
+        state.pendingHTTPStreams.removeAll()
+        state.activeHTTPStreams.removeAll()
+        return retired
+    }
+
+    private static func cancel(_ retired: RetiredHTTPStreams) {
+        for task in retired.pendingTasks { task.cancel() }
+        for body in retired.bodies { body.cancel() }
+    }
+
+    private static func drain(_ retired: RetiredHTTPStreams) async {
+        // An opener can win cancellation and produce a response; cancel that
+        // not-yet-promoted body before its owned event-loop group is shut down.
+        for task in retired.pendingTasks {
+            if case let .success(response) = await task.result {
+                response.body.cancel()
+            }
         }
     }
 

@@ -51,8 +51,8 @@ public actor FeaturePersistentProcess {
     /// Reader tasks must not retain their owner for the lifetime of the child;
     /// otherwise the actor and its task properties form a cycle and `deinit`
     /// can never close an abandoned session.
-    private final class WeakOwner: @unchecked Sendable {
-        weak var value: FeaturePersistentProcess?
+    private final class WeakOwner: Sendable {
+        weak let value: FeaturePersistentProcess?
 
         init(_ value: FeaturePersistentProcess) {
             self.value = value
