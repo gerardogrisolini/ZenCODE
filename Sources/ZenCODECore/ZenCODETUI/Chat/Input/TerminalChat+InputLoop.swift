@@ -925,7 +925,7 @@ extension TerminalChat {
                     // state is applied after a visible payload is guaranteed.
                     let didExpand = await statusBar.expandSharedChatReader(
                         entries: entries,
-                        unreadCount: 0,
+                        unreadCount: sharedChatReadingBuffer.readerOpeningUnreadCount,
                         selection: .message(sharedChatReadingBuffer.readerOpeningMessageID),
                         observationID: sharedChatObservation.observation.id
                     )
@@ -944,7 +944,7 @@ extension TerminalChat {
                     await statusBar.navigateSharedChatReader(action)
                     // The status bar owns the visual selection, while the
                     // terminal-local buffer owns the read marker. Refresh only
-                    // when reaching the newest message changed that marker;
+                    // when visiting an unread message changed that marker;
                     // `navigateSharedChatReader` has already applied the
                     // selection so `replace` preserves it by message ID.
                     if sharedChatReadingBuffer.unreadCount != unreadCountBeforeNavigation {

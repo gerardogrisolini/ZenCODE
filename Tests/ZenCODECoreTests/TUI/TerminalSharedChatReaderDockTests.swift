@@ -228,7 +228,7 @@ struct TerminalSharedChatReaderDockTests {
 
         buffer.append([newest])
 
-        #expect(buffer.unreadCount == 1)
+        #expect(buffer.unreadCount == 2)
         #expect(buffer.selectedMessageID == first.id)
         buffer.navigate(.lastMessage)
         #expect(buffer.selectedMessageID == newest.id)
@@ -255,7 +255,7 @@ struct TerminalSharedChatReaderDockTests {
     }
 
     @Test
-    func openingReaderStartsAtFirstUnreadMessageAndConsumesExistingUnread() {
+    func openingReaderStartsAtFirstUnreadMessageAndConsumesOnlyVisibleMessage() {
         let messages = (21...23).map(message)
         var buffer = TerminalSharedChatReadingBuffer()
         buffer.append(messages)
@@ -265,7 +265,7 @@ struct TerminalSharedChatReaderDockTests {
 
         #expect(buffer.isReaderOpen)
         #expect(buffer.selectedMessageID == messages.first?.id)
-        #expect(buffer.unreadCount == 0)
+        #expect(buffer.unreadCount == messages.count - 1)
     }
 
     @Test
@@ -296,7 +296,7 @@ struct TerminalSharedChatReaderDockTests {
         buffer.openReader()
 
         #expect(buffer.selectedMessageID == unreadMessages.first?.id)
-        #expect(buffer.unreadCount == 0)
+        #expect(buffer.unreadCount == 1)
     }
 
     @Test
@@ -318,12 +318,42 @@ struct TerminalSharedChatReaderDockTests {
         var dock = TerminalSharedChatReaderDock()
         dock.replace(entries: [entry(31), entry(32)], unreadCount: 2)
         dock.navigate(.firstMessage, viewportRows: 2, width: 80)
-        #expect(dock.unreadCount == 2)
+        #expect(dock.unreadCount == 1)
 
         dock.navigate(.lastMessage, viewportRows: 2, width: 80)
 
         #expect(dock.selectedIndex == 1)
         #expect(dock.unreadCount == 0)
+    }
+
+    @Test
+    func readingBufferAndDockDecreaseUnreadCountAsMessagesAreVisited() {
+        let messages = (41...43).map(message)
+        var buffer = TerminalSharedChatReadingBuffer()
+        buffer.append(messages)
+
+        #expect(buffer.readerOpeningUnreadCount == 2)
+        buffer.openReader()
+        #expect(buffer.selectedMessageID == messages[0].id)
+        #expect(buffer.unreadCount == 2)
+
+        buffer.navigate(.nextMessage)
+        #expect(buffer.selectedMessageID == messages[1].id)
+        #expect(buffer.unreadCount == 1)
+        buffer.navigate(.previousMessage)
+        #expect(buffer.unreadCount == 1)
+
+        var dock = TerminalSharedChatReaderDock()
+        dock.replace(
+            entries: (41...43).map { entry($0) },
+            unreadCount: 2,
+            selection: .message(entry(41).id)
+        )
+        dock.navigate(.nextMessage, viewportRows: 2, width: 80)
+        #expect(dock.selectedIndex == 1)
+        #expect(dock.unreadCount == 1)
+        dock.navigate(.previousMessage, viewportRows: 2, width: 80)
+        #expect(dock.unreadCount == 1)
     }
 
     @Test

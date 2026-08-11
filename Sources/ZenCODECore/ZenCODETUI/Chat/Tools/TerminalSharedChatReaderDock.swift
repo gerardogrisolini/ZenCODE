@@ -37,6 +37,13 @@ struct TerminalSharedChatReadingBuffer: Sendable {
         return messages[targetIndex].id
     }
 
+    /// Opening shows (and therefore consumes) only the first unread message.
+    /// The remaining unread suffix is consumed progressively as the operator
+    /// advances through it.
+    var readerOpeningUnreadCount: Int {
+        max(0, unreadCount - (unreadCount > 0 ? 1 : 0))
+    }
+
     /// Adds transcript messages once per `Message.id` and returns the entries
     /// newly retained by the reader. The return value lets callers avoid
     /// refreshing an open dock for a replay without coupling this reader's
@@ -69,13 +76,15 @@ struct TerminalSharedChatReadingBuffer: Sendable {
     }
 
     /// Opens the reader at the first unread retained message when one exists.
-    /// Opening remains an explicit read action, so existing arrivals are
-    /// consumed after the visible reader state is committed. With no unread
-    /// arrivals, opening starts at the newest retained message as before.
+    /// Opening remains an explicit read action, so the first unread arrival is
+    /// consumed only after the visible reader state is committed. With no
+    /// unread arrivals, opening starts at the newest retained message as before.
     mutating func openReader() {
         isReaderOpen = true
         selectedMessageID = readerOpeningMessageID
-        markRead()
+        if unreadCount > 0 {
+            unreadCount -= 1
+        }
     }
 
     mutating func closeReader() {
@@ -88,8 +97,8 @@ struct TerminalSharedChatReadingBuffer: Sendable {
 
     /// Applies message-selection navigation to the reader state. Scrolling
     /// within a message intentionally does not change the read marker: only
-    /// selecting/reaching the newest message means all retained arrivals have
-    /// been seen.
+    /// selecting an unread message advances the read boundary through that
+    /// message. Moving backwards never makes a message unread again.
     mutating func navigate(_ action: TerminalSharedChatReaderAction) {
         guard isReaderOpen, !messages.isEmpty else { return }
         let currentIndex = selectedMessageID.flatMap { id in
@@ -111,8 +120,9 @@ struct TerminalSharedChatReadingBuffer: Sendable {
         }
 
         selectedMessageID = messages[targetIndex].id
-        if targetIndex == messages.count - 1 {
-            markRead()
+        let firstUnreadIndex = messages.count - unreadCount
+        if targetIndex >= firstUnreadIndex {
+            unreadCount = messages.count - targetIndex - 1
         }
     }
 }
@@ -201,13 +211,15 @@ struct TerminalSharedChatReaderDock: Sendable, Equatable {
         case .pageDown: scrollOffset += max(1, viewportRows)
         }
         clamp(viewportRows: viewportRows, width: width)
-        // Message navigation to the newest entry is the read boundary. Keep
+        // Message navigation through the unread suffix advances the read
+        // boundary. Keep
         // this local to the pure dock model so callers that only drive the
         // status bar still get the same marker semantics as the input loop.
         switch action {
         case .previousMessage, .nextMessage, .firstMessage, .lastMessage:
-            if selectedIndex == entries.count - 1 {
-                unreadCount = 0
+            let firstUnreadIndex = entries.count - unreadCount
+            if selectedIndex >= firstUnreadIndex {
+                unreadCount = entries.count - selectedIndex - 1
             }
         case .scrollUp, .scrollDown, .pageUp, .pageDown:
             break
