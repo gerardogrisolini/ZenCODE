@@ -2678,7 +2678,7 @@ struct TerminalChatRenderingTests {
         let compactRows = TerminalChat.renderSubAgentOverviewRowsForTesting(
             snapshots,
             rowBudget: 10
-        )
+        ).map(ansiStripped)
 
         #expect(compactRows.count == 10)
         #expect(

@@ -133,12 +133,32 @@ struct MemoryPersistenceMultiprocessTests {
         }
 
         var searchedDirectories: [URL] = []
-        for executableURL in executableURLs {
-            let productDirectory = productDirectory(for: executableURL)
-            guard !searchedDirectories.contains(where: { $0.path == productDirectory.path }) else {
-                continue
+
+        func appendSearchDirectory(_ directory: URL) {
+            let standardized = directory.standardizedFileURL
+            guard !searchedDirectories.contains(where: { $0.path == standardized.path }) else {
+                return
             }
-            searchedDirectories.append(productDirectory)
+            searchedDirectories.append(standardized)
+        }
+
+        for executableURL in executableURLs {
+            appendSearchDirectory(productDirectory(for: executableURL))
+        }
+        for bundle in Bundle.allBundles + Bundle.allFrameworks {
+            appendSearchDirectory(productDirectory(for: bundle.bundleURL))
+            if let executableURL = bundle.executableURL {
+                appendSearchDirectory(productDirectory(for: executableURL))
+            }
+        }
+        for key in ["BUILT_PRODUCTS_DIR", "TARGET_BUILD_DIR", "__XCODE_BUILT_PRODUCTS_DIR_PATHS", "DYLD_LIBRARY_PATH"] {
+            guard let value = ProcessInfo.processInfo.environment[key] else { continue }
+            for path in value.split(separator: ":") where !path.isEmpty {
+                appendSearchDirectory(URL(fileURLWithPath: String(path)))
+            }
+        }
+
+        for productDirectory in searchedDirectories {
             let candidate = productDirectory.appendingPathComponent("MemoryPersistenceTestHelper")
             if fileManager.isExecutableFile(atPath: candidate.path) {
                 return candidate
