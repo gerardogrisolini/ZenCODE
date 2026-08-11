@@ -279,10 +279,6 @@ enum LocalToolsSupport {
         }
         return url
     }
-
-    static func renderProcessResult(_ result: FeatureProcessResult) -> String {
-        result.renderedProcessOutput
-    }
 }
 
 extension String {

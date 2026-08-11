@@ -51,27 +51,24 @@ public enum AgentOutput {
         _ = standardOutput
         _ = standardError
 
-        let nullFileDescriptor = open(nullPath, O_WRONLY)
-        guard nullFileDescriptor >= 0 else {
-            return
-        }
-        defer { close(nullFileDescriptor) }
-
-        _ = dup2(nullFileDescriptor, STDOUT_FILENO)
-        if !keepStandardError {
-            _ = dup2(nullFileDescriptor, STDERR_FILENO)
-        }
+        redirectToNull(keepStandardError ? [STDOUT_FILENO] : [STDOUT_FILENO, STDERR_FILENO])
     }
 
     public static func silenceInheritedProcessError() {
         _ = standardError
 
+        redirectToNull([STDERR_FILENO])
+    }
+
+    private static func redirectToNull(_ fileDescriptors: [Int32]) {
         let nullFileDescriptor = open(nullPath, O_WRONLY)
         guard nullFileDescriptor >= 0 else {
             return
         }
         defer { close(nullFileDescriptor) }
 
-        _ = dup2(nullFileDescriptor, STDERR_FILENO)
+        for fileDescriptor in fileDescriptors {
+            _ = dup2(nullFileDescriptor, fileDescriptor)
+        }
     }
 }

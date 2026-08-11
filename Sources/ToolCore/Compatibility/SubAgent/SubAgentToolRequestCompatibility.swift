@@ -8,66 +8,6 @@
 import Foundation
 
 public nonisolated enum SubAgentToolRequestCompatibility {
-    private static let aliases: [String: String] = [
-        "todo.read": "todo.read",
-        "todo_read": "todo.read",
-        "todo.list": "todo.read",
-        "todo_list": "todo.read",
-        "todo.write": "todo.write",
-        "todo_write": "todo.write",
-        "todo.update": "todo.write",
-        "todo_update": "todo.write",
-        "tasks.create": "tasks.create",
-        "tasks_create": "tasks.create",
-        "tasks.list": "tasks.list",
-        "tasks_list": "tasks.list",
-        "tasks": "tasks.list",
-        "tasks.get": "tasks.get",
-        "tasks_get": "tasks.get",
-        "tasks.status": "tasks.get",
-        "tasks_status": "tasks.get",
-        "tasks.update": "tasks.update",
-        "tasks_update": "tasks.update",
-        "tasks.retry": "tasks.retry",
-        "tasks_retry": "tasks.retry",
-        "tasks.cancel": "tasks.cancel",
-        "tasks_cancel": "tasks.cancel",
-        "agent.create": "agent.create",
-        "agent.spawn": "agent.create",
-        "agent_spawn": "agent.create",
-        "spawn_agent": "agent.create",
-        "subagent.create": "agent.create",
-        "subagent_create": "agent.create",
-        "agent.list": "agent.list",
-        "agent_list": "agent.list",
-        "agents": "agent.list",
-        "subagent.list": "agent.list",
-        "subagent_list": "agent.list",
-        "agent.get": "agent.get",
-        "agent_get": "agent.get",
-        "agent.status": "agent.get",
-        "agent_status": "agent.get",
-        "subagent.get": "agent.get",
-        "subagent_get": "agent.get",
-        "agent.message": "agent.message",
-        "agent.send": "agent.message",
-        "agent_send": "agent.message",
-        "agent_message": "agent.message",
-        "send_input": "agent.message",
-        "subagent.message": "agent.message",
-        "subagent_message": "agent.message",
-        "agent.wait": "agent.wait",
-        "agent_wait": "agent.wait",
-        "wait_agent": "agent.wait",
-        "subagent.wait": "agent.wait",
-        "subagent_wait": "agent.wait",
-        "agent.close": "agent.close",
-        "agent_close": "agent.close",
-        "close_agent": "agent.close",
-        "subagent.close": "agent.close",
-        "subagent_close": "agent.close"
-    ]
-
     public static func normalize(_ request: ToolRequest) -> ToolRequest? {
         guard let canonicalName = canonicalToolName(for: request.name) else {
             return nil
@@ -80,10 +20,6 @@ public nonisolated enum SubAgentToolRequestCompatibility {
     }
 
     public static func canonicalToolName(for rawName: String) -> String? {
-        if let aliasedName = aliases[rawName.lowercased()] {
-            return aliasedName
-        }
-
         let tokens = normalizedNameTokens(from: rawName)
         guard let domain = primaryDomain(in: tokens),
               let action = canonicalAction(in: tokens, domain: domain) else {

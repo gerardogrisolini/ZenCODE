@@ -45,6 +45,9 @@ struct DirectTaskToolAdapterTests {
                     == nil
             )
         }
+        #expect(SubAgentToolRequestCompatibility.canonicalToolName(for: "tasks") == nil)
+        #expect(SubAgentToolRequestCompatibility.canonicalToolName(for: "agents") == nil)
+        #expect(SubAgentToolRequestCompatibility.canonicalToolName(for: "send_input") == nil)
         #expect(SubAgentToolRequestCompatibility.canonicalToolName(for: "retry_task") == nil)
         #expect(SubAgentToolRequestCompatibility.canonicalToolName(for: "cancel_task") == nil)
         #expect(DirectTaskToolAdapter.isTaskToolName("tasks.create"))

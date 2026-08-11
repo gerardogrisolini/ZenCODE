@@ -143,35 +143,7 @@ actor JSONMemoryPersistence: MemoryTransactionalPersistence {
 
     public func load() async throws -> MemoryGraph {
         guard FileManager.default.fileExists(atPath: url.path) else { return MemoryGraph() }
-        let data = try Data(contentsOf: url)
-
-        // Reject future formats before attempting a full decode: the schema may
-        // have changed in ways this build cannot interpret. load() never writes,
-        // so rejecting here keeps the file byte-identical.
-        let envelopeDecoder = JSONDecoder()
-        envelopeDecoder.keyDecodingStrategy = .convertFromSnakeCase
-        if let envelope = try? envelopeDecoder.decode(GraphVersionEnvelope.self, from: data),
-           let version = envelope.graphVersion,
-           version > MemoryGraph.currentGraphVersion {
-            throw MemoryPersistenceError.unsupportedGraphVersion(version)
-        }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = MemoryJSONDateCoding.decodingStrategy()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        var graph = try decoder.decode(MemoryGraph.self, from: data)
-        graph.rebuildReverseEdges()
-
-        // Older versions (or files without an explicit version) are decoded by
-        // the current schema: every newer field is optional with a contract
-        // default (`scope` -> `.project`, `active` -> `true`, ...). Normalize
-        // the in-memory version to the current one so the next save writes the
-        // current format; the on-disk file is only rewritten by an explicit
-        // save, never by loading.
-        if graph.graphVersion < MemoryGraph.currentGraphVersion {
-            graph.graphVersion = MemoryGraph.currentGraphVersion
-        }
-        return graph
+        return try decodeGraph(Data(contentsOf: url))
     }
 
     public func save(_ graph: MemoryGraph) async throws {
@@ -213,7 +185,17 @@ actor JSONMemoryPersistence: MemoryTransactionalPersistence {
 
     private func loadSynchronously() throws -> MemoryGraph {
         guard FileManager.default.fileExists(atPath: url.path) else { return MemoryGraph() }
-        let data = try Data(contentsOf: url)
+
+        return try decodeGraph(Data(contentsOf: url))
+    }
+
+    /// Decodes a persisted graph without writing it. Both ordinary loads and
+    /// locked transactions use this single path, preserving future-version
+    /// rejection and lazy in-memory normalization identically.
+    private func decodeGraph(_ data: Data) throws -> MemoryGraph {
+        // Reject future formats before attempting a full decode: the schema may
+        // have changed in ways this build cannot interpret. This path never
+        // writes, so rejecting here keeps the file byte-identical.
         let envelopeDecoder = JSONDecoder()
         envelopeDecoder.keyDecodingStrategy = .convertFromSnakeCase
         if let envelope = try? envelopeDecoder.decode(GraphVersionEnvelope.self, from: data),
@@ -226,6 +208,13 @@ actor JSONMemoryPersistence: MemoryTransactionalPersistence {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         var graph = try decoder.decode(MemoryGraph.self, from: data)
         graph.rebuildReverseEdges()
+
+        // Older versions (or files without an explicit version) are decoded by
+        // the current schema: every newer field is optional with a contract
+        // default (`scope` -> `.project`, `active` -> `true`, ...). Normalize
+        // the in-memory version to the current one so the next save writes the
+        // current format; the on-disk file is only rewritten by an explicit
+        // save, never by loading.
         if graph.graphVersion < MemoryGraph.currentGraphVersion {
             graph.graphVersion = MemoryGraph.currentGraphVersion
         }

@@ -93,7 +93,7 @@ struct SearchGrepTool: FeatureTool {
            result.stderr.isEmpty {
             return "No matches found."
         }
-        return LocalToolsSupport.renderProcessResult(result)
+        return result.renderedProcessOutput
             .components(separatedBy: .newlines)
             .prefix(maxResults)
             .joined(separator: "\n")
