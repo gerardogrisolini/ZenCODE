@@ -1390,7 +1390,12 @@ struct DirectSubAgentRuntimeTests {
         )
 
         let firstOverview = await executor.subAgentSnapshots()
+        let firstOverviewIsCurrentWave = !firstOverview.contains {
+            !$0.isInCurrentOverviewWave
+        }
         #expect(Set(firstOverview.map(\.name)) == ["first-a", "first-b"])
+        #expect(firstOverviewIsCurrentWave)
+        #expect(Set(firstOverview.compactMap(\.overviewBatchID)).count == 1)
 
         _ = try await runtime.createAgents(
             arguments: ["name": .string("second"), "profile": .string("Developer")],
@@ -1401,8 +1406,17 @@ struct DirectSubAgentRuntimeTests {
         let currentOverview = await executor.subAgentSnapshots()
         let allSnapshots = await runtime.snapshots()
         let listedAgents = await runtime.listAgents(arguments: [:])
+        let currentOverviewIsCurrentWave = !currentOverview.contains {
+            !$0.isInCurrentOverviewWave
+        }
+        let previousSnapshotsAreNotCurrentWave = !allSnapshots
+            .filter { $0.name != "second" }
+            .contains { $0.isInCurrentOverviewWave }
 
         #expect(currentOverview.map(\.name) == ["second"])
+        #expect(currentOverviewIsCurrentWave)
+        #expect(currentOverview.first?.overviewBatchID != nil)
+        #expect(previousSnapshotsAreNotCurrentWave)
         #expect(Set(allSnapshots.map(\.name)) == ["first-a", "first-b", "second"])
         #expect(listedAgents.contains("first-a"))
         #expect(listedAgents.contains("first-b"))

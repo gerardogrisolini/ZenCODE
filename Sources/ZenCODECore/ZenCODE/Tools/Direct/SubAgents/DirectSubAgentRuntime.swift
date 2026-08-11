@@ -163,6 +163,12 @@ public actor DirectSubAgentRuntime {
         public let role: String
         public let profileID: String?
         public let profileName: String?
+        /// Stable identity of the transient overview wave containing this agent.
+        public let overviewBatchID: UUID?
+        /// Whether this snapshot belongs to the runtime's current overview
+        /// wave. This is captured by the runtime together with the snapshot so
+        /// presentation never has to infer the wave from array order.
+        public let isInCurrentOverviewWave: Bool
         public let status: Status
         public let pending: Bool
         public let modelID: String?
@@ -188,6 +194,8 @@ public actor DirectSubAgentRuntime {
             role: String,
             profileID: String? = nil,
             profileName: String? = nil,
+            overviewBatchID: UUID? = nil,
+            isInCurrentOverviewWave: Bool = false,
             status: Status,
             pending: Bool,
             modelID: String? = nil,
@@ -212,6 +220,8 @@ public actor DirectSubAgentRuntime {
             self.role = role
             self.profileID = profileID?.nilIfBlank
             self.profileName = profileName?.nilIfBlank
+            self.overviewBatchID = overviewBatchID
+            self.isInCurrentOverviewWave = isInCurrentOverviewWave
             self.status = status
             self.pending = pending
             self.modelID = modelID

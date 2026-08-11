@@ -1163,7 +1163,8 @@ struct TerminalChatRenderCoordinatorTests {
             signature: "agents:1",
             text: "\n👥 Sub-Agents:\n   1 total\n   running\n",
             force: false,
-            rememberSignature: true
+            rememberSignature: true,
+            overviewBatchID: "same-wave"
         )
         let firstSnapshot = await renderer.snapshot()
         let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
@@ -1172,7 +1173,8 @@ struct TerminalChatRenderCoordinatorTests {
             signature: "agents:2",
             text: "\n👥 Sub-Agents:\n   1 total\n   completed\n",
             force: false,
-            rememberSignature: true
+            rememberSignature: true,
+            overviewBatchID: "same-wave"
         )
         let events = await renderer.capturedWriteEvents()
         let refreshText = events
@@ -1193,6 +1195,37 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(plainStderr.components(separatedBy: "Sub-Agents:").count - 1 == 2)
         #expect(plainStderr.contains("completed"))
         #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 4)
+    }
+
+    @Test
+    func subAgentOverviewWithoutAnchorIsAlwaysAppended() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:unanchored:first",
+            text: "\n👥 Sub-Agents:\n   first\n",
+            force: false,
+            rememberSignature: true
+        )
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:unanchored:second",
+            text: "\n👥 Sub-Agents:\n   second\n",
+            force: false,
+            rememberSignature: true
+        )
+        let refreshText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeRefresh)
+            .map(\.text)
+            .joined()
+
+        #expect(!containsCursorUpSequence(refreshText))
+        #expect(TerminalANSIText.stripANSI(refreshText).contains("second"))
     }
 
     @Test
@@ -1855,11 +1888,78 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func staleCompletionDoesNotRelinquishNewerToolOwnership() async {
+    func subAgentOverviewDifferentWaveDoesNotReusePreviousRegion() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:wave-a:running",
+            text: "\n👥 Sub-Agents:\n   wave A running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave-a"
+        )
+        let eventCountBeforeNewWave = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:wave-b:running",
+            text: "\n👥 Sub-Agents:\n   wave B running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave-b"
+        )
+        let newWaveText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventCountBeforeNewWave)
+            .map(\.text)
+            .joined()
+
+        // The same physical row count is insufficient: a new wave owns a new
+        // logical region and must not erase the preceding wave's section.
+        #expect(!containsCursorUpSequence(newWaveText))
+        #expect(newWaveText.contains("wave B running"))
+    }
+
+    @Test
+    func newerSubAgentOverviewPublicationFencesAnOlderCallback() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let staleRevision = await renderer.beginOverviewPublication(.subAgents)
+        let currentRevision = await renderer.beginOverviewPublication(.subAgents)
+
+        let current = await renderer.renderSubAgentOverview(
+            signature: "agents:current",
+            text: "Current wave\n",
+            revision: currentRevision,
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "current-wave"
+        )
+        let eventCountBeforeStaleCallback = await renderer.capturedWriteEvents().count
+        let stale = await renderer.renderSubAgentOverview(
+            signature: "agents:stale",
+            text: "Stale wave\n",
+            revision: staleRevision,
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "stale-wave"
+        )
+        let staleText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventCountBeforeStaleCallback)
+            .map(\.text)
+            .joined()
+
+        #expect(current == .rendered)
+        #expect(stale == .unchanged)
+        #expect(staleText.isEmpty)
+    }
+
+    @Test
+    func staleCompletionRelinquishesNewerToolOwnershipAndPreservesTranscript() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let first = presentedToolCall(
             id: "overlap-first",
-            name: "agent.wait",
+            name: "agent.create",
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
@@ -1886,7 +1986,7 @@ struct TerminalChatRenderCoordinatorTests {
             .map(\.text)
             .joined()
 
-        #expect(afterStaleCompletion.activeCompactToolCallID == second.id)
+        #expect(afterStaleCompletion.activeCompactToolCallID == nil)
         #expect(!containsCursorUpSequence(staleCompletionText))
         #expect(staleCompletionText.contains("✅"))
 
@@ -1902,7 +2002,15 @@ struct TerminalChatRenderCoordinatorTests {
             .joined()
 
         #expect(afterOwningCompletion.activeCompactToolCallID == nil)
-        #expect(containsCursorUpSequence(owningCompletionText))
+        #expect(!containsCursorUpSequence(owningCompletionText))
+        let transcript = TerminalANSIText.stripANSI(
+            (await renderer.capturedWriteEvents()).map(\.text).joined()
+        )
+        // Compact cards do not include IDs or result summaries, so distinct
+        // tool names demonstrate that both pending cards and both append-only
+        // completions remain in the transcript.
+        #expect(transcript.components(separatedBy: "agent.create").count - 1 == 2)
+        #expect(transcript.components(separatedBy: "agent.wait").count - 1 == 2)
     }
 
     @Test

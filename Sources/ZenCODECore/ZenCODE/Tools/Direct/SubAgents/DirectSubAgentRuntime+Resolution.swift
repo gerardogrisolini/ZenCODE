@@ -170,6 +170,10 @@ extension DirectSubAgentRuntime {
             role: agent.role,
             profileID: agent.profileID,
             profileName: agent.profileName,
+            overviewBatchID: agent.overviewBatchID,
+            isInCurrentOverviewWave: latestOverviewBatchID.map {
+                agent.overviewBatchID == $0
+            } ?? false,
             status: agent.status,
             pending: agent.hasWorkInFlight,
             modelID: agent.modelID,

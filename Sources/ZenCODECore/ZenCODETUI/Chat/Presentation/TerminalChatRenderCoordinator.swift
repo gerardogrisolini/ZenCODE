@@ -114,6 +114,9 @@ actor TerminalChatRenderCoordinator {
     /// streaming chunk) advances it and therefore invalidates the block without
     /// needing invalidation hooks spread across the coordinator.
     private struct ActiveOverviewBlock: Sendable {
+        /// Stable logical identity of the redrawable section. Physical `rows`
+        /// are cursor geometry only and must never select a different section.
+        let anchorID: String?
         let rows: Int
         let columnWidth: Int
         let maximumInPlaceRows: Int?
@@ -155,6 +158,7 @@ actor TerminalChatRenderCoordinator {
         case subAgents(
             text: String,
             responses: [SubAgentMarkdownResponse],
+            overviewBatchID: String?,
             maximumInPlaceRows: Int?
         )
     }
@@ -784,8 +788,14 @@ actor TerminalChatRenderCoordinator {
 
             // Starts transfer the one physical rewrite slot to the newest
             // block. A completion for an older or otherwise unowned tool is
-            // append-only: it must not erase or relinquish the newer block.
+            // append-only: it must not erase the newer block. It *does*,
+            // however, write transcript rows after it, so that newer block no
+            // longer physically owns the cursor region and must not later
+            // cursor-up through this completion.
             if ownsActiveBlock {
+                activeToolBlock = nil
+                activeToolBlockIsSubAgentTool = false
+            } else if activeBlock != nil {
                 activeToolBlock = nil
                 activeToolBlockIsSubAgentTool = false
             }
@@ -1030,8 +1040,10 @@ actor TerminalChatRenderCoordinator {
         signature: String,
         text: String,
         responses: [SubAgentMarkdownResponse] = [],
+        revision: Int? = nil,
         force: Bool,
         rememberSignature: Bool,
+        overviewBatchID: String? = nil,
         maximumInPlaceRows: Int? = nil
     ) -> OverviewRenderResult {
         let pendingResponseTokens = responses.compactMap { response in
@@ -1050,12 +1062,13 @@ actor TerminalChatRenderCoordinator {
             kind: .subAgents,
             signature: publicationSignature,
             rememberedSignature: signature,
-            revision: nil,
+            revision: revision,
             force: force,
             rememberSignature: rememberSignature,
             content: .subAgents(
                 text: text,
                 responses: responses,
+                overviewBatchID: overviewBatchID,
                 maximumInPlaceRows: maximumInPlaceRows
             )
         )
@@ -1151,10 +1164,11 @@ actor TerminalChatRenderCoordinator {
         switch overview.content {
         case let .markdown(markdown):
             renderMarkdownMessage(markdown)
-        case let .subAgents(text, responses, maximumInPlaceRows):
+        case let .subAgents(text, responses, overviewBatchID, maximumInPlaceRows):
             renderSubAgentOverviewContent(
                 text: text,
                 responses: responses,
+                overviewBatchID: overviewBatchID,
                 maximumInPlaceRows: maximumInPlaceRows
             )
         }
@@ -1169,6 +1183,7 @@ actor TerminalChatRenderCoordinator {
     private func renderSubAgentOverviewContent(
         text: String,
         responses: [SubAgentMarkdownResponse],
+        overviewBatchID: String?,
         maximumInPlaceRows: Int?
     ) {
         let pendingResponses = responses.filter { response in
@@ -1180,6 +1195,7 @@ actor TerminalChatRenderCoordinator {
         flushChatOutput()
         let columnWidth = freshColumnWidthProvider()
         let reusableBlock = reusableSubAgentOverviewBlock(
+            anchorID: overviewBatchID,
             columnWidth: columnWidth,
             maximumInPlaceRows: maximumInPlaceRows
         )
@@ -1216,13 +1232,18 @@ actor TerminalChatRenderCoordinator {
             return
         }
 
+        // A missing identity is not an identity. Callers that cannot establish
+        // the logical wave must remain append-only rather than accidentally
+        // treating all nil anchors as one reusable region.
         guard standardErrorIsTerminal,
+              overviewBatchID != nil,
               startsAtLineStart,
               let rows = ownedRowCount(of: renderedText, columnWidth: columnWidth),
               rows <= (maximumInPlaceRows ?? Int.max) else {
             return
         }
         activeSubAgentOverviewBlock = ActiveOverviewBlock(
+            anchorID: overviewBatchID,
             rows: rows,
             columnWidth: columnWidth,
             maximumInPlaceRows: maximumInPlaceRows,
@@ -1257,11 +1278,14 @@ actor TerminalChatRenderCoordinator {
 
     /// Returns the previously drawn section when it can still be safely erased.
     private func reusableSubAgentOverviewBlock(
+        anchorID: String?,
         columnWidth: Int,
         maximumInPlaceRows: Int?
     ) -> ActiveOverviewBlock? {
         guard standardErrorIsTerminal,
+              let anchorID,
               let block = activeSubAgentOverviewBlock,
+              block.anchorID == anchorID,
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth else {
             return nil

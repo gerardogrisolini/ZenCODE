@@ -125,12 +125,22 @@ extension TerminalChat {
         force: Bool,
         rememberSignature: Bool = true
     ) async {
+        // Reserve before awaiting the runtime snapshot: a later callback must
+        // fence this publication if this snapshot returns after it.
+        let publicationRevision = await renderCoordinator.beginOverviewPublication(.subAgents)
         let snapshots = await sessionRunner.subAgentSnapshots()
         await refreshStatusBarGitStatusSummaryForCompletedSubAgents(snapshots)
         guard force || !snapshots.isEmpty else {
             return
         }
         let signature = Self.subAgentOverviewSignature(snapshots)
+        // The runtime marks the current wave while producing this snapshot.
+        // The overview can also contain older standby/reused agents (or agents
+        // active through shared chat), so array order is not a valid authority.
+        let overviewBatchID = snapshots
+            .first(where: \.isInCurrentOverviewWave)?
+            .overviewBatchID?
+            .uuidString
         let resolver = subAgentModelTitleResolver()
         let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
         let overview = Self.renderSubAgentOverview(
@@ -146,8 +156,10 @@ extension TerminalChat {
             signature: signature,
             text: overview,
             responses: responses,
+            revision: publicationRevision,
             force: force,
             rememberSignature: rememberSignature,
+            overviewBatchID: overviewBatchID,
             maximumInPlaceRows: maximumInPlaceRows
         )
     }
