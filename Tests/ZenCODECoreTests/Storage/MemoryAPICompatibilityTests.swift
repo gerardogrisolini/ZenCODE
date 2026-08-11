@@ -711,7 +711,7 @@ struct MemoryAPICompatibilityTests {
             timeout: shortTimeout
         ) {
             // Simulate a slow store commit that lands after the timeout.
-            try await Task.sleep(nanoseconds: 80_000_000)
+            try await Task.sleep(nanoseconds: 500_000_000)
             sideEffect.withLock { $0 = true }
             return "ok"
         }
@@ -734,7 +734,7 @@ struct MemoryAPICompatibilityTests {
                 "test-slow-failure",
                 timeout: shortTimeout
             ) {
-                try await Task.sleep(nanoseconds: 80_000_000)
+                try await Task.sleep(nanoseconds: 500_000_000)
                 throw SentinelError()
             }
         }
@@ -744,6 +744,8 @@ struct MemoryAPICompatibilityTests {
     /// reads are harmless, so the bounded timeout is the correct semantics.
     @Test
     func readBridgeAbandonsOnTimeout() {
+        // The sleep must comfortably exceed the timeout so that the bounded
+        // wait always expires first, even under CI load or CPU contention.
         let shortTimeout: TimeInterval = 0.05
 
         #expect(throws: MemoryLegacyBridgeError.self) {
@@ -751,7 +753,7 @@ struct MemoryAPICompatibilityTests {
                 "test-slow-read",
                 timeout: shortTimeout
             ) {
-                try await Task.sleep(nanoseconds: 80_000_000)
+                try await Task.sleep(nanoseconds: 500_000_000)
                 return "late"
             }
         }

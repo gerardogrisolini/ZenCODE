@@ -10,6 +10,39 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-08-11
+
+### Changed
+
+- `tasks.create` and `agent.create` system-prompt guidance and tool descriptors
+  now use a single canonical payload shape, producing more consistent task-graph
+  and delegation instructions across `/plan`, `/workflow`, and `/review`.
+- Compact tool rendering in the terminal handles sub-agent tool calls more
+  cleanly, with improved rendering for delegated agent activity.
+- The shared-chat reader (`Ctrl+Y`) now opens at the first unread message instead
+  of the latest, so new messages are immediately visible.
+
+### Fixed
+
+- A session turn lease (`AgentSessionTurnLease`) now serializes concurrent turn
+  requests to the session runner, preventing overlapping turns from corrupting
+  coordinator state.
+- ChatGPT subscription WebSocket pool and task race conditions are resolved: the
+  pool tears down HTTP connections deterministically, and WebSocket task
+  cancellation can no longer leak or double-fire.
+- The MCP tool runtime now fences install-generation boundaries, preventing
+  interleaved feature installations from corrupting the runtime.
+- Terminal redraw glitches during sub-agent delegation are fixed: the render
+  coordinator no longer leaves stale frames when agent status changes.
+- Shared-chat unread counts are now computed correctly when the reader is
+  reopened after new messages arrive.
+- A timing-dependent test (`readBridgeAbandonsOnTimeout`) is stabilized with a
+  wider margin between the bounded timeout and the simulated slow read.
+- A flaky HTTP transport test (`chatGPTHTTPFallbackDoesNotRetryCallbackFailure`)
+  is stabilized: the local test server now sends an explicit HTTP `.end`
+  terminator before closing the channel, preventing a transport-level close from
+  racing ahead of the final body chunk.
+
 ## [1.2.2] - 2026-08-10
 
 ### Added

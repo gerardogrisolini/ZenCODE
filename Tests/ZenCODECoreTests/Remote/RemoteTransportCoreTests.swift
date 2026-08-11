@@ -1286,8 +1286,15 @@ private func writeSSEPayload(
     )
     var body = context.channel.allocator.buffer(capacity: payload.utf8.count)
     body.writeString(payload)
-    context.writeAndFlush(
+    context.write(
         LocalHTTPResponseHandler.wrapOutboundOut(.body(.byteBuffer(body))),
+        promise: nil
+    )
+    // Send the HTTP response terminator before closing the channel so the
+    // client's body reader observes a clean end-of-stream instead of a
+    // transport-level close that can race ahead of the final body chunk.
+    context.writeAndFlush(
+        LocalHTTPResponseHandler.wrapOutboundOut(.end(nil)),
         promise: nil
     )
     context.close(promise: nil)
