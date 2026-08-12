@@ -17,6 +17,51 @@ struct DirectTaskToolAdapterTests {
     }
 
     @Test
+    func taskBoundSessionReceivesScopedTaskUpdateDescriptionOnly() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "work", title: "Work")]
+        )
+        let receipt = try #require(try await orchestrator.claimTasks(
+            sessionID: "root",
+            claims: [TaskClaim(taskID: "work", agentID: "worker")]
+        ).first)
+        try await orchestrator.registerExecutionScope(
+            executionSessionID: "child",
+            scope: TaskExecutionScope(
+                rootSessionID: "root",
+                graphID: receipt.graphID,
+                taskID: receipt.taskID,
+                attemptID: receipt.attemptID
+            )
+        )
+        let executor = DirectToolExecutor(
+            subAgentContextualBackendFactory:
+                DirectSubAgentRuntime.unavailableContextualBackendFactory
+        )
+        await executor.installTaskOrchestrator(orchestrator)
+
+        let rootDescriptor = try #require(await executor.descriptors(
+            allowedToolNames: ["tasks.update"],
+            sessionID: "root"
+        ).first)
+        let childDescriptor = try #require(await executor.descriptors(
+            allowedToolNames: ["tasks.update"],
+            sessionID: "child"
+        ).first)
+
+        #expect(rootDescriptor.description.contains("Updates task metadata"))
+        #expect(!rootDescriptor.description.contains("As a task-bound sub-agent"))
+        #expect(childDescriptor.description.contains("As a task-bound sub-agent"))
+        #expect(childDescriptor.description.contains("final response is recorded automatically"))
+        #expect(childDescriptor.inputSchema == rootDescriptor.inputSchema)
+    }
+
+    @Test
     func tasksNamespaceIsCanonicalAndSingularNamespaceIsRejected() {
         let advertisedNames = DirectToolCatalog.todoTaskDescriptors
             .map(\.name)

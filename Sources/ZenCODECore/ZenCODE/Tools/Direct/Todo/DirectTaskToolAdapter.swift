@@ -21,6 +21,11 @@ public actor DirectTaskToolAdapter {
         self.orchestrator = orchestrator
     }
 
+    public func isTaskBound(sessionID: String?) async -> Bool {
+        guard let sessionID = sessionID?.nilIfBlank else { return false }
+        return await orchestrator.executionScope(for: sessionID) != nil
+    }
+
     public func execute(
         sessionID: String?,
         toolCall: DirectAgentToolCall

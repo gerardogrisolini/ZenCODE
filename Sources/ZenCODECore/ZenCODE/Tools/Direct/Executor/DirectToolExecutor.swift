@@ -383,7 +383,29 @@ public actor DirectToolExecutor {
                 + lateCoreDescriptors
         )
 
-        return result
+        guard await taskToolAdapter.isTaskBound(sessionID: sessionID) else {
+            return result
+        }
+        return result.map(Self.taskBoundDescriptor)
+    }
+
+    private static func taskBoundDescriptor(
+        _ descriptor: DirectToolDescriptor
+    ) -> DirectToolDescriptor {
+        guard descriptor.name == "tasks.update" else { return descriptor }
+        return DirectToolDescriptor(
+            name: descriptor.name,
+            description: "Reports progress for your assigned task attempt. As a task-bound "
+                + "sub-agent, call this only with your task id and `output` (or `progress`); "
+                + "you may also include `statusReason` and `expectedRevision`. Do not set "
+                + "status, error, evidence, metadata, dependencies, or result fields. Your "
+                + "final response is recorded automatically as the attempt result and lifecycle "
+                + "completion is owned by the runtime.",
+            inputSchema: descriptor.inputSchema,
+            title: descriptor.title,
+            outputSchema: descriptor.outputSchema,
+            presentation: descriptor.presentation
+        )
     }
 
     public func chatCompletionToolPayloads(
