@@ -213,9 +213,6 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
     static let compactionReserveTokenCount = 20_000
 
     let configuration: AgentRuntimeConfiguration
-    /// Historical session value retained for source compatibility. It does not
-    /// select or execute the WebSocket transport.
-    let urlSession: RemoteProviderSession
     let toolExecutor: DirectToolExecutor
     let webSocketPool: ChatGPTSubscriptionWebSocketPool
     let ownsWebSocketPool: Bool
@@ -236,9 +233,6 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
 
     public init(
         configuration: AgentRuntimeConfiguration,
-        /// Historical injection retained while Responses streaming uses only
-        /// the shared NIO transport selected by its WebSocket pool.
-        urlSession: RemoteProviderSession? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
         webSocketPool: ChatGPTSubscriptionWebSocketPool? = nil,
         connectionScopeID: String? = nil,
@@ -249,8 +243,6 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
     ) {
         self.configuration = configuration
-        self.urlSession = urlSession
-            ?? RemoteProviderSessionCompatibility.generationSession()
         self.webSocketPool = webSocketPool ?? ChatGPTSubscriptionWebSocketPool()
         ownsWebSocketPool = webSocketPool == nil
         self.connectionScopeID = connectionScopeID?.nilIfBlank

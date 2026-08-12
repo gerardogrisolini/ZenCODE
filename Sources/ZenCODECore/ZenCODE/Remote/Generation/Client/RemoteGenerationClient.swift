@@ -23,9 +23,6 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
     public let configuration: AgentRuntimeConfiguration
     public let provider: AgentRemoteProvider
     public let apiKey: String?
-    /// Historical session value retained for source compatibility. It does not
-    /// participate in HTTP or SSE I/O.
-    public let urlSession: RemoteProviderSession
     /// The shared HTTP/SSE engine. Its lifetime is owned by the composition
     /// root when an explicitly-owned instance is injected; the default borrows
     /// the process-wide NIO event-loop group.
@@ -48,9 +45,6 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         configuration: AgentRuntimeConfiguration,
         provider: AgentRemoteProvider,
         apiKey: String?,
-        /// Historical injection retained for source compatibility. HTTP/SSE
-        /// generation is always performed by `transport`.
-        urlSession: RemoteProviderSession? = nil,
         transport: RemoteTransportCore? = nil,
         /// A controlled endpoint base override for deterministic embeddings
         /// and loopback tests. Provider capability decisions continue to use
@@ -66,8 +60,6 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         self.configuration = configuration
         self.provider = provider
         self.apiKey = apiKey?.nilIfBlank
-        self.urlSession = urlSession
-            ?? RemoteProviderSessionCompatibility.generationSession()
         let resolvedTransport = transport ?? RemoteTransportCore()
         self.transport = resolvedTransport
         ownsTransport = transport == nil

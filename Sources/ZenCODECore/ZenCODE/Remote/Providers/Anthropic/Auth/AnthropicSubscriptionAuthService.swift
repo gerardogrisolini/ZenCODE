@@ -10,9 +10,6 @@ import ToolCore
 #if canImport(os)
 import os
 #endif
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 #if canImport(CryptoKit)
 import CryptoKit
 #else
@@ -486,26 +483,28 @@ public enum AnthropicSubscriptionAuthService {
         fallbackRefreshToken: String? = nil
     ) async throws -> AnthropicSubscriptionCredentials {
         var lastFailure: AnthropicSubscriptionAuthError?
+        let body = try JSONSerialization.data(withJSONObject: parameters)
         for tokenURL in tokenURLs {
-            var request = URLRequest(url: tokenURL)
-            request.httpMethod = "POST"
-            request.httpBody = try JSONSerialization.data(withJSONObject: parameters)
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let request = RemoteHTTPStreamingRequest(
+                url: tokenURL,
+                method: "POST",
+                headers: [
+                    RemoteHTTPHeader(name: "Content-Type", value: "application/json"),
+                    RemoteHTTPHeader(name: "Accept", value: "application/json")
+                ],
+                body: body
+            )
+            let response = try await RemoteTransportCore().sendRequest(request)
 
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw AnthropicSubscriptionAuthError.invalidTokenResponse
-            }
-            guard (200..<300).contains(httpResponse.statusCode) else {
+            guard (200..<300).contains(response.status) else {
                 lastFailure = AnthropicSubscriptionAuthError.tokenExchangeFailed(
-                    status: httpResponse.statusCode,
-                    body: String(decoding: data, as: UTF8.self)
+                    status: response.status,
+                    body: String(decoding: response.body, as: UTF8.self)
                 )
                 continue
             }
 
-            let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
+            let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: response.body)
             let accessToken = tokenResponse.accessToken
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let refreshToken = tokenResponse.refreshToken?

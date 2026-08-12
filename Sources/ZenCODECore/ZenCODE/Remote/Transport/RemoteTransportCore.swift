@@ -90,6 +90,20 @@ public final class RemoteTransportCore: Sendable {
         )
     }
 
+    /// Single request/response helper: opens an HTTP stream and collects the
+    /// entire response body before returning. Intended for non-streaming JSON
+    /// exchanges such as OAuth token endpoints.
+    public func sendRequest(
+        _ request: RemoteHTTPStreamingRequest
+    ) async throws -> (status: Int, headers: RemoteHTTPHeaders, body: Data) {
+        let response = try await openHTTPStream(request)
+        var body = Data()
+        for try await chunk in response.body {
+            body.append(chunk)
+        }
+        return (response.status, response.headers, body)
+    }
+
     private func openHTTPStreamWithoutTimeout(
         _ request: RemoteHTTPStreamingRequest
     ) async throws -> RemoteHTTPStreamingResponse {
@@ -481,10 +495,6 @@ public final class RemoteTransportCore: Sendable {
         }
     }
 }
-
-/// Convenient alternate spelling for consumers that want the implementation
-/// choice to be visible at their composition root.
-public typealias RemoteNIOTransport = RemoteTransportCore
 
 private struct RemoteTransportEndpoint: Sendable {
     let host: String

@@ -9,9 +9,6 @@ import Foundation
 #if canImport(os)
 import os
 #endif
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 #if canImport(CryptoKit)
 import CryptoKit
 #else
@@ -216,26 +213,28 @@ public enum ChatGPTSubscriptionAuthService {
 
 
     public static func requestDeviceCode() async throws -> ChatGPTSubscriptionDeviceCode {
-        var request = URLRequest(url: deviceCodeURL)
-        request.httpMethod = "POST"
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        let body = try JSONSerialization.data(withJSONObject: [
             "client_id": clientID
         ])
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let request = RemoteHTTPStreamingRequest(
+            url: deviceCodeURL,
+            method: "POST",
+            headers: [
+                RemoteHTTPHeader(name: "Content-Type", value: "application/json"),
+                RemoteHTTPHeader(name: "Accept", value: "application/json")
+            ],
+            body: body
+        )
+        let response = try await RemoteTransportCore().sendRequest(request)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ChatGPTSubscriptionAuthError.deviceCodeResponseInvalid
-        }
-        guard (200..<300).contains(httpResponse.statusCode) else {
+        guard (200..<300).contains(response.status) else {
             throw ChatGPTSubscriptionAuthError.deviceCodeRequestFailed(
-                status: httpResponse.statusCode,
-                body: String(decoding: data, as: UTF8.self)
+                status: response.status,
+                body: String(decoding: response.body, as: UTF8.self)
             )
         }
 
-        return try decodedDeviceCode(from: data)
+        return try decodedDeviceCode(from: response.body)
     }
 
     private static func decodedDeviceCode(
@@ -285,25 +284,27 @@ public enum ChatGPTSubscriptionAuthService {
                 nanoseconds: UInt64(deviceCode.pollInterval) * 1_000_000_000
             )
 
-            var request = URLRequest(url: deviceTokenURL)
-            request.httpMethod = "POST"
-            request.httpBody = try JSONSerialization.data(withJSONObject: [
+            let body = try JSONSerialization.data(withJSONObject: [
                 "device_auth_id": deviceCode.deviceAuthID,
                 "user_code": deviceCode.userCode
             ])
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let request = RemoteHTTPStreamingRequest(
+                url: deviceTokenURL,
+                method: "POST",
+                headers: [
+                    RemoteHTTPHeader(name: "Content-Type", value: "application/json"),
+                    RemoteHTTPHeader(name: "Accept", value: "application/json")
+                ],
+                body: body
+            )
+            let response = try await RemoteTransportCore().sendRequest(request)
 
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ChatGPTSubscriptionAuthError.deviceCodeResponseInvalid
-            }
-            if (200..<300).contains(httpResponse.statusCode) {
+            if (200..<300).contains(response.status) {
                 let responseBody: DeviceAuthorizationResponse
                 do {
                     responseBody = try JSONDecoder().decode(
                         DeviceAuthorizationResponse.self,
-                        from: data
+                        from: response.body
                     )
                 } catch {
                     throw ChatGPTSubscriptionAuthError.deviceCodeResponseInvalid
@@ -314,12 +315,12 @@ public enum ChatGPTSubscriptionAuthService {
                 }
                 return responseBody
             }
-            if httpResponse.statusCode == 403 || httpResponse.statusCode == 404 {
+            if response.status == 403 || response.status == 404 {
                 continue
             }
             throw ChatGPTSubscriptionAuthError.deviceCodePollingFailed(
-                status: httpResponse.statusCode,
-                body: String(decoding: data, as: UTF8.self)
+                status: response.status,
+                body: String(decoding: response.body, as: UTF8.self)
             )
         }
         throw ChatGPTSubscriptionAuthError.deviceCodeTimedOut
@@ -415,28 +416,29 @@ public enum ChatGPTSubscriptionAuthService {
     private static func tokenRequest(
         parameters: [String: String]
     ) async throws -> CodexAgentCredentials {
-        var request = URLRequest(url: tokenURL)
-        request.httpMethod = "POST"
-        request.httpBody = formURLEncodedBody(parameters)
-        request.setValue(
-            "application/x-www-form-urlencoded",
-            forHTTPHeaderField: "Content-Type"
+        let request = RemoteHTTPStreamingRequest(
+            url: tokenURL,
+            method: "POST",
+            headers: [
+                RemoteHTTPHeader(
+                    name: "Content-Type",
+                    value: "application/x-www-form-urlencoded"
+                )
+            ],
+            body: formURLEncodedBody(parameters)
         )
+        let response = try await RemoteTransportCore().sendRequest(request)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ChatGPTSubscriptionAuthError.invalidTokenResponse
-        }
-        guard (200..<300).contains(httpResponse.statusCode) else {
+        guard (200..<300).contains(response.status) else {
             throw ChatGPTSubscriptionAuthError.tokenExchangeFailed(
-                status: httpResponse.statusCode,
-                body: String(decoding: data, as: UTF8.self)
+                status: response.status,
+                body: String(decoding: response.body, as: UTF8.self)
             )
         }
 
         let tokenResponse: TokenResponse
         do {
-            tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
+            tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: response.body)
         } catch {
             throw ChatGPTSubscriptionAuthError.invalidTokenResponse
         }

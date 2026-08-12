@@ -25,4 +25,24 @@ public enum TextUtilities {
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .lowercased()
     }
+
+    /// Normalizes a diff/patch file path: trims whitespace, optionally strips a
+    /// tab-suffix, rejects empty or `/dev/null`, and optionally strips the
+    /// `a/` or `b/` git prefix.
+    public static func normalizedPatchPath(
+        _ rawValue: String,
+        stripGitPrefix: Bool = true,
+        stripTabSuffix: Bool = false
+    ) -> String? {
+        var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if stripTabSuffix, let tab = value.firstIndex(of: "\t") {
+            value = String(value[..<tab]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !value.isEmpty, value != "/dev/null" else { return nil }
+        if stripGitPrefix, value.hasPrefix("a/") || value.hasPrefix("b/") {
+            value = String(value.dropFirst(2))
+        }
+        guard !value.isEmpty, value != "/dev/null" else { return nil }
+        return value
+    }
 }

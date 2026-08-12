@@ -41,9 +41,6 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
 
     public let configuration: AgentRuntimeConfiguration
     public let provider: AgentRemoteProvider
-    /// Historical session value retained for source compatibility. It does not
-    /// participate in message streaming I/O.
-    public let urlSession: RemoteProviderSession
     /// Shared NIO HTTP/SSE transport for Anthropic message generation.
     public let transport: RemoteTransportCore
     let ownsTransport: Bool
@@ -63,9 +60,6 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
     public init(
         configuration: AgentRuntimeConfiguration,
         provider: AgentRemoteProvider,
-        /// Historical injection retained for source compatibility. Anthropic
-        /// message generation always uses `transport`.
-        urlSession: RemoteProviderSession? = nil,
         transport: RemoteTransportCore? = nil,
         /// A controlled final messages endpoint override for deterministic
         /// loopback tests and embedding boundaries.
@@ -79,8 +73,6 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
     ) {
         self.configuration = configuration
         self.provider = provider
-        self.urlSession = urlSession
-            ?? RemoteProviderSessionCompatibility.generationSession()
         let resolvedTransport = transport ?? RemoteTransportCore()
         self.transport = resolvedTransport
         ownsTransport = transport == nil

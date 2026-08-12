@@ -91,7 +91,6 @@ extension ChatGPTSubscriptionGenerationClient {
 
         var client = ChatGPTSubscriptionResponsesClient(
             credentials: credentials,
-            urlSession: urlSession,
             webSocketPool: webSocketPool
         )
         let reasoningEffort = session.thinkingSelection
@@ -310,7 +309,6 @@ extension ChatGPTSubscriptionGenerationClient {
                                 client = ChatGPTSubscriptionResponsesClient(
                                     credentials: credentials,
                                     baseURL: client.baseURL,
-                                    urlSession: urlSession,
                                     webSocketPool: webSocketPool
                                 )
                                 await onEvent(.diagnostic(Self.authRefreshDiagnostic()))

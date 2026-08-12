@@ -313,11 +313,4 @@ extension ChatGPTSubscriptionResponsesClient {
             "cancelled"
         ].contains(status)
     }
-
-    static func normalizedEventType(_ type: String) -> String {
-        type.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: ".", with: "_")
-            .replacingOccurrences(of: "-", with: "_")
-            .lowercased()
-    }
 }

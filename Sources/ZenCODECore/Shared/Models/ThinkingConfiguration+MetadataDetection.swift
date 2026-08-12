@@ -448,6 +448,7 @@ extension ModelThinkingSupport {
             let normalizedKey = normalizedToken(key)
             return normalizedKey == "effort"
                 || normalizedKey == "efforts"
+                || normalizedKey == "supportedefforts"
                 || normalizedKey == "reasoningeffort"
                 || normalizedKey == "reasoningefforts"
                 || normalizedKey == "thinkingeffort"
@@ -482,6 +483,8 @@ extension ModelThinkingSupport {
             let normalizedKey = normalizedToken(key)
             return normalizedKey == "defaultselection"
                 || normalizedKey == "defaultthinkingselection"
+                || normalizedKey == "defaulteffort"
+                || normalizedKey == "defaultreasoningeffort"
                 || normalizedKey == "default"
         }
 

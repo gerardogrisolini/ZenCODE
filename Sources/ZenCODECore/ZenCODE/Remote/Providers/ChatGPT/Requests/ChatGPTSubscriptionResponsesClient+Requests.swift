@@ -219,7 +219,7 @@ extension ChatGPTSubscriptionResponsesClient {
             }
         }
 
-        if RemoteProviderSessionCompatibility.isRetryableLegacyNetworkError(error) {
+        if RemoteNetworkErrorClassifier.isRetryableNetworkError(error) {
             return true
         }
 
@@ -347,7 +347,7 @@ extension ChatGPTSubscriptionResponsesClient {
            case .cancelled = error {
             return true
         }
-        return RemoteProviderSessionCompatibility.isLegacyCancellationError(error)
+        return RemoteNetworkErrorClassifier.isCancellationError(error)
     }
 
     static func isRetryablePOSIXCode(_ code: POSIXErrorCode?) -> Bool {

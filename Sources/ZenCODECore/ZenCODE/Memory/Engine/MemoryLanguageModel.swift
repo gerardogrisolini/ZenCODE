@@ -1,7 +1,4 @@
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 protocol MemoryLanguageModel: Sendable {
     func complete(system: String, user: String) async throws -> String
@@ -21,7 +18,7 @@ struct OpenAICompatibleChatModel: MemoryLanguageModel {
     public let apiKey: String?
     public let extraHeaders: [String: String]
     public let temperature: Double
-    private let session: URLSession
+    private let transport: RemoteTransportCore
 
     public init(
         endpoint: URL,
@@ -29,14 +26,14 @@ struct OpenAICompatibleChatModel: MemoryLanguageModel {
         apiKey: String? = nil,
         extraHeaders: [String: String] = [:],
         temperature: Double = 0,
-        session: URLSession = .shared
+        transport: RemoteTransportCore = RemoteTransportCore()
     ) {
         self.endpoint = endpoint
         self.model = model
         self.apiKey = apiKey
         self.extraHeaders = extraHeaders
         self.temperature = temperature
-        self.session = session
+        self.transport = transport
     }
 
     public func complete(system: String, user: String) async throws -> String {
@@ -54,12 +51,17 @@ struct OpenAICompatibleChatModel: MemoryLanguageModel {
             let choices: [Choice]
         }
 
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let apiKey { request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization") }
-        for (key, value) in extraHeaders { request.setValue(value, forHTTPHeaderField: key) }
-        request.httpBody = try JSONEncoder().encode(
+        var headers = [
+            RemoteHTTPHeader(name: "Content-Type", value: "application/json")
+        ]
+        if let apiKey {
+            headers.append(RemoteHTTPHeader(name: "Authorization", value: "Bearer \(apiKey)"))
+        }
+        for (key, value) in extraHeaders {
+            headers.append(RemoteHTTPHeader(name: key, value: value))
+        }
+
+        let body = try JSONEncoder().encode(
             Request(
                 model: model,
                 messages: [
@@ -70,15 +72,21 @@ struct OpenAICompatibleChatModel: MemoryLanguageModel {
             )
         )
 
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw OpenAICompatibleChatError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else {
+        let request = RemoteHTTPStreamingRequest(
+            url: endpoint,
+            method: "POST",
+            headers: headers,
+            body: body
+        )
+        let response = try await transport.sendRequest(request)
+
+        guard (200..<300).contains(response.status) else {
             throw OpenAICompatibleChatError.httpStatus(
-                http.statusCode,
-                String(data: data, encoding: .utf8) ?? ""
+                response.status,
+                String(data: response.body, encoding: .utf8) ?? ""
             )
         }
-        let decoded = try JSONDecoder().decode(Response.self, from: data)
+        let decoded = try JSONDecoder().decode(Response.self, from: response.body)
         guard let content = decoded.choices.first?.message.content,
               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw OpenAICompatibleChatError.emptyResponse

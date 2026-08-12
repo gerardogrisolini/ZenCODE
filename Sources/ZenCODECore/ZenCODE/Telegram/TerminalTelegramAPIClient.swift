@@ -5,31 +5,43 @@
 
 import Foundation
 import ToolCore
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 /// Abstract HTTP transport for the Telegram API client so the concrete
-/// `URLSession` can be swapped out in tests or replaced with a mock.
+/// transport can be swapped out in tests or replaced with a mock.
 protocol TelegramHTTPTransport: Sendable {
-    func data(for request: URLRequest) async throws -> (Data, URLResponse)
-    func data(from url: URL) async throws -> (Data, URLResponse)
+    func send(
+        url: URL,
+        method: String,
+        headers: [RemoteHTTPHeader],
+        body: Data?,
+        timeout: Duration?
+    ) async throws -> (status: Int, body: Data)
 }
 
-/// Production transport backed by a `URLSession` (defaults to `.shared`).
-struct URLSessionTelegramHTTPTransport: TelegramHTTPTransport {
-    let session: URLSession
+/// Production transport backed by the shared SwiftNIO engine.
+struct NIOTelegramHTTPTransport: TelegramHTTPTransport {
+    let transport: RemoteTransportCore
 
-    init(session: URLSession = .shared) {
-        self.session = session
+    init(transport: RemoteTransportCore = RemoteTransportCore()) {
+        self.transport = transport
     }
 
-    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        try await session.data(for: request)
-    }
-
-    func data(from url: URL) async throws -> (Data, URLResponse) {
-        try await session.data(from: url)
+    func send(
+        url: URL,
+        method: String,
+        headers: [RemoteHTTPHeader],
+        body: Data?,
+        timeout: Duration?
+    ) async throws -> (status: Int, body: Data) {
+        let request = RemoteHTTPStreamingRequest(
+            url: url,
+            method: method,
+            headers: headers,
+            body: body,
+            timeout: timeout
+        )
+        let response = try await transport.sendRequest(request)
+        return (response.status, response.body)
     }
 }
 
@@ -37,7 +49,7 @@ struct TerminalTelegramAPIClient: Sendable {
     let token: String
     let transport: any TelegramHTTPTransport
 
-    init(token: String, transport: any TelegramHTTPTransport = URLSessionTelegramHTTPTransport()) {
+    init(token: String, transport: any TelegramHTTPTransport = NIOTelegramHTTPTransport()) {
         self.token = token
         self.transport = transport
     }
@@ -93,13 +105,18 @@ struct TerminalTelegramAPIClient: Sendable {
             throw TerminalTelegramControlError.unexpectedResponse
         }
 
-        let (data, response) = try await transport.data(from: url)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200..<300).contains(httpResponse.statusCode) else {
+        let response = try await transport.send(
+            url: url,
+            method: "GET",
+            headers: [],
+            body: nil,
+            timeout: nil
+        )
+        guard (200..<300).contains(response.status) else {
             throw TerminalTelegramControlError.unexpectedResponse
         }
         return TerminalTelegramDownloadedFile(
-            data: data,
+            data: response.body,
             filename: URL(fileURLWithPath: filePath).lastPathComponent.nilIfBlank
                 ?? "telegram-voice.oga"
         )
@@ -113,27 +130,25 @@ struct TerminalTelegramAPIClient: Sendable {
             throw TerminalTelegramControlError.invalidToken
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 35
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(body)
-
-        let (data, response) = try await transport.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw TerminalTelegramControlError.unexpectedResponse
-        }
+        let bodyData = try JSONEncoder().encode(body)
+        let response = try await transport.send(
+            url: url,
+            method: "POST",
+            headers: [RemoteHTTPHeader(name: "Content-Type", value: "application/json")],
+            body: bodyData,
+            timeout: .seconds(35)
+        )
 
         let decoded = try JSONDecoder().decode(
             TerminalTelegramAPIResponse<Response>.self,
-            from: data
+            from: response.body
         )
-        guard (200..<300).contains(httpResponse.statusCode),
+        guard (200..<300).contains(response.status),
               decoded.ok,
               let result = decoded.result else {
             throw TerminalTelegramControlError.httpError(
-                httpResponse.statusCode,
-                decoded.description ?? String(validating: data, as: UTF8.self)
+                response.status,
+                decoded.description ?? String(validating: response.body, as: UTF8.self)
             )
         }
         return result

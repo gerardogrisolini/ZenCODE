@@ -190,13 +190,6 @@ extension ChatGPTSubscriptionGenerationClient {
             ?? (object["response"] as? [String: Any]).flatMap(usageObject(from:))
     }
 
-    static func normalizedEventType(_ type: String) -> String {
-        type.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: ".", with: "_")
-            .replacingOccurrences(of: "-", with: "_")
-            .lowercased()
-    }
-
     static func usageObject(from object: [String: Any]) -> [String: Any]? {
         for key in ["usage", "token_usage", "tokenUsage", "tokens"] {
             if let usage = object[key] as? [String: Any] {

@@ -23,3 +23,12 @@ enum ChatGPTSubscriptionStreamEvent: Sendable {
     case contextWindow(DirectAgentContextWindowStatus)
     case completed(stopReason: String?)
 }
+
+/// Normalizes a stream event type string by trimming, replacing separators
+/// with underscores, and lowercasing.
+func normalizedEventType(_ type: String) -> String {
+    type.trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: ".", with: "_")
+        .replacingOccurrences(of: "-", with: "_")
+        .lowercased()
+}

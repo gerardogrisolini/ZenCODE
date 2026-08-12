@@ -7,9 +7,6 @@
 
 import Foundation
 import ToolCore
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 public enum AgentRemoteBackendFactory {
     public static func makeRemoteBackend(
@@ -17,7 +14,6 @@ public enum AgentRemoteBackendFactory {
         mcpRuntime: DirectMCPToolRuntime,
         fallbackProvider: AgentRemoteProvider? = nil,
         fallbackAPIKey: String? = nil,
-        urlSession: URLSession? = nil,
         chatGPTConnectionScopeID: String? = nil,
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil
     ) throws -> any AgentRuntimeBackend {
@@ -27,7 +23,6 @@ public enum AgentRemoteBackendFactory {
             fallbackProvider: fallbackProvider,
             fallbackAPIKey: fallbackAPIKey,
             resolvedModelSelection: nil,
-            urlSession: urlSession,
             chatGPTConnectionScopeID: chatGPTConnectionScopeID,
             swiftFeatureRuntime: swiftFeatureRuntime
         )
@@ -39,7 +34,6 @@ public enum AgentRemoteBackendFactory {
         fallbackProvider: AgentRemoteProvider? = nil,
         fallbackAPIKey: String? = nil,
         resolvedModelSelection: AgentModelSelection?,
-        urlSession: URLSession? = nil,
         chatGPTConnectionScopeID: String? = nil,
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
         sharedChat: AgentSharedChat? = nil,
@@ -93,7 +87,6 @@ public enum AgentRemoteBackendFactory {
         if provider.isChatGPTSubscriptionProvider {
             return ChatGPTSubscriptionGenerationClient(
                 configuration: resolvedConfiguration,
-                urlSession: urlSession,
                 mcpRuntime: mcpRuntime,
                 connectionScopeID: chatGPTConnectionScopeID,
                 swiftFeatureRuntime: swiftFeatureRuntime,
@@ -109,7 +102,6 @@ public enum AgentRemoteBackendFactory {
                         baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
                         modelID: resolvedConfiguration.modelID ?? CodexAgentModel.defaultLLMID
                     ),
-                    urlSession: urlSession,
                     swiftFeatureRuntime: swiftFeatureRuntime
                 )
             )
@@ -119,7 +111,6 @@ public enum AgentRemoteBackendFactory {
             return AnthropicSubscriptionGenerationClient(
                 configuration: resolvedConfiguration,
                 provider: provider,
-                urlSession: urlSession,
                 mcpRuntime: mcpRuntime,
                 swiftFeatureRuntime: swiftFeatureRuntime,
                 sharedChat: sharedChat,
@@ -129,7 +120,6 @@ public enum AgentRemoteBackendFactory {
                     configuration: resolvedConfiguration,
                     mcpRuntime: mcpRuntime,
                     fallbackProvider: provider,
-                    urlSession: urlSession,
                     swiftFeatureRuntime: swiftFeatureRuntime
                 )
             )
@@ -139,7 +129,6 @@ public enum AgentRemoteBackendFactory {
             configuration: resolvedConfiguration,
             provider: provider,
             apiKey: apiKey,
-            urlSession: urlSession,
             mcpRuntime: mcpRuntime,
             swiftFeatureRuntime: swiftFeatureRuntime,
             sharedChat: sharedChat,
@@ -150,7 +139,6 @@ public enum AgentRemoteBackendFactory {
                 mcpRuntime: mcpRuntime,
                 fallbackProvider: provider,
                 fallbackAPIKey: apiKey,
-                urlSession: urlSession,
                 swiftFeatureRuntime: swiftFeatureRuntime
             )
         )
@@ -161,7 +149,6 @@ public enum AgentRemoteBackendFactory {
         mcpRuntime: DirectMCPToolRuntime,
         fallbackProvider: AgentRemoteProvider,
         fallbackAPIKey: String? = nil,
-        urlSession: URLSession? = nil,
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil
     ) -> DirectSubAgentContextualBackendFactory {
         { context in
@@ -194,7 +181,6 @@ public enum AgentRemoteBackendFactory {
                 fallbackProvider: fallbackProvider,
                 fallbackAPIKey: fallbackAPIKey,
                 resolvedModelSelection: modelSelection,
-                urlSession: urlSession,
                 chatGPTConnectionScopeID: UUID().uuidString,
                 swiftFeatureRuntime: context.swiftFeatureRuntime ?? swiftFeatureRuntime,
                 sharedChat: context.sharedChat,

@@ -359,7 +359,7 @@ enum TerminalTelegramToolCallFormatter {
         var candidates: [String] = []
 
         func append(_ value: String, stripGitPrefix: Bool) {
-            let normalized = normalizedPatchPath(value, stripGitPrefix: stripGitPrefix)
+            let normalized = TextUtilities.normalizedPatchPath(value, stripGitPrefix: stripGitPrefix)
             guard let normalized, seen.insert(normalized).inserted else {
                 return
             }
@@ -390,20 +390,6 @@ enum TerminalTelegramToolCallFormatter {
         let value = String(line.dropFirst(prefix.count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
-    }
-
-    private static func normalizedPatchPath(_ rawValue: String, stripGitPrefix: Bool) -> String? {
-        var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty, value != "/dev/null" else {
-            return nil
-        }
-        if stripGitPrefix, (value.hasPrefix("a/") || value.hasPrefix("b/")) {
-            value = String(value.dropFirst(2))
-        }
-        guard !value.isEmpty, value != "/dev/null" else {
-            return nil
-        }
-        return value
     }
 
     // MARK: - Argument access

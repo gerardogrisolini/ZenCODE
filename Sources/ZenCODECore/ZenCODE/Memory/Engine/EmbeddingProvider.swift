@@ -51,8 +51,7 @@ enum OpenAICompatibleEmbeddingError: Error, Sendable {
 ///
 /// Requests are driven through the same shared SwiftNIO transport
 /// (``RemoteTransportCore``) that the generation providers use, so embeddings
-/// share one HTTP/SSE engine, TLS stack, and event-loop group rather than a
-/// separate `URLSession` stack.
+/// share one HTTP/SSE engine, TLS stack, and event-loop group.
 struct OpenAICompatibleEmbeddingProvider: EmbeddingProvider {
     /// Embedding responses are small JSON documents (even for high-dimensional
     /// vectors), so a 1 MiB cap leaves ample room for compatible gateways while

@@ -7,51 +7,39 @@
 
 import Foundation
 import ToolCore
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
 public final class RemoteModelCatalogClient {
-    public static let defaultRequestTimeout: TimeInterval = 60 * 60
-    public static let defaultResourceTimeout: TimeInterval = 60 * 60 * 8
+    let transport: RemoteTransportCore
 
-    let session: URLSession
-    let huggingFaceBaseURL: String
-    let enrichesHuggingFaceMetadata: Bool
-
-    public init(
-        urlSession: URLSession? = nil,
-        huggingFaceBaseURL: String = "https://huggingface.co",
-        enrichesHuggingFaceMetadata: Bool = true
-    ) {
-        self.huggingFaceBaseURL = AgentRemoteProvider.normalizedBaseURL(huggingFaceBaseURL)
-        self.enrichesHuggingFaceMetadata = enrichesHuggingFaceMetadata
-        if let urlSession {
-            self.session = urlSession
-        } else {
-            let configuration = URLSessionConfiguration.default
-            configuration.timeoutIntervalForRequest = Self.defaultRequestTimeout
-            configuration.timeoutIntervalForResource = Self.defaultResourceTimeout
-            self.session = URLSession(configuration: configuration)
-        }
+    public init(transport: RemoteTransportCore = RemoteTransportCore()) {
+        self.transport = transport
     }
 
     public func fetchModels(
         baseURL: String,
         apiKey: String?
     ) async throws -> [OpenRouterModelInfo] {
-        var request = try URLRequest(url: endpointURL(baseURL: baseURL, path: "models"))
-        request.httpMethod = "GET"
-        applyCommonHeaders(to: &request, apiKey: apiKey)
+        let url = try endpointURL(baseURL: baseURL, path: "models")
+        let request = RemoteHTTPStreamingRequest(
+            url: url,
+            method: "GET",
+            headers: commonHeaders(apiKey: apiKey),
+            timeout: .seconds(60 * 60)
+        )
+        let response = try await transport.sendRequest(request)
 
-        let (data, response) = try await session.data(for: request)
-        try validateHTTPResponse(response, data: data)
+        guard (200..<300).contains(response.status) else {
+            throw RemoteModelCatalogClientError.serverError(
+                response.status,
+                decodedServerMessage(from: response.body)
+                    ?? "HTTP \(response.status)"
+            )
+        }
 
-        let catalog = try decodeJSON(RemoteModelCatalogResponse.self, from: data)
-        let models = catalog.data.compactMap { entry in
+        let catalog = try decodeJSON(RemoteModelCatalogResponse.self, from: response.body)
+        return catalog.data.compactMap { entry in
             modelInfo(from: entry, baseURL: baseURL)
         }
-        return try await enrichModelsIfNeeded(models, baseURL: baseURL)
     }
 
     public func fetchModelMetadata(
@@ -199,39 +187,6 @@ extension RemoteModelCatalogClient {
         )
     }
 
-    func enrichModelsIfNeeded(
-        _ models: [OpenRouterModelInfo],
-        baseURL: String
-    ) async throws -> [OpenRouterModelInfo] {
-        guard shouldEnrichWithHuggingFace(baseURL: baseURL) else {
-            return models
-        }
-
-        var enrichedModels: [OpenRouterModelInfo] = []
-        enrichedModels.reserveCapacity(models.count)
-        var metadataByRepositoryID: [String: HuggingFaceModelMetadata] = [:]
-        for model in models {
-            guard model.needsHuggingFaceMetadataEnrichment,
-                  let repositoryID = Self.huggingFaceRepositoryID(from: model.id) else {
-                enrichedModels.append(model)
-                continue
-            }
-
-            let cacheKey = repositoryID.lowercased()
-            let metadata: HuggingFaceModelMetadata?
-            if let cachedMetadata = metadataByRepositoryID[cacheKey] {
-                metadata = cachedMetadata
-            } else {
-                metadata = try await fetchHuggingFaceModelMetadata(repositoryID: repositoryID)
-                if let metadata {
-                    metadataByRepositoryID[cacheKey] = metadata
-                }
-            }
-            enrichedModels.append(model.enriched(with: metadata))
-        }
-        return enrichedModels
-    }
-
     func endpointURL(
         baseURL: String,
         path: String
@@ -243,31 +198,15 @@ extension RemoteModelCatalogClient {
         return url
     }
 
-    func applyCommonHeaders(
-        to request: inout URLRequest,
-        apiKey: String?
-    ) {
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+    private func commonHeaders(apiKey: String?) -> [RemoteHTTPHeader] {
+        var headers = [
+            RemoteHTTPHeader(name: "Accept", value: "application/json"),
+            RemoteHTTPHeader(name: "X-Title", value: "ZenCODE")
+        ]
         if let apiKey = apiKey?.nilIfBlank {
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            headers.append(RemoteHTTPHeader(name: "Authorization", value: "Bearer \(apiKey)"))
         }
-        request.setValue("ZenCODE", forHTTPHeaderField: "X-Title")
-    }
-
-    func validateHTTPResponse(
-        _ response: URLResponse,
-        data: Data
-    ) throws {
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw RemoteModelCatalogClientError.invalidResponse
-        }
-        guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            throw RemoteModelCatalogClientError.serverError(
-                httpResponse.statusCode,
-                decodedServerMessage(from: data)
-                    ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-            )
-        }
+        return headers
     }
 
     func decodeJSON<T: Decodable>(

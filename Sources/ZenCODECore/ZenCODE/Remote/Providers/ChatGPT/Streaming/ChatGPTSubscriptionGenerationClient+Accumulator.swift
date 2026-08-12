@@ -118,7 +118,7 @@ extension ChatGPTSubscriptionGenerationClient {
             }
 
             let normalizedType = (object["type"] as? String)
-                .map(ChatGPTSubscriptionGenerationClient.normalizedEventType) ?? ""
+                .map(normalizedEventType) ?? ""
             switch normalizedType {
             case "response_output_text_delta",
                  "response_content_part_delta":

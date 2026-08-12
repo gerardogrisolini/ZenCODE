@@ -1067,18 +1067,6 @@ public actor AgentCoreSessionRunner {
         await backendToShutdown?.shutdown()
     }
 
-    private func registerActivePromptTask(
-        _ task: Task<Void, Never>,
-        id promptID: UUID,
-        sessionID: String
-    ) {
-        promptTaskRegistry.register(task, id: promptID, sessionID: sessionID)
-    }
-
-    private func cancelPromptTasks(for sessionID: String) {
-        promptTaskRegistry.cancelAll(for: sessionID)
-    }
-
     private func waitForPromptTasks(for sessionID: String) async {
         let tasks = promptTaskRegistry.tasks(for: sessionID)
         for task in tasks {

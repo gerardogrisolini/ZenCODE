@@ -289,10 +289,6 @@ public actor AgentSharedChatCoordinator {
     /// Never reused, so a room recreated under a known id is never mistaken for
     /// the instance an in-flight poll observed.
     private var nextRoomGeneration: UInt64 = 1
-    /// Identity used by the deprecated room-scoped API (see
-    /// `AgentSharedChatCoordinator+Compatibility.swift`): the most recent legacy
-    /// observer of a room, which is the single consumer that API assumed.
-    private var legacyObservations: [String: Observation] = [:]
 
     public init(
         source: Source,
@@ -484,27 +480,6 @@ public actor AgentSharedChatCoordinator {
             stop(roomID: roomID)
         }
         rooms.removeAll()
-        legacyObservations.removeAll()
-    }
-
-    // MARK: - Deprecated room-scoped API support
-
-    /// Records the identity handed out by the deprecated `observe(roomID:)`.
-    func registerLegacyObservation(_ observation: Observation) {
-        legacyObservations[observation.roomID] = observation
-    }
-
-    /// The room's legacy observer, if it is still attached. A detached entry is
-    /// purged instead of being used, so a deprecated call can never act for an
-    /// observer that no longer exists.
-    func legacyObservation(roomID rawRoomID: String) -> Observation? {
-        let roomID = Self.normalizedRoomID(rawRoomID)
-        guard let observation = legacyObservations[roomID] else { return nil }
-        guard rooms[roomID]?.subscribers[observation.id] != nil else {
-            legacyObservations.removeValue(forKey: roomID)
-            return nil
-        }
-        return observation
     }
 
     // MARK: - Busy state

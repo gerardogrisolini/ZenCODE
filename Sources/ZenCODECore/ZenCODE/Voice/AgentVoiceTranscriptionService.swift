@@ -11,8 +11,7 @@ import ToolCore
 import Speech
 #endif
 
-public typealias AgentVoiceToolProgress = @Sendable (String) async -> Void
-public typealias AgentVoiceTranscriptionProgress = AgentVoiceToolProgress
+public typealias AgentVoiceTranscriptionProgress = @Sendable (String) async -> Void
 
 public struct AgentVoiceAudioInput: Equatable, Sendable {
     public let fileURL: URL

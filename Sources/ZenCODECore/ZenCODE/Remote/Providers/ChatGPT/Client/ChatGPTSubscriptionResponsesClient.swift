@@ -90,9 +90,6 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
 
     public let credentials: CodexAgentCredentials
     public let baseURL: URL
-    /// Historical session value retained for source compatibility. It does not
-    /// select or execute WebSocket I/O.
-    public let urlSession: RemoteProviderSession
     public let webSocketPool: ChatGPTSubscriptionWebSocketPool
     private let retrySleep: @Sendable (Int) async throws -> Void
     private let retryDelaySleep: @Sendable (UInt64) async throws -> Void
@@ -109,16 +106,12 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
     public init(
         credentials: CodexAgentCredentials,
         baseURL: URL = URL(string: "https://chatgpt.com/backend-api")!,
-        /// Historical injection retained for source compatibility. WebSocket
-        /// I/O is NIO-only.
-        urlSession: RemoteProviderSession? = nil,
         webSocketPool: ChatGPTSubscriptionWebSocketPool =
             ChatGPTSubscriptionWebSocketPool()
     ) {
         self.init(
             credentials: credentials,
             baseURL: baseURL,
-            urlSession: urlSession,
             webSocketPool: webSocketPool,
             retrySleep: { attempt in
                 try await Self.sleepForRetry(attempt: attempt)
@@ -129,7 +122,6 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
     init(
         credentials: CodexAgentCredentials,
         baseURL: URL,
-        urlSession: RemoteProviderSession? = nil,
         webSocketPool: ChatGPTSubscriptionWebSocketPool,
         retrySleep: @escaping @Sendable (Int) async throws -> Void,
         retryDelaySleep: @escaping @Sendable (UInt64) async throws -> Void = {
@@ -139,8 +131,6 @@ public struct ChatGPTSubscriptionResponsesClient: Sendable {
     ) {
         self.credentials = credentials
         self.baseURL = baseURL
-        self.urlSession = urlSession
-            ?? RemoteProviderSessionCompatibility.generationSession()
         self.webSocketPool = webSocketPool
         self.retrySleep = retrySleep
         self.retryDelaySleep = retryDelaySleep

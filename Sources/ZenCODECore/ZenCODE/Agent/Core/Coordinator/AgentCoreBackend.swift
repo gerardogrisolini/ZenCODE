@@ -58,7 +58,6 @@ public actor AgentCoreBackend {
         mcpRuntime: DirectMCPToolRuntime,
         fallbackProvider: AgentRemoteProvider? = nil,
         fallbackAPIKey: String? = nil,
-        urlSession: URLSession? = nil,
         chatGPTConnectionScopeID: String? = nil,
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil
     ) throws -> any AgentRuntimeBackend {
@@ -67,7 +66,6 @@ public actor AgentCoreBackend {
             mcpRuntime: mcpRuntime,
             fallbackProvider: fallbackProvider,
             fallbackAPIKey: fallbackAPIKey,
-            urlSession: urlSession,
             chatGPTConnectionScopeID: chatGPTConnectionScopeID,
             swiftFeatureRuntime: swiftFeatureRuntime
         )

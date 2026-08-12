@@ -246,7 +246,7 @@ public actor TurnFileChangeTracker {
         let lines = rawPatch.components(separatedBy: "\n")
 
         func appendStripped(_ value: String) {
-            guard let normalized = normalizedPatchPath(value) else {
+            guard let normalized = TextUtilities.normalizedPatchPath(value, stripTabSuffix: true) else {
                 return
             }
             candidates.append(normalized)
@@ -277,19 +277,6 @@ public actor TurnFileChangeTracker {
         return value.isEmpty ? nil : value
     }
 
-    private static func normalizedPatchPath(_ rawValue: String) -> String? {
-        var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let tab = value.firstIndex(of: "\t") {
-            value = String(value[..<tab]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        guard !value.isEmpty, value != "/dev/null" else {
-            return nil
-        }
-        if value.hasPrefix("a/") || value.hasPrefix("b/") {
-            value.removeFirst(2)
-        }
-        return value.isEmpty ? nil : value
-    }
 
     private static func normalizedTrackedToolName(_ name: String) -> String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)

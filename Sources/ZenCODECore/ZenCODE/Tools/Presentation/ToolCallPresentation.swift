@@ -284,7 +284,7 @@ public enum ToolCallPresentation {
         var candidates: [String] = []
 
         func appendStripped(_ value: String) {
-            guard let normalized = normalizedPatchPath(value),
+            guard let normalized = TextUtilities.normalizedPatchPath(value),
                   seen.insert(normalized).inserted else {
                 return
             }
@@ -315,21 +315,6 @@ public enum ToolCallPresentation {
         return value.isEmpty ? nil : value
     }
 
-    private static func normalizedPatchPath(_ rawValue: String) -> String? {
-        var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty,
-              value != "/dev/null" else {
-            return nil
-        }
-        if value.hasPrefix("a/") || value.hasPrefix("b/") {
-            value = String(value.dropFirst(2))
-        }
-        guard !value.isEmpty,
-              value != "/dev/null" else {
-            return nil
-        }
-        return value
-    }
 
     private static func stringArgument(
         _ arguments: [String: Any],
