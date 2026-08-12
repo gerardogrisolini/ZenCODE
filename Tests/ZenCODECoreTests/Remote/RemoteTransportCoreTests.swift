@@ -168,6 +168,97 @@ struct RemoteTransportCoreTests {
         await server.shutdown()
     }
 
+    @Test("HTTP request timeout covers a stalled response body")
+    func httpRequestTimeoutCoversStalledBody() async throws {
+        let server = try await LocalHTTPTestServer.start { context, _ in
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(
+                    .head(HTTPResponseHead(version: .http1_1, status: .ok))
+                ),
+                promise: nil
+            )
+            // Keep the body open after a successful head. `sendRequest` must
+            // still honor its deadline while collecting this body.
+        }
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+
+        do {
+            do {
+                _ = try await transport.sendRequest(
+                    RemoteHTTPStreamingRequest(
+                        url: server.url(path: "/stalled-body"),
+                        timeout: .milliseconds(100)
+                    )
+                )
+                Issue.record("The stalled HTTP response body unexpectedly completed.")
+            } catch let error as RemoteTransportError {
+                #expect(error == .timeout)
+            }
+        } catch {
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            throw error
+        }
+
+        try await transport.shutdown()
+        await server.shutdown()
+    }
+
+    @Test("HTTP request follows bounded redirects and strips credentials cross-origin")
+    func httpRequestRedirectStripsSensitiveHeadersAcrossOrigins() async throws {
+        let receivedHeaders = HTTPHeaderCapture()
+        let destination = try await LocalHTTPTestServer.start { context, head in
+            receivedHeaders.record(head.headers)
+            writeHTTPResponse("redirected", status: .ok, to: context)
+        }
+        let origin = try await LocalHTTPTestServer.start { context, _ in
+            var headers = HTTPHeaders()
+            headers.add(name: "location", value: destination.url(path: "/final").absoluteString)
+            headers.add(name: "content-length", value: "0")
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(
+                    .head(HTTPResponseHead(version: .http1_1, status: .found, headers: headers))
+                ),
+                promise: nil
+            )
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(.end(nil)),
+                promise: nil
+            )
+        }
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+
+        do {
+            let response = try await transport.sendRequest(
+                RemoteHTTPStreamingRequest(
+                    url: origin.url(path: "/redirect"),
+                    headers: [
+                        RemoteHTTPHeader(name: "Authorization", value: "Bearer secret"),
+                        RemoteHTTPHeader(name: "Cookie", value: "session=secret"),
+                        RemoteHTTPHeader(name: "Proxy-Authorization", value: "Basic secret"),
+                        RemoteHTTPHeader(name: "X-Retained", value: "yes")
+                    ]
+                )
+            )
+            #expect(response.status == 200)
+            #expect(response.body == Data("redirected".utf8))
+            let headers = receivedHeaders.value()
+            #expect(headers["authorization"].isEmpty)
+            #expect(headers["cookie"].isEmpty)
+            #expect(headers["proxy-authorization"].isEmpty)
+            #expect(headers.first(name: "x-retained") == "yes")
+        } catch {
+            await transport.shutdownIgnoringError()
+            await origin.shutdown()
+            await destination.shutdown()
+            throw error
+        }
+
+        try await transport.shutdown()
+        await origin.shutdown()
+        await destination.shutdown()
+    }
+
     @Test("WebSocket supports text, binary, ping/pong and close frames")
     func webSocketFramesRoundTripThroughNIO() async throws {
         let server = try await LocalWebSocketTestServer.start()
@@ -1298,6 +1389,43 @@ private func writeSSEPayload(
         promise: nil
     )
     context.close(promise: nil)
+}
+
+private func writeHTTPResponse(
+    _ payload: String,
+    status: HTTPResponseStatus,
+    to context: ChannelHandlerContext
+) {
+    var headers = HTTPHeaders()
+    headers.add(name: "content-length", value: String(payload.utf8.count))
+    context.write(
+        LocalHTTPResponseHandler.wrapOutboundOut(
+            .head(HTTPResponseHead(version: .http1_1, status: status, headers: headers))
+        ),
+        promise: nil
+    )
+    var body = context.channel.allocator.buffer(capacity: payload.utf8.count)
+    body.writeString(payload)
+    context.write(
+        LocalHTTPResponseHandler.wrapOutboundOut(.body(.byteBuffer(body))),
+        promise: nil
+    )
+    context.writeAndFlush(
+        LocalHTTPResponseHandler.wrapOutboundOut(.end(nil)),
+        promise: nil
+    )
+}
+
+private final class HTTPHeaderCapture: Sendable {
+    private let headers = Mutex(HTTPHeaders())
+
+    func record(_ headers: HTTPHeaders) {
+        self.headers.withLock { $0 = headers }
+    }
+
+    func value() -> HTTPHeaders {
+        headers.withLock { $0 }
+    }
 }
 
 private extension RemoteTransportCore {

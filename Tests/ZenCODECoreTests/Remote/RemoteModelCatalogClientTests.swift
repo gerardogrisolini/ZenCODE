@@ -12,6 +12,37 @@ import Testing
 @Suite(.serialized)
 struct RemoteModelCatalogClientTests {
     @Test
+    func modelCatalogRequestAlwaysTargetsOpenRouter() throws {
+        let request = try RemoteModelCatalogClient().modelsRequest(
+            apiKey: "sk-openrouter-test"
+        )
+        let expectedURL = try #require(
+            URL(string: "https://openrouter.ai/api/v1/models")
+        )
+        let providerGenerationURL = try #require(
+            URL(string: "https://integrate.api.nvidia.com/v1/models")
+        )
+        let headers = RemoteHTTPHeaders(request.headers)
+
+        #expect(request.method == "GET")
+        #expect(request.url == expectedURL)
+        #expect(request.url != providerGenerationURL)
+        #expect(headers.firstValue(for: "Authorization") == "Bearer sk-openrouter-test")
+        #expect(
+            RemoteModelCatalogClient.openRouterAPIKey(
+                providerBaseURL: "https://integrate.api.nvidia.com/v1",
+                apiKey: "nvidia-secret"
+            ) == nil
+        )
+        #expect(
+            RemoteModelCatalogClient.openRouterAPIKey(
+                providerBaseURL: AgentRemoteProvider.defaultOpenRouterBaseURL,
+                apiKey: "sk-openrouter-test"
+            ) == "sk-openrouter-test"
+        )
+    }
+
+    @Test
     func detectsThinkingParametersFromRemoteServerModelMetadata() {
         let support = RemoteModelCatalogClient.thinkingSupport(
             fromModelMetadata: [

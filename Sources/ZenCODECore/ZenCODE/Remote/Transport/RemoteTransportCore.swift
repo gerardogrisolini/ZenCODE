@@ -96,12 +96,106 @@ public final class RemoteTransportCore: Sendable {
     public func sendRequest(
         _ request: RemoteHTTPStreamingRequest
     ) async throws -> (status: Int, headers: RemoteHTTPHeaders, body: Data) {
-        let response = try await openHTTPStream(request)
-        var body = Data()
-        for try await chunk in response.body {
-            body.append(chunk)
+        do {
+            if let timeout = request.timeout {
+                return try await Self.withTimeout(timeout) { [self] in
+                    try await sendRequestWithoutTimeout(request)
+                }
+            }
+            return try await sendRequestWithoutTimeout(request)
+        } catch {
+            throw remoteTransportMappedError(error)
         }
-        return (response.status, response.headers, body)
+    }
+
+    /// Non-streaming HTTP requests own the deadline until their complete body
+    /// has been consumed. This deliberately does not use `openHTTPStream`,
+    /// whose timeout covers only opening a pull-driven streaming response.
+    private func sendRequestWithoutTimeout(
+        _ initialRequest: RemoteHTTPStreamingRequest
+    ) async throws -> (status: Int, headers: RemoteHTTPHeaders, body: Data) {
+        var request = initialRequest
+        var redirectCount = 0
+
+        while true {
+            let response = try await openHTTPStreamWithoutTimeout(request)
+            var body = Data()
+            for try await chunk in response.body {
+                body.append(chunk)
+            }
+
+            guard Self.isRedirect(response.status) else {
+                return (response.status, response.headers, body)
+            }
+            guard redirectCount < Self.maximumHTTPRedirects,
+                  let location = response.headers.firstValue(for: "location"),
+                  let url = URL(string: location, relativeTo: request.url)?
+                    .absoluteURL else {
+                throw RemoteTransportError.protocolViolation(
+                    "Invalid or excessive HTTP redirect."
+                )
+            }
+
+            redirectCount += 1
+            request = Self.redirectRequest(
+                request,
+                to: url,
+                status: response.status
+            )
+        }
+    }
+
+    private static let maximumHTTPRedirects = 5
+
+    private static func isRedirect(_ status: Int) -> Bool {
+        switch status {
+        case 301, 302, 303, 307, 308:
+            true
+        default:
+            false
+        }
+    }
+
+    private static func redirectRequest(
+        _ request: RemoteHTTPStreamingRequest,
+        to url: URL,
+        status: Int
+    ) -> RemoteHTTPStreamingRequest {
+        let changesOrigin = !sameOrigin(request.url, url)
+        let rewritesToGET = status == 303 ||
+            ((status == 301 || status == 302) &&
+                !["GET", "HEAD"].contains(request.method.uppercased()))
+        let headers = request.headers.filter { header in
+            let name = header.name.lowercased()
+            if name == "host" {
+                return false
+            }
+            if changesOrigin && ["authorization", "cookie", "proxy-authorization"].contains(name) {
+                return false
+            }
+            if rewritesToGET && ["content-length", "content-type", "transfer-encoding"].contains(name) {
+                return false
+            }
+            return true
+        }
+        return RemoteHTTPStreamingRequest(
+            url: url,
+            method: rewritesToGET ? "GET" : request.method,
+            headers: headers,
+            body: rewritesToGET ? nil : request.body,
+            timeout: nil,
+            tls: request.tls
+        )
+    }
+
+    private static func sameOrigin(_ lhs: URL, _ rhs: URL) -> Bool {
+        guard let lhsEndpoint = try? RemoteTransportEndpoint(httpURL: lhs),
+              let rhsEndpoint = try? RemoteTransportEndpoint(httpURL: rhs) else {
+            return false
+        }
+        return lhsEndpoint.isSecure == rhsEndpoint.isSecure &&
+            lhsEndpoint.host.caseInsensitiveCompare(rhsEndpoint.host) == .orderedSame &&
+            lhsEndpoint.port == rhsEndpoint.port
     }
 
     private func openHTTPStreamWithoutTimeout(

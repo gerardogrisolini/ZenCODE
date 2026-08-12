@@ -11,21 +11,19 @@ import ToolCore
 public final class RemoteModelCatalogClient {
     let transport: RemoteTransportCore
 
+    /// The model catalog is authoritative at OpenRouter, independently of the
+    /// provider endpoint used later for generation.
+    public static let openRouterCatalogBaseURL = AgentRemoteProvider.defaultOpenRouterBaseURL
+
     public init(transport: RemoteTransportCore = RemoteTransportCore()) {
         self.transport = transport
     }
 
+    /// Fetches the authoritative OpenRouter model catalog.
     public func fetchModels(
-        baseURL: String,
         apiKey: String?
     ) async throws -> [OpenRouterModelInfo] {
-        let url = try endpointURL(baseURL: baseURL, path: "models")
-        let request = RemoteHTTPStreamingRequest(
-            url: url,
-            method: "GET",
-            headers: commonHeaders(apiKey: apiKey),
-            timeout: .seconds(60 * 60)
-        )
+        let request = try modelsRequest(apiKey: apiKey)
         let response = try await transport.sendRequest(request)
 
         guard (200..<300).contains(response.status) else {
@@ -38,8 +36,22 @@ public final class RemoteModelCatalogClient {
 
         let catalog = try decodeJSON(RemoteModelCatalogResponse.self, from: response.body)
         return catalog.data.compactMap { entry in
-            modelInfo(from: entry, baseURL: baseURL)
+            modelInfo(from: entry, baseURL: Self.openRouterCatalogBaseURL)
         }
+    }
+
+    /// Compatibility entry point for callers that still carry a provider
+    /// generation URL. The catalog origin is intentionally not derived from it.
+    public func fetchModels(
+        baseURL: String,
+        apiKey: String?
+    ) async throws -> [OpenRouterModelInfo] {
+        try await fetchModels(
+            apiKey: Self.openRouterAPIKey(
+                providerBaseURL: baseURL,
+                apiKey: apiKey
+            )
+        )
     }
 
     public func fetchModelMetadata(
@@ -62,6 +74,25 @@ public final class RemoteModelCatalogClient {
                 generationParameterOverrides: model.generationParameterOverrides
             )
         }
+    }
+
+    static func openRouterAPIKey(
+        providerBaseURL: String,
+        apiKey: String?
+    ) -> String? {
+        AgentRemoteProvider.isOpenRouterBaseURL(providerBaseURL) ? apiKey : nil
+    }
+
+    func modelsRequest(apiKey: String?) throws -> RemoteHTTPStreamingRequest {
+        RemoteHTTPStreamingRequest(
+            url: try endpointURL(
+                baseURL: Self.openRouterCatalogBaseURL,
+                path: "models"
+            ),
+            method: "GET",
+            headers: commonHeaders(apiKey: apiKey),
+            timeout: .seconds(60 * 60)
+        )
     }
 
     static func thinkingSupport(
