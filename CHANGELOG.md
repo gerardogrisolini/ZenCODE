@@ -10,6 +10,27 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-08-13
+
+### Changed
+
+- Remote model discovery now queries each configured OpenAI-compatible provider
+  directly, while OpenRouter metadata is merged separately when available to
+  preserve context-length and thinking-capability details.
+- Shared JSON, hashing, direct-tool argument parsing, and network-error helpers
+  replace duplicated compatibility layers, removing obsolete runtime code while
+  preserving existing public behavior.
+
+### Fixed
+
+- Task-bound sub-agents now receive accurate `tasks.update` guidance and can
+  report progress without attempting lifecycle mutations owned by the runtime.
+- Non-streaming HTTP requests now retain their timeout through complete body
+  consumption, follow bounded redirects safely, and strip sensitive headers on
+  cross-origin redirects.
+- Remote model selection keeps provider results authoritative while enriching
+  matching entries with OpenRouter metadata without exposing provider API keys.
+
 ## [1.2.3] - 2026-08-11
 
 ### Changed
@@ -627,8 +648,11 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.4...HEAD
+[1.2.4]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.3...v1.2.4
+[1.2.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.1...v1.2.2
+[1.2.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.4...v1.2.0
 [1.1.4]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.1.2...v1.1.3
