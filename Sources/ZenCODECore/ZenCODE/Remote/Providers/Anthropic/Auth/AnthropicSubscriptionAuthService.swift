@@ -10,11 +10,6 @@ import ToolCore
 #if canImport(os)
 import os
 #endif
-#if canImport(CryptoKit)
-import CryptoKit
-#else
-import Crypto
-#endif
 #if canImport(Security)
 import Security
 #endif
@@ -431,7 +426,7 @@ public enum AnthropicSubscriptionAuthService {
         url: URL
     ) {
         let verifier = try randomBase64URLString(byteCount: 32)
-        let challenge = sha256Base64URL(verifier)
+        let challenge = verifier.sha256Base64URL()
         // Anthropic's Claude Code OAuth flow uses the verifier as the state value.
         let state = verifier
 
@@ -555,10 +550,6 @@ public enum AnthropicSubscriptionAuthService {
         return Data(bytes).base64URLEncodedString()
     }
 
-    private static func sha256Base64URL(_ value: String) -> String {
-        let digest = SHA256.hash(data: Data(value.utf8))
-        return Data(digest).base64URLEncodedString()
-    }
 }
 
 private actor AnthropicSubscriptionRefreshCoordinator {

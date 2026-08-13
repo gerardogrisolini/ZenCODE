@@ -153,7 +153,7 @@ public struct ProjectContextFileService {
         }
 
         for line in markdown.components(separatedBy: .newlines) {
-            if let heading = headingTitle(from: line) {
+            if let heading = line.markdownHeadingTitle() {
                 flush()
                 currentTitle = heading
             } else {
@@ -204,25 +204,6 @@ public struct ProjectContextFileService {
         }
 
         return document
-    }
-
-    private static func headingTitle(from line: String) -> String? {
-        let trimmedLine = line.trimmingCharacters(in: .whitespaces)
-        guard trimmedLine.hasPrefix("#") else {
-            return nil
-        }
-
-        let markerCount = trimmedLine.prefix { $0 == "#" }.count
-        guard markerCount > 0,
-              markerCount <= 3,
-              trimmedLine.dropFirst(markerCount).first == " " else {
-            return nil
-        }
-
-        let title = trimmedLine
-            .dropFirst(markerCount)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return title.isEmpty ? nil : title
     }
 
     public static func digest(_ value: String) -> String {

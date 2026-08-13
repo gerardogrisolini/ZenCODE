@@ -25,7 +25,7 @@ enum MemoryGraphLocation {
     /// directory shared by every workspace on the machine.
     static func workspaceDigest(for workspaceRootURL: URL) -> String {
         let path = workspaceRootURL.standardizedFileURL.path
-        return sha256Hex(Data(path.utf8))
+        return Data(path.utf8).sha256Hex()
     }
 
     static func graphDirectoryURL(

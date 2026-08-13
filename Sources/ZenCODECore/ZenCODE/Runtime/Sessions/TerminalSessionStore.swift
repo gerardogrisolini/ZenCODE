@@ -309,12 +309,12 @@ public enum TerminalSessionStore {
     /// sanitized spelling (for example, `review/a` and `review:a`).
     public static func filenameHash(for name: String) -> String {
         let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return String(sha256Hex(Data(normalizedName.utf8)).prefix(24))
+        return String(Data(normalizedName.utf8).sha256Hex().prefix(24))
     }
 
     public static func projectKey(for workingDirectory: URL) -> String {
         let path = normalizedWorkingDirectoryPath(workingDirectory)
-        return sha256Hex(Data(path.utf8))
+        return Data(path.utf8).sha256Hex()
     }
 
     public static func normalizedWorkingDirectoryPath(_ workingDirectory: URL) -> String {

@@ -291,6 +291,6 @@ public struct SessionTaskGraphStore: Sendable {
     }
 
     private static func key(for value: String) -> String {
-        sha256Hex(Data(value.utf8))
+        Data(value.utf8).sha256Hex()
     }
 }

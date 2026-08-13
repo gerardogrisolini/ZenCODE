@@ -222,7 +222,7 @@ public final class AgentsContextService {
 
         for line in content.components(separatedBy: .newlines) {
             let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let headingTitle = Self.headingTitle(from: trimmedLine) {
+            if let headingTitle = trimmedLine.markdownHeadingTitle() {
                 let normalizedHeading = Self.normalizedHeading(headingTitle)
                 if normalizedHeading == "agents-md" {
                     skippingRuntimeOnlySection = false
@@ -243,25 +243,6 @@ public final class AgentsContextService {
 
         return Self.collapsedBlankLines(in: filteredLines.joined(separator: "\n"))
             .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private static func headingTitle(from line: String) -> String? {
-        let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmedLine.hasPrefix("#") else {
-            return nil
-        }
-
-        let markerCount = trimmedLine.prefix { $0 == "#" }.count
-        guard markerCount > 0,
-              markerCount <= 3,
-              trimmedLine.dropFirst(markerCount).first == " " else {
-            return nil
-        }
-
-        let title = trimmedLine
-            .dropFirst(markerCount)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return title.isEmpty ? nil : title
     }
 
     private static func normalizedHeading(_ heading: String) -> String {

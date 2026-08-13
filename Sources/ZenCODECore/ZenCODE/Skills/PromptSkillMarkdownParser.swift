@@ -384,7 +384,7 @@ public enum PromptSkillMarkdownParser {
     }
 
     private static func hash(_ value: String) -> String {
-        sha256Hex(Data(value.utf8))
+        Data(value.utf8).sha256Hex()
     }
 
     private static func isSetextHeadingUnderline(_ rawLine: String) -> Bool {

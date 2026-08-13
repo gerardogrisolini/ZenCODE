@@ -8,11 +8,6 @@
 import Foundation
 import Synchronization
 import ToolCore
-#if canImport(CryptoKit)
-import CryptoKit
-#else
-import Crypto
-#endif
 #if canImport(os)
 import os
 #endif
@@ -133,9 +128,8 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         /// every on-disk key a fixed size and avoiding prompt text in the
         /// preferences plist.
         var promptCachePersistenceKey: String {
-            let digest = SHA256.hash(data: promptCacheIdentityData)
             return Self.promptCachePersistenceKeyPrefix
-                + digest.map { String(format: "%02x", $0) }.joined()
+            + promptCacheIdentityData.sha256Hex()
         }
 
         static func isPromptCachePersistenceKey(_ value: String) -> Bool {
