@@ -40,18 +40,27 @@ public final class RemoteModelCatalogClient {
         }
     }
 
-    /// Compatibility entry point for callers that still carry a provider
-    /// generation URL. The catalog origin is intentionally not derived from it.
+    /// Fetches the model list exposed by the configured OpenAI-compatible
+    /// provider. OpenRouter remains a separate metadata catalog.
     public func fetchModels(
         baseURL: String,
         apiKey: String?
     ) async throws -> [OpenRouterModelInfo] {
-        try await fetchModels(
-            apiKey: Self.openRouterAPIKey(
-                providerBaseURL: baseURL,
-                apiKey: apiKey
+        let request = try modelsRequest(baseURL: baseURL, apiKey: apiKey)
+        let response = try await transport.sendRequest(request)
+
+        guard (200..<300).contains(response.status) else {
+            throw RemoteModelCatalogClientError.serverError(
+                response.status,
+                decodedServerMessage(from: response.body)
+                    ?? "HTTP \(response.status)"
             )
-        )
+        }
+
+        let catalog = try decodeJSON(RemoteModelCatalogResponse.self, from: response.body)
+        return catalog.data.compactMap { entry in
+            modelInfo(from: entry, baseURL: baseURL)
+        }
     }
 
     public func fetchModelMetadata(
@@ -64,7 +73,12 @@ public final class RemoteModelCatalogClient {
             return nil
         }
 
-        return try await fetchModels(baseURL: baseURL, apiKey: apiKey).first {
+        return try await fetchModels(
+            apiKey: Self.openRouterAPIKey(
+                providerBaseURL: baseURL,
+                apiKey: apiKey
+            )
+        ).first {
             AgentRemoteProvider.normalizedModelID($0.id).lowercased() == normalizedModelID
         }.map { model in
             OpenRouterModelMetadata(
@@ -84,9 +98,19 @@ public final class RemoteModelCatalogClient {
     }
 
     func modelsRequest(apiKey: String?) throws -> RemoteHTTPStreamingRequest {
+        try modelsRequest(
+            baseURL: Self.openRouterCatalogBaseURL,
+            apiKey: apiKey
+        )
+    }
+
+    func modelsRequest(
+        baseURL: String,
+        apiKey: String?
+    ) throws -> RemoteHTTPStreamingRequest {
         RemoteHTTPStreamingRequest(
             url: try endpointURL(
-                baseURL: Self.openRouterCatalogBaseURL,
+                baseURL: baseURL,
                 path: "models"
             ),
             method: "GET",

@@ -219,7 +219,12 @@ extension ZenCODESetupRunner {
         }
 
         let selectedModels = try selectRemoteModels(from: catalogModels)
-        let manifests = selectedModels.map {
+        let enrichedModels = try await enrichModelsWithOpenRouterMetadata(
+            selectedModels,
+            providerBaseURL: baseURL,
+            apiKey: apiKey
+        )
+        let manifests = enrichedModels.map {
             remoteModelManifest(
                 from: $0,
                 providerID: providerID,
@@ -236,6 +241,74 @@ extension ZenCODESetupRunner {
 
     static func normalizedRemoteModelID(_ modelID: String) -> String {
         AgentRemoteProvider.normalizedModelID(modelID).lowercased()
+    }
+
+    static func enrichModelsWithOpenRouterMetadata(
+        _ models: [OpenRouterModelInfo],
+        providerBaseURL: String,
+        apiKey: String?
+    ) async throws -> [OpenRouterModelInfo] {
+        try await enrichModelsWithOpenRouterMetadata(
+            models,
+            providerBaseURL: providerBaseURL,
+            apiKey: apiKey
+        ) {
+            try await RemoteModelCatalogClient().fetchModels(
+                apiKey: RemoteModelCatalogClient.openRouterAPIKey(
+                    providerBaseURL: providerBaseURL,
+                    apiKey: apiKey
+                )
+            )
+        }
+    }
+
+    static func enrichModelsWithOpenRouterMetadata(
+        _ models: [OpenRouterModelInfo],
+        providerBaseURL: String,
+        apiKey: String?,
+        catalogLoader: @escaping @Sendable () async throws -> [OpenRouterModelInfo]
+    ) async throws -> [OpenRouterModelInfo] {
+        guard !models.isEmpty else {
+            return models
+        }
+
+        do {
+            let catalog = try await catalogLoader()
+            let metadataByID = Dictionary(
+                catalog.map { (normalizedRemoteModelID($0.id), $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            return models.map { model in
+                guard let metadata = metadataByID[normalizedRemoteModelID(model.id)] else {
+                    return model
+                }
+                return modelMergingOpenRouterMetadata(model, metadata: metadata)
+            }
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            AgentOutput.standardError.writeString(
+                "Unable to load OpenRouter model metadata: \(error.localizedDescription)\n"
+            )
+            return models
+        }
+    }
+
+    static func modelMergingOpenRouterMetadata(
+        _ model: OpenRouterModelInfo,
+        metadata: OpenRouterModelInfo
+    ) -> OpenRouterModelInfo {
+        OpenRouterModelInfo(
+            id: model.id,
+            name: model.name,
+            contextLength: metadata.contextLength ?? model.contextLength,
+            pricing: model.pricing,
+            thinkingSupport: metadata.thinkingSupport ?? model.thinkingSupport,
+            generationParameterOverrides: model.generationParameterOverrides,
+            installed: model.installed,
+            loaded: model.loaded,
+            serverLoaded: model.serverLoaded
+        )
     }
 
     static func modelWithProvider(
@@ -421,7 +494,12 @@ extension ZenCODESetupRunner {
 
             if !catalogModels.isEmpty {
                 let selectedModels = try selectRemoteModels(from: catalogModels)
-                let manifests = selectedModels.map {
+                let enrichedModels = try await enrichModelsWithOpenRouterMetadata(
+                    selectedModels,
+                    providerBaseURL: baseURL,
+                    apiKey: apiKey
+                )
+                let manifests = enrichedModels.map {
                     remoteModelManifest(
                         from: $0,
                         providerID: providerID,

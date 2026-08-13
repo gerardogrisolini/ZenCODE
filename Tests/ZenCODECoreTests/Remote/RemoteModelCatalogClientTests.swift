@@ -12,22 +12,21 @@ import Testing
 @Suite(.serialized)
 struct RemoteModelCatalogClientTests {
     @Test
-    func modelCatalogRequestAlwaysTargetsOpenRouter() throws {
+    func providerModelCatalogRequestTargetsConfiguredProvider() throws {
         let request = try RemoteModelCatalogClient().modelsRequest(
-            apiKey: "sk-openrouter-test"
+            baseURL: "https://integrate.api.nvidia.com/v1",
+            apiKey: "nvidia-secret"
         )
-        let expectedURL = try #require(
-            URL(string: "https://openrouter.ai/api/v1/models")
-        )
+        let expectedURL = try #require(URL(string: "https://integrate.api.nvidia.com/v1/models"))
         let providerGenerationURL = try #require(
-            URL(string: "https://integrate.api.nvidia.com/v1/models")
+            URL(string: "https://openrouter.ai/api/v1/models")
         )
         let headers = RemoteHTTPHeaders(request.headers)
 
         #expect(request.method == "GET")
         #expect(request.url == expectedURL)
         #expect(request.url != providerGenerationURL)
-        #expect(headers.firstValue(for: "Authorization") == "Bearer sk-openrouter-test")
+        #expect(headers.firstValue(for: "Authorization") == "Bearer nvidia-secret")
         #expect(
             RemoteModelCatalogClient.openRouterAPIKey(
                 providerBaseURL: "https://integrate.api.nvidia.com/v1",
@@ -40,6 +39,178 @@ struct RemoteModelCatalogClientTests {
                 apiKey: "sk-openrouter-test"
             ) == "sk-openrouter-test"
         )
+    }
+
+    @Test
+    func openRouterMetadataCatalogRequestTargetsOpenRouter() throws {
+        let request = try RemoteModelCatalogClient().modelsRequest(apiKey: nil)
+        let expectedURL = try #require(URL(string: "https://openrouter.ai/api/v1/models"))
+
+        #expect(request.method == "GET")
+        #expect(request.url == expectedURL)
+        #expect(RemoteHTTPHeaders(request.headers).firstValue(for: "Authorization") == nil)
+    }
+
+    @Test
+    func mergingOpenRouterMetadataRetainsProviderValuesWhenCatalogIsSparse() {
+        let providerModel = OpenRouterModelInfo(
+            id: "provider/model",
+            name: "Provider Model",
+            contextLength: 32_768,
+            pricing: OpenRouterModelPricing(prompt: 0.001, completion: 0.002),
+            thinkingSupport: .generic,
+            generationParameterOverrides: AgentGenerationParameterOverrides(
+                maxTokens: 321,
+                temperature: 0.2
+            ),
+            installed: true,
+            loaded: false,
+            serverLoaded: true
+        )
+        let sparseCatalogModel = OpenRouterModelInfo(
+            id: "provider/model",
+            name: "Catalog Model",
+            contextLength: nil,
+            pricing: OpenRouterModelPricing(prompt: 0.003, completion: 0.004),
+            generationParameterOverrides: AgentGenerationParameterOverrides(maxTokens: 123)
+        )
+
+        let merged = ZenCODESetupRunner.modelMergingOpenRouterMetadata(
+            providerModel,
+            metadata: sparseCatalogModel
+        )
+
+        #expect(merged.id == providerModel.id)
+        #expect(merged.name == providerModel.name)
+        #expect(merged.contextLength == 32_768)
+        #expect(merged.pricing == providerModel.pricing)
+        #expect(merged.thinkingSupport == .generic)
+        #expect(merged.generationParameterOverrides == providerModel.generationParameterOverrides)
+        #expect(merged.installed == true)
+        #expect(merged.loaded == false)
+        #expect(merged.serverLoaded == true)
+    }
+
+    @Test
+    func enrichingOpenRouterMetadataPropagatesCancellation() async {
+        let providerModel = OpenRouterModelInfo(
+            id: "provider/model",
+            name: "Provider Model",
+            contextLength: 32_768,
+            pricing: nil
+        )
+
+        do {
+            _ = try await ZenCODESetupRunner.enrichModelsWithOpenRouterMetadata(
+                [providerModel],
+                providerBaseURL: "https://provider.example/v1",
+                apiKey: nil,
+                catalogLoader: {
+                    throw CancellationError()
+                }
+            )
+            Issue.record("Expected OpenRouter metadata cancellation to propagate.")
+        } catch is CancellationError {
+            // Expected: cancellation must not be converted into a provider fallback.
+        } catch {
+            Issue.record("Unexpected error for cancellation: \(error)")
+        }
+    }
+
+    @Test
+    func enrichingOpenRouterMetadataFallsBackToProviderModelsForOtherErrors() async throws {
+        let providerModel = OpenRouterModelInfo(
+            id: "provider/model",
+            name: "Provider Model",
+            contextLength: 32_768,
+            pricing: OpenRouterModelPricing(prompt: 0.001, completion: 0.002),
+            thinkingSupport: .generic,
+            generationParameterOverrides: AgentGenerationParameterOverrides(maxTokens: 321),
+            installed: true,
+            loaded: false,
+            serverLoaded: true
+        )
+
+        let enriched = try await ZenCODESetupRunner.enrichModelsWithOpenRouterMetadata(
+            [providerModel],
+            providerBaseURL: "https://provider.example/v1",
+            apiKey: nil,
+            catalogLoader: {
+                throw MetadataCatalogError.unavailable
+            }
+        )
+
+        #expect(enriched == [providerModel])
+    }
+
+    @Test
+    func enrichingOpenRouterMetadataMergesCatalogContextWithoutReplacingProviderFields() async throws {
+        let providerModel = OpenRouterModelInfo(
+            id: "provider/model",
+            name: "Provider Model",
+            contextLength: nil,
+            pricing: OpenRouterModelPricing(prompt: 0.001, completion: 0.002),
+            thinkingSupport: nil,
+            generationParameterOverrides: AgentGenerationParameterOverrides(maxTokens: 321),
+            installed: true,
+            loaded: false,
+            serverLoaded: true
+        )
+        let catalogModel = OpenRouterModelInfo(
+            id: "provider/model",
+            name: "Catalog Model",
+            contextLength: 131_072,
+            pricing: OpenRouterModelPricing(prompt: 0.003, completion: 0.004),
+            thinkingSupport: .generic,
+            generationParameterOverrides: AgentGenerationParameterOverrides(maxTokens: 123),
+            installed: false,
+            loaded: true,
+            serverLoaded: false
+        )
+
+        let enriched = try await ZenCODESetupRunner.enrichModelsWithOpenRouterMetadata(
+            [providerModel],
+            providerBaseURL: "https://provider.example/v1",
+            apiKey: nil,
+            catalogLoader: { [catalogModel] in
+                [catalogModel]
+            }
+        )
+
+        let merged = try #require(enriched.first)
+        #expect(merged.contextLength == catalogModel.contextLength)
+        #expect(merged.thinkingSupport == catalogModel.thinkingSupport)
+        #expect(merged.pricing == providerModel.pricing)
+        #expect(merged.generationParameterOverrides == providerModel.generationParameterOverrides)
+        #expect(merged.installed == providerModel.installed)
+        #expect(merged.loaded == providerModel.loaded)
+        #expect(merged.serverLoaded == providerModel.serverLoaded)
+    }
+
+    @Test
+    func mergingOpenRouterMetadataEnrichesContextAndThinking() {
+        let providerModel = OpenRouterModelInfo(
+            id: "provider/model",
+            name: "Provider Model",
+            contextLength: nil,
+            pricing: nil
+        )
+        let catalogThinking = ModelThinkingSupport.effort(levels: [.low, .high])
+        let catalogModel = OpenRouterModelInfo(
+            id: "provider/model",
+            name: "Catalog Model",
+            contextLength: 131_072,
+            pricing: nil,
+            thinkingSupport: catalogThinking
+        )
+
+        let merged = ZenCODESetupRunner.modelMergingOpenRouterMetadata(
+            providerModel,
+            metadata: catalogModel
+        )
+
+        #expect(merged.contextLength == 131_072)
+        #expect(merged.thinkingSupport == catalogThinking)
     }
 
     @Test
@@ -170,4 +341,8 @@ struct RemoteModelCatalogClientTests {
 
         #expect(provider.requiresAPIKey)
     }
+}
+
+private enum MetadataCatalogError: Error {
+    case unavailable
 }
