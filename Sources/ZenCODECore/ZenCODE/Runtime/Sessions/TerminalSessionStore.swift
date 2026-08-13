@@ -5,7 +5,6 @@
 //  Created by Gerardo Grisolini on 30/05/26.
 //
 
-import Crypto
 import Foundation
 import ToolCore
 
@@ -310,16 +309,12 @@ public enum TerminalSessionStore {
     /// sanitized spelling (for example, `review/a` and `review:a`).
     public static func filenameHash(for name: String) -> String {
         let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return SHA256.hash(data: Data(normalizedName.utf8))
-            .prefix(12)
-            .map { String(format: "%02x", $0) }
-            .joined()
+        return String(sha256Hex(Data(normalizedName.utf8)).prefix(24))
     }
 
     public static func projectKey(for workingDirectory: URL) -> String {
         let path = normalizedWorkingDirectoryPath(workingDirectory)
-        let digest = SHA256.hash(data: Data(path.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        return sha256Hex(Data(path.utf8))
     }
 
     public static func normalizedWorkingDirectoryPath(_ workingDirectory: URL) -> String {

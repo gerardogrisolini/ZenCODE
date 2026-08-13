@@ -71,23 +71,14 @@ extension DirectTodoRuntime {
         _ keys: [String],
         in arguments: [String: JSONValue]
     ) -> [JSONValue]? {
-        for key in keys {
-            guard let value = arguments[key] else { continue }
-            switch value {
-            case let .array(values): return values
-            case let .object(object): return [.object(object)]
-            default: continue
-            }
-        }
-        return nil
+        DirectArgumentValues.firstArray(keys, in: arguments)
     }
 
     public static func firstString(
         _ keys: [String],
         in arguments: [String: JSONValue]
     ) -> String? {
-        for key in keys {
-            guard let value = arguments[key] else { continue }
+        DirectArgumentValues.firstString(keys, in: arguments) { value in
             switch value {
             case let .string(string): return string
             case let .number(number):
@@ -98,32 +89,22 @@ extension DirectTodoRuntime {
                 }
                 return String(number)
             case let .bool(bool): return bool ? "true" : "false"
-            default: continue
+            default: return nil
             }
         }
-        return nil
     }
 
     public static func firstStringList(
         _ keys: [String],
         in arguments: [String: JSONValue]
     ) -> [String]? {
-        for key in keys {
-            guard let value = arguments[key] else { continue }
+        DirectArgumentValues.firstStringList(keys, in: arguments) { value in
             switch value {
-            case let .array(values):
-                return values.compactMap { value in
-                    switch value {
-                    case let .string(string): return string
-                    case let .number(number): return String(number)
-                    default: return nil
-                    }
-                }
-            case let .string(string): return [string]
-            default: continue
+            case let .string(string): return string
+            case let .number(number): return String(number)
+            default: return nil
             }
         }
-        return nil
     }
 
     public static func firstBool(

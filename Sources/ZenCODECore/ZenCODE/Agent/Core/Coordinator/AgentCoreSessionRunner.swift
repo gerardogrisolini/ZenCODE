@@ -167,16 +167,10 @@ public actor AgentCoreSessionRunner {
         localExecAccessModeState = .standard
     }
 
-    public func createSession(
+    private func createBackendSession(
+        _ backend: AgentCoreBackend,
         configuration: AgentCoreSessionConfiguration
-    ) async throws {
-        try await taskOrchestrator.registerSession(
-            id: configuration.sessionID,
-            workingDirectory: URL(fileURLWithPath: configuration.workingDirectoryPath)
-        )
-        _ = ensurePromptSkillProvider(sessionID: configuration.sessionID)
-        let backend = try await ensureBackend(configuration: configuration)
-        let generation = backendGeneration
+    ) async {
         await backend.createSession(
             id: configuration.sessionID,
             cwd: configuration.workingDirectoryPath,
@@ -188,6 +182,19 @@ public actor AgentCoreSessionRunner {
             thinkingSelection: configuration.thinkingSelection,
             preserveThinking: configuration.preserveThinking
         )
+    }
+
+    public func createSession(
+        configuration: AgentCoreSessionConfiguration
+    ) async throws {
+        try await taskOrchestrator.registerSession(
+            id: configuration.sessionID,
+            workingDirectory: URL(fileURLWithPath: configuration.workingDirectoryPath)
+        )
+        _ = ensurePromptSkillProvider(sessionID: configuration.sessionID)
+        let backend = try await ensureBackend(configuration: configuration)
+        let generation = backendGeneration
+        await createBackendSession(backend, configuration: configuration)
         try verifyBackendGeneration(generation)
         sessions[configuration.sessionID] = configuration
         beginSessionGeneration(for: configuration.sessionID)
@@ -1308,17 +1315,7 @@ public actor AgentCoreSessionRunner {
         let configuration = baseConfiguration.replacingRuntimeState(
             with: recovery.snapshot
         )
-        await backend.createSession(
-            id: configuration.sessionID,
-            cwd: configuration.workingDirectoryPath,
-            systemPrompt: configuration.systemPrompt,
-            dynamicContext: configuration.dynamicContext,
-            history: configuration.history,
-            cacheKey: configuration.cacheKey,
-            allowedToolNames: configuration.allowedToolNames,
-            thinkingSelection: configuration.thinkingSelection,
-            preserveThinking: configuration.preserveThinking
-        )
+        await createBackendSession(backend, configuration: configuration)
     }
 
     private func cacheSessionSnapshot(

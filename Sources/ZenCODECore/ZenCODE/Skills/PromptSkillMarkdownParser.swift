@@ -5,12 +5,6 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
-#if canImport(CryptoKit)
-
-import CryptoKit
-#else
-import Crypto
-#endif
 import Foundation
 
 public enum PromptSkillMarkdownParser {
@@ -390,8 +384,7 @@ public enum PromptSkillMarkdownParser {
     }
 
     private static func hash(_ value: String) -> String {
-        let digest = SHA256.hash(data: Data(value.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        sha256Hex(Data(value.utf8))
     }
 
     private static func isSetextHeadingUnderline(_ rawLine: String) -> Bool {

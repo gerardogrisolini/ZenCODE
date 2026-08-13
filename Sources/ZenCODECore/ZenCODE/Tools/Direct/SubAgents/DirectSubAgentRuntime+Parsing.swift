@@ -352,13 +352,7 @@ extension DirectSubAgentRuntime {
         _ keys: [String],
         in arguments: [String: JSONValue]
     ) -> String? {
-        for key in keys {
-            if let value = arguments[key],
-               let string = stringValue(from: value) {
-                return string
-            }
-        }
-        return nil
+        DirectArgumentValues.firstString(keys, in: arguments, convert: stringValue(from:))
     }
 
     private static func stringValue(from value: JSONValue) -> String? {
@@ -409,42 +403,16 @@ extension DirectSubAgentRuntime {
         _ keys: [String],
         in arguments: [String: JSONValue]
     ) -> [JSONValue]? {
-        for key in keys {
-            guard let value = arguments[key] else {
-                continue
-            }
-            if case let .array(values) = value {
-                return values
-            }
-            if case let .object(object) = value {
-                return [.object(object)]
-            }
-        }
-        return nil
+        DirectArgumentValues.firstArray(keys, in: arguments)
     }
 
     public static func firstStringList(
         _ keys: [String],
         in arguments: [String: JSONValue]
     ) -> [String]? {
-        for key in keys {
-            guard let value = arguments[key] else {
-                continue
-            }
-            switch value {
-            case let .array(values):
-                return values.compactMap { value in
-                    if case let .string(string) = value {
-                        return string
-                    }
-                    return nil
-                }
-            case let .string(string):
-                return [string]
-            default:
-                continue
-            }
+        DirectArgumentValues.firstStringList(keys, in: arguments) { value in
+            if case let .string(string) = value { return string }
+            return nil
         }
-        return nil
     }
 }

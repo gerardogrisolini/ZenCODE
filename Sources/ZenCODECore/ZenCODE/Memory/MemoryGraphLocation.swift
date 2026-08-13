@@ -5,7 +5,6 @@
 //  Resolves where a workspace's MemoryEngine graph is persisted.
 //
 
-import Crypto
 import Foundation
 
 /// Resolves the on-disk location of the per-workspace memory graph.
@@ -26,9 +25,7 @@ enum MemoryGraphLocation {
     /// directory shared by every workspace on the machine.
     static func workspaceDigest(for workspaceRootURL: URL) -> String {
         let path = workspaceRootURL.standardizedFileURL.path
-        return SHA256.hash(data: Data(path.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
+        return sha256Hex(Data(path.utf8))
     }
 
     static func graphDirectoryURL(
