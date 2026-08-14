@@ -7,6 +7,9 @@
 
 import Crypto
 import Foundation
+#if canImport(Security)
+import Security
+#endif
 
 extension Data {
     /// Returns a Base64-URL encoded string (no padding, `-`/`_` replacing `+`/`/`).
@@ -15,6 +18,25 @@ extension Data {
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
+    }
+
+    static func randomBase64URLString(
+        byteCount: Int,
+        randomBytesFailure: (Int32) -> Error
+    ) throws -> String {
+        #if canImport(Security)
+        var bytes = [UInt8](repeating: 0, count: byteCount)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard status == errSecSuccess else {
+            throw randomBytesFailure(status)
+        }
+        #else
+        var generator = SystemRandomNumberGenerator()
+        let bytes = (0..<byteCount).map { _ in
+            UInt8.random(in: UInt8.min...UInt8.max, using: &generator)
+        }
+        #endif
+        return Data(bytes).base64URLEncodedString()
     }
     
     func sha256Hex() -> String {

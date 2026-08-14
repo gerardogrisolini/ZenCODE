@@ -131,14 +131,7 @@ public nonisolated enum CodexAgentModel {
     }
 
     public static func isCodexLLMID(_ value: String?) -> Bool {
-        guard let normalizedValue = value?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased(),
-              !normalizedValue.isEmpty else {
-            return false
-        }
-
-        return isSubscriptionPrefix(normalizedValue, prefix: llmID)
+        RemoteSubscriptionModelID.isLLMID(value, prefix: llmID)
     }
 
     public static func canonicalLLMID(_ value: String?) -> String {
@@ -149,28 +142,19 @@ public nonisolated enum CodexAgentModel {
     }
 
     public static func selectionID(forModelID modelID: String) -> String {
-        "\(llmID):\(normalizedModelID(modelID))"
+        RemoteSubscriptionModelID.selectionID(
+            forModelID: modelID,
+            prefix: llmID,
+            defaultModelID: defaultModelID
+        )
     }
 
     public static func modelID(fromLLMID value: String?) -> String {
-        guard let value else {
-            return defaultModelID
-        }
-
-        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedValue.isEmpty else {
-            return defaultModelID
-        }
-
-        let lowercasedValue = trimmedValue.lowercased()
-        if lowercasedValue == llmID {
-            return defaultModelID
-        }
-        for separator in [":", "/"] where lowercasedValue.hasPrefix(llmID + separator) {
-            let rawModelID = String(trimmedValue.dropFirst(llmID.count + separator.count))
-            return normalizedModelID(rawModelID)
-        }
-        return normalizedModelID(trimmedValue)
+        RemoteSubscriptionModelID.modelID(
+            fromLLMID: value,
+            prefix: llmID,
+            defaultModelID: defaultModelID
+        )
     }
 
     public static func option(forLLMID value: String?) -> ModelOption {
@@ -200,14 +184,7 @@ public nonisolated enum CodexAgentModel {
     }
 
     private static func normalizedModelID(_ value: String) -> String {
-        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedValue.isEmpty ? defaultModelID : trimmedValue
-    }
-
-    private static func isSubscriptionPrefix(_ value: String, prefix: String) -> Bool {
-        value == prefix
-            || value.hasPrefix(prefix + ":")
-            || value.hasPrefix(prefix + "/")
+        RemoteSubscriptionModelID.normalizedModelID(value, defaultModelID: defaultModelID)
     }
 
     public static var isAvailable: Bool {

@@ -317,32 +317,21 @@ extension SessionTaskOrchestrator {
         attemptID: String,
         mutation: (inout TaskRecord, inout TaskAttempt, Date) -> Void
     ) throws -> Bool {
-        let executionSessionID = try normalizedSessionID(rawSessionID)
-        let scope = executionScopes[executionSessionID]
-        let sessionID = scope?.rootSessionID ?? executionSessionID
-        guard var sessionState = sessionStates[sessionID] else {
-            throw SessionTaskOrchestratorError.taskNotFound(taskID)
-        }
-        guard let graphID = try resolvedAttemptGraphID(
-                  requestedGraphID,
-                  scope: scope,
-                  sessionState: sessionState
-              ),
-              var graph = sessionState.graphs[graphID],
-              let taskIndex = graph.tasks.firstIndex(where: { $0.id == taskID }) else {
-            throw SessionTaskOrchestratorError.taskNotFound(taskID)
-        }
-        if let scope,
-           (scope.taskID != taskID || scope.attemptID != attemptID) {
-            throw SessionTaskOrchestratorError.permissionDenied(
-                "A delegated sub-agent may only update its assigned task attempt."
-            )
-        }
-        var task = graph.tasks[taskIndex]
-        guard task.activeAttemptID == attemptID,
-              let attemptIndex = task.attempts.firstIndex(where: { $0.id == attemptID }) else {
+        guard let location = try locateActiveAttempt(
+            sessionID: rawSessionID,
+            graphID: requestedGraphID,
+            taskID: taskID,
+            attemptID: attemptID,
+            permissionDeniedMessage: "A delegated sub-agent may only update its assigned task attempt."
+        ) else {
             return false
         }
+        let sessionID = location.sessionID
+        var sessionState = location.sessionState
+        var graph = location.graph
+        let taskIndex = location.taskIndex
+        let attemptIndex = location.attemptIndex
+        var task = graph.tasks[taskIndex]
         var attempt = task.attempts[attemptIndex]
         let now = Date()
         mutation(&task, &attempt, now)
@@ -372,34 +361,23 @@ extension SessionTaskOrchestrator {
         error: String?,
         statusReason: String?
     ) throws -> Bool {
-        let executionSessionID = try normalizedSessionID(rawSessionID)
-        let scope = executionScopes[executionSessionID]
-        let sessionID = scope?.rootSessionID ?? executionSessionID
         let output = output?.nilIfBlank.map(sanitizedPersistedText)
         let error = error?.nilIfBlank.map(sanitizedPersistedText)
-        guard var sessionState = sessionStates[sessionID] else {
-            throw SessionTaskOrchestratorError.taskNotFound(taskID)
-        }
-        guard let graphID = try resolvedAttemptGraphID(
-                  requestedGraphID,
-                  scope: scope,
-                  sessionState: sessionState
-              ),
-              var graph = sessionState.graphs[graphID],
-              let taskIndex = graph.tasks.firstIndex(where: { $0.id == taskID }) else {
-            throw SessionTaskOrchestratorError.taskNotFound(taskID)
-        }
-        if let scope,
-           (scope.taskID != taskID || scope.attemptID != attemptID) {
-            throw SessionTaskOrchestratorError.permissionDenied(
-                "A delegated sub-agent may only finish its assigned task attempt."
-            )
-        }
-        var task = graph.tasks[taskIndex]
-        guard task.activeAttemptID == attemptID,
-              let attemptIndex = task.attempts.firstIndex(where: { $0.id == attemptID }) else {
+        guard let location = try locateActiveAttempt(
+            sessionID: rawSessionID,
+            graphID: requestedGraphID,
+            taskID: taskID,
+            attemptID: attemptID,
+            permissionDeniedMessage: "A delegated sub-agent may only finish its assigned task attempt."
+        ) else {
             return false
         }
+        let sessionID = location.sessionID
+        var sessionState = location.sessionState
+        var graph = location.graph
+        let taskIndex = location.taskIndex
+        let attemptIndex = location.attemptIndex
+        var task = graph.tasks[taskIndex]
 
         // A workflow implementation is never terminal until an independent
         // validator accepts it, regardless of the runtime caller's hint.
@@ -440,6 +418,54 @@ extension SessionTaskOrchestrator {
             graphID: graph.id
         )
         return true
+    }
+
+    private struct ActiveAttemptLocation {
+        let sessionID: String
+        let sessionState: SessionState
+        let graph: TaskGraphSnapshot
+        let taskIndex: Int
+        let attemptIndex: Int
+    }
+
+    private func locateActiveAttempt(
+        sessionID rawSessionID: String,
+        graphID requestedGraphID: String?,
+        taskID: String,
+        attemptID: String,
+        permissionDeniedMessage: String
+    ) throws -> ActiveAttemptLocation? {
+        let executionSessionID = try normalizedSessionID(rawSessionID)
+        let scope = executionScopes[executionSessionID]
+        let sessionID = scope?.rootSessionID ?? executionSessionID
+        guard let sessionState = sessionStates[sessionID] else {
+            throw SessionTaskOrchestratorError.taskNotFound(taskID)
+        }
+        guard let graphID = try resolvedAttemptGraphID(
+                  requestedGraphID,
+                  scope: scope,
+                  sessionState: sessionState
+              ),
+              let graph = sessionState.graphs[graphID],
+              let taskIndex = graph.tasks.firstIndex(where: { $0.id == taskID }) else {
+            throw SessionTaskOrchestratorError.taskNotFound(taskID)
+        }
+        if let scope,
+           (scope.taskID != taskID || scope.attemptID != attemptID) {
+            throw SessionTaskOrchestratorError.permissionDenied(permissionDeniedMessage)
+        }
+        let task = graph.tasks[taskIndex]
+        guard task.activeAttemptID == attemptID,
+              let attemptIndex = task.attempts.firstIndex(where: { $0.id == attemptID }) else {
+            return nil
+        }
+        return ActiveAttemptLocation(
+            sessionID: sessionID,
+            sessionState: sessionState,
+            graph: graph,
+            taskIndex: taskIndex,
+            attemptIndex: attemptIndex
+        )
     }
 
     private func resolvedAttemptGraphID(

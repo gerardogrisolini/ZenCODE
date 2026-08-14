@@ -9,9 +9,6 @@ import Foundation
 #if canImport(os)
 import os
 #endif
-#if canImport(Security)
-import Security
-#endif
 
 public enum ChatGPTSubscriptionAuthError: LocalizedError {
     case unsupportedPlatform
@@ -349,9 +346,15 @@ public enum ChatGPTSubscriptionAuthService {
         state: String,
         url: URL
     ) {
-        let verifier = try randomBase64URLString(byteCount: 32)
+        let verifier = try Data.randomBase64URLString(
+            byteCount: 32,
+            randomBytesFailure: ChatGPTSubscriptionAuthError.randomBytesFailed
+        )
         let challenge = verifier.sha256Base64URL()
-        let state = try randomBase64URLString(byteCount: 16)
+        let state = try Data.randomBase64URLString(
+            byteCount: 16,
+            randomBytesFailure: ChatGPTSubscriptionAuthError.randomBytesFailed
+        )
 
         var components = URLComponents(url: authorizeURL, resolvingAgainstBaseURL: false)!
         components.queryItems = [
@@ -469,22 +472,6 @@ public enum ChatGPTSubscriptionAuthService {
         var allowed = CharacterSet.urlQueryAllowed
         allowed.remove(charactersIn: ":#[]@!$&'()*+,;=")
         return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
-    }
-
-    private static func randomBase64URLString(byteCount: Int) throws -> String {
-        #if canImport(Security)
-        var bytes = [UInt8](repeating: 0, count: byteCount)
-        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        guard status == errSecSuccess else {
-            throw ChatGPTSubscriptionAuthError.randomBytesFailed(status)
-        }
-        #else
-        var generator = SystemRandomNumberGenerator()
-        let bytes = (0..<byteCount).map { _ in
-            UInt8.random(in: UInt8.min...UInt8.max, using: &generator)
-        }
-        #endif
-        return Data(bytes).base64URLEncodedString()
     }
 
 #if DEBUG

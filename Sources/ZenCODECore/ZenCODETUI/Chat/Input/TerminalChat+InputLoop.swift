@@ -552,6 +552,17 @@ extension TerminalChat {
             rootSessionID: sharedChatRoomID
         )
 
+        /// Builds a dock snapshot after fetching the current participant roster.
+        /// All callers run on this loop's serialized context, preserving the
+        /// former fetch → map → buffer-projection ordering.
+        func sharedChatReaderEntries() async -> [TerminalSharedChatReaderEntry] {
+            let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sharedChatRoomID)
+            let participantMap = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
+            return sharedChatReadingBuffer.messages.map {
+                TerminalSharedChatReaderEntry(message: $0, participantMap: participantMap)
+            }
+        }
+
         defer {
             // Stop producers before terminating the queue so no task keeps
             // running (or keeps this chat alive) after the loop exits, and any
@@ -898,11 +909,7 @@ extension TerminalChat {
                     await writeAccessModeChangeMessage(accessMode)
                     await interactiveReader.refreshPanel()
                 case .toggleSharedChatReaderRequested:
-                    let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sharedChatRoomID)
-                    let participantMap = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
-                    let entries = sharedChatReadingBuffer.messages.map {
-                        TerminalSharedChatReaderEntry(message: $0, participantMap: participantMap)
-                    }
+                    let entries = await sharedChatReaderEntries()
                     // The dock is rendered by the status bar in the panel's
                     // reserved rows; generation and the normal input loop keep running.
                     guard !isSharedChatReaderOpen else {
@@ -948,11 +955,7 @@ extension TerminalChat {
                     // `navigateSharedChatReader` has already applied the
                     // selection so `replace` preserves it by message ID.
                     if sharedChatReadingBuffer.unreadCount != unreadCountBeforeNavigation {
-                        let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sharedChatRoomID)
-                        let participantMap = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
-                        let entries = sharedChatReadingBuffer.messages.map {
-                            TerminalSharedChatReaderEntry(message: $0, participantMap: participantMap)
-                        }
+                        let entries = await sharedChatReaderEntries()
                         await statusBar.setSharedChatReader(
                             entries: entries,
                             unreadCount: sharedChatReadingBuffer.unreadCount,
@@ -1022,9 +1025,7 @@ extension TerminalChat {
                 // unread counter twice.
                 let newMessages = sharedChatReadingBuffer.append(messages)
                 guard !newMessages.isEmpty else { continue }
-                let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sharedChatRoomID)
-                let participantMap = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
-                let entries = sharedChatReadingBuffer.messages.map { TerminalSharedChatReaderEntry(message: $0, participantMap: participantMap) }
+                let entries = await sharedChatReaderEntries()
                 await statusBar.setSharedChatReader(
                     entries: entries,
                     unreadCount: sharedChatReadingBuffer.unreadCount,

@@ -130,7 +130,9 @@ struct TerminalTelegramAPIClient: Sendable {
             throw TerminalTelegramControlError.invalidToken
         }
 
-        let bodyData = try JSONEncoder().encode(body)
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let bodyData = try encoder.encode(body)
         let response = try await transport.send(
             url: url,
             method: "POST",
@@ -139,7 +141,8 @@ struct TerminalTelegramAPIClient: Sendable {
             timeout: .seconds(35)
         )
 
-        let decoded = try JSONDecoder().decode(
+        let decoder = JSONDecoder()
+        let decoded = try decoder.decode(
             TerminalTelegramAPIResponse<Response>.self,
             from: response.body
         )
@@ -193,9 +196,6 @@ struct TerminalTelegramEmptyRequest: Encodable {}
 struct TerminalTelegramDeleteWebhookRequest: Encodable {
     let dropPendingUpdates: Bool
 
-    enum CodingKeys: String, CodingKey {
-        case dropPendingUpdates = "drop_pending_updates"
-    }
 }
 
 struct TerminalTelegramGetUpdatesRequest: Encodable {
@@ -203,11 +203,6 @@ struct TerminalTelegramGetUpdatesRequest: Encodable {
     let timeout: Int
     let allowedUpdates: [String]
 
-    enum CodingKeys: String, CodingKey {
-        case offset
-        case timeout
-        case allowedUpdates = "allowed_updates"
-    }
 }
 
 struct TerminalTelegramSendMessageRequest: Encodable {
@@ -215,19 +210,11 @@ struct TerminalTelegramSendMessageRequest: Encodable {
     let text: String
     let parseMode: String?
 
-    enum CodingKeys: String, CodingKey {
-        case chatID = "chat_id"
-        case text
-        case parseMode = "parse_mode"
-    }
 }
 
 struct TerminalTelegramGetFileRequest: Encodable {
     let fileID: String
 
-    enum CodingKeys: String, CodingKey {
-        case fileID = "file_id"
-    }
 }
 
 struct TerminalTelegramDownloadedFile: Sendable {
@@ -239,6 +226,7 @@ struct TerminalTelegramUpdate: Decodable {
     let updateID: Int
     let message: TerminalTelegramMessage?
 
+    // Responses decode with the default strategy, so wire keys stay manual.
     enum CodingKeys: String, CodingKey {
         case updateID = "update_id"
         case message
@@ -252,6 +240,7 @@ struct TerminalTelegramMessage: Decodable {
     let text: String?
     let voice: TerminalTelegramVoice?
 
+    // Responses decode with the default strategy, so wire keys stay manual.
     enum CodingKeys: String, CodingKey {
         case messageID = "message_id"
         case from
@@ -268,6 +257,7 @@ struct TerminalTelegramVoice: Decodable {
     let mimeType: String?
     let fileSize: Int?
 
+    // Responses decode with the default strategy, so wire keys stay manual.
     enum CodingKeys: String, CodingKey {
         case fileID = "file_id"
         case fileUniqueID = "file_unique_id"
@@ -283,6 +273,7 @@ struct TerminalTelegramFile: Decodable {
     let fileSize: Int?
     let filePath: String?
 
+    // Responses decode with the default strategy, so wire keys stay manual.
     enum CodingKeys: String, CodingKey {
         case fileID = "file_id"
         case fileUniqueID = "file_unique_id"
@@ -296,6 +287,7 @@ struct TerminalTelegramUser: Decodable {
     let isBot: Bool?
     let username: String?
 
+    // Responses decode with the default strategy, so wire keys stay manual.
     enum CodingKeys: String, CodingKey {
         case id
         case isBot = "is_bot"
@@ -311,6 +303,7 @@ struct TerminalTelegramChat: Decodable {
     let firstName: String?
     let lastName: String?
 
+    // Responses decode with the default strategy, so wire keys stay manual.
     enum CodingKeys: String, CodingKey {
         case id
         case type

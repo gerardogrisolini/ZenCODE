@@ -10,9 +10,6 @@ import ToolCore
 #if canImport(os)
 import os
 #endif
-#if canImport(Security)
-import Security
-#endif
 
 public struct AnthropicSubscriptionCredentials: Codable, Equatable, Sendable {
     public let accessToken: String
@@ -425,7 +422,10 @@ public enum AnthropicSubscriptionAuthService {
         state: String,
         url: URL
     ) {
-        let verifier = try randomBase64URLString(byteCount: 32)
+        let verifier = try Data.randomBase64URLString(
+            byteCount: 32,
+            randomBytesFailure: AnthropicSubscriptionAuthError.randomBytesFailed
+        )
         let challenge = verifier.sha256Base64URL()
         // Anthropic's Claude Code OAuth flow uses the verifier as the state value.
         let state = verifier
@@ -533,22 +533,6 @@ public enum AnthropicSubscriptionAuthService {
         throw lastFailure ?? AnthropicSubscriptionAuthError.invalidTokenResponse
     }
 
-
-    private static func randomBase64URLString(byteCount: Int) throws -> String {
-        #if canImport(Security)
-        var bytes = [UInt8](repeating: 0, count: byteCount)
-        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        guard status == errSecSuccess else {
-            throw AnthropicSubscriptionAuthError.randomBytesFailed(status)
-        }
-        #else
-        var generator = SystemRandomNumberGenerator()
-        let bytes = (0..<byteCount).map { _ in
-            UInt8.random(in: UInt8.min...UInt8.max, using: &generator)
-        }
-        #endif
-        return Data(bytes).base64URLEncodedString()
-    }
 
 }
 

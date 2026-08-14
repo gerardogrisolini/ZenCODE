@@ -470,6 +470,35 @@ struct TerminalMarkdownStreamFormatterTests {
     }
 
     @Test
+    func tenDigitOrderedLikePrefixRemainsPlainText() {
+        var formatter = makeFormatter()
+
+        let rendered = formatter.consume("1000000000. plain text\n") + formatter.finish()
+
+        #expect(TerminalANSIText.stripANSI(rendered).contains("1000000000. plain text"))
+    }
+
+    @Test
+    func orderedMarkerWithoutBodyRemainsVisible() {
+        var formatter = makeFormatter()
+
+        let rendered = formatter.consume("1.\n") + formatter.finish()
+
+        #expect(TerminalANSIText.stripANSI(rendered).contains("1."))
+    }
+
+    @Test
+    func orderedMarkersAcceptMixedWhitespaceAfterTheDot() {
+        var formatter = makeFormatter()
+
+        let rendered = formatter.consume("1.\tfirst\n2.  second\n") + formatter.finish()
+        let plain = TerminalANSIText.stripANSI(rendered)
+
+        #expect(plain.contains("first"))
+        #expect(plain.contains("second"))
+    }
+
+    @Test
     func blockquoteMarkerIsNotEmittedRaw() {
         var formatter = makeFormatter()
         let partial = formatter.consume(">")

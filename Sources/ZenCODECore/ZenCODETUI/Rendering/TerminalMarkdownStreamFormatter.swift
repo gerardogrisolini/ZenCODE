@@ -81,6 +81,16 @@ public struct TerminalMarkdownStreamFormatter {
         let remainder: String
     }
 
+    /// Shared lexical scan of an ordered-list-like prefix. Callers retain their
+    /// distinct policy for an empty body and the CommonMark nine-digit limit.
+    private struct OrderedListMarkerScan {
+        let digits: Substring
+        let afterDot: String.Index
+        let hasWhitespaceBody: Bool
+
+        var digitCount: Int { digits.count }
+    }
+
     /// Incremental classification of the still-unemitted line start. A line
     /// can only move from an unresolved marker candidate to either a known
     /// block marker or a known-safe prose prefix. Once it is known safe, later
@@ -689,15 +699,20 @@ public struct TerminalMarkdownStreamFormatter {
         // can itself contain an arbitrarily long header while it waits for a
         // delimiter, so exempting it would leave an unbounded hole.
         if blockKind == .table || blockKind == .tableCandidate {
-            if blockLines.count >= Self.maxBufferedTableLineCount {
-                return true
-            }
-            return blockLines.reduce(0) { $0 + $1.count } >= Self.maxBufferedTableCharacterCount
+            return exceedsBufferCap(
+                lineCount: Self.maxBufferedTableLineCount,
+                characterCount: Self.maxBufferedTableCharacterCount
+            )
         }
-        if blockLines.count >= Self.maxBufferedBlockLineCount {
-            return true
-        }
-        return blockLines.reduce(0) { $0 + $1.count } >= Self.maxBufferedBlockCharacterCount
+        return exceedsBufferCap(
+            lineCount: Self.maxBufferedBlockLineCount,
+            characterCount: Self.maxBufferedBlockCharacterCount
+        )
+    }
+
+    private func exceedsBufferCap(lineCount: Int, characterCount: Int) -> Bool {
+        blockLines.count >= lineCount
+            || blockLines.reduce(0) { $0 + $1.count } >= characterCount
     }
 
     /// Handles the safety-limit trigger. For lists, flush only the completed
@@ -759,8 +774,10 @@ public struct TerminalMarkdownStreamFormatter {
     /// Whether the buffered block has exceeded the much higher hard cap used
     /// only as a last resort to bound buffering on pathological inputs.
     private func isPastHardBufferCap() -> Bool {
-        blockLines.count >= Self.hardBufferedBlockLineCount
-            || blockLines.reduce(0) { $0 + $1.count } >= Self.hardBufferedBlockCharacterCount
+        exceedsBufferCap(
+            lineCount: Self.hardBufferedBlockLineCount,
+            characterCount: Self.hardBufferedBlockCharacterCount
+        )
     }
 
     /// Whether the incoming top-level list marker is a different type (ordered
@@ -843,20 +860,8 @@ public struct TerminalMarkdownStreamFormatter {
     /// Replaces the leading "<digits>." of an ordered marker with `number.`.
     /// Returns nil when the line does not start with an ordered marker.
     private func renumberLeadingOrderedMarker(in line: String, to number: Int) -> String? {
-        var index = line.startIndex
-        while index < line.endIndex, line[index].isNumber {
-            index = line.index(after: index)
-        }
-        guard index > line.startIndex,
-              index < line.endIndex,
-              line[index] == "." else {
-            return nil
-        }
-        let afterDot = line.index(after: index)
-        guard afterDot == line.endIndex || line[afterDot].isWhitespace else {
-            return nil
-        }
-        return "\(number)." + line[afterDot...]
+        guard let marker = orderedListMarkerScan(in: line) else { return nil }
+        return "\(number)." + line[marker.afterDot...]
     }
 
     /// The leading integer of an ordered-list marker (e.g. "1." -> 1), or nil
@@ -864,26 +869,14 @@ public struct TerminalMarkdownStreamFormatter {
     /// threshold are treated as non-markers: no real list has millions of items,
     /// and incrementing such a number during renumbering would overflow Int.
     private func leadingOrderedNumber(in trimmed: String) -> Int? {
-        var digits = ""
-        var index = trimmed.startIndex
-        while index < trimmed.endIndex, trimmed[index].isNumber {
-            digits.append(trimmed[index])
-            index = trimmed.index(after: index)
-        }
-        guard !digits.isEmpty,
-              index < trimmed.endIndex,
-              trimmed[index] == "." else {
-            return nil
-        }
-        let afterDot = trimmed.index(after: index)
-        guard afterDot == trimmed.endIndex || trimmed[afterDot].isWhitespace else {
-            return nil
-        }
+        guard let marker = orderedListMarkerScan(in: trimmed) else { return nil }
         // Clamp to a safe range: Swift Markdown accepts up to 9 digits, so valid
         // markers up to 999_999_999 are supported. Beyond that the number can't
         // be a real list index, and incrementing it during renumbering would risk
         // overflow. Treat out-of-range values as plain markers (verbatim render).
-        guard digits.count <= 9, let value = Int(digits), value <= 999_999_999 else {
+        guard marker.digitCount <= 9,
+              let value = Int(marker.digits),
+              value <= 999_999_999 else {
             return nil
         }
         return value
@@ -1269,22 +1262,11 @@ public struct TerminalMarkdownStreamFormatter {
     }
     
     private func isOrderedListMarker(in line: String) -> Bool {
-        var index = line.startIndex
-        var digits = 0
-        while index < line.endIndex, line[index].isNumber {
-            digits += 1
-            index = line.index(after: index)
-        }
         // Swift Markdown accepts up to 9-digit ordered markers; 10+ digits are
         // plain text. Keep this consistent with leadingOrderedNumber so the
         // streaming classification matches the parser's list detection.
-        guard digits > 0, digits <= 9,
-              index < line.endIndex,
-              line[index] == "." else {
-            return false
-        }
-        let afterDot = line.index(after: index)
-        return afterDot < line.endIndex && line[afterDot].isWhitespace
+        guard let marker = orderedListMarkerScan(in: line) else { return false }
+        return marker.digitCount <= 9 && marker.hasWhitespaceBody
     }
 
     /// True when the line looks like an ordered-list marker (digits + "." +
@@ -1293,19 +1275,29 @@ public struct TerminalMarkdownStreamFormatter {
     /// block such a line is buffered as a continuation line so the parser can
     /// decide whether it is a lazy continuation of the current item.
     private func isOutOfRangeOrderedLikeMarker(_ trimmed: String) -> Bool {
-        var digits = 0
-        var index = trimmed.startIndex
-        while index < trimmed.endIndex, trimmed[index].isNumber {
-            digits += 1
-            index = trimmed.index(after: index)
+        guard let marker = orderedListMarkerScan(in: trimmed) else { return false }
+        return marker.digitCount > 9
+    }
+
+    private func orderedListMarkerScan(in line: String) -> OrderedListMarkerScan? {
+        var index = line.startIndex
+        while index < line.endIndex, line[index].isNumber {
+            index = line.index(after: index)
         }
-        guard digits > 9,
-              index < trimmed.endIndex,
-              trimmed[index] == "." else {
-            return false
+        guard index > line.startIndex,
+              index < line.endIndex,
+              line[index] == "." else {
+            return nil
         }
-        let afterDot = trimmed.index(after: index)
-        return afterDot == trimmed.endIndex || trimmed[afterDot].isWhitespace
+        let afterDot = line.index(after: index)
+        guard afterDot == line.endIndex || line[afterDot].isWhitespace else {
+            return nil
+        }
+        return OrderedListMarkerScan(
+            digits: line[..<index],
+            afterDot: afterDot,
+            hasWhitespaceBody: afterDot < line.endIndex
+        )
     }
     
     private func leadingIndent(in line: String) -> (indent: String, body: String) {
