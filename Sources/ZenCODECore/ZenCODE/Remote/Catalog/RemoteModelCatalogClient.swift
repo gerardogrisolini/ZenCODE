@@ -23,21 +23,7 @@ public final class RemoteModelCatalogClient {
     public func fetchModels(
         apiKey: String?
     ) async throws -> [OpenRouterModelInfo] {
-        let request = try modelsRequest(apiKey: apiKey)
-        let response = try await transport.sendRequest(request)
-
-        guard (200..<300).contains(response.status) else {
-            throw RemoteModelCatalogClientError.serverError(
-                response.status,
-                decodedServerMessage(from: response.body)
-                    ?? "HTTP \(response.status)"
-            )
-        }
-
-        let catalog = try decodeJSON(RemoteModelCatalogResponse.self, from: response.body)
-        return catalog.data.compactMap { entry in
-            modelInfo(from: entry, baseURL: Self.openRouterCatalogBaseURL)
-        }
+        try await fetchModels(baseURL: Self.openRouterCatalogBaseURL, apiKey: apiKey)
     }
 
     /// Fetches the model list exposed by the configured OpenAI-compatible

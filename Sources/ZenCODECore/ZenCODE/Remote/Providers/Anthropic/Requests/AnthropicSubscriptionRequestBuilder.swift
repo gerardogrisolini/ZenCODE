@@ -25,14 +25,9 @@ public enum AnthropicSubscriptionRequestBuilder {
             payload["tools"] = tools
         }
 
-        guard !payload.isEmpty,
-              let data = try? JSONValue(jsonObject: sanitizedPayload(payload)).jsonData(
-                  outputFormatting: [.withoutEscapingSlashes]
-              ),
-              !data.isEmpty else {
-            return nil
-        }
-        return max(Int((Double(data.count) / 4.0).rounded(.up)), 1)
+        return SubscriptionCompactionSupport.serializedPayloadTokenEstimate(
+            sanitizedPayload(payload) as? [String: Any] ?? [:]
+        )
     }
 
     public static func sanitizedPayload(_ value: Any?) -> Any {

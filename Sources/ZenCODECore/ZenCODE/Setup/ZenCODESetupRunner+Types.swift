@@ -165,122 +165,39 @@ struct SetupSession {
 }
 
 enum SetupSection: Equatable, Hashable {
-    case providersAndModels
-    case defaultModelSettings
-    case defaultModel
-    case defaultThinking
-    case telegram
-    case voice
-    case features
-    case agents
-    case agentModels
-    case responseLanguage
-    case memoryEmbedding
-    case resetRemoteConfiguration
-    case finish
-    case cancel
+    case providersAndModels, defaultModelSettings, defaultModel, defaultThinking
+    case telegram, voice, features, agents, agentModels, responseLanguage, memoryEmbedding
+    case resetRemoteConfiguration, finish, cancel
 
-    var title: String {
-        switch self {
-        case .providersAndModels:
-            return "Providers and models"
-        case .defaultModelSettings:
-            return "Default model & thinking"
-        case .defaultModel:
-            return "Default model"
-        case .defaultThinking:
-            return "Default thinking"
-        case .telegram:
-            return "Telegram remote control"
-        case .voice:
-            return "Voice tools"
-        case .features:
-            return "Features"
-        case .agents:
-            return "Agents"
-        case .agentModels:
-            return "Agent model bindings"
-        case .responseLanguage:
-            return "Response language"
-        case .memoryEmbedding:
-            return "Memory embeddings"
-        case .resetRemoteConfiguration:
-            return "Reset remote configuration"
-        case .finish:
-            return "Finish setup"
-        case .cancel:
-            return "Cancel without saving"
-        }
+    private struct Descriptor {
+        let title: String
+        let category: SetupSectionCategory
+        let requiresConfiguredModels: Bool
+        let aliases: Set<String>
     }
 
-    var category: SetupSectionCategory {
-        switch self {
-        case .providersAndModels:
-            return .required
-        case .defaultModelSettings, .agents, .agentModels, .responseLanguage:
-            return .recommended
-        case .telegram, .voice, .features, .memoryEmbedding, .resetRemoteConfiguration:
-            return .optional
-        case .defaultModel, .defaultThinking:
-            return .recommended
-        case .finish, .cancel:
-            return .finish
-        }
-    }
+    private static let descriptors: [SetupSection: Descriptor] = [
+        .providersAndModels: .init(title: "Providers and models", category: .required, requiresConfiguredModels: false, aliases: ["providers", "provider", "models", "model", "providers and models", "providers/models", "remote"]),
+        .defaultModelSettings: .init(title: "Default model & thinking", category: .recommended, requiresConfiguredModels: true, aliases: ["default", "default model", "selected model", "model default", "thinking", "default thinking"]),
+        .defaultModel: .init(title: "Default model", category: .recommended, requiresConfiguredModels: true, aliases: ["default", "default model", "selected model", "model default"]),
+        .defaultThinking: .init(title: "Default thinking", category: .recommended, requiresConfiguredModels: true, aliases: ["thinking", "default thinking", "reasoning", "thinking default"]),
+        .telegram: .init(title: "Telegram remote control", category: .optional, requiresConfiguredModels: true, aliases: ["telegram", "remote control", "bot"]),
+        .voice: .init(title: "Voice tools", category: .optional, requiresConfiguredModels: true, aliases: ["voice", "voice transcription", "voice messages", "speech"]),
+        .features: .init(title: "Features", category: .optional, requiresConfiguredModels: false, aliases: ["features", "feature", "tools", "swift features", "enable features", "disable features"]),
+        .agents: .init(title: "Agents", category: .recommended, requiresConfiguredModels: false, aliases: ["agents", "agent", "profiles", "agent profiles"]),
+        .agentModels: .init(title: "Agent model bindings", category: .recommended, requiresConfiguredModels: true, aliases: ["agent models", "agent model bindings", "agent bindings", "agent capability", "models", "capability", "agent models & capability"]),
+        .responseLanguage: .init(title: "Response language", category: .recommended, requiresConfiguredModels: false, aliases: ["language", "response language", "locale", "response_language"]),
+        .memoryEmbedding: .init(title: "Memory embeddings", category: .optional, requiresConfiguredModels: false, aliases: ["memory embeddings", "memory embedding", "embeddings", "embedding", "bm25"]),
+        .resetRemoteConfiguration: .init(title: "Reset remote configuration", category: .optional, requiresConfiguredModels: false, aliases: ["reset", "reset remote configuration", "reset configuration"]),
+        .finish: .init(title: "Finish setup", category: .finish, requiresConfiguredModels: false, aliases: ["finish", "done", "exit", "quit", "end", "stop"]),
+        .cancel: .init(title: "Cancel without saving", category: .finish, requiresConfiguredModels: false, aliases: ["cancel", "abort", "discard", "quit without saving"])
+    ]
 
-    var requiresConfiguredModels: Bool {
-        switch self {
-        case .providersAndModels, .agents, .features, .responseLanguage, .memoryEmbedding, .resetRemoteConfiguration, .finish, .cancel:
-            return false
-        case .defaultModelSettings, .defaultModel, .defaultThinking, .telegram, .voice, .agentModels:
-            return true
-        }
-    }
-
-    func matches(_ value: String) -> Bool {
-        aliases.contains(value)
-    }
-
-    private var aliases: Set<String> {
-        switch self {
-        case .providersAndModels:
-            return ["providers", "provider", "models", "model", "providers and models", "providers/models", "remote"]
-        case .defaultModelSettings:
-            return ["default", "default model", "selected model", "model default", "thinking", "default thinking"]
-        case .defaultModel:
-            return ["default", "default model", "selected model", "model default"]
-        case .defaultThinking:
-            return ["thinking", "default thinking", "reasoning", "thinking default"]
-        case .telegram:
-            return ["telegram", "remote control", "bot"]
-        case .voice:
-            return ["voice", "voice transcription", "voice messages", "speech"]
-        case .features:
-            return ["features", "feature", "tools", "swift features", "enable features", "disable features"]
-        case .agents:
-            return ["agents", "agent", "profiles", "agent profiles"]
-        case .agentModels:
-            return [
-                "agent models",
-                "agent model bindings",
-                "agent bindings",
-                "agent capability",
-                "models",
-                "capability",
-                "agent models & capability"
-            ]
-        case .responseLanguage:
-            return ["language", "response language", "locale", "response_language"]
-        case .memoryEmbedding:
-            return ["memory embeddings", "memory embedding", "embeddings", "embedding", "bm25"]
-        case .resetRemoteConfiguration:
-            return ["reset", "reset remote configuration", "reset configuration"]
-        case .finish:
-            return ["finish", "done", "exit", "quit", "end", "stop"]
-        case .cancel:
-            return ["cancel", "abort", "discard", "quit without saving"]
-        }
-    }
+    private var descriptor: Descriptor { Self.descriptors[self]! }
+    var title: String { descriptor.title }
+    var category: SetupSectionCategory { descriptor.category }
+    var requiresConfiguredModels: Bool { descriptor.requiresConfiguredModels }
+    func matches(_ value: String) -> Bool { descriptor.aliases.contains(value) }
 }
 
 struct VoiceSetupOption {

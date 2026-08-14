@@ -26,16 +26,15 @@ public enum ZenCODESetupRunner {
         let settingsURL = AgentSettingsManifestStore.settingsURL()
         var manifest: AgentSettingsManifest?
         if FileManager.default.fileExists(atPath: settingsURL.path) {
-            let resolution = try SetupConfigurationResolver.resolve {
-                try AgentSettingsManifestStore.loadRequired(from: settingsURL)
-            } confirmOverwrite: { _ in
-                try promptYesNo(
+            do {
+                manifest = try AgentSettingsManifestStore.loadRequired(from: settingsURL)
+            } catch {
+                guard try promptYesNo(
                     "settings.json exists but is invalid. Rewrite it?",
                     defaultValue: true
-                )
-            }
-            if case let .loaded(loadedManifest) = resolution {
-                manifest = loadedManifest
+                ) else {
+                    throw error
+                }
             }
         }
 

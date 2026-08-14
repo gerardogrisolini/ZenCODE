@@ -171,22 +171,13 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         self.tools = tools
         self.skills = skills
 
-        let legacyModelID = modelID?.nilIfBlank
-        let sourceBindings: [AgentModelBinding]
-        if modelBindings.isEmpty, let legacyModelID {
-            sourceBindings = [
-                AgentModelBinding(
-                    id: legacyModelID,
-                    modelID: legacyModelID,
-                    modelProvider: modelProvider,
-                    thinkingSelection: thinkingSelection,
-                    capability: capability
-                )
-            ]
-        } else {
-            sourceBindings = modelBindings
-        }
-
+        let sourceBindings = Self.sourceModelBindings(
+            modelBindings.isEmpty ? nil : modelBindings,
+            legacyModelID: modelID,
+            legacyModelProvider: modelProvider,
+            legacyThinkingSelection: thinkingSelection,
+            legacyCapability: capability
+        )
         let normalizedBindings = Self.normalizedModelBindings(sourceBindings)
         self.modelBindings = normalizedBindings
         self.defaultModelBindingID = Self.resolvedDefaultModelBindingID(
@@ -220,23 +211,13 @@ public struct AgentProfile: Codable, Hashable, Sendable {
             [AgentModelBinding].self,
             forKey: .modelBindings
         )
-        let sourceBindings: [AgentModelBinding]
-        if let decodedBindings {
-            sourceBindings = decodedBindings
-        } else if let legacyModelID {
-            sourceBindings = [
-                AgentModelBinding(
-                    id: legacyModelID,
-                    modelID: legacyModelID,
-                    modelProvider: legacyModelProvider,
-                    thinkingSelection: legacyThinkingSelection,
-                    capability: legacyCapability
-                )
-            ]
-        } else {
-            sourceBindings = []
-        }
-
+        let sourceBindings = Self.sourceModelBindings(
+            decodedBindings,
+            legacyModelID: legacyModelID,
+            legacyModelProvider: legacyModelProvider,
+            legacyThinkingSelection: legacyThinkingSelection,
+            legacyCapability: legacyCapability
+        )
         let normalizedBindings = Self.normalizedModelBindings(sourceBindings)
         self.modelBindings = normalizedBindings
         self.defaultModelBindingID = Self.resolvedDefaultModelBindingID(
@@ -279,6 +260,26 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         case modelBindings
         case defaultModelBindingID
         case defaultModelID
+    }
+
+    private static func sourceModelBindings(
+        _ bindings: [AgentModelBinding]?,
+        legacyModelID: String?,
+        legacyModelProvider: String?,
+        legacyThinkingSelection: AgentThinkingSelection?,
+        legacyCapability: Int?
+    ) -> [AgentModelBinding] {
+        guard let bindings else {
+            guard let legacyModelID = legacyModelID?.nilIfBlank else { return [] }
+            return [AgentModelBinding(
+                id: legacyModelID,
+                modelID: legacyModelID,
+                modelProvider: legacyModelProvider,
+                thinkingSelection: legacyThinkingSelection,
+                capability: legacyCapability
+            )]
+        }
+        return bindings
     }
 
     private static func normalizedModelBindings(

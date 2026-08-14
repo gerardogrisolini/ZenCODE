@@ -12,10 +12,6 @@ func jsonString(from value: Any) -> String {
     AgentJSONSupport.jsonString(from: value)
 }
 
-func jsonCompatible(_ value: Any) -> Any {
-    AgentJSONSupport.jsonCompatible(value)
-}
-
 extension Dictionary where Key == String, Value == Any {
     public func string(_ keys: String...) -> String? {
         for key in keys {

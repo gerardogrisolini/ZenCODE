@@ -474,18 +474,14 @@ actor TerminalChatRenderCoordinator {
     // MARK: - Messages
 
     func writeStartupSummary(_ text: String) {
-        interruptActiveToolForInterleavedOutputIfNeeded()
-        writeRawChatError(text)
-        renderPendingOverviewsIfIdle()
+        writeInterleavedMessage { writeRawChatError(text) }
     }
 
     /// Writes text that already carries its own ANSI styling (bordered cards and
     /// other pre-rendered blocks) without applying the system-message color,
     /// which would otherwise override the block's own palette.
     func writePreformattedMessage(_ text: String) {
-        interruptActiveToolForInterleavedOutputIfNeeded()
-        writeRawChatError(text)
-        renderPendingOverviewsIfIdle()
+        writeInterleavedMessage { writeRawChatError(text) }
     }
 
     func writeSubmittedPrompt(_ prompt: String) {
@@ -528,13 +524,11 @@ actor TerminalChatRenderCoordinator {
     }
 
     func writeOutput(_ text: String, preservesSpacing: Bool = false) {
-        interruptActiveToolForInterleavedOutputIfNeeded()
-        writeChat(
+        writeInterleavedMessage { writeChat(
             text,
             to: .standardOutput,
             preservesSpacing: preservesSpacing
-        )
-        renderPendingOverviewsIfIdle()
+        ) }
     }
 
     func flushOutput() {
@@ -542,37 +536,31 @@ actor TerminalChatRenderCoordinator {
     }
 
     func writeError(_ text: String, preservesSpacing: Bool = false) {
-        interruptActiveToolForInterleavedOutputIfNeeded()
-        writeChat(
+        writeInterleavedMessage { writeChat(
             text,
             to: .standardError,
             preservesSpacing: preservesSpacing
-        )
-        renderPendingOverviewsIfIdle()
+        ) }
     }
 
     func writeFailureMessage(_ text: String) {
-        interruptActiveToolForInterleavedOutputIfNeeded()
-        writeChat(
+        writeInterleavedMessage { writeChat(
             TerminalChatTextFormatting.failureMessageColorApplied(
                 to: text,
                 isEnabled: standardErrorIsTerminal
             ),
             to: .standardError
-        )
-        renderPendingOverviewsIfIdle()
+        ) }
     }
 
     func writeSystemMessage(_ text: String) {
-        interruptActiveToolForInterleavedOutputIfNeeded()
-        writeChat(
+        writeInterleavedMessage { writeChat(
             TerminalChatTextFormatting.systemMessageColorApplied(
                 to: text,
                 isEnabled: standardErrorIsTerminal
             ),
             to: .standardError
-        )
-        renderPendingOverviewsIfIdle()
+        ) }
     }
 
     func writeMarkdownMessage(_ markdown: String) {
@@ -584,26 +572,28 @@ actor TerminalChatRenderCoordinator {
     }
 
     func writeFileChangeSummaryMessage(_ text: String) {
-        interruptActiveToolForInterleavedOutputIfNeeded()
-        writeChat(
+        writeInterleavedMessage { writeChat(
             TerminalChatTextFormatting.fileChangeSummaryColorApplied(
                 to: text,
                 isEnabled: standardErrorIsTerminal
             ),
             to: .standardError
-        )
-        renderPendingOverviewsIfIdle()
+        ) }
     }
 
     func writeOperationalMessage(_ text: String) {
-        interruptActiveToolForInterleavedOutputIfNeeded()
-        writeChat(
+        writeInterleavedMessage { writeChat(
             TerminalChatTextFormatting.operationalMessageColorApplied(
                 to: text,
                 isEnabled: standardErrorIsTerminal
             ),
             to: .standardError
-        )
+        ) }
+    }
+
+    private func writeInterleavedMessage(_ write: () -> Void) {
+        interruptActiveToolForInterleavedOutputIfNeeded()
+        write()
         renderPendingOverviewsIfIdle()
     }
 

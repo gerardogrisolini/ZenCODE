@@ -164,24 +164,11 @@ struct BrowserViewportStateStore: Sendable {
                 throw BrowserToolsFeatureError.browserError("Viewport state directory unavailable.")
             }
 
-            let descriptor = open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
-            guard descriptor >= 0 else {
-                throw BrowserToolsFeatureError.browserError("Viewport state lock unavailable.")
-            }
-            defer {
-                _ = flock(descriptor, LOCK_UN)
-                _ = close(descriptor)
-            }
-            guard flock(descriptor, LOCK_EX) == 0 else {
-                throw BrowserToolsFeatureError.browserError("Viewport state lock unavailable.")
-            }
-            #if canImport(Darwin) || canImport(Glibc)
-            try? FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: lockURL.path
+            return try BrowserInterprocessLock.withExclusiveLock(
+                at: lockURL,
+                error: { BrowserToolsFeatureError.browserError("Viewport state lock unavailable.") },
+                body: body
             )
-            #endif
-            return try body()
         }
     }
 
@@ -256,7 +243,7 @@ struct BrowserViewportTool: FeatureTool {
         let preset: String?
 
         var resolvedPageID: String? {
-            BrowserWebDevPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
+            BrowserPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
         }
     }
 
@@ -436,7 +423,7 @@ struct BrowserResetStateTool: FeatureTool {
         let scope: String?
 
         var resolvedPageID: String? {
-            BrowserWebDevPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
+            BrowserPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
         }
     }
 
@@ -635,7 +622,6 @@ enum BrowserConditionLimits {
     static let maximumTimeoutSeconds = 30
     static let pollIntervalMilliseconds = 250
     static let maximumLiteralBytes = 1_000
-    static let maximumProbeTextCharacters = 48_000
     private static let maximumObservedValueBytes = 1_000
 
     static func resolveTimeout(_ requestedTimeout: Int?) throws -> Int {
@@ -837,7 +823,7 @@ struct BrowserWaitTool: FeatureTool {
         let timeout_seconds: Int?
 
         var resolvedPageID: String? {
-            BrowserWebDevPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
+            BrowserPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
         }
 
         var resolvedTimeout: Int? {
@@ -897,7 +883,7 @@ struct BrowserAssertTool: FeatureTool {
         let value: String?
 
         var resolvedPageID: String? {
-            BrowserWebDevPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
+            BrowserPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
         }
     }
 
@@ -1014,11 +1000,11 @@ extension CDPSession {
 
 // MARK: - Shared input resolution
 
-private enum BrowserWebDevPageInput {
+enum BrowserPageInput {
     static func resolve(
         pageID: String?,
         pageIDSnakeCase: String?,
-        id: String?
+        id: String? = nil
     ) -> String? {
         pageID?.nilIfBlank ?? pageIDSnakeCase?.nilIfBlank ?? id?.nilIfBlank
     }

@@ -32,16 +32,6 @@ enum LocalToolsSupport {
         return context.resolvePath(path)
     }
 
-    static func requiredString(
-        _ values: String?...,
-        name: String
-    ) throws -> String {
-        guard let value = values.compactMap({ $0?.nilIfBlank }).first else {
-            throw LocalToolsFeatureError.missingArgument(name)
-        }
-        return value
-    }
-
     static func requiredRawString(
         _ values: String?...,
         name: String

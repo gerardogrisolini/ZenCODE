@@ -116,6 +116,25 @@ extension RemoteGenerationClient {
         }
     }
 
+    private func remoteToolCatalog(
+        allowedToolNames: Set<String>?,
+        preferredWorkspaceRootURL: URL?,
+        sessionID: String,
+        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async -> RemoteToolWireCatalog {
+        let descriptors = await toolExecutor.descriptors(
+            allowedToolNames: allowedToolNames,
+            preferredWorkspaceRootURL: preferredWorkspaceRootURL,
+            sessionID: sessionID
+        )
+        if configuration.verboseLogging {
+            await onEvent(.diagnostic(
+                RemoteStreamTransport.toolExposureDiagnostic(from: descriptors)
+            ))
+        }
+        return RemoteToolWireCatalog(descriptors: descriptors)
+    }
+
     // MARK: - Chat Completions
 
     public func streamChatCompletions(
@@ -126,17 +145,12 @@ extension RemoteGenerationClient {
         thinkingSelection: AgentThinkingSelection?,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> RemoteStreamResult {
-        let toolDescriptors = await toolExecutor.descriptors(
+        let toolCatalog = await remoteToolCatalog(
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
-            sessionID: sessionID
+            sessionID: sessionID,
+            onEvent: onEvent
         )
-        if configuration.verboseLogging {
-            await onEvent(.diagnostic(
-                RemoteStreamTransport.toolExposureDiagnostic(from: toolDescriptors)
-            ))
-        }
-        let toolCatalog = RemoteToolWireCatalog(descriptors: toolDescriptors)
         let wireMessages = Self.chatCompletionsMessagesExpandingToolImages(
             from: toolCatalog.wireMessages(from: messages)
         )
@@ -192,17 +206,12 @@ extension RemoteGenerationClient {
         thinkingSelection: AgentThinkingSelection?,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> RemoteStreamResult {
-        let toolDescriptors = await toolExecutor.descriptors(
+        let toolCatalog = await remoteToolCatalog(
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
-            sessionID: sessionID
+            sessionID: sessionID,
+            onEvent: onEvent
         )
-        if configuration.verboseLogging {
-            await onEvent(.diagnostic(
-                RemoteStreamTransport.toolExposureDiagnostic(from: toolDescriptors)
-            ))
-        }
-        let toolCatalog = RemoteToolWireCatalog(descriptors: toolDescriptors)
         let normalizedInput = try Self.validatedResponsesInputPayload(
             from: toolCatalog.wireMessages(from: messages)
         )

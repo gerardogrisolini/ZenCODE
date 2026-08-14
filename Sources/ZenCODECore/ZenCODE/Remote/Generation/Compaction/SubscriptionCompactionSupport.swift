@@ -10,8 +10,21 @@
 //
 
 import Foundation
+import ToolCore
 
 enum SubscriptionCompactionSupport {
+    /// Coarse request estimate used only to decide whether compaction is needed.
+    static func serializedPayloadTokenEstimate(_ payload: [String: Any]) -> Int? {
+        guard !payload.isEmpty,
+              let data = try? JSONValue(jsonObject: payload).jsonData(
+                  outputFormatting: [.withoutEscapingSlashes]
+              ),
+              !data.isEmpty else {
+            return nil
+        }
+        return max(Int((Double(data.count) / 4.0).rounded(.up)), 1)
+    }
+
     /// Homogeneous split of a provider request estimate.
     ///
     /// `staticOverheadTokens` is produced by the *same* provider estimator run

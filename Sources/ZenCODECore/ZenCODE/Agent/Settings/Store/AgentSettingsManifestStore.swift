@@ -120,20 +120,10 @@ public enum AgentSettingsManifestStore {
         try withManifestMutation {
             let current = try loadRequiredUnlocked(from: settingsURL())
             try saveUnlocked(
-                AgentSettingsManifest(
-                    version: current.version,
-                    providers: current.providers,
-                    models: current.models,
-                    selectedModelID: modelID,
-                    selectedThinkingSelection: thinkingSelection,
-                    telegram: current.telegram,
-                    voice: current.voice,
-                    remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
-                    localExecAllowedCommands: current.localExecAllowedCommands,
-                    chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
-                    anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
-                    responseLanguage: current.responseLanguage,
-                    memoryEmbedding: current.memoryEmbedding
+                applying(
+                    current,
+                    selectedModelID: .some(modelID),
+                    selectedThinkingSelection: .some(thinkingSelection)
                 ),
                 to: settingsURL()
             )
@@ -146,21 +136,7 @@ public enum AgentSettingsManifestStore {
         try withManifestMutation {
             let current = try loadRequiredUnlocked(from: settingsURL())
             try saveUnlocked(
-                AgentSettingsManifest(
-                    version: current.version,
-                    providers: current.providers,
-                    models: current.models,
-                    selectedModelID: current.selectedModelID,
-                    selectedThinkingSelection: thinkingSelection,
-                    telegram: current.telegram,
-                    voice: current.voice,
-                    remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
-                    localExecAllowedCommands: current.localExecAllowedCommands,
-                    chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
-                    anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
-                    responseLanguage: current.responseLanguage,
-                    memoryEmbedding: current.memoryEmbedding
-                ),
+                applying(current, selectedThinkingSelection: .some(thinkingSelection)),
                 to: settingsURL()
             )
         }
@@ -172,21 +148,7 @@ public enum AgentSettingsManifestStore {
         try withManifestMutation {
             let current = try manifestForCredentialUpdate()
             try saveUnlocked(
-                AgentSettingsManifest(
-                    version: current.version,
-                    providers: current.providers,
-                    models: current.models,
-                    selectedModelID: current.selectedModelID,
-                    selectedThinkingSelection: current.selectedThinkingSelection,
-                    telegram: current.telegram,
-                    voice: current.voice,
-                    remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
-                    localExecAllowedCommands: current.localExecAllowedCommands,
-                    chatGPTSubscriptionCredentials: credentials,
-                    anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
-                    responseLanguage: current.responseLanguage,
-                    memoryEmbedding: current.memoryEmbedding
-                ),
+                applying(current, chatGPTSubscriptionCredentials: .some(credentials)),
                 to: settingsURL()
             )
         }
@@ -198,21 +160,7 @@ public enum AgentSettingsManifestStore {
         try withManifestMutation {
             let current = try manifestForCredentialUpdate()
             try saveUnlocked(
-                AgentSettingsManifest(
-                    version: current.version,
-                    providers: current.providers,
-                    models: current.models,
-                    selectedModelID: current.selectedModelID,
-                    selectedThinkingSelection: current.selectedThinkingSelection,
-                    telegram: current.telegram,
-                    voice: current.voice,
-                    remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
-                    localExecAllowedCommands: current.localExecAllowedCommands,
-                    chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
-                    anthropicSubscriptionCredentials: credentials,
-                    responseLanguage: current.responseLanguage,
-                    memoryEmbedding: current.memoryEmbedding
-                ),
+                applying(current, anthropicSubscriptionCredentials: .some(credentials)),
                 to: settingsURL()
             )
         }
@@ -222,24 +170,35 @@ public enum AgentSettingsManifestStore {
         try withManifestMutation {
             let current = try manifestForCredentialUpdate()
             try saveUnlocked(
-                AgentSettingsManifest(
-                    version: current.version,
-                    providers: current.providers,
-                    models: current.models,
-                    selectedModelID: current.selectedModelID,
-                    selectedThinkingSelection: current.selectedThinkingSelection,
-                    telegram: current.telegram,
-                    voice: current.voice,
-                    remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
-                    localExecAllowedCommands: current.localExecAllowedCommands,
-                    chatGPTSubscriptionCredentials: current.chatGPTSubscriptionCredentials,
-                    anthropicSubscriptionCredentials: current.anthropicSubscriptionCredentials,
-                    responseLanguage: languageCode,
-                    memoryEmbedding: current.memoryEmbedding
-                ),
+                applying(current, responseLanguage: .some(languageCode)),
                 to: settingsURL()
             )
         }
+    }
+
+    private static func applying(
+        _ current: AgentSettingsManifest,
+        selectedModelID: String?? = nil,
+        selectedThinkingSelection: AgentThinkingSelection?? = nil,
+        chatGPTSubscriptionCredentials: CodexAgentCredentials?? = nil,
+        anthropicSubscriptionCredentials: AnthropicSubscriptionCredentials?? = nil,
+        responseLanguage: String?? = nil
+    ) -> AgentSettingsManifest {
+        AgentSettingsManifest(
+            version: current.version,
+            providers: current.providers,
+            models: current.models,
+            selectedModelID: selectedModelID ?? current.selectedModelID,
+            selectedThinkingSelection: selectedThinkingSelection ?? current.selectedThinkingSelection,
+            telegram: current.telegram,
+            voice: current.voice,
+            remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
+            localExecAllowedCommands: current.localExecAllowedCommands,
+            chatGPTSubscriptionCredentials: chatGPTSubscriptionCredentials ?? current.chatGPTSubscriptionCredentials,
+            anthropicSubscriptionCredentials: anthropicSubscriptionCredentials ?? current.anthropicSubscriptionCredentials,
+            responseLanguage: responseLanguage ?? current.responseLanguage,
+            memoryEmbedding: current.memoryEmbedding
+        )
     }
 
     private static func manifestForCredentialUpdate() throws -> AgentSettingsManifest {

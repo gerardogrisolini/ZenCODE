@@ -415,7 +415,7 @@ public enum AgentSettingsStore {
         let preferredSelection = requestedSelection ?? agentThinkingSelection
         if let explicitModelID = explicitModelID?.nilIfBlank {
             guard let model = manifest?.models.first(where: {
-                manifestModel($0, matches: explicitModelID)
+                $0.matches(explicitModelID)
             }) else {
                 return preferredSelection
             }
@@ -424,7 +424,7 @@ public enum AgentSettingsStore {
 
         if let agentModelID = agentModelID?.nilIfBlank,
            let model = manifest?.models.first(where: {
-               manifestModel($0, matches: agentModelID)
+               $0.matches(agentModelID)
            }) {
             return model.thinkingSelection(for: preferredSelection)
         }
@@ -488,10 +488,6 @@ public enum AgentSettingsStore {
             return selection(for: model)
         }
 
-        if isRemoteLLMIDSyntax(normalizedLLMID) {
-            return nil
-        }
-
         return nil
     }
 
@@ -499,7 +495,7 @@ public enum AgentSettingsStore {
         guard let manifest = AgentSettingsManifestStore.load() else {
             return nil
         }
-        return manifest.models.first { manifestModel($0, matches: llmID) }
+        return manifest.models.first { $0.matches(llmID) }
     }
 
     private static func selection(
@@ -543,20 +539,6 @@ public enum AgentSettingsStore {
             return model.configuredContextWindowLimit
         }
         return CodexAgentModel.contextWindowTokenLimit(forLLMID: model.id)
-    }
-
-    private static func manifestModel(
-        _ model: AgentSettingsModelManifest,
-        matches llmID: String
-    ) -> Bool {
-        let normalizedLLMID = llmID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedLLMID.isEmpty else {
-            return false
-        }
-        if model.matches(normalizedLLMID) {
-            return true
-        }
-        return false
     }
 
     public static func defaultLocalModelID() -> String? {

@@ -1158,7 +1158,7 @@ private enum DesktopController {
             records = windowRecords(onScreenOnly: false, matching: input)
         } else if let frontmost = NSWorkspace.shared.frontmostApplication {
             var copy = input
-            copy = DesktopRunInput(copying: copy, pid: frontmost.processIdentifier)
+            copy = DesktopRunInput(copying: copy, pidOverride: frontmost.processIdentifier)
             records = windowRecords(onScreenOnly: false, matching: copy)
         } else {
             records = []
@@ -1186,7 +1186,7 @@ private enum DesktopController {
         try requireAccessibility()
 
         let expected = input.window_id.flatMap { id in
-            windowRecords(onScreenOnly: false, matching: DesktopRunInput(copying: input, windowID: id)).first
+            windowRecords(onScreenOnly: false, matching: DesktopRunInput(copying: input, windowIDOverride: id)).first
         }
         let pid = try DesktopWindowSelectionPolicy.selectedProcessID(
             requestedWindowID: input.window_id,
@@ -1821,15 +1821,8 @@ private enum DesktopController {
     }
 }
 
-private extension String {
-    var nilIfBlank: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-}
-
 private extension DesktopRunInput {
-    init(copying source: DesktopRunInput, pid: Int32) {
+    init(copying source: DesktopRunInput, pidOverride: Int32? = nil, windowIDOverride: UInt32? = nil) {
         self.init(
             action: source.action,
             x: source.x, y: source.y, to_x: source.to_x, to_y: source.to_y,
@@ -1837,25 +1830,8 @@ private extension DesktopRunInput {
             button: source.button, click_count: source.click_count, delta_x: source.delta_x, delta_y: source.delta_y,
             scroll_unit: source.scroll_unit, text: source.text, key: source.key, modifiers: source.modifiers,
             repeat_count: source.repeat_count, scope: source.scope, display_index: source.display_index,
-            window_id: source.window_id, include_cursor: source.include_cursor, include_shadow: source.include_shadow,
-            delay: source.delay, label: source.label, pid: pid, bundle_id: source.bundle_id,
-            app_name: source.app_name, app_path: source.app_path, title: source.title,
-            window_index: source.window_index, on_screen_only: source.on_screen_only, limit: source.limit,
-            launch_if_needed: source.launch_if_needed, force: source.force, state: source.state,
-            timeout: source.timeout, target: source.target
-        )
-    }
-
-    init(copying source: DesktopRunInput, windowID: UInt32) {
-        self.init(
-            action: source.action,
-            x: source.x, y: source.y, to_x: source.to_x, to_y: source.to_y,
-            width: source.width, height: source.height, duration: source.duration, interval: source.interval,
-            button: source.button, click_count: source.click_count, delta_x: source.delta_x, delta_y: source.delta_y,
-            scroll_unit: source.scroll_unit, text: source.text, key: source.key, modifiers: source.modifiers,
-            repeat_count: source.repeat_count, scope: source.scope, display_index: source.display_index,
-            window_id: windowID, include_cursor: source.include_cursor, include_shadow: source.include_shadow,
-            delay: source.delay, label: source.label, pid: source.pid, bundle_id: source.bundle_id,
+            window_id: windowIDOverride ?? source.window_id, include_cursor: source.include_cursor, include_shadow: source.include_shadow,
+            delay: source.delay, label: source.label, pid: pidOverride ?? source.pid, bundle_id: source.bundle_id,
             app_name: source.app_name, app_path: source.app_path, title: source.title,
             window_index: source.window_index, on_screen_only: source.on_screen_only, limit: source.limit,
             launch_if_needed: source.launch_if_needed, force: source.force, state: source.state,

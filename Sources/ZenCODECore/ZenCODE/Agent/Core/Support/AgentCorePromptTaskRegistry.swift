@@ -14,9 +14,6 @@ struct AgentCorePromptTaskRegistry {
     private var taskIDsBySessionID: [String: Set<UUID>] = [:]
     private var sessionIDsByTaskID: [UUID: String] = [:]
 
-    var allTasks: [UUID: Task<Void, Never>] { tasks }
-    var isEmpty: Bool { tasks.isEmpty }
-
     /// Registers a prompt task so it can be cancelled by session or cleared
     /// when it completes.
     mutating func register(
@@ -68,12 +65,6 @@ struct AgentCorePromptTaskRegistry {
 
     var activeTasks: [Task<Void, Never>] {
         Array(tasks.values)
-    }
-
-    mutating func removeAll() {
-        tasks.removeAll()
-        taskIDsBySessionID.removeAll()
-        sessionIDsByTaskID.removeAll()
     }
 
     /// Returns `true` when at least one prompt task is active for the session.

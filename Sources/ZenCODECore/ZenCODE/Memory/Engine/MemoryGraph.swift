@@ -20,46 +20,46 @@ enum EdgeKind: Sendable, Equatable {
     }
 }
 
-extension EdgeKind: Codable {
-    private enum CodingKeys: String, CodingKey { case kind, weight }
-    private enum Kind: String, Codable {
-        case hasTag = "has_tag"
-        case inCluster = "in_cluster"
-        case relatesTo = "relates_to"
-        case supersedes
-        case contradicts
-        case derivedFrom = "derived_from"
+private enum EdgeCoding {
+    enum Keys: String, CodingKey { case kind, weight }
+    enum Kind: String, Codable {
+        case hasTag = "has_tag", inCluster = "in_cluster", relatesTo = "relates_to"
+        case supersedes, contradicts, derivedFrom = "derived_from"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        switch try container.decode(Kind.self, forKey: .kind) {
-        case .hasTag: self = .hasTag
-        case .inCluster: self = .inCluster
-        case .relatesTo: self = .relatesTo(weight: try container.decodeIfPresent(Float.self, forKey: .weight) ?? 1)
-        case .supersedes: self = .supersedes
-        case .contradicts: self = .contradicts
-        case .derivedFrom: self = .derivedFrom
+    static func decode<Key: CodingKey>(from container: KeyedDecodingContainer<Key>) throws -> EdgeKind {
+        switch try container.decode(Kind.self, forKey: Key(stringValue: "kind")!) {
+        case .hasTag: .hasTag
+        case .inCluster: .inCluster
+        case .relatesTo: .relatesTo(weight: try container.decodeIfPresent(Float.self, forKey: Key(stringValue: "weight")!) ?? 1)
+        case .supersedes: .supersedes
+        case .contradicts: .contradicts
+        case .derivedFrom: .derivedFrom
         }
+    }
+
+    static func encode<Key: CodingKey>(_ edge: EdgeKind, to container: inout KeyedEncodingContainer<Key>) throws {
+        switch edge {
+        case .hasTag: try container.encode(Kind.hasTag, forKey: Key(stringValue: "kind")!)
+        case .inCluster: try container.encode(Kind.inCluster, forKey: Key(stringValue: "kind")!)
+        case .relatesTo(let weight):
+            try container.encode(Kind.relatesTo, forKey: Key(stringValue: "kind")!)
+            try container.encode(weight, forKey: Key(stringValue: "weight")!)
+        case .supersedes: try container.encode(Kind.supersedes, forKey: Key(stringValue: "kind")!)
+        case .contradicts: try container.encode(Kind.contradicts, forKey: Key(stringValue: "kind")!)
+        case .derivedFrom: try container.encode(Kind.derivedFrom, forKey: Key(stringValue: "kind")!)
+        }
+    }
+}
+
+extension EdgeKind: Codable {
+    public init(from decoder: Decoder) throws {
+        self = try EdgeCoding.decode(from: decoder.container(keyedBy: EdgeCoding.Keys.self))
     }
 
     public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        switch self {
-        case .hasTag:
-            try container.encode(Kind.hasTag, forKey: .kind)
-        case .inCluster:
-            try container.encode(Kind.inCluster, forKey: .kind)
-        case .relatesTo(let weight):
-            try container.encode(Kind.relatesTo, forKey: .kind)
-            try container.encode(weight, forKey: .weight)
-        case .supersedes:
-            try container.encode(Kind.supersedes, forKey: .kind)
-        case .contradicts:
-            try container.encode(Kind.contradicts, forKey: .kind)
-        case .derivedFrom:
-            try container.encode(Kind.derivedFrom, forKey: .kind)
-        }
+        var container = encoder.container(keyedBy: EdgeCoding.Keys.self)
+        try EdgeCoding.encode(self, to: &container)
     }
 }
 
@@ -73,41 +73,17 @@ struct MemoryEdge: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey { case target, kind, weight }
-    private enum Kind: String, Codable {
-        case hasTag = "has_tag"
-        case inCluster = "in_cluster"
-        case relatesTo = "relates_to"
-        case supersedes
-        case contradicts
-        case derivedFrom = "derived_from"
-    }
 
     public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        target = try c.decode(String.self, forKey: .target)
-        switch try c.decode(Kind.self, forKey: .kind) {
-        case .hasTag: kind = .hasTag
-        case .inCluster: kind = .inCluster
-        case .relatesTo: kind = .relatesTo(weight: try c.decodeIfPresent(Float.self, forKey: .weight) ?? 1)
-        case .supersedes: kind = .supersedes
-        case .contradicts: kind = .contradicts
-        case .derivedFrom: kind = .derivedFrom
-        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        target = try container.decode(String.self, forKey: .target)
+        kind = try EdgeCoding.decode(from: container)
     }
 
     public func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(target, forKey: .target)
-        switch kind {
-        case .hasTag: try c.encode(Kind.hasTag, forKey: .kind)
-        case .inCluster: try c.encode(Kind.inCluster, forKey: .kind)
-        case .relatesTo(let weight):
-            try c.encode(Kind.relatesTo, forKey: .kind)
-            try c.encode(weight, forKey: .weight)
-        case .supersedes: try c.encode(Kind.supersedes, forKey: .kind)
-        case .contradicts: try c.encode(Kind.contradicts, forKey: .kind)
-        case .derivedFrom: try c.encode(Kind.derivedFrom, forKey: .kind)
-        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(target, forKey: .target)
+        try EdgeCoding.encode(kind, to: &container)
     }
 }
 

@@ -147,25 +147,21 @@ extension TerminalChat {
     }
 
     public nonisolated static func renderSelectedSkills(_ skills: [PromptSkill]) -> String {
-        guard !skills.isEmpty else {
-            return "Selected skills: none\n"
-        }
-
-        let renderedSkills = skills
-            .map(\.title)
-            .joined(separator: ", ")
-        return "Selected skills: \(renderedSkills)\n"
+        renderSkills(skills, label: "Selected")
     }
 
     public nonisolated static func renderActiveSkills(_ skills: [PromptSkill]) -> String {
-        guard !skills.isEmpty else {
-            return "Active skills: none\n"
-        }
+        renderSkills(skills, label: "Active")
+    }
 
-        let renderedSkills = skills
-            .map(\.title)
-            .joined(separator: ", ")
-        return "Active skills: \(renderedSkills)\n"
+    private nonisolated static func renderSkills(
+        _ skills: [PromptSkill],
+        label: String
+    ) -> String {
+        guard !skills.isEmpty else {
+            return "\(label) skills: none\n"
+        }
+        return "\(label) skills: \(skills.map(\.title).joined(separator: ", "))\n"
     }
 
     public nonisolated static func renderToolSelectionUsage() -> String {

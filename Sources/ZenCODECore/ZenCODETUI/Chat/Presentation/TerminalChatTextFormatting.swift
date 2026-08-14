@@ -289,18 +289,7 @@ enum TerminalChatTextFormatting {
     static let chatLineInsetPrefix = " "
 
     static func systemMessageColorApplied(to text: String, isEnabled: Bool) -> String {
-        guard isEnabled, !text.isEmpty else {
-            return text
-        }
-
-        let color = systemMessageANSIColor
-        let reset = TerminalStyle.reset
-        return text
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { line in
-                line.isEmpty ? "" : "\(color)\(line)\(reset)"
-            }
-            .joined(separator: "\n")
+        messageColorApplied(to: text, color: systemMessageANSIColor, isEnabled: isEnabled)
     }
 
     static let systemMessageANSIColor = TerminalStyle.Text.systemMessage
@@ -424,11 +413,18 @@ enum TerminalChatTextFormatting {
     static let fileChangeSummaryHeaderANSIColor = TerminalStyle.FileChange.summaryHeader
 
     static func failureMessageColorApplied(to text: String, isEnabled: Bool) -> String {
+        messageColorApplied(to: text, color: failureMessageANSIColor, isEnabled: isEnabled)
+    }
+
+    private static func messageColorApplied(
+        to text: String,
+        color: String,
+        isEnabled: Bool
+    ) -> String {
         guard isEnabled, !text.isEmpty else {
             return text
         }
 
-        let color = failureMessageANSIColor
         let reset = TerminalStyle.reset
         return text
             .split(separator: "\n", omittingEmptySubsequences: false)

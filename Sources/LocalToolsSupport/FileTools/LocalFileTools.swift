@@ -15,6 +15,27 @@ import FeatureKit
 import ToolCore
 
 
+private func replacing(
+    _ contents: String,
+    oldString: String,
+    with newString: String,
+    replaceAll: Bool,
+    notFoundMessage: @autoclosure () -> String
+) throws -> (contents: String, replacements: Int) {
+    let occurrences = contents.ranges(of: oldString).count
+    guard occurrences > 0 else {
+        throw LocalToolsFeatureError.permissionDenied(notFoundMessage())
+    }
+    if !replaceAll && occurrences != 1 {
+        throw LocalToolsFeatureError.permissionDenied("oldString matched \(occurrences) times. Set replaceAll=true or provide a unique string.")
+    }
+    return (
+        replaceAll ? contents.replacingOccurrences(of: oldString, with: newString) : contents.replacingFirstOccurrence(of: oldString, with: newString),
+        replaceAll ? occurrences : 1
+    )
+}
+
+
 struct LocalPwdTool: FeatureTool {
     struct Input: Decodable, Sendable {}
 
@@ -202,14 +223,12 @@ struct LocalReplaceTool: FeatureTool {
         }
         return try await LocalIOOffloader.run {
             let original = try String(contentsOf: path, encoding: .utf8)
-            // Count without materializing the full split array.
-            let occurrences = original.ranges(of: oldString).count
-            guard occurrences > 0 else {
-                throw LocalToolsFeatureError.permissionDenied("oldString was not found in \(path.path).")
-            }
-            let updated = original.replacingOccurrences(of: oldString, with: newString)
-            try updated.write(to: path, atomically: true, encoding: .utf8)
-            return "Replaced \(occurrences) occurrence(s) in \(path.path)."
+            let replacement = try replacing(
+                original, oldString: oldString, with: newString, replaceAll: true,
+                notFoundMessage: "oldString was not found in \(path.path)."
+            )
+            try replacement.contents.write(to: path, atomically: true, encoding: .utf8)
+            return "Replaced \(replacement.replacements) occurrence(s) in \(path.path)."
         }
     }
 }
@@ -243,18 +262,12 @@ struct LocalEditFileTool: FeatureTool {
         let replaceAll = input.replaceAll ?? input.replace_all ?? false
         return try await LocalIOOffloader.run {
             let original = try String(contentsOf: path, encoding: .utf8)
-            let occurrences = original.ranges(of: oldString).count
-            guard occurrences > 0 else {
-                throw LocalToolsFeatureError.permissionDenied("oldString was not found in \(path.path).")
-            }
-            if !replaceAll && occurrences != 1 {
-                throw LocalToolsFeatureError.permissionDenied("oldString matched \(occurrences) times. Set replaceAll=true or provide a unique string.")
-            }
-            let updated = replaceAll
-                ? original.replacingOccurrences(of: oldString, with: newString)
-                : original.replacingFirstOccurrence(of: oldString, with: newString)
-            try updated.write(to: path, atomically: true, encoding: .utf8)
-            return "Updated \(path.path). Replacements: \(replaceAll ? occurrences : 1)."
+            let replacement = try replacing(
+                original, oldString: oldString, with: newString, replaceAll: replaceAll,
+                notFoundMessage: "oldString was not found in \(path.path)."
+            )
+            try replacement.contents.write(to: path, atomically: true, encoding: .utf8)
+            return "Updated \(path.path). Replacements: \(replacement.replacements)."
         }
     }
 }
@@ -307,17 +320,12 @@ struct LocalMultiEditTool: FeatureTool {
                 throw LocalToolsFeatureError.missingArgument("edits[\(index)].newString")
             }
             let replaceAll = edit.replaceAll ?? edit.replace_all ?? false
-            let occurrences = contents.components(separatedBy: oldString).count - 1
-            guard occurrences > 0 else {
-                throw LocalToolsFeatureError.permissionDenied("oldString was not found in \(path.path): \(oldString)")
-            }
-            if !replaceAll && occurrences != 1 {
-                throw LocalToolsFeatureError.permissionDenied("oldString matched \(occurrences) times. Set replaceAll=true or provide a unique string.")
-            }
-            contents = replaceAll
-                ? contents.replacingOccurrences(of: oldString, with: newString)
-                : contents.replacingFirstOccurrence(of: oldString, with: newString)
-            totalReplacements += replaceAll ? occurrences : 1
+            let replacement = try replacing(
+                contents, oldString: oldString, with: newString, replaceAll: replaceAll,
+                notFoundMessage: "oldString was not found in \(path.path): \(oldString)"
+            )
+            contents = replacement.contents
+            totalReplacements += replacement.replacements
         }
         let finalContents = contents
         try await LocalIOOffloader.run {

@@ -15,13 +15,6 @@ struct SwiftFeatureInvocationResult: Sendable {
 }
 
 extension SwiftFeatureRuntime {
-    static func renderInvocationResult(
-        _ result: AsyncProcessResult,
-        feature: SwiftFeatureBundle
-    ) throws -> String {
-        try invocationResult(result, feature: feature).output
-    }
-
     static func invocationResult(
         _ result: AsyncProcessResult,
         feature: SwiftFeatureBundle

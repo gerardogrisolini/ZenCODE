@@ -10,16 +10,6 @@ import FeatureKit
 import ToolCore
 import Foundation
 
-private enum BrowserPageInput {
-    static func resolve(
-        pageID: String?,
-        pageIDSnakeCase: String?,
-        id: String?
-    ) -> String? {
-        pageID?.nilIfBlank ?? pageIDSnakeCase?.nilIfBlank ?? id?.nilIfBlank
-    }
-}
-
 /// Captures a point-in-time semantic accessibility snapshot of a Browser page.
 ///
 /// ## Managing snapshot size on complex pages

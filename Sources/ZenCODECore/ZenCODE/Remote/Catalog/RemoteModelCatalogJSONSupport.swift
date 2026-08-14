@@ -30,13 +30,6 @@ extension Dictionary where Key == String, Value == Any {
 }
 
 extension JSONValue {
-    var anyValueDictionary: [String: Any] {
-        guard case let .object(object) = self else {
-            return [:]
-        }
-        return object.mapValues(\.anyValue)
-    }
-
     var anyValue: Any {
         switch self {
         case let .string(value):

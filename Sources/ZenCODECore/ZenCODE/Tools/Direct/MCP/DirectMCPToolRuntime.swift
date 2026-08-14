@@ -24,28 +24,10 @@ public actor DirectMCPToolRuntime {
         case external(String)
     }
 
-    enum Backend {
-        case remote(RemoteMCPToolExecutor)
-
-        func execute(_ request: ToolRequest) async throws -> ToolExecutionOutput {
-            switch self {
-            case let .remote(executor):
-                return try await executor.execute(request)
-            }
-        }
-
-        func disconnect() async {
-            switch self {
-            case let .remote(executor):
-                await executor.disconnect()
-            }
-        }
-    }
-
     struct Server {
         let family: ServerFamily
         let toolPrefix: String
-        let backend: Backend
+        let backend: RemoteMCPToolExecutor
         let descriptors: [DirectToolDescriptor]
         let ownsBackend: Bool
         let mcpConfiguration: MCPServerConfiguration?
@@ -132,7 +114,7 @@ public actor DirectMCPToolRuntime {
 
     /// Tears down an executor that finished connecting for a runtime
     /// generation that no longer exists.
-    func disconnectStaleExecutor(_ backend: Backend, ownsBackend: Bool) async {
+    func disconnectStaleExecutor(_ backend: RemoteMCPToolExecutor, ownsBackend: Bool) async {
         guard ownsBackend else {
             return
         }
@@ -176,7 +158,7 @@ public actor DirectMCPToolRuntime {
             Server(
                 family: family,
                 toolPrefix: toolPrefix,
-                backend: .remote(executor),
+                backend: executor,
                 descriptors: descriptors,
                 ownsBackend: false,
                 mcpConfiguration: nil
@@ -222,7 +204,7 @@ public actor DirectMCPToolRuntime {
         do {
             let tools = ToolDescriptor.canonicalized(try await executor.loadTools())
             guard isActive(shutdownFence, installationFence: installFence) else {
-                await disconnectStaleExecutor(.remote(executor), ownsBackend: true)
+                await disconnectStaleExecutor(executor, ownsBackend: true)
                 try throwIfInstallIsInactive(
                     shutdownFence: shutdownFence,
                     installationFence: installFence
@@ -245,7 +227,7 @@ public actor DirectMCPToolRuntime {
                 )
             }
             guard isActive(shutdownFence, installationFence: installFence) else {
-                await disconnectStaleExecutor(.remote(executor), ownsBackend: true)
+                await disconnectStaleExecutor(executor, ownsBackend: true)
                 try throwIfInstallIsInactive(
                     shutdownFence: shutdownFence,
                     installationFence: installFence
@@ -256,7 +238,7 @@ public actor DirectMCPToolRuntime {
                 Server(
                     family: family,
                     toolPrefix: toolPrefix,
-                    backend: .remote(executor),
+                    backend: executor,
                     descriptors: descriptors,
                     ownsBackend: true,
                     mcpConfiguration: configuration

@@ -206,13 +206,6 @@ public enum ChatGPTSubscriptionRequestBuilder {
             payload["tools"] = toolPayloads
         }
 
-        guard !payload.isEmpty,
-              let data = try? JSONValue(jsonObject: payload).jsonData(
-                  outputFormatting: [.withoutEscapingSlashes]
-              ),
-              !data.isEmpty else {
-            return nil
-        }
-        return max(Int((Double(data.count) / 4.0).rounded(.up)), 1)
+        return SubscriptionCompactionSupport.serializedPayloadTokenEstimate(payload)
     }
 }

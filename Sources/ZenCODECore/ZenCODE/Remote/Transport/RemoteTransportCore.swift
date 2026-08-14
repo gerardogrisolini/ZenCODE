@@ -51,15 +51,8 @@ public final class RemoteTransportCore: Sendable {
     public func openHTTPStream(
         _ request: RemoteHTTPStreamingRequest
     ) async throws -> RemoteHTTPStreamingResponse {
-        do {
-            if let timeout = request.timeout {
-                return try await Self.withTimeout(timeout) { [self] in
-                    try await openHTTPStreamWithoutTimeout(request)
-                }
-            }
-            return try await openHTTPStreamWithoutTimeout(request)
-        } catch {
-            throw remoteTransportMappedError(error)
+        try await performRequest(timeout: request.timeout) { [self] in
+            try await openHTTPStreamWithoutTimeout(request)
         }
     }
 
@@ -68,15 +61,8 @@ public final class RemoteTransportCore: Sendable {
     public func connectWebSocket(
         _ request: RemoteWebSocketRequest
     ) async throws -> RemoteWebSocketConnection {
-        do {
-            if let timeout = request.timeout {
-                return try await Self.withTimeout(timeout) { [self] in
-                    try await connectWebSocketWithoutTimeout(request)
-                }
-            }
-            return try await connectWebSocketWithoutTimeout(request)
-        } catch {
-            throw remoteTransportMappedError(error)
+        try await performRequest(timeout: request.timeout) { [self] in
+            try await connectWebSocketWithoutTimeout(request)
         }
     }
 
@@ -96,13 +82,20 @@ public final class RemoteTransportCore: Sendable {
     public func sendRequest(
         _ request: RemoteHTTPStreamingRequest
     ) async throws -> (status: Int, headers: RemoteHTTPHeaders, body: Data) {
+        try await performRequest(timeout: request.timeout) { [self] in
+            try await sendRequestWithoutTimeout(request)
+        }
+    }
+
+    private func performRequest<Value: Sendable>(
+        timeout: Duration?,
+        operation: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
         do {
-            if let timeout = request.timeout {
-                return try await Self.withTimeout(timeout) { [self] in
-                    try await sendRequestWithoutTimeout(request)
-                }
+            if let timeout {
+                return try await Self.withTimeout(timeout, operation: operation)
             }
-            return try await sendRequestWithoutTimeout(request)
+            return try await operation()
         } catch {
             throw remoteTransportMappedError(error)
         }

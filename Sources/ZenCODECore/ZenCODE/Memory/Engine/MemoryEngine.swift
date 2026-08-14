@@ -293,9 +293,6 @@ actor MemoryEngine {
 
     public func snapshot() -> MemoryGraph { graph }
 
-    public func setConfiguration(_ configuration: MemoryEngineConfiguration) {
-        self.configuration = configuration
-    }
 
     // MARK: - Transactions
 
@@ -520,35 +517,6 @@ actor MemoryEngine {
         try await transaction { $0.removeMemory(id: id) }
     }
 
-    public func tag(memoryID: String, with tag: String) async throws {
-        try await transaction { $0.addTag(tag, to: memoryID) }
-    }
-
-    public func link(from: String, to: String, weight: Float = 0.8) async throws {
-        try await transaction { $0.linkMemories(from: from, to: to, weight: weight) }
-    }
-
-    public func supersede(newerID: String, olderID: String) async throws {
-        try await transaction { $0.supersede(newerID: newerID, olderID: olderID) }
-    }
-
-    public func contradict(_ firstID: String, _ secondID: String) async throws {
-        try await transaction { $0.markContradiction(firstID, secondID) }
-    }
-
-    public func reinforce(id: String, sessionID: String, messageIndex: Int) async throws {
-        try await transaction { graph in
-            guard var memory = graph.memories[id] else { return }
-            memory.reinforce(sessionID: sessionID, messageIndex: messageIndex)
-            graph.memories[id] = memory
-        }
-    }
-
-    /// Runs only the query-planning stage. Useful for debugging or for host agents that want
-    /// to inspect whether a memory lookup will happen before executing it.
-    public func analyze(_ prompt: String) async throws -> MemoryQueryPlan {
-        try await analyzeWithPolicy(prompt)
-    }
 
     /// Retrieves candidate memories, expands their graph neighborhood, then lets the configured
     /// selector decide which memories are safe and useful to inject into the main agent context.

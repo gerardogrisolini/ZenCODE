@@ -43,6 +43,32 @@ public enum AgentRuntimeAttachmentStoreError: LocalizedError {
 }
 
 public enum AgentRuntimeAttachmentStore {
+    private struct FallbackContentType {
+        let extensions: Set<String>
+        let mimeType: String
+        let kind: AgentRuntimeAttachment.Kind
+        let preferredExtension: String?
+    }
+
+    private static let fallbackContentTypes = [
+        FallbackContentType(extensions: ["apng"], mimeType: "image/apng", kind: .image, preferredExtension: "apng"),
+        FallbackContentType(extensions: ["avif"], mimeType: "image/avif", kind: .image, preferredExtension: "avif"),
+        FallbackContentType(extensions: ["gif"], mimeType: "image/gif", kind: .image, preferredExtension: "gif"),
+        FallbackContentType(extensions: ["heic"], mimeType: "image/heic", kind: .image, preferredExtension: "heic"),
+        FallbackContentType(extensions: ["heif"], mimeType: "image/heif", kind: .image, preferredExtension: "heif"),
+        FallbackContentType(extensions: ["jpeg", "jpg"], mimeType: "image/jpeg", kind: .image, preferredExtension: "jpg"),
+        FallbackContentType(extensions: ["png"], mimeType: "image/png", kind: .image, preferredExtension: "png"),
+        FallbackContentType(extensions: ["tif", "tiff"], mimeType: "image/tiff", kind: .image, preferredExtension: "tiff"),
+        FallbackContentType(extensions: ["webp"], mimeType: "image/webp", kind: .image, preferredExtension: "webp"),
+        FallbackContentType(extensions: ["avi"], mimeType: "video/x-msvideo", kind: .video, preferredExtension: nil),
+        FallbackContentType(extensions: ["m4v"], mimeType: "video/x-m4v", kind: .video, preferredExtension: nil),
+        FallbackContentType(extensions: ["mkv"], mimeType: "video/x-matroska", kind: .video, preferredExtension: nil),
+        FallbackContentType(extensions: ["mov"], mimeType: "video/quicktime", kind: .video, preferredExtension: "mov"),
+        FallbackContentType(extensions: ["mp4"], mimeType: "video/mp4", kind: .video, preferredExtension: "mp4"),
+        FallbackContentType(extensions: ["mpeg", "mpg"], mimeType: "video/mpeg", kind: .video, preferredExtension: nil),
+        FallbackContentType(extensions: ["webm"], mimeType: "video/webm", kind: .video, preferredExtension: "webm"),
+    ]
+
     public static func importRuntimeAttachments(
         from urls: [URL]
     ) throws -> [AgentRuntimeAttachment] {
@@ -114,14 +140,10 @@ public enum AgentRuntimeAttachmentStore {
         }
         #endif
 
-        switch sourceURL.pathExtension.lowercased() {
-        case "apng", "avif", "gif", "heic", "heif", "jpeg", "jpg", "png", "tif", "tiff", "webp":
-            return .image
-        case "avi", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "webm":
-            return .video
-        default:
+        guard let contentType = fallbackContentType(forExtension: sourceURL.pathExtension) else {
             throw AgentRuntimeAttachmentStoreError.unsupportedFileType(sourceURL)
         }
+        return contentType.kind
     }
 
     public static func resolvedContentTypeIdentifier(for sourceURL: URL) -> String? {
@@ -173,75 +195,20 @@ public enum AgentRuntimeAttachmentStore {
         return values?.fileSize
     }
 
+    private static func fallbackContentType(forExtension pathExtension: String) -> FallbackContentType? {
+        fallbackContentTypes.first { $0.extensions.contains(pathExtension.lowercased()) }
+    }
+
     private static func fallbackMIMEType(forExtension pathExtension: String) -> String? {
-        switch pathExtension.lowercased() {
-        case "apng":
-            return "image/apng"
-        case "avif":
-            return "image/avif"
-        case "gif":
-            return "image/gif"
-        case "heic":
-            return "image/heic"
-        case "heif":
-            return "image/heif"
-        case "jpeg", "jpg":
-            return "image/jpeg"
-        case "png":
-            return "image/png"
-        case "tif", "tiff":
-            return "image/tiff"
-        case "webp":
-            return "image/webp"
-        case "avi":
-            return "video/x-msvideo"
-        case "m4v":
-            return "video/x-m4v"
-        case "mkv":
-            return "video/x-matroska"
-        case "mov":
-            return "video/quicktime"
-        case "mp4":
-            return "video/mp4"
-        case "mpeg", "mpg":
-            return "video/mpeg"
-        case "webm":
-            return "video/webm"
-        default:
-            return nil
-        }
+        fallbackContentType(forExtension: pathExtension)?.mimeType
     }
 
     private static func fallbackFilenameExtension(forContentType contentType: String) -> String {
-        switch contentType.lowercased() {
-        case "image/apng":
-            return "apng"
-        case "image/avif":
-            return "avif"
-        case "image/gif":
-            return "gif"
-        case "image/heic":
-            return "heic"
-        case "image/heif":
-            return "heif"
-        case "image/jpeg":
-            return "jpg"
-        case "image/png":
-            return "png"
-        case "image/tiff":
-            return "tiff"
-        case "image/webp":
-            return "webp"
-        case "video/mp4":
-            return "mp4"
-        case "video/quicktime":
-            return "mov"
-        case "video/webm":
-            return "webm"
-        default:
-            return ""
-        }
+        fallbackContentTypes.first {
+            $0.mimeType == contentType.lowercased()
+        }?.preferredExtension ?? ""
     }
+
 }
 
 public extension AgentRuntimeAttachment {

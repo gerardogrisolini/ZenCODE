@@ -335,8 +335,7 @@ public struct ResolvedAgentProfileBindings: Sendable {
             }
             return resolvedSelection(
                 liveMatches: liveMatches,
-                staleMatches: staleMatches,
-                fallbackReference: reference
+                staleMatches: staleMatches
             )
         }
 
@@ -356,15 +355,13 @@ public struct ResolvedAgentProfileBindings: Sendable {
         }
         return resolvedSelection(
             liveMatches: liveMatches,
-            staleMatches: staleMatches,
-            fallbackReference: reference
+            staleMatches: staleMatches
         )
     }
 
     private func resolvedSelection(
         liveMatches: [ResolvedAgentModelBinding],
-        staleMatches: [UnresolvedAgentModelBinding],
-        fallbackReference: String
+        staleMatches: [UnresolvedAgentModelBinding]
     ) -> AgentDelegationBindingSelection {
         let uniqueLive = Dictionary(
             grouping: liveMatches,
@@ -384,7 +381,6 @@ public struct ResolvedAgentProfileBindings: Sendable {
         if candidates.count > 1 || (!uniqueLive.isEmpty && !staleMatches.isEmpty) {
             return .ambiguous(candidates)
         }
-        _ = fallbackReference
         return .notAuthorized
     }
 }

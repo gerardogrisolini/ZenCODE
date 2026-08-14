@@ -92,18 +92,7 @@ actor AgentCorePromptTurnRecorder {
         if let assistantMessage = pendingAssistantMessage() {
             snapshotHistory.append(assistantMessage)
         }
-        return AgentRuntimeSessionSnapshot(
-            sessionID: initialSnapshot.sessionID,
-            modelID: initialSnapshot.modelID,
-            workingDirectoryPath: initialSnapshot.workingDirectoryPath,
-            systemPrompt: initialSnapshot.systemPrompt,
-            dynamicContext: initialSnapshot.dynamicContext,
-            cacheKey: initialSnapshot.cacheKey,
-            history: snapshotHistory,
-            allowedToolNames: initialSnapshot.allowedToolNames,
-            thinkingSelection: initialSnapshot.thinkingSelection,
-            preserveThinking: initialSnapshot.preserveThinking
-        )
+        return initialSnapshot.replacingHistory(snapshotHistory)
     }
 
     private func recordToolCall(_ toolCall: DirectAgentToolCall) {

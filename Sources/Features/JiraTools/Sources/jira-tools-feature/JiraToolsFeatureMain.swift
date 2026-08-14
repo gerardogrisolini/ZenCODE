@@ -21,8 +21,6 @@ struct JiraSearchTool: FeatureTool {
         let query: String?
     }
 
-    typealias Output = String
-
     static let name = "jira.search"
     static let description = "Searches Jira issues by issue key, issue URL, or text and returns selectable issue summaries."
     static let inputSchema = #"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#
@@ -53,8 +51,6 @@ struct JiraReadTool: FeatureTool {
         let include_raw: Bool?
     }
 
-    typealias Output = String
-
     static let name = "jira.read"
     static let description = "Loads a Jira issue and returns task context for the model without creating a local task."
     static let inputSchema = #"{"type":"object","properties":{"issueKey":{"type":"string"},"issue_key":{"type":"string"},"key":{"type":"string"},"url":{"type":"string"},"query":{"type":"string"},"includeRaw":{"type":"boolean"},"include_raw":{"type":"boolean"}}}"#
@@ -82,8 +78,6 @@ struct JiraReadTool: FeatureTool {
 
 struct JiraSignOutTool: FeatureTool {
     struct Input: Decodable, Sendable {}
-    typealias Output = String
-
     static let name = "jira.signOut"
     static let description = "Clears the persisted Jira API token used by the Jira tools."
     static let inputSchema = #"{"type":"object","properties":{}}"#

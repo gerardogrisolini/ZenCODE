@@ -228,13 +228,7 @@ extension ZenCODEACPBridge {
                 if let thought = message.reasoningContent?.nilIfBlank {
                     await writer.sendSessionUpdate(
                         sessionID: snapshot.sessionID,
-                        update: JSONValue.acpValue(from: [
-                            "sessionUpdate": "agent_thought_chunk",
-                            "content": [
-                                "type": "text",
-                                "text": thought
-                            ]
-                        ])
+                        update: Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: thought)
                     )
                 }
                 guard let text = message.content.nilIfBlank else {
@@ -242,13 +236,7 @@ extension ZenCODEACPBridge {
                 }
                 await writer.sendSessionUpdate(
                     sessionID: snapshot.sessionID,
-                    update: JSONValue.acpValue(from: [
-                        "sessionUpdate": "agent_message_chunk",
-                        "content": [
-                            "type": "text",
-                            "text": text
-                        ]
-                    ])
+                    update: Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: text)
                 )
             case .system, .tool:
                 continue

@@ -639,12 +639,6 @@ struct BrowserAssertElementOutput: Codable, Sendable {
 
 // MARK: - Public tools (registration is intentionally external)
 
-private enum BrowserElementConditionPageInput {
-    static func resolve(pageID: String?, pageIDSnakeCase: String?) -> String? {
-        pageID?.nilIfBlank ?? pageIDSnakeCase?.nilIfBlank
-    }
-}
-
 struct BrowserWaitElementTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let pageId: String?
@@ -658,7 +652,7 @@ struct BrowserWaitElementTool: FeatureTool {
         let timeout_seconds: Int?
 
         var resolvedPageID: String? {
-            BrowserElementConditionPageInput.resolve(
+            BrowserPageInput.resolve(
                 pageID: pageId,
                 pageIDSnakeCase: page_id
             )
@@ -754,7 +748,7 @@ struct BrowserAssertElementTool: FeatureTool {
         let value: String?
 
         var resolvedPageID: String? {
-            BrowserElementConditionPageInput.resolve(
+            BrowserPageInput.resolve(
                 pageID: pageId,
                 pageIDSnakeCase: page_id
             )

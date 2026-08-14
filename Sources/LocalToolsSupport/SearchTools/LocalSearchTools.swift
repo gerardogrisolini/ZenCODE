@@ -19,6 +19,29 @@ import ToolCore
 /// build products dwarf real sources and produce noisy, slow matches.
 let searchExcludedDirectories = [".git", ".build", ".swiftpm", "node_modules", "DerivedData"]
 
+private func runGrep(
+    pattern: String,
+    path: URL,
+    maximumMatches: Int?,
+    options: [String],
+    context: FeatureContext
+) async throws -> FeatureProcessResult {
+    var arguments = ["-E", "-R", "-n", "-I"]
+    arguments.append(contentsOf: searchExcludedDirectories.map { "--exclude-dir=\($0)" })
+    arguments.append(contentsOf: options)
+    if let maximumMatches {
+        arguments.append(contentsOf: ["-m", "\(maximumMatches)"])
+    }
+    arguments.append(contentsOf: ["-e", pattern, "--", path.path])
+    return try await FeatureProcessRunner.run(
+        executableURL: URL(fileURLWithPath: "/usr/bin/grep"),
+        arguments: arguments,
+        workingDirectory: context.workingDirectory,
+        environment: context.environment,
+        timeout: 60
+    )
+}
+
 struct SearchGlobTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let pattern: String?
@@ -67,26 +90,16 @@ struct SearchGrepTool: FeatureTool {
         let path = context.resolvePath(input.path ?? ".")
         let maxResults = max(1, input.maxResults ?? input.max_results ?? 200)
         let filesOnly = input.filesOnly ?? input.files_only ?? false
-        var processArguments = ["-E", "-R", "-n", "-I"]
-        for excludedDirectory in searchExcludedDirectories {
-            processArguments.append("--exclude-dir=\(excludedDirectory)")
-        }
+        var options: [String] = []
         if filesOnly {
-            processArguments.append("-l")
+            options.append("-l")
         } else if let contextLines = input.context, contextLines > 0 {
-            processArguments.append(contentsOf: ["-C", "\(min(contextLines, 20))"])
+            options.append(contentsOf: ["-C", "\(min(contextLines, 20))"])
         }
-        if maxResults < 10000 {
-            processArguments.append(contentsOf: ["-m", "\(maxResults)"])
-        }
-        processArguments.append(contentsOf: ["-e", pattern, "--"])
-        processArguments.append(path.path)
-        let result = try await FeatureProcessRunner.run(
-            executableURL: URL(fileURLWithPath: "/usr/bin/grep"),
-            arguments: processArguments,
-            workingDirectory: context.workingDirectory,
-            environment: context.environment,
-            timeout: 60
+        let result = try await runGrep(
+            pattern: pattern, path: path,
+            maximumMatches: maxResults < 10000 ? maxResults : nil,
+            options: options, context: context
         )
         if result.exitCode == 1,
            result.stdout.isEmpty,
@@ -125,18 +138,9 @@ struct SearchLocateTool: FeatureTool {
 
         let path = context.resolvePath(input.path ?? ".")
         let maxResults = min(max(1, input.maxResults ?? input.max_results ?? 40), 500)
-        var processArguments = ["-E", "-R", "-n", "-I"]
-        for excludedDirectory in searchExcludedDirectories {
-            processArguments.append("--exclude-dir=\(excludedDirectory)")
-        }
-        processArguments.append(contentsOf: ["-m", "\(maxResults)", "-e", pattern, "--", path.path])
-
-        let result = try await FeatureProcessRunner.run(
-            executableURL: URL(fileURLWithPath: "/usr/bin/grep"),
-            arguments: processArguments,
-            workingDirectory: context.workingDirectory,
-            environment: context.environment,
-            timeout: 60
+        let result = try await runGrep(
+            pattern: pattern, path: path, maximumMatches: maxResults,
+            options: [], context: context
         )
         if result.exitCode == 1,
            result.stdout.isEmpty,

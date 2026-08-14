@@ -236,24 +236,11 @@ struct BrowserSnapshotStateStore: Sendable {
                 throw BrowserSnapshotStateStoreError.unavailable
             }
 
-            let descriptor = open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
-            guard descriptor >= 0 else {
-                throw BrowserSnapshotStateStoreError.unavailable
-            }
-            defer {
-                _ = flock(descriptor, LOCK_UN)
-                _ = close(descriptor)
-            }
-            guard flock(descriptor, LOCK_EX) == 0 else {
-                throw BrowserSnapshotStateStoreError.unavailable
-            }
-            #if canImport(Darwin) || canImport(Glibc)
-            try? FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: lockURL.path
+            return try BrowserInterprocessLock.withExclusiveLock(
+                at: lockURL,
+                error: { BrowserSnapshotStateStoreError.unavailable },
+                body: body
             )
-            #endif
-            return try body()
         }
     }
 

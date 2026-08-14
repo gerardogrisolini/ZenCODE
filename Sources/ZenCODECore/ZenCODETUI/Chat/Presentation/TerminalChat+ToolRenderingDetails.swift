@@ -482,18 +482,6 @@ extension TerminalChat {
         }
     }
 
-    nonisolated static func toolLocationLines(
-        for toolCall: DirectAgentToolCall
-    ) -> [String] {
-        ToolCallPresentation.toolLocations(for: toolCall).compactMap { location in
-            guard let path = location["path"] as? String,
-                  let sanitizedPath = sanitizedMetadataText(path) else {
-                return nil
-            }
-            return "location: \(sanitizedPath)"
-        }
-    }
-
     nonisolated static func multiEditChangeDetailLines(
         _ arguments: [String: Any],
         contentWidth: Int? = nil
@@ -710,45 +698,6 @@ extension TerminalChat {
         return truncatedByCount(summary, limit: 160)
     }
 
-    nonisolated static func expandedToolSummary(
-        for toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult
-    ) -> String? {
-        if let lineCount = numberedFileReadLineCount(
-            toolName: toolCall.name,
-            output: result.output
-        ) {
-            let noun = lineCount == 1 ? "line" : "lines"
-            return "read \(lineCount) \(noun)"
-        }
-        return compactSummaryLine(result.summary)
-    }
-
-    nonisolated static func numberedFileReadLineCount(
-        toolName: String,
-        output: String
-    ) -> Int? {
-        switch toolName {
-        case "local.readFile", "local.readFiles", "text.head", "text.tail":
-            break
-        case let x where x.lowercased().contains("read"):
-            break
-        default:
-            return nil
-        }
-
-        return output
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .count(where: { line in
-                guard line.contains("\t") else {
-                    return false
-                }
-                let lineNumber = line.prefix { $0 != "\t" }
-                    .trimmingCharacters(in: .whitespaces)
-                return !lineNumber.isEmpty && lineNumber.allSatisfy(\.isWholeNumber)
-            })
-    }
-
     nonisolated static func indentedSnippet(
         _ text: String,
         indentation: String = "  "
@@ -875,23 +824,12 @@ extension TerminalChat {
                 content: terminalSafeSnippetLine(line)
             ))
         }
-        if snippet.isEmptyPayload {
-            // Structural emptiness: no line number is assigned, so this row is
-            // distinct from a numbered line whose content is literally the
-            // marker text.
-            rendered.append(.code(DetailedToolCodeLine(
-                indentation: indentation,
-                lineNumber: String(repeating: " ", count: numberWidth),
-                content: detailedToolEmptyPayloadMarker
-            )))
-        }
-        if snippet.isTruncated {
-            rendered.append(.code(DetailedToolCodeLine(
-                indentation: indentation,
-                lineNumber: String(repeating: " ", count: numberWidth),
-                content: "... truncated"
-            )))
-        }
+        appendSnippetMarkers(
+            to: &rendered,
+            snippet: snippet,
+            indentation: indentation,
+            numberWidth: numberWidth
+        )
         return rendered
     }
 
@@ -928,21 +866,39 @@ extension TerminalChat {
                 content: terminalSafeSnippetLine(line.content)
             ))
         }
+        appendSnippetMarkers(
+            to: &rendered,
+            snippet: snippet,
+            indentation: indentation,
+            numberWidth: numberWidth
+        )
+        return rendered
+    }
+
+    private nonisolated static func appendSnippetMarkers(
+        to rows: inout [DetailedToolRow],
+        snippet: DetailedToolSnippet,
+        indentation: String,
+        numberWidth: Int
+    ) {
+        let blankLineNumber = String(repeating: " ", count: numberWidth)
         if snippet.isEmptyPayload {
-            rendered.append(.code(DetailedToolCodeLine(
+            // Structural emptiness: no line number is assigned, so this row is
+            // distinct from a numbered line whose content is literally the
+            // marker text.
+            rows.append(.code(DetailedToolCodeLine(
                 indentation: indentation,
-                lineNumber: String(repeating: " ", count: numberWidth),
+                lineNumber: blankLineNumber,
                 content: detailedToolEmptyPayloadMarker
             )))
         }
         if snippet.isTruncated {
-            rendered.append(.code(DetailedToolCodeLine(
+            rows.append(.code(DetailedToolCodeLine(
                 indentation: indentation,
-                lineNumber: String(repeating: " ", count: numberWidth),
+                lineNumber: blankLineNumber,
                 content: "... truncated"
             )))
         }
-        return rendered
     }
 
     /// Minimum useful width for each source cell in a side-by-side expanded

@@ -726,15 +726,11 @@ extension TerminalChat {
     }
 
     private nonisolated static func boldText(_ text: String) -> String {
-        AgentOutput.standardErrorIsTerminal
-            ? "\(TerminalStyle.Attribute.bold)\(text)\(TerminalStyle.reset)"
-            : text
+        colorText(text, code: TerminalStyle.Attribute.bold)
     }
 
     private nonisolated static func dimText(_ text: String) -> String {
-        AgentOutput.standardErrorIsTerminal
-            ? "\(TerminalStyle.Text.muted)\(text)\(TerminalStyle.reset)"
-            : text
+        colorText(text, code: TerminalStyle.Text.muted)
     }
 
     /// Keeps metadata labels muted while matching Task inline-code values.

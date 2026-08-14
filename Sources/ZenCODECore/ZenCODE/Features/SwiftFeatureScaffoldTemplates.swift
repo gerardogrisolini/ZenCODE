@@ -220,36 +220,7 @@ extension SwiftFeatureRuntime {
         targetName: String,
         packagePath: String
     ) -> String {
-        """
-        // swift-tools-version: \(generatedSwiftToolsVersion)
-
-        import PackageDescription
-
-        let package = Package(
-            name: "\(productName)",
-            platforms: [
-                .macOS(.v26)
-            ],
-            products: [
-                .executable(
-                    name: "\(productName)",
-                    targets: ["\(targetName)"]
-                )
-            ],
-            dependencies: [
-                .package(path: \(swiftStringLiteral(packagePath)))
-            ],
-            targets: [
-                .executableTarget(
-                    name: "\(targetName)",
-                    dependencies: [
-                        .product(name: "FeatureKit", package: "ZenCODE"),
-                        .product(name: "ToolCore", package: "ZenCODE")
-                    ]
-                )
-            ]
-        )
-        """
+        packageManifestContents(productName: productName, targetName: targetName, packagePath: packagePath, includesMCPBridge: false)
     }
 
     static func mcpBridgePackageManifestContents(
@@ -257,7 +228,19 @@ extension SwiftFeatureRuntime {
         targetName: String,
         packagePath: String
     ) -> String {
-        """
+        packageManifestContents(productName: productName, targetName: targetName, packagePath: packagePath, includesMCPBridge: true)
+    }
+
+    private static func packageManifestContents(
+        productName: String,
+        targetName: String,
+        packagePath: String,
+        includesMCPBridge: Bool
+    ) -> String {
+        let mcpBridgeDependency = includesMCPBridge
+            ? ",\n                .product(name: \"FeatureMCPBridgeKit\", package: \"ZenCODE\")"
+            : ""
+        return """
         // swift-tools-version: \(generatedSwiftToolsVersion)
 
         import PackageDescription
@@ -281,8 +264,7 @@ extension SwiftFeatureRuntime {
                     name: "\(targetName)",
                     dependencies: [
                         .product(name: "FeatureKit", package: "ZenCODE"),
-                        .product(name: "ToolCore", package: "ZenCODE"),
-                        .product(name: "FeatureMCPBridgeKit", package: "ZenCODE")
+                        .product(name: "ToolCore", package: "ZenCODE")\(mcpBridgeDependency)
                     ]
                 )
             ]

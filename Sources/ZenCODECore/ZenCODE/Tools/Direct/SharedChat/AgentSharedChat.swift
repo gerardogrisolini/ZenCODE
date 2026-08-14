@@ -59,10 +59,6 @@ public actor AgentSharedChat {
             self = ParticipantKind(rawValue: raw) ?? .agent
         }
 
-        public func encode(to encoder: Encoder) throws {
-            var container = encoder.singleValueContainer()
-            try container.encode(rawValue)
-        }
     }
 
     public struct Participant: Sendable, Codable, Equatable, Identifiable {

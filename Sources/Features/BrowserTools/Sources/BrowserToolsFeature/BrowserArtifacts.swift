@@ -105,6 +105,30 @@ struct BrowserOwnedScreenshot: Sendable {
     let data: Data
 }
 
+/// Performs the interprocess portion of Browser state-store locking.
+enum BrowserInterprocessLock {
+    static func withExclusiveLock<T>(
+        at lockURL: URL,
+        error: () -> Error,
+        body: () throws -> T
+    ) throws -> T {
+        let descriptor = open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw error() }
+        defer {
+            _ = flock(descriptor, LOCK_UN)
+            _ = close(descriptor)
+        }
+        guard flock(descriptor, LOCK_EX) == 0 else { throw error() }
+        #if canImport(Darwin) || canImport(Glibc)
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: lockURL.path
+        )
+        #endif
+        return try body()
+    }
+}
+
 /// Owns Browser-produced files only. Tool callers cannot choose a destination,
 /// so a page cannot turn screenshots into arbitrary filesystem writes.
 struct BrowserArtifactStore: Sendable {
@@ -355,21 +379,11 @@ struct BrowserArtifactStore: Sendable {
                 withIntermediateDirectories: true
             )
 
-            let descriptor = open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
-            guard descriptor >= 0 else {
-                throw BrowserArtifactError.emptyArtifact("lock")
-            }
-            defer {
-                _ = flock(descriptor, LOCK_UN)
-                _ = close(descriptor)
-            }
-            guard flock(descriptor, LOCK_EX) == 0 else {
-                throw BrowserArtifactError.emptyArtifact("lock")
-            }
-            #if canImport(Darwin) || canImport(Glibc)
-            try? setPermissions(0o600, at: lockURL)
-            #endif
-            return try body()
+            return try BrowserInterprocessLock.withExclusiveLock(
+                at: lockURL,
+                error: { BrowserArtifactError.emptyArtifact("lock") },
+                body: body
+            )
         }
     }
 }
