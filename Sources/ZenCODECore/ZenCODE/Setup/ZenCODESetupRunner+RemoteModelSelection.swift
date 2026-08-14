@@ -274,12 +274,11 @@ extension ZenCODESetupRunner {
 
         do {
             let catalog = try await catalogLoader()
-            let metadataByID = Dictionary(
-                catalog.map { (normalizedRemoteModelID($0.id), $0) },
-                uniquingKeysWith: { first, _ in first }
-            )
             return models.map { model in
-                guard let metadata = metadataByID[normalizedRemoteModelID(model.id)] else {
+                guard let metadata = openRouterMetadata(
+                    matching: model.id,
+                    in: catalog
+                ) else {
                     return model
                 }
                 return modelMergingOpenRouterMetadata(model, metadata: metadata)
@@ -292,6 +291,37 @@ extension ZenCODESetupRunner {
             )
             return models
         }
+    }
+
+    /// Resolves a catalog model while retaining the provider's configured ID.
+    /// A namespace-free ID can only use a catalog suffix when that suffix maps
+    /// to exactly one catalog entry; this avoids silently selecting variants
+    /// such as `model` versus `model:batch` or a model offered by two vendors.
+    static func openRouterMetadata(
+        matching modelID: String,
+        in catalog: [OpenRouterModelInfo]
+    ) -> OpenRouterModelInfo? {
+        let normalizedModelID = normalizedRemoteModelID(modelID)
+        if let exactMatch = catalog.first(where: {
+            normalizedRemoteModelID($0.id) == normalizedModelID
+        }) {
+            return exactMatch
+        }
+
+        guard !normalizedModelID.contains("/") else {
+            return nil
+        }
+
+        let suffixMatches = catalog.filter { catalogModel in
+            let normalizedCatalogID = normalizedRemoteModelID(catalogModel.id)
+            guard let separator = normalizedCatalogID.lastIndex(of: "/") else {
+                return false
+            }
+            return normalizedCatalogID[
+                normalizedCatalogID.index(after: separator)...
+            ] == normalizedModelID
+        }
+        return suffixMatches.count == 1 ? suffixMatches[0] : nil
     }
 
     static func modelMergingOpenRouterMetadata(

@@ -188,6 +188,73 @@ struct RemoteModelCatalogClientTests {
     }
 
     @Test
+    func enrichingUnqualifiedZAIModelsUsesUniqueOpenRouterSuffixMetadata() async throws {
+        let providerModels = [
+            OpenRouterModelInfo(id: "glm-5-turbo", name: "GLM 5 Turbo", contextLength: nil, pricing: nil),
+            OpenRouterModelInfo(id: "glm-5.2", name: "GLM 5.2", contextLength: nil, pricing: nil)
+        ]
+        let turboThinking = RemoteModelCatalogClient.thinkingSupport(
+            fromModelMetadata: [
+                "reasoning": ["mandatory": false, "default_enabled": true] as [String: Any]
+            ],
+            baseURL: "https://openrouter.ai/api/v1",
+            modelID: "z-ai/glm-5-turbo"
+        )
+        let glm52Thinking = RemoteModelCatalogClient.thinkingSupport(
+            fromModelMetadata: [
+                "reasoning": [
+                    "mandatory": false,
+                    "default_enabled": true,
+                    "supported_efforts": ["xhigh", "high"],
+                    "default_effort": "high"
+                ] as [String: Any]
+            ],
+            baseURL: "https://openrouter.ai/api/v1",
+            modelID: "z-ai/glm-5.2"
+        )
+        let catalog = [
+            OpenRouterModelInfo(id: "z-ai/glm-5-turbo", name: "GLM 5 Turbo", contextLength: 202_752, pricing: nil, thinkingSupport: turboThinking),
+            OpenRouterModelInfo(id: "z-ai/glm-5.2", name: "GLM 5.2", contextLength: 1_048_576, pricing: nil, thinkingSupport: glm52Thinking)
+        ]
+
+        let enriched = try await ZenCODESetupRunner.enrichModelsWithOpenRouterMetadata(
+            providerModels,
+            providerBaseURL: "https://api.z.ai/v1",
+            apiKey: nil,
+            catalogLoader: { catalog }
+        )
+
+        #expect(enriched.map(\.id) == ["glm-5-turbo", "glm-5.2"])
+        #expect(enriched.map(\.contextLength) == [202_752, 1_048_576])
+        #expect(enriched[0].thinkingSupport?.availableSelections == [.enabled, .off])
+        #expect(enriched[0].thinkingSupport?.defaultSelection == .enabled)
+        #expect(enriched[1].thinkingSupport?.availableSelections == [.off, .high, .xhigh])
+        #expect(enriched[1].thinkingSupport?.defaultSelection == .high)
+    }
+
+    @Test
+    func unqualifiedOpenRouterSuffixMetadataDoesNotResolveAmbiguousModels() {
+        let catalog = [
+            OpenRouterModelInfo(id: "z-ai/glm-5.2", name: "GLM", contextLength: 1_048_576, pricing: nil),
+            OpenRouterModelInfo(id: "other/glm-5.2", name: "Other GLM", contextLength: 32_768, pricing: nil)
+        ]
+
+        #expect(ZenCODESetupRunner.openRouterMetadata(matching: "glm-5.2", in: catalog) == nil)
+    }
+
+    @Test
+    func exactOpenRouterMetadataMatchTakesPrecedenceOverSuffixAmbiguity() {
+        let exact = OpenRouterModelInfo(id: "glm-5.2", name: "Provider GLM", contextLength: 65_536, pricing: nil)
+        let catalog = [
+            exact,
+            OpenRouterModelInfo(id: "z-ai/glm-5.2", name: "GLM", contextLength: 1_048_576, pricing: nil),
+            OpenRouterModelInfo(id: "other/glm-5.2", name: "Other GLM", contextLength: 32_768, pricing: nil)
+        ]
+
+        #expect(ZenCODESetupRunner.openRouterMetadata(matching: " GLM-5.2 ", in: catalog) == exact)
+    }
+
+    @Test
     func mergingOpenRouterMetadataEnrichesContextAndThinking() {
         let providerModel = OpenRouterModelInfo(
             id: "provider/model",

@@ -347,6 +347,12 @@ extension ModelThinkingSupport {
         private mutating func appendDefaultSelection(
             from value: Any
         ) {
+            if let enabled = JSONValue(jsonObject: value).flexibleBoolValue {
+                supportsThinking = true
+                defaultSelection = enabled ? .enabled : .off
+                return
+            }
+
             guard let selection = firstThinkingSelection(from: value),
                   selection.isEnabled else {
                 return
@@ -485,6 +491,7 @@ extension ModelThinkingSupport {
                 || normalizedKey == "defaultthinkingselection"
                 || normalizedKey == "defaulteffort"
                 || normalizedKey == "defaultreasoningeffort"
+                || normalizedKey == "defaultenabled"
                 || normalizedKey == "default"
         }
 
