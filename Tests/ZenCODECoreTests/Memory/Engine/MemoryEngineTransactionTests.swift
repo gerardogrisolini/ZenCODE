@@ -247,6 +247,29 @@ private actor ControlledPersistence: MemoryPersistence {
     #expect(await persistence.saveCount == savesAfterSave)
 }
 
+@Test func saveWithoutChangesDoesNotPersistAnEmptyGraph() async throws {
+    let persistence = ControlledPersistence()
+    let memory = MemoryEngine(persistence: persistence)
+
+    try await memory.save()
+
+    #expect(await persistence.saveCount == 0)
+    #expect(await persistence.lastSaved == nil)
+}
+
+@Test func savePersistsAnInsertDeferredWithPersistFalse() async throws {
+    let persistence = ControlledPersistence()
+    let memory = MemoryEngine(persistence: persistence)
+    let entry = EngineMemoryEntry(id: "deferred", category: .fact, content: "save me later")
+
+    try await memory.insert(entry, persist: false)
+    #expect(await persistence.saveCount == 0)
+
+    try await memory.save()
+    #expect(await persistence.saveCount == 1)
+    #expect(await persistence.lastSaved?.memories[entry.id] == entry)
+}
+
 @Test func noOpTransactionFlushesPendingRecallMaintenanceExactlyOnce() async throws {
     let persistence = ControlledPersistence()
     let memory = MemoryEngine(persistence: persistence)

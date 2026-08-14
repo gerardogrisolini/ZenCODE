@@ -228,6 +228,11 @@ actor MemoryEngine {
     /// It must represent the graph before the first pending intent; using the
     /// live graph here would replay that intent twice on a cold checkpoint.
     private var pendingRecallBaseGraph: MemoryGraph?
+    /// Local state which has deliberately not crossed a persistence boundary.
+    /// This is distinct from recall maintenance: `insert(persist: false)` and a
+    /// lazy legacy migration have no replayable intent, but `save()` must still
+    /// commit them. It is cleared only after the complete live graph is saved.
+    private var needsSave: Bool
 
     /// Default reporter: always emits a redacted ERROR line on the preserved
     /// stderr descriptor (visible even with `ZENCODE_LOG` off) and feeds the
@@ -244,6 +249,7 @@ actor MemoryEngine {
         extractor: any MemoryExtractor = NoopMemoryExtractor(),
         contextFormatter: any MemoryContextFormatter = BulletMemoryContextFormatter(),
         configuration: MemoryEngineConfiguration = .init(),
+        needsSave: Bool = false,
         semanticFailureReporter: @escaping @Sendable (String) -> Void = MemoryEngine.defaultSemanticFailureReporter
     ) {
         self.graph = graph
@@ -255,6 +261,7 @@ actor MemoryEngine {
         self.extractor = extractor
         self.contextFormatter = contextFormatter
         self.configuration = configuration
+        self.needsSave = needsSave
         self.semanticFailureReporter = semanticFailureReporter
     }
 
@@ -330,6 +337,20 @@ actor MemoryEngine {
             // so a cancelled waiter neither commits nor strands the lock.
             try Task.checkCancellation()
             let pending = pendingRecallMaintenance
+            // A transactional store normally reloads its file before applying
+            // the body. That is correct for durable state, but would discard a
+            // preceding `insert(persist: false)` (or lazy migration) which only
+            // exists in this actor. Commit that local snapshot first instead.
+            if needsSave {
+                var draft = graph
+                let result = try body(&draft)
+                try await persist(draft)
+                graph = draft
+                needsSave = false
+                pendingRecallMaintenance.removeAll()
+                pendingRecallBaseGraph = nil
+                return result
+            }
             if let transactionalPersistence = persistence as? any MemoryTransactionalPersistence {
                 // A separate process may have committed since this engine last
                 // wrote. Reloading inside the persistence lock makes our body
@@ -364,6 +385,7 @@ actor MemoryEngine {
             guard draft != graph || !pending.isEmpty else { return result }
             try await persist(draft)
             graph = draft
+            needsSave = false
             pendingRecallMaintenance.removeAll()
             pendingRecallBaseGraph = nil
             return result
@@ -487,7 +509,10 @@ actor MemoryEngine {
         } else {
             // Still serialized: an unpersisted insert that landed while another
             // transaction was saving would be overwritten by that commit.
-            _ = try await withWriteLock { graph.addMemory(entry) }
+            _ = try await withWriteLock {
+                graph.addMemory(entry)
+                needsSave = true
+            }
         }
     }
 
@@ -555,7 +580,8 @@ actor MemoryEngine {
             // recall cannot mutate maintenance for a result never delivered.
             try Task.checkCancellation()
 
-            if let transactionalPersistence = persistence as? any MemoryTransactionalPersistence {
+            if let transactionalPersistence = persistence as? any MemoryTransactionalPersistence,
+               !needsSave {
                 // Everything below builds a *proposal* on private values: engine
                 // state (`graph`, `pendingRecallMaintenance`,
                 // `pendingRecallBaseGraph`) is never touched before the durable
@@ -906,9 +932,15 @@ actor MemoryEngine {
     /// retry them.
     public func save() async throws {
         try await withWriteLock {
-            if pendingRecallMaintenance.isEmpty {
+            // Do not materialize a pristine graph. Conversely, a dirty local
+            // graph cannot go through a transactional reload: that would lose
+            // deferred inserts/migrations before they reach disk.
+            if needsSave {
                 try await persist(graph)
-            } else {
+                needsSave = false
+                pendingRecallMaintenance.removeAll()
+                pendingRecallBaseGraph = nil
+            } else if !pendingRecallMaintenance.isEmpty {
                 try await flushPendingRecallMaintenanceLocked()
             }
         }
@@ -1167,6 +1199,7 @@ actor MemoryEngine {
         }
         pendingRecallMaintenance.removeAll()
         pendingRecallBaseGraph = nil
+        needsSave = false
     }
 
     private func persist(_ graph: MemoryGraph) async throws {

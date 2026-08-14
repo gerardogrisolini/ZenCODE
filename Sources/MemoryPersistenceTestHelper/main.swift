@@ -11,15 +11,16 @@ import Glibc
 struct MemoryPersistenceTestHelper {
     static func main() async {
         let arguments = Array(CommandLine.arguments.dropFirst())
-        guard arguments.count == 2 else {
-            FileHandle.standardError.write(Data("usage: MemoryPersistenceTestHelper <workspace> <content>\n".utf8))
+        guard arguments.count == 3,
+              arguments[0] == AppStorageDirectory.testHarnessArgument else {
+            FileHandle.standardError.write(Data("usage: MemoryPersistenceTestHelper --zencode-test-harness <workspace> <content>\n".utf8))
             exit(EXIT_FAILURE)
         }
 
         do {
-            let workspace = URL(fileURLWithPath: arguments[0], isDirectory: true)
+            let workspace = URL(fileURLWithPath: arguments[1], isDirectory: true)
             _ = try await MemoryService().writeEntry(
-                content: arguments[1],
+                content: arguments[2],
                 workspaceRootURL: workspace
             )
         } catch {

@@ -255,6 +255,37 @@ struct MemoryReadOnlySearchStoreTests {
     }
 
     @Test
+    func explicitSavePersistsLazyLegacyMigration() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try workspace.writeLegacyJournal("""
+        # MEMORY.md
+
+        ## Active
+
+        - Timestamp: 2026-08-01 09:00 Europe/Rome
+          Summary: migrated entry persisted by explicit save.
+          State: migration remains lazy until a durability boundary.
+          Next: verify the graph file.
+        """)
+
+        try await workspace.withIsolatedSupport {
+            let graphURL = workspace.graphURL()
+            let store = try await MemoryGraphStore.open(
+                graphURL: graphURL,
+                workspaceRootURL: workspace.workspaceURL
+            )
+            #expect(!FileManager.default.fileExists(atPath: graphURL.path))
+
+            try await store.saveGraph()
+            #expect(FileManager.default.fileExists(atPath: graphURL.path))
+            let persisted = try await JSONMemoryPersistence(url: graphURL).load()
+            #expect(persisted.memories.count == 1)
+        }
+    }
+
+    @Test
     func firstMutationPersistsMigratedGraph() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }

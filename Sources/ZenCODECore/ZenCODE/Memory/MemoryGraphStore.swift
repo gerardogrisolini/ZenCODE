@@ -73,8 +73,9 @@ actor MemoryGraphStore {
 
         // Load or migrate the graph in memory only; do NOT persist. The first
         // mutation/maintenance will persist the full graph atomically.
+        let graphAlreadyExists = fileManager.fileExists(atPath: graphURL.path)
         let initialGraph: MemoryGraph
-        if fileManager.fileExists(atPath: graphURL.path) {
+        if graphAlreadyExists {
             initialGraph = try await persistence.load()
         } else {
             initialGraph = try await migratedGraph(
@@ -97,6 +98,10 @@ actor MemoryGraphStore {
             // remains an internal engine seam, but opening a product store never
             // installs a network-backed extractor or makes a generation request.
             extractor: NoopMemoryExtractor(),
+            // A non-empty legacy journal is an intentional lazy mutation: open
+            // remains read-only, while an explicit `save()` must be able to
+            // materialize the migration even before another user mutation.
+            needsSave: !graphAlreadyExists && initialGraph != MemoryGraph(),
             semanticFailureReporter: semanticFailureReporter
         )
         return MemoryGraphStore(

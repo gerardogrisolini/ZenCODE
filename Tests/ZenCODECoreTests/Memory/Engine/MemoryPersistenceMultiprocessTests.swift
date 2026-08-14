@@ -11,11 +11,12 @@ struct MemoryPersistenceMultiprocessTests {
     /// two actors: actor isolation cannot prove that the advisory lock survives
     /// atomic replacement across independent process descriptor tables.
     @Test func subprocessesCommitAllConcurrentWrites() async throws {
-        let workspace = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let support = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("memory-persistence-helper-\(UUID().uuidString)", isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        let support = root.appendingPathComponent("support", isDirectory: true)
         defer {
-            try? FileManager.default.removeItem(at: workspace)
-            try? FileManager.default.removeItem(at: support)
+            try? FileManager.default.removeItem(at: root)
         }
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
 
@@ -84,12 +85,12 @@ struct MemoryPersistenceMultiprocessTests {
     ) throws -> Process {
         let process = Process()
         process.executableURL = executableURL
-        process.arguments = [workspace.path, content]
+        process.arguments = [AppStorageDirectory.testHarnessArgument, workspace.path, content]
         process.currentDirectoryURL = packageRoot
-        process.environment = ProcessInfo.processInfo.environment.merging(
-            ["ZENCODE_SUPPORT_DIRECTORY": support.path],
-            uniquingKeysWith: { _, replacement in replacement }
-        )
+        // Do not inherit XCTest variables or an operator's support-directory
+        // override. The helper's explicit argument is its own test-harness
+        // identity; this is the sole support path it is allowed to use.
+        process.environment = [AppStorageDirectory.supportDirectoryEnvironmentKey: support.path]
         try process.run()
         return process
     }

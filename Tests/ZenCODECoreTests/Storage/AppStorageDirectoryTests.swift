@@ -12,6 +12,16 @@ import Testing
 @Suite(.serialized)
 struct AppStorageDirectoryTests {
     @Test
+    func standaloneHelperMarkerIsAnIndependentTestHarnessSignal() {
+        #expect(AppStorageDirectory.isRunningUnderTestHarness(
+            processName: "MemoryPersistenceTestHelper",
+            arguments: ["MemoryPersistenceTestHelper", AppStorageDirectory.testHarnessArgument],
+            environment: [:],
+            bundlePath: "/Applications/ZenCODE.app"
+        ))
+    }
+
+    @Test
     func coderSupportFilesUseTheEffectiveZenCodeDirectory() {
         AppStorageDirectory.configureSupportDirectoryURL(nil)
         AgentSettingsManifestStore.resetDefaultCacheForTesting()

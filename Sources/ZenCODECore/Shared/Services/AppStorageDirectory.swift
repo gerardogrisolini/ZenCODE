@@ -10,6 +10,9 @@ import Synchronization
 
 public enum AppStorageDirectory {
     public static let supportDirectoryEnvironmentKey = "ZENCODE_SUPPORT_DIRECTORY"
+    /// Explicit marker for helper executables built exclusively to exercise
+    /// test behaviour outside the XCTest process.
+    public static let testHarnessArgument = "--zencode-test-harness"
     private static let supportDirectoryName = ".zencode"
     private static let supportDirectoryOverride = SupportDirectoryOverride()
     private static let testHarnessSandbox = TestHarnessSandbox()
@@ -77,7 +80,22 @@ public enum AppStorageDirectory {
     /// broad.
     public static var isRunningUnderTestHarness: Bool {
         let processInfo = ProcessInfo.processInfo
-        let environment = processInfo.environment
+        return isRunningUnderTestHarness(
+            processName: processInfo.processName,
+            arguments: processInfo.arguments,
+            environment: processInfo.environment,
+            bundlePath: Bundle.main.bundlePath
+        )
+    }
+
+    /// Pure detection seam so the standalone-helper marker is tested without
+    /// relying on this XCTest process's ambient overrides.
+    static func isRunningUnderTestHarness(
+        processName: String,
+        arguments: [String],
+        environment: [String: String],
+        bundlePath: String
+    ) -> Bool {
         let testEnvironmentKeys = [
             "XCTestConfigurationFilePath",
             "XCTestBundlePath",
@@ -92,16 +110,22 @@ public enum AppStorageDirectory {
             "swiftpm-testing-helper",
             "swiftpm-xctest-helper"
         ]
-        if testHarnessProcessNames.contains(processInfo.processName) {
+        if testHarnessProcessNames.contains(processName) {
+            return true
+        }
+        // Some test helpers are standalone executable products, so they do
+        // not inherit XCTest's process name, bundle path, or environment.
+        // They opt in explicitly rather than relying on those parent signals.
+        if arguments.contains(testHarnessArgument) {
             return true
         }
         // Substring, not suffix: the bundle is normally passed as a path *into*
         // the bundle (`…/Tests.xctest/Contents/MacOS/Tests`), so a suffix check
         // misses every SwiftPM invocation on macOS.
-        if processInfo.arguments.contains(where: { $0.contains(".xctest") }) {
+        if arguments.contains(where: { $0.contains(".xctest") }) {
             return true
         }
-        return Bundle.main.bundlePath.contains(".xctest")
+        return bundlePath.contains(".xctest")
     }
 
     /// Per-process throwaway support directory used by test harnesses.
