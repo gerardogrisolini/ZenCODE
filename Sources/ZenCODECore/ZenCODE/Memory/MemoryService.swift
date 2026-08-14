@@ -20,7 +20,6 @@ import Foundation
 /// `MemoryGraphStore`.
 public final class MemoryService: @unchecked Sendable {
     public static let filename = "MEMORY.md"
-    public static let graphFilename = MemoryGraphLocation.graphFilename
     public static let entriesDidChangeNotification = Notification.Name("MemoryEntriesDidChange")
     public static let defaultProjectMemoryContent: String = """
     # MEMORY.md

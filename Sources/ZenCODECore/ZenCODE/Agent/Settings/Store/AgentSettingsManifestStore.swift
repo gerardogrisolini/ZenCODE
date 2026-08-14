@@ -18,10 +18,6 @@ public enum AgentSettingsManifestStore {
         try? loadRequired()
     }
 
-    public static func preload() {
-        _ = load()
-    }
-
     #if DEBUG
     /// Compatibility hook retained for tests that predate uncached settings reads.
     static func resetDefaultCacheForTesting() {}
@@ -166,23 +162,12 @@ public enum AgentSettingsManifestStore {
         }
     }
 
-    public static func saveResponseLanguage(_ languageCode: String?) throws {
-        try withManifestMutation {
-            let current = try manifestForCredentialUpdate()
-            try saveUnlocked(
-                applying(current, responseLanguage: .some(languageCode)),
-                to: settingsURL()
-            )
-        }
-    }
-
     private static func applying(
         _ current: AgentSettingsManifest,
         selectedModelID: String?? = nil,
         selectedThinkingSelection: AgentThinkingSelection?? = nil,
         chatGPTSubscriptionCredentials: CodexAgentCredentials?? = nil,
-        anthropicSubscriptionCredentials: AnthropicSubscriptionCredentials?? = nil,
-        responseLanguage: String?? = nil
+        anthropicSubscriptionCredentials: AnthropicSubscriptionCredentials?? = nil
     ) -> AgentSettingsManifest {
         AgentSettingsManifest(
             version: current.version,
@@ -196,7 +181,7 @@ public enum AgentSettingsManifestStore {
             localExecAllowedCommands: current.localExecAllowedCommands,
             chatGPTSubscriptionCredentials: chatGPTSubscriptionCredentials ?? current.chatGPTSubscriptionCredentials,
             anthropicSubscriptionCredentials: anthropicSubscriptionCredentials ?? current.anthropicSubscriptionCredentials,
-            responseLanguage: responseLanguage ?? current.responseLanguage,
+            responseLanguage: current.responseLanguage,
             memoryEmbedding: current.memoryEmbedding
         )
     }

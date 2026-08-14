@@ -69,28 +69,6 @@ public enum FeatureProcessProtocol {
         FileHandle.standardOutput.write(Data("\n".utf8))
     }
 
-    /// Writes the successful invocation envelope without re-encoding its JSON
-    /// output. This preserves arbitrary `Encodable` tool output exactly.
-    public static func emitSuccess(outputData: Data) {
-        FileHandle.standardOutput.write(Data(#"{"ok":true,"output":"#.utf8))
-        FileHandle.standardOutput.write(outputData)
-        FileHandle.standardOutput.write(Data("}\n".utf8))
-    }
-
-    /// Writes a successful invocation envelope with local media artifacts that
-    /// the feature host must import into the model's multimodal context.
-    ///
-    /// The legacy byte-for-byte envelope is retained when `attachments` is
-    /// empty so existing feature executables and wire fixtures remain stable.
-    public static func emitSuccess(
-        outputData: Data,
-        attachments: [FeatureInvocationAttachment]
-    ) throws {
-        FileHandle.standardOutput.write(
-            try renderSuccess(outputData: outputData, attachments: attachments)
-        )
-    }
-
     public static func renderSuccess(
         outputData: Data,
         attachments: [FeatureInvocationAttachment]

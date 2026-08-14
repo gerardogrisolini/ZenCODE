@@ -42,10 +42,6 @@ let zenCODEDependencies: [Target.Dependency] = [
     "ZenPackageMetadata"
 ]
 
-let zenCODESwiftSettings: [SwiftSetting] = memberImportVisibilitySettings + [
-    .define("SWIFTPM_NON_SANDBOX_TUI")
-]
-
 let targets: [Target] = [
     .target(
         name: "ZenPackageMetadata",
@@ -72,9 +68,7 @@ let targets: [Target] = [
             "LocalToolsSupport",
             "ZenPackageMetadata"
         ],
-        swiftSettings: memberImportVisibilitySettings + [
-            .define("SWIFTPM_NON_SANDBOX_TUI")
-        ]
+        swiftSettings: memberImportVisibilitySettings
     ),
     .target(
         name: "FeatureKit",
@@ -103,7 +97,7 @@ let targets: [Target] = [
     .executableTarget(
         name: "zen",
         dependencies: zenCODEDependencies,
-        swiftSettings: zenCODESwiftSettings
+        swiftSettings: memberImportVisibilitySettings
     ),
     // Built as a test dependency so the persistence suite can exercise two
     // genuinely independent processes without exposing engine internals.

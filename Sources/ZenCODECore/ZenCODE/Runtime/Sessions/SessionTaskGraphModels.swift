@@ -66,8 +66,6 @@ public enum TaskGraphState: String, Codable, Equatable, Sendable {
     case cancelled
     case archived
 
-    public var permitsExecution: Bool { self == .active }
-
     public var isTerminal: Bool {
         switch self {
         case .completed, .cancelled, .archived: true

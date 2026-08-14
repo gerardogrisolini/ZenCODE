@@ -576,7 +576,6 @@ public enum AgentProfileStore {
         TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools"),
         "sub-agents"
     ]
-    public static let implementationToolNames: [String] = codingToolNames
     public static let builderToolNames: [String] = codingToolNames + [
         TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools")
     ]

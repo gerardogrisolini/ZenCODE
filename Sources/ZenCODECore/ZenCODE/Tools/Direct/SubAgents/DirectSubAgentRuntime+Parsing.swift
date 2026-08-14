@@ -317,12 +317,6 @@ extension DirectSubAgentRuntime {
         JSONValue(jsonObject: value)
     }
 
-    /// Every argument key that can carry an agent identifier. Callers that need
-    /// to *retarget* a request (rather than read it) must clear all of them, so
-    /// the list lives next to the parser that consumes it and cannot drift.
-    public static let agentIdentifierArgumentKeys: [String] = singularAgentIdentifierKeys
-        + pluralAgentIdentifierKeys
-
     static let singularAgentIdentifierKeys = [
         "id", "agentID", "agent_id", "taskID", "task_id", "name", "agent"
     ]

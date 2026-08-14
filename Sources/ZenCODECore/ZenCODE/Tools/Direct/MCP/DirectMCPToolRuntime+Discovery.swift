@@ -7,31 +7,6 @@ import Foundation
 import ToolCore
 
 extension DirectMCPToolRuntime {
-    func discoverFamilyIfNeeded(
-        _ family: ServerFamily,
-        preferredWorkspaceRootURL: URL?,
-        force: Bool
-    ) async {
-        _ = preferredWorkspaceRootURL
-        guard force || autoDiscoverExternalConnectors else {
-            return
-        }
-        guard discoveringFamilies.insert(family).inserted else {
-            return
-        }
-        defer {
-            discoveringFamilies.remove(family)
-        }
-
-        // Connector-specific discovery belongs to optional feature processes.
-        // Direct MCP servers are installed explicitly through
-        // `installExternalMCPServer` and require no vendor-specific branch here.
-        switch family {
-        case .figma, .external:
-            return
-        }
-    }
-
     public static func externalToolPrefix(for serverName: String) -> String {
         let base = externalServerID(for: serverName)
         return "\(base)."

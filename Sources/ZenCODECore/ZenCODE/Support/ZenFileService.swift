@@ -33,12 +33,6 @@ public struct ZenFileResult: Sendable {
 }
 
 public enum ZenFileService {
-    public static let requiredFilenames: [String] = [
-        AgentsContextService.filename,
-        AgentProfileStore.manifestFilename,
-        AgentSettingsManifestStore.settingsFilename
-    ]
-
     @discardableResult
     public static func ensureBaseFiles(
         fileManager: FileManager = .default

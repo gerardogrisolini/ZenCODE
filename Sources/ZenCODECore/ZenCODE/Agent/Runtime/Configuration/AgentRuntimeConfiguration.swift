@@ -19,12 +19,6 @@ public enum AgentLocalExecAccessMode: CaseIterable, Equatable, Sendable {
         }
     }
 
-    public var label: String {
-        switch self {
-        case .standard: return "default"
-        case .fullAccess: return "full access"
-        }
-    }
 }
 
 /// Dynamic turn context propagated while a runtime backend executes one prompt.

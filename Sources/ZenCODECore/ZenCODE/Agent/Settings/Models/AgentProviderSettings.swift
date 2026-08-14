@@ -541,10 +541,6 @@ public enum AgentSettingsStore {
         return CodexAgentModel.contextWindowTokenLimit(forLLMID: model.id)
     }
 
-    public static func defaultLocalModelID() -> String? {
-        nil
-    }
-
     public static func isRemoteLLMIDSyntax(_ llmID: String) -> Bool {
         let trimmed = llmID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return trimmed.hasPrefix("remoteapi:")

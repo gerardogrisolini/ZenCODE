@@ -89,17 +89,6 @@ extension DirectSubAgentRuntime {
             .joined(separator: "\n")
     }
 
-    public static func truncated(
-        _ text: String,
-        limit: Int
-    ) -> String {
-        TextUtilities.truncate(
-            text: text,
-            limit: limit,
-            footer: "\n... truncated ..."
-        )
-    }
-
     static func agentSortOrder(
         lhs: AgentRecord,
         rhs: AgentRecord

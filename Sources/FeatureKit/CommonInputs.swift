@@ -46,71 +46,6 @@ public extension WorkingDirectoryInput {
     }
 }
 
-/// Resolves a file path from common aliases.
-public protocol FilePathInput {
-    var path: String? { get }
-    var file_path: String? { get }
-    var filePath: String? { get }
-    var file: String? { get }
-}
-
-public extension FilePathInput {
-    func resolvedPath() -> String? {
-        firstNonBlank(path, file_path, filePath, file)
-    }
-}
-
-/// Resolves a timeout in seconds from `timeoutSeconds` / `timeout` aliases.
-public protocol TimeoutInput {
-    var timeoutSeconds: Int? { get }
-    var timeout: Int? { get }
-}
-
-public extension TimeoutInput {
-    func resolvedTimeout(default: Int = 900, minimum: Int = 30, maximum: Int = 3600) -> TimeInterval {
-        let raw = timeoutSeconds ?? timeout ?? `default`
-        return TimeInterval(max(minimum, min(raw, maximum)))
-    }
-}
-
-/// Resolves a pagination / result limit from `maxResults` / `max_results`.
-public protocol LimitInput {
-    var maxResults: Int? { get }
-    var max_results: Int? { get }
-}
-
-public extension LimitInput {
-    func resolvedLimit(default: Int = 100, minimum: Int = 1, maximum: Int = 500) -> Int {
-        let raw = maxResults ?? max_results ?? `default`
-        return max(minimum, min(raw, maximum))
-    }
-}
-
-/// Resolves a symbol cap from `maxSymbols` / `max_symbols`.
-public protocol SymbolLimitInput {
-    var maxSymbols: Int? { get }
-    var max_symbols: Int? { get }
-}
-
-public extension SymbolLimitInput {
-    func resolvedMaxSymbols() -> Int? {
-        maxSymbols ?? max_symbols
-    }
-}
-
-/// Resolves a base revision from alias keys.
-public protocol BaseRevisionInput {
-    var baseRevision: String? { get }
-    var base_revision: String? { get }
-    var base: String? { get }
-}
-
-public extension BaseRevisionInput {
-    func resolvedBaseRevision() -> String? {
-        firstNonBlank(baseRevision, base_revision, base)
-    }
-}
-
 // MARK: - Schema model
 
 /// A JSON Schema node. `indirect` so arrays and objects can nest.
@@ -265,33 +200,6 @@ private func escapeJSONString(_ value: String) -> String {
     return result
 }
 
-// MARK: - Legacy builder (retained for source compatibility)
-
-/// Incrementally accumulates properties and renders an object schema.
-/// Prefer `buildInputSchema(_:required:)` for new tools.
-public struct InputSchemaBuilder {
-    private var properties: [SchemaProperty] = []
-    private var required: [String] = []
-
-    public init() {}
-
-    public mutating func add(_ property: SchemaProperty) {
-        properties.append(property)
-    }
-
-    public mutating func add(contentsOf newProperties: [SchemaProperty]) {
-        properties.append(contentsOf: newProperties)
-    }
-
-    public mutating func require(_ keys: String...) {
-        required.append(contentsOf: keys)
-    }
-
-    public func build() -> String {
-        buildInputSchema(properties, required: required)
-    }
-}
-
 // MARK: - Convenience presets
 
 /// Common property groups used across many tools. Reusing these keeps the
@@ -307,14 +215,6 @@ public enum CommonSchemaProperties {
     public static let pathAliases: [SchemaProperty] = [
         .string("path"),
         .string("file_path"),
-    ]
-
-    /// `path`, `file_path`, `file`, `filePath` — full file-target alias set.
-    public static let filePath: [SchemaProperty] = [
-        .string("path"),
-        .string("file_path"),
-        .string("file"),
-        .string("filePath"),
     ]
 
     /// `timeoutSeconds`, `timeout` — long-running tools.

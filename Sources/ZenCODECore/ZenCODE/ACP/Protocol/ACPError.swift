@@ -24,13 +24,3 @@ public struct ACPError: LocalizedError {
     }
 }
 
-extension AsyncSequence where Element == UInt8 {
-    public func collectString() async throws -> String {
-        var data = Data()
-        for try await byte in self {
-            data.append(byte)
-        }
-        return String(decoding: data, as: UTF8.self)
-    }
-}
-

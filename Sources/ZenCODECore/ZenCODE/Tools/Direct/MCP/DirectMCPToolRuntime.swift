@@ -19,6 +19,8 @@ public struct MCPRuntimeShutdownError: Error {}
 public struct MCPRuntimeInstallSupersededError: Error {}
 
 public actor DirectMCPToolRuntime {
+    public init() {}
+
     enum ServerFamily: Hashable {
         case figma
         case external(String)
@@ -40,10 +42,6 @@ public actor DirectMCPToolRuntime {
         }
     }
 
-    /// Per-family single-flight latch. Actor reentrancy permits another caller
-    /// to enter while discovery awaits I/O, so booleans alone cannot prevent
-    /// duplicate executor/process creation.
-    var discoveringFamilies: Set<ServerFamily> = []
     var servers: [Server] = []
     /// The latest install request for each family. An owned install awaits its
     /// transport while the actor is reentrant; this generation prevents it
@@ -86,12 +84,6 @@ public actor DirectMCPToolRuntime {
 
     func isActive(_ shutdownFence: ShutdownFence, installationFence: InstallationFence) -> Bool {
         isActive(shutdownFence) && isCurrent(installationFence)
-    }
-
-    let autoDiscoverExternalConnectors: Bool
-
-    public init(autoDiscoverExternalConnectors: Bool = false) {
-        self.autoDiscoverExternalConnectors = autoDiscoverExternalConnectors
     }
 
     deinit {
@@ -345,11 +337,6 @@ public actor DirectMCPToolRuntime {
         force: Bool = false
     ) async {
         for family in Self.discoveryServerFamilies(allowedToolNames: allowedToolNames) {
-            await discoverFamilyIfNeeded(
-                family,
-                preferredWorkspaceRootURL: preferredWorkspaceRootURL,
-                force: force
-            )
         }
     }
 

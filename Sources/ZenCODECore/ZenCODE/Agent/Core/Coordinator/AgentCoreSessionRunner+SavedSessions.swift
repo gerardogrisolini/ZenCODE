@@ -93,19 +93,6 @@ public extension AgentCoreSessionRunner {
         return savedSession
     }
 
-    @discardableResult
-    nonisolated func deleteSavedSession(
-        name: String,
-        workingDirectory: URL,
-        supportDirectoryURL: URL? = nil
-    ) throws -> Bool {
-        try TerminalSessionStore.delete(
-            name: name,
-            workingDirectory: workingDirectory,
-            supportDirectoryURL: supportDirectoryURL
-        )
-    }
-
     private static func normalizedSavedSessionName(_ rawName: String) -> String {
         let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedName.isEmpty ? "Session" : trimmedName

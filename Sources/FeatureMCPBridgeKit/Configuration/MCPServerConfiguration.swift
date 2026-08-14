@@ -99,100 +99,6 @@ public nonisolated struct MCPServerConfiguration: Hashable, Sendable {
         endpointURL != nil
     }
 
-    public static func remoteHTTPFromEnvironment(
-        urlKey: String,
-        headersKey: String,
-        bearerTokenKey: String? = nil,
-        preferredProtocolVersion: String = "2025-03-26",
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> MCPServerConfiguration? {
-        guard let rawURL = environment[urlKey]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            let endpointURL = URL(string: rawURL),
-            !rawURL.isEmpty else {
-            return nil
-        }
-
-        var httpHeaders = parseHTTPHeaders(
-            from: environment[headersKey]
-        )
-
-        if let bearerTokenKey,
-           let token = environment[bearerTokenKey]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !token.isEmpty,
-           httpHeaders["Authorization"] == nil {
-            httpHeaders["Authorization"] = "Bearer \(token)"
-        }
-
-        return MCPServerConfiguration(
-            executablePath: "",
-            arguments: [],
-            environment: [:],
-            endpointURL: endpointURL,
-            httpHeaders: httpHeaders,
-            preferredProtocolVersion: preferredProtocolVersion
-        )
-    }
-
-    public static func localProcessFromEnvironment(
-        executableKey: String,
-        argumentsKey: String,
-        inheritedEnvironmentPrefixes: [String],
-        excludedEnvironmentKeys: Set<String> = [],
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> MCPServerConfiguration? {
-        guard let rawExecutablePath = environment[executableKey]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !rawExecutablePath.isEmpty else {
-            return nil
-        }
-
-        let arguments = environment[argumentsKey]?
-            .split(separator: "\n")
-            .map(String.init) ?? []
-
-        let processEnvironment = environment.reduce(into: [String: String]()) { partialResult, pair in
-            let (key, value) = pair
-            guard !excludedEnvironmentKeys.contains(key) else {
-                return
-            }
-
-            guard inheritedEnvironmentPrefixes.contains(where: key.hasPrefix) else {
-                return
-            }
-
-            partialResult[key] = value
-        }
-
-        return MCPServerConfiguration(
-            executablePath: rawExecutablePath,
-            arguments: arguments,
-            environment: processEnvironment,
-            preferredProtocolVersion: "2024-11-05"
-        )
-    }
-
-    public static func figmaRemote() -> MCPServerConfiguration {
-        MCPServerConfiguration(
-            executablePath: "",
-            arguments: [],
-            environment: [:],
-            endpointURL: URL(string: "https://mcp.figma.com/mcp"),
-            httpHeaders: [:],
-            httpAuthentication: .browserOAuth(
-                MCPBrowserOAuthConfiguration(
-                    clientName: "Figma MCP client",
-                    serviceName: "Figma",
-                    redirectHost: "127.0.0.1",
-                    redirectPort: 8788,
-                    redirectPath: "/figma-callback"
-                )
-            ),
-            preferredProtocolVersion: "2025-03-26"
-        )
-    }
-
     public static func figmaDesktopLocal() -> MCPServerConfiguration {
         MCPServerConfiguration(
             executablePath: "",
@@ -288,32 +194,6 @@ public nonisolated struct MCPServerConfiguration: Hashable, Sendable {
     }
     #endif
 
-    private static func parseHTTPHeaders(from rawValue: String?) -> [String: String] {
-        guard let rawValue = rawValue?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !rawValue.isEmpty else {
-            return [:]
-        }
-
-        return rawValue
-            .split(separator: "\n")
-            .reduce(into: [String: String]()) { partialResult, rawLine in
-                let line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !line.isEmpty,
-                      let separatorIndex = line.firstIndex(of: ":") else {
-                    return
-                }
-
-                let headerName = line[..<separatorIndex].trimmingCharacters(in: .whitespacesAndNewlines)
-                let headerValue = line[line.index(after: separatorIndex)...]
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !headerName.isEmpty, !headerValue.isEmpty else {
-                    return
-                }
-
-                partialResult[String(headerName)] = headerValue
-            }
-    }
 }
 
 public nonisolated enum MCPClientError: LocalizedError, Sendable {
