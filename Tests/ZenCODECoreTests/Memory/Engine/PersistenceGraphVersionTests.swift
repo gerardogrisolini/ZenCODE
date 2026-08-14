@@ -205,3 +205,196 @@ import Testing
     #expect(reloaded.metadata.retrievalCount == 5)
     #expect(reloaded.metadata.linkDiscoveryCount == 2)
 }
+
+
+// MARK: - Durable graph privacy
+
+#if canImport(Darwin) || canImport(Glibc)
+private func posixMode(_ url: URL) throws -> Int {
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    return (attributes[.posixPermissions] as? NSNumber)?.intValue ?? -1
+}
+#endif
+
+@Test func graphPersistenceCreatesPrivateGraphLockAndDirectory() async throws {
+    #if canImport(Darwin) || canImport(Glibc)
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? fileManager.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("memory.graph.json")
+
+    let persistence = JSONMemoryPersistence(url: file)
+    try await persistence.save(MemoryGraph())
+
+    #expect(try posixMode(directory) == 0o700)
+    #expect(try posixMode(file) == 0o600)
+    // A transaction creates the stable adjacent lock and must harden it too.
+    _ = try await persistence.transaction { _ in () }
+    #expect(try posixMode(file.appendingPathExtension("lock")) == 0o600)
+    // The staging file used to publish the graph must not survive the commit.
+    let leftovers = try fileManager.contentsOfDirectory(atPath: directory.path)
+        .filter { $0.contains("staging") }
+    #expect(leftovers.isEmpty)
+    #else
+    return
+    #endif
+}
+
+/// A graph published over a world-readable predecessor must never be readable
+/// by anyone else, not even for the instant between write and `chmod`.
+///
+/// The check is indirect but exact: the file that ends up at `url` must be a
+/// *different inode* than the permissive one, because the publication stages a
+/// private file and renames it over the old path. Correcting the mode after
+/// `Data.write(options: .atomic)` cannot satisfy this — that path writes the
+/// content first and tightens afterwards.
+@Test func graphPublicationNeverInheritsOrExposesAPermissiveMode() async throws {
+    #if canImport(Darwin) || canImport(Glibc)
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? fileManager.removeItem(at: directory) }
+    try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+    let file = directory.appendingPathComponent("memory.graph.json")
+    // A store left behind by an older build: readable and writable by everyone.
+    try Data("{}".utf8).write(to: file)
+    try fileManager.setAttributes([.posixPermissions: 0o666], ofItemAtPath: file.path)
+    try fileManager.setAttributes([.posixPermissions: 0o777], ofItemAtPath: directory.path)
+    let permissiveInode = (try fileManager.attributesOfItem(atPath: file.path)[.systemFileNumber]
+        as? NSNumber)?.intValue
+
+    var graph = MemoryGraph()
+    graph.addMemory(EngineMemoryEntry(id: "mem_1", category: .fact, content: "private"))
+    let persistence = JSONMemoryPersistence(url: file)
+    try await persistence.save(graph)
+
+    #expect(try posixMode(file) == 0o600)
+    #expect(try posixMode(directory) == 0o700)
+    let publishedInode = (try fileManager.attributesOfItem(atPath: file.path)[.systemFileNumber]
+        as? NSNumber)?.intValue
+    #expect(publishedInode != permissiveInode)
+    // Publication is still a complete, decodable replacement.
+    let reloaded = try await JSONMemoryPersistence(url: file).load()
+    #expect(reloaded.memories["mem_1"]?.content == "private")
+    #else
+    return
+    #endif
+}
+
+/// Opening an existing permissive store must tighten it, not wait for the next
+/// write. The lock file is included: it is created adjacent to the graph and
+/// older builds left it with the ambient umask.
+@Test func loadingHardensAPreExistingPermissiveStore() async throws {
+    #if canImport(Darwin) || canImport(Glibc)
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? fileManager.removeItem(at: directory) }
+    try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+    let file = directory.appendingPathComponent("memory.graph.json")
+    let lock = file.appendingPathExtension("lock")
+
+    var graph = MemoryGraph()
+    graph.addMemory(EngineMemoryEntry(id: "mem_1", category: .fact, content: "legacy"))
+    let encoder = JSONEncoder()
+    encoder.keyEncodingStrategy = .convertToSnakeCase
+    encoder.dateEncodingStrategy = .iso8601
+    try encoder.encode(graph).write(to: file)
+    try Data().write(to: lock)
+    try fileManager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+    try fileManager.setAttributes([.posixPermissions: 0o646], ofItemAtPath: lock.path)
+    try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+
+    let bytesBefore = try Data(contentsOf: file)
+    let loaded = try await JSONMemoryPersistence(url: file).load()
+
+    #expect(loaded.memories["mem_1"]?.content == "legacy")
+    #expect(try posixMode(file) == 0o600)
+    #expect(try posixMode(lock) == 0o600)
+    #expect(try posixMode(directory) == 0o700)
+    // Hardening is a mode change only: loading never rewrites the graph.
+    #expect(try Data(contentsOf: file) == bytesBefore)
+    #else
+    return
+    #endif
+}
+
+/// A mode that is already stricter than the target must not be widened.
+@Test func hardeningNeverWidensAnAlreadyStrictMode() async throws {
+    #if canImport(Darwin) || canImport(Glibc)
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? fileManager.removeItem(at: directory) }
+    try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+    let file = directory.appendingPathComponent("memory.graph.json")
+    try Data("{}".utf8).write(to: file)
+    try fileManager.setAttributes([.posixPermissions: 0o400], ofItemAtPath: file.path)
+
+    _ = try? await JSONMemoryPersistence(url: file).load()
+
+    #expect(try posixMode(file) == 0o400)
+    #else
+    return
+    #endif
+}
+
+/// The closure → save window.
+///
+/// A transaction body can run long (revalidation, replay of pending recall
+/// maintenance) and the caller's deadline can pass while it does. Cancelling
+/// from *inside* the body reproduces exactly that instant deterministically:
+/// the draft is already dirty, the store has not written yet. The transaction
+/// must abort before publishing and leave the previous bytes untouched.
+@Test func cancellationBetweenTransactionBodyAndSaveLeavesTheGraphUnpublished() async throws {
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? fileManager.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("memory.graph.json")
+    let persistence = JSONMemoryPersistence(url: file)
+
+    var seed = MemoryGraph()
+    seed.addMemory(EngineMemoryEntry(id: "seed", category: .fact, content: "seed"))
+    try await persistence.save(seed)
+    let bytesBefore = try Data(contentsOf: file)
+
+    let task = Task<Void, Error> {
+        _ = try await persistence.transaction { graph in
+            graph.addMemory(EngineMemoryEntry(id: "late", category: .fact, content: "late"))
+            // The body has produced a dirty draft; the deadline passes here.
+            withUnsafeCurrentTask { $0?.cancel() }
+        }
+    }
+
+    await #expect(throws: CancellationError.self) {
+        try await task.value
+    }
+    #expect(try Data(contentsOf: file) == bytesBefore)
+    let reloaded = try await JSONMemoryPersistence(url: file).load()
+    #expect(reloaded.memories["late"] == nil)
+    #expect(reloaded.memories["seed"] != nil)
+    // No staging file was left behind by the aborted publication.
+    let leftovers = try fileManager.contentsOfDirectory(atPath: directory.path)
+        .filter { $0.contains("staging") }
+    #expect(leftovers.isEmpty)
+}
+
+/// The same window, but with a body that changed nothing: an unchanged graph
+/// never reaches the save path, so cancellation there is not a failure to hide
+/// — the transaction simply reports its read-only result.
+@Test func cancellationInAReadOnlyTransactionBodyStillAborts() async throws {
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? fileManager.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("memory.graph.json")
+    let persistence = JSONMemoryPersistence(url: file)
+    try await persistence.save(MemoryGraph())
+    let bytesBefore = try Data(contentsOf: file)
+
+    let task = Task<Bool, Error> {
+        let committed = try await persistence.transaction { _ in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return true
+        }
+        return committed.didChange
+    }
+    #expect(try await task.value == false)
+    #expect(try Data(contentsOf: file) == bytesBefore)
+}

@@ -27,6 +27,22 @@ public enum ProjectContextFileKind: String, CaseIterable, Hashable, Identifiable
             return MemoryService.filename
         }
     }
+
+    /// Whether this service may create or replace the file on disk.
+    ///
+    /// `MEMORY.md` is a legacy journal: the graph store imports it read-only,
+    /// exactly once, and durable memory then lives in the engine graph. Nothing
+    /// in ZenCODE writes the journal back, so the writing entry points must
+    /// refuse it rather than resurrect a second source of truth — or, worse,
+    /// overwrite a user's journal with a template before it was imported.
+    public var supportsDocumentWrites: Bool {
+        switch self {
+        case .agents:
+            return true
+        case .memory:
+            return false
+        }
+    }
 }
 
 public struct ProjectContextDocument: Hashable, Sendable {
@@ -84,6 +100,12 @@ public struct ProjectContextFileService {
         let fileURL = standardizedRootURL.appendingPathComponent(kind.filename)
         switch readContextFile(at: fileURL, fileManager: fileManager) {
         case .missing:
+            // MEMORY.md is only imported. In particular this legacy generic
+            // initializer must not create an empty journal just because the
+            // caller asked for the default document.
+            guard kind.supportsDocumentWrites else {
+                throw CocoaError(.fileNoSuchFile)
+            }
             break
         case .unreadable:
             throw ProjectContextFileServiceError.unreadableDocument(fileURL)
@@ -106,9 +128,14 @@ public struct ProjectContextFileService {
         at rootURL: URL,
         projectName: String
     ) throws -> ProjectContextDocument {
-        try writeDefaultDocument(
+        let standardizedRootURL = rootURL.standardizedFileURL
+        try Self.requireWritable(
+            kind,
+            at: standardizedRootURL.appendingPathComponent(kind.filename)
+        )
+        return try writeDefaultDocument(
             kind: kind,
-            at: rootURL.standardizedFileURL,
+            at: standardizedRootURL,
             projectName: projectName
         )
     }
@@ -120,6 +147,7 @@ public struct ProjectContextFileService {
     ) throws -> ProjectContextDocument {
         let standardizedRootURL = rootURL.standardizedFileURL
         let fileURL = standardizedRootURL.appendingPathComponent(kind.filename)
+        try Self.requireWritable(kind, at: fileURL)
         let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedContent.isEmpty else {
             throw CocoaError(.fileWriteUnknown)
@@ -191,6 +219,9 @@ public struct ProjectContextFileService {
     ) throws -> ProjectContextDocument {
         let standardizedRootURL = rootURL.standardizedFileURL
         let fileURL = standardizedRootURL.appendingPathComponent(kind.filename)
+        // Belt and braces: the public entry points already refused a read-only
+        // kind, and this stops a future caller from bypassing them.
+        try Self.requireWritable(kind, at: fileURL)
         let content = Self.defaultContent(
             kind: kind,
             projectName: projectName,
@@ -208,6 +239,19 @@ public struct ProjectContextFileService {
 
     public static func digest(_ value: String) -> String {
         String(format: "%016llx", fnv1aHash(value))
+    }
+
+    /// Fails before touching the file system for a kind this service only reads.
+    private static func requireWritable(
+        _ kind: ProjectContextFileKind,
+        at fileURL: URL
+    ) throws {
+        guard kind.supportsDocumentWrites else {
+            // Keep the public error enum source-compatible. This generic Cocoa
+            // error still tells writing entry points to leave the import-only
+            // journal untouched without adding a new public enum case.
+            throw CocoaError(.fileWriteNoPermission)
+        }
     }
 }
 

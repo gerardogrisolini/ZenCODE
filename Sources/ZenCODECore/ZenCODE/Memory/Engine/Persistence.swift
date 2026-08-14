@@ -142,6 +142,12 @@ actor JSONMemoryPersistence: MemoryTransactionalPersistence {
     }
 
     public func load() async throws -> MemoryGraph {
+        // Opening is the moment a pre-existing store becomes this process's
+        // responsibility, so it is also where a graph, lock or directory left
+        // group/other-readable by an older build (or a permissive umask) is
+        // tightened. Best effort on purpose: a read must not start failing
+        // because the mode of a file owned by another user cannot be changed.
+        Self.hardenExistingItems(graphURL: url, lockURL: lockURL)
         guard FileManager.default.fileExists(atPath: url.path) else { return MemoryGraph() }
         return try decodeGraph(Data(contentsOf: url))
     }
@@ -173,6 +179,15 @@ actor JSONMemoryPersistence: MemoryTransactionalPersistence {
             let result = try body(&graph)
             let didChange = graph != original
             if didChange {
+                // Last controllable boundary before the graph becomes durable.
+                // The body may have run long (revalidation, replay of pending
+                // recall maintenance) and its caller's deadline may have passed
+                // in the meantime; publishing here would make an abandoned turn
+                // durable. Throwing *before* the write keeps the transaction
+                // all-or-nothing: nothing is written and the caller's in-memory
+                // state is left untouched. There is deliberately no failable
+                // step after the write.
+                try Task.checkCancellation()
                 try saveSynchronously(graph)
             }
             return (result, graph, didChange)
@@ -223,22 +238,134 @@ actor JSONMemoryPersistence: MemoryTransactionalPersistence {
 
     private func saveSynchronously(_ graph: MemoryGraph) throws {
         let directory = url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Self.prepareOwnerOnlyDirectory(directory)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = MemoryJSONDateCoding.encodingStrategy()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(graph).write(to: url, options: .atomic)
+        // Byte-identical payload to every previous version of this method; only
+        // the way it reaches the final path changed.
+        try Self.publishPrivately(try encoder.encode(graph), to: url)
+    }
+
+    /// Installs `data` at `url` through an owner-only staging file.
+    ///
+    /// `Data.WritingOptions.atomic` also stages and renames, but it creates the
+    /// staged file with the process umask and replaces the inode, so the graph
+    /// exists — however briefly — with whatever mode the umask allowed, and the
+    /// mode can only be corrected *after* the content is already published.
+    /// Staging by hand makes the file private *before* a single byte of graph
+    /// content is written and publishes it with `rename`, which is atomic within
+    /// the directory. `rename` is the commit point and nothing failable follows
+    /// it, so this never reports an error for an already-durable graph.
+    private static func publishPrivately(_ data: Data, to url: URL) throws {
+        let directory = url.deletingLastPathComponent()
+        let staging = directory.appendingPathComponent(
+            ".\(url.lastPathComponent).\(UUID().uuidString).staging"
+        )
+        let descriptor = open(staging.path, O_CREAT | O_WRONLY | O_TRUNC | O_EXCL, 0o600)
+        guard descriptor >= 0 else { throw errnoError() }
+        var published = false
+        defer {
+            if !published { try? FileManager.default.removeItem(at: staging) }
+        }
+        do {
+            // `open`'s mode argument is masked by the umask, which can only
+            // clear bits — never add them — but an inherited restrictive umask
+            // would otherwise make the published mode unpredictable. Pin it
+            // while the file is still empty.
+            guard fchmod(descriptor, 0o600) == 0 else { throw errnoError() }
+            try writeFully(data, to: descriptor)
+            guard fsync(descriptor) == 0 else { throw errnoError() }
+        } catch {
+            _ = close(descriptor)
+            throw error
+        }
+        guard close(descriptor) == 0 else { throw errnoError() }
+        // `rename` publishes the completed private staging inode. Check as
+        // close to that commit point as possible so a cancellation observed
+        // after I/O never makes an abandoned operation visible.
+        try Task.checkCancellation()
+        guard rename(staging.path, url.path) == 0 else { throw errnoError() }
+        published = true
+    }
+
+    private static func writeFully(_ data: Data, to descriptor: Int32) throws {
+        guard !data.isEmpty else { return }
+        try data.withUnsafeBytes { buffer in
+            guard let base = buffer.baseAddress else { return }
+            var offset = 0
+            while offset < buffer.count {
+                let written = write(descriptor, base.advanced(by: offset), buffer.count - offset)
+                if written < 0 {
+                    if errno == EINTR { continue }
+                    throw errnoError()
+                }
+                offset += written
+            }
+        }
+    }
+
+    /// Creates the graph directory owner-only, or tightens an existing one.
+    private static func prepareOwnerOnlyDirectory(_ directory: URL) throws {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: directory.path) else {
+            try fileManager.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            return
+        }
+        restrictIfPermissive(directory, to: 0o700)
+    }
+
+    /// Tightens whatever already exists, without ever widening a mode.
+    ///
+    /// Used on the read paths (`load`) and when the lock is taken, so a store
+    /// created by an older build stops being group/other-readable at the first
+    /// touch instead of only at the first write.
+    private static func hardenExistingItems(graphURL: URL, lockURL: URL) {
+        let directory = graphURL.deletingLastPathComponent()
+        restrictIfPermissive(directory, to: 0o700)
+        restrictIfPermissive(graphURL, to: 0o600)
+        restrictIfPermissive(lockURL, to: 0o600)
+    }
+
+    /// Clears every mode bit outside `allowed`. Never adds a bit, never throws:
+    /// a store that cannot be tightened (foreign owner, read-only mount) must
+    /// still be readable.
+    @discardableResult
+    private static func restrictIfPermissive(_ url: URL, to allowed: Int) -> Bool {
+        let fileManager = FileManager.default
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+              let current = (attributes[.posixPermissions] as? NSNumber)?.intValue else {
+            return false
+        }
+        let restricted = current & allowed
+        guard restricted != current else { return false }
+        return (try? fileManager.setAttributes(
+            [.posixPermissions: restricted],
+            ofItemAtPath: url.path
+        )) != nil
+    }
+
+    private static func errnoError() -> POSIXError {
+        POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
 
     private func withExclusiveFileLock<T>(_ body: () throws -> T) throws -> T {
-        let directory = lockURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Self.prepareOwnerOnlyDirectory(lockURL.deletingLastPathComponent())
         let descriptor = open(lockURL.path, O_CREAT | O_RDWR, 0o600)
-        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        guard descriptor >= 0 else { throw Self.errnoError() }
         defer { _ = close(descriptor) }
+        // `open(..., 0600)` only governs creation, so a lock file left
+        // group/other-writable by an older build keeps that mode. Tighten it
+        // here too; like every other upgrade this is best effort and never
+        // turns a permission quirk into a failed memory operation.
+        Self.restrictIfPermissive(lockURL, to: 0o600)
         guard flock(descriptor, LOCK_EX) == 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            throw Self.errnoError()
         }
         defer { _ = flock(descriptor, LOCK_UN) }
         return try body()

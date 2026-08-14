@@ -159,6 +159,256 @@ struct MemoryServiceTests {
     }
 
     @Test
+    func memoryToolDeduplicatesTimestampedWritesFromDifferentTurnContexts() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        let firstZone = TimeZone(identifier: "Europe/Rome")!
+        let secondZone = TimeZone(identifier: "America/Los_Angeles")!
+        let content = """
+        Summary: fixed durable graph permissions.
+        State: graph and lock are private to the current user.
+        Next: validate a fresh process open.
+        """
+
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let first = try await MemoryTool.executeAsync(
+                ToolRequest(name: "memory.write", arguments: ["content": .string(content)]),
+                context: MemoryToolContext(
+                    workingDirectory: workspace.workspaceURL,
+                    currentDate: Date(timeIntervalSince1970: 1_700_000_000),
+                    currentTimeZone: firstZone
+                ),
+                memoryService: service
+            )
+            let second = try await MemoryTool.executeAsync(
+                ToolRequest(name: "memory.write", arguments: ["content": .string(content)]),
+                context: MemoryToolContext(
+                    workingDirectory: workspace.workspaceURL,
+                    // A later minute and a separate context/time zone must not
+                    // make Timestamp metadata defeat duplicate detection.
+                    currentDate: Date(timeIntervalSince1970: 1_700_003_660),
+                    currentTimeZone: secondZone
+                ),
+                memoryService: service
+            )
+
+            guard case let .object(firstResult)? = first.rawResult,
+                  case let .object(secondResult)? = second.rawResult else {
+                Issue.record("Expected memory.write JSON results.")
+                return
+            }
+            #expect(firstResult["written"] == .bool(true))
+            #expect(secondResult["deduplicated"] == .bool(true))
+            #expect(
+                try await service.readEntries(
+                    workspaceRootURL: workspace.workspaceURL,
+                    limit: 10
+                ).count == 1
+            )
+            // The surviving entry keeps the first turn's stamp verbatim: a
+            // duplicate is reused, never rewritten.
+            let stored = try await service.readEntries(
+                workspaceRootURL: workspace.workspaceURL,
+                limit: 10
+            )
+            #expect(stored.first?.content.hasPrefix("Timestamp: 2023-11-14 23:13 Europe/Rome") == true)
+        }
+    }
+
+    // MARK: - Deduplication must not swallow authored timestamps
+
+    /// A `Timestamp:` line the author wrote is content, not metadata.
+    ///
+    /// Ignoring every line that starts with `timestamp:` would merge these two
+    /// entries even though only one of them was stamped by the tool, silently
+    /// discarding the author's own annotation.
+    @Test
+    func authoredTimestampKeepsAnEntryDistinctFromAnAutoStampedOne() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        let body = "Summary: release cut for 1.2.4."
+
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let authored = try await MemoryTool.executeAsync(
+                ToolRequest(
+                    name: "memory.write",
+                    arguments: ["content": .string("Timestamp: sprint kickoff\n\(body)")]
+                ),
+                context: MemoryToolContext(
+                    workingDirectory: workspace.workspaceURL,
+                    currentDate: Date(timeIntervalSince1970: 1_700_000_000),
+                    currentTimeZone: TimeZone(identifier: "Europe/Rome")!
+                ),
+                memoryService: service
+            )
+            let autoStamped = try await MemoryTool.executeAsync(
+                ToolRequest(name: "memory.write", arguments: ["content": .string(body)]),
+                context: MemoryToolContext(
+                    workingDirectory: workspace.workspaceURL,
+                    currentDate: Date(timeIntervalSince1970: 1_700_003_660),
+                    currentTimeZone: TimeZone(identifier: "Europe/Rome")!
+                ),
+                memoryService: service
+            )
+
+            #expect(authored.rawResult?.objectValue?["written"]?.boolValue == true)
+            #expect(autoStamped.rawResult?.objectValue?["written"]?.boolValue == true)
+            let entries = try await service.readEntries(
+                workspaceRootURL: workspace.workspaceURL,
+                limit: 10
+            )
+            #expect(entries.count == 2)
+            #expect(entries.contains { $0.content.hasPrefix("Timestamp: sprint kickoff") })
+        }
+    }
+
+    @Test
+    func machineShapedAuthoredTimestampKeepsAnEntryDistinctFromAnAutoStampedOne() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        let body = "Summary: release cut for 1.2.5."
+
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let context = MemoryToolContext(
+                workingDirectory: workspace.workspaceURL,
+                currentDate: Date(timeIntervalSince1970: 1_700_000_000),
+                currentTimeZone: TimeZone(identifier: "Europe/Rome")!
+            )
+            let authored = try await MemoryTool.executeAsync(
+                ToolRequest(
+                    name: "memory.write",
+                    arguments: ["content": .string("Timestamp: 2024-01-01 09:00 Europe/Rome\n\(body)")]
+                ),
+                context: context,
+                memoryService: service
+            )
+            let autoStamped = try await MemoryTool.executeAsync(
+                ToolRequest(name: "memory.write", arguments: ["content": .string(body)]),
+                context: context,
+                memoryService: service
+            )
+
+            #expect(authored.rawResult?.objectValue?["written"]?.boolValue == true)
+            #expect(autoStamped.rawResult?.objectValue?["written"]?.boolValue == true)
+            #expect(try await service.readEntries(workspaceRootURL: workspace.workspaceURL, limit: 10).count == 2)
+        }
+    }
+
+    /// Two entries differing only inside a fenced code block are different
+    /// entries, even when the differing line happens to look like the journal
+    /// field.
+    @Test
+    func timestampInsideACodeBlockStaysSignificant() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        func sample(_ value: String) -> String {
+            """
+            Summary: documented the log format.
+            ```
+            Timestamp: \(value)
+            ```
+            """
+        }
+
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let context = MemoryToolContext(
+                workingDirectory: workspace.workspaceURL,
+                currentDate: Date(timeIntervalSince1970: 1_700_000_000),
+                currentTimeZone: TimeZone(identifier: "Europe/Rome")!
+            )
+            _ = try await MemoryTool.executeAsync(
+                ToolRequest(
+                    name: "memory.write",
+                    arguments: ["content": .string(sample("2024-01-01 09:00 Europe/Rome"))]
+                ),
+                context: context,
+                memoryService: service
+            )
+            let second = try await MemoryTool.executeAsync(
+                ToolRequest(
+                    name: "memory.write",
+                    arguments: ["content": .string(sample("2025-02-02 10:00 Europe/Rome"))]
+                ),
+                context: context,
+                memoryService: service
+            )
+
+            #expect(second.rawResult?.objectValue?["written"]?.boolValue == true)
+            #expect(second.rawResult?.objectValue?["deduplicated"]?.boolValue == false)
+            #expect(
+                try await service.readEntries(
+                    workspaceRootURL: workspace.workspaceURL,
+                    limit: 10
+                ).count == 2
+            )
+        }
+    }
+
+    /// The legacy public write API never generated a stamp, so nothing in the
+    /// content it is handed may be ignored: two entries that differ by a
+    /// caller-supplied `Timestamp:` remain two entries.
+    @Test
+    func legacyWriteEntryAPIComparesContentLiterally() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let first = try await service.writeEntry(
+                content: "Timestamp: 2024-01-01 09:00 Europe/Rome\nSummary: migrated the journal.",
+                workspaceRootURL: workspace.workspaceURL
+            )
+            let second = try await service.writeEntry(
+                content: "Timestamp: 2025-02-02 10:00 Europe/Rome\nSummary: migrated the journal.",
+                workspaceRootURL: workspace.workspaceURL
+            )
+
+            #expect(first.id != second.id)
+            #expect(
+                try await service.readEntries(
+                    workspaceRootURL: workspace.workspaceURL,
+                    limit: 10
+                ).count == 2
+            )
+        }
+    }
+
+    /// Only the exact generated rendering is ignorable. A first line that
+    /// merely starts with the field name is authored content.
+    @Test
+    func onlyTheGeneratedTimestampRenderingIsIgnorable() {
+        #expect(MemoryAutoTimestamp.isGeneratedLine("Timestamp: 2024-01-01 09:00 Europe/Rome"))
+        #expect(!MemoryAutoTimestamp.isGeneratedLine("Timestamp: 2024-01-01 09:00"))
+        #expect(!MemoryAutoTimestamp.isGeneratedLine("Timestamp: 2024-01-01"))
+        #expect(!MemoryAutoTimestamp.isGeneratedLine("Timestamp: yesterday"))
+        #expect(!MemoryAutoTimestamp.isGeneratedLine("Timestamp: 2024-13-45 99:99 Europe/Rome"))
+        #expect(!MemoryAutoTimestamp.isGeneratedLine("Timestamp: 2024-01-01 09:00 Not/AZone"))
+        #expect(!MemoryAutoTimestamp.isGeneratedLine("timestamp: 2024-01-01 09:00 Europe/Rome"))
+        #expect(!MemoryAutoTimestamp.isGeneratedLine("Updated: 2024-01-01 09:00 Europe/Rome"))
+
+        // Only the first line, and only when something follows it.
+        #expect(
+            MemoryAutoTimestamp.strippingGeneratedLine(
+                from: "Timestamp: 2024-01-01 09:00 Europe/Rome\nSummary: x"
+            ) == "Summary: x"
+        )
+        #expect(
+            MemoryAutoTimestamp.strippingGeneratedLine(
+                from: "Summary: x\nTimestamp: 2024-01-01 09:00 Europe/Rome"
+            ) == nil
+        )
+        #expect(
+            MemoryAutoTimestamp.strippingGeneratedLine(
+                from: "Timestamp: 2024-01-01 09:00 Europe/Rome"
+            ) == nil
+        )
+    }
+
+    @Test
     func memorySearchReturnsEntriesWithProjectScope() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }

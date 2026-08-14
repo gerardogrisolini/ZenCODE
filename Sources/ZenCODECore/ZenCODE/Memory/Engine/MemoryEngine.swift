@@ -556,69 +556,90 @@ actor MemoryEngine {
             try Task.checkCancellation()
 
             if let transactionalPersistence = persistence as? any MemoryTransactionalPersistence {
-                // The local graph is still updated immediately, but the
-                // durable reload, revalidation and checkpoint share one
-                // persistence lock. This prevents returning a candidate another
-                // engine archived after retrieval but before maintenance.
-                if pendingRecallMaintenance.isEmpty {
-                    // Preserve the pre-maintenance seed for a cold transactional
-                    // checkpoint. A JSON store with no file will use this graph
-                    // and replay the intent exactly once.
-                    pendingRecallBaseGraph = graph
-                }
+                // Everything below builds a *proposal* on private values: engine
+                // state (`graph`, `pendingRecallMaintenance`,
+                // `pendingRecallBaseGraph`) is never touched before the durable
+                // decision. That is what makes the failure paths meaningful —
+                // see `adoptMaintenance(after:...)` for the two of them.
                 let localValid = Self.revalidate(
                     candidates: candidates,
                     selected: selected,
                     against: graph,
                     scope: scope
                 )
+                var draft = graph
                 Self.maintainAfterRetrieval(
-                    &graph,
+                    &draft,
                     all: localValid.candidates,
                     selected: localValid.selected,
                     configuration: settings
                 )
-                pendingRecallMaintenance.append(
-                    PendingRecallMaintenance(
+                let proposal = proposedMaintenance(
+                    adding: PendingRecallMaintenance(
                         candidateIDs: localValid.candidates.map(\.memory.id),
                         selectedIDs: Set(localValid.selected.map(\.memory.id)),
                         scope: scope,
                         configuration: settings
                     )
                 )
-                let pending = pendingRecallMaintenance
-                let shouldCheckpoint = pending.count >= settings.recallMaintenanceCheckpointSize
-                let initialGraph = pendingRecallBaseGraph ?? graph
-                let committed = try await transactionalPersistence.transaction(initialGraph: initialGraph) { durable in
-                    // Build the pending overlay separately. Leaving the durable
-                    // draft untouched below the threshold guarantees that this
-                    // read/revalidation transaction cannot accidentally save on
-                    // every recall; only a real checkpoint replaces it.
-                    var overlay = durable
-                    Self.apply(pending, to: &overlay)
-                    // Replay all local intents over the graph loaded under the
-                    // process-wide lock, then validate the result that callers
-                    // will receive against that same durable state.
-                    let durableValid = Self.revalidate(
-                        candidates: candidates,
-                        selected: selected,
-                        against: overlay,
-                        scope: scope
-                    )
-                    if shouldCheckpoint {
-                        durable = overlay
+                let shouldCheckpoint = proposal.pending.count >= settings.recallMaintenanceCheckpointSize
+                // Last cancellable point before a durable transaction begins.
+                try Task.checkCancellation()
+                let committed: (result: RevalidatedRecall, graph: MemoryGraph, didChange: Bool)
+                do {
+                    committed = try await transactionalPersistence.transaction(
+                        initialGraph: proposal.initialGraph
+                    ) { durable in
+                        // Inside the persistence lock but before any durable
+                        // mutation: aborting here makes the store discard the
+                        // transaction without writing.
+                        try Task.checkCancellation()
+                        // Build the pending overlay separately. Leaving the durable
+                        // draft untouched below the threshold guarantees that this
+                        // read/revalidation transaction cannot accidentally save on
+                        // every recall; only a real checkpoint replaces it.
+                        var overlay = durable
+                        Self.apply(proposal.pending, to: &overlay)
+                        // Replay all local intents over the graph loaded under the
+                        // process-wide lock, then validate the result that callers
+                        // will receive against that same durable state.
+                        let durableValid = Self.revalidate(
+                            candidates: candidates,
+                            selected: selected,
+                            against: overlay,
+                            scope: scope
+                        )
+                        if shouldCheckpoint {
+                            durable = overlay
+                        }
+                        return durableValid
                     }
-                    return durableValid
+                } catch {
+                    adoptMaintenance(after: error, draftGraph: draft, proposal: proposal)
+                    throw error
                 }
+                // A below-threshold transaction deliberately does not save.
+                // It can nevertheless suspend while acquiring the process lock,
+                // so do not adopt its local overlay for a caller cancelled in
+                // that window.
+                if !committed.didChange {
+                    try Task.checkCancellation()
+                }
+                // Commit point. Nothing failable may run from here on, so the
+                // engine can never report an error for state that is already
+                // durable.
                 if committed.didChange {
                     graph = committed.graph
                     pendingRecallMaintenance.removeAll()
                     pendingRecallBaseGraph = nil
                 } else {
                     // The lock gave us the newest durable graph without a
-                    // checkpoint; overlay every pending intent for local reads.
+                    // checkpoint; overlay every pending intent for local reads
+                    // and record the proposal as the new pending batch.
                     graph = committed.graph
-                    Self.apply(pendingRecallMaintenance, to: &graph)
+                    Self.apply(proposal.pending, to: &graph)
+                    pendingRecallMaintenance = proposal.pending
+                    pendingRecallBaseGraph = proposal.baseGraph
                 }
                 return committed.result
             }
@@ -629,28 +650,42 @@ actor MemoryEngine {
                 against: graph,
                 scope: scope
             )
-            if pendingRecallMaintenance.isEmpty {
-                // Preserve the pre-maintenance seed for a cold transactional
-                // checkpoint. A JSON store with no file will use this graph and
-                // replay the intent exactly once.
-                pendingRecallBaseGraph = graph
-            }
+            var draft = graph
             Self.maintainAfterRetrieval(
-                &graph,
+                &draft,
                 all: valid.candidates,
                 selected: valid.selected,
                 configuration: settings
             )
-            pendingRecallMaintenance.append(
-                PendingRecallMaintenance(
+            let proposal = proposedMaintenance(
+                adding: PendingRecallMaintenance(
                     candidateIDs: valid.candidates.map(\.memory.id),
                     selectedIDs: Set(valid.selected.map(\.memory.id)),
                     scope: scope,
                     configuration: settings
                 )
             )
-            if pendingRecallMaintenance.count >= settings.recallMaintenanceCheckpointSize {
-                try await flushPendingRecallMaintenanceLocked()
+            if proposal.pending.count >= settings.recallMaintenanceCheckpointSize {
+                // Last cancellable point before the durable write.
+                try Task.checkCancellation()
+                do {
+                    try await commitRecallMaintenance(
+                        draftGraph: draft,
+                        pending: proposal.pending,
+                        baseGraph: proposal.baseGraph
+                    )
+                } catch {
+                    adoptMaintenance(after: error, draftGraph: draft, proposal: proposal)
+                    throw error
+                }
+            } else {
+                // No persistence boundary exists below the checkpoint threshold;
+                // this is consequently the last cancellation point before the
+                // proposed maintenance becomes visible in the engine.
+                try Task.checkCancellation()
+                graph = draft
+                pendingRecallMaintenance = proposal.pending
+                pendingRecallBaseGraph = proposal.baseGraph
             }
             return valid
         }
@@ -1019,6 +1054,62 @@ actor MemoryEngine {
         let configuration: MemoryEngineConfiguration
     }
 
+    /// The maintenance a recall *would* record, computed without mutating the
+    /// engine.
+    ///
+    /// Materializing the proposal separately is what makes the recall path
+    /// rollback-safe: the batch, its cold-start seed and the graph a
+    /// transactional store should fall back to are all decided before the first
+    /// cancellable await, and the engine adopts them in one step only after the
+    /// durable transaction has returned.
+    private struct MaintenanceProposal: Sendable {
+        /// Already recorded intents plus the new one.
+        let pending: [PendingRecallMaintenance]
+        /// Graph as it was before the *first* pending intent, or `nil` when no
+        /// batch is open yet.
+        let baseGraph: MemoryGraph?
+        /// Seed for a transactional store whose file does not exist yet.
+        let initialGraph: MemoryGraph
+    }
+
+    private func proposedMaintenance(
+        adding intent: PendingRecallMaintenance
+    ) -> MaintenanceProposal {
+        // `graph` has not been touched by this recall yet, so it *is* the
+        // pre-maintenance seed a cold transactional checkpoint needs to replay
+        // the batch exactly once.
+        let baseGraph = pendingRecallMaintenance.isEmpty ? graph : pendingRecallBaseGraph
+        return MaintenanceProposal(
+            pending: pendingRecallMaintenance + [intent],
+            baseGraph: baseGraph,
+            initialGraph: baseGraph ?? graph
+        )
+    }
+
+    /// Decides what a failed maintenance checkpoint leaves behind.
+    ///
+    /// The two failure modes are genuinely different and must not be collapsed:
+    ///
+    /// - **Cancelled.** The turn was abandoned and its caller receives no
+    ///   result, so the recall must leave no trace at all. Nothing is adopted:
+    ///   there is no pending intent for a later explicit write to make durable,
+    ///   and the graph keeps the confidences, access counts and edges it had
+    ///   before the recall.
+    /// - **Store unavailable.** The retrieval really happened and only
+    ///   persistence failed. The batch is adopted so it stays visible in memory
+    ///   and retryable at the next durability boundary — the same contract a
+    ///   failed explicit ``flushRecallMaintenance()`` honours.
+    private func adoptMaintenance(
+        after error: any Error,
+        draftGraph: MemoryGraph,
+        proposal: MaintenanceProposal
+    ) {
+        guard !(error is CancellationError), !Task.isCancelled else { return }
+        graph = draftGraph
+        pendingRecallMaintenance = proposal.pending
+        pendingRecallBaseGraph = proposal.baseGraph
+    }
+
     private static func apply(_ pending: [PendingRecallMaintenance], to graph: inout MemoryGraph) {
         for record in pending {
             let candidates = record.candidateIDs.compactMap { id -> MemoryCandidate? in
@@ -1039,15 +1130,40 @@ actor MemoryEngine {
     /// failed checkpoint leaves the in-memory intents retryable.
     private func flushPendingRecallMaintenanceLocked() async throws {
         guard !pendingRecallMaintenance.isEmpty else { return }
-        let pending = pendingRecallMaintenance
+        try await commitRecallMaintenance(
+            draftGraph: graph,
+            pending: pendingRecallMaintenance,
+            baseGraph: pendingRecallBaseGraph
+        )
+    }
+
+    /// Makes a maintenance batch durable and adopts it as engine state.
+    ///
+    /// Caller owns `withWriteLock`. Engine state is written only after
+    /// persistence accepted the batch, so a cancelled or failed checkpoint
+    /// leaves `graph` / `pendingRecallMaintenance` exactly as the caller found
+    /// them: an already-recorded batch stays retryable, and a batch that was
+    /// only a proposal is simply forgotten.
+    private func commitRecallMaintenance(
+        draftGraph: MemoryGraph,
+        pending: [PendingRecallMaintenance],
+        baseGraph: MemoryGraph?
+    ) async throws {
         if let transactionalPersistence = persistence as? any MemoryTransactionalPersistence {
-            let initialGraph = pendingRecallBaseGraph ?? graph
-            let committed = try await transactionalPersistence.transaction(initialGraph: initialGraph) { graph in
+            let committed = try await transactionalPersistence.transaction(
+                initialGraph: baseGraph ?? draftGraph
+            ) { graph in
+                try Task.checkCancellation()
                 Self.apply(pending, to: &graph)
             }
             graph = committed.graph
         } else {
-            try await persist(graph)
+            // Same boundary as the transactional branch, as tight as an
+            // arbitrary `MemoryPersistence` allows: the engine cannot see
+            // inside a foreign store, so this is the last point it controls.
+            try Task.checkCancellation()
+            try await persist(draftGraph)
+            graph = draftGraph
         }
         pendingRecallMaintenance.removeAll()
         pendingRecallBaseGraph = nil

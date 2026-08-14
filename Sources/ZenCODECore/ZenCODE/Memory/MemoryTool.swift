@@ -289,15 +289,18 @@ public enum MemoryTool {
             throw MemoryServiceError.missingField("content")
         }
 
-        let contentToWrite = contentWithTimestampIfNeeded(
+        let stamped = contentWithTimestampIfNeeded(
             content,
             context: context
         )
         let outcome = try await memoryService.writeEntryOutcome(
-            content: contentToWrite,
+            content: stamped.content,
             workspaceRootURL: context.workingDirectory,
             category: parsedCategory(from: arguments),
-            tags: parsedTags(from: arguments) ?? []
+            tags: parsedTags(from: arguments) ?? [],
+            // Only a stamp this call generated may be ignored by the duplicate
+            // check; a `Timestamp:` the author supplied is content.
+            generatedTimestamp: stamped.generatedTimestamp
         )
 
         // The store deduplicates against active entries, so "I saved it" is not
@@ -416,18 +419,21 @@ public enum MemoryTool {
         }
     }
 
+    /// Prepends the journal `Timestamp:` annotation when the author omitted it,
+    /// reporting whether it actually generated one.
     private static func contentWithTimestampIfNeeded(
         _ content: String,
         context: MemoryToolContext
-    ) -> String {
+    ) -> (content: String, generatedTimestamp: Bool) {
         guard !contentContainsTimestamp(content) else {
-            return content
+            return (content, false)
         }
 
-        return """
-        Timestamp: \(MemoryService.timestampString(context.currentDate, timeZone: context.currentTimeZone))
+        let stamped = """
+        \(MemoryAutoTimestamp.line(for: context.currentDate, timeZone: context.currentTimeZone))
         \(content)
         """
+        return (stamped, true)
     }
 
     private static func contentContainsTimestamp(_ content: String) -> Bool {

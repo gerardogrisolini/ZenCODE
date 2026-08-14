@@ -157,16 +157,22 @@ public final class MemoryService: @unchecked Sendable {
     /// is propagated internally through this variant instead. The tool layer
     /// uses it to report a truthful `written` / `deduplicated` result rather than
     /// claiming every call wrote something.
+    ///
+    /// `generatedTimestamp` must stay `false` for every caller that did not
+    /// itself prepend the `Timestamp:` annotation: the public 1.1.x entry point
+    /// below therefore keeps a literal duplicate check.
     func writeEntryOutcome(
         content: String,
         workspaceRootURL: URL?,
         category: MemoryCategory = .fact,
-        tags: [String] = []
+        tags: [String] = [],
+        generatedTimestamp: Bool = false
     ) async throws -> MemoryWriteOutcome {
         let result = try await store(for: workspaceRootURL).write(
             content: content,
             category: category.engineCategory,
-            tags: tags
+            tags: tags,
+            generatedTimestamp: generatedTimestamp
         )
         if result.created {
             Self.notifyMemoryEntriesChanged()

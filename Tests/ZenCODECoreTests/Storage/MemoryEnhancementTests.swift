@@ -102,6 +102,53 @@ struct MemoryEnhancementTests {
     }
 
     @Test
+    func memoryUpdateClearsAutomaticTimestampProvenance() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let timeZone = try #require(TimeZone(identifier: "Europe/Rome"))
+            let body = "Summary: provenance must follow replacement content."
+            _ = try await MemoryTool.executeAsync(
+                ToolRequest(name: "memory.write", arguments: ["content": .string(body)]),
+                context: MemoryToolContext(
+                    workingDirectory: workspace.workspaceURL,
+                    currentDate: Date(timeIntervalSince1970: 1_700_000_000),
+                    currentTimeZone: timeZone
+                ),
+                memoryService: service
+            )
+            let firstEntry = try #require(
+                try await service.readEntries(
+                    workspaceRootURL: workspace.workspaceURL,
+                    limit: 10
+                ).first
+            )
+
+            _ = try await service.updateEntry(
+                id: firstEntry.id.uuidString,
+                content: "Timestamp: 2024-01-01 09:00 Europe/Rome\n\(body)",
+                workspaceRootURL: workspace.workspaceURL
+            )
+            _ = try await MemoryTool.executeAsync(
+                ToolRequest(name: "memory.write", arguments: ["content": .string(body)]),
+                context: MemoryToolContext(
+                    workingDirectory: workspace.workspaceURL,
+                    currentDate: Date(timeIntervalSince1970: 1_800_000_000),
+                    currentTimeZone: timeZone
+                ),
+                memoryService: service
+            )
+
+            let entries = try await service.readEntries(
+                workspaceRootURL: workspace.workspaceURL,
+                limit: 10
+            )
+            #expect(entries.count == 2)
+        }
+    }
+
+    @Test
     func memoryUpdatePreservesSubsecondCreatedAtAfterLockedJSONReload() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
