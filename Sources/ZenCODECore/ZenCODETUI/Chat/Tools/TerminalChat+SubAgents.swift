@@ -14,25 +14,29 @@ extension TerminalChat {
         let indentation: Int
         let maxWrappedLines: Int
         let dimPrefix: Bool
+        let clipsOverflowWithoutEllipsis: Bool
 
         static func summary(_ text: String) -> SubAgentOverviewLine {
             SubAgentOverviewLine(
                 text: text,
                 indentation: 3,
                 maxWrappedLines: 3,
-                dimPrefix: true
+                dimPrefix: true,
+                clipsOverflowWithoutEllipsis: false
             )
         }
 
         static func regular(
             _ text: String,
-            maxWrappedLines: Int = 3
+            maxWrappedLines: Int = 3,
+            clipsOverflowWithoutEllipsis: Bool = false
         ) -> SubAgentOverviewLine {
             SubAgentOverviewLine(
                 text: text,
                 indentation: 3,
                 maxWrappedLines: maxWrappedLines,
-                dimPrefix: false
+                dimPrefix: false,
+                clipsOverflowWithoutEllipsis: clipsOverflowWithoutEllipsis
             )
         }
 
@@ -47,7 +51,8 @@ extension TerminalChat {
                 text: text,
                 indentation: indentation,
                 maxWrappedLines: .max,
-                dimPrefix: false
+                dimPrefix: false,
+                clipsOverflowWithoutEllipsis: false
             )
         }
     }
@@ -613,10 +618,16 @@ extension TerminalChat {
                 colorText(" \(inlineText($0))", code: TerminalStyle.Tool.value)
             } ?? ""
             lines.append(
-                subAgentOverviewEntryLine(
-                    "🛠️  \(tool)\(parameter)",
-                    density: density
-                )
+                density == .full
+                    ? subAgentOverviewEntryLine(
+                        "🛠️  \(tool)\(parameter)",
+                        density: density
+                    )
+                    : .regular(
+                        "🛠️  \(tool)\(parameter)",
+                        maxWrappedLines: 1,
+                        clipsOverflowWithoutEllipsis: true
+                    )
             )
         }
 
@@ -828,6 +839,16 @@ extension TerminalChat {
                 ? "\(dim)\(indentationText)\(reset)"
                 : indentationText
             let wrapWidth = max(1, contentWidth - indentation)
+            if line.clipsOverflowWithoutEllipsis {
+                let clipped = TerminalANSIText.truncate(
+                    line.text,
+                    to: wrapWidth,
+                    ellipsis: "",
+                    ellipsisWidth: 0
+                )
+                output.append("\(linePrefix)\(prefix)\(clipped)")
+                continue
+            }
             var wrapped = fitInline(line.text, width: wrapWidth)
                 .components(separatedBy: "\n")
             let maxWrappedLines = max(1, line.maxWrappedLines)

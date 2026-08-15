@@ -2690,6 +2690,36 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func compactSubAgentOverviewShowsToolParameterInsteadOfEllipsis() {
+        let now = Date(timeIntervalSince1970: 0)
+        let snapshots = (0..<2).map { index in
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "tool-agent-\(index)",
+                name: "worker-\(index)",
+                role: "",
+                status: .running,
+                pending: true,
+                currentToolName: "local.readFile",
+                currentToolTarget: "Sources/ZenCODECore/VeryLongUnbrokenPath/RequestedFile.swift",
+                latestOutput: nil,
+                latestError: nil,
+                createdAt: now,
+                updatedAt: now
+            )
+        }
+
+        let compactRows = TerminalChat.renderSubAgentOverviewRowsForTesting(
+            snapshots,
+            rowBudget: 10
+        ).map(ansiStripped)
+        let toolRows = compactRows.filter { $0.contains("local.readFile") }
+
+        #expect(toolRows.count == snapshots.count)
+        #expect(toolRows.allSatisfy { $0.contains("Sources/ZenCODECore/") })
+        #expect(toolRows.allSatisfy { !$0.contains("…") })
+    }
+
+    @Test
     func subAgentOverviewFitsRowBudgetWhenManyAgentsRun() {
         let now = Date(timeIntervalSince1970: 0)
         let snapshots = (0..<12).map { index in
