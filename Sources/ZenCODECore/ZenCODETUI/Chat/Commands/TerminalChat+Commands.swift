@@ -269,7 +269,7 @@ extension TerminalChat {
         TerminalChatCommandDescriptor(
             command: "/plan",
             summary: "plan work via sub-agents",
-            help: "/plan <goal> creates a new unapproved plan. Use /plan save to persist its todo-derived graph for this project, /plan load in a new session to restore the latest saved plan as unapproved, /plan status to show item progress, /plan approve to approve it and start implementation immediately, or /plan clear to remove it.",
+            help: "/plan <goal> creates a new unapproved plan. Use /plan save to persist its todo-derived graph for this project, /plan load in a new session to restore the newest saved draft as unapproved, /plan list to review saved plans, /plan delete <plan|prefix|all> to remove saved plans from the project library, /plan status to show item progress, /plan approve to approve it and start implementation immediately, or /plan clear to discard the active plan in this session (saved copies are kept).",
             requiresArgument: true
         ),
         TerminalChatCommandDescriptor(

@@ -38,6 +38,19 @@ public extension AgentCoreSessionRunner {
         )
     }
 
+    /// Removes the requested plans from the project's saved-plan library.
+    /// Returns the plan IDs that were found and removed.
+    @discardableResult
+    func deleteSavedTaskPlans(
+        planIDs: [String],
+        workingDirectory: URL
+    ) async throws -> [String] {
+        try await taskOrchestrator.deleteSavedTaskPlans(
+            planIDs: planIDs,
+            workingDirectory: workingDirectory
+        )
+    }
+
     func removeResumableTaskGraphs(
         _ graphs: [ResumableTaskGraph],
         workingDirectory: URL

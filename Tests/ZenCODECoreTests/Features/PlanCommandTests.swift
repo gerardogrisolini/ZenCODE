@@ -46,11 +46,173 @@ struct PlanCommandTests {
         #expect(descriptor.help.contains("/plan <goal>"))
         #expect(descriptor.help.contains("/plan save"))
         #expect(descriptor.help.contains("/plan load"))
+        #expect(descriptor.help.contains("/plan list"))
+        #expect(descriptor.help.contains("/plan delete"))
         #expect(descriptor.help.contains("/plan status"))
         #expect(descriptor.help.contains("/plan approve"))
         #expect(descriptor.help.contains("start implementation immediately"))
         #expect(descriptor.help.contains("/plan clear"))
         #expect(!descriptor.help.contains("/plan [goal]"))
+    }
+
+    @Test
+    func savedPlanDeletionTargetResolvesAllExactAndUniquePrefix() {
+        let planIDs = ["plan-aaaa1111", "plan-aaaa2222", "plan-bbbb3333"]
+
+        #expect(
+            TerminalChat.savedPlanDeletionTarget("ALL", in: planIDs)
+                == .ids(planIDs)
+        )
+        #expect(
+            TerminalChat.savedPlanDeletionTarget("plan-bbbb3333", in: planIDs)
+                == .ids(["plan-bbbb3333"])
+        )
+        #expect(
+            TerminalChat.savedPlanDeletionTarget("plan-bbbb", in: planIDs)
+                == .ids(["plan-bbbb3333"])
+        )
+        #expect(
+            TerminalChat.savedPlanDeletionTarget("plan-aaaa", in: planIDs)
+                == .ambiguous(matches: ["plan-aaaa1111", "plan-aaaa2222"])
+        )
+        #expect(
+            TerminalChat.savedPlanDeletionTarget("plan-zzzz", in: planIDs)
+                == .notFound
+        )
+        #expect(
+            TerminalChat.savedPlanDeletionTarget("   ", in: planIDs)
+                == .notFound
+        )
+    }
+
+    @Test
+    func planDeleteTargetExtractsTargetFromRawArgument() {
+        #expect(TerminalChat.planDeleteTarget(from: "delete plan-abc") == "plan-abc")
+        #expect(TerminalChat.planDeleteTarget(from: "DELETE   plan-abc ") == "plan-abc")
+        #expect(TerminalChat.planDeleteTarget(from: "delete") == nil)
+        #expect(TerminalChat.planDeleteTarget(from: "delete   ") == nil)
+    }
+
+    @Test
+    func loadableSavedPlanSkipsCompletedLibraryEntries() {
+        let draftPlan = TerminalSessionPlan(
+            id: "plan-draft-0001",
+            originalGoal: "Reusable draft",
+            consolidatedText: "Still to implement."
+        )
+        let completedPlan = TerminalSessionPlan(
+            id: "plan-done-0002",
+            originalGoal: "Already implemented",
+            consolidatedText: "Done."
+        )
+        let now = Date()
+        func savedPlan(
+            for plan: TerminalSessionPlan,
+            state: TaskGraphState
+        ) -> SavedTaskPlan {
+            SavedTaskPlan(
+                librarySessionID: "saved-plans-test",
+                graph: TaskGraphSnapshot(
+                    id: plan.id,
+                    source: .plan(planID: plan.id),
+                    state: state,
+                    tasks: [TaskRecord(id: "task", title: "Task", order: 1)],
+                    savedPlan: TaskGraphSavedPlan(plan: plan),
+                    createdAt: now,
+                    updatedAt: now
+                ),
+                snapshot: TaskGraphSavedPlan(plan: plan)
+            )
+        }
+
+        let newestFirst = [
+            savedPlan(for: completedPlan, state: .completed),
+            savedPlan(for: draftPlan, state: .draft),
+        ]
+        #expect(
+            TerminalChat.loadableSavedPlan(from: newestFirst)?.graph.id
+                == draftPlan.id
+        )
+        #expect(
+            TerminalChat.loadableSavedPlan(
+                from: [savedPlan(for: completedPlan, state: .completed)]
+            ) == nil
+        )
+        #expect(TerminalChat.loadableSavedPlan(from: []) == nil)
+    }
+
+    @Test
+    func savedPlansListMessageRendersShortIDStatusAndCounts() {
+        let now = Date()
+        let savedPlans = [
+            SavedTaskPlan(
+                librarySessionID: "saved-plans-test",
+                graph: TaskGraphSnapshot(
+                    id: "plan-aaaaaaaa-1111",
+                    source: .plan(planID: "plan-aaaaaaaa-1111"),
+                    state: .draft,
+                    tasks: [
+                        TaskRecord(id: "task-1", title: "One", order: 1),
+                        TaskRecord(id: "task-2", title: "Two", order: 2),
+                    ],
+                    savedPlan: TaskGraphSavedPlan(
+                        plan: TerminalSessionPlan(
+                            id: "plan-aaaaaaaa-1111",
+                            originalGoal: "Improve the terminal | renderer",
+                            consolidatedText: "Plan body."
+                        )
+                    ),
+                    createdAt: now,
+                    updatedAt: now
+                ),
+                snapshot: TaskGraphSavedPlan(
+                    plan: TerminalSessionPlan(
+                        id: "plan-aaaaaaaa-1111",
+                        originalGoal: "Improve the terminal | renderer",
+                        consolidatedText: "Plan body."
+                    )
+                )
+            ),
+        ]
+
+        let message = TerminalChat.savedPlansListMessage(for: savedPlans)
+        #expect(message.contains("## Saved plans"))
+        #expect(message.contains("**Total:** 1"))
+        #expect(message.contains("`plan-aaaaaaaa`"))
+        #expect(message.contains("`draft`"))
+        #expect(message.contains("0/2"))
+        #expect(message.contains("Improve the terminal \\| renderer"))
+        #expect(message.contains("/plan delete <plan|prefix|all>"))
+        // Round trip: the short id rendered by the list must resolve in the
+        // deletion target resolver without any user retyping.
+        #expect(
+            TerminalChat.savedPlanDeletionTarget(
+                "plan-aaaaaaaa",
+                in: savedPlans.map(\.graph.id)
+            ) == .ids(["plan-aaaaaaaa-1111"])
+        )
+    }
+
+    @Test
+    func planDeleteSuccessMessageCountsDeletionsAndNotesActivePlan() {
+        #expect(
+            TerminalChat.planDeleteSuccessMessage(
+                deletedPlanIDs: ["plan-x"],
+                activePlanAffected: false
+            ) == "Deleted saved plan `plan-x`.\n"
+        )
+        let bulkMessage = TerminalChat.planDeleteSuccessMessage(
+            deletedPlanIDs: ["plan-x", "plan-y"],
+            activePlanAffected: true
+        )
+        #expect(bulkMessage.contains("Deleted 2 saved plans."))
+        #expect(bulkMessage.contains("use /plan clear to discard it"))
+        #expect(
+            TerminalChat.planDeleteSuccessMessage(
+                deletedPlanIDs: [],
+                activePlanAffected: false
+            ).contains("no saved plans were deleted")
+        )
     }
 
     @Test

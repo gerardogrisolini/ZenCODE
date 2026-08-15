@@ -24,6 +24,18 @@ extension TerminalChat {
             await writeSubmittedPrompt(command)
             await loadReusablePlan()
             return .continueChat
+        case "list":
+            await writeSubmittedPrompt(command)
+            await listSavedPlans()
+            return .continueChat
+        case "delete":
+            await writeSubmittedPrompt(command)
+            await deleteSavedPlan(argument: argument)
+            return .continueChat
+        case let deletionCommand where deletionCommand.hasPrefix("delete "):
+            await writeSubmittedPrompt(command)
+            await deleteSavedPlan(argument: argument)
+            return .continueChat
         case "status":
             await writeSubmittedPrompt(command)
             guard let activePlan else {
@@ -116,7 +128,10 @@ extension TerminalChat {
                 return .continueChat
             }
             activePlan = nil
-            await writeSystemMessage("Cleared the active plan and archived its task graph.\n")
+        await writeSystemMessage(
+            "Cleared the active plan and archived its task graph in this session. "
+                + "Saved-plan library copies are unaffected; use /plan delete to remove those.\n"
+        )
             return .continueChat
         default:
             break
@@ -152,8 +167,8 @@ extension TerminalChat {
     }
 
     nonisolated static let planMissingGoalMessage =
-        "ZenCODE: /plan requires a goal. "
-        + "Use /plan <goal> to describe what should be planned.\n"
+        "ZenCODE: /plan requires a goal. Use /plan <goal> to describe what should "
+        + "be planned, or a subcommand: save, load, list, delete, status, approve, clear.\n"
 
     nonisolated static let planUnavailableForApprovalMessage =
         "ZenCODE: no completed plan is available to approve. "
@@ -165,6 +180,14 @@ extension TerminalChat {
 
     nonisolated static let savedPlanUnavailableMessage =
         "ZenCODE: no saved plan is available for this project. Use /plan save first.\n"
+
+    nonisolated static let savedPlansAllTerminalMessage =
+        "ZenCODE: every saved plan for this project is already completed. "
+        + "Use /plan list to review them or /plan delete <plan|all> to remove them.\n"
+
+    nonisolated static let planDeleteUsageMessage =
+        "ZenCODE: /plan delete requires a plan id, a unique id prefix, or all. "
+        + "Use /plan list to review saved plans.\n"
 
     func saveReusablePlan(savedAt: Date = Date()) async {
         guard let plan = reusablePlanCandidate(createdAt: savedAt) else {
@@ -205,10 +228,15 @@ extension TerminalChat {
             )
             return
         }
-        guard let savedPlan = await sessionRunner.savedTaskPlans(
+        let savedPlans = await sessionRunner.savedTaskPlans(
             workingDirectory: configuration.workingDirectory
-        ).first else {
+        )
+        guard !savedPlans.isEmpty else {
             await writeFailureMessage(Self.savedPlanUnavailableMessage)
+            return
+        }
+        guard let savedPlan = Self.loadableSavedPlan(from: savedPlans) else {
+            await writeFailureMessage(Self.savedPlansAllTerminalMessage)
             return
         }
 
@@ -239,6 +267,202 @@ extension TerminalChat {
                 + plan.consolidatedText
                 + "\n\nUse /plan approve when it is ready to implement."
         )
+    }
+
+    /// Lists every saved plan for this project, newest save first, including
+    /// entries that were already mirrored as completed so the library stays
+    /// inspectable.
+    func listSavedPlans() async {
+        let savedPlans = await sessionRunner.savedTaskPlans(
+            workingDirectory: configuration.workingDirectory
+        )
+        guard !savedPlans.isEmpty else {
+            await writeSystemMessage(Self.savedPlanUnavailableMessage)
+            return
+        }
+        await writeMarkdownMessage(Self.savedPlansListMessage(for: savedPlans))
+    }
+
+    /// Deletes saved plans from the project library. The target can be a full
+    /// plan id, a unique id prefix, or `all`. The active plan of the current
+    /// session and its live task graph are never touched here: that is
+    /// /plan clear's session-scoped role.
+    func deleteSavedPlan(argument: String) async {
+        let savedPlans = await sessionRunner.savedTaskPlans(
+            workingDirectory: configuration.workingDirectory
+        )
+        guard !savedPlans.isEmpty else {
+            await writeFailureMessage(Self.savedPlanUnavailableMessage)
+            return
+        }
+        guard let target = Self.planDeleteTarget(from: argument) else {
+            await writeFailureMessage(Self.planDeleteUsageMessage)
+            return
+        }
+        switch Self.savedPlanDeletionTarget(
+            target,
+            in: savedPlans.map(\.graph.id)
+        ) {
+        case .notFound:
+            await writeFailureMessage(
+                Self.planDeleteNotFoundMessage(
+                    availablePlanIDs: savedPlans.map(\.graph.id)
+                )
+            )
+        case let .ambiguous(matches):
+            await writeFailureMessage(
+                Self.planDeleteAmbiguousMessage(matches: matches)
+            )
+        case let .ids(planIDs):
+            do {
+                let deletedPlanIDs = try await sessionRunner.deleteSavedTaskPlans(
+                    planIDs: planIDs,
+                    workingDirectory: configuration.workingDirectory
+                )
+                await writeSystemMessage(
+                    Self.planDeleteSuccessMessage(
+                        deletedPlanIDs: deletedPlanIDs,
+                        activePlanAffected: activePlan.map { planIDs.contains($0.id) } ?? false
+                    )
+                )
+            } catch {
+                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            }
+        }
+    }
+
+    enum SavedPlanDeletionResolution: Equatable {
+        case ids([String])
+        case ambiguous(matches: [String])
+        case notFound
+    }
+
+    /// Resolves the target of /plan delete among the known saved-plan ids:
+    /// `all` selects everything, an exact id wins, and otherwise a unique id
+    /// prefix is accepted so users do not have to retype full plan UUIDs.
+    nonisolated static func savedPlanDeletionTarget(
+        _ target: String,
+        in planIDs: [String]
+    ) -> SavedPlanDeletionResolution {
+        let trimmedTarget = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTarget.isEmpty else {
+            return .notFound
+        }
+        if trimmedTarget.lowercased() == "all" {
+            return .ids(planIDs)
+        }
+        if let exactID = planIDs.first(where: { $0 == trimmedTarget }) {
+            return .ids([exactID])
+        }
+        let prefixMatches = planIDs
+            .filter { $0.hasPrefix(trimmedTarget) }
+            .sorted()
+        switch prefixMatches.count {
+        case 0:
+            return .notFound
+        case 1:
+            return .ids(prefixMatches)
+        default:
+            return .ambiguous(matches: prefixMatches)
+        }
+    }
+
+    /// Extracts the delete target from the raw /plan argument, e.g.
+    /// "delete plan-1234" → "plan-1234".
+    nonisolated static func planDeleteTarget(from argument: String) -> String? {
+        guard let separator = argument.firstIndex(where: \.isWhitespace) else {
+            return nil
+        }
+        let target = argument[argument.index(after: separator)...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return target.isEmpty ? nil : target
+    }
+
+    /// A saved plan stays loadable only while its library graph is still a
+    /// reusable draft; completed entries are historical.
+    nonisolated static func loadableSavedPlan(
+        from savedPlans: [SavedTaskPlan]
+    ) -> SavedTaskPlan? {
+        savedPlans.first { !$0.graph.state.isTerminal }
+    }
+
+    nonisolated static func planDeleteNotFoundMessage(
+        availablePlanIDs: [String]
+    ) -> String {
+        "ZenCODE: no saved plan matches. Available plans: "
+            + availablePlanIDs.joined(separator: ", ")
+            + ".\n"
+    }
+
+    nonisolated static func planDeleteAmbiguousMessage(
+        matches: [String]
+    ) -> String {
+        "ZenCODE: the plan id prefix is ambiguous: "
+            + matches.joined(separator: ", ")
+            + ". Provide more characters.\n"
+    }
+
+    nonisolated static func planDeleteSuccessMessage(
+        deletedPlanIDs: [String],
+        activePlanAffected: Bool
+    ) -> String {
+        guard !deletedPlanIDs.isEmpty else {
+            return "ZenCODE: no saved plans were deleted.\n"
+        }
+        var message: String
+        if deletedPlanIDs.count == 1, let planID = deletedPlanIDs.first {
+            message = "Deleted saved plan `\(planID)`.\n"
+        } else {
+            message = "Deleted \(deletedPlanIDs.count) saved plans.\n"
+        }
+        if activePlanAffected {
+            message += "The active plan in this session is unaffected; use /plan clear to discard it.\n"
+        }
+        return message
+    }
+
+    nonisolated static func savedPlansListMessage(
+        for savedPlans: [SavedTaskPlan]
+    ) -> String {
+        var lines = [
+            "## Saved plans",
+            "",
+            "**Total:** \(savedPlans.count)",
+            "",
+            "| Plan | Saved | Status | Items done | Goal |",
+            "|---|---|---|---:|---|",
+        ]
+        for saved in savedPlans {
+            let id = saved.graph.id
+            // The displayed token must be a prefix /plan delete accepts, so
+            // keep the `plan-` stem: `plan-aaaaaaaa` resolves, `aaaaaaaa`
+            // would not.
+            let shortID = id.hasPrefix("plan-")
+                ? String(id.prefix("plan-".count + 8))
+                : String(id.prefix(12))
+            let savedAt = saved.snapshot.savedAt.formatted(
+                date: .abbreviated,
+                time: .shortened
+            )
+            let completedCount = saved.graph.tasks
+                .filter { $0.status == .completed }
+                .count
+            let goal = saved.snapshot.plan.originalGoal
+                .replacingOccurrences(of: "\n", with: " ")
+            let truncatedGoal = goal.count > 60
+                ? String(goal.prefix(60)) + "…"
+                : goal
+            lines.append(
+                "| `\(shortID)` | \(savedAt) | `\(saved.graph.state.rawValue)` "
+                    + "| \(completedCount)/\(saved.graph.tasks.count) "
+                    + "| \(escapedPlanTableCell(truncatedGoal)) |"
+            )
+        }
+        lines.append("")
+        lines.append(
+            "Use /plan load to restore the newest draft, or /plan delete <plan|prefix|all> to remove saved plans."
+        )
+        return lines.joined(separator: "\n") + "\n"
     }
 
     func reusablePlanCandidate(createdAt: Date = Date()) -> TerminalSessionPlan? {

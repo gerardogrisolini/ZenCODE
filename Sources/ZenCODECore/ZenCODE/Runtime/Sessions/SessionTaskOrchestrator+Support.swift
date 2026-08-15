@@ -500,6 +500,11 @@ extension SessionTaskOrchestrator {
     ) throws {
         try persist(sessionID: sessionID, state: state)
         sessionStates[sessionID] = state
+        mirrorCompletedPlanToSavedPlanLibrary(
+            sessionID: sessionID,
+            state: state,
+            graphID: graphID
+        )
         let revision = graphID.flatMap { state.graphs[$0]?.revision }
         emit(
             sessionID: sessionID,

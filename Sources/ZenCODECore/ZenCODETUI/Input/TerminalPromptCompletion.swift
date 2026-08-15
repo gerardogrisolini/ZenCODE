@@ -214,10 +214,19 @@ enum TerminalPromptCompletionCatalog {
         ],
         "/plan": [
             TerminalCommandSuggestion(command: "save", summary: "persist the current plan"),
-            TerminalCommandSuggestion(command: "load", summary: "restore the latest saved plan"),
+            TerminalCommandSuggestion(command: "load", summary: "restore the newest saved draft"),
+            TerminalCommandSuggestion(command: "list", summary: "list saved plans"),
+            TerminalCommandSuggestion(
+                command: "delete",
+                summary: "delete saved plans by id, prefix, or all",
+                requiresArgument: true
+            ),
             TerminalCommandSuggestion(command: "status", summary: "show plan progress"),
             TerminalCommandSuggestion(command: "approve", summary: "approve and start the plan"),
-            TerminalCommandSuggestion(command: "clear", summary: "remove the plan")
+            TerminalCommandSuggestion(
+                command: "clear",
+                summary: "discard the active plan in this session"
+            )
         ],
         "/feature": [
             TerminalCommandSuggestion(command: "list", summary: "enable/disable features"),

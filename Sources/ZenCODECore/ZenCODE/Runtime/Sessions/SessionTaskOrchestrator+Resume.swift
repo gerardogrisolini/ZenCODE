@@ -143,6 +143,149 @@ extension SessionTaskOrchestrator {
             }
     }
 
+    /// Removes the requested plans from the project's saved-plan library.
+    /// Returns the plan IDs that were found and removed; unknown or duplicate
+    /// IDs are ignored so one stale reference cannot fail the cleanup. When no
+    /// usable saved plan remains, the library checkpoint itself is discarded so
+    /// no empty `saved-plans-*` residue is left behind.
+    @discardableResult
+    public func deleteSavedTaskPlans(
+        planIDs: [String],
+        workingDirectory: URL
+    ) throws -> [String] {
+        let requestedIDs = planIDs
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !requestedIDs.isEmpty, let store else {
+            return []
+        }
+        let existingIDs = Set(
+            savedTaskPlans(workingDirectory: workingDirectory).map(\.graph.id)
+        )
+        var deletableIDs: [String] = []
+        var seenIDs = Set<String>()
+        for id in requestedIDs
+        where existingIDs.contains(id) && seenIDs.insert(id).inserted {
+            deletableIDs.append(id)
+        }
+        guard !deletableIDs.isEmpty else {
+            return []
+        }
+
+        let librarySessionID = Self.savedPlanLibrarySessionID(
+            for: workingDirectory
+        )
+        // Re-read and re-install the freshest on-disk library state before
+        // mutating: a long-lived in-memory registration could otherwise
+        // overwrite plans saved in the meantime by another orchestrator
+        // sharing this support directory (logical lost update).
+        guard let checkpoint = try store.load(
+            sessionID: librarySessionID,
+            workingDirectory: workingDirectory
+        ) else {
+            return []
+        }
+        try registerSession(
+            id: librarySessionID,
+            workingDirectory: workingDirectory
+        )
+        try restoreCheckpoint(
+            checkpoint,
+            interruptActiveAttempts: true,
+            persist: false
+        )
+        for planID in deletableIDs {
+            _ = try removeGraph(id: planID, sessionID: librarySessionID)
+        }
+        if savedTaskPlans(workingDirectory: workingDirectory).isEmpty {
+            try discardSession(id: librarySessionID, deleteCheckpoint: true)
+        }
+        return deletableIDs
+    }
+
+    /// Best-effort mirror of a completed plan graph onto its saved-plan
+    /// library copy: an implemented plan must stop being offered as a
+    /// reusable draft. Cancelling or archiving a live graph intentionally
+    /// leaves the saved draft reusable, and a missing library checkpoint is
+    /// never created here. Failures are swallowed on purpose because a live
+    /// task-graph commit must never fail because of the library mirror.
+    func mirrorCompletedPlanToSavedPlanLibrary(
+        sessionID: String,
+        state: SessionState,
+        graphID: String?
+    ) {
+        guard let store,
+              let workingDirectory = workingDirectories[sessionID],
+              let graphID,
+              let graph = state.graphs[graphID],
+              graph.source.planID == graphID,
+              graph.state == .completed else {
+            return
+        }
+        let librarySessionID = Self.savedPlanLibrarySessionID(
+            for: workingDirectory
+        )
+        guard librarySessionID != sessionID,
+              let checkpoint = try? store.load(
+                sessionID: librarySessionID,
+                workingDirectory: workingDirectory
+              ),
+              let savedGraph = checkpoint.graphs.first(where: { $0.id == graphID }),
+              !savedGraph.state.isTerminal else {
+            return
+        }
+        do {
+            try registerSession(
+                id: librarySessionID,
+                workingDirectory: workingDirectory
+            )
+            // Re-install the freshest on-disk library state before mutating so
+            // a long-lived in-memory registration cannot overwrite plans saved
+            // in the meantime by another orchestrator sharing this support
+            // directory (logical lost update). Only the narrow load→commit
+            // window remains, which the store's file locking cannot close.
+            try restoreCheckpoint(
+                checkpoint,
+                interruptActiveAttempts: true,
+                persist: false
+            )
+            guard var libraryState = sessionStates[librarySessionID],
+                  var libraryGraph = libraryState.graphs[graphID],
+                  !libraryGraph.state.isTerminal else {
+                return
+            }
+            let now = Date()
+            let completedTaskIDs = Set(
+                graph.tasks
+                    .filter { $0.status == .completed }
+                    .map(\.id)
+            )
+            for index in libraryGraph.tasks.indices
+            where completedTaskIDs.contains(libraryGraph.tasks[index].id) {
+                guard libraryGraph.tasks[index].status != .completed else {
+                    continue
+                }
+                libraryGraph.tasks[index].status = .completed
+                touchTask(&libraryGraph.tasks[index], at: now)
+            }
+            libraryGraph.state = .completed
+            touchGraph(&libraryGraph, at: now)
+            if libraryState.currentGraphID == graphID {
+                libraryState.currentGraphID = nil
+            }
+            libraryState.graphs[graphID] = libraryGraph
+            try validate(libraryGraph)
+            try commit(
+                sessionID: librarySessionID,
+                state: libraryState,
+                eventKind: .updated,
+                graphID: graphID
+            )
+        } catch {
+            // Best effort by design: see the doc comment above.
+        }
+    }
+
     /// Restores the selected checkpoint session and makes the exact graph the
     /// user chose current. This explicit startup recovery may supersede another
     /// incomplete graph from the same old session; any other active graph is
