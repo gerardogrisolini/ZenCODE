@@ -86,6 +86,10 @@ public final class TerminalChat {
     public var lastFileChangeSummary: TurnFileChangeSummary?
     public var activePlan: TerminalSessionPlan?
     public var taskGraphObserverTask: Task<Void, Never>?
+    /// In-flight debounced task-graph render scheduled by the observer task.
+    /// Tracked on the chat so a turn boundary can quiesce the debounce before
+    /// retiring its Telegram reporter.
+    var taskGraphDebouncedRender: Task<Void, Never>?
     /// Periodically republishes the sub-agent overview while a blocking
     /// `agent.*` tool call (e.g. `agent.wait`) is executing. Started from
     /// `.toolCallStarted` and stopped from `.toolCallCompleted` / end-of-turn.
@@ -127,6 +131,15 @@ public final class TerminalChat {
     /// turn's progress is mirrored to the linked chat. Permission dialogue is
     /// enqueued here so it cannot overtake the tool activity that raised it.
     var activeTelegramProgressReporter: TerminalTelegramTurnProgressReporter?
+    /// Change signatures of overview sections already mirrored to Telegram
+    /// during the current turn, so republished identical sections do not spam
+    /// the remote chat. Reset when a new turn begins.
+    var mirroredOverviewSignatures: [TerminalChatRenderCoordinator.OverviewKind: String] = [:]
+    /// Mirroring epoch of the current turn. Advanced (via the coordinator) at
+    /// every turn boundary and compared against the epoch each notification
+    /// carried at enqueue time: a notification delivered after its turn ended
+    /// is discarded instead of being adopted by the next turn's reporter.
+    var currentTelegramMirrorEpoch = 0
     var optionalCommandAvailability = TerminalOptionalCommandAvailability.load()
     var requestedRuntimeSetup = false
 
@@ -279,6 +292,7 @@ public final class TerminalChat {
         defer {
             sleepAssertion.invalidate()
         }
+        await installOverviewMirroringHandler()
 
         let initialInputLine: String?
         if stdinIsTerminal {

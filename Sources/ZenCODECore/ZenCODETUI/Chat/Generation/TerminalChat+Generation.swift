@@ -36,8 +36,10 @@ extension TerminalChat {
             baseDirectoryURL: configuration.workingDirectory
         )
         await fileChanges.prepareForTurn()
-        beginTelegramTurnProgressReporting(for: attempt.origin)
-        defer { endTelegramTurnProgressReporting() }
+        await beginTelegramTurnProgressReporting(for: attempt.origin)
+        // The turn's Telegram reporting ends in `finishPromptResult`, after
+        // deferred overview renders and their mirrors have been drained: the
+        // final remote message must not overtake sections the turn produced.
         do {
             var sessionConfiguration = await currentSessionConfiguration()
             if case .plan = attempt.purpose {
@@ -237,6 +239,7 @@ extension TerminalChat {
                 agentsMarkdownOutcome = nil
             }
             await stopSubAgentOverviewRefresh()
+            await renderCoordinator.waitForOverviewMirrorsToDrain()
             await activeTelegramProgressReporter?.flush()
             if case .plan = attempt.purpose {
                 await writeAssistantContent(response.text)
@@ -257,6 +260,7 @@ extension TerminalChat {
             activeSessionTranscript.append(contentsOf: await transcriptTurn.messages())
             let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
             await stopSubAgentOverviewRefresh()
+            await renderCoordinator.waitForOverviewMirrorsToDrain()
             await activeTelegramProgressReporter?.flush()
             throw TerminalChatGenerationRunError(
                 underlying: error,
@@ -356,22 +360,37 @@ extension TerminalChat {
             if let outcome = success.agentsMarkdownOutcome {
                 await writeAgentsMarkdownOutcomeIfNeeded(outcome)
             }
+            // Quiesce the debounced task-graph observer and publish the
+            // latest known section once while the reporter is still alive;
+            // then retire the turn's Telegram reporting, restart the observer
+            // for the next turn, and snapshot once more so mutations that
+            // landed during the handoff window are not lost (no event replay).
+            await quiesceTaskGraphObserverForTurnBoundary()
+            await finalizeTelegramTurnProgressReporting()
+            await startTaskGraphObserver()
+            await publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
             await sendTelegramCompletionIfLinked(completionText, origin: success.origin)
         case let .failure(failure):
             await finishStreamingOutput()
+            let remoteFailureText: String
             if failure.isCancellation {
                 await writeChatError("\nStopped.\n")
-                await sendTelegramSystemMessageIfLinked("Stopped.", origin: failure.origin)
+                remoteFailureText = "Stopped."
             } else {
                 await writeFailureMessage("ZenCODE: \(failure.message)\n")
-                await sendTelegramSystemMessageIfLinked(
-                    "ZenCODE failed: \(failure.message)",
-                    origin: failure.origin
-                )
+                remoteFailureText = "ZenCODE failed: \(failure.message)"
             }
             if let summary = failure.fileChangeSummary {
                 await writeFileChangeSummary(summary, includeDiff: false)
             }
+            await quiesceTaskGraphObserverForTurnBoundary()
+            await finalizeTelegramTurnProgressReporting()
+            await startTaskGraphObserver()
+            await publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
+            await sendTelegramSystemMessageIfLinked(
+                remoteFailureText,
+                origin: failure.origin
+            )
         }
     }
 }

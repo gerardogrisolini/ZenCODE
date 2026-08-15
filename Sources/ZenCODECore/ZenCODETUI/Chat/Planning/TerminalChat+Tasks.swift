@@ -10,13 +10,21 @@ extension TerminalChat {
     func startTaskGraphObserver() async {
         await stopTaskGraphObserver()
         await renderCoordinator.resetOverview(.taskGraph)
+        taskGraphDebouncedRender = nil
         let observedSessionID = sessionID
         let runner = sessionRunner
+        // Subscribe BEFORE spawning the consumer task and only then return:
+        // registering the continuation here closes the snapshot→subscription
+        // handoff window (the event stream has no replay), so a graph
+        // mutation that lands after this call is seen by the new observer
+        // even when a turn-boundary snapshot raced it. Events buffered
+        // between registration and the consumer's first await are retained
+        // by the stream.
+        let stream = await runner.taskOrchestrator.events(
+            sessionID: observedSessionID
+        )
 
         taskGraphObserverTask = Task(name: "ZenCODE.TUI.task-graph-observer") { [weak self] in
-            let orchestrator = runner.taskOrchestrator
-            let stream = await orchestrator.events(sessionID: observedSessionID)
-            var pendingRender: Task<Void, Never>?
             for await _ in stream {
                 guard !Task.isCancelled,
                       let coordinator = self?.renderCoordinator,
@@ -24,9 +32,10 @@ extension TerminalChat {
                     break
                 }
                 let publicationRevision = await coordinator.beginOverviewPublication(.taskGraph)
-                let previousRender = pendingRender
+                guard let self, !Task.isCancelled else { break }
+                let previousRender = self.taskGraphDebouncedRender
                 previousRender?.cancel()
-                pendingRender = Task(name: "ZenCODE.TUI.task-graph-render") { [weak self] in
+                self.taskGraphDebouncedRender = Task(name: "ZenCODE.TUI.task-graph-render") { [weak self] in
                     try? await Task.sleep(nanoseconds: 150_000_000)
                     await previousRender?.value
                     guard !Task.isCancelled, let self else { return }
@@ -36,8 +45,11 @@ extension TerminalChat {
                     )
                 }
             }
-            pendingRender?.cancel()
-            await pendingRender?.value
+            if let pendingRender = self?.taskGraphDebouncedRender {
+                pendingRender.cancel()
+                await pendingRender.value
+                self?.taskGraphDebouncedRender = nil
+            }
         }
     }
 
@@ -46,6 +58,28 @@ extension TerminalChat {
         taskGraphObserverTask = nil
         observer?.cancel()
         await observer?.value
+        if let pendingRender = taskGraphDebouncedRender {
+            pendingRender.cancel()
+            await pendingRender.value
+            taskGraphDebouncedRender = nil
+        }
+    }
+
+    /// Turn-boundary quiescence for the task-graph section: stops the event
+    /// observer, drains any in-flight debounced render, and publishes the
+    /// latest known graph state once, so the retiring turn's final section is
+    /// mirrored while its reporter is still alive. The observer is NOT
+    /// restarted here: the caller restarts it only after the turn's Telegram
+    /// reporter has been retired, so no observer-driven render can cross the
+    /// retirement boundary and be adopted by the next turn's reporter.
+    /// Restarts should follow with a fresh
+    /// ``publishTaskGraphOverviewIfChanged(observedSessionID:)`` snapshot,
+    /// which also recovers graph mutations that landed between this
+    /// publication and the new event subscription (the event stream has no
+    /// replay).
+    func quiesceTaskGraphObserverForTurnBoundary() async {
+        await stopTaskGraphObserver()
+        await publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
     }
 
     func publishTaskGraphOverviewIfChanged(

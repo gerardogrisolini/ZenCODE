@@ -274,9 +274,14 @@ extension TerminalChat {
     /// the origin lets `/telegram on` attach a reporter to an already-running
     /// local request; previously the reporter was a one-time snapshot created at
     /// turn start, so enabling Telegram mid-turn had no effect.
-    func beginTelegramTurnProgressReporting(for origin: TerminalPromptOrigin) {
+    func beginTelegramTurnProgressReporting(for origin: TerminalPromptOrigin) async {
         activeTelegramProgressReporter = nil
         activeTelegramTurnOrigin = origin
+        resetMirroredOverviewSignatures()
+        // Fence off any undelivered mirror notification from the previous
+        // turn before the new turn's reporter exists: stale-epoch deliveries
+        // are discarded instead of being adopted by the new reporter.
+        currentTelegramMirrorEpoch = await renderCoordinator.advanceMirrorEpoch()
         synchronizeTelegramTurnProgressReporting()
     }
 

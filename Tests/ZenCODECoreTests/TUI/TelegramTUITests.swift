@@ -240,7 +240,7 @@ struct TelegramTUITests {
 
         // A local turn begins while Telegram is off. Its origin is retained so
         // `/telegram on` can attach the in-flight request immediately.
-        terminal.beginTelegramTurnProgressReporting(for: .local)
+        await terminal.beginTelegramTurnProgressReporting(for: .local)
         #expect(terminal.activeTelegramTurnOrigin == .local)
         #expect(terminal.activeTelegramProgressReporter == nil)
 

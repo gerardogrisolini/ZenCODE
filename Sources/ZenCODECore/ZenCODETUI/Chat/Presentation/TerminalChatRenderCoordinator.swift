@@ -988,6 +988,120 @@ actor TerminalChatRenderCoordinator {
 
     // MARK: - Overview arbitration
 
+    /// Optional mirror invoked after an overview section is actually rendered
+    /// locally, carrying the kind, the change signature, and the section text
+    /// (markdown for the task graph, the plain overview text for sub-agents).
+    /// Deferred overviews flow through here too, once they become renderable,
+    /// so remote mirrors (e.g. Telegram) cannot miss a section that only
+    /// rendered after streaming finished.
+    ///
+    /// Notifications are queued on this actor in render order and delivered to
+    /// the handler by a single drain task, so the remote channel observes the
+    /// same section order as the terminal even though delivery is asynchronous
+    /// and never blocks local rendering. Use
+    /// ``waitForOverviewMirrorsToDrain()`` as an end-of-turn barrier.
+    var overviewMirroringHandler: (@Sendable (
+        _ kind: OverviewKind,
+        _ signature: String,
+        _ text: String,
+        _ epoch: Int
+    ) async -> Void)?
+
+    private struct OverviewMirrorNotification: Sendable {
+        let kind: OverviewKind
+        let signature: String
+        let text: String
+        let epoch: Int
+    }
+
+    private var pendingMirrorNotifications: [OverviewMirrorNotification] = []
+    private var isDrainingMirrorNotifications = false
+    private var mirrorDrainWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Monotonic mirroring epoch, advanced by the chat at every turn boundary.
+    /// Notifications carry the epoch current at enqueue time; the consumer
+    /// compares it with the epoch current at delivery and discards stale
+    /// ones, so a section rendered for one turn can never be adopted by the
+    /// next turn's remote channel even when delivery is delayed.
+    private var mirrorEpoch = 0
+
+    /// Advances and returns the mirroring epoch. The chat calls this at each
+    /// turn boundary so undelivered notifications from the previous turn are
+    /// fenced off from the new turn's reporter.
+    func advanceMirrorEpoch() -> Int {
+        mirrorEpoch += 1
+        return mirrorEpoch
+    }
+
+    /// Installs or replaces the overview mirroring hook. Actor-isolated so the
+    /// handler swap cannot race an in-flight mirror dispatch.
+    func setOverviewMirroringHandler(
+        _ handler: (@Sendable (
+            _ kind: OverviewKind,
+            _ signature: String,
+            _ text: String,
+            _ epoch: Int
+        ) async -> Void)?
+    ) {
+        overviewMirroringHandler = handler
+    }
+
+    /// Turn-boundary barrier over the mirror queue: returns once every
+    /// notification queued so far has been handed to the mirroring handler.
+    /// This is a snapshot contract over the queue, not over producers: a
+    /// publication whose render has not happened yet (for example a debounced
+    /// task-graph observer render still inside its coalescing window) is by
+    /// contract a post-turn publication and will not be mirrored for the
+    /// retiring turn. Callers flush the remote channel and retire the turn
+    /// reporter right after, so the turn's final message cannot be overtaken
+    /// by sections the turn already rendered.
+    func waitForOverviewMirrorsToDrain() async {
+        guard isDrainingMirrorNotifications
+            || !pendingMirrorNotifications.isEmpty else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            mirrorDrainWaiters.append(continuation)
+        }
+    }
+    private func enqueueMirrorNotification(
+        _ notification: OverviewMirrorNotification
+    ) {
+        pendingMirrorNotifications.append(notification)
+        guard !isDrainingMirrorNotifications else {
+            return
+        }
+        isDrainingMirrorNotifications = true
+        Task(name: "ZenCODE.TUI.overview-mirror-drain") {
+            await drainMirrorNotifications()
+        }
+    }
+
+    /// FIFO delivery: appends happen on this actor in render order, and this
+    /// single drain task hands them to the handler one at a time. While it
+    /// awaits the handler, new appends are picked up by the same loop, so the
+    /// remote order always matches the local render order.
+    private func drainMirrorNotifications() async {
+        while !pendingMirrorNotifications.isEmpty {
+            let notification = pendingMirrorNotifications.removeFirst()
+            if let overviewMirroringHandler {
+                await overviewMirroringHandler(
+                    notification.kind,
+                    notification.signature,
+                    notification.text,
+                    notification.epoch
+                )
+            }
+        }
+        // No suspension between the loop exit and the flag/waiter handoff, so
+        // a concurrent append cannot slip past this drain unnoticed.
+        isDrainingMirrorNotifications = false
+        let waiters = mirrorDrainWaiters
+        mirrorDrainWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
     /// Reserves a monotonically increasing publication token before snapshot
     /// work starts. Reserving eagerly lets a newer request fence an older one
     /// even when the older snapshot completes last or the active graph changes.
@@ -1009,6 +1123,7 @@ actor TerminalChatRenderCoordinator {
         }
     }
 
+    @discardableResult
     func renderTaskGraphOverview(
         signature: String,
         markdown: String,
@@ -1026,6 +1141,7 @@ actor TerminalChatRenderCoordinator {
         )
     }
 
+    @discardableResult
     func renderSubAgentOverview(
         signature: String,
         text: String,
@@ -1151,9 +1267,11 @@ actor TerminalChatRenderCoordinator {
         if overview.rememberSignature {
             overviewSignatures[overview.kind] = overview.rememberedSignature
         }
+        let mirroredText: String
         switch overview.content {
         case let .markdown(markdown):
             renderMarkdownMessage(markdown)
+            mirroredText = markdown
         case let .subAgents(text, responses, overviewBatchID, maximumInPlaceRows):
             renderSubAgentOverviewContent(
                 text: text,
@@ -1161,7 +1279,19 @@ actor TerminalChatRenderCoordinator {
                 overviewBatchID: overviewBatchID,
                 maximumInPlaceRows: maximumInPlaceRows
             )
+            mirroredText = text
         }
+        // Asynchronous by design: the local render above is never blocked, the
+        // FIFO drain preserves render order, and the end-of-turn barrier
+        // (`waitForOverviewMirrorsToDrain`) lets the turn flush its mirrors.
+        enqueueMirrorNotification(
+            OverviewMirrorNotification(
+                kind: overview.kind,
+                signature: overview.signature,
+                text: mirroredText,
+                epoch: mirrorEpoch
+            )
+        )
     }
 
     /// Draws the sub-agent section, replacing the previously drawn section in

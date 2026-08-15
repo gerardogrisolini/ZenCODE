@@ -1136,6 +1136,30 @@ extension TerminalChat {
             }
         }
 
+        // Loop teardown paths that bypass `finishPromptResult` (end-of-input
+        // during generation, or cancellation of this loop's task) must still
+        // retire the turn's Telegram reporting so no reporter outlives its
+        // turn and no mirror is left in flight. Finish the queue BEFORE
+        // joining the cancelled generation: the generation waits on a detached
+        // completion delivery whose backpressure send can only conclude once
+        // the queue is finished (or a slot frees up, which requires the
+        // consumer this loop no longer runs). `finish()` is idempotent, so
+        // the teardown defer below remains safe. Joining first also guarantees
+        // a cancelled `generateResponse` suspended right before its
+        // `beginTelegramTurnProgressReporting` call cannot open a reporting
+        // session after the retirement below.
+        eventQueue.finish()
+        if let generation = generationTask {
+            generationTask = nil
+            generation.cancel()
+            _ = await generation.value
+        }
+        // This loop is ending for good: stop the task-graph observer (and its
+        // in-flight debounce) without restarting it, so no observer-driven
+        // render can run during or after the turn retirement below.
+        await stopTaskGraphObserver()
+        await finalizeTelegramTurnProgressReporting()
+
         await stopPanelInput()
     }
 }
