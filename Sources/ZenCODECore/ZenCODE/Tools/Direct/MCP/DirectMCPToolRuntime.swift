@@ -331,13 +331,13 @@ public actor DirectMCPToolRuntime {
         return output.text
     }
 
+    /// Discovery is driven by explicit feature installation; the runtime
+    /// no longer discovers servers implicitly.
     func discoverIfNeeded(
         allowedToolNames: Set<String>? = nil,
         preferredWorkspaceRootURL: URL? = nil,
         force: Bool = false
     ) async {
-        for family in Self.discoveryServerFamilies(allowedToolNames: allowedToolNames) {
-        }
     }
 
     public static func discoveryFamilies(
